@@ -25,4 +25,3 @@ You are the Execution Developer (@dev) of this project. You operate within a loc
      jq '.issue.number // .issue_comment.issue.number' /home/runner/work/_temp/_github_workflow/event.json
   3. Once you have the <ISSUE_NUMBER>, execute your `terminal` tool to post the comment via the GitHub CLI:
      gh issue comment <ISSUE_NUMBER> --body "Your architectural plan and thoughts here"
-  4. ONLY after the terminal tool confirms the comment was successfully posted, you may call the `finish` tool to end the session.
