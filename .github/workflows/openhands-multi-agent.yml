@@ -1,36 +1,79 @@
 name: OpenHands Multi-Agent Router
 
 on:
+  issues:
+    types: [opened, edited, assigned]
   issue_comment:
     types: [created]
 
+permissions:
+    contents: write
+    pull-requests: write
+    issues: write
+
 jobs:
-  route-agent:
-    runs-on: ubuntu-latest
-    if: |
-      contains(github.event.comment.body, '@genius') || 
-      contains(github.event.comment.body, '@dev')
-    
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+    run-task:
+        runs-on: ubuntu-24.04
+        if: |
+            contains(github.event.comment.body, '@genius') || 
+            contains(github.event.comment.body, '@dev')
+        env:
+            AGENT_SCRIPT_URL: https://raw.githubusercontent.com/OpenHands/agent-sdk/main/examples/03_github_workflows/01_basic_action/agent_script.py
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
 
-      - name: Run Genius Agent
-        if: contains(github.event.comment.body, '@genius')
-        uses: OpenHands/extensions/plugins/issue-resolver@main
-        with:
-          llm-model: 'openrouter/deepseek/deepseek-v4-pro'
-          llm-base-url: 'https://openrouter.ai/api/v1/chat/completions'
-          llm-api-key: ${{ secrets.OPENROUTER_API_KEY }}
-          instruction-file: '.agents/prompts/genius.md'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+            - name: Set up Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: '3.13'
 
-      - name: Run Dev Agent
-        if: contains(github.event.comment.body, '@dev')
-        uses: OpenHands/extensions/plugins/issue-resolver@main
-        with:
-          llm-model: 'openrouter/qwen/qwen3.6-27b'
-          llm-api-key: ${{ secrets.OPENROUTER_API_KEY }}
-          llm-base-url: 'https://openrouter.ai/api/v1/chat/completions'
-          instruction-file: '.agents/prompts/dev.md'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+            - name: Install uv
+              uses: astral-sh/setup-uv@v7
+              with:
+                  enable-cache: true
+
+            - name: Install OpenHands dependencies
+              run: |
+                  # Install OpenHands SDK and tools from git repository
+                  uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-sdk"
+                  uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-tools"
+
+            - name: Run genius
+              if: contains(github.event.comment.body, '@genius')
+              env:
+                  PROMPT_LOCATION: '.agents/prompts/genius.md'
+                  LLM_MODEL: 'openrouter/deepseek/deepseek-v4-pro'
+                  LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
+                  LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+                  PYTHONPATH: ''
+              run: |
+                  echo "Running agent script: $AGENT_SCRIPT_URL"
+
+                  # Download script if it's a URL
+                  if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then
+                    echo "Downloading agent script from URL..."
+                    curl -sSL "$AGENT_SCRIPT_URL" -o /tmp/agent_script.py
+                    AGENT_SCRIPT_PATH="/tmp/agent_script.py"
+                  else
+                    AGENT_SCRIPT_PATH="$AGENT_SCRIPT_URL"
+                  fi
+
+                  # Run with appropriate prompt argument
+                  if [ -n "$PROMPT_LOCATION" ]; then
+                    echo "Using prompt from: $PROMPT_LOCATION"
+                    uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION"
+                  else
+                    echo "Using PROMPT_STRING (${#PROMPT_STRING} characters)"
+                    uv run python "$AGENT_SCRIPT_PATH"
+                  fi
+
+            - name: Upload logs as artifact
+              uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: openhands-task-logs
+                  path: |
+                      *.log
+                      output/
+                  retention-days: 7
