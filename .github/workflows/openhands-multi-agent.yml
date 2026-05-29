@@ -43,7 +43,7 @@ jobs:
               run: |
                 if [[ "${{ github.event.comment.body }}" == *"@genius"* ]]; then
                     echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
-                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
+                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
                     echo "ROLE_NAME=genius" >> $GITHUB_ENV
                 elif [[ "${{ github.event.comment.body }}" == *"@dev"* ]]; then
                     echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
