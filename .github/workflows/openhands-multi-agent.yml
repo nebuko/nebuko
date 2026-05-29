@@ -101,7 +101,7 @@ jobs:
             - name: Run OpenHands Agent
               id: openhands_agent
               env:
-                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                GH_TOKEN: ${{ secrets.GH_PAT }}
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
               run: |
