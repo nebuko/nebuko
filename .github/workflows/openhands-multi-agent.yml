@@ -43,7 +43,7 @@ jobs:
               if: contains(github.event.comment.body, '@genius')
               env:
                   PROMPT_LOCATION: '.agents/prompts/genius.md'
-                  LLM_MODEL: 'openrouter/deepseek/deepseek-v4-pro'
+                  LLM_MODEL: 'openrouter/deepseek/deepseek-v4-flash'
                   LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
                   LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                   PYTHONPATH: ''
@@ -73,7 +73,7 @@ jobs:
               if: contains(github.event.comment.body, '@dev')
               env:
                   PROMPT_LOCATION: '.agents/prompts/dev.md'
-                  LLM_MODEL: 'openrouter/qwen/qwen3.6-27b'
+                  LLM_MODEL: 'openrouter/deepseek/deepseek-v4-flash'
                   LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
                   LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                   PYTHONPATH: ''
