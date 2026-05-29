@@ -65,14 +65,24 @@ jobs:
                     AGENT_SCRIPT_PATH="$AGENT_SCRIPT_URL"
                 fi
 
-                uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION"
+                uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION" | tee console.log
+
+            - name: Clean and Prepare Comment
+              if: always() && steps.openhands_agent.outcome == 'success'
+              run: |
+                sed -n '/Message from Agent/, $p' console.log | grep -v "Message from Agent" > github_comment.md
+                if [ -s github_comment.md ]; then
+                    echo "HAS_COMMENT=true" >> $GITHUB_ENV
+                else
+                    echo "HAS_COMMENT=false" >> $GITHUB_ENV
+                fi
 
             - name: Post Agent Comment to GitHub
-              if: always() && steps.openhands_agent.outcome == 'success'
+              if: always() && env.HAS_COMMENT == 'true'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ github.event.issue.number }}
-                body: ${{ steps.openhands_agent.outputs.publish_message }}
+                body-path: ./github_comment.md
 
             - name: Upload logs as artifact
               uses: actions/upload-artifact@v4
