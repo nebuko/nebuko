@@ -107,8 +107,12 @@ jobs:
                     AGENT_SCRIPT_PATH="$AGENT_SCRIPT_URL"
                 fi
 
-                AGENT_QUERY=$(cat $AGENT_QUERY_PATH)
-                uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION" "$AGENT_QUERY" | tee console.log
+                FINAL_PROMPT_FILE="/tmp/final_prompt.md"
+                cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
+                echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
+                cat $AGENT_QUERY_PATH >> $FINAL_PROMPT_FILE
+                # 2. Maintenant on ne passe qu'un seul argument au script !
+                uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" | tee console.log
 
             - name: Clean and Prepare Comment
               if: always() && steps.openhands_agent.outcome == 'success'
