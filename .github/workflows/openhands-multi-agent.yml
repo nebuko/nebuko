@@ -70,9 +70,9 @@ jobs:
 
 
             - name: Run dev
-              if: contains(github.event.comment.body, '@genius')
+              if: contains(github.event.comment.body, '@dev')
               env:
-                  PROMPT_LOCATION: '.agents/prompts/genius.md'
+                  PROMPT_LOCATION: '.agents/prompts/dev.md'
                   LLM_MODEL: 'openrouter/qwen/qwen3.6-27b'
                   LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
                   LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
