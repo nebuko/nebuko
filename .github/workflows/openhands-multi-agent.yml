@@ -68,6 +68,36 @@ jobs:
                     uv run python "$AGENT_SCRIPT_PATH"
                   fi
 
+
+            - name: Run dev
+              if: contains(github.event.comment.body, '@genius')
+              env:
+                  PROMPT_LOCATION: '.agents/prompts/genius.md'
+                  LLM_MODEL: 'openrouter/qwen/qwen3.6-27b'
+                  LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
+                  LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+                  PYTHONPATH: ''
+              run: |
+                  echo "Running agent script: $AGENT_SCRIPT_URL"
+
+                  # Download script if it's a URL
+                  if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then
+                    echo "Downloading agent script from URL..."
+                    curl -sSL "$AGENT_SCRIPT_URL" -o /tmp/agent_script.py
+                    AGENT_SCRIPT_PATH="/tmp/agent_script.py"
+                  else
+                    AGENT_SCRIPT_PATH="$AGENT_SCRIPT_URL"
+                  fi
+
+                  # Run with appropriate prompt argument
+                  if [ -n "$PROMPT_LOCATION" ]; then
+                    echo "Using prompt from: $PROMPT_LOCATION"
+                    uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION"
+                  else
+                    echo "Using PROMPT_STRING (${#PROMPT_STRING} characters)"
+                    uv run python "$AGENT_SCRIPT_PATH"
+                  fi
+
             - name: Upload logs as artifact
               uses: actions/upload-artifact@v4
               if: always()
