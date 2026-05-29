@@ -69,13 +69,32 @@ jobs:
 
             - name: Clean and Prepare Comment
               if: always() && steps.openhands_agent.outcome == 'success'
+              shell: python
               run: |
-                sed -n '/Message from Agent/, $p' console.log | grep -v "Message from Agent" > github_comment.md
-                if [ -s github_comment.md ]; then
-                    echo "HAS_COMMENT=true" >> $GITHUB_ENV
-                else
-                    echo "HAS_COMMENT=false" >> $GITHUB_ENV
-                fi
+                import re
+                import os
+
+                with open("console.log", "r", encoding="utf-8") as f:
+                    content = f.read()
+
+                # On découpe le log à chaque occurrence de "Message from Agent"
+                blocks = content.split("Message from Agent ─────────────────────────────────────────────────────────────")
+                
+                if len(blocks) > 1:
+                    # On prend le dernier bloc et on nettoie les scories techniques de fin de log
+                    last_message = blocks[-1].split("Tokens:")[0].strip()
+                    
+                    # Nettoyage des logs JSON parasites d'OpenHands
+                    last_message = re.sub(r'{"asctime":.*"message": "Task completed successfully"}', '', last_message).strip()
+                    
+                    with open("github_comment.md", "w", encoding="utf-8") as f_out:
+                        f_out.write(last_message)
+                    
+                    with open(os.environ['GITHUB_ENV'], 'a') as ge:
+                        ge.write("HAS_COMMENT=true\n")
+                else:
+                    with open(os.environ['GITHUB_ENV'], 'a') as ge:
+                        ge.write("HAS_COMMENT=false\n")
 
             - name: Post Agent Comment to GitHub
               if: always() && env.HAS_COMMENT == 'true'
