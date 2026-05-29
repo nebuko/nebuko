@@ -52,6 +52,8 @@ jobs:
                 fi
             
             - name: Inject GitHub Context into Template
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                 EVENT_PATH="/home/runner/work/_temp/_github_workflow/event.json"
                 REPO_NAME="${{ github.repository }}"
