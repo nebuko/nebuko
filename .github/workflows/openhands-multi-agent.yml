@@ -50,6 +50,29 @@ jobs:
                     echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
                     echo "ROLE_NAME=dev" >> $GITHUB_ENV
                 fi
+            
+            - name: Inject GitHub Context into Template
+              run: |
+                EVENT_PATH="/home/runner/work/_temp/_github_workflow/event.json"
+                
+                ISSUE_TITLE=$(jq -r '.issue.title' $EVENT_PATH)
+                ISSUE_BODY=$(jq -r '.issue.body' $EVENT_PATH)
+                TRIGGER_COMMENT=$(jq -r '.comment.body' $EVENT_PATH)
+                COMMENT_AUTHOR=$(jq -r '.comment.user.login' $EVENT_PATH)
+                
+                cp .agents/templates/issue_context.md /tmp/ready_prompt.md
+                
+                python3 -c "
+                import os
+                with open('/tmp/ready_prompt.md', 'r') as f: text = f.read()
+                text = text.replace('{{ISSUE_TITLE}}', '''$ISSUE_TITLE''')
+                text = text.replace('{{ISSUE_BODY}}', '''$ISSUE_BODY''')
+                text = text.replace('{{TRIGGER_COMMENT}}', '''$TRIGGER_COMMENT''')
+                text = text.replace('{{COMMENT_AUTHOR}}', '''$COMMENT_AUTHOR''')
+                with open('/tmp/ready_prompt.md', 'w') as f: f.write(text)
+                "
+                
+                echo "AGENT_QUERY_PATH=/tmp/ready_prompt.md" >> $GITHUB_ENV
 
             - name: Run OpenHands Agent
               id: openhands_agent
@@ -65,7 +88,8 @@ jobs:
                     AGENT_SCRIPT_PATH="$AGENT_SCRIPT_URL"
                 fi
 
-                uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION" | tee console.log
+                AGENT_QUERY=$(cat $AGENT_QUERY_PATH)
+                uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION" "$AGENT_QUERY" | tee console.log
 
             - name: Clean and Prepare Comment
               if: always() && steps.openhands_agent.outcome == 'success'
