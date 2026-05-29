@@ -44,12 +44,10 @@ jobs:
                 if [[ "${{ github.event.comment.body }}" == *"@genius"* ]]; then
                     echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
                     echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
-                    echo "LLM_BASE_URL='https://openrouter.ai/api/v1/chat/completions'" >> $GITHUB_ENV
                     echo "ROLE_NAME=genius" >> $GITHUB_ENV
                 elif [[ "${{ github.event.comment.body }}" == *"@dev"* ]]; then
                     echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
                     echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
-                    echo "LLM_BASE_URL='https://openrouter.ai/api/v1/chat/completions'" >> $GITHUB_ENV
                     echo "ROLE_NAME=dev" >> $GITHUB_ENV
                 fi
 
@@ -57,6 +55,7 @@ jobs:
               id: openhands_agent
               env:
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+                LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
               run: |
                 echo "Running agent as [@$ROLE_NAME] using prompt: $PROMPT_LOCATION"
                 if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then
