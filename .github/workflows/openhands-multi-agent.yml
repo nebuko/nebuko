@@ -39,64 +39,39 @@ jobs:
                   uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-sdk"
                   uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-tools"
 
-            - name: Run genius
-              if: contains(github.event.comment.body, '@genius')
-              env:
-                  PROMPT_LOCATION: '.agents/prompts/genius.md'
-                  LLM_MODEL: 'openrouter/deepseek/deepseek-v4-flash'
-                  LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
-                  LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-                  PYTHONPATH: ''
+            - name: Resolve Agent Configuration
               run: |
-                  echo "Running agent script: $AGENT_SCRIPT_URL"
+                if [[ "${{ github.event.comment.body }}" == *"@genius"* ]]; then
+                    echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
+                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
+                    echo "LLM_BASE_URL='https://openrouter.ai/api/v1/chat/completions'" >> $GITHUB_ENV
+                    echo "ROLE_NAME=genius" >> $GITHUB_ENV
+                elif [[ "${{ github.event.comment.body }}" == *"@dev"* ]]; then
+                    echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
+                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
+                    echo "LLM_BASE_URL='https://openrouter.ai/api/v1/chat/completions'" >> $GITHUB_ENV
+                    echo "ROLE_NAME=dev" >> $GITHUB_ENV
+                fi
 
-                  # Download script if it's a URL
-                  if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then
-                    echo "Downloading agent script from URL..."
-                    curl -sSL "$AGENT_SCRIPT_URL" -o /tmp/agent_script.py
-                    AGENT_SCRIPT_PATH="/tmp/agent_script.py"
-                  else
-                    AGENT_SCRIPT_PATH="$AGENT_SCRIPT_URL"
-                  fi
-
-                  # Run with appropriate prompt argument
-                  if [ -n "$PROMPT_LOCATION" ]; then
-                    echo "Using prompt from: $PROMPT_LOCATION"
-                    uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION"
-                  else
-                    echo "Using PROMPT_STRING (${#PROMPT_STRING} characters)"
-                    uv run python "$AGENT_SCRIPT_PATH"
-                  fi
-
-
-            - name: Run dev
-              if: contains(github.event.comment.body, '@dev')
-              env:
-                  PROMPT_LOCATION: '.agents/prompts/dev.md'
-                  LLM_MODEL: 'openrouter/deepseek/deepseek-v4-flash'
-                  LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
-                  LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-                  PYTHONPATH: ''
+            - name: Run OpenHands Agent
+              id: openhands_agent
               run: |
-                  echo "Running agent script: $AGENT_SCRIPT_URL"
-
-                  # Download script if it's a URL
-                  if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then
-                    echo "Downloading agent script from URL..."
-                    curl -sSL "$AGENT_SCRIPT_URL" -o /tmp/agent_script.py
+                echo "Running agent as [@$ROLE_NAME] using prompt: $PROMPT_LOCATION"
+                if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then
+                  curl -sSL "$AGENT_SCRIPT_URL" -o /tmp/agent_script.py
                     AGENT_SCRIPT_PATH="/tmp/agent_script.py"
-                  else
+                else
                     AGENT_SCRIPT_PATH="$AGENT_SCRIPT_URL"
-                  fi
+                fi
 
-                  # Run with appropriate prompt argument
-                  if [ -n "$PROMPT_LOCATION" ]; then
-                    echo "Using prompt from: $PROMPT_LOCATION"
-                    uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION"
-                  else
-                    echo "Using PROMPT_STRING (${#PROMPT_STRING} characters)"
-                    uv run python "$AGENT_SCRIPT_PATH"
-                  fi
+                uv run python "$AGENT_SCRIPT_PATH" "$PROMPT_LOCATION"
+
+            - name: Post Agent Comment to GitHub
+              if: always() && steps.openhands_agent.outcome == 'success'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ github.event.issue.number }}
+                body: ${{ steps.openhands_agent.outputs.publish_message }}
 
             - name: Upload logs as artifact
               uses: actions/upload-artifact@v4
