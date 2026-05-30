@@ -18,7 +18,9 @@ jobs:
             contains(github.event.comment.body, '@genius') || 
             contains(github.event.comment.body, '@dev')
         env:
-            AGENT_SCRIPT_URL: https://raw.githubusercontent.com/OpenHands/agent-sdk/main/examples/03_github_workflows/01_basic_action/agent_script.py
+            AGENT_SCRIPT_URL: 
+https://raw.githubusercontent.com/OpenHands/agent-sdk/main/examples/03_github_wo
+rkflows/01_basic_action/agent_script.py
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
@@ -36,18 +38,24 @@ jobs:
             - name: Install OpenHands dependencies
               run: |
                   # Install OpenHands SDK and tools from git repository
-                  uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-sdk"
-                  uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-tools"
+                  uv pip install --system "openhands-sdk @ 
+git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-sdk"
+                  uv pip install --system "openhands-tools @ 
+git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-tools
+"
 
             - name: Resolve Agent Configuration
               run: |
                 if [[ "${{ github.event.comment.body }}" == *"@genius"* ]]; then
-                    echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
-                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
+                    echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> 
+$GITHUB_ENV
+                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> 
+$GITHUB_ENV
                     echo "ROLE_NAME=genius" >> $GITHUB_ENV
                 elif [[ "${{ github.event.comment.body }}" == *"@dev"* ]]; then
                     echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
-                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
+                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> 
+$GITHUB_ENV
                     echo "ROLE_NAME=dev" >> $GITHUB_ENV
                 fi
             
@@ -57,17 +65,24 @@ jobs:
               run: |
                 EVENT_PATH="/home/runner/work/_temp/_github_workflow/event.json"
                 REPO_NAME="${{ github.repository }}"
-                ISSUE_NUMBER=$(jq -r '.issue.number // .issue_comment.issue.number' $EVENT_PATH)
+                ISSUE_NUMBER=$(jq -r '.issue.number // 
+.issue_comment.issue.number' $EVENT_PATH)
                 
                 # 1. Extraction des données statiques
-                export ISSUE_TITLE=$(jq -r '.issue.title // "No Title"' $EVENT_PATH)
-                export ISSUE_BODY=$(jq -r '.issue.body // "No Description"' $EVENT_PATH)
-                export ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' $EVENT_PATH)
+                export ISSUE_TITLE=$(jq -r '.issue.title // "No Title"' 
+$EVENT_PATH)
+                export ISSUE_BODY=$(jq -r '.issue.body // "No Description"' 
+$EVENT_PATH)
+                export ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' 
+$EVENT_PATH)
                 
-                # 2. Récupération dynamique de TOUS les commentaires via l'API GitHub
+                # 2. Récupération dynamique de TOUS les commentaires via l'API 
+GitHub
                 # On formate chaque commentaire en Markdown pour le LLM
-                export COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
-                  --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
+                export COMMENT_HISTORY=$(gh api 
+/repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                  --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' |
+tr -d '\r')
 
                 python3 -c '
                 import os
@@ -75,7 +90,8 @@ jobs:
                 template = """
                 # 📰 GITHUB CONTEXT
 
-                An issue comment was triggered. Please review the details below (including full history) and take appropriate action.
+                An issue comment was triggered. Please review the details below 
+(including full history) and take appropriate action.
 
                 ## Issue Author
                 {author}
@@ -94,7 +110,8 @@ jobs:
                     title=os.environ.get("ISSUE_TITLE", ""),
                     body=os.environ.get("ISSUE_BODY", ""),
                     author=os.environ.get("ISSUE_AUTHOR", "unknown"),
-                    history=os.environ.get("COMMENT_HISTORY", "No previous comments.")
+                    history=os.environ.get("COMMENT_HISTORY", "No previous 
+comments.")
                 )
 
                 with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
@@ -110,7 +127,8 @@ jobs:
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
               run: |
-                echo "Running agent as [@$ROLE_NAME] using prompt: $PROMPT_LOCATION"
+                echo "Running agent as [@$ROLE_NAME] using prompt: 
+$PROMPT_LOCATION"
                 if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then
                   curl -sSL "$AGENT_SCRIPT_URL" -o /tmp/agent_script.py
                     AGENT_SCRIPT_PATH="/tmp/agent_script.py"
@@ -120,53 +138,42 @@ jobs:
 
                 FINAL_PROMPT_FILE="/tmp/final_prompt.md"
                 cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
-                echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
+                echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> 
+$FINAL_PROMPT_FILE
                 cat $AGENT_QUERY_PATH >> $FINAL_PROMPT_FILE
                 # 2. Maintenant on ne passe qu'un seul argument au script !
-                uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" | tee console.log
+                # 2>&1 fusionne stderr dans stdout, stdbuf désactive le 
+buffering pour une écriture immédiate
+                stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" 
+"$FINAL_PROMPT_FILE" 2>&1 | tee console.log
 
             - name: Clean and Prepare Comment
-              if: always() && steps.openhands_agent.outcome == 'success'
+              if: always()
               shell: python
               run: |
                 import re
                 import os
 
-                with open("console.log", "r", encoding="utf-8") as f:
-                    content = f.read()
-
-                # On découpe le log à chaque occurrence de "Message from Agent"
-                blocks = content.split("Message from Agent ─────────────────────────────────────────────────────────────")
-                
-                if len(blocks) > 1:
-                    # On prend le dernier bloc et on nettoie les scories techniques de fin de log
-                    last_message = blocks[-1].split("Tokens:")[0].strip()
-                    
-                    # Nettoyage des logs JSON parasites d'OpenHands
-                    last_message = re.sub(r'{"asctime":.*"message": "Task completed successfully"}', '', last_message).strip()
-                    
-                    with open("github_comment.md", "w", encoding="utf-8") as f_out:
-                        f_out.write(last_message)
-                    
+                # Vérification : console.log existe et n'est pas vide
+                if not os.path.isfile("console.log") or 
+os.path.getsize("console.log") == 0:
+                    fallback = "> ⚠️ The agent produced too much output to 
+include here. Please check the full logs in the workflow run."
+                    with open("github_comment.md", "w", encoding="utf-8") as 
+f_out:
+                        f_out.write(fallback)
                     with open(os.environ['GITHUB_ENV'], 'a') as ge:
                         ge.write("HAS_COMMENT=true\n")
                 else:
-                    with open(os.environ['GITHUB_ENV'], 'a') as ge:
-                        ge.write("HAS_COMMENT=false\n")
+                    with open("console.log", "r", encoding="utf-8") as f:
+                        content = f.read()
 
-            - name: Post Agent Comment to GitHub
-              if: always() && env.HAS_COMMENT == 'true'
-              uses: peter-evans/create-or-update-comment@v4
-              with:
-                issue-number: ${{ github.event.issue.number }}
-                body-path: ./github_comment.md
+                    # On découpe le log à chaque occurrence de "Message from 
+Agent"
+                    blocks = content.split("Message from Agent 
+─────────────────────────────────────────────────────────────")
 
-            - name: Upload logs as artifact
-              uses: actions/upload-artifact@v4
-              if: always()
-              with:
-                  name: openhands-task-logs
-                  path: |
-                      *.log
-                      output/
-                  retention-days: 7
+                    if len(blocks) > 1:
+                        # On prend le dernier bloc et on nettoie les scories 
+techniques de fin de log
+                        last_message = blocks[-1].split("
