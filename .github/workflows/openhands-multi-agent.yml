@@ -6,7 +6,7 @@ on:
   issue_comment:
     types: [created]
   pull_request:
-    types: [opened, edited]
+    types: [opened, edited, synchronize]
 
 permissions:
     contents: write
@@ -17,21 +17,15 @@ jobs:
     run-task:
         runs-on: ubuntu-24.04
         if: |
-          (github.event_name == 'issue_comment' && (
-            contains(github.event.comment.body, '@@genius') || 
-            contains(github.event.comment.body, '@@ctx') || 
-            contains(github.event.comment.body, '@@dev')
-          )) ||
-          (github.event_name == 'issues' && (
-            contains(github.event.issue.body, '@@genius') || 
-            contains(github.event.issue.body, '@@ctx') || 
-            contains(github.event.issue.body, '@@dev')
-          )) ||
-          (github.event_name == 'pull_request' && (
-            contains(github.event.pull_request.body, '@@genius') || 
-            contains(github.event.pull_request.body, '@@ctx') || 
-            contains(github.event.pull_request.body, '@@dev')
-          ))
+          contains(github.event.comment.body, '@@genius') || 
+          contains(github.event.comment.body, '@@ctx') || 
+          contains(github.event.comment.body, '@@dev') ||
+          contains(github.event.issue.body, '@@genius') || 
+          contains(github.event.issue.body, '@@ctx') || 
+          contains(github.event.issue.body, '@@dev') ||
+          contains(github.event.pull_request.body, '@@genius') || 
+          contains(github.event.pull_request.body, '@@ctx') || 
+          contains(github.event.pull_request.body, '@@dev')
         env:
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
             CIRCUIT_BREAKER_THRESHOLD: 10
@@ -153,7 +147,6 @@ jobs:
                       else
                         echo "Cross-agent call ($CALLER_AGENT -> $TARGET_AGENT). Allowing."
                       fi
-                    fi
                   else
                     echo "Event type ${{ env.EVENT_TYPE }} - skipping same-agent loop check (no bot marker expected)"
                   fi
