@@ -16,6 +16,7 @@ jobs:
         runs-on: ubuntu-24.04
         if: |
             contains(github.event.comment.body, '@genius') || 
+            contains(github.event.comment.body, '@ctx') || 
             contains(github.event.comment.body, '@dev')
         env:
             AGENT_SCRIPT_URL: https://raw.githubusercontent.com/OpenHands/agent-sdk/main/examples/03_github_workflows/01_basic_action/agent_script.py
@@ -53,6 +54,11 @@ jobs:
                     echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
                     echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
                     echo "ROLE_NAME=genius" >> $GITHUB_ENV
+                    echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                  elif [[ "$TRIGGER_BODY" == *"@ctx"* ]]; then
+                    echo "PROMPT_LOCATION=.agents/prompts/ctx.md" >> $GITHUB_ENV
+                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
+                    echo "ROLE_NAME=ctx" >> $GITHUB_ENV
                     echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                   elif [[ "$TRIGGER_BODY" == *"@dev"* ]]; then
                     echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
