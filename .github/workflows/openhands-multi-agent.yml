@@ -17,9 +17,21 @@ jobs:
     run-task:
         runs-on: ubuntu-24.04
         if: |
+          (github.event_name == 'issue_comment' && (
             contains(github.event.comment.body, '@@genius') || 
             contains(github.event.comment.body, '@@ctx') || 
             contains(github.event.comment.body, '@@dev')
+          )) ||
+          (github.event_name == 'issues' && (
+            contains(github.event.issue.body, '@@genius') || 
+            contains(github.event.issue.body, '@@ctx') || 
+            contains(github.event.issue.body, '@@dev')
+          )) ||
+          (github.event_name == 'pull_request' && (
+            contains(github.event.pull_request.body, '@@genius') || 
+            contains(github.event.pull_request.body, '@@ctx') || 
+            contains(github.event.pull_request.body, '@@dev')
+          ))
         env:
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
             CIRCUIT_BREAKER_THRESHOLD: 10
@@ -133,7 +145,7 @@ jobs:
                   # Guard 1: Block same-agent loops, allow cross-agent calls
                   CALLER_AGENT=$(echo "$TRIGGER_BODY" | sed -n 's/.*<!-- bot-agent-\([a-z]*\) -->.*/\1/p')
                   if [[ -n "$CALLER_AGENT" ]]; then
-                      TARGET_AGENT=$(echo "$LAST_AGENT" | sed 's/^@//')
+                      TARGET_AGENT=$(echo "$LAST_AGENT" | sed 's/^@@//')
                       if [[ "$CALLER_AGENT" == "$TARGET_AGENT" ]]; then
                         echo "Same-agent loop detected ($CALLER_AGENT calling itself). Skipping."
                         echo "SKIP_AGENT=true" >> $GITHUB_ENV
@@ -147,8 +159,8 @@ jobs:
                   fi
 
                   # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
-                  HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@genius\|@ctx\|@dev' || true)
-                  HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@genius\|@ctx\|@dev' || true)
+                  HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev' || true)
+                  HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev' || true)
                   if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
                     echo "Human ping + agent ping detected. Skipping to let human orchestrate."
                     echo "SKIP_AGENT=true" >> $GITHUB_ENV
