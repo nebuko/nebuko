@@ -70,11 +70,8 @@ jobs:
                   echo "SELF_TRIGGER=true" >> $GITHUB_ENV
                 fi
 
-            - name: Exit on self-trigger
-              if: env.SELF_TRIGGER == 'true'
-              run: exit 0
-
             - name: Inject GitHub Context into Template
+              if: env.SELF_TRIGGER != 'true'
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
@@ -128,6 +125,7 @@ jobs:
 
             - name: Run OpenHands Agent
               id: openhands_agent
+              if: env.SELF_TRIGGER != 'true'
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -150,7 +148,7 @@ jobs:
                 stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" 2>&1 | tee console.log
 
             - name: Clean and Prepare Comment
-              if: always()
+              if: always() && env.SELF_TRIGGER != 'true'
               shell: python
               run: |
                 import re
@@ -196,12 +194,12 @@ jobs:
                         ge.write("HAS_COMMENT=true\n")
 
             - name: Add bot marker to comment
-              if: always() && env.HAS_COMMENT == 'true'
+              if: always() && env.HAS_COMMENT == 'true' && env.SELF_TRIGGER != 'true'
               run: |
                 sed -i "1s/^/<!-- bot-agent-${ROLE_NAME} -->\n/" ./github_comment.md
 
             - name: Post Agent Comment to GitHub
-              if: always() && env.HAS_COMMENT == 'true'
+              if: always() && env.HAS_COMMENT == 'true' && env.SELF_TRIGGER != 'true'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ github.event.issue.number }}
