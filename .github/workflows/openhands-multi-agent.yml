@@ -15,9 +15,9 @@ jobs:
     run-task:
         runs-on: ubuntu-24.04
         if: |
-            contains(github.event.comment.body, '@genius') || 
-            contains(github.event.comment.body, '@ctx') || 
-            contains(github.event.comment.body, '@dev')
+            contains(github.event.comment.body, '@@genius') || 
+            contains(github.event.comment.body, '@@ctx') || 
+            contains(github.event.comment.body, '@@dev')
         env:
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
         steps:
@@ -45,10 +45,10 @@ jobs:
                   TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
                   echo "Debug: Checking trigger body..."
                   # Last-mention-wins: avoids @ctx stealing execution when mentioned in passing
-                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@genius\|@ctx\|@dev' | tail -1)
+                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev' | tail -1)
 
                   case "$LAST_AGENT" in
-                      "@genius")
+                      "@@genius")
                           echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
                           echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
                           echo "LLM_TEMPERATURE=0.2" >> $GITHUB_ENV
@@ -56,13 +56,13 @@ jobs:
                           echo "ROLE_NAME=genius" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           ;;
-                      "@ctx")
+                      "@@ctx")
                           echo "PROMPT_LOCATION=.agents/prompts/ctx.md" >> $GITHUB_ENV
                           echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
                           echo "ROLE_NAME=ctx" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           ;;
-                      "@dev")
+                      "@@dev")
                           echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
                           echo "LLM_TEMPERATURE=0.0" >> $GITHUB_ENV
                           echo "LLM_SEED=42" >> $GITHUB_ENV
@@ -95,7 +95,7 @@ jobs:
                   # Guard 1: Block same-agent loops, allow cross-agent calls
                   CALLER_AGENT=$(echo "$TRIGGER_BODY" | sed -n 's/.*<!-- bot-agent-\([a-z]*\) -->.*/\1/p')
                   if [[ -n "$CALLER_AGENT" ]]; then
-                      TARGET_AGENT=$(echo "$LAST_AGENT" | sed 's/^@//')
+                      TARGET_AGENT=$(echo "$LAST_AGENT" | sed 's/^@@//')
                       if [[ "$CALLER_AGENT" == "$TARGET_AGENT" ]]; then
                           echo "Same-agent loop detected ($CALLER_AGENT calling itself). Skipping."
                           echo "SKIP_AGENT=true" >> $GITHUB_ENV
@@ -106,8 +106,8 @@ jobs:
                   fi
 
                   # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
-                  HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@genius\|@ctx\|@dev' || true)
-                  HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@genius\|@ctx\|@dev' || true)
+                  HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev' || true)
+                  HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev' || true)
                   if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
                       echo "Human ping + agent ping detected. Skipping to let human orchestrate."
                       echo "SKIP_AGENT=true" >> $GITHUB_ENV
