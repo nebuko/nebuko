@@ -64,11 +64,27 @@ jobs:
                           ;;
                       "@dev")
                           echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
-                          echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
                           echo "LLM_TEMPERATURE=0.0" >> $GITHUB_ENV
                           echo "LLM_SEED=42" >> $GITHUB_ENV
                           echo "ROLE_NAME=dev" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+
+                          # Parse complexity from the triggering comment (estimated by @genius)
+                          COMPLEXITY_JSON=$(echo "$TRIGGER_BODY" | grep -oP '\{"complexity"\s*:\s*"\w+"\}' || echo '{"complexity": "medium"}')
+                          COMPLEXITY=$(echo "$COMPLEXITY_JSON" | jq -r '.complexity' | tr '[:upper:]' '[:lower:]')
+                          case "$COMPLEXITY" in
+                              "low")
+                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
+                                  ;;
+                              "high")
+                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-pro"
+                                  ;;
+                              *)
+                                  DEV_MODEL="openrouter/deepseek/deepseek-v3.2"
+                                  ;;
+                          esac
+                          echo "LLM_MODEL=$DEV_MODEL" >> $GITHUB_ENV
+                          echo "Dev complexity estimated: $COMPLEXITY -> using model: $DEV_MODEL"
                           ;;
                   esac
 
