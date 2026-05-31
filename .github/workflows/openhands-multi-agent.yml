@@ -44,7 +44,7 @@ jobs:
               run: |
                   TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
                   echo "Debug: Checking trigger body..."
-                  # Last-mention-wins: avoids @ctx stealing execution when mentioned in passing
+                  # Last-mention-wins: avoids @@ctx stealing execution when mentioned in passing
                   LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev' | tail -1)
 
                   case "$LAST_AGENT" in
@@ -69,7 +69,7 @@ jobs:
                           echo "ROLE_NAME=dev" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
 
-                          # Parse complexity from the triggering comment (estimated by @genius)
+                          # Parse complexity from the triggering comment (estimated by @@genius)
                           COMPLEXITY_JSON=$(echo "$TRIGGER_BODY" | grep -oP '\{"complexity"\s*:\s*"\w+"\}' || echo '{"complexity": "medium"}')
                           COMPLEXITY=$(echo "$COMPLEXITY_JSON" | jq -r '.complexity' | tr '[:upper:]' '[:lower:]')
                           case "$COMPLEXITY" in
