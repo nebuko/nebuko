@@ -134,6 +134,8 @@ jobs:
                           ;;
                   esac
 
+                  echo "LAST_AGENT=$LAST_AGENT" >> $GITHUB_ENV
+
             - name: Prevent all agent-trigger loops & human ping guard
               run: |
                   # Guard 1: Block same-agent loops, allow cross-agent calls
