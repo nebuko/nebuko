@@ -125,7 +125,7 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                EVENT_PATH="/home/runner/work/_temp/_github_workflow/event.json"
+                EVENT_PATH="${{ github.event_path }}"
                 REPO_NAME="${{ github.repository }}"
                 ISSUE_NUMBER="${{ github.event.issue.number }}"
                 ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' $EVENT_PATH)
@@ -187,7 +187,7 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                EVENT_PATH="/home/runner/work/_temp/_github_workflow/event.json"
+                EVENT_PATH="${{ github.event_path }}"
                 REPO_NAME="${{ github.repository }}"
                 ISSUE_NUMBER=$(jq -r '.issue.number // .issue_comment.issue.number' $EVENT_PATH)
                 
