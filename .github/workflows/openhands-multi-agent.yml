@@ -41,15 +41,27 @@ jobs:
 
             - name: Resolve Agent Configuration
               run: |
-                if [[ "${{ github.event.comment.body }}" == *"@genius"* ]]; then
+                  # 1. On récupère juste le contenu du commentaire déclencheur via l'API, 
+                  # ou on tronque drastiquement la variable.
+                  # Ici, on extrait seulement les 100 premiers caractères pour le test du nom de l'agent.
+          
+                  TRIGGER_BODY="${{ github.event.comment.body }}"
+          
+                  echo "Debug: Checking trigger body..."
+          
+                  # 2. Utilisation d'un pattern simple et court
+                  if [[ "$TRIGGER_BODY" == *"@genius"* ]]; then
                     echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
                     echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
                     echo "ROLE_NAME=genius" >> $GITHUB_ENV
-                elif [[ "${{ github.event.comment.body }}" == *"@dev"* ]]; then
+                    echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                  elif [[ "$TRIGGER_BODY" == *"@dev"* ]]; then
                     echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
                     echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
                     echo "ROLE_NAME=dev" >> $GITHUB_ENV
-                fi
+                    echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                  fi
+
             
             - name: Inject GitHub Context into Template
               env:
