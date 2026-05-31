@@ -5,6 +5,8 @@ on:
     types: [opened, edited, assigned]
   issue_comment:
     types: [created]
+  pull_request:
+    types: [opened, edited]
 
 permissions:
     contents: write
@@ -25,6 +27,41 @@ jobs:
             - name: Checkout repository
               uses: actions/checkout@v5
 
+            - name: Normalize GitHub Event Data
+              run: |
+                EVENT_PATH="/home/runner/work/_temp/_github_workflow/event.json"
+                
+                # Normalize based on event type
+                if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                  TARGET_NUMBER="${{ github.event.pull_request.number }}"
+                  TRIGGER_BODY=$(jq -r '.pull_request.body // ""' "$EVENT_PATH")
+                  TRIGGER_AUTHOR=$(jq -r '.pull_request.user.login // ""' "$EVENT_PATH")
+                  IS_PR_EVENT="true"
+                  EVENT_TYPE="pull_request"
+                elif [[ "${{ github.event_name }}" == "issue_comment" ]]; then
+                  TARGET_NUMBER="${{ github.event.comment.issue.number }}"
+                  TRIGGER_BODY=$(jq -r '.comment.body // ""' "$EVENT_PATH")
+                  TRIGGER_AUTHOR=$(jq -r '.comment.user.login // ""' "$EVENT_PATH")
+                  IS_PR_EVENT="false"
+                  EVENT_TYPE="issue_comment"
+                elif [[ "${{ github.event_name }}" == "issues" ]]; then
+                  TARGET_NUMBER="${{ github.event.issue.number }}"
+                  TRIGGER_BODY=$(jq -r '.issue.body // ""' "$EVENT_PATH")
+                  TRIGGER_AUTHOR=$(jq -r '.issue.user.login // ""' "$EVENT_PATH")
+                  IS_PR_EVENT="false"
+                  EVENT_TYPE="issues"
+                else
+                  echo "Unknown event type: ${{ github.event_name }}"
+                  exit 1
+                fi
+                
+                echo "TARGET_NUMBER=$TARGET_NUMBER" >> $GITHUB_ENV
+                echo "TRIGGER_BODY=$TRIGGER_BODY" >> $GITHUB_ENV
+                echo "TRIGGER_AUTHOR=$TRIGGER_AUTHOR" >> $GITHUB_ENV
+                echo "IS_PR_EVENT=$IS_PR_EVENT" >> $GITHUB_ENV
+                echo "EVENT_TYPE=$EVENT_TYPE" >> $GITHUB_ENV
+                echo "Normalized event: $EVENT_TYPE -> TARGET_NUMBER=$TARGET_NUMBER, IS_PR_EVENT=$IS_PR_EVENT"
+
             - name: Set up Python
               uses: actions/setup-python@v6
               with:
@@ -43,7 +80,6 @@ jobs:
 
             - name: Resolve Agent Configuration
               run: |
-                  TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
                   echo "Debug: Checking trigger body..."
                   # Last-mention-wins: avoids @@ctx stealing execution when mentioned in passing
                   LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev' | tail -1)
@@ -72,7 +108,7 @@ jobs:
                           echo "ROLE_NAME=dev" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
 
-                          # Parse complexity from the triggering comment (estimated by @@genius)
+                          # Parse complexity from the triggering comment (estimated by @genius)
                           COMPLEXITY_JSON=$(echo "$TRIGGER_BODY" | grep -oP '\{"complexity"\s*:\s*"\w+"\}' || echo '{"complexity": "medium"}')
                           COMPLEXITY=$(echo "$COMPLEXITY_JSON" | jq -r '.complexity' | tr '[:upper:]' '[:lower:]')
                           case "$COMPLEXITY" in
@@ -94,28 +130,29 @@ jobs:
 
             - name: Prevent all agent-trigger loops & human ping guard
               run: |
-                  TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
-
                   # Guard 1: Block same-agent loops, allow cross-agent calls
                   CALLER_AGENT=$(echo "$TRIGGER_BODY" | sed -n 's/.*<!-- bot-agent-\([a-z]*\) -->.*/\1/p')
                   if [[ -n "$CALLER_AGENT" ]]; then
-                      TARGET_AGENT=$(echo "$LAST_AGENT" | sed 's/^@@//')
+                      TARGET_AGENT=$(echo "$LAST_AGENT" | sed 's/^@//')
                       if [[ "$CALLER_AGENT" == "$TARGET_AGENT" ]]; then
-                          echo "Same-agent loop detected ($CALLER_AGENT calling itself). Skipping."
-                          echo "SKIP_AGENT=true" >> $GITHUB_ENV
-                          exit 0
+                        echo "Same-agent loop detected ($CALLER_AGENT calling itself). Skipping."
+                        echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                        exit 0
                       else
-                          echo "Cross-agent call ($CALLER_AGENT -> $TARGET_AGENT). Allowing."
+                        echo "Cross-agent call ($CALLER_AGENT -> $TARGET_AGENT). Allowing."
                       fi
+                    fi
+                  else
+                    echo "Event type ${{ env.EVENT_TYPE }} - skipping same-agent loop check (no bot marker expected)"
                   fi
 
                   # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
-                  HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev' || true)
-                  HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -oP '(?<!@)@[a-zA-Z0-9_-]+' | wc -l)
+                  HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@genius\|@ctx\|@dev' || true)
+                  HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@genius\|@ctx\|@dev' || true)
                   if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
-                      echo "Human ping + agent ping detected. Skipping to let human orchestrate."
-                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
-                      exit 0
+                    echo "Human ping + agent ping detected. Skipping to let human orchestrate."
+                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                    exit 0
                   fi
 
                   echo "SKIP_AGENT=false" >> $GITHUB_ENV
@@ -171,7 +208,7 @@ jobs:
               if: env.SKIP_AGENT == 'false'
               uses: peter-evans/create-or-update-comment@v4
               with:
-                issue-number: ${{ github.event.issue.number }}
+                issue-number: ${{ env.TARGET_NUMBER }}
                 token: ${{ secrets.GH_PAT }}
                 body: |
                   <!-- bot-agent-${{ env.ROLE_NAME }} -->
@@ -182,56 +219,125 @@ jobs:
 
                   ⏳ This may take 1–10 minutes. I'll reply here when done.
 
-            - name: Inject GitHub Context into Template
+            - name: Prepare Agent Query Context
               if: env.SKIP_AGENT == 'false'
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                 EVENT_PATH="${{ github.event_path }}"
                 REPO_NAME="${{ github.repository }}"
-                ISSUE_NUMBER=$(jq -r '.issue.number // .issue_comment.issue.number' $EVENT_PATH)
                 
-                # 1. Extraction des données statiques
-                export ISSUE_TITLE=$(jq -r '.issue.title // "No Title"' $EVENT_PATH)
-                export ISSUE_BODY=$(jq -r '.issue.body // "No Description"' $EVENT_PATH)
-                export ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' $EVENT_PATH)
-                
-                # 2. Récupération dynamique de TOUS les commentaires via l'API GitHub
-                # On formate chaque commentaire en Markdown pour le LLM
-                export COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
-                  --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
+                if [[ "${{ env.IS_PR_EVENT }}" == "true" ]]; then
+                  # For pull requests: extract PR data
+                  PR_NUMBER="${{ env.TARGET_NUMBER }}"
+                  PR_TITLE=$(jq -r '.pull_request.title // ""' "$EVENT_PATH")
+                  PR_BODY=$(jq -r '.pull_request.body // ""' "$EVENT_PATH")
+                  PR_AUTHOR=$(jq -r '.pull_request.user.login // "unknown"' "$EVENT_PATH")
+                  
+                  # Get changed files
+                  CHANGED_FILES=$(gh api /repos/$REPO_NAME/pulls/$PR_NUMBER/files \
+                    --jq '.[] | "  * \(.filename) (status: \(.status))"' | tr -d '\r')
+                  if [[ -z "$CHANGED_FILES" ]]; then
+                    CHANGED_FILES="No changed files detected"
+                  fi
+                  
+                  # Get PR diff (last 200 lines)
+                  PR_DIFF=$(gh api /repos/$REPO_NAME/pulls/$PR_NUMBER | jq -r '.diff_url // ""')
+                  if [[ -n "$PR_DIFF" ]]; then
+                    DIFF_CONTENT=$(curl -s "$PR_DIFF" | head -200 | sed 's/^/    /')
+                  else
+                    DIFF_CONTENT="No diff available"
+                  fi
+                  
+                  # Get all PR comments
+                  COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$PR_NUMBER/comments \
+                    --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
+                  if [[ -z "$COMMENT_HISTORY" ]]; then
+                    COMMENT_HISTORY="No previous comments"
+                  fi
+                  
+                  python3 -c '
+                  import os
+                  template = """
+                  # 📰 GITHUB CONTEXT
 
-                python3 -c '
-                import os
+                  A pull request was triggered. Please review the details below (including full history) and take appropriate action.
 
-                template = """
-                # 📰 GITHUB CONTEXT
+                  ## PR Author
+                  {author}
 
-                An issue comment was triggered. Please review the details below (including full history) and take appropriate action.
+                  ## PR Title
+                  {title}
 
-                ## Issue Author
-                {author}
+                  ## PR Description
+                  {body}
 
-                ## Issue Title
-                {title}
+                  ## Changed Files
+                  {files}
 
-                ## Issue Original Description
-                {body}
+                  ## PR Diff (first 200 lines)
+                  ```
+                  {diff}
+                  ```
 
-                ---
+                  ---
 
-                ## Full Comment History
-                {history}
-                """.format(
+                  ## Full Comment History
+                  {history}
+                  """.format(
+                    title=os.environ.get("PR_TITLE", ""),
+                    body=os.environ.get("PR_BODY", ""),
+                    author=os.environ.get("PR_AUTHOR", "unknown"),
+                    files=os.environ.get("CHANGED_FILES", "No changed files detected"),
+                    diff=os.environ.get("DIFF_CONTENT", "No diff available"),
+                    history=os.environ.get("COMMENT_HISTORY", "No previous comments.")
+                  )
+                  with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
+                    f.write(template)
+                  '
+                else
+                  # For issues: use existing logic
+                  ISSUE_NUMBER="${{ env.TARGET_NUMBER }}"
+                  ISSUE_TITLE=$(jq -r '.issue.title // "No Title"' "$EVENT_PATH")
+                  ISSUE_BODY=$(jq -r '.issue.body // "No Description"' "$EVENT_PATH")
+                  ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' "$EVENT_PATH")
+                  
+                  COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                    --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
+                  if [[ -z "$COMMENT_HISTORY" ]]; then
+                    COMMENT_HISTORY="No previous comments"
+                  fi
+                  
+                  python3 -c '
+                  import os
+                  template = """
+                  # 📰 GITHUB CONTEXT
+
+                  An issue comment was triggered. Please review the details below (including full history) and take appropriate action.
+
+                  ## Issue Author
+                  {author}
+
+                  ## Issue Title
+                  {title}
+
+                  ## Issue Original Description
+                  {body}
+
+                  ---
+
+                  ## Full Comment History
+                  {history}
+                  """.format(
                     title=os.environ.get("ISSUE_TITLE", ""),
                     body=os.environ.get("ISSUE_BODY", ""),
                     author=os.environ.get("ISSUE_AUTHOR", "unknown"),
                     history=os.environ.get("COMMENT_HISTORY", "No previous comments.")
-                )
-
-                with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
+                  )
+                  with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
                     f.write(template)
-                '
+                  '
+                fi
                 
                 echo "AGENT_QUERY_PATH=/tmp/ready_prompt.md" >> $GITHUB_ENV
 
@@ -354,7 +460,7 @@ jobs:
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false'
               uses: peter-evans/create-or-update-comment@v4
               with:
-                issue-number: ${{ github.event.issue.number }}
+                issue-number: ${{ env.TARGET_NUMBER }}
                 body-path: ./github_comment.md
                 token: ${{ secrets.GH_PAT }}
 
