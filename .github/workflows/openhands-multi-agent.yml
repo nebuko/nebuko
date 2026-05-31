@@ -15,8 +15,9 @@ jobs:
     run-task:
         runs-on: ubuntu-24.04
         if: |
-            contains(github.event.comment.body, '@genius') || 
-            contains(github.event.comment.body, '@dev')
+            (contains(github.event.comment.body, '@genius') || 
+            contains(github.event.comment.body, '@dev')) &&
+            !contains(github.event.comment.body, '<!-- bot-agent -->')
         env:
             AGENT_SCRIPT_URL: https://raw.githubusercontent.com/OpenHands/agent-sdk/main/examples/03_github_workflows/01_basic_action/agent_script.py
         steps:
@@ -184,12 +185,18 @@ jobs:
                     with open(os.environ['GITHUB_ENV'], 'a') as ge:
                         ge.write("HAS_COMMENT=true\n")
 
+            - name: Add bot marker to comment
+              if: always() && env.HAS_COMMENT == 'true'
+              run: |
+                sed -i '1s/^/<!-- bot-agent -->\n/' ./github_comment.md
+
             - name: Post Agent Comment to GitHub
               if: always() && env.HAS_COMMENT == 'true'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ github.event.issue.number }}
                 body-path: ./github_comment.md
+                token: ${{ secrets.GH_PAT }}
 
             - name: Upload logs as artifact
               uses: actions/upload-artifact@v4
