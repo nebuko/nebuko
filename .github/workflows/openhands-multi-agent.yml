@@ -55,12 +55,14 @@ jobs:
                           echo "LLM_SEED=42" >> $GITHUB_ENV
                           echo "ROLE_NAME=genius" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           ;;
                       "@ctx")
                           echo "PROMPT_LOCATION=.agents/prompts/ctx.md" >> $GITHUB_ENV
                           echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
                           echo "ROLE_NAME=ctx" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           ;;
                       "@dev")
                           echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
@@ -84,6 +86,7 @@ jobs:
                                   ;;
                           esac
                           echo "LLM_MODEL=$DEV_MODEL" >> $GITHUB_ENV
+                          echo "COMPLEXITY=$COMPLEXITY" >> $GITHUB_ENV
                           echo "Dev complexity estimated: $COMPLEXITY -> using model: $DEV_MODEL"
                           ;;
                   esac
@@ -197,6 +200,7 @@ jobs:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
+                COMPLEXITY: ${{ env.COMPLEXITY }}
               run: |
                 echo "Running agent as [@$ROLE_NAME] using prompt: $PROMPT_LOCATION"
                 if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then
