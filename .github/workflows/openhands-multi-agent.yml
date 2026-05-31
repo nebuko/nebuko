@@ -61,7 +61,21 @@ jobs:
                     echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                   fi
 
-            
+            - name: Prevent self-trigger loop
+              run: |
+                  TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
+                  if [[ "$TRIGGER_BODY" == *"<!-- bot-agent-${ROLE_NAME} -->"* ]]; then
+                      echo "SELF_TRIGGER=true" >> $GITHUB_ENV
+                  else
+                      echo "SELF_TRIGGER=false" >> $GITHUB_ENV
+                  fi
+
+            - name: Exit on self-trigger
+              if: env.SELF_TRIGGER == 'true'
+              run: |
+                  echo "Self-trigger detected. Agent @${ROLE_NAME} is commenting on its own comment. Exiting to avoid infinite loop."
+                  exit 0
+
             - name: Inject GitHub Context into Template
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -183,12 +197,25 @@ jobs:
                     with open(os.environ['GITHUB_ENV'], 'a') as ge:
                         ge.write("HAS_COMMENT=true\n")
 
+            - name: Add bot marker to comment
+              if: always()
+              shell: python
+              run: |
+                import os
+                role = os.environ.get("ROLE_NAME", "unknown")
+                marker = f"<!-- bot-agent-{role} -->"
+                with open("github_comment.md", "r") as f:
+                    content = f.read()
+                with open("github_comment.md", "w") as f:
+                    f.write(marker + "\n" + content)
+
             - name: Post Agent Comment to GitHub
               if: always() && env.HAS_COMMENT == 'true'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ github.event.issue.number }}
                 body-path: ./github_comment.md
+                token: ${{ secrets.GH_PAT }}
 
             - name: Upload logs as artifact
               uses: actions/upload-artifact@v4
