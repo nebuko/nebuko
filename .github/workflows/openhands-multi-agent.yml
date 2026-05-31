@@ -251,10 +251,12 @@ jobs:
                 import os
                 role = os.environ.get("ROLE_NAME", "unknown")
                 marker = f"<!-- bot-agent-{role} -->"
+                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer"}
+                display_name = agent_display_names.get(role, role.capitalize())
                 with open("github_comment.md", "r") as f:
                     content = f.read()
                 with open("github_comment.md", "w") as f:
-                    f.write(marker + "\n" + content)
+                    f.write(marker + "\n*" + display_name + " answer*\n\n" + content)
 
             - name: Post Agent Comment to GitHub
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false'
