@@ -80,10 +80,10 @@ jobs:
                                   DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
                                   ;;
                               "high")
-                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-pro"
+                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
                                   ;;
                               *)
-                                  DEV_MODEL="openrouter/deepseek/deepseek-v3.2"
+                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
                                   ;;
                           esac
                           echo "LLM_MODEL=$DEV_MODEL" >> $GITHUB_ENV
