@@ -41,11 +41,10 @@ jobs:
 
             - name: Resolve Agent Configuration
               run: |
-                  # 1. On récupère juste le contenu du commentaire déclencheur via l'API, 
-                  # ou on tronque drastiquement la variable.
-                  # Ici, on extrait seulement les 100 premiers caractères pour le test du nom de l'agent.
+                  # 1. Extract the comment body safely from the GitHub event JSON
+                  # to avoid syntax errors with multi-line content (fixes #issue)
           
-                  TRIGGER_BODY="${{ github.event.comment.body }}"
+                  TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
           
                   echo "Debug: Checking trigger body..."
           
