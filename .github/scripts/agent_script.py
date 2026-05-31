@@ -28,12 +28,16 @@ see README.md in this directory.
 """
 
 import argparse
+import json
 import os
 import sys
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from openhands.sdk import LLM, Conversation, get_logger
+from openhands.sdk.event.llm_convertible.action import ActionEvent
+from openhands.sdk.event.llm_convertible.observation import ObservationEvent
 from openhands.tools.preset.default import get_default_agent
 
 
@@ -73,6 +77,117 @@ def load_prompt(prompt_location: str) -> str:
                 return f.read()
     except Exception as e:
         raise ValueError(f"Failed to load prompt from {prompt_location}: {e}")
+
+
+def collect_llm_metrics(conversation):
+    """
+    Collect LLM metrics from a conversation after it has completed.
+    
+    Args:
+        conversation: The OpenHands Conversation object
+        
+    Returns:
+        dict: Dictionary containing all collected metrics
+    """
+    try:
+        # Get combined metrics across all LLMs
+        combined_metrics = conversation.conversation_stats.get_combined_metrics()
+        
+        # Count tool calls
+        action_events = [e for e in conversation.state.events if isinstance(e, ActionEvent)]
+        agent_tool_calls = [e for e in action_events if e.source == "agent"]
+        nb_tool_calls = len(agent_tool_calls)
+        
+        # Count tool call errors
+        observation_events = [e for e in conversation.state.events if isinstance(e, ObservationEvent)]
+        total_observations = len(observation_events)
+        error_observations = len([e for e in observation_events if hasattr(e, 'exit_code') and e.exit_code != 0])
+        
+        # Calculate error rate (avoid division by zero)
+        tool_call_error_rate = 0.0
+        if total_observations > 0:
+            tool_call_error_rate = (error_observations / total_observations) * 100
+        
+        # Calculate average latency (latency is in seconds, convert to milliseconds)
+        tool_call_latency_ms = 0.0
+        if combined_metrics.response_latencies:
+            total_latency = sum(lat.latency for lat in combined_metrics.response_latencies)
+            # Convert from seconds to milliseconds
+            tool_call_latency_ms = (total_latency / len(combined_metrics.response_latencies)) * 1000
+        
+        # Get token usage
+        input_tokens = 0
+        output_tokens = 0
+        if combined_metrics.accumulated_token_usage:
+            input_tokens = combined_metrics.accumulated_token_usage.prompt_tokens
+            output_tokens = combined_metrics.accumulated_token_usage.completion_tokens
+        
+        # Get start time (first event timestamp or current time)
+        start_time = datetime.now(timezone.utc).isoformat()
+        if conversation.state.events:
+            first_event = conversation.state.events[0]
+            if hasattr(first_event, 'timestamp'):
+                start_time = first_event.timestamp
+        
+        # Build metrics dictionary
+        metrics = {
+            "run_id": str(conversation.id),
+            "model_name": combined_metrics.model_name,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "complexity": os.environ.get("COMPLEXITY", "N/A"),
+            "tool_call_latency_ms": tool_call_latency_ms,
+            "nb_tool_calls": nb_tool_calls,
+            "tool_call_error_rate": tool_call_error_rate,
+            "start_time": start_time,
+            "end_time": datetime.now(timezone.utc).isoformat()
+        }
+        
+        logger.info(f"Collected LLM metrics for run {metrics['run_id']}")
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Failed to collect LLM metrics: {e}")
+        # Return minimal metrics on error
+        return {
+            "run_id": str(conversation.id) if conversation else "unknown",
+            "model_name": "unknown",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "complexity": os.environ.get("COMPLEXITY", "N/A"),
+            "tool_call_latency_ms": 0.0,
+            "nb_tool_calls": 0,
+            "tool_call_error_rate": 0.0,
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "end_time": datetime.now(timezone.utc).isoformat(),
+            "error": str(e)
+        }
+
+
+def save_metrics_json(metrics_dict):
+    """
+    Save metrics dictionary as JSON file in output/ directory.
+    
+    Args:
+        metrics_dict: Dictionary containing metrics data
+    """
+    try:
+        # Create output directory if it doesn't exist
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Generate filename
+        run_id = metrics_dict.get("run_id", "unknown")
+        filename = f"{output_dir}/metrics-{run_id}.json"
+        
+        # Write JSON file
+        with open(filename, "w") as f:
+            json.dump(metrics_dict, f, indent=2)
+        
+        logger.info(f"Saved LLM metrics to {filename}")
+        
+    except Exception as e:
+        logger.error(f"Failed to save metrics JSON: {e}")
 
 
 def main():
@@ -168,6 +283,10 @@ def main():
     # Send the prompt and run the agent
     conversation.send_message(prompt)
     conversation.run()
+
+    # Collect and save LLM metrics
+    metrics = collect_llm_metrics(conversation)
+    save_metrics_json(metrics)
 
     logger.info("Task completed successfully")
 
