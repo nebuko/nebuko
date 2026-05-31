@@ -42,44 +42,58 @@ jobs:
 
             - name: Resolve Agent Configuration
               run: |
-                  # 1. Extract the comment body safely from the GitHub event JSON
-                  # to avoid syntax errors with multi-line content (fixes #issue)
-          
                   TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
-          
                   echo "Debug: Checking trigger body..."
-          
-                  # 2. Utilisation d'un pattern simple et court
-                  if [[ "$TRIGGER_BODY" == *"@genius"* ]]; then
-                    echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
-                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
-                    echo "ROLE_NAME=genius" >> $GITHUB_ENV
-                    echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                  elif [[ "$TRIGGER_BODY" == *"@ctx"* ]]; then
-                    echo "PROMPT_LOCATION=.agents/prompts/ctx.md" >> $GITHUB_ENV
-                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
-                    echo "ROLE_NAME=ctx" >> $GITHUB_ENV
-                    echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                  elif [[ "$TRIGGER_BODY" == *"@dev"* ]]; then
-                    echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
-                    echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
-                    echo "ROLE_NAME=dev" >> $GITHUB_ENV
-                    echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                  fi
+                  # Last-mention-wins: avoids @ctx stealing execution when mentioned in passing
+                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@genius\|@ctx\|@dev' | tail -1)
 
-            - name: Prevent self-trigger loop
+                  case "$LAST_AGENT" in
+                      "@genius")
+                          echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
+                          echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
+                          echo "ROLE_NAME=genius" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          ;;
+                      "@ctx")
+                          echo "PROMPT_LOCATION=.agents/prompts/ctx.md" >> $GITHUB_ENV
+                          echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
+                          echo "ROLE_NAME=ctx" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          ;;
+                      "@dev")
+                          echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
+                          echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
+                          echo "ROLE_NAME=dev" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          ;;
+                  esac
+
+            - name: Prevent all agent-trigger loops & human ping guard
               run: |
                   TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
-                  if [[ "$TRIGGER_BODY" == *"<!-- bot-agent-${ROLE_NAME} -->"* ]]; then
-                      echo "SELF_TRIGGER=true" >> $GITHUB_ENV
-                  else
-                      echo "SELF_TRIGGER=false" >> $GITHUB_ENV
+
+                  # Guard 1: Block ALL bot-posted comments (cross-agent loop fix)
+                  if [[ "$TRIGGER_BODY" == *"<!-- bot-agent-"* ]]; then
+                      echo "Bot agent comment detected. Skipping to prevent loop."
+                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                      exit 0
                   fi
 
-            - name: Exit on self-trigger
-              if: env.SELF_TRIGGER == 'true'
+                  # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
+                  HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@genius\|@ctx\|@dev' || true)
+                  HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@genius\|@ctx\|@dev' || true)
+                  if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
+                      echo "Human ping + agent ping detected. Skipping to let human orchestrate."
+                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                      exit 0
+                  fi
+
+                  echo "SKIP_AGENT=false" >> $GITHUB_ENV
+
+            - name: Exit if agent should be skipped
+              if: env.SKIP_AGENT == 'true'
               run: |
-                  echo "Self-trigger detected. Agent @${ROLE_NAME} is commenting on its own comment. Exiting to avoid infinite loop."
+                  echo "Agent execution skipped. Exiting."
                   exit 0
 
             - name: Inject GitHub Context into Template
