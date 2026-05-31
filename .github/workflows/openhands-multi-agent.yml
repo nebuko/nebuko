@@ -19,7 +19,7 @@ jobs:
             contains(github.event.comment.body, '@ctx') || 
             contains(github.event.comment.body, '@dev')
         env:
-            AGENT_SCRIPT_URL: https://raw.githubusercontent.com/OpenHands/agent-sdk/main/examples/03_github_workflows/01_basic_action/agent_script.py
+            AGENT_SCRIPT_URL: .github/scripts/agent_script.py
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
@@ -51,6 +51,8 @@ jobs:
                       "@genius")
                           echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
                           echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=0.2" >> $GITHUB_ENV
+                          echo "LLM_SEED=42" >> $GITHUB_ENV
                           echo "ROLE_NAME=genius" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           ;;
@@ -63,6 +65,8 @@ jobs:
                       "@dev")
                           echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
                           echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=0.0" >> $GITHUB_ENV
+                          echo "LLM_SEED=42" >> $GITHUB_ENV
                           echo "ROLE_NAME=dev" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           ;;
