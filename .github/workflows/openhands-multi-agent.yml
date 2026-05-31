@@ -224,7 +224,31 @@ jobs:
               run: |
                 import re
                 import os
+                import logging
 
+                logging.basicConfig(level=logging.INFO)
+                logger = logging.getLogger(__name__)
+
+                # First check for structured final message file
+                if os.path.isfile("final_message.txt") and os.path.getsize("final_message.txt") > 0:
+                    with open("final_message.txt", "r", encoding="utf-8") as f:
+                        final_message = f.read().strip()
+                    
+                    if final_message:
+                        logger.info(f"Using final_message.txt ({len(final_message)} characters)")
+                        # Apply truncation if needed (GitHub comment limit is 65,536 chars)
+                        if len(final_message) > 60000:
+                            final_message = final_message[:60000] + "\n\n...*(comment truncated due to size limit)*"
+                        
+                        with open("github_comment.md", "w", encoding="utf-8") as f_out:
+                            f_out.write(final_message)
+                        with open(os.environ['GITHUB_ENV'], 'a') as ge:
+                            ge.write("HAS_COMMENT=true\n")
+                        exit(0)
+                    else:
+                        logger.warning("final_message.txt exists but is empty, falling back to console.log")
+
+                # Fallback to console.log parsing if final_message.txt doesn't exist or is empty
                 # Vérification : console.log existe et n'est pas vide
                 if not os.path.isfile("console.log") or os.path.getsize("console.log") == 0:
                     fallback = "> ⚠️ The agent produced too much output to include here. Please check the full logs in the workflow run."
