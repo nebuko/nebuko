@@ -123,36 +123,54 @@ jobs:
                 echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
                 cat $AGENT_QUERY_PATH >> $FINAL_PROMPT_FILE
                 # 2. Maintenant on ne passe qu'un seul argument au script !
-                uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" | tee console.log
+                # 2>&1 fusionne stderr dans stdout, stdbuf désactive le buffering pour une écriture immédiate
+                stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" 2>&1 | tee console.log
 
             - name: Clean and Prepare Comment
-              if: always() && steps.openhands_agent.outcome == 'success'
+              if: always()
               shell: python
               run: |
                 import re
                 import os
 
-                with open("console.log", "r", encoding="utf-8") as f:
-                    content = f.read()
-
-                # On découpe le log à chaque occurrence de "Message from Agent"
-                blocks = content.split("Message from Agent ─────────────────────────────────────────────────────────────")
-                
-                if len(blocks) > 1:
-                    # On prend le dernier bloc et on nettoie les scories techniques de fin de log
-                    last_message = blocks[-1].split("Tokens:")[0].strip()
-                    
-                    # Nettoyage des logs JSON parasites d'OpenHands
-                    last_message = re.sub(r'{"asctime":.*"message": "Task completed successfully"}', '', last_message).strip()
-                    
+                # Vérification : console.log existe et n'est pas vide
+                if not os.path.isfile("console.log") or os.path.getsize("console.log") == 0:
+                    fallback = "> ⚠️ The agent produced too much output to include here. Please check the full logs in the workflow run."
                     with open("github_comment.md", "w", encoding="utf-8") as f_out:
-                        f_out.write(last_message)
-                    
+                        f_out.write(fallback)
                     with open(os.environ['GITHUB_ENV'], 'a') as ge:
                         ge.write("HAS_COMMENT=true\n")
                 else:
+                    with open("console.log", "r", encoding="utf-8") as f:
+                        content = f.read()
+
+                    # On découpe le log à chaque occurrence de "Message from Agent"
+                    blocks = content.split("Message from Agent ─────────────────────────────────────────────────────────────")
+
+                    if len(blocks) > 1:
+                        # On prend le dernier bloc et on nettoie les scories techniques de fin de log
+                        last_message = blocks[-1].split("Tokens:")[0].strip()
+
+                        # Nettoyage des logs JSON parasites d'OpenHands
+                        last_message = re.sub(r'{"asctime":.*"message": "Task completed successfully"}', '', last_message).strip()
+                    else:
+                        # Fallback: prendre les 200 dernières lignes si le séparateur n'est pas trouvé
+                        lines = content.strip().split('\n')
+                        last_message = '\n'.join(lines[-200:]) if len(lines) > 200 else content.strip()
+
+                    # Troncature à 60 000 caractères pour rester sous la limite GitHub (65 536)
+                    if len(last_message) > 60000:
+                        last_message = last_message[:60000] + "\n\n...*(comment truncated due to size limit)*"
+
+                    # Garantie : si le commentaire est vide, on met un message de repli
+                    if not last_message.strip():
+                        last_message = "> ⚠️ The agent produced too much output to include here. Please check the full logs in the workflow run."
+
+                    with open("github_comment.md", "w", encoding="utf-8") as f_out:
+                        f_out.write(last_message)
+
                     with open(os.environ['GITHUB_ENV'], 'a') as ge:
-                        ge.write("HAS_COMMENT=false\n")
+                        ge.write("HAS_COMMENT=true\n")
 
             - name: Post Agent Comment to GitHub
               if: always() && env.HAS_COMMENT == 'true'
