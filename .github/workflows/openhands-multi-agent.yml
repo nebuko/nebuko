@@ -20,6 +20,7 @@ jobs:
             contains(github.event.comment.body, '@@dev')
         env:
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
+            CIRCUIT_BREAKER_THRESHOLD: 10
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
@@ -119,6 +120,53 @@ jobs:
 
                   echo "SKIP_AGENT=false" >> $GITHUB_ENV
 
+            - name: Check Circuit Breaker
+              if: env.SKIP_AGENT == 'false'
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                EVENT_PATH="${{ github.event_path }}"
+                REPO_NAME="${{ github.repository }}"
+                ISSUE_NUMBER="${{ github.event.issue.number }}"
+                ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' $EVENT_PATH)
+                
+                # Fetch all issue comments
+                COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                  --jq '.[] | .body' | tr -d '\r')
+                
+                # Count bot markers (<!-- bot-agent-)
+                BOT_MARKER_COUNT=$(echo "$COMMENT_HISTORY" | grep -c '<!-- bot-agent-' || true)
+                AGENT_CALLS=$(( BOT_MARKER_COUNT / 2 ))
+                
+                echo "Agent calls detected: $AGENT_CALLS (threshold: $CIRCUIT_BREAKER_THRESHOLD)"
+                
+                if [[ "$AGENT_CALLS" -ge "$CIRCUIT_BREAKER_THRESHOLD" ]]; then
+                    echo "CIRCUIT_BREAKER_TRIPPED=true" >> $GITHUB_ENV
+                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                    
+                    # Build circuit breaker comment line by line
+                    {
+                      echo "<!-- bot-agent-genius -->"
+                      echo ""
+                      echo "🚨 **Circuit Breaker Tripped** — Agent Loop Threshold Reached"
+                      echo ""
+                      echo "This issue has triggered $AGENT_CALLS agent calls (threshold: $CIRCUIT_BREAKER_THRESHOLD)."
+                      echo "Further automated agent execution has been **halted** to prevent an infinite loop."
+                      echo ""
+                      echo "👉 **Action Required:** @$ISSUE_AUTHOR please review the conversation and decide next steps:"
+                      echo "- If the task is complete, close the issue."
+                      echo "- If more work is needed, reset the conversation by posting \`@@genius reset\` (or manually close/reopen)."
+                      echo ""
+                      echo "🔗 [View workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+                    } > /tmp/circuit_breaker_comment.md
+                    
+                    # Post the comment
+                    gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                      -f body=@/tmp/circuit_breaker_comment.md
+                else
+                    echo "CIRCUIT_BREAKER_TRIPPED=false" >> $GITHUB_ENV
+                fi
+
             - name: Post Acknowledgment Comment
               if: env.SKIP_AGENT == 'false'
               uses: peter-evans/create-or-update-comment@v4
@@ -139,7 +187,7 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                EVENT_PATH="/home/runner/work/_temp/_github_workflow/event.json"
+                EVENT_PATH="${{ github.event_path }}"
                 REPO_NAME="${{ github.repository }}"
                 ISSUE_NUMBER=$(jq -r '.issue.number // .issue_comment.issue.number' $EVENT_PATH)
                 
