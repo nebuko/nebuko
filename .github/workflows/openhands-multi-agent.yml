@@ -15,9 +15,8 @@ jobs:
     run-task:
         runs-on: ubuntu-24.04
         if: |
-            (contains(github.event.comment.body, '@genius') || 
-            contains(github.event.comment.body, '@dev')) &&
-            !contains(github.event.comment.body, '<!-- bot-agent -->')
+            contains(github.event.comment.body, '@genius') ||
+            contains(github.event.comment.body, '@dev')
         env:
             AGENT_SCRIPT_URL: https://raw.githubusercontent.com/OpenHands/agent-sdk/main/examples/03_github_workflows/01_basic_action/agent_script.py
         steps:
@@ -42,15 +41,13 @@ jobs:
 
             - name: Resolve Agent Configuration
               run: |
-                  # 1. On récupère juste le contenu du commentaire déclencheur via l'API, 
-                  # ou on tronque drastiquement la variable.
-                  # Ici, on extrait seulement les 100 premiers caractères pour le test du nom de l'agent.
-          
-                  TRIGGER_BODY="${{ github.event.comment.body }}"
-          
+                  # 1. Extract the comment body safely from the GitHub event JSON
+                  # to avoid syntax errors with multi-line content
+                  TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
+
                   echo "Debug: Checking trigger body..."
-          
-                  # 2. Utilisation d'un pattern simple et court
+
+                  # 2. Determine which agent is being called
                   if [[ "$TRIGGER_BODY" == *"@genius"* ]]; then
                     echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
                     echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
@@ -63,7 +60,20 @@ jobs:
                     echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                   fi
 
-            
+            - name: Prevent self-trigger loop
+              if: env.AGENT_SELECTED == 'true'
+              run: |
+                MARKER="<!-- bot-agent-${ROLE_NAME} -->"
+                TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
+                if echo "$TRIGGER_BODY" | grep -qF "$MARKER"; then
+                  echo "🛡️ Self-trigger detected for @${ROLE_NAME}. Exiting."
+                  echo "SELF_TRIGGER=true" >> $GITHUB_ENV
+                fi
+
+            - name: Exit on self-trigger
+              if: env.SELF_TRIGGER == 'true'
+              run: exit 0
+
             - name: Inject GitHub Context into Template
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -188,7 +198,7 @@ jobs:
             - name: Add bot marker to comment
               if: always() && env.HAS_COMMENT == 'true'
               run: |
-                sed -i '1s/^/<!-- bot-agent -->\n/' ./github_comment.md
+                sed -i "1s/^/<!-- bot-agent-${ROLE_NAME} -->\n/" ./github_comment.md
 
             - name: Post Agent Comment to GitHub
               if: always() && env.HAS_COMMENT == 'true'
