@@ -76,11 +76,17 @@ jobs:
               run: |
                   TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
 
-                  # Guard 1: Block ALL bot-posted comments (cross-agent loop fix)
-                  if [[ "$TRIGGER_BODY" == *"<!-- bot-agent-"* ]]; then
-                      echo "Bot agent comment detected. Skipping to prevent loop."
-                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
-                      exit 0
+                  # Guard 1: Block same-agent loops, allow cross-agent calls
+                  CALLER_AGENT=$(echo "$TRIGGER_BODY" | sed -n 's/.*<!-- bot-agent-\([a-z]*\) -->.*/\1/p')
+                  if [[ -n "$CALLER_AGENT" ]]; then
+                      TARGET_AGENT=$(echo "$LAST_AGENT" | sed 's/^@//')
+                      if [[ "$CALLER_AGENT" == "$TARGET_AGENT" ]]; then
+                          echo "Same-agent loop detected ($CALLER_AGENT calling itself). Skipping."
+                          echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                          exit 0
+                      else
+                          echo "Cross-agent call ($CALLER_AGENT -> $TARGET_AGENT). Allowing."
+                      fi
                   fi
 
                   # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
@@ -93,12 +99,6 @@ jobs:
                   fi
 
                   echo "SKIP_AGENT=false" >> $GITHUB_ENV
-
-            - name: Exit if agent should be skipped
-              if: env.SKIP_AGENT == 'true'
-              run: |
-                  echo "Agent execution skipped. Exiting."
-                  exit 0
 
             - name: Post Acknowledgment Comment
               if: env.SKIP_AGENT == 'false'
@@ -116,6 +116,7 @@ jobs:
                   ⏳ This may take 1–10 minutes. I'll reply here when done.
 
             - name: Inject GitHub Context into Template
+              if: env.SKIP_AGENT == 'false'
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
@@ -168,11 +169,13 @@ jobs:
                 echo "AGENT_QUERY_PATH=/tmp/ready_prompt.md" >> $GITHUB_ENV
 
             - name: Configure git to use GH_PAT for workflow file access
+              if: env.SKIP_AGENT == 'false'
               run: |
                 git config --local --unset http.https://github.com/.extraheader || true
                 git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git
 
             - name: Run OpenHands Agent
+              if: env.SKIP_AGENT == 'false'
               id: openhands_agent
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
@@ -196,7 +199,7 @@ jobs:
                 stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" 2>&1 | tee console.log
 
             - name: Clean and Prepare Comment
-              if: always()
+              if: always() && env.SKIP_AGENT == 'false'
               shell: python
               run: |
                 import re
@@ -242,7 +245,7 @@ jobs:
                         ge.write("HAS_COMMENT=true\n")
 
             - name: Add bot marker to comment
-              if: always()
+              if: always() && env.SKIP_AGENT == 'false'
               shell: python
               run: |
                 import os
@@ -254,7 +257,7 @@ jobs:
                     f.write(marker + "\n" + content)
 
             - name: Post Agent Comment to GitHub
-              if: always() && env.HAS_COMMENT == 'true'
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ github.event.issue.number }}
@@ -263,7 +266,7 @@ jobs:
 
             - name: Upload logs as artifact
               uses: actions/upload-artifact@v4
-              if: always()
+              if: always() && env.SKIP_AGENT == 'false'
               with:
                   name: openhands-task-logs
                   path: |
