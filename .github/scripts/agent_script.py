@@ -38,6 +38,7 @@ from urllib.request import urlopen
 from openhands.sdk import LLM, Conversation, get_logger
 from openhands.sdk.event.llm_convertible.action import ActionEvent
 from openhands.sdk.event.llm_convertible.observation import ObservationEvent
+from openhands.sdk.conversation import get_agent_final_response
 from openhands.tools.preset.default import get_default_agent
 
 
@@ -287,6 +288,15 @@ def main():
     # Collect and save LLM metrics
     metrics = collect_llm_metrics(conversation)
     save_metrics_json(metrics)
+
+    # Extract and save final agent message
+    final_message = get_agent_final_response(conversation.state.events)
+    if final_message:
+        with open("final_message.txt", "w", encoding="utf-8") as f:
+            f.write(final_message)
+        logger.info(f"Saved final agent message ({len(final_message)} characters)")
+    else:
+        logger.warning("No final agent message found in events")
 
     logger.info("Task completed successfully")
 
