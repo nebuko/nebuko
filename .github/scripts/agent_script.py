@@ -108,11 +108,12 @@ def collect_llm_metrics(conversation):
         if total_observations > 0:
             tool_call_error_rate = (error_observations / total_observations) * 100
         
-        # Calculate average latency
+        # Calculate average latency (latency is in seconds, convert to milliseconds)
         tool_call_latency_ms = 0.0
         if combined_metrics.response_latencies:
             total_latency = sum(lat.latency for lat in combined_metrics.response_latencies)
-            tool_call_latency_ms = total_latency / len(combined_metrics.response_latencies)
+            # Convert from seconds to milliseconds
+            tool_call_latency_ms = (total_latency / len(combined_metrics.response_latencies)) * 1000
         
         # Get token usage
         input_tokens = 0
