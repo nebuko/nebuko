@@ -96,6 +96,21 @@ jobs:
                   echo "Agent execution skipped. Exiting."
                   exit 0
 
+            - name: Post Acknowledgment Comment
+              if: env.SKIP_AGENT == 'false'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ github.event.issue.number }}
+                token: ${{ secrets.GH_PAT }}
+                body: |
+                  <!-- bot-agent-${{ env.ROLE_NAME }} -->
+
+                  🤖 **${{ env.ROLE_NAME }} agent started** — processing your request.
+
+                  🔗 [View workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+                  ⏳ This may take 1–10 minutes. I'll reply here when done.
+
             - name: Inject GitHub Context into Template
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
