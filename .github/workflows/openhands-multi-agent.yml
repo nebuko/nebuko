@@ -63,6 +63,11 @@ on:
         required: false
         type: boolean
         default: true
+      prompt_body:
+        description: 'The prompt/body text for the agent to process (required for external callers)'
+        required: false
+        type: string
+        default: ''
     secrets:
       OPENROUTER_API_KEY:
         description: 'API key for the LLM provider'
@@ -142,6 +147,11 @@ jobs:
                   TRIGGER_BODY=$(jq -r '.issue.body // ""' "$EVENT_PATH")
                   TRIGGER_AUTHOR=$(jq -r '.issue.user.login // ""' "$EVENT_PATH")
                   EVENT_TYPE="issues"
+                elif [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+                  TARGET_NUMBER=0
+                  TRIGGER_BODY="${{ inputs.prompt_body }}"
+                  TRIGGER_AUTHOR="${{ github.triggering_actor || github.actor }}"
+                  EVENT_TYPE="workflow_call"
                 else
                   echo "Unknown event type: ${{ github.event_name }}"
                   exit 1
@@ -273,7 +283,7 @@ jobs:
                   echo "SKIP_AGENT=false" >> $GITHUB_ENV
 
             - name: Check Circuit Breaker
-              if: env.SKIP_AGENT == 'false'
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
@@ -524,7 +534,7 @@ jobs:
                     f.write(marker + "\n*" + display_name + " answer*\n\n" + content)
 
             - name: Post Agent Comment to GitHub
-              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false'
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
