@@ -291,6 +291,24 @@ def main():
 
     # Extract and save final agent message with embedded metrics
     final_message = get_agent_final_response(conversation.state.events)
+    
+    # Smart truncation: hard limit of 10K chars with paragraph-boundary awareness
+    MAX_FINAL_MESSAGE_LEN = 10000
+    if final_message and len(final_message) > MAX_FINAL_MESSAGE_LEN:
+        # Truncate to limit, then find the last paragraph boundary within 50% of the limit
+        truncated = final_message[:MAX_FINAL_MESSAGE_LEN]
+        # Try to find a paragraph boundary (double newline) in the last 50% of the truncated text
+        split_point = MAX_FINAL_MESSAGE_LEN // 2
+        last_para = truncated.rfind("\n\n", 0, split_point)
+        if last_para > 0:
+            truncated = truncated[:last_para]
+        else:
+            # No paragraph boundary found, use the full truncated text
+            pass
+        original_len = len(final_message)
+        final_message = truncated + "\n\n... *(truncated due to length)*"
+        logger.warning(f"Final message truncated from {original_len} to {len(final_message)} characters")
+    
     if final_message:
         # Append metrics as hidden HTML comment for later aggregation on issue close
         metrics_json = json.dumps(metrics, separators=(",", ":"))
@@ -301,10 +319,13 @@ def main():
         logger.info(f"Saved final agent message ({len(final_message)} characters) with embedded metrics")
     else:
         logger.warning("No final agent message found in events")
+        # Write sentinel so the workflow can distinguish "no message" from "file missing"
+        with open("final_message.txt", "w", encoding="utf-8") as f:
+            f.write("__NO_FINAL_MESSAGE__")
         # Still save metrics comment even without final message
         metrics_json = json.dumps(metrics, separators=(",", ":"))
         metrics_comment = f"<!-- agent-metrics: {metrics_json} -->"
-        with open("final_message.txt", "w", encoding="utf-8") as f:
+        with open("final_message.txt", "a", encoding="utf-8") as f:
             f.write(metrics_comment)
         logger.info("Saved embedded metrics comment (no final message)")
 

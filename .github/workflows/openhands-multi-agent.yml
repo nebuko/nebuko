@@ -467,6 +467,7 @@ jobs:
             - name: Run OpenHands Agent
               if: env.SKIP_AGENT == 'false'
               id: openhands_agent
+              timeout-minutes: 15
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -500,64 +501,117 @@ jobs:
                 logging.basicConfig(level=logging.INFO)
                 logger = logging.getLogger(__name__)
 
-                # First check for structured final message file
+                # Path A & B: final_message.txt exists
                 if os.path.isfile("final_message.txt") and os.path.getsize("final_message.txt") > 0:
                     with open("final_message.txt", "r", encoding="utf-8") as f:
-                        final_message = f.read().strip()
+                        content = f.read()
                     
-                    if final_message:
-                        logger.info(f"Using final_message.txt ({len(final_message)} characters)")
-                        # Apply truncation if needed (GitHub comment limit is 65,536 chars)
-                        if len(final_message) > 60000:
-                            final_message = final_message[:60000] + "\n\n...*(comment truncated due to size limit)*"
+                    # Check for sentinel (no final message was extracted by agent_script.py)
+                    if "__NO_FINAL_MESSAGE__" in content:
+                        logger.warning("Sentinel detected in final_message.txt, falling back to console.log")
+                        # Extract metrics comment before falling through
+                        metrics_match = re.search(r'<!-- agent-metrics:.*?-->', content)
+                        metrics_comment = metrics_match.group(0) if metrics_match else ""
+                    else:
+                        # Normal path: extract metrics comment before stripping for display
+                        metrics_match = re.search(r'<!-- agent-metrics:.*?-->', content)
+                        metrics_comment = metrics_match.group(0) if metrics_match else ""
+                        content = re.sub(r'\n?\n?<!-- agent-metrics:.*?-->', '', content).strip()
                         
+                        if content:
+                            logger.info(f"Using final_message.txt ({len(content)} characters)")
+                            # Apply truncation if needed (GitHub comment limit is 65,536 chars)
+                            if len(content) > 60000:
+                                content = content[:60000] + "\n\n...*(comment truncated due to size limit)*"
+                            
+                            # Re-add metrics comment if present
+                            if metrics_comment:
+                                content += "\n\n" + metrics_comment
+                            
+                            with open("github_comment.md", "w", encoding="utf-8") as f_out:
+                                f_out.write(content)
+                            with open(os.environ['GITHUB_ENV'], 'a') as ge:
+                                ge.write("HAS_COMMENT=true\n")
+                            exit(0)
+                        else:
+                            logger.warning("final_message.txt contained only metrics, falling back to console.log")
+                            # metrics_comment already extracted above, will be preserved in fallback
+
+                    # Path B: Fallback to console.log (sentinel detected or empty content)
+                    if not os.path.isfile("console.log") or os.path.getsize("console.log") == 0:
+                        logger.error("console.log missing or empty during fallback")
+                        fallback = "> ⚠️ The agent did not produce a usable final message. Please check the full logs in the workflow run."
+                        if metrics_comment:
+                            fallback += "\n\n" + metrics_comment
                         with open("github_comment.md", "w", encoding="utf-8") as f_out:
-                            f_out.write(final_message)
+                            f_out.write(fallback)
                         with open(os.environ['GITHUB_ENV'], 'a') as ge:
                             ge.write("HAS_COMMENT=true\n")
                         exit(0)
-                    else:
-                        logger.warning("final_message.txt exists but is empty, falling back to console.log")
-
-                # Fallback to console.log parsing if final_message.txt doesn't exist or is empty
-                # Vérification : console.log existe et n'est pas vide
-                if not os.path.isfile("console.log") or os.path.getsize("console.log") == 0:
-                    fallback = "> ⚠️ The agent produced too much output to include here. Please check the full logs in the workflow run."
-                    with open("github_comment.md", "w", encoding="utf-8") as f_out:
-                        f_out.write(fallback)
-                    with open(os.environ['GITHUB_ENV'], 'a') as ge:
-                        ge.write("HAS_COMMENT=true\n")
-                else:
+                    
                     with open("console.log", "r", encoding="utf-8") as f:
                         content = f.read()
 
-                    # On découpe le log à chaque occurrence de "Message from Agent"
+                    # Parse console.log for agent messages
                     blocks = content.split("Message from Agent ─────────────────────────────────────────────────────────────")
 
                     if len(blocks) > 1:
-                        # On prend le dernier bloc et on nettoie les scories techniques de fin de log
                         last_message = blocks[-1].split("Tokens:")[0].strip()
-
-                        # Nettoyage des logs JSON parasites d'OpenHands
                         last_message = re.sub(r'{"asctime":.*"message": "Task completed successfully"}', '', last_message).strip()
                     else:
-                        # Fallback: prendre les 200 dernières lignes si le séparateur n'est pas trouvé
+                        # Filter JSON noise and take last 50 meaningful lines
                         lines = content.strip().split('\n')
-                        last_message = '\n'.join(lines[-200:]) if len(lines) > 200 else content.strip()
+                        meaningful = [l for l in lines if not re.match(r'^\s*\{', l) and l.strip()]
+                        last_message = '\n'.join(meaningful[-50:]) if meaningful else content.strip()
 
-                    # Troncature à 60 000 caractères pour rester sous la limite GitHub (65 536)
                     if len(last_message) > 60000:
                         last_message = last_message[:60000] + "\n\n...*(comment truncated due to size limit)*"
 
-                    # Garantie : si le commentaire est vide, on met un message de repli
                     if not last_message.strip():
                         last_message = "> ⚠️ The agent produced too much output to include here. Please check the full logs in the workflow run."
+
+                    # Preserve metrics comment if we extracted it earlier
+                    if metrics_comment:
+                        last_message += "\n\n" + metrics_comment
+
+                    with open("github_comment.md", "w", encoding="utf-8") as f_out:
+                        f_out.write(last_message)
+                    with open(os.environ['GITHUB_ENV'], 'a') as ge:
+                        ge.write("HAS_COMMENT=true\n")
+                    exit(0)
+
+                # Path C: Crash/timeout fallback (final_message.txt missing)
+                if not os.path.isfile("console.log") or os.path.getsize("console.log") == 0:
+                    logger.error("Both final_message.txt and console.log are missing/empty")
+                    fallback = "> ⚠️ The agent crashed or timed out. No output was produced. Please check the full logs in the workflow run."
+                    with open("github_comment.md", "w", encoding="utf-8") as f_out:
+                        f_out.write(fallback)
+                else:
+                    logger.warning("final_message.txt missing, falling back to console.log")
+                    with open("console.log", "r", encoding="utf-8") as f:
+                        content = f.read()
+
+                    blocks = content.split("Message from Agent ─────────────────────────────────────────────────────────────")
+
+                    if len(blocks) > 1:
+                        last_message = blocks[-1].split("Tokens:")[0].strip()
+                        last_message = re.sub(r'{"asctime":.*"message": "Task completed successfully"}', '', last_message).strip()
+                    else:
+                        lines = content.strip().split('\n')
+                        meaningful = [l for l in lines if not re.match(r'^\s*\{', l) and l.strip()]
+                        last_message = '\n'.join(meaningful[-50:]) if meaningful else content.strip()
+
+                    if len(last_message) > 60000:
+                        last_message = last_message[:60000] + "\n\n...*(comment truncated due to size limit)*"
+
+                    if not last_message.strip():
+                        last_message = "> ⚠️ The agent crashed or timed out. Please check the full logs in the workflow run."
 
                     with open("github_comment.md", "w", encoding="utf-8") as f_out:
                         f_out.write(last_message)
 
-                    with open(os.environ['GITHUB_ENV'], 'a') as ge:
-                        ge.write("HAS_COMMENT=true\n")
+                with open(os.environ['GITHUB_ENV'], 'a') as ge:
+                    ge.write("HAS_COMMENT=true\n")
 
             - name: Add bot marker to comment
               if: always() && env.SKIP_AGENT == 'false'
