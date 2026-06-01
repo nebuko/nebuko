@@ -45,8 +45,9 @@ jobs:
               run: |
                   TRIGGER_BODY=$(jq -r '.comment.body // ""' "${{ github.event_path }}")
                   echo "Debug: Checking trigger body..."
-                  # Last-mention-wins: avoids @@ctx stealing execution when mentioned in passing
-                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev' | tail -1)
+                  # First-mention-wins: ensures the intended target agent is selected
+                  # When @@genius writes \"@@ctx: collect context...\", @@ctx is the target, not @@genius
+                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev' | head -1)
 
                   case "$LAST_AGENT" in
                       "@@genius")
@@ -91,6 +92,9 @@ jobs:
                           echo "Dev complexity estimated: $COMPLEXITY -> using model: $DEV_MODEL"
                           ;;
                   esac
+
+                  # Export LAST_AGENT so Guard 1 (same-agent loop detection) can read it
+                  echo "LAST_AGENT=$LAST_AGENT" >> $GITHUB_ENV
 
             - name: Prevent all agent-trigger loops & human ping guard
               run: |
