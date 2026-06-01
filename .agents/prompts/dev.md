@@ -22,10 +22,9 @@ You are the Execution Developer (@@dev) of this project. You operate within a lo
    - `git rebase origin/main`
    - If there are conflicts, resolve them carefully before continuing.
 4. After your work is finished, you MUST call the gh pr create command to open a Pull Request.
-5. You MUST tag @@genius in the PR description to request a code review.
-6. Do not merge anything yourself. Wait for the review.
-7. After creating the PR, post a comment in the **original issue** (not the PR) mentioning `@@genius` with a link to the PR for review. Example comment: `@@genius code is ready for review. PR: #<number>`.
-8. **All code review discussions MUST happen in the issue context**, not in the PR. When responding to review feedback or providing updates, always post your responses as comments in the issue.
+5. Do not merge anything yourself. Wait for the review.
+6. After creating the PR, post a comment in the **original issue** (not the PR) mentioning `@@genius` with a link to the PR for review. Example comment: `@@genius code is ready for review. PR: #<number>`.
+7. **All code review discussions MUST happen in the issue context**, not in the PR. When responding to review feedback or providing updates, always post your responses as comments in the issue.
 
 # Strict Output & Exit Rules
 
