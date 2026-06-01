@@ -271,44 +271,44 @@ jobs:
                   fi
                   
                   python3 - <<EOF
-import os
-template = """
-# 📰 GITHUB CONTEXT
+                  import os
+                  template = """
+                  # 📰 GITHUB CONTEXT
 
-A pull request was triggered. Please review the details below (including full history) and take appropriate action.
+                  A pull request was triggered. Please review the details below (including full history) and take appropriate action.
 
-## PR Author
-{author}
+                  ## PR Author
+                  {author}
 
-## PR Title
-{title}
+                  ## PR Title
+                  {title}
 
-## PR Description
-{body}
+                  ## PR Description
+                  {body}
 
-## Changed Files
-{files}
+                  ## Changed Files
+                  {files}
 
-## PR Diff (first 200 lines)
-```
-{diff}
-```
+                  ## PR Diff (first 200 lines)
+                  ```
+                  {diff}
+                  ```
 
----
+                  ---
 
-## Full Comment History
-{history}
-""".format(
-  title=os.environ.get("PR_TITLE", ""),
-  body=os.environ.get("PR_BODY", ""),
-  author=os.environ.get("PR_AUTHOR", "unknown"),
-  files=os.environ.get("CHANGED_FILES", "No changed files detected"),
-  diff=os.environ.get("DIFF_CONTENT", "No diff available"),
-  history=os.environ.get("COMMENT_HISTORY", "No previous comments.")
-)
-with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
-  f.write(template)
-EOF
+                  ## Full Comment History
+                  {history}
+                  """.format(
+                    title=os.environ.get("PR_TITLE", ""),
+                    body=os.environ.get("PR_BODY", ""),
+                    author=os.environ.get("PR_AUTHOR", "unknown"),
+                    files=os.environ.get("CHANGED_FILES", "No changed files detected"),
+                    diff=os.environ.get("DIFF_CONTENT", "No diff available"),
+                    history=os.environ.get("COMMENT_HISTORY", "No previous comments.")
+                  )
+                  with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
+                    f.write(template)
+                  EOF
                 else
                   # For issues: use existing logic
                   ISSUE_NUMBER="${{ env.TARGET_NUMBER }}"
@@ -323,34 +323,34 @@ EOF
                   fi
                   
                   python3 - <<EOF
-import os
-template = """
-# 📰 GITHUB CONTEXT
+                  import os
+                  template = """
+                  # 📰 GITHUB CONTEXT
 
-An issue comment was triggered. Please review the details below (including full history) and take appropriate action.
+                  An issue comment was triggered. Please review the details below (including full history) and take appropriate action.
 
-## Issue Author
-{author}
+                  ## Issue Author
+                  {author}
 
-## Issue Title
-{title}
+                  ## Issue Title
+                  {title}
 
-## Issue Original Description
-{body}
+                  ## Issue Original Description
+                  {body}
 
----
+                  ---
 
-## Full Comment History
-{history}
-""".format(
-  title=os.environ.get("ISSUE_TITLE", ""),
-  body=os.environ.get("ISSUE_BODY", ""),
-  author=os.environ.get("ISSUE_AUTHOR", "unknown"),
-  history=os.environ.get("COMMENT_HISTORY", "No previous comments.")
-)
-with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
-  f.write(template)
-EOF
+                  ## Full Comment History
+                  {history}
+                  """.format(
+                    title=os.environ.get("ISSUE_TITLE", ""),
+                    body=os.environ.get("ISSUE_BODY", ""),
+                    author=os.environ.get("ISSUE_AUTHOR", "unknown"),
+                    history=os.environ.get("COMMENT_HISTORY", "No previous comments.")
+                  )
+                  with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
+                    f.write(template)
+                  EOF
                 fi
                 
                 echo "AGENT_QUERY_PATH=/tmp/ready_prompt.md" >> $GITHUB_ENV
