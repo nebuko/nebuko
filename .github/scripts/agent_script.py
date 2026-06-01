@@ -291,6 +291,22 @@ def main():
 
     # Extract and save final agent message with embedded metrics
     final_message = get_agent_final_response(conversation.state.events)
+    
+    # Smart truncation: enforce a hard limit at the Python level to prevent
+    # GitHub comment API failures (65,536 char limit). We use 10,000 chars
+    # as a safe limit, leaving room for bot markers and metrics comments.
+    MAX_MESSAGE_LENGTH = 10000
+    if final_message and len(final_message) > MAX_MESSAGE_LENGTH:
+        original_len = len(final_message)
+        # Truncate at paragraph boundary for readability
+        truncated = final_message[:MAX_MESSAGE_LENGTH]
+        # Try to cut at the last paragraph break rather than mid-sentence
+        last_paragraph_break = truncated.rfind("\n\n")
+        if last_paragraph_break > MAX_MESSAGE_LENGTH * 0.5:
+            truncated = truncated[:last_paragraph_break]
+        final_message = truncated + "\n\n... *(truncated due to length)*"
+        logger.warning(f"Final message truncated from {original_len} to {len(final_message)} characters")
+    
     if final_message:
         # Append metrics as hidden HTML comment for later aggregation on issue close
         metrics_json = json.dumps(metrics, separators=(",", ":"))
@@ -301,12 +317,13 @@ def main():
         logger.info(f"Saved final agent message ({len(final_message)} characters) with embedded metrics")
     else:
         logger.warning("No final agent message found in events")
-        # Still save metrics comment even without final message
+        # Mark that there's no final message so the workflow can handle the fallback properly
+        # Write a sentinel + metrics comment
         metrics_json = json.dumps(metrics, separators=(",", ":"))
-        metrics_comment = f"<!-- agent-metrics: {metrics_json} -->"
+        sentinel = f"__NO_FINAL_MESSAGE__\n<!-- agent-metrics: {metrics_json} -->"
         with open("final_message.txt", "w", encoding="utf-8") as f:
-            f.write(metrics_comment)
-        logger.info("Saved embedded metrics comment (no final message)")
+            f.write(sentinel)
+        logger.info("Saved sentinel + metrics comment (no final message)")
 
     logger.info("Task completed successfully")
 
