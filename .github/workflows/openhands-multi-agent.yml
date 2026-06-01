@@ -28,7 +28,7 @@ jobs:
           contains(github.event.pull_request.body, '@@dev')
         env:
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
-            CIRCUIT_BREAKER_THRESHOLD: 10
+            CIRCUIT_BREAKER_THRESHOLD: 15
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
