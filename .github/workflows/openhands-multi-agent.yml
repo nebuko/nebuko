@@ -123,8 +123,11 @@ jobs:
                                   ;;
                               "high")
                                   DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
+                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
                                   ;;
                               *)
+                                  # Disabled; too slow actually
+                                  # DEV_MODEL="openrouter/deepseek/deepseek-v3.2"
                                   DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
                                   ;;
                           esac
