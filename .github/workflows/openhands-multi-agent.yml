@@ -404,7 +404,7 @@ jobs:
             - name: Run OpenHands Agent
               if: env.SKIP_AGENT == 'false'
               id: openhands_agent
-              timeout-minutes: 15
+              timeout-minutes: 30
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
