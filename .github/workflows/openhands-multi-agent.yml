@@ -45,7 +45,7 @@ jobs:
                   IS_PR_EVENT="true"
                   EVENT_TYPE="pull_request"
                 elif [[ "${{ github.event_name }}" == "issue_comment" ]]; then
-                  TARGET_NUMBER="${{ github.event.comment.issue.number }}"
+                  TARGET_NUMBER="${{ github.event.issue.number }}"
                   TRIGGER_BODY=$(jq -r '.comment.body // ""' "$EVENT_PATH")
                   TRIGGER_AUTHOR=$(jq -r '.comment.user.login // ""' "$EVENT_PATH")
                   IS_PR_EVENT="false"
