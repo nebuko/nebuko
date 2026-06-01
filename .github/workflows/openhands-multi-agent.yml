@@ -187,13 +187,13 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                EVENT_PATH="${{ github.event_path }}"
                 REPO_NAME="${{ github.repository }}"
-                ISSUE_NUMBER="${{ github.event.issue.number }}"
-                ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' $EVENT_PATH)
+                TARGET_NUMBER="${{ env.TARGET_NUMBER }}"
+                ISSUE_AUTHOR="${{ env.TRIGGER_AUTHOR }}"
+                IS_PR_EVENT="${{ env.IS_PR_EVENT }}"
                 
-                # Fetch all issue comments
-                COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                # Fetch all comments on the target (issue or PR)
+                COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments \
                   --jq '.[] | .body' | tr -d '\r')
                 
                 # Count bot markers (<!-- bot-agent-)
@@ -206,24 +206,31 @@ jobs:
                     echo "CIRCUIT_BREAKER_TRIPPED=true" >> $GITHUB_ENV
                     echo "SKIP_AGENT=true" >> $GITHUB_ENV
                     
+                    # Determine context-aware wording
+                    if [[ "$IS_PR_EVENT" == "true" ]]; then
+                      TARGET_TYPE="pull request"
+                    else
+                      TARGET_TYPE="issue"
+                    fi
+                    
                     # Build circuit breaker comment line by line
                     {
                       echo "<!-- bot-agent-genius -->"
                       echo ""
                       echo "🚨 **Circuit Breaker Tripped** — Agent Loop Threshold Reached"
                       echo ""
-                      echo "This issue has triggered $AGENT_CALLS agent calls (threshold: $CIRCUIT_BREAKER_THRESHOLD)."
+                      echo "This $TARGET_TYPE has triggered $AGENT_CALLS agent calls (threshold: $CIRCUIT_BREAKER_THRESHOLD)."
                       echo "Further automated agent execution has been **halted** to prevent an infinite loop."
                       echo ""
                       echo "👉 **Action Required:** @$ISSUE_AUTHOR please review the conversation and decide next steps:"
-                      echo "- If the task is complete, close the issue."
+                      echo "- If the task is complete, close this $TARGET_TYPE."
                       echo "- If more work is needed, reset the conversation by posting \`@@genius reset\` (or manually close/reopen)."
                       echo ""
                       echo "🔗 [View workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
                     } > /tmp/circuit_breaker_comment.md
                     
                     # Post the comment
-                    gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                    gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments \
                       -f body=@/tmp/circuit_breaker_comment.md
                 else
                     echo "CIRCUIT_BREAKER_TRIPPED=false" >> $GITHUB_ENV
