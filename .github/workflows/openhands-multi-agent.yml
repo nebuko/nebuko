@@ -17,15 +17,19 @@ jobs:
     run-task:
         runs-on: ubuntu-24.04
         if: |
-          contains(github.event.comment.body, '@@genius') || 
-          contains(github.event.comment.body, '@@ctx') || 
-          contains(github.event.comment.body, '@@dev') ||
-          contains(github.event.issue.body, '@@genius') || 
-          contains(github.event.issue.body, '@@ctx') || 
-          contains(github.event.issue.body, '@@dev') ||
-          contains(github.event.pull_request.body, '@@genius') || 
-          contains(github.event.pull_request.body, '@@ctx') || 
-          contains(github.event.pull_request.body, '@@dev')
+          github.event_name == 'workflow_call' ||
+          (github.event_name == 'issues' &&
+           (contains(github.event.issue.body, '@@genius') ||
+            contains(github.event.issue.body, '@@ctx') ||
+            contains(github.event.issue.body, '@@dev'))) ||
+          (github.event_name == 'issue_comment' &&
+           (contains(github.event.comment.body, '@@genius') ||
+            contains(github.event.comment.body, '@@ctx') ||
+            contains(github.event.comment.body, '@@dev'))) ||
+          (github.event_name == 'pull_request' &&
+           (contains(github.event.pull_request.body, '@@genius') ||
+            contains(github.event.pull_request.body, '@@ctx') ||
+            contains(github.event.pull_request.body, '@@dev')))
         env:
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
             CIRCUIT_BREAKER_THRESHOLD: 15
@@ -140,6 +144,13 @@ jobs:
                           echo "Dev complexity estimated: $COMPLEXITY -> using model: $DEV_MODEL"
                           ;;
                   esac
+
+                  # Safety guard: skip if no valid agent was resolved
+                  if [ -z "$ROLE_NAME" ]; then
+                    echo "No valid agent found in trigger body. Skipping."
+                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                    exit 0
+                  fi
 
                   echo "LAST_AGENT=$LAST_AGENT" >> $GITHUB_ENV
 
