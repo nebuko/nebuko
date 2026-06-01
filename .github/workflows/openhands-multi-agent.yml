@@ -146,11 +146,22 @@ jobs:
                   IS_PR_EVENT="true"
                   EVENT_TYPE="pull_request"
                 elif [[ "${{ github.event_name }}" == "issue_comment" ]]; then
-                  TARGET_NUMBER="${{ github.event.issue.number }}"
-                  TRIGGER_BODY=$(jq -r '.comment.body // ""' "$EVENT_PATH")
-                  TRIGGER_AUTHOR=$(jq -r '.comment.user.login // ""' "$EVENT_PATH")
-                  IS_PR_EVENT="false"
-                  EVENT_TYPE="issue_comment"
+                  # Check if the comment is on a PR (github.event.issue.pull_request is present)
+                  IS_PR=$(jq -r '.issue.pull_request // empty' "$EVENT_PATH")
+                  if [[ -n "$IS_PR" ]]; then
+                    # This is a PR comment, not an issue comment
+                    TARGET_NUMBER=$(jq -r '.issue.number // ""' "$EVENT_PATH")
+                    TRIGGER_BODY=$(jq -r '.comment.body // ""' "$EVENT_PATH")
+                    TRIGGER_AUTHOR=$(jq -r '.comment.user.login // ""' "$EVENT_PATH")
+                    IS_PR_EVENT="true"
+                    EVENT_TYPE="issue_comment_on_pr"
+                  else
+                    TARGET_NUMBER="${{ github.event.issue.number }}"
+                    TRIGGER_BODY=$(jq -r '.comment.body // ""' "$EVENT_PATH")
+                    TRIGGER_AUTHOR=$(jq -r '.comment.user.login // ""' "$EVENT_PATH")
+                    IS_PR_EVENT="false"
+                    EVENT_TYPE="issue_comment"
+                  fi
                 elif [[ "${{ github.event_name }}" == "issues" ]]; then
                   TARGET_NUMBER="${{ github.event.issue.number }}"
                   TRIGGER_BODY=$(jq -r '.issue.body // ""' "$EVENT_PATH")
@@ -606,8 +617,21 @@ jobs:
                 with open("github_comment.md", "w") as f:
                     f.write(marker + "\n*" + display_name + " answer*\n\n" + content)
 
+            - name: Check for associated PR (skip issue comment if dev created a PR)
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.ROLE_NAME == 'dev' && env.IS_PR_EVENT == 'false'
+              run: |
+                # Check if dev created a PR referencing this issue
+                PR_NUMBER=$(gh pr list --search "issues/${{ env.TARGET_NUMBER }}" --state open --json number -q '.[0].number // ""' 2>/dev/null || echo "")
+                if [[ -n "$PR_NUMBER" ]]; then
+                  echo "SKIP_ISSUE_COMMENT=true" >> $GITHUB_ENV
+                  echo "Found open PR #$PR_NUMBER referencing issue #${{ env.TARGET_NUMBER }} — skipping issue comment post"
+                else
+                  echo "SKIP_ISSUE_COMMENT=false" >> $GITHUB_ENV
+                  echo "No associated PR found — will post comment to issue"
+                fi
+
             - name: Post Agent Comment to GitHub
-              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false'
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.SKIP_ISSUE_COMMENT != 'true'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}

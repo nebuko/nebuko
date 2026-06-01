@@ -45,7 +45,7 @@ All complexity and future improvements stay centralized in this repo — your wo
 1. An issue or comment is created on GitHub
 2. The GitHub Actions workflow (`openhands-multi-agent.yml`) triggers automatically
 3. The appropriate agent (@@genius, @@ctx, or @@dev) is invoked based on the mention in the comment
-4. The agent processes the request using OpenHands SDK and posts results back to the issue
+4. The agent processes the request using OpenHands SDK and posts results back to the issue or PR
 
 ### Agent Collaboration Flow
 
@@ -53,14 +53,23 @@ All complexity and future improvements stay centralized in this repo — your wo
 @@genius (analyzes request)
   → @@ctx (collects context deeply)
   → @@genius (drafts technical plan)
-  → @@dev (implements the plan)
+  → @@dev (implements the plan, creates PR)
+  → @@genius (reviews PR in PR context)
 ```
+
+### PR-First Review Process
+
+When @@dev completes implementation:
+- A PR is created with `@@genius` tagged in the description to trigger code review
+- @@dev does **not** post back to the original issue (this prevents spawning unintended review agents)
+- @@genius reviews the PR directly in the PR context (with diffs and changed files)
+- Once approved, the original issue author is notified for final human review
 
 ## Workflow
 
 The automation pipeline is defined in `.github/workflows/openhands-multi-agent.yml` and handles:
 - Issue opened, edited, or assigned events
-- Issue comment creation events
+- Issue comment creation events (including PR comments detected via `github.event.issue.pull_request`)
 - Automatic agent selection based on @@genius, @@ctx, or @@dev mentions
 - Context injection from GitHub issues and comments
-- Agent response posting back to the issue thread
+- Agent response posting back to the issue or PR thread (PR comments are routed to the PR, not the issue)
