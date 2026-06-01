@@ -513,8 +513,8 @@ jobs:
                         metrics_match = re.search(r'<!-- agent-metrics:.*?-->', content)
                         metrics_comment = metrics_match.group(0) if metrics_match else ""
                     else:
-                        metrics_comment = None  # Will be preserved from the file content
-                        # Remove metrics comment for display, we'll re-add it later
+                        metrics_match = re.search(r'<!-- agent-metrics:.*?-->', content)
+                        metrics_comment = metrics_match.group(0) if metrics_match else ""
                         content = re.sub(r'\n?\n?<!-- agent-metrics:.*?-->', '', content).strip()
 
                         if content:

@@ -297,6 +297,7 @@ def main():
     # as a safe limit, leaving room for bot markers and metrics comments.
     MAX_MESSAGE_LENGTH = 10000
     if final_message and len(final_message) > MAX_MESSAGE_LENGTH:
+        original_len = len(final_message)
         # Truncate at paragraph boundary for readability
         truncated = final_message[:MAX_MESSAGE_LENGTH]
         # Try to cut at the last paragraph break rather than mid-sentence
@@ -304,7 +305,7 @@ def main():
         if last_paragraph_break > MAX_MESSAGE_LENGTH * 0.5:
             truncated = truncated[:last_paragraph_break]
         final_message = truncated + "\n\n... *(truncated due to length)*"
-        logger.warning(f"Final message truncated from {len(final_message)} to {len(final_message)} characters")
+        logger.warning(f"Final message truncated from {original_len} to {len(final_message)} characters")
     
     if final_message:
         # Append metrics as hidden HTML comment for later aggregation on issue close
@@ -319,7 +320,7 @@ def main():
         # Mark that there's no final message so the workflow can handle the fallback properly
         # Write a sentinel + metrics comment
         metrics_json = json.dumps(metrics, separators=(",", ":"))
-        sentinel = "__NO_FINAL_MESSAGE__\n<!-- agent-metrics: {metrics_json} -->"
+        sentinel = f"__NO_FINAL_MESSAGE__\n<!-- agent-metrics: {metrics_json} -->"
         with open("final_message.txt", "w", encoding="utf-8") as f:
             f.write(sentinel)
         logger.info("Saved sentinel + metrics comment (no final message)")
