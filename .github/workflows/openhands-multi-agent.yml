@@ -270,7 +270,7 @@ jobs:
                     COMMENT_HISTORY="No previous comments"
                   fi
                   
-                  python3 - <<<EOF
+                  python3 - EOF
 import os
 template = """
 # 📰 GITHUB CONTEXT
