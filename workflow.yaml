@@ -1,0 +1,65 @@
+# =============================================================================
+# 🤖 AI Dev Workflow (git-flow-ai)
+# =============================================================================
+# Copy this file into your project's .github/workflows/ directory to use the
+# multi-agent AI development workflow from git-flow-ai.
+#
+# Quick start:
+#   1. Copy this file to .github/workflows/ai-dev-workflow.yaml
+#   2. Set OPENROUTER_API_KEY and GH_PAT secrets in your repository settings
+#   3. Mention @@genius in any issue or comment to start the workflow
+#
+# For more information: https://github.com/olivier-norture/git-flow-ai
+# =============================================================================
+
+name: AI Dev Workflow (git-flow-ai)
+
+on:
+  issues:
+    types: [opened, edited, assigned]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  agent:
+    uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+    with:
+      # ───── Model Configuration ──────────────────────────────────────────────
+      # Set which LLM models each agent uses. Defaults match git-flow-ai's
+      # recommended setup (DeepSeek V4 through OpenRouter).
+      genius_model: "openrouter/deepseek/deepseek-v4-pro"
+      dev_model_low: "openrouter/deepseek/deepseek-v4-flash"
+      dev_model_medium: "openrouter/deepseek/deepseek-v4-flash"
+      dev_model_high: "openrouter/deepseek/deepseek-v4-flash"
+      ctx_model: "openrouter/deepseek/deepseek-v4-flash"
+
+      # ───── API Configuration ────────────────────────────────────────────────
+      # Base URL for your LLM provider's API endpoint.
+      api_base_url: "https://openrouter.ai/api/v1/chat/completions"
+
+      # ───── Sampling Parameters ──────────────────────────────────────────────
+      genius_temperature: 0.2
+      dev_temperature: 0.0
+      llm_seed: 42
+
+      # ───── Advanced Options ─────────────────────────────────────────────────
+      # Maximum number of agent calls on a single issue before the circuit
+      # breaker halts execution to prevent infinite loops.
+      circuit_breaker_threshold: 10
+
+    secrets:
+      # Your LLM provider API key (e.g., OpenRouter, OpenAI, Anthropic).
+      # Store this as a GitHub Actions secret in your repository settings.
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      # GitHub Personal Access Token with at least these permissions:
+      #   - contents: write  (to push branches)
+      #   - pull-requests: write  (to create PRs)
+      #   - issues: write  (to post comments)
+      # Store this as a GitHub Actions secret in your repository settings.
+      GH_PAT: ${{ secrets.GH_PAT }}

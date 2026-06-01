@@ -2,6 +2,27 @@
 
 An AI-powered Git workflow automation tool leveraging OpenHands multi-agent architecture. This project automates software development workflows using three specialized AI agents that collaborate on context collection, issue resolution, code implementation, and code review.
 
+## Usage in Other Projects
+
+You can use this AI dev workflow in **any GitHub project** by copying a single YAML file.
+
+### Quick Start
+
+1. Copy [`workflow.yaml`](./workflow.yaml) from this repo root into your project's `.github/workflows/` directory.
+   ```bash
+   cp workflow.yaml .github/workflows/ai-dev-workflow.yaml
+   ```
+
+2. Add the following secrets in your GitHub repository settings (`Settings → Secrets and variables → Actions`):
+   - `OPENROUTER_API_KEY` — Your OpenRouter (or other LLM provider) API key
+   - `GH_PAT` — A GitHub Personal Access Token with `contents:write`, `pull-requests:write`, and `issues:write` scopes
+
+3. That's it! Mention `@@genius` in any issue or comment to start the workflow.
+
+### Customizing Models & Settings
+
+All settings are configurable via the `with:` block in your workflow file. See [`workflow.yaml`](./workflow.yaml) for the full list of options, including model selection, temperature, and circuit breaker threshold.
+
 ## Architecture
 
 The system uses a **three-agent architecture** powered by OpenHands:
