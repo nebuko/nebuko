@@ -179,12 +179,12 @@ jobs:
             - name: Set up Python
               uses: actions/setup-python@v6
               with:
-                  python-version: '3.13'
+                  python-version: '${{ inputs.python_version || "3.13" }}'
 
             - name: Install uv
               uses: astral-sh/setup-uv@v7
               with:
-                  enable-cache: true
+                  enable-cache: ${{ inputs.enable_uv_cache || true }}
 
             - name: Install OpenHands dependencies
               run: |
@@ -206,7 +206,7 @@ jobs:
 
                   case "$LAST_AGENT" in
                       "@@genius")
-                          echo "PROMPT_LOCATION=${BASE_PATH}/.agents/prompts/genius.md" >> $GITHUB_ENV
+                          echo "PROMPT_LOCATION=${PROMPT_PATH_OVERRIDE:-${BASE_PATH}/.agents/prompts/genius.md}" >> $GITHUB_ENV
                           echo "LLM_MODEL=${GENIUS_MODEL:-openrouter/deepseek/deepseek-v4-pro}" >> $GITHUB_ENV
                           echo "LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.2}" >> $GITHUB_ENV
                           echo "LLM_SEED=${LLM_SEED:-42}" >> $GITHUB_ENV
@@ -215,14 +215,14 @@ jobs:
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           ;;
                       "@@ctx")
-                          echo "PROMPT_LOCATION=${BASE_PATH}/.agents/prompts/ctx.md" >> $GITHUB_ENV
+                          echo "PROMPT_LOCATION=${PROMPT_PATH_OVERRIDE:-${BASE_PATH}/.agents/prompts/ctx.md}" >> $GITHUB_ENV
                           echo "LLM_MODEL=${CTX_MODEL:-openrouter/deepseek/deepseek-v4-flash}" >> $GITHUB_ENV
                           echo "ROLE_NAME=ctx" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           ;;
                       "@@dev")
-                          echo "PROMPT_LOCATION=${BASE_PATH}/.agents/prompts/dev.md" >> $GITHUB_ENV
+                          echo "PROMPT_LOCATION=${PROMPT_PATH_OVERRIDE:-${BASE_PATH}/.agents/prompts/dev.md}" >> $GITHUB_ENV
                           echo "LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}" >> $GITHUB_ENV
                           echo "LLM_SEED=${LLM_SEED:-42}" >> $GITHUB_ENV
                           echo "ROLE_NAME=dev" >> $GITHUB_ENV
