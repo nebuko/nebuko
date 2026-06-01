@@ -237,6 +237,50 @@ jobs:
               if: env.SKIP_AGENT == 'false'
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                PR_TEMPLATE: |
+                  # 📰 GITHUB CONTEXT
+
+                  A pull request was triggered. Please review the details below (including full history) and take appropriate action.
+
+                  ## PR Author
+                  {author}
+
+                  ## PR Title
+                  {title}
+
+                  ## PR Description
+                  {body}
+
+                  ## Changed Files
+                  {files}
+
+                  ## PR Diff (first 200 lines)
+                  ```
+                  {diff}
+                  ```
+
+                  ---
+
+                  ## Full Comment History
+                  {history}
+                ISSUE_TEMPLATE: |
+                  # 📰 GITHUB CONTEXT
+
+                  An issue comment was triggered. Please review the details below (including full history) and take appropriate action.
+
+                  ## Issue Author
+                  {author}
+
+                  ## Issue Title
+                  {title}
+
+                  ## Issue Original Description
+                  {body}
+
+                  ---
+
+                  ## Full Comment History
+                  {history}
               run: |
                 EVENT_PATH="${{ github.event_path }}"
                 REPO_NAME="${{ github.repository }}"
@@ -244,113 +288,49 @@ jobs:
                 if [[ "${{ env.IS_PR_EVENT }}" == "true" ]]; then
                   # For pull requests: extract PR data
                   PR_NUMBER="${{ env.TARGET_NUMBER }}"
-                  PR_TITLE=$(jq -r '.pull_request.title // ""' "$EVENT_PATH")
-                  PR_BODY=$(jq -r '.pull_request.body // ""' "$EVENT_PATH")
-                  PR_AUTHOR=$(jq -r '.pull_request.user.login // "unknown"' "$EVENT_PATH")
+                  export PR_TITLE=$(jq -r '.pull_request.title // ""' "$EVENT_PATH")
+                  export PR_BODY=$(jq -r '.pull_request.body // ""' "$EVENT_PATH")
+                  export PR_AUTHOR=$(jq -r '.pull_request.user.login // "unknown"' "$EVENT_PATH")
                   
                   # Get changed files
-                  CHANGED_FILES=$(gh api /repos/$REPO_NAME/pulls/$PR_NUMBER/files \
+                  export CHANGED_FILES=$(gh api /repos/$REPO_NAME/pulls/$PR_NUMBER/files \
                     --jq '.[] | "  * \(.filename) (status: \(.status))"' | tr -d '\r')
                   if [[ -z "$CHANGED_FILES" ]]; then
-                    CHANGED_FILES="No changed files detected"
+                    export CHANGED_FILES="No changed files detected"
                   fi
                   
                   # Get PR diff (last 200 lines)
                   PR_DIFF=$(gh api /repos/$REPO_NAME/pulls/$PR_NUMBER | jq -r '.diff_url // ""')
                   if [[ -n "$PR_DIFF" ]]; then
-                    DIFF_CONTENT=$(curl -s "$PR_DIFF" | head -200 | sed 's/^/    /')
+                    export DIFF_CONTENT=$(curl -s "$PR_DIFF" | head -200 | sed 's/^/    /')
                   else
-                    DIFF_CONTENT="No diff available"
+                    export DIFF_CONTENT="No diff available"
                   fi
                   
                   # Get all PR comments
-                  COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$PR_NUMBER/comments \
+                  export COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$PR_NUMBER/comments \
                     --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
                   if [[ -z "$COMMENT_HISTORY" ]]; then
-                    COMMENT_HISTORY="No previous comments"
+                    export COMMENT_HISTORY="No previous comments"
                   fi
                   
-                  python3 - <<'EOF'
-import os
-template = """
-# 📰 GITHUB CONTEXT
-
-A pull request was triggered. Please review the details below (including full history) and take appropriate action.
-
-## PR Author
-{author}
-
-## PR Title
-{title}
-
-## PR Description
-{body}
-
-## Changed Files
-{files}
-
-## PR Diff (first 200 lines)
-```
-{diff}
-```
-
----
-
-## Full Comment History
-{history}
-""".format(
-  title=os.environ.get("PR_TITLE", ""),
-  body=os.environ.get("PR_BODY", ""),
-  author=os.environ.get("PR_AUTHOR", "unknown"),
-  files=os.environ.get("CHANGED_FILES", "No changed files detected"),
-  diff=os.environ.get("DIFF_CONTENT", "No diff available"),
-  history=os.environ.get("COMMENT_HISTORY", "No previous comments.")
-)
-with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
-  f.write(template)
-EOF
+                  # Format and write out using a safe single-line python execution
+                  python3 -c 'import os; print(os.environ["PR_TEMPLATE"].format(title=os.environ.get("PR_TITLE",""), body=os.environ.get("PR_BODY",""), author=os.environ.get("PR_AUTHOR","unknown"), files=os.environ.get("CHANGED_FILES",""), diff=os.environ.get("DIFF_CONTENT",""), history=os.environ.get("COMMENT_HISTORY","")))' > /tmp/ready_prompt.md
                 else
                   # For issues: use existing logic
                   ISSUE_NUMBER="${{ env.TARGET_NUMBER }}"
-                  ISSUE_TITLE=$(jq -r '.issue.title // "No Title"' "$EVENT_PATH")
-                  ISSUE_BODY=$(jq -r '.issue.body // "No Description"' "$EVENT_PATH")
-                  ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' "$EVENT_PATH")
+                  export ISSUE_TITLE=$(jq -r '.issue.title // "No Title"' "$EVENT_PATH")
+                  export ISSUE_BODY=$(jq -r '.issue.body // "No Description"' "$EVENT_PATH")
+                  export ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' "$EVENT_PATH")
                   
-                  COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                  export COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
                     --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
                   if [[ -z "$COMMENT_HISTORY" ]]; then
-                    COMMENT_HISTORY="No previous comments"
+                    export COMMENT_HISTORY="No previous comments"
                   fi
                   
-                  python3 - <<'EOF'
-import os
-template = """
-# 📰 GITHUB CONTEXT
-
-An issue comment was triggered. Please review the details below (including full history) and take appropriate action.
-
-## Issue Author
-{author}
-
-## Issue Title
-{title}
-
-## Issue Original Description
-{body}
-
----
-
-## Full Comment History
-{history}
-""".format(
-  title=os.environ.get("ISSUE_TITLE", ""),
-  body=os.environ.get("ISSUE_BODY", ""),
-  author=os.environ.get("ISSUE_AUTHOR", "unknown"),
-  history=os.environ.get("COMMENT_HISTORY", "No previous comments.")
-)
-with open("/tmp/ready_prompt.md", "w", encoding="utf-8") as f:
-  f.write(template)
-EOF
+                  # Format and write out using a safe single-line python execution
+                  python3 -c 'import os; print(os.environ["ISSUE_TEMPLATE"].format(title=os.environ.get("ISSUE_TITLE",""), body=os.environ.get("ISSUE_BODY",""), author=os.environ.get("ISSUE_AUTHOR","unknown"), history=os.environ.get("COMMENT_HISTORY","")))' > /tmp/ready_prompt.md
                 fi
                 
                 echo "AGENT_QUERY_PATH=/tmp/ready_prompt.md" >> $GITHUB_ENV
