@@ -1,0 +1,33 @@
+name: AI Dev Workflow (git-flow-ai)
+
+on:
+  issues:
+    types: [opened, edited, assigned]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  agent:
+    uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+    with:
+      # ───── Model Configuration ─────
+      genius_model: "openrouter/deepseek/deepseek-v4-pro"
+      dev_model_low: "openrouter/deepseek/deepseek-v4-flash"
+      dev_model_medium: "openrouter/deepseek/deepseek-v4-flash"
+      dev_model_high: "openrouter/deepseek/deepseek-v4-flash"
+      ctx_model: "openrouter/deepseek/deepseek-v4-flash"
+      # ───── API Configuration ─────
+      api_base_url: "https://openrouter.ai/api/v1/chat/completions"
+      # ───── Advanced ─────
+      genius_temperature: 0.2
+      dev_temperature: 0.0
+      llm_seed: 42
+      circuit_breaker_threshold: 15
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GH_PAT: ${{ secrets.GH_PAT }}
