@@ -289,14 +289,24 @@ def main():
     metrics = collect_llm_metrics(conversation)
     save_metrics_json(metrics)
 
-    # Extract and save final agent message
+    # Extract and save final agent message with embedded metrics
     final_message = get_agent_final_response(conversation.state.events)
     if final_message:
+        # Append metrics as hidden HTML comment for later aggregation on issue close
+        metrics_json = json.dumps(metrics, separators=(",", ":"))
+        metrics_comment = f"\n\n<!-- agent-metrics: {metrics_json} -->"
         with open("final_message.txt", "w", encoding="utf-8") as f:
             f.write(final_message)
-        logger.info(f"Saved final agent message ({len(final_message)} characters)")
+            f.write(metrics_comment)
+        logger.info(f"Saved final agent message ({len(final_message)} characters) with embedded metrics")
     else:
         logger.warning("No final agent message found in events")
+        # Still save metrics comment even without final message
+        metrics_json = json.dumps(metrics, separators=(",", ":"))
+        metrics_comment = f"<!-- agent-metrics: {metrics_json} -->"
+        with open("final_message.txt", "w", encoding="utf-8") as f:
+            f.write(metrics_comment)
+        logger.info("Saved embedded metrics comment (no final message)")
 
     logger.info("Task completed successfully")
 
