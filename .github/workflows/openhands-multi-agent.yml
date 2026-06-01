@@ -1,6 +1,75 @@
 name: OpenHands Multi-Agent Router
 
 on:
+  workflow_call:
+    inputs:
+      genius_model:
+        description: 'Model for genius agent'
+        required: false
+        type: string
+        default: 'openrouter/deepseek/deepseek-v4-pro'
+      dev_model_low:
+        description: 'Model for dev agent (low complexity)'
+        required: false
+        type: string
+        default: 'openrouter/deepseek/deepseek-v4-flash'
+      dev_model_medium:
+        description: 'Model for dev agent (medium complexity)'
+        required: false
+        type: string
+        default: 'openrouter/deepseek/deepseek-v4-flash'
+      dev_model_high:
+        description: 'Model for dev agent (high complexity)'
+        required: false
+        type: string
+        default: 'openrouter/deepseek/deepseek-v4-flash'
+      ctx_model:
+        description: 'Model for ctx agent'
+        required: false
+        type: string
+        default: 'openrouter/deepseek/deepseek-v4-flash'
+      genius_temperature:
+        description: 'Temperature for genius agent'
+        required: false
+        type: number
+        default: 0.2
+      dev_temperature:
+        description: 'Temperature for dev agent'
+        required: false
+        type: number
+        default: 0.0
+      llm_seed:
+        description: 'Seed for LLM'
+        required: false
+        type: number
+        default: 42
+      api_base_url:
+        description: 'Base URL for LLM API'
+        required: false
+        type: string
+        default: 'https://openrouter.ai/api/v1/chat/completions'
+      circuit_breaker_threshold:
+        description: 'Circuit breaker threshold'
+        required: false
+        type: number
+        default: 15
+      python_version:
+        description: 'Python version'
+        required: false
+        type: string
+        default: '3.13'
+      enable_uv_cache:
+        description: 'Enable uv cache'
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      OPENROUTER_API_KEY:
+        description: 'API key for the LLM provider'
+        required: true
+      GH_PAT:
+        description: 'GitHub Personal Access Token for API access'
+        required: true
   issues:
     types: [opened, edited, assigned]
   issue_comment:
@@ -36,6 +105,31 @@ jobs:
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
+
+            - name: Checkout git-flow-ai repo (workflow_call mode)
+              if: github.event_name == 'workflow_call'
+              uses: actions/checkout@v5
+              with:
+                repository: olivier-norture/git-flow-ai
+                path: /tmp/git-flow-ai
+
+            - name: Apply workflow_call configuration overrides
+              if: github.event_name == 'workflow_call'
+              run: |
+                echo "Applying external workflow configuration..."
+                echo "GENIUS_MODEL=${{ inputs.genius_model }}" >> $GITHUB_ENV
+                echo "DEV_MODEL_LOW=${{ inputs.dev_model_low }}" >> $GITHUB_ENV
+                echo "DEV_MODEL_MEDIUM=${{ inputs.dev_model_medium }}" >> $GITHUB_ENV
+                echo "DEV_MODEL_HIGH=${{ inputs.dev_model_high }}" >> $GITHUB_ENV
+                echo "CTX_MODEL=${{ inputs.ctx_model }}" >> $GITHUB_ENV
+                echo "GENIUS_TEMPERATURE=${{ inputs.genius_temperature }}" >> $GITHUB_ENV
+                echo "DEV_TEMPERATURE=${{ inputs.dev_temperature }}" >> $GITHUB_ENV
+                echo "LLM_SEED_OVERRIDE=${{ inputs.llm_seed }}" >> $GITHUB_ENV
+                echo "API_BASE_URL=${{ inputs.api_base_url }}" >> $GITHUB_ENV
+                echo "CIRCUIT_BREAKER_THRESHOLD=${{ inputs.circuit_breaker_threshold }}" >> $GITHUB_ENV
+                echo "PYTHON_VERSION=${{ inputs.python_version }}" >> $GITHUB_ENV
+                echo "ENABLE_UV_CACHE=${{ inputs.enable_uv_cache }}" >> $GITHUB_ENV
+                echo "WORKFLOW_CALL_MODE=true" >> $GITHUB_ENV
 
             - name: Normalize GitHub Event Data
               run: |
@@ -82,12 +176,12 @@ jobs:
             - name: Set up Python
               uses: actions/setup-python@v6
               with:
-                  python-version: '3.13'
+                  python-version: "${{ env.PYTHON_VERSION || '3.13' }}"
 
             - name: Install uv
               uses: astral-sh/setup-uv@v7
               with:
-                  enable-cache: true
+                  enable-cache: ${{ env.ENABLE_UV_CACHE != 'false' }}
 
             - name: Install OpenHands dependencies
               run: |
@@ -101,27 +195,35 @@ jobs:
                   # Last-mention-wins: avoids @@ctx stealing execution when mentioned in passing
                   LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev' | tail -1)
 
+                  # Determine prompt and script locations based on mode
+                  if [[ "$WORKFLOW_CALL_MODE" == "true" ]]; then
+                    PROMPT_BASE="/tmp/git-flow-ai/.agents/prompts"
+                    echo "AGENT_SCRIPT_URL=/tmp/git-flow-ai/.github/scripts/agent_script.py" >> $GITHUB_ENV
+                  else
+                    PROMPT_BASE=".agents/prompts"
+                  fi
+
                   case "$LAST_AGENT" in
                       "@@genius")
-                          echo "PROMPT_LOCATION=.agents/prompts/genius.md" >> $GITHUB_ENV
-                          echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-pro" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=0.2" >> $GITHUB_ENV
-                          echo "LLM_SEED=42" >> $GITHUB_ENV
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/genius.md" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${GENIUS_MODEL:-openrouter/deepseek/deepseek-v4-pro}" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=${GENIUS_TEMPERATURE:-0.2}" >> $GITHUB_ENV
+                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
                           echo "ROLE_NAME=genius" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           ;;
                       "@@ctx")
-                          echo "PROMPT_LOCATION=.agents/prompts/ctx.md" >> $GITHUB_ENV
-                          echo "LLM_MODEL=openrouter/deepseek/deepseek-v4-flash" >> $GITHUB_ENV
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${CTX_MODEL:-openrouter/deepseek/deepseek-v4-flash}" >> $GITHUB_ENV
                           echo "ROLE_NAME=ctx" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           ;;
                       "@@dev")
-                          echo "PROMPT_LOCATION=.agents/prompts/dev.md" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=0.0" >> $GITHUB_ENV
-                          echo "LLM_SEED=42" >> $GITHUB_ENV
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=${DEV_TEMPERATURE:-0.0}" >> $GITHUB_ENV
+                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
                           echo "ROLE_NAME=dev" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
 
@@ -130,13 +232,13 @@ jobs:
                           COMPLEXITY=$(echo "$COMPLEXITY_JSON" | jq -r '.complexity' | tr '[:upper:]' '[:lower:]')
                           case "$COMPLEXITY" in
                               "low")
-                                  DEV_MODEL="openrouter/qwen/qwen3.6-27b"
+                                  DEV_MODEL="${DEV_MODEL_LOW:-openrouter/qwen/qwen3.6-27b}"
                                   ;;
                               "high")
-                                  DEV_MODEL="openrouter/qwen/qwen3.6-27b"
+                                  DEV_MODEL="${DEV_MODEL_HIGH:-openrouter/qwen/qwen3.6-27b}"
                                   ;;
                               *)
-                                  DEV_MODEL="openrouter/qwen/qwen3.6-27b"
+                                  DEV_MODEL="${DEV_MODEL_MEDIUM:-openrouter/qwen/qwen3.6-27b}"
                                   ;;
                           esac
                           echo "LLM_MODEL=$DEV_MODEL" >> $GITHUB_ENV
@@ -365,7 +467,7 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-                LLM_BASE_URL: 'https://openrouter.ai/api/v1/chat/completions'
+                LLM_BASE_URL: ${{ env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 COMPLEXITY: ${{ env.COMPLEXITY }}
               run: |
                 echo "Running agent as [@$ROLE_NAME] using prompt: $PROMPT_LOCATION"
