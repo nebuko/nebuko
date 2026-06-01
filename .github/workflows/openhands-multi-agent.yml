@@ -126,7 +126,6 @@ jobs:
                 echo "CIRCUIT_BREAKER_THRESHOLD=${{ inputs.circuit_breaker_threshold }}" >> $GITHUB_ENV
                 echo "PYTHON_VERSION=${{ inputs.python_version }}" >> $GITHUB_ENV
                 echo "ENABLE_UV_CACHE=${{ inputs.enable_uv_cache }}" >> $GITHUB_ENV
-                echo "WORKFLOW_CALL_MODE=true" >> $GITHUB_ENV
 
             - name: Normalize GitHub Event Data
               run: |
@@ -183,12 +182,13 @@ jobs:
                   # Last-mention-wins: avoids @@ctx stealing execution when mentioned in passing
                   LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev' | tail -1)
 
-                  # Determine prompt and script locations based on mode
-                  if [[ "$WORKFLOW_CALL_MODE" == "true" ]]; then
+                  # Determine prompt and script locations by checking which path exists
+                  if [ -d "/tmp/git-flow-ai/.agents/prompts" ]; then
                     PROMPT_BASE="/tmp/git-flow-ai/.agents/prompts"
                     echo "AGENT_SCRIPT_URL=/tmp/git-flow-ai/.github/scripts/agent_script.py" >> $GITHUB_ENV
                   else
                     PROMPT_BASE=".agents/prompts"
+                    echo "AGENT_SCRIPT_URL=.github/scripts/agent_script.py" >> $GITHUB_ENV
                   fi
 
                   case "$LAST_AGENT" in
