@@ -243,7 +243,7 @@ jobs:
                                   DEV_MODEL="${DEV_MODEL_LOW:-openrouter/qwen/qwen3.6-27b}"
                                   ;;
                               "high")
-                                  DEV_MODEL="${DEV_MODEL_HIGH:-openrouter/qwen/qwen3.6-27b}"
+                                  DEV_MODEL="${DEV_MODEL_HIGH:-openrouter/deepseek/deepseek-v4-pro}"
                                   ;;
                               *)
                                   DEV_MODEL="${DEV_MODEL_MEDIUM:-openrouter/qwen/qwen3.6-27b}"
