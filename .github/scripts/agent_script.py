@@ -131,9 +131,11 @@ def collect_llm_metrics(conversation):
                 start_time = first_event.timestamp
         
         # Build metrics dictionary
+        role_name = os.environ.get("ROLE_NAME", "unknown")
         metrics = {
             "run_id": str(conversation.id),
             "model_name": combined_metrics.model_name,
+            "agent_role": role_name,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "complexity": os.environ.get("COMPLEXITY", "N/A"),
@@ -153,6 +155,7 @@ def collect_llm_metrics(conversation):
         return {
             "run_id": str(conversation.id) if conversation else "unknown",
             "model_name": "unknown",
+            "agent_role": os.environ.get("ROLE_NAME", "unknown"),
             "input_tokens": 0,
             "output_tokens": 0,
             "complexity": os.environ.get("COMPLEXITY", "N/A"),

@@ -93,6 +93,42 @@ def aggregate_by_model(all_metrics):
     return aggregated
 
 
+AGENT_DISPLAY_NAMES = {
+    "genius": "Genius",
+    "ctx": "Ctx",
+    "dev": "Dev",
+}
+
+
+def get_agent_display_name(agent_role):
+    """Get display name for an agent role."""
+    return AGENT_DISPLAY_NAMES.get(agent_role, agent_role.title())
+
+
+def aggregate_by_agent(all_metrics):
+    """Aggregate metrics by agent_role."""
+    aggregated = defaultdict(lambda: {
+        "runs": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "latency_sum": 0.0,
+        "tool_calls_sum": 0,
+        "error_rate_sum": 0.0,
+    })
+
+    for m in all_metrics:
+        agent = m.get("agent_role", "unknown")
+        agg = aggregated[agent]
+        agg["runs"] += 1
+        agg["total_input_tokens"] += m.get("input_tokens", 0)
+        agg["total_output_tokens"] += m.get("output_tokens", 0)
+        agg["latency_sum"] += m.get("tool_call_latency_ms", 0.0)
+        agg["tool_calls_sum"] += m.get("nb_tool_calls", 0)
+        agg["error_rate_sum"] += m.get("tool_call_error_rate", 0.0)
+
+    return aggregated
+
+
 def format_number(n):
     """Format a number with commas."""
     return f"{n:,}"
@@ -150,6 +186,92 @@ def generate_summary_table(aggregated):
     return "\n".join(lines)
 
 
+def generate_agent_summary_table(aggregated):
+    """Generate a markdown table from per-agent aggregated metrics."""
+    if not aggregated:
+        return ""
+
+    lines = []
+    lines.append("## 📊 Agent Statistics Summary")
+    lines.append("")
+    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Avg Error Rate |")
+    lines.append("|-------|------|-------------|---------------|------------------|----------------|----------------|")
+
+    grand_runs = 0
+    grand_input = 0
+    grand_output = 0
+
+    # Define a stable sort order for known agents
+    agent_order = {"genius": 0, "ctx": 1, "dev": 2}
+
+    for agent in sorted(aggregated.keys(), key=lambda a: agent_order.get(a, 99)):
+        agg = aggregated[agent]
+        runs = agg["runs"]
+        input_tokens = agg["total_input_tokens"]
+        output_tokens = agg["total_output_tokens"]
+        avg_latency = agg["latency_sum"] / runs if runs else 0
+        avg_tool_calls = agg["tool_calls_sum"] / runs if runs else 0
+        avg_error_rate = agg["error_rate_sum"] / runs if runs else 0
+
+        display_name = get_agent_display_name(agent)
+
+        lines.append(
+            f"| {display_name} "
+            f"| {runs} "
+            f"| {format_number(input_tokens)} "
+            f"| {format_number(output_tokens)} "
+            f"| {avg_latency:.0f} "
+            f"| {avg_tool_calls:.1f} "
+            f"| {avg_error_rate:.1f}% |"
+        )
+
+        grand_runs += runs
+        grand_input += input_tokens
+        grand_output += output_tokens
+
+    lines.append("")
+    lines.append(
+        f"**Totals:** {grand_runs} run{'s' if grand_runs != 1 else ''} "
+        f"· {format_number(grand_input)} input tokens "
+        f"· {format_number(grand_output)} output tokens"
+    )
+
+    return lines
+
+
+def generate_model_summary_table(aggregated):
+    """Generate a markdown table from per-model aggregated metrics."""
+    if not aggregated:
+        return ""
+
+    lines = []
+    lines.append("## 📊 Model Statistics Summary")
+    lines.append("")
+    lines.append("| Model | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Avg Error Rate |")
+    lines.append("|-------|------|-------------|---------------|------------------|----------------|----------------|")
+
+    for model in sorted(aggregated.keys()):
+        agg = aggregated[model]
+        runs = agg["runs"]
+        input_tokens = agg["total_input_tokens"]
+        output_tokens = agg["total_output_tokens"]
+        avg_latency = agg["latency_sum"] / runs if runs else 0
+        avg_tool_calls = agg["tool_calls_sum"] / runs if runs else 0
+        avg_error_rate = agg["error_rate_sum"] / runs if runs else 0
+
+        lines.append(
+            f"| {model} "
+            f"| {runs} "
+            f"| {format_number(input_tokens)} "
+            f"| {format_number(output_tokens)} "
+            f"| {avg_latency:.0f} "
+            f"| {avg_tool_calls:.1f} "
+            f"| {avg_error_rate:.1f}% |"
+        )
+
+    return lines
+
+
 def post_comment(repo, issue_number, token, body):
     """Post a comment to a GitHub issue."""
     url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
@@ -199,8 +321,23 @@ def main():
     if not all_metrics:
         summary = "No agent metrics were found for this issue."
     else:
-        aggregated = aggregate_by_model(all_metrics)
-        summary = generate_summary_table(aggregated)
+        agent_aggregated = aggregate_by_agent(all_metrics)
+        model_aggregated = aggregate_by_model(all_metrics)
+
+        sections = []
+        agent_table = generate_agent_summary_table(agent_aggregated)
+        if agent_table:
+            sections.append("\n".join(agent_table))
+
+        model_table = generate_model_summary_table(model_aggregated)
+        if model_table:
+            sections.append("\n".join(model_table))
+
+        if sections:
+            summary = "\n\n".join(sections)
+            summary += "\n\n> _This comment was auto-generated by the metrics summary agent on issue close._"
+        else:
+            summary = "No agent metrics were found for this issue."
 
     print("\n--- Summary ---")
     print(summary)

@@ -15,8 +15,13 @@ from summarize_metrics import (
     METRICS_REGEX,
     extract_metrics_from_comment,
     aggregate_by_model,
+    aggregate_by_agent,
     generate_summary_table,
+    generate_agent_summary_table,
+    generate_model_summary_table,
     format_number,
+    get_agent_display_name,
+    AGENT_DISPLAY_NAMES,
 )
 
 
@@ -235,6 +240,231 @@ class TestGenerateSummaryTable(unittest.TestCase):
         lines = result.split("\n")
         claude_line = [l for l in lines if "claude" in l][0]
         self.assertIn("5.0%", claude_line)
+
+
+class TestGetAgentDisplayName(unittest.TestCase):
+    """Test get_agent_display_name function."""
+
+    def test_genius(self):
+        self.assertEqual(get_agent_display_name("genius"), "Genius")
+
+    def test_ctx(self):
+        self.assertEqual(get_agent_display_name("ctx"), "Ctx")
+
+    def test_dev(self):
+        self.assertEqual(get_agent_display_name("dev"), "Dev")
+
+    def test_unknown_agent(self):
+        self.assertEqual(get_agent_display_name("unknown"), "Unknown")
+
+    def test_custom_agent(self):
+        self.assertEqual(get_agent_display_name("custom"), "Custom")
+
+
+class TestAggregateByAgent(unittest.TestCase):
+    """Test aggregate_by_agent function."""
+
+    def _make_metric(self, agent, input_tokens=100, output_tokens=50,
+                     latency=1000.0, tool_calls=5, error_rate=0.0):
+        return {
+            "model_name": "gpt-4",
+            "agent_role": agent,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "tool_call_latency_ms": latency,
+            "nb_tool_calls": tool_calls,
+            "tool_call_error_rate": error_rate,
+        }
+
+    def test_single_agent_single_run(self):
+        metrics = [self._make_metric("genius")]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["runs"], 1)
+        self.assertEqual(result["genius"]["total_input_tokens"], 100)
+        self.assertEqual(result["genius"]["total_output_tokens"], 50)
+
+    def test_single_agent_multiple_runs(self):
+        metrics = [
+            self._make_metric("genius", input_tokens=100, output_tokens=50),
+            self._make_metric("genius", input_tokens=200, output_tokens=100),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["runs"], 2)
+        self.assertEqual(result["genius"]["total_input_tokens"], 300)
+        self.assertEqual(result["genius"]["total_output_tokens"], 150)
+
+    def test_multiple_agents(self):
+        metrics = [
+            self._make_metric("genius", input_tokens=100),
+            self._make_metric("ctx", input_tokens=200),
+            self._make_metric("dev", input_tokens=150),
+            self._make_metric("genius", input_tokens=50),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["runs"], 2)
+        self.assertEqual(result["genius"]["total_input_tokens"], 150)
+        self.assertEqual(result["ctx"]["runs"], 1)
+        self.assertEqual(result["ctx"]["total_input_tokens"], 200)
+        self.assertEqual(result["dev"]["runs"], 1)
+        self.assertEqual(result["dev"]["total_input_tokens"], 150)
+
+    def test_empty_metrics(self):
+        result = aggregate_by_agent([])
+        self.assertEqual(len(result), 0)
+
+    def test_missing_agent_role_fallback(self):
+        metrics = [{"model_name": "gpt-4", "input_tokens": 100}]  # no agent_role
+        result = aggregate_by_agent(metrics)
+        self.assertIn("unknown", result)
+        self.assertEqual(result["unknown"]["runs"], 1)
+
+    def test_mixed_with_and_without_agent_role(self):
+        metrics = [
+            self._make_metric("genius", input_tokens=100),
+            {"model_name": "gpt-4", "input_tokens": 200},  # no agent_role
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["runs"], 1)
+        self.assertEqual(result["unknown"]["runs"], 1)
+
+
+class TestGenerateAgentSummaryTable(unittest.TestCase):
+    """Test generate_agent_summary_table function."""
+
+    def _make_aggregated(self):
+        return {
+            "genius": {
+                "runs": 2,
+                "total_input_tokens": 300,
+                "total_output_tokens": 150,
+                "latency_sum": 2000.0,
+                "tool_calls_sum": 10,
+                "error_rate_sum": 0.0,
+            },
+            "ctx": {
+                "runs": 1,
+                "total_input_tokens": 200,
+                "total_output_tokens": 100,
+                "latency_sum": 1500.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 5.0,
+            },
+            "dev": {
+                "runs": 1,
+                "total_input_tokens": 400,
+                "total_output_tokens": 200,
+                "latency_sum": 3000.0,
+                "tool_calls_sum": 8,
+                "error_rate_sum": 2.0,
+            },
+        }
+
+    def test_empty_returns_empty(self):
+        result = generate_agent_summary_table({})
+        self.assertEqual(result, "")
+
+    def test_table_header(self):
+        result = generate_agent_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        self.assertIn("| Agent | Runs |", result_str)
+        self.assertIn("## 📊 Agent Statistics Summary", result_str)
+
+    def test_agent_display_names(self):
+        result = generate_agent_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        self.assertIn("| Genius ", result_str)
+        self.assertIn("| Ctx ", result_str)
+        self.assertIn("| Dev ", result_str)
+
+    def test_agent_sort_order(self):
+        result = generate_agent_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        genius_pos = result_str.index("| Genius ")
+        ctx_pos = result_str.index("| Ctx ")
+        dev_pos = result_str.index("| Dev ")
+        self.assertLess(genius_pos, ctx_pos)
+        self.assertLess(ctx_pos, dev_pos)
+
+    def test_totals_line(self):
+        result = generate_agent_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        self.assertIn("Totals:", result_str)
+        self.assertIn("4 runs", result_str)
+        self.assertIn("900 input tokens", result_str)
+        self.assertIn("450 output tokens", result_str)
+
+    def test_single_run_singular(self):
+        agg = {
+            "genius": {
+                "runs": 1,
+                "total_input_tokens": 100,
+                "total_output_tokens": 50,
+                "latency_sum": 1000.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 0.0,
+            }
+        }
+        result = generate_agent_summary_table(agg)
+        result_str = "\n".join(result)
+        self.assertIn("1 run", result_str)
+        self.assertNotIn("1 runs", result_str)
+
+    def test_average_latency(self):
+        result = generate_agent_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        # genius: 2000/2 = 1000ms avg
+        genius_line = [l for l in result if "Genius" in l][0]
+        self.assertIn("| 1000 ", genius_line)
+
+    def test_average_tool_calls(self):
+        result = generate_agent_summary_table(self._make_aggregated())
+        genius_line = [l for l in result if "Genius" in l][0]
+        self.assertIn("5.0", genius_line)
+
+    def test_average_error_rate(self):
+        result = generate_agent_summary_table(self._make_aggregated())
+        ctx_line = [l for l in result if "Ctx" in l][0]
+        self.assertIn("5.0%", ctx_line)
+
+
+class TestGenerateModelSummaryTable(unittest.TestCase):
+    """Test generate_model_summary_table function."""
+
+    def _make_aggregated(self):
+        return {
+            "gpt-4": {
+                "runs": 2,
+                "total_input_tokens": 300,
+                "total_output_tokens": 150,
+                "latency_sum": 2000.0,
+                "tool_calls_sum": 10,
+                "error_rate_sum": 0.0,
+            },
+            "claude": {
+                "runs": 1,
+                "total_input_tokens": 200,
+                "total_output_tokens": 100,
+                "latency_sum": 1500.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 5.0,
+            },
+        }
+
+    def test_empty_returns_empty(self):
+        result = generate_model_summary_table({})
+        self.assertEqual(result, "")
+
+    def test_table_header(self):
+        result = generate_model_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        self.assertIn("| Model | Runs |", result_str)
+        self.assertIn("## 📊 Model Statistics Summary", result_str)
+
+    def test_model_rows(self):
+        result = generate_model_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        self.assertIn("| gpt-4 ", result_str)
+        self.assertIn("| claude ", result_str)
 
 
 if __name__ == "__main__":
