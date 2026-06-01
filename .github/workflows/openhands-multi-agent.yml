@@ -119,16 +119,13 @@ jobs:
                           COMPLEXITY=$(echo "$COMPLEXITY_JSON" | jq -r '.complexity' | tr '[:upper:]' '[:lower:]')
                           case "$COMPLEXITY" in
                               "low")
-                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
+                                  DEV_MODEL="openrouter/qwen/qwen3.6-27b"
                                   ;;
                               "high")
-                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
-                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
+                                  DEV_MODEL="openrouter/qwen/qwen3.6-27b"
                                   ;;
                               *)
-                                  # Disabled; too slow actually
-                                  # DEV_MODEL="openrouter/deepseek/deepseek-v3.2"
-                                  DEV_MODEL="openrouter/deepseek/deepseek-v4-flash"
+                                  DEV_MODEL="openrouter/qwen/qwen3.6-27b"
                                   ;;
                           esac
                           echo "LLM_MODEL=$DEV_MODEL" >> $GITHUB_ENV
