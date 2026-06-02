@@ -87,7 +87,7 @@ permissions:
 
 jobs:
     run-task:
-        runs-on: ubuntu-24.04
+        runs-on: self-hosted
         if: |
           github.event.action != 'closed' &&
           (
@@ -563,7 +563,7 @@ jobs:
                   retention-days: 7
 
     summarize-metrics:
-        runs-on: ubuntu-latest
+        runs-on: self-hosted
         if: |
           github.event_name == 'issues' &&
           github.event.action == 'closed' &&
