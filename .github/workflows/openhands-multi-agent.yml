@@ -265,23 +265,23 @@ jobs:
                   case "$LAST_AGENT" in
                       "@@genius")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/genius.md" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${GENIUS_MODEL:-openrouter/deepseek/deepseek-v4-pro}" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${GENIUS_MODEL}" >> $GITHUB_ENV
                           echo "LLM_TEMPERATURE=${GENIUS_TEMPERATURE:-0.2}" >> $GITHUB_ENV
                           echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
                           echo "ROLE_NAME=genius" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${GENIUS_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${GENIUS_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${GENIUS_BASE_URL}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${GENIUS_API_KEY}" >> $GITHUB_ENV
                           ;;
                       "@@ctx")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${CTX_MODEL:-openrouter/deepseek/deepseek-v4-flash}" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${CTX_MODEL}" >> $GITHUB_ENV
                           echo "ROLE_NAME=ctx" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${CTX_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${CTX_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${CTX_BASE_URL}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${CTX_API_KEY}" >> $GITHUB_ENV
                           ;;
                       "@@dev")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
@@ -295,13 +295,13 @@ jobs:
                           COMPLEXITY=$(echo "$COMPLEXITY_JSON" | jq -r '.complexity' | tr '[:upper:]' '[:lower:]')
                           case "$COMPLEXITY" in
                               "low")
-                                  DEV_MODEL="${DEV_MODEL_LOW:-openrouter/qwen/qwen3.6-27b}"
+                                  DEV_MODEL="${DEV_MODEL_LOW}"
                                   ;;
                               "high")
-                                  DEV_MODEL="${DEV_MODEL_HIGH:-openrouter/deepseek/deepseek-v4-pro}"
+                                  DEV_MODEL="${DEV_MODEL_HIGH}"
                                   ;;
                               *)
-                                  DEV_MODEL="${DEV_MODEL_MEDIUM:-openrouter/qwen/qwen3.6-27b}"
+                                  DEV_MODEL="${DEV_MODEL_MEDIUM}"
                                   ;;
                           esac
                           echo "LLM_MODEL=$DEV_MODEL" >> $GITHUB_ENV
@@ -311,26 +311,26 @@ jobs:
                           # Resolve per-complexity base URL
                           case "$COMPLEXITY" in
                               "low")
-                                  echo "LLM_BASE_URL=${DEV_MODEL_LOW_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
+                                  echo "LLM_BASE_URL=${DEV_MODEL_LOW_BASE_URL:-${API_BASE_URL}" >> $GITHUB_ENV
                                   ;;
                               "high")
-                                  echo "LLM_BASE_URL=${DEV_MODEL_HIGH_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
+                                  echo "LLM_BASE_URL=${DEV_MODEL_HIGH_BASE_URL:-${API_BASE_URL}" >> $GITHUB_ENV
                                   ;;
                               *)
-                                  echo "LLM_BASE_URL=${DEV_MODEL_MEDIUM_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
+                                  echo "LLM_BASE_URL=${DEV_MODEL_MEDIUM_BASE_URL:-${API_BASE_URL}" >> $GITHUB_ENV
                                   ;;
                           esac
 
                           # Resolve per-complexity API key
                           case "$COMPLEXITY" in
                               "low")
-                                  echo "LLM_API_KEY=${DEV_MODEL_LOW_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
+                                  echo "LLM_API_KEY=${DEV_MODEL_LOW_API_KEY}" >> $GITHUB_ENV
                                   ;;
                               "high")
-                                  echo "LLM_API_KEY=${DEV_MODEL_HIGH_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
+                                  echo "LLM_API_KEY=${DEV_MODEL_HIGH_API_KEY}" >> $GITHUB_ENV
                                   ;;
                               *)
-                                  echo "LLM_API_KEY=${DEV_MODEL_MEDIUM_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
+                                  echo "LLM_API_KEY=${DEV_MODEL_MEDIUM_API_KEY}" >> $GITHUB_ENV
                                   ;;
                           esac
                           ;;
