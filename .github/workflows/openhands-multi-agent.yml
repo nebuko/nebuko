@@ -12,22 +12,22 @@ on:
         description: 'Model for dev agent (low complexity)'
         required: false
         type: string
-        default: 'openrouter/deepseek/deepseek-v4-flash'
+        default: 'qwen-3-6-27b'
       dev_model_medium:
         description: 'Model for dev agent (medium complexity)'
         required: false
         type: string
-        default: 'openrouter/deepseek/deepseek-v4-flash'
+        default: 'qwen-3-6-27b'
       dev_model_high:
         description: 'Model for dev agent (high complexity)'
         required: false
         type: string
-        default: 'openrouter/deepseek/deepseek-v4-flash'
+        default: 'qwen-3-6-27b'
       ctx_model:
         description: 'Model for ctx agent'
         required: false
         type: string
-        default: 'openrouter/deepseek/deepseek-v4-flash'
+        default: 'qwen-3-6-30b-a3b'
       genius_temperature:
         description: 'Temperature for genius agent'
         required: false
@@ -57,22 +57,22 @@ on:
         description: 'Base URL override for dev low-complexity model'
         required: false
         type: string
-        default: ''
+        default: 'http://192.168.1.64:31728/v1/chat/completions'
       dev_model_medium_base_url:
         description: 'Base URL override for dev medium-complexity model'
         required: false
         type: string
-        default: ''
+        default: 'http://192.168.1.64:31728/v1/chat/completions'
       dev_model_high_base_url:
         description: 'Base URL override for dev high-complexity model'
         required: false
         type: string
-        default: ''
+        default: 'http://192.168.1.64:31728/v1/chat/completions'
       ctx_base_url:
         description: 'Base URL override for ctx model'
         required: false
         type: string
-        default: ''
+        default: 'http://192.168.1.64:32202/v1/chat/completions'
       circuit_breaker_threshold:
         description: 'Circuit breaker threshold'
         required: false
