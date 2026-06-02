@@ -167,7 +167,6 @@ jobs:
                 token: ${{ secrets.GH_PAT }}
 
             - name: Apply workflow_call configuration overrides
-              if: github.event_name == 'workflow_call'
               run: |
                 echo "Applying external workflow configuration..."
                 echo "GENIUS_MODEL=${{ inputs.genius_model }}" >> $GITHUB_ENV
