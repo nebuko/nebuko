@@ -57,22 +57,22 @@ on:
         description: 'Base URL override for dev low-complexity model'
         required: false
         type: string
-        default: 'http://192.168.1.64:31728/v1/chat/completions'
+        default: 'http://192.168.1.64:31728'
       dev_model_medium_base_url:
         description: 'Base URL override for dev medium-complexity model'
         required: false
         type: string
-        default: 'http://192.168.1.64:31728/v1/chat/completions'
+        default: 'http://192.168.1.64:31728'
       dev_model_high_base_url:
         description: 'Base URL override for dev high-complexity model'
         required: false
         type: string
-        default: 'http://192.168.1.64:31728/v1/chat/completions'
+        default: 'http://192.168.1.64:31728'
       ctx_base_url:
         description: 'Base URL override for ctx model'
         required: false
         type: string
-        default: 'http://192.168.1.64:32202/v1/chat/completions'
+        default: 'http://192.168.1.64:32202'
       circuit_breaker_threshold:
         description: 'Circuit breaker threshold'
         required: false
