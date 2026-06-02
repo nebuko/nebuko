@@ -27,7 +27,7 @@ on:
         description: 'Model for ctx agent'
         required: false
         type: string
-        default: 'vllm/cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit'
+        default: 'hosted_vllm/qwen-3-6-27b'
       genius_temperature:
         description: 'Temperature for genius agent'
         required: false
