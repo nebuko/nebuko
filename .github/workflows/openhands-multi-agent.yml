@@ -311,13 +311,13 @@ jobs:
                           # Resolve per-complexity base URL
                           case "$COMPLEXITY" in
                               "low")
-                                  echo "LLM_BASE_URL=${DEV_MODEL_LOW_BASE_URL:-${API_BASE_URL}" >> $GITHUB_ENV
+                                  echo "LLM_BASE_URL=${DEV_MODEL_LOW_BASE_URL}" >> $GITHUB_ENV
                                   ;;
                               "high")
-                                  echo "LLM_BASE_URL=${DEV_MODEL_HIGH_BASE_URL:-${API_BASE_URL}" >> $GITHUB_ENV
+                                  echo "LLM_BASE_URL=${DEV_MODEL_HIGH_BASE_URL}" >> $GITHUB_ENV
                                   ;;
                               *)
-                                  echo "LLM_BASE_URL=${DEV_MODEL_MEDIUM_BASE_URL:-${API_BASE_URL}" >> $GITHUB_ENV
+                                  echo "LLM_BASE_URL=${DEV_MODEL_MEDIUM_BASE_URL}" >> $GITHUB_ENV
                                   ;;
                           esac
 
