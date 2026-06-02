@@ -12,22 +12,22 @@ on:
         description: 'Model for dev agent (low complexity)'
         required: false
         type: string
-        default: 'openai/qwen-3-6-27b'
+        default: 'openai/cyankiwi/Qwen3.6-27B-AWQ-INT4'
       dev_model_medium:
         description: 'Model for dev agent (medium complexity)'
         required: false
         type: string
-        default: 'openai/qwen-3-6-27b'
+        default: 'openai/cyankiwi/Qwen3.6-27B-AWQ-INT4'
       dev_model_high:
         description: 'Model for dev agent (high complexity)'
         required: false
         type: string
-        default: 'openai/qwen-3-6-27b'
+        default: 'openai/cyankiwi/Qwen3.6-27B-AWQ-INT4'
       ctx_model:
         description: 'Model for ctx agent'
         required: false
         type: string
-        default: 'openai/qwen-3-6-30b-a3b'
+        default: 'openai/cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit'
       genius_temperature:
         description: 'Temperature for genius agent'
         required: false
