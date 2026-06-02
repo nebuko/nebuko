@@ -142,8 +142,19 @@ jobs:
               contains(github.event.comment.body, '@@dev')))
           )
         env:
+            GENIUS_MODEL: ${{ inputs.genius_model || 'openrouter/deepseek/deepseek-v4-pro' }}
+            DEV_MODEL_LOW: ${{ inputs.dev_model_low || 'qwen-3-6-27b' }}
+            DEV_MODEL_MEDIUM: ${{ inputs.dev_model_medium || 'qwen-3-6-27b' }}
+            DEV_MODEL_HIGH: ${{ inputs.dev_model_high || 'qwen-3-6-27b' }}
+            CTX_MODEL: ${{ inputs.ctx_model || 'qwen-3-6-30b-a3b' }}
+            GENIUS_TEMPERATURE: ${{ inputs.genius_temperature || 0.2 }}
+            DEV_TEMPERATURE: ${{ inputs.dev_temperature || 0.0 }}
+            LLM_SEED_OVERRIDE: ${{ inputs.llm_seed || 42 }}
+            API_BASE_URL: ${{ inputs.api_base_url || 'https://openrouter.ai/api/v1/chat/completions' }}
+            CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 15 }}
+            PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
+            ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
-            CIRCUIT_BREAKER_THRESHOLD: 20
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
@@ -165,32 +176,6 @@ jobs:
                 repository: olivier-norture/git-flow-ai
                 path: .git-flow-ai-cache
                 token: ${{ secrets.GH_PAT }}
-
-            - name: Apply workflow_call configuration overrides
-              run: |
-                echo "Applying external workflow configuration..."
-                echo "GENIUS_MODEL=${{ inputs.genius_model }}" >> $GITHUB_ENV
-                echo "DEV_MODEL_LOW=${{ inputs.dev_model_low }}" >> $GITHUB_ENV
-                echo "DEV_MODEL_MEDIUM=${{ inputs.dev_model_medium }}" >> $GITHUB_ENV
-                echo "DEV_MODEL_HIGH=${{ inputs.dev_model_high }}" >> $GITHUB_ENV
-                echo "CTX_MODEL=${{ inputs.ctx_model }}" >> $GITHUB_ENV
-                echo "GENIUS_TEMPERATURE=${{ inputs.genius_temperature }}" >> $GITHUB_ENV
-                echo "DEV_TEMPERATURE=${{ inputs.dev_temperature }}" >> $GITHUB_ENV
-                echo "LLM_SEED_OVERRIDE=${{ inputs.llm_seed }}" >> $GITHUB_ENV
-                echo "API_BASE_URL=${{ inputs.api_base_url }}" >> $GITHUB_ENV
-                echo "GENIUS_BASE_URL=${{ inputs.genius_base_url }}" >> $GITHUB_ENV
-                echo "DEV_MODEL_LOW_BASE_URL=${{ inputs.dev_model_low_base_url }}" >> $GITHUB_ENV
-                echo "DEV_MODEL_MEDIUM_BASE_URL=${{ inputs.dev_model_medium_base_url }}" >> $GITHUB_ENV
-                echo "DEV_MODEL_HIGH_BASE_URL=${{ inputs.dev_model_high_base_url }}" >> $GITHUB_ENV
-                echo "CTX_BASE_URL=${{ inputs.ctx_base_url }}" >> $GITHUB_ENV
-                echo "GENIUS_API_KEY=${{ secrets.GENIUS_API_KEY }}" >> $GITHUB_ENV
-                echo "DEV_MODEL_LOW_API_KEY=${{ secrets.DEV_MODEL_LOW_API_KEY }}" >> $GITHUB_ENV
-                echo "DEV_MODEL_MEDIUM_API_KEY=${{ secrets.DEV_MODEL_MEDIUM_API_KEY }}" >> $GITHUB_ENV
-                echo "DEV_MODEL_HIGH_API_KEY=${{ secrets.DEV_MODEL_HIGH_API_KEY }}" >> $GITHUB_ENV
-                echo "CTX_API_KEY=${{ secrets.CTX_API_KEY }}" >> $GITHUB_ENV
-                echo "CIRCUIT_BREAKER_THRESHOLD=${{ inputs.circuit_breaker_threshold }}" >> $GITHUB_ENV
-                echo "PYTHON_VERSION=${{ inputs.python_version }}" >> $GITHUB_ENV
-                echo "ENABLE_UV_CACHE=${{ inputs.enable_uv_cache }}" >> $GITHUB_ENV
 
             - name: Normalize GitHub Event Data
               run: |
