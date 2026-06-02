@@ -37,4 +37,9 @@ jobs:
       circuit_breaker_threshold: 15
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GENIUS_API_KEY: ${{ secrets.GENIUS_API_KEY }}
+      DEV_MODEL_LOW_API_KEY: ${{ secrets.DEV_MODEL_LOW_API_KEY }}
+      DEV_MODEL_MEDIUM_API_KEY: ${{ secrets.DEV_MODEL_MEDIUM_API_KEY }}
+      DEV_MODEL_HIGH_API_KEY: ${{ secrets.DEV_MODEL_HIGH_API_KEY }}
+      CTX_API_KEY: ${{ secrets.CTX_API_KEY }}
       GH_PAT: ${{ secrets.GH_PAT }}

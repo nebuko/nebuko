@@ -33,6 +33,16 @@ Use this workflow in any GitHub project by copying a single workflow file.
 | `dev_model_high` | `openrouter/deepseek/deepseek-v4-flash` | Model for dev agent (high complexity) |
 | `ctx_model` | `openrouter/deepseek/deepseek-v4-flash` | Model for the ctx agent |
 | `api_base_url` | `https://openrouter.ai/api/v1/chat/completions` | LLM API base URL |
+| `genius_base_url` | *(empty)* | Base URL override for genius model |
+| `dev_model_low_base_url` | *(empty)* | Base URL override for dev low-complexity model |
+| `dev_model_medium_base_url` | *(empty)* | Base URL override for dev medium-complexity model |
+| `dev_model_high_base_url` | *(empty)* | Base URL override for dev high-complexity model |
+| `ctx_base_url` | *(empty)* | Base URL override for ctx model |
+| `genius_api_key` | *(empty)* | API key override for genius model (falls back to `OPENROUTER_API_KEY`) |
+| `dev_model_low_api_key` | *(empty)* | API key override for dev low-complexity model |
+| `dev_model_medium_api_key` | *(empty)* | API key override for dev medium-complexity model |
+| `dev_model_high_api_key` | *(empty)* | API key override for dev high-complexity model |
+| `ctx_api_key` | *(empty)* | API key override for ctx model |
 | `genius_temperature` | `0.2` | Temperature for genius agent |
 | `dev_temperature` | `0.0` | Temperature for dev agent |
 | `llm_seed` | `42` | Seed for reproducible LLM outputs |
