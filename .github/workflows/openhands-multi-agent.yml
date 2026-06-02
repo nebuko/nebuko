@@ -124,6 +124,7 @@ jobs:
               with:
                 repository: olivier-norture/git-flow-ai
                 path: .git-flow-ai-cache
+                token: ${{ secrets.GH_PAT }}
 
             - name: Apply workflow_call configuration overrides
               if: github.event_name == 'workflow_call'
