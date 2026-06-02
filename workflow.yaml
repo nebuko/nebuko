@@ -30,13 +30,6 @@ jobs:
       # dev_model_medium_base_url: "http://localhost:8002/v1/chat/completions"
       # dev_model_high_base_url: "http://localhost:8003/v1/chat/completions"
       # ctx_base_url: "http://localhost:8004/v1/chat/completions"
-      # ───── Per-Model API Key Overrides (optional) ─────
-      # Set these to use different API keys per model/role (overrides OPENROUTER_API_KEY)
-      # genius_api_key: ""
-      # dev_model_low_api_key: ""
-      # dev_model_medium_api_key: ""
-      # dev_model_high_api_key: ""
-      # ctx_api_key: ""
       # ───── Advanced ─────
       genius_temperature: 0.2
       dev_temperature: 0.0
