@@ -73,6 +73,31 @@ on:
         required: false
         type: string
         default: ''
+      genius_api_key:
+        description: 'API key override for genius model'
+        required: false
+        type: string
+        default: ''
+      dev_model_low_api_key:
+        description: 'API key override for dev low-complexity model'
+        required: false
+        type: string
+        default: ''
+      dev_model_medium_api_key:
+        description: 'API key override for dev medium-complexity model'
+        required: false
+        type: string
+        default: ''
+      dev_model_high_api_key:
+        description: 'API key override for dev high-complexity model'
+        required: false
+        type: string
+        default: ''
+      ctx_api_key:
+        description: 'API key override for ctx model'
+        required: false
+        type: string
+        default: ''
       circuit_breaker_threshold:
         description: 'Circuit breaker threshold'
         required: false
@@ -95,8 +120,23 @@ on:
         default: ''
     secrets:
       OPENROUTER_API_KEY:
-        description: 'API key for the LLM provider'
+        description: 'Default API key for the LLM provider (used as fallback)'
         required: true
+      GENIUS_API_KEY:
+        description: 'API key override for the Genius agent'
+        required: false
+      DEV_MODEL_LOW_API_KEY:
+        description: 'API key override for low-complexity dev tasks'
+        required: false
+      DEV_MODEL_MEDIUM_API_KEY:
+        description: 'API key override for medium-complexity dev tasks'
+        required: false
+      DEV_MODEL_HIGH_API_KEY:
+        description: 'API key override for high-complexity dev tasks'
+        required: false
+      CTX_API_KEY:
+        description: 'API key override for the Ctx agent'
+        required: false
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
@@ -169,6 +209,11 @@ jobs:
                 echo "DEV_MODEL_MEDIUM_BASE_URL=${{ inputs.dev_model_medium_base_url }}" >> $GITHUB_ENV
                 echo "DEV_MODEL_HIGH_BASE_URL=${{ inputs.dev_model_high_base_url }}" >> $GITHUB_ENV
                 echo "CTX_BASE_URL=${{ inputs.ctx_base_url }}" >> $GITHUB_ENV
+                echo "GENIUS_API_KEY=${{ inputs.genius_api_key }}" >> $GITHUB_ENV
+                echo "DEV_MODEL_LOW_API_KEY=${{ inputs.dev_model_low_api_key }}" >> $GITHUB_ENV
+                echo "DEV_MODEL_MEDIUM_API_KEY=${{ inputs.dev_model_medium_api_key }}" >> $GITHUB_ENV
+                echo "DEV_MODEL_HIGH_API_KEY=${{ inputs.dev_model_high_api_key }}" >> $GITHUB_ENV
+                echo "CTX_API_KEY=${{ inputs.ctx_api_key }}" >> $GITHUB_ENV
                 echo "CIRCUIT_BREAKER_THRESHOLD=${{ inputs.circuit_breaker_threshold }}" >> $GITHUB_ENV
                 echo "PYTHON_VERSION=${{ inputs.python_version }}" >> $GITHUB_ENV
                 echo "ENABLE_UV_CACHE=${{ inputs.enable_uv_cache }}" >> $GITHUB_ENV
@@ -252,6 +297,7 @@ jobs:
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           echo "LLM_BASE_URL=${GENIUS_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${GENIUS_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
                           ;;
                       "@@ctx")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
@@ -260,6 +306,7 @@ jobs:
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           echo "LLM_BASE_URL=${CTX_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${CTX_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
                           ;;
                       "@@dev")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
@@ -296,6 +343,19 @@ jobs:
                                   ;;
                               *)
                                   echo "LLM_BASE_URL=${DEV_MODEL_MEDIUM_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
+                                  ;;
+                          esac
+
+                          # Resolve per-complexity API key
+                          case "$COMPLEXITY" in
+                              "low")
+                                  echo "LLM_API_KEY=${DEV_MODEL_LOW_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
+                                  ;;
+                              "high")
+                                  echo "LLM_API_KEY=${DEV_MODEL_HIGH_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
+                                  ;;
+                              *)
+                                  echo "LLM_API_KEY=${DEV_MODEL_MEDIUM_API_KEY:-${{ secrets.OPENROUTER_API_KEY }}}" >> $GITHUB_ENV
                                   ;;
                           esac
                           ;;
@@ -453,7 +513,7 @@ jobs:
               timeout-minutes: 30
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
-                LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+                LLM_API_KEY: ${{ env.LLM_API_KEY || secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 COMPLEXITY: ${{ env.COMPLEXITY }}
               run: |
