@@ -145,7 +145,7 @@ jobs:
 
             - name: Normalize GitHub Event Data
               run: |
-                EVENT_PATH="/home/runner/work/_temp/_github_workflow/event.json"
+                EVENT_PATH="$GITHUB_EVENT_PATH"
                 
                 # Normalize based on event type
                 if [[ "${{ github.event_name }}" == "issue_comment" ]]; then
