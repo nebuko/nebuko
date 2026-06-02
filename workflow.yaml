@@ -23,6 +23,13 @@ jobs:
       ctx_model: "openrouter/deepseek/deepseek-v4-flash"
       # ───── API Configuration ─────
       api_base_url: "https://openrouter.ai/api/v1/chat/completions"
+      # ───── Per-Model Base URL Overrides (optional) ─────
+      # Set these to route specific models to different endpoints (e.g., local vLLM)
+      # genius_base_url: "http://localhost:8000/v1/chat/completions"
+      # dev_model_low_base_url: "http://localhost:8001/v1/chat/completions"
+      # dev_model_medium_base_url: "http://localhost:8002/v1/chat/completions"
+      # dev_model_high_base_url: "http://localhost:8003/v1/chat/completions"
+      # ctx_base_url: "http://localhost:8004/v1/chat/completions"
       # ───── Advanced ─────
       genius_temperature: 0.2
       dev_temperature: 0.0

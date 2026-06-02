@@ -48,6 +48,31 @@ on:
         required: false
         type: string
         default: 'https://openrouter.ai/api/v1/chat/completions'
+      genius_base_url:
+        description: 'Base URL override for genius model'
+        required: false
+        type: string
+        default: ''
+      dev_model_low_base_url:
+        description: 'Base URL override for dev low-complexity model'
+        required: false
+        type: string
+        default: ''
+      dev_model_medium_base_url:
+        description: 'Base URL override for dev medium-complexity model'
+        required: false
+        type: string
+        default: ''
+      dev_model_high_base_url:
+        description: 'Base URL override for dev high-complexity model'
+        required: false
+        type: string
+        default: ''
+      ctx_base_url:
+        description: 'Base URL override for ctx model'
+        required: false
+        type: string
+        default: ''
       circuit_breaker_threshold:
         description: 'Circuit breaker threshold'
         required: false
@@ -139,6 +164,11 @@ jobs:
                 echo "DEV_TEMPERATURE=${{ inputs.dev_temperature }}" >> $GITHUB_ENV
                 echo "LLM_SEED_OVERRIDE=${{ inputs.llm_seed }}" >> $GITHUB_ENV
                 echo "API_BASE_URL=${{ inputs.api_base_url }}" >> $GITHUB_ENV
+                echo "GENIUS_BASE_URL=${{ inputs.genius_base_url }}" >> $GITHUB_ENV
+                echo "DEV_MODEL_LOW_BASE_URL=${{ inputs.dev_model_low_base_url }}" >> $GITHUB_ENV
+                echo "DEV_MODEL_MEDIUM_BASE_URL=${{ inputs.dev_model_medium_base_url }}" >> $GITHUB_ENV
+                echo "DEV_MODEL_HIGH_BASE_URL=${{ inputs.dev_model_high_base_url }}" >> $GITHUB_ENV
+                echo "CTX_BASE_URL=${{ inputs.ctx_base_url }}" >> $GITHUB_ENV
                 echo "CIRCUIT_BREAKER_THRESHOLD=${{ inputs.circuit_breaker_threshold }}" >> $GITHUB_ENV
                 echo "PYTHON_VERSION=${{ inputs.python_version }}" >> $GITHUB_ENV
                 echo "ENABLE_UV_CACHE=${{ inputs.enable_uv_cache }}" >> $GITHUB_ENV
@@ -221,6 +251,7 @@ jobs:
                           echo "ROLE_NAME=genius" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${GENIUS_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
                           ;;
                       "@@ctx")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
@@ -228,6 +259,7 @@ jobs:
                           echo "ROLE_NAME=ctx" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${CTX_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
                           ;;
                       "@@dev")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
@@ -253,6 +285,19 @@ jobs:
                           echo "LLM_MODEL=$DEV_MODEL" >> $GITHUB_ENV
                           echo "COMPLEXITY=$COMPLEXITY" >> $GITHUB_ENV
                           echo "Dev complexity estimated: $COMPLEXITY -> using model: $DEV_MODEL"
+
+                          # Resolve per-complexity base URL
+                          case "$COMPLEXITY" in
+                              "low")
+                                  echo "LLM_BASE_URL=${DEV_MODEL_LOW_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
+                                  ;;
+                              "high")
+                                  echo "LLM_BASE_URL=${DEV_MODEL_HIGH_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
+                                  ;;
+                              *)
+                                  echo "LLM_BASE_URL=${DEV_MODEL_MEDIUM_BASE_URL:-${API_BASE_URL:-https://openrouter.ai/api/v1/chat/completions}}" >> $GITHUB_ENV
+                                  ;;
+                          esac
                           ;;
                   esac
 
@@ -409,7 +454,7 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-                LLM_BASE_URL: ${{ env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
+                LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 COMPLEXITY: ${{ env.COMPLEXITY }}
               run: |
                 echo "Running agent as [@$ROLE_NAME] using prompt: $PROMPT_LOCATION"
