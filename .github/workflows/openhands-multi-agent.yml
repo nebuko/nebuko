@@ -12,22 +12,22 @@ on:
         description: 'Model for dev agent (low complexity)'
         required: false
         type: string
-        default: 'qwen-3-6-27b'
+        default: 'openai/qwen-3-6-27b'
       dev_model_medium:
         description: 'Model for dev agent (medium complexity)'
         required: false
         type: string
-        default: 'qwen-3-6-27b'
+        default: 'openai/qwen-3-6-27b'
       dev_model_high:
         description: 'Model for dev agent (high complexity)'
         required: false
         type: string
-        default: 'qwen-3-6-27b'
+        default: 'openai/qwen-3-6-27b'
       ctx_model:
         description: 'Model for ctx agent'
         required: false
         type: string
-        default: 'qwen-3-6-30b-a3b'
+        default: 'openai/qwen-3-6-30b-a3b'
       genius_temperature:
         description: 'Temperature for genius agent'
         required: false
@@ -143,10 +143,10 @@ jobs:
           )
         env:
             GENIUS_MODEL: ${{ inputs.genius_model || 'openrouter/deepseek/deepseek-v4-pro' }}
-            DEV_MODEL_LOW: ${{ inputs.dev_model_low || 'qwen-3-6-27b' }}
-            DEV_MODEL_MEDIUM: ${{ inputs.dev_model_medium || 'qwen-3-6-27b' }}
-            DEV_MODEL_HIGH: ${{ inputs.dev_model_high || 'qwen-3-6-27b' }}
-            CTX_MODEL: ${{ inputs.ctx_model || 'qwen-3-6-30b-a3b' }}
+            DEV_MODEL_LOW: ${{ inputs.dev_model_low || 'openai/qwen-3-6-27b' }}
+            DEV_MODEL_MEDIUM: ${{ inputs.dev_model_medium || 'openai/qwen-3-6-27b' }}
+            DEV_MODEL_HIGH: ${{ inputs.dev_model_high || 'openai/qwen-3-6-27b' }}
+            CTX_MODEL: ${{ inputs.ctx_model || 'openai/qwen-3-6-30b-a3b' }}
             GENIUS_TEMPERATURE: ${{ inputs.genius_temperature || 0.2 }}
             DEV_TEMPERATURE: ${{ inputs.dev_temperature || 0.0 }}
             LLM_SEED_OVERRIDE: ${{ inputs.llm_seed || 42 }}
