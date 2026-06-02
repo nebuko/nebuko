@@ -123,7 +123,7 @@ jobs:
               uses: actions/checkout@v5
               with:
                 repository: olivier-norture/git-flow-ai
-                path: /tmp/git-flow-ai
+                path: .git-flow-ai-cache
 
             - name: Apply workflow_call configuration overrides
               if: github.event_name == 'workflow_call'
@@ -203,9 +203,9 @@ jobs:
                   LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev' | tail -1)
 
                   # Determine prompt and script locations by checking which path exists
-                  if [ -d "/tmp/git-flow-ai/.agents/prompts" ]; then
-                    PROMPT_BASE="/tmp/git-flow-ai/.agents/prompts"
-                    echo "AGENT_SCRIPT_URL=/tmp/git-flow-ai/.github/scripts/agent_script.py" >> $GITHUB_ENV
+                  if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/.agents/prompts" ]; then
+                    PROMPT_BASE="$GITHUB_WORKSPACE/.git-flow-ai-cache/.agents/prompts"
+                    echo "AGENT_SCRIPT_URL=$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts/agent_script.py" >> $GITHUB_ENV
                   else
                     PROMPT_BASE=".agents/prompts"
                     echo "AGENT_SCRIPT_URL=.github/scripts/agent_script.py" >> $GITHUB_ENV
@@ -339,7 +339,7 @@ jobs:
                 fi
 
             - name: Post Acknowledgment Comment
-              if: env.SKIP_AGENT == 'false'
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
@@ -354,7 +354,7 @@ jobs:
                   ⏳ This may take 1–10 minutes. I'll reply here when done.
 
             - name: Prepare Agent Query Context
-              if: env.SKIP_AGENT == 'false'
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                 ISSUE_TEMPLATE: |
