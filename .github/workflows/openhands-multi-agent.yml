@@ -155,7 +155,7 @@ jobs:
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
-            LITELLM_LOG: "DEBUG"
+            LITELLM_LOG: DEBUG
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
