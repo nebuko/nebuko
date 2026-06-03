@@ -69,6 +69,68 @@ def extract_metrics_from_comment(body):
     return metrics_list
 
 
+def _merge_per_tool_dict(base, override):
+    """
+    Merge two per-tool dicts: base and override.
+    
+    Values from override are added to base. Handles both simple numeric
+    values and nested token dicts (input/output/cache_hit/reasoning).
+    
+    Args:
+        base: First per-tool dict (may be None or empty)
+        override: Second per-tool dict (may be None or empty)
+        
+    Returns:
+        Merged per-tool dict
+    """
+    if not base:
+        return override or {}
+    if not override:
+        return base
+    
+    merged = dict(base)
+    for tool, values in override.items():
+        if tool in merged:
+            existing = merged[tool]
+            if isinstance(values, dict) and isinstance(existing, dict):
+                # Check if this is a token usage dict
+                if all(k in existing for k in ('input', 'output', 'cache_hit', 'reasoning')):
+                    merged[tool] = {
+                        'input': existing['input'] + values.get('input', 0),
+                        'output': existing['output'] + values.get('output', 0),
+                        'cache_hit': existing['cache_hit'] + values.get('cache_hit', 0),
+                        'reasoning': existing['reasoning'] + values.get('reasoning', 0),
+                    }
+                else:
+                    # Generic dict merge: sum numeric values
+                    for k, v in values.items():
+                        existing[k] = existing.get(k, 0) + v
+            else:
+                # Simple numeric values: sum them
+                merged[tool] = existing + values
+        else:
+            merged[tool] = values
+    
+    return merged
+
+
+def _format_tool_dict(tool_dict):
+    """
+    Format a per-tool dict for display.
+    
+    Args:
+        tool_dict: Per-tool dict (may be None, empty, or populated)
+        
+    Returns:
+        Formatted string or "N/A" if empty
+    """
+    if not tool_dict:
+        return "N/A"
+    # Sort alphabetically for consistent display
+    parts = [f"{tool}: {count}" for tool, count in sorted(tool_dict.items())]
+    return ", ".join(parts)
+
+
 def aggregate_by_model(all_metrics):
     """Aggregate metrics by model_name."""
     aggregated = defaultdict(lambda: {
@@ -78,6 +140,9 @@ def aggregate_by_model(all_metrics):
         "latency_sum": 0.0,
         "tool_calls_sum": 0,
         "error_rate_sum": 0.0,
+        "tool_calls_per_tool": {},
+        "errors_per_tool": {},
+        "tokens_per_tool": {},
     })
 
     for m in all_metrics:
@@ -89,6 +154,16 @@ def aggregate_by_model(all_metrics):
         agg["latency_sum"] += m.get("tool_call_latency_ms", 0.0)
         agg["tool_calls_sum"] += m.get("nb_tool_calls", 0)
         agg["error_rate_sum"] += m.get("tool_call_error_rate", 0.0)
+        # Merge per-tool data
+        agg["tool_calls_per_tool"] = _merge_per_tool_dict(
+            agg["tool_calls_per_tool"], m.get("tool_calls_per_tool", {})
+        )
+        agg["errors_per_tool"] = _merge_per_tool_dict(
+            agg["errors_per_tool"], m.get("errors_per_tool", {})
+        )
+        agg["tokens_per_tool"] = _merge_per_tool_dict(
+            agg["tokens_per_tool"], m.get("tokens_per_tool", {})
+        )
 
     return aggregated
 
@@ -114,6 +189,9 @@ def aggregate_by_agent(all_metrics):
         "latency_sum": 0.0,
         "tool_calls_sum": 0,
         "error_rate_sum": 0.0,
+        "tool_calls_per_tool": {},
+        "errors_per_tool": {},
+        "tokens_per_tool": {},
     })
 
     for m in all_metrics:
@@ -125,6 +203,16 @@ def aggregate_by_agent(all_metrics):
         agg["latency_sum"] += m.get("tool_call_latency_ms", 0.0)
         agg["tool_calls_sum"] += m.get("nb_tool_calls", 0)
         agg["error_rate_sum"] += m.get("tool_call_error_rate", 0.0)
+        # Merge per-tool data
+        agg["tool_calls_per_tool"] = _merge_per_tool_dict(
+            agg["tool_calls_per_tool"], m.get("tool_calls_per_tool", {})
+        )
+        agg["errors_per_tool"] = _merge_per_tool_dict(
+            agg["errors_per_tool"], m.get("errors_per_tool", {})
+        )
+        agg["tokens_per_tool"] = _merge_per_tool_dict(
+            agg["tokens_per_tool"], m.get("tokens_per_tool", {})
+        )
 
     return aggregated
 
@@ -194,8 +282,8 @@ def generate_agent_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Agent Statistics Summary")
     lines.append("")
-    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Avg Error Rate |")
-    lines.append("|-------|------|-------------|---------------|------------------|----------------|----------------|")
+    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Tool Errors | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|------------------|----------------|-------------|----------------|")
 
     grand_runs = 0
     grand_input = 0
@@ -211,7 +299,9 @@ def generate_agent_summary_table(aggregated):
         output_tokens = agg["total_output_tokens"]
         avg_latency = agg["latency_sum"] / runs if runs else 0
         avg_tool_calls = agg["tool_calls_sum"] / runs if runs else 0
-        avg_error_rate = agg["error_rate_sum"] / runs if runs else 0
+
+        # Calculate total tool errors across all runs
+        total_errors = sum(agg["errors_per_tool"].values()) if agg["errors_per_tool"] else 0
 
         display_name = get_agent_display_name(agent)
 
@@ -222,7 +312,8 @@ def generate_agent_summary_table(aggregated):
             f"| {format_number(output_tokens)} "
             f"| {avg_latency:.0f} "
             f"| {avg_tool_calls:.1f} "
-            f"| {avg_error_rate:.1f}% |"
+            f"| {total_errors} "
+            f"| {_format_tool_dict(agg['tool_calls_per_tool'])} |"
         )
 
         grand_runs += runs
@@ -247,8 +338,8 @@ def generate_model_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Model Statistics Summary")
     lines.append("")
-    lines.append("| Model | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Avg Error Rate |")
-    lines.append("|-------|------|-------------|---------------|------------------|----------------|----------------|")
+    lines.append("| Model | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Tool Errors | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|------------------|----------------|-------------|----------------|")
 
     for model in sorted(aggregated.keys()):
         agg = aggregated[model]
@@ -257,7 +348,9 @@ def generate_model_summary_table(aggregated):
         output_tokens = agg["total_output_tokens"]
         avg_latency = agg["latency_sum"] / runs if runs else 0
         avg_tool_calls = agg["tool_calls_sum"] / runs if runs else 0
-        avg_error_rate = agg["error_rate_sum"] / runs if runs else 0
+
+        # Calculate total tool errors across all runs
+        total_errors = sum(agg["errors_per_tool"].values()) if agg["errors_per_tool"] else 0
 
         lines.append(
             f"| {model} "
@@ -266,7 +359,8 @@ def generate_model_summary_table(aggregated):
             f"| {format_number(output_tokens)} "
             f"| {avg_latency:.0f} "
             f"| {avg_tool_calls:.1f} "
-            f"| {avg_error_rate:.1f}% |"
+            f"| {total_errors} "
+            f"| {_format_tool_dict(agg['tool_calls_per_tool'])} |"
         )
 
     return lines
