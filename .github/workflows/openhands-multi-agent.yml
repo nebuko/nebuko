@@ -148,6 +148,7 @@ jobs:
             DEV_MODEL_HIGH: ${{ inputs.dev_model_high || 'openai/qwen-3-6-27b' }}
             CTX_MODEL: ${{ inputs.ctx_model || 'hosted_vllm/qwen-3-6-30b-a3b' }}
             CTX_BASE_URL : ${{ inputs.ctx_base_url || 'http://192.168.1.64:32202/v1' }}
+            CTX_API_KEY : ${{ secrets.CTX_API_KEY }}
             GENIUS_TEMPERATURE: ${{ inputs.genius_temperature || 0.2 }}
             DEV_TEMPERATURE: ${{ inputs.dev_temperature || 0.0 }}
             LLM_SEED_OVERRIDE: ${{ inputs.llm_seed || 42 }}
