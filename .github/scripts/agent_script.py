@@ -80,6 +80,80 @@ def load_prompt(prompt_location: str) -> str:
         raise ValueError(f"Failed to load prompt from {prompt_location}: {e}")
 
 
+def _compute_tool_calls_per_tool(conversation):
+    """
+    Group ActionEvents by tool_name to produce per-tool call counts.
+    
+    Args:
+        conversation: The OpenHands Conversation object
+        
+    Returns:
+        dict: Mapping of tool_name to call count
+    """
+    action_events = [e for e in conversation.state.events if isinstance(e, ActionEvent)]
+    agent_tool_calls = [e for e in action_events if e.source == "agent"]
+    
+    tool_counts = {}
+    for event in agent_tool_calls:
+        tool_name = event.tool_name if hasattr(event, 'tool_name') else "unknown"
+        tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+    
+    return tool_counts
+
+
+def _compute_errors_per_tool(conversation):
+    """
+    Count observation errors per tool_name.
+    
+    Args:
+        conversation: The OpenHands Conversation object
+        
+    Returns:
+        dict: Mapping of tool_name to error count
+    """
+    observation_events = [e for e in conversation.state.events if isinstance(e, ObservationEvent)]
+    
+    errors_per_tool = {}
+    for event in observation_events:
+        # Get the tool_name from the related action event
+        tool_name = "unknown"
+        if hasattr(event, 'action_event') and event.action_event:
+            action = event.action_event
+            if hasattr(action, 'tool_name'):
+                tool_name = action.tool_name
+        # Check if this observation is an error
+        if hasattr(event, 'observation') and hasattr(event.observation, 'is_error') and event.observation.is_error:
+            errors_per_tool[tool_name] = errors_per_tool.get(tool_name, 0) + 1
+    
+    return errors_per_tool
+
+
+def _compute_tokens_per_tool(combined_metrics):
+    """
+    Compute token usage per tool from combined metrics.
+    
+    Args:
+        combined_metrics: The combined metrics object from conversation
+        
+    Returns:
+        dict: Mapping of tool_name to token usage dict
+    """
+    if not combined_metrics.token_usages:
+        return {}
+    
+    tokens_per_tool = {}
+    for usage in combined_metrics.token_usages:
+        tool_name = getattr(usage, 'tool_name', 'unknown') or 'unknown'
+        tokens_per_tool[tool_name] = {
+            'input': getattr(usage, 'prompt_tokens', 0) or 0,
+            'output': getattr(usage, 'completion_tokens', 0) or 0,
+            'cache_hit': getattr(usage, 'cache_hit_tokens', 0) or 0,
+            'reasoning': getattr(usage, 'reasoning_tokens', 0) or 0,
+        }
+    
+    return tokens_per_tool
+
+
 def collect_llm_metrics(conversation):
     """
     Collect LLM metrics from a conversation after it has completed.
@@ -102,7 +176,7 @@ def collect_llm_metrics(conversation):
         # Count tool call errors
         observation_events = [e for e in conversation.state.events if isinstance(e, ObservationEvent)]
         total_observations = len(observation_events)
-        error_observations = len([e for e in observation_events if hasattr(e, 'exit_code') and e.exit_code != 0])
+        error_observations = len([e for e in observation_events if hasattr(e, 'observation') and hasattr(e.observation, 'is_error') and e.observation.is_error])
         
         # Calculate error rate (avoid division by zero)
         tool_call_error_rate = 0.0
@@ -122,6 +196,11 @@ def collect_llm_metrics(conversation):
         if combined_metrics.accumulated_token_usage:
             input_tokens = combined_metrics.accumulated_token_usage.prompt_tokens
             output_tokens = combined_metrics.accumulated_token_usage.completion_tokens
+        
+        # Compute per-tool statistics
+        tool_calls_per_tool = _compute_tool_calls_per_tool(conversation)
+        errors_per_tool = _compute_errors_per_tool(conversation)
+        tokens_per_tool = _compute_tokens_per_tool(combined_metrics)
         
         # Get start time (first event timestamp or current time)
         start_time = datetime.now(timezone.utc).isoformat()
@@ -143,7 +222,10 @@ def collect_llm_metrics(conversation):
             "nb_tool_calls": nb_tool_calls,
             "tool_call_error_rate": tool_call_error_rate,
             "start_time": start_time,
-            "end_time": datetime.now(timezone.utc).isoformat()
+            "end_time": datetime.now(timezone.utc).isoformat(),
+            "tool_calls_per_tool": tool_calls_per_tool,
+            "errors_per_tool": errors_per_tool,
+            "tokens_per_tool": tokens_per_tool,
         }
         
         logger.info(f"Collected LLM metrics for run {metrics['run_id']}")
@@ -164,7 +246,10 @@ def collect_llm_metrics(conversation):
             "tool_call_error_rate": 0.0,
             "start_time": datetime.now(timezone.utc).isoformat(),
             "end_time": datetime.now(timezone.utc).isoformat(),
-            "error": str(e)
+            "error": str(e),
+            "tool_calls_per_tool": {},
+            "errors_per_tool": {},
+            "tokens_per_tool": {},
         }
 
 

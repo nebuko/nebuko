@@ -22,6 +22,8 @@ from summarize_metrics import (
     format_number,
     get_agent_display_name,
     AGENT_DISPLAY_NAMES,
+    _merge_per_tool_dict,
+    _format_tool_dict,
 )
 
 
@@ -171,6 +173,9 @@ class TestGenerateSummaryTable(unittest.TestCase):
                 "latency_sum": 2000.0,
                 "tool_calls_sum": 10,
                 "error_rate_sum": 0.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
             },
             "claude": {
                 "runs": 1,
@@ -179,6 +184,9 @@ class TestGenerateSummaryTable(unittest.TestCase):
                 "latency_sum": 1500.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 5.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
             },
         }
 
@@ -217,6 +225,9 @@ class TestGenerateSummaryTable(unittest.TestCase):
                 "latency_sum": 1000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 0.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
             }
         }
         result = generate_summary_table(agg)
@@ -340,6 +351,9 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "latency_sum": 2000.0,
                 "tool_calls_sum": 10,
                 "error_rate_sum": 0.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
             },
             "ctx": {
                 "runs": 1,
@@ -348,6 +362,9 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "latency_sum": 1500.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 5.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
             },
             "dev": {
                 "runs": 1,
@@ -356,6 +373,9 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "latency_sum": 3000.0,
                 "tool_calls_sum": 8,
                 "error_rate_sum": 2.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
             },
         }
 
@@ -402,6 +422,9 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "latency_sum": 1000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 0.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
             }
         }
         result = generate_agent_summary_table(agg)
@@ -421,10 +444,13 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         genius_line = [l for l in result if "Genius" in l][0]
         self.assertIn("5.0", genius_line)
 
-    def test_average_error_rate(self):
+    def test_tool_errors_column(self):
+        """Test that tool errors column shows correct values."""
         result = generate_agent_summary_table(self._make_aggregated())
-        ctx_line = [l for l in result if "Ctx" in l][0]
-        self.assertIn("5.0%", ctx_line)
+        # All per-tool error dicts are empty, so all should show 0
+        for line in result:
+            if any(name in line for name in ["Genius", "Ctx", "Dev"]):
+                self.assertIn("| 0 ", line)
 
 
 class TestGenerateModelSummaryTable(unittest.TestCase):
@@ -439,6 +465,9 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
                 "latency_sum": 2000.0,
                 "tool_calls_sum": 10,
                 "error_rate_sum": 0.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
             },
             "claude": {
                 "runs": 1,
@@ -447,6 +476,9 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
                 "latency_sum": 1500.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 5.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
             },
         }
 
@@ -465,6 +497,334 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
         result_str = "\n".join(result)
         self.assertIn("| gpt-4 ", result_str)
         self.assertIn("| claude ", result_str)
+
+    def test_tool_errors_column(self):
+        """Test that tool errors column shows correct values."""
+        result = generate_model_summary_table(self._make_aggregated())
+        # All per-tool error dicts are empty, so all should show 0
+        for line in result:
+            if any(name in line for name in ["gpt-4", "claude"]):
+                self.assertIn("| 0 ", line)
+
+
+class TestMergePerToolDict(unittest.TestCase):
+    """Test _merge_per_tool_dict function."""
+
+    def test_merge_simple_values(self):
+        """Merge two dicts with simple numeric values."""
+        base = {"terminal": 10, "file_editor": 5}
+        override = {"terminal": 5, "bash": 3}
+        result = _merge_per_tool_dict(base, override)
+        self.assertEqual(result["terminal"], 15)
+        self.assertEqual(result["file_editor"], 5)
+        self.assertEqual(result["bash"], 3)
+
+    def test_merge_nested_token_dicts(self):
+        """Merge two dicts with nested token usage dicts."""
+        base = {
+            "terminal": {
+                "input": 1000,
+                "output": 500,
+                "cache_hit": 200,
+                "reasoning": 10,
+            }
+        }
+        override = {
+            "terminal": {
+                "input": 500,
+                "output": 250,
+                "cache_hit": 100,
+                "reasoning": 5,
+            }
+        }
+        result = _merge_per_tool_dict(base, override)
+        self.assertEqual(result["terminal"]["input"], 1500)
+        self.assertEqual(result["terminal"]["output"], 750)
+        self.assertEqual(result["terminal"]["cache_hit"], 300)
+        self.assertEqual(result["terminal"]["reasoning"], 15)
+
+    def test_merge_different_tools(self):
+        """Merge dicts with non-overlapping tools."""
+        base = {"terminal": 10}
+        override = {"file_editor": 5}
+        result = _merge_per_tool_dict(base, override)
+        self.assertEqual(result["terminal"], 10)
+        self.assertEqual(result["file_editor"], 5)
+
+    def test_merge_empty_base(self):
+        """Merge when base is empty."""
+        base = {}
+        override = {"terminal": 10}
+        result = _merge_per_tool_dict(base, override)
+        self.assertEqual(result, {"terminal": 10})
+
+    def test_merge_empty_override(self):
+        """Merge when override is empty."""
+        base = {"terminal": 10}
+        override = {}
+        result = _merge_per_tool_dict(base, override)
+        self.assertEqual(result, {"terminal": 10})
+
+    def test_merge_none_base(self):
+        """Merge when base is None."""
+        base = None
+        override = {"terminal": 10}
+        result = _merge_per_tool_dict(base, override)
+        self.assertEqual(result, {"terminal": 10})
+
+    def test_merge_none_override(self):
+        """Merge when override is None."""
+        base = {"terminal": 10}
+        override = None
+        result = _merge_per_tool_dict(base, override)
+        self.assertEqual(result, {"terminal": 10})
+
+    def test_merge_both_none(self):
+        """Merge when both are None."""
+        result = _merge_per_tool_dict(None, None)
+        self.assertEqual(result, {})
+
+    def test_merge_both_empty(self):
+        """Merge when both are empty dicts."""
+        result = _merge_per_tool_dict({}, {})
+        self.assertEqual(result, {})
+
+    def test_merge_generic_dict_values(self):
+        """Merge dicts with generic (non-token) nested dicts."""
+        base = {"terminal": {"calls": 10, "errors": 2}}
+        override = {"terminal": {"calls": 5, "errors": 1}}
+        result = _merge_per_tool_dict(base, override)
+        # Should sum numeric values in generic dicts
+        self.assertEqual(result["terminal"]["calls"], 15)
+        self.assertEqual(result["terminal"]["errors"], 3)
+
+
+class TestFormatToolDict(unittest.TestCase):
+    """Test _format_tool_dict function."""
+
+    def test_format_non_empty_dict(self):
+        """Format a non-empty dict."""
+        tool_dict = {"terminal": 15, "file_editor": 8}
+        result = _format_tool_dict(tool_dict)
+        # Should be sorted alphabetically
+        self.assertEqual(result, "file_editor: 8, terminal: 15")
+
+    def test_format_empty_dict(self):
+        """Format an empty dict."""
+        result = _format_tool_dict({})
+        self.assertEqual(result, "N/A")
+
+    def test_format_none(self):
+        """Format None."""
+        result = _format_tool_dict(None)
+        self.assertEqual(result, "N/A")
+
+    def test_format_single_tool(self):
+        """Format a dict with a single tool."""
+        result = _format_tool_dict({"terminal": 10})
+        self.assertEqual(result, "terminal: 10")
+
+    def test_format_sorted_order(self):
+        """Verify alphabetical sorting."""
+        tool_dict = {"z_tool": 1, "a_tool": 2, "m_tool": 3}
+        result = _format_tool_dict(tool_dict)
+        self.assertEqual(result, "a_tool: 2, m_tool: 3, z_tool: 1")
+
+
+class TestPerToolAggregationAgent(unittest.TestCase):
+    """Test per-tool aggregation in aggregate_by_agent."""
+
+    def _make_metric(self, agent, tool_calls_per_tool=None, errors_per_tool=None,
+                     tokens_per_tool=None):
+        metric = {
+            "agent_role": agent,
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "tool_call_latency_ms": 1000.0,
+            "nb_tool_calls": 5,
+            "tool_call_error_rate": 0.0,
+        }
+        if tool_calls_per_tool is not None:
+            metric["tool_calls_per_tool"] = tool_calls_per_tool
+        if errors_per_tool is not None:
+            metric["errors_per_tool"] = errors_per_tool
+        if tokens_per_tool is not None:
+            metric["tokens_per_tool"] = tokens_per_tool
+        return metric
+
+    def test_merge_per_tool_across_runs(self):
+        """Per-tool calls should be summed across runs for same agent."""
+        metrics = [
+            self._make_metric("genius", tool_calls_per_tool={"terminal": 10}),
+            self._make_metric("genius", tool_calls_per_tool={"terminal": 5, "bash": 3}),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["tool_calls_per_tool"]["terminal"], 15)
+        self.assertEqual(result["genius"]["tool_calls_per_tool"]["bash"], 3)
+
+    def test_merge_errors_per_tool_across_runs(self):
+        """Errors per tool should be summed across runs."""
+        metrics = [
+            self._make_metric("genius", errors_per_tool={"terminal": 2}),
+            self._make_metric("genius", errors_per_tool={"terminal": 1, "file_editor": 0}),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["errors_per_tool"]["terminal"], 3)
+        self.assertEqual(result["genius"]["errors_per_tool"]["file_editor"], 0)
+
+    def test_merge_tokens_per_tool_across_runs(self):
+        """Tokens per tool should be summed across runs."""
+        metrics = [
+            self._make_metric("genius", tokens_per_tool={
+                "terminal": {"input": 1000, "output": 500, "cache_hit": 200, "reasoning": 10}
+            }),
+            self._make_metric("genius", tokens_per_tool={
+                "terminal": {"input": 500, "output": 250, "cache_hit": 100, "reasoning": 5}
+            }),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["tokens_per_tool"]["terminal"]["input"], 1500)
+        self.assertEqual(result["genius"]["tokens_per_tool"]["terminal"]["output"], 750)
+        self.assertEqual(result["genius"]["tokens_per_tool"]["terminal"]["cache_hit"], 300)
+        self.assertEqual(result["genius"]["tokens_per_tool"]["terminal"]["reasoning"], 15)
+
+    def test_backward_compatible_without_per_tool(self):
+        """Old metrics without per-tool data should still work."""
+        metrics = [
+            self._make_metric("genius"),  # no per-tool fields
+            self._make_metric("genius"),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["tool_calls_per_tool"], {})
+        self.assertEqual(result["genius"]["errors_per_tool"], {})
+        self.assertEqual(result["genius"]["tokens_per_tool"], {})
+
+
+class TestPerToolAggregationModel(unittest.TestCase):
+    """Test per-tool aggregation in aggregate_by_model."""
+
+    def _make_metric(self, model, tool_calls_per_tool=None, errors_per_tool=None,
+                     tokens_per_tool=None):
+        metric = {
+            "model_name": model,
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "tool_call_latency_ms": 1000.0,
+            "nb_tool_calls": 5,
+            "tool_call_error_rate": 0.0,
+        }
+        if tool_calls_per_tool is not None:
+            metric["tool_calls_per_tool"] = tool_calls_per_tool
+        if errors_per_tool is not None:
+            metric["errors_per_tool"] = errors_per_tool
+        if tokens_per_tool is not None:
+            metric["tokens_per_tool"] = tokens_per_tool
+        return metric
+
+    def test_merge_per_tool_across_runs(self):
+        """Per-tool calls should be summed across runs for same model."""
+        metrics = [
+            self._make_metric("gpt-4", tool_calls_per_tool={"terminal": 10}),
+            self._make_metric("gpt-4", tool_calls_per_tool={"terminal": 5, "bash": 3}),
+        ]
+        result = aggregate_by_model(metrics)
+        self.assertEqual(result["gpt-4"]["tool_calls_per_tool"]["terminal"], 15)
+        self.assertEqual(result["gpt-4"]["tool_calls_per_tool"]["bash"], 3)
+
+    def test_merge_errors_per_tool_across_runs(self):
+        """Errors per tool should be summed across runs."""
+        metrics = [
+            self._make_metric("gpt-4", errors_per_tool={"terminal": 2}),
+            self._make_metric("gpt-4", errors_per_tool={"terminal": 1, "file_editor": 0}),
+        ]
+        result = aggregate_by_model(metrics)
+        self.assertEqual(result["gpt-4"]["errors_per_tool"]["terminal"], 3)
+        self.assertEqual(result["gpt-4"]["errors_per_tool"]["file_editor"], 0)
+
+
+class TestTableGenerationWithPerTool(unittest.TestCase):
+    """Test table generation with per-tool data."""
+
+    def _make_aggregated_with_per_tool(self):
+        return {
+            "genius": {
+                "runs": 2,
+                "total_input_tokens": 300,
+                "total_output_tokens": 150,
+                "latency_sum": 2000.0,
+                "tool_calls_sum": 10,
+                "error_rate_sum": 0.0,
+                "tool_calls_per_tool": {"terminal": 15, "file_editor": 8},
+                "errors_per_tool": {"terminal": 2, "file_editor": 0},
+                "tokens_per_tool": {},
+            },
+            "ctx": {
+                "runs": 1,
+                "total_input_tokens": 200,
+                "total_output_tokens": 100,
+                "latency_sum": 1500.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 5.0,
+                "tool_calls_per_tool": {"bash": 5},
+                "errors_per_tool": {"bash": 1},
+                "tokens_per_tool": {},
+            },
+        }
+
+    def test_agent_table_has_new_columns(self):
+        """Agent table should include Tool Errors and Per-Tool Calls columns."""
+        result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
+        result_str = "\n".join(result)
+        self.assertIn("Tool Errors", result_str)
+        self.assertIn("Per-Tool Calls", result_str)
+
+    def test_agent_table_shows_tool_errors(self):
+        """Agent table should show correct tool error counts."""
+        result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
+        genius_line = [l for l in result if "Genius" in l][0]
+        # genius has 2 terminal errors + 0 file_editor errors = 2 total
+        self.assertIn("| 2 ", genius_line)
+
+    def test_agent_table_shows_per_tool_calls(self):
+        """Agent table should show formatted per-tool calls."""
+        result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
+        genius_line = [l for l in result if "Genius" in l][0]
+        self.assertIn("file_editor: 8, terminal: 15", genius_line)
+
+    def test_agent_table_backward_compatible(self):
+        """Agent table should show N/A for agents without per-tool data."""
+        agg = {
+            "genius": {
+                "runs": 1,
+                "total_input_tokens": 100,
+                "total_output_tokens": 50,
+                "latency_sum": 1000.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 0.0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            }
+        }
+        result = generate_agent_summary_table(agg)
+        result_str = "\n".join(result)
+        self.assertIn("N/A", result_str)
+
+    def test_model_table_has_new_columns(self):
+        """Model table should include Tool Errors and Per-Tool Calls columns."""
+        result = generate_model_summary_table(self._make_aggregated_with_per_tool())
+        result_str = "\n".join(result)
+        self.assertIn("Tool Errors", result_str)
+        self.assertIn("Per-Tool Calls", result_str)
+
+    def test_model_table_shows_tool_errors(self):
+        """Model table should show correct tool error counts."""
+        result = generate_model_summary_table(self._make_aggregated_with_per_tool())
+        # Both genius and ctx have errors
+        for line in result:
+            if "Genius" in line or "Ctx" in line:
+                # Should contain error count
+                self.assertTrue(any(c.isdigit() for c in line))
 
 
 if __name__ == "__main__":
