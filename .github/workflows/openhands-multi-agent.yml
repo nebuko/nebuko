@@ -144,8 +144,14 @@ jobs:
         env:
             GENIUS_MODEL: ${{ inputs.genius_model || 'openrouter/deepseek/deepseek-v4-pro' }}
             DEV_MODEL_LOW: ${{ inputs.dev_model_low || 'openai/qwen-3-6-27b' }}
+            DEV_MODEL_LOW_BASE_URL : ${{ inputs.dev_model_low_base_url || 'http://192.168.1.64:31728/v1' }}
+            DEV_MODEL_LOW_API_KEY : ${{ secrets.DEV_MODEL_LOW_API_KEY }}
             DEV_MODEL_MEDIUM: ${{ inputs.dev_model_medium || 'openai/qwen-3-6-27b' }}
+            DEV_MODEL_MEDIUM_BASE_URL : ${{ inputs.dev_model_medium_base_url || 'http://192.168.1.64:31728/v1' }}
+            DEV_MODEL_MEDIUM_API_KEY : ${{ secrets.DEV_MODEL_MEDIUM_API_KEY }}
             DEV_MODEL_HIGH: ${{ inputs.dev_model_high || 'openai/qwen-3-6-27b' }}
+            DEV_MODEL_HIGH_BASE_URL : ${{ inputs.dev_model_high_base_url || 'http://192.168.1.64:31728/v1' }}
+            DEV_MODEL_HIGH_API_KEY : ${{ secrets.DEV_MODEL_HIGH_API_KEY }}
             CTX_MODEL: ${{ inputs.ctx_model || 'hosted_vllm/qwen-3-6-30b-a3b' }}
             CTX_BASE_URL : ${{ inputs.ctx_base_url || 'http://192.168.1.64:32202/v1' }}
             CTX_API_KEY : ${{ secrets.CTX_API_KEY }}
