@@ -503,12 +503,15 @@ def main():
     conversation.send_message(prompt)
     conversation.run()
 
-    # Collect and save LLM metrics
-    metrics = collect_llm_metrics(conversation)
-    save_metrics_json(metrics)
-
     # Extract and save final agent message with embedded metrics
     final_message = get_agent_final_response(conversation.state.events)
+
+    # Count review fix requests (genius asking dev to make changes)
+    review_fix_requests = final_message.count("@@dev fix this") if final_message else 0
+    metrics["review_fix_requests"] = review_fix_requests
+
+    # Save metrics JSON with the new field
+    save_metrics_json(metrics)
 
     # Split long messages into multiple parts, each under the safe limit.
     # GitHub's comment API allows 65,536 chars, but we use 10,000 as a
