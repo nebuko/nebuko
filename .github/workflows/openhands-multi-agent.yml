@@ -515,6 +515,10 @@ jobs:
                 logging.basicConfig(level=logging.INFO)
                 logger = logging.getLogger(__name__)
 
+                # Get the issue/PR author for pinging on failure
+                trigger_author = os.environ.get('TRIGGER_AUTHOR', '')
+                author_ping = f"@{trigger_author} " if trigger_author else ""
+
                 # Path A: Check for structured final message file
                 if os.path.isfile("final_message.txt") and os.path.getsize("final_message.txt") > 0:
                     with open("final_message.txt", "r", encoding="utf-8") as f:
@@ -577,7 +581,7 @@ jobs:
                             last_message += "\n\n...*(comment truncated due to size limit)*"
 
                         if not last_message.strip():
-                            last_message = "> ⚠️ The agent crashed or produced no readable output. Please check the full logs in the workflow run."
+                            last_message = author_ping + "> ⚠️ The agent crashed or produced no readable output. Please check the full logs in the workflow run."
 
                         # Re-add metrics comment if we preserved one from the sentinel
                         if metrics_comment:
@@ -590,7 +594,7 @@ jobs:
                         exit(0)
 
                     # Path C: No console.log either - agent likely crashed before producing output
-                    fallback = "> ⚠️ The agent crashed or timed out before producing output. Please check the full logs in the workflow run."
+                    fallback = author_ping + "> ⚠️ The agent crashed or timed out before producing output. Please check the full logs in the workflow run."
                     if metrics_comment:
                         fallback += "\n\n" + metrics_comment
                     with open("github_comment.md", "w", encoding="utf-8") as f_out:
@@ -600,7 +604,7 @@ jobs:
                     exit(0)
 
                 # Path D: final_message.txt doesn't exist at all (agent script didn't run)
-                fallback = "> ⚠️ The agent did not produce a final message. Please check the full logs in the workflow run."
+                fallback = author_ping + "> ⚠️ The agent did not produce a final message. Please check the full logs in the workflow run."
                 with open("github_comment.md", "w", encoding="utf-8") as f_out:
                     f_out.write(fallback)
                 with open(os.environ['GITHUB_ENV'], 'a') as ge:
