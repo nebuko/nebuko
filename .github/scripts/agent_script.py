@@ -380,6 +380,12 @@ def main():
     # Extract and save final agent message with embedded metrics
     final_message = get_agent_final_response(conversation.state.events)
     
+    # Count review fix requests (genius asking dev to make changes)
+    review_fix_requests = 0
+    if final_message:
+        review_fix_requests = final_message.count("@@dev fix this")
+    metrics["review_fix_requests"] = review_fix_requests
+    
     # Smart truncation: enforce a hard limit at the Python level to prevent
     # GitHub comment API failures (65,536 char limit). We use 10,000 chars
     # as a safe limit, leaving room for bot markers and metrics comments.

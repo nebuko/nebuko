@@ -140,6 +140,7 @@ def aggregate_by_model(all_metrics):
         "latency_sum": 0.0,
         "tool_calls_sum": 0,
         "error_rate_sum": 0.0,
+        "review_fix_requests_sum": 0,
         "tool_calls_per_tool": {},
         "errors_per_tool": {},
         "tokens_per_tool": {},
@@ -154,6 +155,7 @@ def aggregate_by_model(all_metrics):
         agg["latency_sum"] += m.get("tool_call_latency_ms", 0.0)
         agg["tool_calls_sum"] += m.get("nb_tool_calls", 0)
         agg["error_rate_sum"] += m.get("tool_call_error_rate", 0.0)
+        agg["review_fix_requests_sum"] += m.get("review_fix_requests", 0)
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
             agg["tool_calls_per_tool"], m.get("tool_calls_per_tool", {})
@@ -189,6 +191,7 @@ def aggregate_by_agent(all_metrics):
         "latency_sum": 0.0,
         "tool_calls_sum": 0,
         "error_rate_sum": 0.0,
+        "review_fix_requests_sum": 0,
         "tool_calls_per_tool": {},
         "errors_per_tool": {},
         "tokens_per_tool": {},
@@ -203,6 +206,7 @@ def aggregate_by_agent(all_metrics):
         agg["latency_sum"] += m.get("tool_call_latency_ms", 0.0)
         agg["tool_calls_sum"] += m.get("nb_tool_calls", 0)
         agg["error_rate_sum"] += m.get("tool_call_error_rate", 0.0)
+        agg["review_fix_requests_sum"] += m.get("review_fix_requests", 0)
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
             agg["tool_calls_per_tool"], m.get("tool_calls_per_tool", {})
@@ -282,8 +286,8 @@ def generate_agent_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Agent Statistics Summary")
     lines.append("")
-    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Tool Errors | Per-Tool Calls |")
-    lines.append("|-------|------|-------------|---------------|------------------|----------------|-------------|----------------|")
+    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|------------------|----------------|-------------|--------------|----------------|")
 
     grand_runs = 0
     grand_input = 0
@@ -303,6 +307,9 @@ def generate_agent_summary_table(aggregated):
         # Calculate total tool errors across all runs
         total_errors = sum(agg["errors_per_tool"].values()) if agg["errors_per_tool"] else 0
 
+        # Get total fix requests across all runs
+        total_fix_requests = agg.get("review_fix_requests_sum", 0)
+
         display_name = get_agent_display_name(agent)
 
         lines.append(
@@ -313,6 +320,7 @@ def generate_agent_summary_table(aggregated):
             f"| {avg_latency:.0f} "
             f"| {avg_tool_calls:.1f} "
             f"| {total_errors} "
+            f"| {total_fix_requests} "
             f"| {_format_tool_dict(agg['tool_calls_per_tool'])} |"
         )
 
@@ -338,8 +346,8 @@ def generate_model_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Model Statistics Summary")
     lines.append("")
-    lines.append("| Model | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Tool Errors | Per-Tool Calls |")
-    lines.append("|-------|------|-------------|---------------|------------------|----------------|-------------|----------------|")
+    lines.append("| Model | Runs | Input Tokens | Output Tokens | Avg Latency (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|------------------|----------------|-------------|--------------|----------------|")
 
     for model in sorted(aggregated.keys()):
         agg = aggregated[model]
@@ -352,6 +360,9 @@ def generate_model_summary_table(aggregated):
         # Calculate total tool errors across all runs
         total_errors = sum(agg["errors_per_tool"].values()) if agg["errors_per_tool"] else 0
 
+        # Get total fix requests across all runs
+        total_fix_requests = agg.get("review_fix_requests_sum", 0)
+
         lines.append(
             f"| {model} "
             f"| {runs} "
@@ -360,6 +371,7 @@ def generate_model_summary_table(aggregated):
             f"| {avg_latency:.0f} "
             f"| {avg_tool_calls:.1f} "
             f"| {total_errors} "
+            f"| {total_fix_requests} "
             f"| {_format_tool_dict(agg['tool_calls_per_tool'])} |"
         )
 
