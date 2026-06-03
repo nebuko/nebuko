@@ -522,7 +522,8 @@ def main():
         # Write part 1 to the standard file (backward compatible)
         with open("final_message.txt", "w", encoding="utf-8") as f:
             f.write(message_parts[0])
-            f.write(metrics_comment)
+            if len(message_parts) == 1:  # Only single-part messages get metrics here
+                f.write(metrics_comment)
         logger.info(f"Saved first message part ({len(message_parts[0])} characters)")
 
         # Write additional parts if the message was split
