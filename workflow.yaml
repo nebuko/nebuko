@@ -2,7 +2,7 @@ name: AI Dev Workflow (git-flow-ai)
 
 on:
   issues:
-    types: [opened, edited, assigned]
+    types: [opened, edited, assigned, closed]
   issue_comment:
     types: [created]
 
