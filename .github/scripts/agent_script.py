@@ -35,11 +35,11 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from openhands.sdk import LLM, Conversation, get_logger
+from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.event.llm_convertible.action import ActionEvent
 from openhands.sdk.event.llm_convertible.observation import ObservationEvent
 from openhands.sdk.conversation import get_agent_final_response
-from openhands.tools.preset.default import get_default_agent
+from openhands.tools.preset.default import get_default_agent, get_default_condenser
 
 
 logger = get_logger(__name__)
@@ -469,11 +469,26 @@ def main():
     # Get the current working directory as workspace
     cwd = os.getcwd()
 
-    # Create agent with default tools
-    agent = get_default_agent(
-        llm=llm,
-        cli_mode=True,
-    )
+    # Role-aware agent instantiation: restrict genius to thinking tools only
+    role_name = os.environ.get("ROLE_NAME", "unknown")
+    if role_name == "genius":
+        # Genius runs on a high-cost model; restrict to built-in ThinkTool + FinishTool
+        # to eliminate unnecessary tool token consumption.
+        logger.info("Creating genius agent with restricted tools (ThinkTool + FinishTool only)")
+        agent = Agent(
+            llm=llm,
+            tools=[],
+            include_default_tools=["ThinkTool", "FinishTool"],
+            system_prompt_kwargs={"cli_mode": True},
+            condenser=get_default_condenser(llm=llm),
+        )
+    else:
+        # ctx and dev get full default toolset
+        logger.info(f"Creating {role_name} agent with default tools")
+        agent = get_default_agent(
+            llm=llm,
+            cli_mode=True,
+        )
 
     # Create conversation
     conversation = Conversation(
