@@ -112,6 +112,10 @@ def _compute_tokens_per_tool(agent_tool_calls, combined_metrics):
     A single LLM response can trigger multiple parallel tool calls.
     Token costs are evenly divided among tools in the same response.
     """
+    # Guard against None/empty token_usages
+    if not combined_metrics.token_usages:
+        return {}
+
     # Build lookup: response_id -> TokenUsage
     token_by_response = {}
     for tu in combined_metrics.token_usages:
