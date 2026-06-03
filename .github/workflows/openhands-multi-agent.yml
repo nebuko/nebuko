@@ -27,7 +27,7 @@ on:
         description: 'Model for ctx agent'
         required: false
         type: string
-        default: 'hosted_vllm/qwen-3-6-30b-a3b'
+        default: 'openai/qwen-3-6-30b-a3b'
       genius_temperature:
         description: 'Temperature for genius agent'
         required: false
