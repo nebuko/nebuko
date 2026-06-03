@@ -286,15 +286,12 @@ def split_message(message: str, max_length: int = 10000) -> list[str]:
     Splits preferentially at paragraph breaks, then line breaks,
     then sentence boundaries, falling back to hard splits.
 
-    Each part (except the last) gets a *(Part X/Y)* header prepended.
-    The last part receives the metrics comment appended.
-
     Args:
         message: The full message to split.
         max_length: Maximum characters per part.
 
     Returns:
-        List of message parts, each <= max_length characters.
+        List of raw message parts, each <= max_length characters.
     """
     if not message or len(message) <= max_length:
         return [message] if message else []
@@ -516,6 +513,12 @@ def main():
         metrics_json = json.dumps(metrics, separators=(",", ":"))
         metrics_comment = f"\n\n<!-- agent-metrics: {metrics_json} -->"
 
+        # Add part indicators for multi-part messages
+        if len(message_parts) > 1:
+            total = len(message_parts)
+            for i in range(total):
+                message_parts[i] = f"*(Part {i + 1}/{total})*\n\n{message_parts[i]}"
+
         # Write part 1 to the standard file (backward compatible)
         with open("final_message.txt", "w", encoding="utf-8") as f:
             f.write(message_parts[0])
@@ -532,7 +535,9 @@ def main():
                 filename = f"final_message_part_{i}.txt"
                 with open(filename, "w", encoding="utf-8") as f:
                     f.write(part)
-                    f.write(metrics_comment)
+                    # Only the last part gets the metrics comment
+                    if i == len(message_parts):
+                        f.write(metrics_comment)
                 logger.info(f"Saved message part {i} ({len(part)} characters)")
 
             logger.info(f"Message split into {len(message_parts)} parts (was {len(final_message)} characters)")
