@@ -350,18 +350,21 @@ jobs:
                         exit 0
                       else
                         echo "Cross-agent call ($CALLER_AGENT -> $TARGET_AGENT). Allowing."
+                        echo "SKIP_AGENT=false" >> $GITHUB_ENV
+                        exit 0
                       fi
                   else
                     echo "Event type ${{ env.EVENT_TYPE }} - skipping same-agent loop check (no bot marker expected)"
-                  fi
 
-                  # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
-                  HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev' || true)
-                  HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@genius\|@ctx\|@dev' || true)
-                  if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
-                    echo "Human ping + agent ping detected. Skipping to let human orchestrate."
-                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
-                    exit 0
+                    # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
+                    # Only applies to human-triggered comments (no bot marker present)
+                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev' || true)
+                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@genius\|@ctx\|@dev' || true)
+                    if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
+                      echo "Human ping + agent ping detected. Skipping to let human orchestrate."
+                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                      exit 0
+                    fi
                   fi
 
                   echo "SKIP_AGENT=false" >> $GITHUB_ENV
