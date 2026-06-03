@@ -31,6 +31,7 @@ import argparse
 import json
 import os
 import sys
+from collections import defaultdict
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -80,6 +81,89 @@ def load_prompt(prompt_location: str) -> str:
         raise ValueError(f"Failed to load prompt from {prompt_location}: {e}")
 
 
+def _compute_tool_calls_per_tool(agent_tool_calls):
+    """Count tool calls grouped by tool_name."""
+    counts = {}
+    for event in agent_tool_calls:
+        tool_name = getattr(event, "tool_name", None)
+        if tool_name:
+            counts[tool_name] = counts.get(tool_name, 0) + 1
+    return counts
+
+
+def _compute_errors_per_tool(observation_events):
+    """Count tool call errors grouped by tool_name using observation.is_error."""
+    errors = {}
+    for event in observation_events:
+        tool_name = getattr(event, "tool_name", None)
+        if not tool_name:
+            continue
+        obs = getattr(event, "observation", None)
+        is_error = getattr(obs, "is_error", False) if obs else False
+        if is_error:
+            errors[tool_name] = errors.get(tool_name, 0) + 1
+    return errors
+
+
+def _compute_tokens_per_tool(agent_tool_calls, combined_metrics):
+    """
+    Distribute token usage per tool call.
+    
+    A single LLM response can trigger multiple parallel tool calls.
+    Token costs are evenly divided among tools in the same response.
+    """
+    # Build lookup: response_id -> TokenUsage
+    token_by_response = {}
+    for tu in combined_metrics.token_usages:
+        rid = getattr(tu, "response_id", None)
+        if rid:
+            token_by_response[rid] = tu
+
+    # Group tool calls by llm_response_id
+    calls_by_response = defaultdict(list)
+    for event in agent_tool_calls:
+        rid = getattr(event, "llm_response_id", None)
+        if rid:
+            calls_by_response[rid].append(event)
+
+    # Initialize per-tool token accumulators
+    tokens_per_tool = {}
+
+    for rid, tu in token_by_response.items():
+        calls = calls_by_response.get(rid, [])
+        if not calls:
+            continue
+        # Divide tokens evenly among calls in this response
+        n = len(calls)
+        input_tok = getattr(tu, "prompt_tokens", 0) / n
+        output_tok = getattr(tu, "completion_tokens", 0) / n
+        cache_hit = getattr(tu, "cache_read_tokens", 0) / n
+        reasoning = getattr(tu, "reasoning_tokens", 0) / n
+
+        for event in calls:
+            tool_name = getattr(event, "tool_name", None)
+            if not tool_name:
+                continue
+            if tool_name not in tokens_per_tool:
+                tokens_per_tool[tool_name] = {
+                    "input": 0,
+                    "output": 0,
+                    "cache_hit": 0,
+                    "reasoning": 0,
+                }
+            tokens_per_tool[tool_name]["input"] += input_tok
+            tokens_per_tool[tool_name]["output"] += output_tok
+            tokens_per_tool[tool_name]["cache_hit"] += cache_hit
+            tokens_per_tool[tool_name]["reasoning"] += reasoning
+
+    # Round to integers for cleaner output
+    for tool_name in tokens_per_tool:
+        for key in tokens_per_tool[tool_name]:
+            tokens_per_tool[tool_name][key] = round(tokens_per_tool[tool_name][key])
+
+    return tokens_per_tool
+
+
 def collect_llm_metrics(conversation):
     """
     Collect LLM metrics from a conversation after it has completed.
@@ -99,10 +183,13 @@ def collect_llm_metrics(conversation):
         agent_tool_calls = [e for e in action_events if e.source == "agent"]
         nb_tool_calls = len(agent_tool_calls)
         
-        # Count tool call errors
+        # Count tool call errors (fixed: use observation.is_error instead of exit_code)
         observation_events = [e for e in conversation.state.events if isinstance(e, ObservationEvent)]
         total_observations = len(observation_events)
-        error_observations = len([e for e in observation_events if hasattr(e, 'exit_code') and e.exit_code != 0])
+        error_observations = len([
+            e for e in observation_events
+            if getattr(getattr(e, "observation", None), "is_error", False)
+        ])
         
         # Calculate error rate (avoid division by zero)
         tool_call_error_rate = 0.0
@@ -123,6 +210,11 @@ def collect_llm_metrics(conversation):
             input_tokens = combined_metrics.accumulated_token_usage.prompt_tokens
             output_tokens = combined_metrics.accumulated_token_usage.completion_tokens
         
+        # Per-tool statistics
+        tool_calls_per_tool = _compute_tool_calls_per_tool(agent_tool_calls)
+        errors_per_tool = _compute_errors_per_tool(observation_events)
+        tokens_per_tool = _compute_tokens_per_tool(agent_tool_calls, combined_metrics)
+        
         # Get start time (first event timestamp or current time)
         start_time = datetime.now(timezone.utc).isoformat()
         if conversation.state.events:
@@ -141,6 +233,9 @@ def collect_llm_metrics(conversation):
             "complexity": os.environ.get("COMPLEXITY", "N/A"),
             "tool_call_latency_ms": tool_call_latency_ms,
             "nb_tool_calls": nb_tool_calls,
+            "tool_calls_per_tool": tool_calls_per_tool,
+            "errors_per_tool": errors_per_tool,
+            "tokens_per_tool": tokens_per_tool,
             "tool_call_error_rate": tool_call_error_rate,
             "start_time": start_time,
             "end_time": datetime.now(timezone.utc).isoformat()
@@ -161,6 +256,9 @@ def collect_llm_metrics(conversation):
             "complexity": os.environ.get("COMPLEXITY", "N/A"),
             "tool_call_latency_ms": 0.0,
             "nb_tool_calls": 0,
+            "tool_calls_per_tool": {},
+            "errors_per_tool": {},
+            "tokens_per_tool": {},
             "tool_call_error_rate": 0.0,
             "start_time": datetime.now(timezone.utc).isoformat(),
             "end_time": datetime.now(timezone.utc).isoformat(),
