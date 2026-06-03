@@ -648,6 +648,21 @@ jobs:
             - name: Checkout repository
               uses: actions/checkout@v5
 
+            - name: Check if git-flow-ai cache is needed
+              id: check_gfa
+              run: |
+                if [ ! -d ".git-flow-ai-cache/.github/scripts" ]; then
+                  echo "needed=true" >> $GITHUB_OUTPUT
+                fi
+
+            - name: Checkout git-flow-ai repo (reusable workflow mode)
+              if: steps.check_gfa.outputs.needed == 'true'
+              uses: actions/checkout@v5
+              with:
+                repository: olivier-norture/git-flow-ai
+                path: .git-flow-ai-cache
+                token: ${{ secrets.GH_PAT }}
+
             - name: Setup Python
               uses: actions/setup-python@v6
               with:
@@ -658,4 +673,10 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GH_PAT }}
                   GITHUB_REPOSITORY: ${{ github.repository }}
                   ISSUE_NUMBER: ${{ github.event.issue.number }}
-              run: python .github/scripts/summarize_metrics.py
+              run: |
+                if [ -f ".git-flow-ai-cache/.github/scripts/summarize_metrics.py" ]; then
+                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/summarize_metrics.py"
+                else
+                  SCRIPT_PATH=".github/scripts/summarize_metrics.py"
+                fi
+                python "$SCRIPT_PATH"
