@@ -95,7 +95,8 @@ class TestAggregateByModel(unittest.TestCase):
     """Test aggregate_by_model function."""
 
     def _make_metric(self, model, input_tokens=100, output_tokens=50,
-                     latency=1000.0, tool_calls=5, error_rate=0.0):
+                     latency=1000.0, tool_calls=5, error_rate=0.0,
+                     review_fix_requests=0):
         return {
             "model_name": model,
             "input_tokens": input_tokens,
@@ -103,6 +104,7 @@ class TestAggregateByModel(unittest.TestCase):
             "tool_call_latency_ms": latency,
             "nb_tool_calls": tool_calls,
             "tool_call_error_rate": error_rate,
+            "review_fix_requests": review_fix_requests,
         }
 
     def test_single_model_single_run(self):
@@ -143,6 +145,92 @@ class TestAggregateByModel(unittest.TestCase):
         result = aggregate_by_model(metrics)
         self.assertIn("unknown", result)
         self.assertEqual(result["unknown"]["runs"], 1)
+
+    def test_review_fix_requests_aggregation(self):
+        """Review fix requests should be summed across runs."""
+        metrics = [
+            self._make_metric("gpt-4", review_fix_requests=2),
+            self._make_metric("gpt-4", review_fix_requests=3),
+        ]
+        result = aggregate_by_model(metrics)
+        self.assertEqual(result["gpt-4"]["review_fix_requests_sum"], 5)
+
+    def test_review_fix_requests_default_zero(self):
+        """Review fix requests should default to 0 when not present."""
+        metrics = [self._make_metric("gpt-4")]
+        result = aggregate_by_model(metrics)
+        self.assertEqual(result["gpt-4"]["review_fix_requests_sum"], 0)
+
+
+class TestAggregateByAgent(unittest.TestCase):
+    """Test aggregate_by_agent function."""
+
+    def _make_metric(self, agent, input_tokens=100, output_tokens=50,
+                     latency=1000.0, tool_calls=5, error_rate=0.0,
+                     review_fix_requests=0):
+        return {
+            "agent_role": agent,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "tool_call_latency_ms": latency,
+            "nb_tool_calls": tool_calls,
+            "tool_call_error_rate": error_rate,
+            "review_fix_requests": review_fix_requests,
+        }
+
+    def test_single_agent_single_run(self):
+        metrics = [self._make_metric("genius")]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["runs"], 1)
+        self.assertEqual(result["genius"]["total_input_tokens"], 100)
+
+    def test_single_agent_multiple_runs(self):
+        metrics = [
+            self._make_metric("genius", input_tokens=100, output_tokens=50),
+            self._make_metric("genius", input_tokens=200, output_tokens=100),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["runs"], 2)
+        self.assertEqual(result["genius"]["total_input_tokens"], 300)
+
+    def test_multiple_agents(self):
+        metrics = [
+            self._make_metric("genius", input_tokens=100),
+            self._make_metric("dev", input_tokens=200),
+            self._make_metric("genius", input_tokens=150),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["runs"], 2)
+        self.assertEqual(result["genius"]["total_input_tokens"], 250)
+        self.assertEqual(result["dev"]["runs"], 1)
+        self.assertEqual(result["dev"]["total_input_tokens"], 200)
+
+    def test_review_fix_requests_aggregation(self):
+        """Review fix requests should be summed across runs."""
+        metrics = [
+            self._make_metric("genius", review_fix_requests=2),
+            self._make_metric("genius", review_fix_requests=3),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["review_fix_requests_sum"], 5)
+
+    def test_review_fix_requests_dev_zero(self):
+        """Dev agent should have 0 review fix requests."""
+        metrics = [self._make_metric("dev", review_fix_requests=0)]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["dev"]["review_fix_requests_sum"], 0)
+
+    def test_review_fix_requests_ctx_zero(self):
+        """Ctx agent should have 0 review fix requests."""
+        metrics = [self._make_metric("ctx", review_fix_requests=0)]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["ctx"]["review_fix_requests_sum"], 0)
+
+    def test_review_fix_requests_default_zero(self):
+        """Review fix requests should default to 0 when not present."""
+        metrics = [self._make_metric("genius")]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["review_fix_requests_sum"], 0)
 
 
 class TestFormatNumber(unittest.TestCase):
@@ -452,6 +540,73 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             if any(name in line for name in ["Genius", "Ctx", "Dev"]):
                 self.assertIn("| 0 ", line)
 
+    def test_fix_requests_column_header(self):
+        """Test that Fix Requests column header is present."""
+        result = generate_agent_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        self.assertIn("Fix Requests", result_str)
+
+    def test_fix_requests_column_zero_by_default(self):
+        """Test that Fix Requests column shows 0 when no fix requests."""
+        result = generate_agent_summary_table(self._make_aggregated())
+        for line in result:
+            if any(name in line for name in ["Genius", "Ctx", "Dev"]):
+                self.assertIn("| 0 ", line)
+
+    def test_fix_requests_column_with_values(self):
+        """Test that Fix Requests column shows correct values."""
+        agg = {
+            "genius": {
+                "runs": 2,
+                "total_input_tokens": 300,
+                "total_output_tokens": 150,
+                "latency_sum": 2000.0,
+                "tool_calls_sum": 10,
+                "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 5,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            },
+            "dev": {
+                "runs": 1,
+                "total_input_tokens": 200,
+                "total_output_tokens": 100,
+                "latency_sum": 1500.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            },
+        }
+        result = generate_agent_summary_table(agg)
+        genius_line = [l for l in result if "Genius" in l][0]
+        dev_line = [l for l in result if "Dev" in l][0]
+        self.assertIn("| 5 ", genius_line)
+        self.assertIn("| 0 ", dev_line)
+
+    def test_backward_compatible_without_fix_requests(self):
+        """Agent table should show 0 for agents without review_fix_requests_sum."""
+        agg = {
+            "genius": {
+                "runs": 1,
+                "total_input_tokens": 100,
+                "total_output_tokens": 50,
+                "latency_sum": 1000.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 0.0,
+                # No review_fix_requests_sum key
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            }
+        }
+        result = generate_agent_summary_table(agg)
+        result_str = "\n".join(result)
+        self.assertIn("| 0 ", result_str)
+
 
 class TestGenerateModelSummaryTable(unittest.TestCase):
     """Test generate_model_summary_table function."""
@@ -505,6 +660,73 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
         for line in result:
             if any(name in line for name in ["gpt-4", "claude"]):
                 self.assertIn("| 0 ", line)
+
+    def test_fix_requests_column_header(self):
+        """Test that Fix Requests column header is present."""
+        result = generate_model_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        self.assertIn("Fix Requests", result_str)
+
+    def test_fix_requests_column_zero_by_default(self):
+        """Test that Fix Requests column shows 0 when no fix requests."""
+        result = generate_model_summary_table(self._make_aggregated())
+        for line in result:
+            if any(name in line for name in ["gpt-4", "claude"]):
+                self.assertIn("| 0 ", line)
+
+    def test_fix_requests_column_with_values(self):
+        """Test that Fix Requests column shows correct values."""
+        agg = {
+            "gpt-4": {
+                "runs": 2,
+                "total_input_tokens": 300,
+                "total_output_tokens": 150,
+                "latency_sum": 2000.0,
+                "tool_calls_sum": 10,
+                "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 3,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            },
+            "claude": {
+                "runs": 1,
+                "total_input_tokens": 200,
+                "total_output_tokens": 100,
+                "latency_sum": 1500.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 5.0,
+                "review_fix_requests_sum": 2,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            },
+        }
+        result = generate_model_summary_table(agg)
+        gpt4_line = [l for l in result if "gpt-4" in l][0]
+        claude_line = [l for l in result if "claude" in l][0]
+        self.assertIn("| 3 ", gpt4_line)
+        self.assertIn("| 2 ", claude_line)
+
+    def test_backward_compatible_without_fix_requests(self):
+        """Model table should show 0 for models without review_fix_requests_sum."""
+        agg = {
+            "gpt-4": {
+                "runs": 1,
+                "total_input_tokens": 100,
+                "total_output_tokens": 50,
+                "latency_sum": 1000.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 0.0,
+                # No review_fix_requests_sum key
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            }
+        }
+        result = generate_model_summary_table(agg)
+        result_str = "\n".join(result)
+        self.assertIn("| 0 ", result_str)
 
 
 class TestMergePerToolDict(unittest.TestCase):
