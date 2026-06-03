@@ -38,6 +38,36 @@ You are backed by a **cheap LLM** — token cost is not a blocker, so take your 
 * Read documentation files thoroughly and extract relevant sections.
 * Report document section titles and file paths.
 
+### Web Search
+* Use the SearXNG instance at `https://searxng.norture.fr` to perform web searches for supplementary information and state-of-the-art knowledge.
+* Query the API via `curl` using the JSON format:
+  ```bash
+  curl -s --get "https://searxng.norture.fr/search" --data-urlencode "q=<your query>" --data-urlencode "format=json"
+  ```
+* The response is structured JSON with these key fields:
+  - `results` — array of search results, each containing:
+    - `title` — result title
+    - `url` — result URL
+    - `content` — snippet/description
+    - `engine` — search engine used (google, duckduckgo, wikipedia, etc.)
+    - `score` — relevance score
+    - `category` — result category
+  - `suggestions` — query suggestions
+  - `number_of_results` — total result count
+* Example:
+  ```bash
+  curl -s --get "https://searxng.norture.fr/search" \
+    --data-urlencode "q=latest advances in large language models" \
+    --data-urlencode "format=json" | jq '.results[:5] | .[] | "\(.title) - \(.url) (\(.engine))"'
+  ```
+* Guidelines:
+  - Use web search when gathering state-of-the-art knowledge, recent developments, or supplementary information that may not be in the repository.
+  - Keep queries focused and specific to get high-quality results.
+  - Limit results to the most relevant 3-5 items and summarize findings.
+  - Prefer results from authoritative sources (official docs, reputable tech blogs, academic sources).
+  - Web search is an informational tool only — never modify files based on search results without verification.
+* Note: `jq` is available in the terminal for JSON parsing. If not, use Python: `python3 -c "import json,sys; print(json.dumps(sys.stdin.read(), indent=2))"`
+
 ## 3. Output Format
 For each relevant finding, report:
 - **Source location**: File path with line numbers, issue URL, PR URL, or doc section
