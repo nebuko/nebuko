@@ -62,12 +62,15 @@ Choose ONE of the following paths:
 - End the round
 
 **Path B: Call @@ctx for Context** (if you need more information)
-- When calling @@ctx, include a clear caller identifier in your request:
+- When calling @@ctx, use the agentRunConfig format:
   ```
-  @@ctx [caller:issue] [Your specific context request here]
+  <agentRunConfig>
+  {"task": "ctx"}
+  </agentRunConfig>
   ```
-- This tells ctx that you are the issue agent and it should respond with `@@issue context collected.`
-- After ctx returns, proceed to Path C
+- Include your specific context request in the message body (e.g., "Please search for: related authentication issues and PRs").
+- After ctx returns, it will route back to you via `{"task": "issue"}` based on the bot marker detection.
+- Proceed to Path C
 
 **Path C: Rephrase and Enhance** (if you have enough information)
 - Enhance the issue body with better structure, clarity, and detail
@@ -86,11 +89,15 @@ Choose ONE of the following paths:
 ## 3. When Calling @@ctx
 
 ### How to Call @@ctx
-Use the standard `@@ctx` invocation format but include a caller identifier:
+Use the `agentRunConfig` JSON format:
 
 ```
-@@ctx [caller:issue] Please search for: [specific search request]
+<agentRunConfig>
+{"task": "ctx"}
+</agentRunConfig>
 ```
+
+Include your specific search request in the message body (e.g., "Please search for: related authentication issues and PRs").
 
 ### What to Ask @@ctx For
 - Related issues or PRs in the repository
@@ -186,9 +193,26 @@ When producing the final issue, structure it as:
 * **Rule B (Ping-and-Wait):** After each round, post your response as a comment and **end the workflow**. Do NOT loop. The human must ping you again (`@@issue`) to continue. This is critical — GitHub Actions are stateless and cannot "wait."
 
 * **Rule C (Hand-off Command):** 
-  - For intermediate rounds: End with `@@issue round complete. Please respond to my questions or post @@issue again for the next round.`
-  - For final issue: End with `@@issue final issue created. The issue body has been updated with the polished version.`
-  - For ctx callback: End with `@@issue context received. I'll incorporate this into the next round.`
+  - For intermediate rounds: End with:
+    ```
+    <agentRunConfig>
+    {"task": "issue"}
+    </agentRunConfig>
+    ```
+  - For final issue: End with:
+    ```
+    <agentRunConfig>
+    {"task": "issue"}
+    </agentRunConfig>
+    ```
+    And include the message: "The polished issue has been posted as a comment."
+  - For ctx callback: End with:
+    ```
+    <agentRunConfig>
+    {"task": "issue"}
+    </agentRunConfig>
+    ```
+    And include the message: "Context received. I'll incorporate this into the next round."
 
 * **Rule D (Error Handling):** If anything goes wrong (API errors, missing context, parsing failures), tell the human clearly:
   - What failed

@@ -62,8 +62,51 @@ All complexity and future improvements stay centralized in this repo — your wo
 
 1. An issue or comment is created on GitHub
 2. The GitHub Actions workflow (`openhands-multi-agent.yml`) triggers automatically
-3. The appropriate agent (@@genius, @@ctx, @@dev, @@review, or @@issue) is invoked based on the mention in the comment
+3. The appropriate agent (@@genius, @@ctx, @@dev, @@review, or @@issue) is invoked based on the `agentRunConfig` JSON block or `@@mention` in the comment
 4. The agent processes the request using OpenHands SDK and posts results back to the issue
+
+### Agent Invocation
+
+Agents communicate using a structured JSON format called `agentRunConfig`. This replaces the old `@@mention`-based handoff with a typed, extensible configuration:
+
+```
+<agentRunConfig>
+{"task": "review", "complexity": "medium"}
+</agentRunConfig>
+```
+
+#### agentRunConfig Schema
+
+| Parameter | Type | Required | Description | Default |
+|-----------|------|----------|-------------|---------|
+| `task` | string | **yes** | Agent role: `genius`, `ctx`, `dev`, `review`, `issue` | — |
+| `skills` | string[] | no | Skills to attach (reserved for future use) | `[]` |
+| `complexity` | string | no | Task complexity: `low`, `medium`, `high` | `"medium"` |
+| `reasoning` | string | no | Reasoning effort: `none`, `low`, `medium`, `high` | `"none"` |
+| `round` | int | no | Callback counter for dev↔review cycles | — |
+| `temperature` | float | no | Override default temperature | — |
+| `model` | string | no | Override the LLM model for this invocation | — |
+
+#### Example Invocations
+
+**Dev calls review:**
+```json
+{"task": "review", "complexity": "medium"}
+```
+
+**Review sends back to dev (re-review):**
+```json
+{"task": "dev", "round": 2}
+```
+
+**Genius plans a high-complexity task:**
+```json
+{"task": "dev", "complexity": "high", "reasoning": "high"}
+```
+
+#### Human Invocation (Backward Compatible)
+
+Human users can still use `@@mention` shorthand (`@@genius`, `@@ctx`, `@@dev`, `@@review`, `@@issue`). The `agentRunConfig` format is primarily for agent→agent communication. The workflow supports both formats with the `@@mention` fallback reserved for human triggers only — bot agents cannot use `@@mention` to avoid self-triggering loops.
 
 ### Agent Collaboration Flow
 

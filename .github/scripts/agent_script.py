@@ -475,6 +475,15 @@ def main():
     if os.getenv("LLM_SEED"):
         llm_config["seed"] = int(os.getenv("LLM_SEED"))
 
+    # Reasoning level support (optional — model-dependent)
+    llm_reasoning = os.getenv("LLM_REASONING", "none")
+    if llm_reasoning and llm_reasoning != "none":
+        llm_config["reasoning"] = {
+            "enabled": True,
+            "effort": llm_reasoning
+        }
+        logger.info(f"Reasoning enabled: effort={llm_reasoning}")
+
     llm = LLM(**llm_config)
 
     # Get the current working directory as workspace
