@@ -86,23 +86,13 @@ class LLMConfig(BaseModel):
     output_price: Optional[float] = None
 
 
-class ComplexityOverrideConfig(BaseModel):
-    """Optional per-complexity model/temperature/seed override for an agent."""
-
-    model_ref: Optional[LLMConfig] = Field(alias="model", default=None)
-    temperature: Optional[float] = None
-    seed: Optional[int] = None
-
-
 class AgentConfig(BaseModel):
-    """Agent role → model + prompt file + skills + optional complexity overrides."""
+    """Agent role → model + prompt file + skills."""
 
     model_ref: LLMConfig = Field(alias="model")
     temperature: float = 0.0
     prompt_file: str
     skills: list[str] = Field(default_factory=list)
-    complexity_overrides: Optional[dict[str, ComplexityOverrideConfig]] = None
-    seed: Optional[int] = None
 
 
 class AppConfig(BaseModel):

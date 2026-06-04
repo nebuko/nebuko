@@ -11,7 +11,6 @@ from pydantic import ValidationError
 from config import (
     AppConfig,
     AgentConfig,
-    ComplexityOverrideConfig,
     LLMConfig,
     ProviderConfig,
     resolve_refs,
@@ -146,35 +145,6 @@ class TestLLMConfig:
         assert config.output_price == 8.0
 
 
-class TestComplexityOverrideConfig:
-    """Test ComplexityOverrideConfig Pydantic model."""
-
-    def test_valid_override(self):
-        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
-        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
-        override = ComplexityOverrideConfig(model=llm, temperature=0.5)
-        assert override.temperature == 0.5
-
-    def test_override_without_model(self):
-        override = ComplexityOverrideConfig(temperature=0.5)
-        assert override.model_ref is None
-        assert override.temperature == 0.5
-
-    def test_override_with_seed(self):
-        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
-        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
-        override = ComplexityOverrideConfig(model=llm, temperature=0.5, seed=123)
-        assert override.model_ref is llm
-        assert override.temperature == 0.5
-        assert override.seed == 123
-
-    def test_override_with_seed_only(self):
-        override = ComplexityOverrideConfig(temperature=0.5, seed=42)
-        assert override.model_ref is None
-        assert override.temperature == 0.5
-        assert override.seed == 42
-
-
 class TestAgentConfig:
     """Test AgentConfig Pydantic model."""
 
@@ -189,40 +159,6 @@ class TestAgentConfig:
         )
         assert agent.temperature == 0.2
         assert agent.skills == ["python"]
-
-    def test_agent_with_complexity_overrides(self):
-        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
-        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
-        override = ComplexityOverrideConfig(model=llm, temperature=0.5)
-        agent = AgentConfig(
-            model=llm,  # alias="model" for model_ref
-            temperature=0.2,
-            prompt_file=".agents/prompts/dev.md",
-            complexity_overrides={"high": override},
-        )
-        assert "high" in agent.complexity_overrides
-        assert agent.complexity_overrides["high"].temperature == 0.5
-
-    def test_agent_with_seed(self):
-        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
-        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
-        agent = AgentConfig(
-            model=llm,
-            temperature=0.2,
-            prompt_file=".agents/prompts/genius.md",
-            seed=42,
-        )
-        assert agent.seed == 42
-
-    def test_agent_seed_none_by_default(self):
-        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
-        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
-        agent = AgentConfig(
-            model=llm,
-            temperature=0.2,
-            prompt_file=".agents/prompts/genius.md",
-        )
-        assert agent.seed is None
 
 
 class TestAppConfig:
@@ -327,49 +263,3 @@ class TestLoadConfig:
             with pytest.raises(ValidationError):
                 load_config(f.name)
             os.unlink(f.name)
-
-    def test_dev_agent_with_complexity_overrides(self):
-        """Dev agent with complexity_overrides loads correctly."""
-        raw = {
-            "providers": {
-                "openrouter": {
-                    "api_url": "https://openrouter.ai/api/v1/chat/completions",
-                    "api_token_env": "OPENROUTER_API_KEY",
-                }
-            },
-            "llms": {
-                "deepseek-v4-flash": {
-                    "model_path": "openrouter/deepseek/deepseek-v4-flash",
-                    "provider": "${providers.openrouter}",
-                    "default_temperature": 0.0,
-                }
-            },
-            "agents": {
-                "dev": {
-                    "model": "${llms.deepseek-v4-flash}",
-                    "temperature": 0.0,
-                    "prompt_file": ".agents/prompts/dev.md",
-                    "skills": ["python", "devops"],
-                    "complexity_overrides": {
-                        "low": {"model": "${llms.deepseek-v4-flash}"},
-                        "medium": {"model": "${llms.deepseek-v4-flash}"},
-                        "high": {"model": "${llms.deepseek-v4-flash}"},
-                    },
-                }
-            },
-        }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
-            yaml.dump(raw, f)
-            f.flush()
-            config = load_config(f.name)
-
-        dev = config.agents["dev"]
-        assert dev.complexity_overrides is not None
-        assert "low" in dev.complexity_overrides
-        assert "medium" in dev.complexity_overrides
-        assert "high" in dev.complexity_overrides
-        assert dev.complexity_overrides["low"].model_ref.model_path == "openrouter/deepseek/deepseek-v4-flash"
-
-        os.unlink(f.name)

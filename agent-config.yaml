@@ -31,7 +31,6 @@ llms:
     output_price: 0.40
 
 # ── Agents: role → model + prompt + skills ──
-# Note: seed is optional per-agent. If not set, falls back to workflow-level llm_seed input.
 agents:
   genius:
     model: "${llms.deepseek-v4-pro}"
@@ -44,13 +43,6 @@ agents:
     temperature: 0.0
     prompt_file: ".agents/prompts/dev.md"
     skills: [python, devops]
-    complexity_overrides:
-      low:
-        model: "${llms.deepseek-v4-flash}"
-      medium:
-        model: "${llms.deepseek-v4-flash}"
-      high:
-        model: "${llms.deepseek-v4-flash}"
 
   ctx:
     model: "${llms.deepseek-v4-flash}"

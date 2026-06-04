@@ -19,7 +19,6 @@ Environment Variables:
     LLM_MODEL: Language model to use (default: gpt-5.5)
     LLM_BASE_URL: Optional base URL for LLM API
     LLM_TEMPERATURE: Optional sampling temperature (0.0 = deterministic, default: provider default)
-    LLM_SEED: Optional seed for reproducible outputs (default: not set)
 
 Note: Provide either prompt_location argument OR PROMPT_STRING env variable, not both.
 
@@ -454,13 +453,11 @@ def main():
     # Configure LLM — prefer layered config file, fall back to env vars
     config_path = os.getenv("AGENT_CONFIG_PATH", "agent-config.yaml")
     role_name = os.environ.get("ROLE_NAME", "unknown")
-    complexity = os.getenv("COMPLEXITY", "low").lower()
 
     api_key = None
     model = None
     base_url = None
     temperature = None
-    seed = None
 
     if os.path.isfile(config_path):
         try:
@@ -469,28 +466,11 @@ def main():
             cfg = load_config(config_path)
             agent_cfg = cfg.agents.get(role_name)
             if agent_cfg:
-                # Resolve model (with complexity override for dev agent)
-                model_ref = agent_cfg.model_ref
-                if (
-                    agent_cfg.complexity_overrides
-                    and complexity in agent_cfg.complexity_overrides
-                ):
-                    override = agent_cfg.complexity_overrides[complexity]
-                    if override.model_ref:
-                        model_ref = override.model_ref
-                    if override.temperature is not None:
-                        temperature = override.temperature
-                    if override.seed is not None:
-                        seed = override.seed
-
-                model = model_ref.model_path
-                provider = model_ref.provider_ref
+                model = agent_cfg.model_ref.model_path
+                provider = agent_cfg.model_ref.provider_ref
                 api_key = os.environ.get(provider.api_token_env)
                 base_url = provider.api_url
-                if temperature is None:
-                    temperature = agent_cfg.temperature
-                if seed is None:
-                    seed = agent_cfg.seed
+                temperature = agent_cfg.temperature
                 logger.info(
                     f"Loaded config for agent '{role_name}' from {config_path}: "
                     f"model={model}, provider={provider.api_url}"
@@ -515,8 +495,6 @@ def main():
         base_url = os.getenv("LLM_BASE_URL")
     if temperature is None and os.getenv("LLM_TEMPERATURE"):
         temperature = float(os.getenv("LLM_TEMPERATURE"))
-    if seed is None and os.getenv("LLM_SEED"):
-        seed = int(os.getenv("LLM_SEED"))
 
     # Per-invocation overrides from agentRunConfig (CONFIG_MODEL / CONFIG_TEMPERATURE)
     # These allow a caller to override the config file values for a single invocation.
@@ -545,8 +523,6 @@ def main():
 
     if temperature is not None:
         llm_config["temperature"] = temperature
-    if seed is not None:
-        llm_config["seed"] = seed
 
     # Reasoning level support (optional — model-dependent)
     llm_reasoning = os.getenv("LLM_REASONING", "none")
