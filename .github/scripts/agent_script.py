@@ -40,6 +40,7 @@ from openhands.sdk.event.llm_convertible.action import ActionEvent
 from openhands.sdk.event.llm_convertible.observation import ObservationEvent
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.tools.preset.default import get_default_agent, get_default_condenser
+from metrics_schema import Metrics
 
 
 logger = get_logger(__name__)
@@ -162,7 +163,7 @@ def collect_llm_metrics(conversation):
         conversation: The OpenHands Conversation object
         
     Returns:
-        dict: Dictionary containing all collected metrics
+        Metrics: Metrics object containing all collected metrics
     """
     try:
         # Get combined metrics across all LLMs
@@ -217,74 +218,74 @@ def collect_llm_metrics(conversation):
             if hasattr(first_event, 'timestamp'):
                 start_time = first_event.timestamp
         
-        # Build metrics dictionary
+        # Build Metrics object
         role_name = os.environ.get("ROLE_NAME", "unknown")
-        metrics = {
-            "run_id": str(conversation.id),
-            "model_name": combined_metrics.model_name,
-            "agent_role": role_name,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "complexity": os.environ.get("COMPLEXITY", "N/A"),
-            "tool_call_latency_ms": tool_call_latency_ms,
-            "agent_runtime_ms": agent_runtime_ms,
-            "agent_runtimes_per_call_ms": agent_runtimes_per_call_ms,
-            "nb_tool_calls": nb_tool_calls,
-            "tool_call_error_rate": tool_call_error_rate,
-            "start_time": start_time,
-            "end_time": datetime.now(timezone.utc).isoformat(),
-            "tool_calls_per_tool": tool_calls_per_tool,
-            "errors_per_tool": errors_per_tool,
-            "tokens_per_tool": tokens_per_tool,
-        }
-        
-        logger.info(f"Collected LLM metrics for run {metrics['run_id']}")
+        metrics = Metrics(
+            run_id=str(conversation.id),
+            model_name=combined_metrics.model_name,
+            agent_role=role_name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            complexity=os.environ.get("COMPLEXITY", "N/A"),
+            tool_call_latency_ms=tool_call_latency_ms,
+            agent_runtime_ms=agent_runtime_ms,
+            agent_runtimes_per_call_ms=agent_runtimes_per_call_ms,
+            nb_tool_calls=nb_tool_calls,
+            tool_call_error_rate=tool_call_error_rate,
+            start_time=start_time,
+            end_time=datetime.now(timezone.utc).isoformat(),
+            tool_calls_per_tool=tool_calls_per_tool,
+            errors_per_tool=errors_per_tool,
+            tokens_per_tool=tokens_per_tool,
+        )
+
+        logger.info(f"Collected LLM metrics for run {metrics.run_id}")
         return metrics
         
     except Exception as e:
         logger.error(f"Failed to collect LLM metrics: {e}")
         # Return minimal metrics on error
-        return {
-            "run_id": str(conversation.id) if conversation else "unknown",
-            "model_name": "unknown",
-            "agent_role": os.environ.get("ROLE_NAME", "unknown"),
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "complexity": os.environ.get("COMPLEXITY", "N/A"),
-            "tool_call_latency_ms": 0.0,
-            "nb_tool_calls": 0,
-            "tool_call_error_rate": 0.0,
-            "start_time": datetime.now(timezone.utc).isoformat(),
-            "end_time": datetime.now(timezone.utc).isoformat(),
-            "error": str(e),
-            "tool_calls_per_tool": {},
-            "errors_per_tool": {},
-            "tokens_per_tool": {},
-        }
+        return Metrics(
+            run_id=str(conversation.id) if conversation else "unknown",
+            model_name="unknown",
+            agent_role=os.environ.get("ROLE_NAME", "unknown"),
+            input_tokens=0,
+            output_tokens=0,
+            complexity=os.environ.get("COMPLEXITY", "N/A"),
+            tool_call_latency_ms=0.0,
+            nb_tool_calls=0,
+            tool_call_error_rate=0.0,
+            start_time=datetime.now(timezone.utc).isoformat(),
+            end_time=datetime.now(timezone.utc).isoformat(),
+            error=str(e),
+        )
 
 
-def save_metrics_json(metrics_dict):
+def save_metrics_json(metrics):
     """
-    Save metrics dictionary as JSON file in output/ directory.
-    
+    Save metrics as JSON file in output/ directory.
+
     Args:
-        metrics_dict: Dictionary containing metrics data
+        metrics: Metrics object containing metrics data
     """
     try:
         # Create output directory if it doesn't exist
         output_dir = "output"
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Generate filename
-        run_id = metrics_dict.get("run_id", "unknown")
+        run_id = metrics.run_id if hasattr(metrics, 'run_id') else "unknown"
         filename = f"{output_dir}/metrics-{run_id}.json"
-        
-        # Write JSON file
+
+        # Write pretty-printed JSON file
         with open(filename, "w") as f:
-            json.dump(metrics_dict, f, indent=2)
-        
+            if isinstance(metrics, Metrics):
+                f.write(metrics.to_json(compact=False))
+            else:
+                json.dump(metrics, f, indent=2)
+
         logger.info(f"Saved LLM metrics to {filename}")
-        
+
     except Exception as e:
         logger.error(f"Failed to save metrics JSON: {e}")
 
@@ -529,7 +530,7 @@ def main():
     metrics = collect_llm_metrics(conversation)
     # Count review fix requests (genius asking dev to make changes)
     review_fix_requests = final_message.count("@@dev fix this") if final_message else 0
-    metrics["review_fix_requests"] = review_fix_requests
+    metrics.review_fix_requests = review_fix_requests
 
     # Save metrics JSON with the new field
     save_metrics_json(metrics)
@@ -542,14 +543,14 @@ def main():
 
     if not message_parts:
         logger.warning("No final agent message found in events")
-        metrics_json = json.dumps(metrics, separators=(",", ":"))
+        metrics_json = metrics.to_json(compact=True)
         sentinel = f"__NO_FINAL_MESSAGE__\n<!-- agent-metrics: {metrics_json} -->"
         with open("final_message.txt", "w", encoding="utf-8") as f:
             f.write(sentinel)
         logger.info("Saved sentinel + metrics comment (no final message)")
     else:
         # Append metrics as hidden HTML comment for later aggregation on issue close
-        metrics_json = json.dumps(metrics, separators=(",", ":"))
+        metrics_json = metrics.to_json(compact=True)
         metrics_comment = f"\n\n<!-- agent-metrics: {metrics_json} -->"
 
         # Add part indicators for multi-part messages
