@@ -622,21 +622,6 @@ jobs:
                 fi
 
                 FINAL_PROMPT_FILE="/tmp/final_prompt.md"
-                PROMPT_SIZE=$(wc -c < "$PROMPT_LOCATION")
-                CONTEXT_SIZE=$(wc -c < "$AGENT_QUERY_PATH")
-                MAX_CONTEXT_BYTES=150000  # ~37K tokens at 4 chars/token
-
-                if [ "$AGENT_ROLE" = "genius" ] && [ "$CONTEXT_SIZE" -gt "$MAX_CONTEXT_BYTES" ]; then
-                    # Truncate context to preserve genius instructions.
-                    # Use tail -c to keep the most recent (bottom) comments,
-                    # and iconv -c to safely drop incomplete multi-byte UTF-8 chars.
-                    tail -c "$MAX_CONTEXT_BYTES" "$AGENT_QUERY_PATH" \
-                        | iconv -c -f UTF-8 -t UTF-8 \
-                        > "${AGENT_QUERY_PATH}.truncated"
-                    echo -e "\n\n--- ⚠️ CONTEXT TRUNCATED (original: ${CONTEXT_SIZE} bytes, limit: ${MAX_CONTEXT_BYTES} bytes) ---\n" \
-                        >> "${AGENT_QUERY_PATH}.truncated"
-                    AGENT_QUERY_PATH="${AGENT_QUERY_PATH}.truncated"
-                fi
 
                 cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
                 echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
