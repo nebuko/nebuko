@@ -460,6 +460,7 @@ def main():
     model = None
     base_url = None
     temperature = None
+    seed = None
 
     if os.path.isfile(config_path):
         try:
@@ -477,8 +478,10 @@ def main():
                     override = agent_cfg.complexity_overrides[complexity]
                     if override.model_ref:
                         model_ref = override.model_ref
-                    elif override.temperature is not None:
+                    if override.temperature is not None:
                         temperature = override.temperature
+                    if override.seed is not None:
+                        seed = override.seed
 
                 model = model_ref.model_path
                 provider = model_ref.provider_ref
@@ -486,6 +489,8 @@ def main():
                 base_url = provider.api_url
                 if temperature is None:
                     temperature = agent_cfg.temperature
+                if seed is None:
+                    seed = agent_cfg.seed
                 logger.info(
                     f"Loaded config for agent '{role_name}' from {config_path}: "
                     f"model={model}, provider={provider.api_url}"
@@ -510,6 +515,19 @@ def main():
         base_url = os.getenv("LLM_BASE_URL")
     if temperature is None and os.getenv("LLM_TEMPERATURE"):
         temperature = float(os.getenv("LLM_TEMPERATURE"))
+    if seed is None and os.getenv("LLM_SEED"):
+        seed = int(os.getenv("LLM_SEED"))
+
+    # Per-invocation overrides from agentRunConfig (CONFIG_MODEL / CONFIG_TEMPERATURE)
+    # These allow a caller to override the config file values for a single invocation.
+    config_model = os.getenv("CONFIG_MODEL")
+    if config_model:
+        model = config_model
+        logger.info(f"CONFIG_MODEL override: {model}")
+    config_temperature = os.getenv("CONFIG_TEMPERATURE")
+    if config_temperature:
+        temperature = float(config_temperature)
+        logger.info(f"CONFIG_TEMPERATURE override: {temperature}")
 
     if not api_key:
         logger.error("LLM_API_KEY environment variable is not set.")
@@ -527,8 +545,8 @@ def main():
 
     if temperature is not None:
         llm_config["temperature"] = temperature
-    if os.getenv("LLM_SEED"):
-        llm_config["seed"] = int(os.getenv("LLM_SEED"))
+    if seed is not None:
+        llm_config["seed"] = seed
 
     # Reasoning level support (optional — model-dependent)
     llm_reasoning = os.getenv("LLM_REASONING", "none")

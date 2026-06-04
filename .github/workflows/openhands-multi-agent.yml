@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: ''
+      llm_seed:
+        description: 'Optional seed for reproducible LLM outputs (runtime concern, not architectural config)'
+        required: false
+        type: number
+        default: ''
     secrets:
       OPENROUTER_API_KEY:
         description: 'Default API key for the LLM provider (used as fallback)'
@@ -95,6 +100,7 @@ jobs:
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
             LITELLM_LOG: DEBUG
+            LLM_SEED: ${{ inputs.llm_seed }}
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
@@ -305,7 +311,7 @@ jobs:
                   # Step 8: Export skills field (plumbing only — no-op for now)
                   echo "AGENT_SKILLS=${CONFIG_SKILLS}" >> $GITHUB_ENV
 
-                  echo "Resolved agent: ROLE_NAME=$TASK MODEL=${LLM_MODEL} COMPLEXITY=${COMPLEXITY}"
+                  echo "Resolved agent: ROLE_NAME=$TASK MODEL=from-config COMPLEXITY=${COMPLEXITY}"
 
             - name: Prevent all agent-trigger loops & human ping guard
               run: |
@@ -452,7 +458,12 @@ jobs:
                 AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
                 LLM_API_KEY: ${{ env.LLM_API_KEY || secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
+                LLM_TEMPERATURE: ${{ env.LLM_TEMPERATURE }}
+                LLM_SEED: ${{ env.LLM_SEED }}
+                LLM_REASONING: ${{ env.LLM_REASONING }}
                 COMPLEXITY: ${{ env.COMPLEXITY }}
+                CONFIG_MODEL: ${{ env.CONFIG_MODEL }}
+                CONFIG_TEMPERATURE: ${{ env.CONFIG_TEMPERATURE }}
               run: |
                 echo "Running agent as [@$ROLE_NAME] using prompt: $PROMPT_LOCATION"
                 if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then

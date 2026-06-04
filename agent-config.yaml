@@ -31,6 +31,7 @@ llms:
     output_price: 0.40
 
 # ── Agents: role → model + prompt + skills ──
+# Note: seed is optional per-agent. If not set, falls back to workflow-level llm_seed input.
 agents:
   genius:
     model: "${llms.deepseek-v4-pro}"

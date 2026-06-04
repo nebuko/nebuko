@@ -160,6 +160,20 @@ class TestComplexityOverrideConfig:
         assert override.model_ref is None
         assert override.temperature == 0.5
 
+    def test_override_with_seed(self):
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        override = ComplexityOverrideConfig(model=llm, temperature=0.5, seed=123)
+        assert override.model_ref is llm
+        assert override.temperature == 0.5
+        assert override.seed == 123
+
+    def test_override_with_seed_only(self):
+        override = ComplexityOverrideConfig(temperature=0.5, seed=42)
+        assert override.model_ref is None
+        assert override.temperature == 0.5
+        assert override.seed == 42
+
 
 class TestAgentConfig:
     """Test AgentConfig Pydantic model."""
@@ -188,6 +202,27 @@ class TestAgentConfig:
         )
         assert "high" in agent.complexity_overrides
         assert agent.complexity_overrides["high"].temperature == 0.5
+
+    def test_agent_with_seed(self):
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        agent = AgentConfig(
+            model=llm,
+            temperature=0.2,
+            prompt_file=".agents/prompts/genius.md",
+            seed=42,
+        )
+        assert agent.seed == 42
+
+    def test_agent_seed_none_by_default(self):
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        agent = AgentConfig(
+            model=llm,
+            temperature=0.2,
+            prompt_file=".agents/prompts/genius.md",
+        )
+        assert agent.seed is None
 
 
 class TestAppConfig:
