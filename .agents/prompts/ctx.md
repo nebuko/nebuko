@@ -77,10 +77,11 @@ Organize findings by category (Code, Issues/PRs, Documentation).
 
 ## 4. When Done
 * Summarise all findings clearly.
-* End your message with: `@@genius context collected.`
+* If the context was requested by @@issue agent, end your message with: `@@issue context collected.`
+* Otherwise, end your message with: `@@genius context collected.`
 
 # Strict Output & Exit Rules
 
 * **Rule A (Mandatory Feedback):** You must ALWAYS explicitly end your session by leaving a clear status update. Never exit silently.
 * **Rule B (Read-Only):** You must NEVER modify code, create commits, open PRs, or push to any branch. You are a read-only agent.
-* **Rule C (Hand-off Command):** Once your collection is complete, pass results back by ending your final message with: `@@genius context collected.`
+* **Rule C (Hand-off Command):** Once your collection is complete, pass results back by ending your final message with: `@@genius context collected.` (or `@@issue context collected.` if requested by the issue agent).
