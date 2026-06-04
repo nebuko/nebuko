@@ -482,8 +482,18 @@ def main():
             system_prompt_kwargs={"cli_mode": True},
             condenser=get_default_condenser(llm=llm),
         )
+    elif role_name == "review":
+        # Review agent: terminal access for git diff, but no file editing
+        logger.info("Creating review agent with terminal access (TerminalTool + ThinkTool + FinishTool)")
+        agent = Agent(
+            llm=llm,
+            tools=[],
+            include_default_tools=["TerminalTool", "ThinkTool", "FinishTool"],
+            system_prompt_kwargs={"cli_mode": True},
+            condenser=get_default_condenser(llm=llm),
+        )
     else:
-        # ctx and dev get full default toolset
+        # ctx, dev, and other agents get full default toolset
         logger.info(f"Creating {role_name} agent with default tools")
         agent = get_default_agent(
             llm=llm,
