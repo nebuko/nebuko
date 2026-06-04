@@ -33,11 +33,6 @@ on:
         required: false
         type: string
         default: 'openrouter/deepseek/deepseek-v4-pro'
-      issue_model:
-        description: 'Model for issue agent'
-        required: false
-        type: string
-        default: 'openrouter/deepseek/deepseek-v4-pro'
       genius_temperature:
         description: 'Temperature for genius agent'
         required: false
