@@ -21,6 +21,7 @@ jobs:
       dev_model_medium: "openrouter/deepseek/deepseek-v4-flash"
       dev_model_high: "openrouter/deepseek/deepseek-v4-flash"
       ctx_model: "openrouter/deepseek/deepseek-v4-flash"
+      review_model: "openrouter/deepseek/deepseek-v4-pro"
       # ───── API Configuration ─────
       api_base_url: "https://openrouter.ai/api/v1/chat/completions"
       # ───── Per-Model Base URL Overrides (optional) ─────
@@ -42,4 +43,5 @@ jobs:
       DEV_MODEL_MEDIUM_API_KEY: ${{ secrets.DEV_MODEL_MEDIUM_API_KEY }}
       DEV_MODEL_HIGH_API_KEY: ${{ secrets.DEV_MODEL_HIGH_API_KEY }}
       CTX_API_KEY: ${{ secrets.CTX_API_KEY }}
+      REVIEW_API_KEY: ${{ secrets.REVIEW_API_KEY }}
       GH_PAT: ${{ secrets.GH_PAT }}

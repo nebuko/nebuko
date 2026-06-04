@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: 'openai/qwen-3-6-30b-a3b'
+      review_model:
+        description: 'Model for review agent'
+        required: false
+        type: string
+        default: 'openrouter/deepseek/deepseek-v4-pro'
       genius_temperature:
         description: 'Temperature for genius agent'
         required: false
@@ -73,6 +78,11 @@ on:
         required: false
         type: string
         default: 'http://192.168.1.64:32202/v1'
+      review_base_url:
+        description: 'Base URL override for review model'
+        required: false
+        type: string
+        default: ''
       circuit_breaker_threshold:
         description: 'Circuit breaker threshold'
         required: false
@@ -112,6 +122,9 @@ on:
       CTX_API_KEY:
         description: 'API key override for the Ctx agent'
         required: false
+      REVIEW_API_KEY:
+        description: 'API key override for the Review agent'
+        required: false
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
@@ -135,11 +148,13 @@ jobs:
             (github.event_name == 'issues' &&
              (contains(github.event.issue.body, '@@genius') ||
               contains(github.event.issue.body, '@@ctx') ||
-              contains(github.event.issue.body, '@@dev'))) ||
+              contains(github.event.issue.body, '@@dev') ||
+              contains(github.event.issue.body, '@@review'))) ||
             (github.event_name == 'issue_comment' &&
              (contains(github.event.comment.body, '@@genius') ||
               contains(github.event.comment.body, '@@ctx') ||
-              contains(github.event.comment.body, '@@dev')))
+              contains(github.event.comment.body, '@@dev') ||
+              contains(github.event.comment.body, '@@review')))
           )
         env:
             GENIUS_MODEL: ${{ inputs.genius_model || 'openrouter/deepseek/deepseek-v4-pro' }}
@@ -155,6 +170,9 @@ jobs:
             CTX_MODEL: ${{ inputs.ctx_model || 'hosted_vllm/qwen-3-6-30b-a3b' }}
             CTX_BASE_URL : ${{ inputs.ctx_base_url || 'http://192.168.1.64:32202/v1' }}
             CTX_API_KEY : ${{ secrets.CTX_API_KEY }}
+            REVIEW_MODEL: ${{ inputs.review_model || 'openrouter/deepseek/deepseek-v4-pro' }}
+            REVIEW_BASE_URL : ${{ inputs.review_base_url || '' }}
+            REVIEW_API_KEY : ${{ secrets.REVIEW_API_KEY }}
             GENIUS_TEMPERATURE: ${{ inputs.genius_temperature || 0.2 }}
             DEV_TEMPERATURE: ${{ inputs.dev_temperature || 0.0 }}
             LLM_SEED_OVERRIDE: ${{ inputs.llm_seed || 42 }}
@@ -244,7 +262,7 @@ jobs:
               run: |
                   echo "Debug: Checking trigger body..."
                   # Last-mention-wins: avoids @@ctx stealing execution when mentioned in passing
-                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev' | tail -1)
+                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review' | tail -1)
 
                   # Determine prompt and script locations by checking which path exists
                   if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/.agents/prompts" ]; then
@@ -326,6 +344,17 @@ jobs:
                                   echo "LLM_API_KEY=${DEV_MODEL_MEDIUM_API_KEY}" >> $GITHUB_ENV
                                   ;;
                           esac
+                          ;;
+                      "@@review")
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/review.md" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${REVIEW_MODEL}" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=0.1" >> $GITHUB_ENV
+                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
+                          echo "ROLE_NAME=review" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${REVIEW_BASE_URL}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${REVIEW_API_KEY}" >> $GITHUB_ENV
                           ;;
                   esac
 
@@ -612,7 +641,7 @@ jobs:
                 import os
                 role = os.environ.get("ROLE_NAME", "unknown")
                 marker = f"<!-- bot-agent-{role} -->"
-                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer"}
+                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer", "review": "Reviewer"}
                 display_name = agent_display_names.get(role, role.capitalize())
                 with open("github_comment.md", "r") as f:
                     content = f.read()
