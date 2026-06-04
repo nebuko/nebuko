@@ -11,6 +11,7 @@ from io import StringIO
 
 # Import the module under test
 sys.path.insert(0, os.path.dirname(__file__))
+from metrics_schema import Metrics
 from summarize_metrics import (
     METRICS_REGEX,
     extract_metrics_from_comment,
@@ -70,8 +71,9 @@ class TestExtractMetricsFromComment(unittest.TestCase):
         body = "<!-- agent-metrics: {\"model_name\":\"gpt-4\",\"input_tokens\":100,\"output_tokens\":50} -->"
         result = extract_metrics_from_comment(body)
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["model_name"], "gpt-4")
-        self.assertEqual(result[0]["input_tokens"], 100)
+        self.assertIsInstance(result[0], Metrics)
+        self.assertEqual(result[0].model_name, "gpt-4")
+        self.assertEqual(result[0].input_tokens, 100)
 
     def test_extract_multiple_from_one_comment(self):
         body = (
@@ -80,6 +82,8 @@ class TestExtractMetricsFromComment(unittest.TestCase):
         )
         result = extract_metrics_from_comment(body)
         self.assertEqual(len(result), 2)
+        self.assertIsInstance(result[0], Metrics)
+        self.assertIsInstance(result[1], Metrics)
 
     def test_malformed_json_skipped(self):
         body = "<!-- agent-metrics: {invalid json} -->"
@@ -91,21 +95,176 @@ class TestExtractMetricsFromComment(unittest.TestCase):
         self.assertEqual(len(result), 0)
 
 
+class TestMetricsSchema(unittest.TestCase):
+    """Test Metrics schema class."""
+
+    def _make_full_metrics(self):
+        """Create a full Metrics object for testing."""
+        return Metrics(
+            run_id="test-run-123",
+            model_name="gpt-4",
+            agent_role="genius",
+            input_tokens=1000,
+            output_tokens=500,
+            complexity="medium",
+            tool_call_latency_ms=1500.5,
+            agent_runtime_ms=5000.0,
+            agent_runtimes_per_call_ms=[1000.0, 1500.0, 2500.0],
+            nb_tool_calls=10,
+            tool_call_error_rate=5.0,
+            start_time="2024-01-01T00:00:00",
+            end_time="2024-01-01T00:01:00",
+            tool_calls_per_tool={"terminal": 5, "file_editor": 5},
+            errors_per_tool={"terminal": 1},
+            tokens_per_tool={
+                "terminal": {"input": 500, "output": 250, "cache_hit": 100, "reasoning": 50},
+                "file_editor": {"input": 500, "output": 250, "cache_hit": 50, "reasoning": 25},
+            },
+            review_fix_requests=2,
+        )
+
+    def test_to_dict_roundtrip(self):
+        """Metrics should serialize to dict and back correctly."""
+        original = self._make_full_metrics()
+        d = original.to_dict()
+        restored = Metrics.from_dict(d)
+        self.assertEqual(restored.run_id, original.run_id)
+        self.assertEqual(restored.model_name, original.model_name)
+        self.assertEqual(restored.agent_role, original.agent_role)
+        self.assertEqual(restored.input_tokens, original.input_tokens)
+        self.assertEqual(restored.output_tokens, original.output_tokens)
+        self.assertEqual(restored.complexity, original.complexity)
+        self.assertEqual(restored.tool_call_latency_ms, original.tool_call_latency_ms)
+        self.assertEqual(restored.agent_runtime_ms, original.agent_runtime_ms)
+        self.assertEqual(restored.agent_runtimes_per_call_ms, original.agent_runtimes_per_call_ms)
+        self.assertEqual(restored.nb_tool_calls, original.nb_tool_calls)
+        self.assertEqual(restored.tool_call_error_rate, original.tool_call_error_rate)
+        self.assertEqual(restored.start_time, original.start_time)
+        self.assertEqual(restored.end_time, original.end_time)
+        self.assertEqual(restored.tool_calls_per_tool, original.tool_calls_per_tool)
+        self.assertEqual(restored.errors_per_tool, original.errors_per_tool)
+        self.assertEqual(restored.tokens_per_tool, original.tokens_per_tool)
+        self.assertEqual(restored.review_fix_requests, original.review_fix_requests)
+
+    def test_from_dict_with_missing_optional_fields(self):
+        """from_dict should handle missing optional fields gracefully."""
+        minimal_dict = {
+            "run_id": "test",
+            "model_name": "gpt-4",
+            "agent_role": "dev",
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "complexity": "low",
+            "tool_call_latency_ms": 100.0,
+            "agent_runtime_ms": 1000.0,
+            "agent_runtimes_per_call_ms": [],
+            "nb_tool_calls": 1,
+            "tool_call_error_rate": 0.0,
+            "start_time": "2024-01-01T00:00:00",
+            "end_time": "2024-01-01T00:01:00",
+            "tool_calls_per_tool": {},
+            "errors_per_tool": {},
+            "tokens_per_tool": {},
+        }
+        m = Metrics.from_dict(minimal_dict)
+        self.assertEqual(m.run_id, "test")
+        self.assertEqual(m.review_fix_requests, 0)
+        self.assertIsNone(m.error)
+
+    def test_from_dict_with_error_field(self):
+        """from_dict should handle error field."""
+        dict_with_error = {
+            "run_id": "test",
+            "model_name": "gpt-4",
+            "agent_role": "dev",
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "complexity": "low",
+            "tool_call_latency_ms": 100.0,
+            "agent_runtime_ms": 1000.0,
+            "agent_runtimes_per_call_ms": [],
+            "nb_tool_calls": 1,
+            "tool_call_error_rate": 0.0,
+            "start_time": "2024-01-01T00:00:00",
+            "end_time": "2024-01-01T00:01:00",
+            "tool_calls_per_tool": {},
+            "errors_per_tool": {},
+            "tokens_per_tool": {},
+            "error": "Something went wrong",
+        }
+        m = Metrics.from_dict(dict_with_error)
+        self.assertEqual(m.error, "Something went wrong")
+
+    def test_to_json_compact(self):
+        """to_json(compact=True) should produce compact JSON."""
+        m = self._make_full_metrics()
+        json_str = m.to_json(compact=True)
+        # Compact JSON should not have spaces after separators
+        self.assertNotIn(": ", json_str)
+        self.assertNotIn(", ", json_str)
+        # Should be valid JSON
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed["model_name"], "gpt-4")
+
+    def test_to_json_pretty(self):
+        """to_json(compact=False) should produce pretty JSON."""
+        m = self._make_full_metrics()
+        json_str = m.to_json(compact=False)
+        # Pretty JSON should have newlines
+        self.assertIn("\n", json_str)
+        # Should be valid JSON
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed["model_name"], "gpt-4")
+
+    def test_to_json_from_json_roundtrip(self):
+        """to_json + from_json should roundtrip correctly."""
+        original = self._make_full_metrics()
+        json_str = original.to_json(compact=True)
+        restored = Metrics.from_json(json_str)
+        self.assertEqual(restored.run_id, original.run_id)
+        self.assertEqual(restored.input_tokens, original.input_tokens)
+        self.assertEqual(restored.tool_calls_per_tool, original.tool_calls_per_tool)
+
+    def test_metrics_backward_compatible_with_dict(self):
+        """Metrics should be usable where dicts were expected."""
+        m = self._make_full_metrics()
+        d = m.to_dict()
+        # Verify dict has all expected keys
+        expected_keys = {
+            "run_id", "model_name", "agent_role", "input_tokens", "output_tokens",
+            "complexity", "tool_call_latency_ms", "agent_runtime_ms",
+            "agent_runtimes_per_call_ms", "nb_tool_calls", "tool_call_error_rate",
+            "start_time", "end_time", "tool_calls_per_tool", "errors_per_tool",
+            "tokens_per_tool", "review_fix_requests",
+        }
+        self.assertEqual(set(d.keys()), expected_keys)
+
+
 class TestAggregateByModel(unittest.TestCase):
     """Test aggregate_by_model function."""
 
     def _make_metric(self, model, input_tokens=100, output_tokens=50,
                      latency=1000.0, tool_calls=5, error_rate=0.0,
                      review_fix_requests=0):
-        return {
-            "model_name": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "tool_call_latency_ms": latency,
-            "nb_tool_calls": tool_calls,
-            "tool_call_error_rate": error_rate,
-            "review_fix_requests": review_fix_requests,
-        }
+        return Metrics(
+            run_id="test-run",
+            model_name=model,
+            agent_role="genius",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            complexity="medium",
+            tool_call_latency_ms=latency,
+            agent_runtime_ms=5000.0,
+            agent_runtimes_per_call_ms=[],
+            nb_tool_calls=tool_calls,
+            tool_call_error_rate=error_rate,
+            start_time="2024-01-01T00:00:00",
+            end_time="2024-01-01T00:01:00",
+            tool_calls_per_tool={},
+            errors_per_tool={},
+            tokens_per_tool={},
+            review_fix_requests=review_fix_requests,
+        )
 
     def test_single_model_single_run(self):
         metrics = [self._make_metric("gpt-4")]
@@ -141,7 +300,8 @@ class TestAggregateByModel(unittest.TestCase):
         self.assertEqual(len(result), 0)
 
     def test_unknown_model(self):
-        metrics = [{"input_tokens": 100}]  # no model_name
+        # Legacy dict support: no model_name
+        metrics = [{"input_tokens": 100}]
         result = aggregate_by_model(metrics)
         self.assertIn("unknown", result)
         self.assertEqual(result["unknown"]["runs"], 1)
@@ -161,6 +321,28 @@ class TestAggregateByModel(unittest.TestCase):
         result = aggregate_by_model(metrics)
         self.assertEqual(result["gpt-4"]["review_fix_requests_sum"], 0)
 
+    def test_metrics_object_aggregation(self):
+        """Metrics objects should aggregate correctly."""
+        metrics = [
+            self._make_metric("gpt-4", input_tokens=100, output_tokens=50),
+            self._make_metric("gpt-4", input_tokens=200, output_tokens=100),
+        ]
+        result = aggregate_by_model(metrics)
+        self.assertEqual(result["gpt-4"]["runs"], 2)
+        self.assertEqual(result["gpt-4"]["total_input_tokens"], 300)
+        self.assertEqual(result["gpt-4"]["total_output_tokens"], 150)
+
+    def test_legacy_dict_aggregation(self):
+        """Legacy dict metrics should still aggregate correctly."""
+        metrics = [
+            {"model_name": "gpt-4", "input_tokens": 100, "output_tokens": 50},
+            {"model_name": "gpt-4", "input_tokens": 200, "output_tokens": 100},
+        ]
+        result = aggregate_by_model(metrics)
+        self.assertEqual(result["gpt-4"]["runs"], 2)
+        self.assertEqual(result["gpt-4"]["total_input_tokens"], 300)
+        self.assertEqual(result["gpt-4"]["total_output_tokens"], 150)
+
 
 class TestAggregateByAgent(unittest.TestCase):
     """Test aggregate_by_agent function."""
@@ -168,15 +350,25 @@ class TestAggregateByAgent(unittest.TestCase):
     def _make_metric(self, agent, input_tokens=100, output_tokens=50,
                      latency=1000.0, tool_calls=5, error_rate=0.0,
                      review_fix_requests=0):
-        return {
-            "agent_role": agent,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "tool_call_latency_ms": latency,
-            "nb_tool_calls": tool_calls,
-            "tool_call_error_rate": error_rate,
-            "review_fix_requests": review_fix_requests,
-        }
+        return Metrics(
+            run_id="test-run",
+            model_name="gpt-4",
+            agent_role=agent,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            complexity="medium",
+            tool_call_latency_ms=latency,
+            agent_runtime_ms=5000.0,
+            agent_runtimes_per_call_ms=[],
+            nb_tool_calls=tool_calls,
+            tool_call_error_rate=error_rate,
+            start_time="2024-01-01T00:00:00",
+            end_time="2024-01-01T00:01:00",
+            tool_calls_per_tool={},
+            errors_per_tool={},
+            tokens_per_tool={},
+            review_fix_requests=review_fix_requests,
+        )
 
     def test_single_agent_single_run(self):
         metrics = [self._make_metric("genius")]
@@ -232,6 +424,28 @@ class TestAggregateByAgent(unittest.TestCase):
         result = aggregate_by_agent(metrics)
         self.assertEqual(result["genius"]["review_fix_requests_sum"], 0)
 
+    def test_metrics_object_aggregation(self):
+        """Metrics objects should aggregate correctly."""
+        metrics = [
+            self._make_metric("genius", input_tokens=100, output_tokens=50),
+            self._make_metric("genius", input_tokens=200, output_tokens=100),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["runs"], 2)
+        self.assertEqual(result["genius"]["total_input_tokens"], 300)
+        self.assertEqual(result["genius"]["total_output_tokens"], 150)
+
+    def test_legacy_dict_aggregation(self):
+        """Legacy dict metrics should still aggregate correctly."""
+        metrics = [
+            {"agent_role": "genius", "input_tokens": 100, "output_tokens": 50},
+            {"agent_role": "genius", "input_tokens": 200, "output_tokens": 100},
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["genius"]["runs"], 2)
+        self.assertEqual(result["genius"]["total_input_tokens"], 300)
+        self.assertEqual(result["genius"]["total_output_tokens"], 150)
+
 
 class TestFormatNumber(unittest.TestCase):
     """Test format_number function."""
@@ -259,8 +473,10 @@ class TestGenerateSummaryTable(unittest.TestCase):
                 "total_input_tokens": 300,
                 "total_output_tokens": 150,
                 "latency_sum": 2000.0,
+                "llm_runtime_sum": 10000.0,
                 "tool_calls_sum": 10,
                 "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
@@ -270,8 +486,10 @@ class TestGenerateSummaryTable(unittest.TestCase):
                 "total_input_tokens": 200,
                 "total_output_tokens": 100,
                 "latency_sum": 1500.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 5.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
@@ -311,8 +529,10 @@ class TestGenerateSummaryTable(unittest.TestCase):
                 "total_input_tokens": 100,
                 "total_output_tokens": 50,
                 "latency_sum": 1000.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
@@ -437,8 +657,10 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "total_input_tokens": 300,
                 "total_output_tokens": 150,
                 "latency_sum": 2000.0,
+                "llm_runtime_sum": 10000.0,
                 "tool_calls_sum": 10,
                 "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
@@ -448,8 +670,10 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "total_input_tokens": 200,
                 "total_output_tokens": 100,
                 "latency_sum": 1500.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 5.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
@@ -459,8 +683,10 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "total_input_tokens": 400,
                 "total_output_tokens": 200,
                 "latency_sum": 3000.0,
+                "llm_runtime_sum": 8000.0,
                 "tool_calls_sum": 8,
                 "error_rate_sum": 2.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
@@ -508,8 +734,10 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "total_input_tokens": 100,
                 "total_output_tokens": 50,
                 "latency_sum": 1000.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
@@ -561,6 +789,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "total_input_tokens": 300,
                 "total_output_tokens": 150,
                 "latency_sum": 2000.0,
+                "llm_runtime_sum": 10000.0,
                 "tool_calls_sum": 10,
                 "error_rate_sum": 0.0,
                 "review_fix_requests_sum": 5,
@@ -573,6 +802,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "total_input_tokens": 200,
                 "total_output_tokens": 100,
                 "latency_sum": 1500.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 0.0,
                 "review_fix_requests_sum": 0,
@@ -595,6 +825,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "total_input_tokens": 100,
                 "total_output_tokens": 50,
                 "latency_sum": 1000.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 0.0,
                 # No review_fix_requests_sum key
@@ -618,8 +849,10 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
                 "total_input_tokens": 300,
                 "total_output_tokens": 150,
                 "latency_sum": 2000.0,
+                "llm_runtime_sum": 10000.0,
                 "tool_calls_sum": 10,
                 "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
@@ -629,8 +862,10 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
                 "total_input_tokens": 200,
                 "total_output_tokens": 100,
                 "latency_sum": 1500.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 5.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
@@ -682,6 +917,7 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
                 "total_input_tokens": 300,
                 "total_output_tokens": 150,
                 "latency_sum": 2000.0,
+                "llm_runtime_sum": 10000.0,
                 "tool_calls_sum": 10,
                 "error_rate_sum": 0.0,
                 "review_fix_requests_sum": 3,
@@ -694,6 +930,7 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
                 "total_input_tokens": 200,
                 "total_output_tokens": 100,
                 "latency_sum": 1500.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 5.0,
                 "review_fix_requests_sum": 2,
@@ -716,6 +953,7 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
                 "total_input_tokens": 100,
                 "total_output_tokens": 50,
                 "latency_sum": 1000.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 0.0,
                 # No review_fix_requests_sum key
@@ -974,8 +1212,10 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
                 "total_input_tokens": 300,
                 "total_output_tokens": 150,
                 "latency_sum": 2000.0,
+                "llm_runtime_sum": 10000.0,
                 "tool_calls_sum": 10,
                 "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {"terminal": 15, "file_editor": 8},
                 "errors_per_tool": {"terminal": 2, "file_editor": 0},
                 "tokens_per_tool": {},
@@ -985,8 +1225,10 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
                 "total_input_tokens": 200,
                 "total_output_tokens": 100,
                 "latency_sum": 1500.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 5.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {"bash": 5},
                 "errors_per_tool": {"bash": 1},
                 "tokens_per_tool": {},
@@ -1021,8 +1263,10 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
                 "total_input_tokens": 100,
                 "total_output_tokens": 50,
                 "latency_sum": 1000.0,
+                "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
