@@ -194,7 +194,7 @@ jobs:
             REVIEW_BASE_URL : ${{ inputs.review_base_url || '' }}
             REVIEW_API_KEY : ${{ secrets.REVIEW_API_KEY }}
             ISSUE_MODEL: ${{ inputs.issue_model || 'openrouter/deepseek/deepseek-v4-pro' }}
-            ISSUE_BASE_URL : ${{ inputs.issue_base_url || '' }}
+            ISSUE_BASE_URL : ${{ inputs.issue_base_url || 'https://openrouter.ai/api/v1/chat/completions' }}
             ISSUE_API_KEY : ${{ secrets.ISSUE_API_KEY }}
             GENIUS_TEMPERATURE: ${{ inputs.genius_temperature || 0.2 }}
             DEV_TEMPERATURE: ${{ inputs.dev_temperature || 0.0 }}
