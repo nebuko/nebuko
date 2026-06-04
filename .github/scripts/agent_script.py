@@ -480,12 +480,14 @@ def main():
     # Get the current working directory as workspace
     cwd = os.getcwd()
 
-    # Role-aware agent instantiation: restrict genius to thinking tools only
+    # Role-aware agent instantiation: restrict genius and issue to thinking tools only
     role_name = os.environ.get("ROLE_NAME", "unknown")
-    if role_name == "genius":
-        # Genius runs on a high-cost model; restrict to built-in ThinkTool + FinishTool
-        # to eliminate unnecessary tool token consumption.
-        logger.info("Creating genius agent with restricted tools (ThinkTool + FinishTool only)")
+    if role_name in ("genius", "issue"):
+        # Genius and Issue agents run on high-cost models; restrict to built-in
+        # ThinkTool + FinishTool to eliminate unnecessary tool token consumption.
+        # The issue agent's role is purely analytical — it should never execute
+        # terminal commands; when it needs context, it delegates to @@ctx.
+        logger.info(f"Creating {role_name} agent with restricted tools (ThinkTool + FinishTool only)")
         agent = Agent(
             llm=llm,
             tools=[],
