@@ -423,12 +423,7 @@ jobs:
                 token: ${{ secrets.GH_PAT }}
                 body: |
                   <!-- bot-agent-${{ env.ROLE_NAME }} -->
-
-                  🤖 **${{ env.ROLE_NAME }} agent started** — processing your request.
-
-                  🔗 [View workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-                  ⏳ This may take 1–10 minutes. I'll reply here when done.
+                  🤖 **${{ env.ROLE_NAME }} agent started** — [View workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
             - name: Prepare Agent Query Context
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
