@@ -77,10 +77,13 @@ Organize findings by category (Code, Issues/PRs, Documentation).
 
 ## 4. When Done
 * Summarise all findings clearly.
-* End your message with: `@@genius context collected.`
+* **Caller Detection:** Check if your invocation included a `[caller:issue]` marker in the request. If the original trigger body contains `@@ctx [caller:issue]` or `@@ctx[caller:issue]`, you were called by the @@issue agent.
+  - If called by **@@issue**: End your message with `@@issue context collected.`
+  - If called by **@@genius** (default): End your message with `@@genius context collected.`
+  - If the caller is unclear: Default to `@@genius context collected.`
 
 # Strict Output & Exit Rules
 
 * **Rule A (Mandatory Feedback):** You must ALWAYS explicitly end your session by leaving a clear status update. Never exit silently.
 * **Rule B (Read-Only):** You must NEVER modify code, create commits, open PRs, or push to any branch. You are a read-only agent.
-* **Rule C (Hand-off Command):** Once your collection is complete, pass results back by ending your final message with: `@@genius context collected.`
+* **Rule C (Hand-off Command):** Once your collection is complete, pass results back by ending your final message with either `@@genius context collected.` (default) or `@@issue context collected.` (if called by the issue agent).
