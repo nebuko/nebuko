@@ -3,96 +3,11 @@ name: OpenHands Multi-Agent Router
 on:
   workflow_call:
     inputs:
-      genius_model:
-        description: 'Model for genius agent'
+      agent_config_path:
+        description: 'Path to the layered YAML config file (providers → llms → agents)'
         required: false
         type: string
-        default: 'openrouter/deepseek/deepseek-v4-pro'
-      dev_model_low:
-        description: 'Model for dev agent (low complexity)'
-        required: false
-        type: string
-        default: 'hosted_vllm/qwen-3-6-27b'
-      dev_model_medium:
-        description: 'Model for dev agent (medium complexity)'
-        required: false
-        type: string
-        default: 'hosted_vllm/qwen-3-6-27b'
-      dev_model_high:
-        description: 'Model for dev agent (high complexity)'
-        required: false
-        type: string
-        default: 'hosted_vllm/qwen-3-6-27b'
-      ctx_model:
-        description: 'Model for ctx agent'
-        required: false
-        type: string
-        default: 'openai/qwen-3-6-30b-a3b'
-      review_model:
-        description: 'Model for review agent'
-        required: false
-        type: string
-        default: 'openrouter/deepseek/deepseek-v4-pro'
-      genius_temperature:
-        description: 'Temperature for genius agent'
-        required: false
-        type: number
-        default: 0.2
-      dev_temperature:
-        description: 'Temperature for dev agent'
-        required: false
-        type: number
-        default: 0.0
-      llm_seed:
-        description: 'Seed for LLM'
-        required: false
-        type: number
-        default: 42
-      api_base_url:
-        description: 'Base URL for LLM API'
-        required: false
-        type: string
-        default: 'https://openrouter.ai/api/v1/chat/completions'
-      genius_base_url:
-        description: 'Base URL override for genius model'
-        required: false
-        type: string
-        default: ''
-      dev_model_low_base_url:
-        description: 'Base URL override for dev low-complexity model'
-        required: false
-        type: string
-        default: 'http://192.168.1.64:31728/v1'
-      dev_model_medium_base_url:
-        description: 'Base URL override for dev medium-complexity model'
-        required: false
-        type: string
-        default: 'http://192.168.1.64:31728/v1'
-      dev_model_high_base_url:
-        description: 'Base URL override for dev high-complexity model'
-        required: false
-        type: string
-        default: 'http://192.168.1.64:31728/v1'
-      ctx_base_url:
-        description: 'Base URL override for ctx model'
-        required: false
-        type: string
-        default: 'http://192.168.1.64:32202/v1'
-      review_base_url:
-        description: 'Base URL override for review model'
-        required: false
-        type: string
-        default: ''
-      issue_model:
-        description: 'Model for the issue agent'
-        required: false
-        type: string
-        default: 'openrouter/deepseek/deepseek-v4-pro'
-      issue_base_url:
-        description: 'Base URL override for issue model'
-        required: false
-        type: string
-        default: ''
+        default: 'agent-config.yaml'
       circuit_breaker_threshold:
         description: 'Circuit breaker threshold'
         required: false
@@ -117,30 +32,30 @@ on:
       OPENROUTER_API_KEY:
         description: 'Default API key for the LLM provider (used as fallback)'
         required: true
-      GENIUS_API_KEY:
-        description: 'API key override for the Genius agent'
-        required: false
-      DEV_MODEL_LOW_API_KEY:
-        description: 'API key override for low-complexity dev tasks'
-        required: false
-      DEV_MODEL_MEDIUM_API_KEY:
-        description: 'API key override for medium-complexity dev tasks'
-        required: false
-      DEV_MODEL_HIGH_API_KEY:
-        description: 'API key override for high-complexity dev tasks'
-        required: false
-      CTX_API_KEY:
-        description: 'API key override for the Ctx agent'
-        required: false
-      REVIEW_API_KEY:
-        description: 'API key override for the Review agent'
-        required: false
-      ISSUE_API_KEY:
-        description: 'API key override for the Issue agent'
-        required: false
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
+      GENIUS_API_KEY:
+        description: 'API key override for the Genius agent (backward compat)'
+        required: false
+      DEV_MODEL_LOW_API_KEY:
+        description: 'API key override for low-complexity dev tasks (backward compat)'
+        required: false
+      DEV_MODEL_MEDIUM_API_KEY:
+        description: 'API key override for medium-complexity dev tasks (backward compat)'
+        required: false
+      DEV_MODEL_HIGH_API_KEY:
+        description: 'API key override for high-complexity dev tasks (backward compat)'
+        required: false
+      CTX_API_KEY:
+        description: 'API key override for the Ctx agent (backward compat)'
+        required: false
+      REVIEW_API_KEY:
+        description: 'API key override for the Review agent (backward compat)'
+        required: false
+      ISSUE_API_KEY:
+        description: 'API key override for the Issue agent (backward compat)'
+        required: false
   issues:
     types: [opened, edited, assigned, closed]
   issue_comment:
@@ -174,33 +89,11 @@ jobs:
               contains(github.event.comment.body, '<agentRunConfig>')))
           )
         env:
-            GENIUS_MODEL: ${{ inputs.genius_model || 'openrouter/deepseek/deepseek-v4-pro' }}
-            DEV_MODEL_LOW: ${{ inputs.dev_model_low || 'openai/qwen-3-6-30b-a3b' }}
-            DEV_MODEL_LOW_BASE_URL : ${{ inputs.dev_model_low_base_url || 'http://192.168.1.64:32202/v1' }}
-            DEV_MODEL_LOW_API_KEY : ${{ secrets.DEV_MODEL_LOW_API_KEY }}
-            DEV_MODEL_MEDIUM: ${{ inputs.dev_model_medium || 'openai/qwen-3-6-30b-a3b' }}
-            DEV_MODEL_MEDIUM_BASE_URL : ${{ inputs.dev_model_medium_base_url || 'http://192.168.1.64:32202/v1' }}
-            DEV_MODEL_MEDIUM_API_KEY : ${{ secrets.DEV_MODEL_MEDIUM_API_KEY }}
-            DEV_MODEL_HIGH: ${{ inputs.dev_model_high || 'openai/qwen-3-6-30b-a3b' }}
-            DEV_MODEL_HIGH_BASE_URL : ${{ inputs.dev_model_high_base_url || 'http://192.168.1.64:32202/v1' }}
-            DEV_MODEL_HIGH_API_KEY : ${{ secrets.DEV_MODEL_HIGH_API_KEY }}
-            CTX_MODEL: ${{ inputs.ctx_model || 'hosted_vllm/qwen-3-6-30b-a3b' }}
-            CTX_BASE_URL : ${{ inputs.ctx_base_url || 'http://192.168.1.64:32202/v1' }}
-            CTX_API_KEY : ${{ secrets.CTX_API_KEY }}
-            REVIEW_MODEL: ${{ inputs.review_model || 'openrouter/deepseek/deepseek-v4-pro' }}
-            REVIEW_BASE_URL : ${{ inputs.review_base_url || '' }}
-            REVIEW_API_KEY : ${{ secrets.REVIEW_API_KEY }}
-            ISSUE_MODEL: ${{ inputs.issue_model || 'openrouter/deepseek/deepseek-v4-pro' }}
-            ISSUE_BASE_URL : ${{ inputs.issue_base_url || 'https://openrouter.ai/api/v1/chat/completions' }}
-            ISSUE_API_KEY : ${{ secrets.ISSUE_API_KEY }}
-            GENIUS_TEMPERATURE: ${{ inputs.genius_temperature || 0.2 }}
-            DEV_TEMPERATURE: ${{ inputs.dev_temperature || 0.0 }}
-            LLM_SEED_OVERRIDE: ${{ inputs.llm_seed || 42 }}
-            API_BASE_URL: ${{ inputs.api_base_url || 'https://openrouter.ai/api/v1/chat/completions' }}
             CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 15 }}
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
+            AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
             LITELLM_LOG: DEBUG
         steps:
             - name: Checkout repository
@@ -346,36 +239,27 @@ jobs:
                   # Export TASK for loop prevention guards (Bug Fix #1)
                   echo "TASK=$TASK" >> $GITHUB_ENV
 
-                  # Step 5: Map task to agent defaults (model, base_url, api_key, prompt)
+                  # Step 5: Map task to agent role and prompt location
+                  # The agent script loads model/provider/temperature from the config file
                   case "$TASK" in
                       "genius")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/genius.md" >> $GITHUB_ENV
                           echo "ROLE_NAME=genius" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${GENIUS_MODEL}" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=${CONFIG_TEMPERATURE:-${GENIUS_TEMPERATURE:-0.2}}" >> $GITHUB_ENV
-                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${GENIUS_BASE_URL}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${GENIUS_API_KEY}" >> $GITHUB_ENV
                           ;;
                       "ctx")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
                           echo "ROLE_NAME=ctx" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${CTX_MODEL}" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${CTX_BASE_URL}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${CTX_API_KEY}" >> $GITHUB_ENV
                           ;;
                       "dev")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
                           echo "ROLE_NAME=dev" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=${CONFIG_TEMPERATURE:-${DEV_TEMPERATURE:-0.0}}" >> $GITHUB_ENV
-                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
 
-                          # Complexity-based model selection
+                          # Complexity-based model selection (via config file)
                           COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
                           case "$COMPLEXITY" in
                               "low")
@@ -388,63 +272,18 @@ jobs:
                                   echo "COMPLEXITY=medium" >> $GITHUB_ENV
                                   ;;
                           esac
-
-                          # Model selection: CONFIG_MODEL override takes priority, then complexity tier
-                          if [ -n "$CONFIG_MODEL" ]; then
-                              # Bug Fix #2: Use explicit check to avoid empty-string fallback producing garbage
-                              echo "LLM_MODEL=${CONFIG_MODEL}" >> $GITHUB_ENV
-                          else
-                              case "$COMPLEXITY" in
-                                  "low")    echo "LLM_MODEL=${DEV_MODEL_LOW}" >> $GITHUB_ENV ;;
-                                  "high")   echo "LLM_MODEL=${DEV_MODEL_HIGH}" >> $GITHUB_ENV ;;
-                                  *)        echo "LLM_MODEL=${DEV_MODEL_MEDIUM}" >> $GITHUB_ENV ;;
-                              esac
-                          fi
-
-                          # Base URL selection: CONFIG_MODEL override takes priority, then complexity tier
-                          if [ -n "$CONFIG_MODEL" ]; then
-                              # When model is overridden, use the default API base URL
-                              echo "LLM_BASE_URL=${API_BASE_URL}" >> $GITHUB_ENV
-                          else
-                              case "$COMPLEXITY" in
-                                  "low")    echo "LLM_BASE_URL=${DEV_MODEL_LOW_BASE_URL}" >> $GITHUB_ENV ;;
-                                  "high")   echo "LLM_BASE_URL=${DEV_MODEL_HIGH_BASE_URL}" >> $GITHUB_ENV ;;
-                                  *)        echo "LLM_BASE_URL=${DEV_MODEL_MEDIUM_BASE_URL}" >> $GITHUB_ENV ;;
-                              esac
-                          fi
-
-                          # API key selection: CONFIG_MODEL override uses default key, then complexity tier
-                          if [ -n "$CONFIG_MODEL" ]; then
-                              echo "LLM_API_KEY=${OPENROUTER_API_KEY}" >> $GITHUB_ENV
-                          else
-                              case "$COMPLEXITY" in
-                                  "low")    echo "LLM_API_KEY=${DEV_MODEL_LOW_API_KEY}" >> $GITHUB_ENV ;;
-                                  "high")   echo "LLM_API_KEY=${DEV_MODEL_HIGH_API_KEY}" >> $GITHUB_ENV ;;
-                                  *)        echo "LLM_API_KEY=${DEV_MODEL_MEDIUM_API_KEY}" >> $GITHUB_ENV ;;
-                              esac
-                          fi
                           ;;
                       "review")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/review.md" >> $GITHUB_ENV
                           echo "ROLE_NAME=review" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${REVIEW_MODEL}" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=${CONFIG_TEMPERATURE:-0.1}" >> $GITHUB_ENV
-                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${REVIEW_BASE_URL}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${REVIEW_API_KEY}" >> $GITHUB_ENV
                           ;;
                       "issue")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/issue.md" >> $GITHUB_ENV
                           echo "ROLE_NAME=issue" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${ISSUE_MODEL}" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=${CONFIG_TEMPERATURE:-${GENIUS_TEMPERATURE:-0.2}}" >> $GITHUB_ENV
-                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${ISSUE_BASE_URL}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${ISSUE_API_KEY}" >> $GITHUB_ENV
                           ;;
                       *)
                           echo "Unknown task: $TASK"
@@ -609,6 +448,8 @@ jobs:
               timeout-minutes: 30
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
+                AGENT_ROLE: ${{ env.ROLE_NAME }}
+                AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
                 LLM_API_KEY: ${{ env.LLM_API_KEY || secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 COMPLEXITY: ${{ env.COMPLEXITY }}

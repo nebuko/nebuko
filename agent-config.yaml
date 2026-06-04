@@ -1,0 +1,70 @@
+# ── Providers: API endpoints + auth ──
+providers:
+  openrouter:
+    api_url: "https://openrouter.ai/api/v1/chat/completions"
+    api_token_env: "OPENROUTER_API_KEY"
+  local_vllm:
+    api_url: "http://192.168.1.64:32202/v1"
+    api_token_env: "LOCAL_VLLM_API_TOKEN"
+
+# ── LLMs: model paths referencing providers ──
+llms:
+  deepseek-v4-pro:
+    model_path: "openrouter/deepseek/deepseek-v4-pro"
+    provider: "${providers.openrouter}"
+    default_temperature: 0.2
+    input_price: 2.0
+    output_price: 8.0
+
+  deepseek-v4-flash:
+    model_path: "openrouter/deepseek/deepseek-v4-flash"
+    provider: "${providers.openrouter}"
+    default_temperature: 0.0
+    input_price: 0.12
+    output_price: 0.18
+
+  qwen-3-6-30b:
+    model_path: "hosted_vllm/qwen-3-6-30b-a3b"
+    provider: "${providers.local_vllm}"
+    default_temperature: 0.0
+    input_price: 0.35
+    output_price: 0.40
+
+# ── Agents: role → model + prompt + skills ──
+agents:
+  genius:
+    model: "${llms.deepseek-v4-pro}"
+    temperature: 0.2
+    prompt_file: ".agents/prompts/genius.md"
+    skills: []
+
+  dev:
+    model: "${llms.deepseek-v4-flash}"
+    temperature: 0.0
+    prompt_file: ".agents/prompts/dev.md"
+    skills: [python, devops]
+    complexity_overrides:
+      low:
+        model: "${llms.deepseek-v4-flash}"
+      medium:
+        model: "${llms.deepseek-v4-flash}"
+      high:
+        model: "${llms.deepseek-v4-flash}"
+
+  ctx:
+    model: "${llms.deepseek-v4-flash}"
+    temperature: 0.0
+    prompt_file: ".agents/prompts/ctx.md"
+    skills: []
+
+  review:
+    model: "${llms.deepseek-v4-pro}"
+    temperature: 0.1
+    prompt_file: ".agents/prompts/review.md"
+    skills: []
+
+  issue:
+    model: "${llms.deepseek-v4-pro}"
+    temperature: 0.2
+    prompt_file: ".agents/prompts/issue.md"
+    skills: []
