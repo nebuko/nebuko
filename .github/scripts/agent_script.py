@@ -506,6 +506,7 @@ def main():
     # Extract and save final agent message with embedded metrics
     final_message = get_agent_final_response(conversation.state.events)
 
+    metrics = collect_llm_metrics(conversation)
     # Count review fix requests (genius asking dev to make changes)
     review_fix_requests = final_message.count("@@dev fix this") if final_message else 0
     metrics["review_fix_requests"] = review_fix_requests
