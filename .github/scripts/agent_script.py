@@ -496,6 +496,12 @@ def main():
         # ThinkTool + FinishTool to eliminate unnecessary tool token consumption.
         # The issue agent's role is purely analytical — it should never execute
         # terminal commands; when it needs context, it delegates to @@ctx.
+        #
+        # For genius: use NoOpCondenser since genius has zero tool calls
+        # (runs average ~5K input tokens). The GitHub context is injected via
+        # the prompt file (not conversation history), so condensing is unnecessary
+        # and could truncate the genius instructions. The workflow also enforces
+        # a 150KB context size cap for genius to prevent unbounded growth.
         logger.info(f"Creating {role_name} agent with restricted tools (ThinkTool + FinishTool only)")
         agent = Agent(
             llm=llm,
