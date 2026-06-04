@@ -19,6 +19,9 @@ import urllib.request
 import urllib.error
 from collections import defaultdict
 
+# Import the Metrics schema
+sys.path.insert(0, os.path.dirname(__file__))
+from metrics_schema import Metrics
 
 METRICS_REGEX = re.compile(r"<!--\s*agent-metrics:\s*(.*?)\s*-->")
 
@@ -58,11 +61,11 @@ def fetch_comments(repo, issue_number, token, per_page=100):
 
 
 def extract_metrics_from_comment(body):
-    """Extract all metrics JSON objects from a comment body."""
+    """Extract all metrics objects from a comment body."""
     metrics_list = []
     for match in METRICS_REGEX.finditer(body):
         try:
-            metrics = json.loads(match.group(1))
+            metrics = Metrics.from_json(match.group(1))
             metrics_list.append(metrics)
         except json.JSONDecodeError as e:
             print(f"Warning: Failed to parse metrics JSON: {e}")
@@ -148,25 +151,51 @@ def aggregate_by_model(all_metrics):
     })
 
     for m in all_metrics:
-        model = m.get("model_name", "unknown")
+        # Support both Metrics objects and legacy dicts
+        if isinstance(m, Metrics):
+            model = m.model_name or "unknown"
+            input_tokens = m.input_tokens
+            output_tokens = m.output_tokens
+            latency = m.tool_call_latency_ms
+            runtime = m.agent_runtime_ms
+            tool_calls = m.nb_tool_calls
+            error_rate = m.tool_call_error_rate
+            fix_requests = m.review_fix_requests
+            tool_calls_per_tool = m.tool_calls_per_tool
+            errors_per_tool = m.errors_per_tool
+            tokens_per_tool = m.tokens_per_tool
+        else:
+            # Legacy dict support
+            model = m.get("model_name", "unknown")
+            input_tokens = m.get("input_tokens", 0)
+            output_tokens = m.get("output_tokens", 0)
+            latency = m.get("tool_call_latency_ms", 0.0)
+            runtime = m.get("agent_runtime_ms", 0.0)
+            tool_calls = m.get("nb_tool_calls", 0)
+            error_rate = m.get("tool_call_error_rate", 0.0)
+            fix_requests = m.get("review_fix_requests", 0)
+            tool_calls_per_tool = m.get("tool_calls_per_tool", {})
+            errors_per_tool = m.get("errors_per_tool", {})
+            tokens_per_tool = m.get("tokens_per_tool", {})
+
         agg = aggregated[model]
         agg["runs"] += 1
-        agg["total_input_tokens"] += m.get("input_tokens", 0)
-        agg["total_output_tokens"] += m.get("output_tokens", 0)
-        agg["latency_sum"] += m.get("tool_call_latency_ms", 0.0)
-        agg["llm_runtime_sum"] += m.get("agent_runtime_ms", 0.0)
-        agg["tool_calls_sum"] += m.get("nb_tool_calls", 0)
-        agg["error_rate_sum"] += m.get("tool_call_error_rate", 0.0)
-        agg["review_fix_requests_sum"] += m.get("review_fix_requests", 0)
+        agg["total_input_tokens"] += input_tokens
+        agg["total_output_tokens"] += output_tokens
+        agg["latency_sum"] += latency
+        agg["llm_runtime_sum"] += runtime
+        agg["tool_calls_sum"] += tool_calls
+        agg["error_rate_sum"] += error_rate
+        agg["review_fix_requests_sum"] += fix_requests
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
-            agg["tool_calls_per_tool"], m.get("tool_calls_per_tool", {})
+            agg["tool_calls_per_tool"], tool_calls_per_tool
         )
         agg["errors_per_tool"] = _merge_per_tool_dict(
-            agg["errors_per_tool"], m.get("errors_per_tool", {})
+            agg["errors_per_tool"], errors_per_tool
         )
         agg["tokens_per_tool"] = _merge_per_tool_dict(
-            agg["tokens_per_tool"], m.get("tokens_per_tool", {})
+            agg["tokens_per_tool"], tokens_per_tool
         )
 
     return aggregated
@@ -201,25 +230,51 @@ def aggregate_by_agent(all_metrics):
     })
 
     for m in all_metrics:
-        agent = m.get("agent_role", "unknown")
+        # Support both Metrics objects and legacy dicts
+        if isinstance(m, Metrics):
+            agent = m.agent_role or "unknown"
+            input_tokens = m.input_tokens
+            output_tokens = m.output_tokens
+            latency = m.tool_call_latency_ms
+            runtime = m.agent_runtime_ms
+            tool_calls = m.nb_tool_calls
+            error_rate = m.tool_call_error_rate
+            fix_requests = m.review_fix_requests
+            tool_calls_per_tool = m.tool_calls_per_tool
+            errors_per_tool = m.errors_per_tool
+            tokens_per_tool = m.tokens_per_tool
+        else:
+            # Legacy dict support
+            agent = m.get("agent_role", "unknown")
+            input_tokens = m.get("input_tokens", 0)
+            output_tokens = m.get("output_tokens", 0)
+            latency = m.get("tool_call_latency_ms", 0.0)
+            runtime = m.get("agent_runtime_ms", 0.0)
+            tool_calls = m.get("nb_tool_calls", 0)
+            error_rate = m.get("tool_call_error_rate", 0.0)
+            fix_requests = m.get("review_fix_requests", 0)
+            tool_calls_per_tool = m.get("tool_calls_per_tool", {})
+            errors_per_tool = m.get("errors_per_tool", {})
+            tokens_per_tool = m.get("tokens_per_tool", {})
+
         agg = aggregated[agent]
         agg["runs"] += 1
-        agg["total_input_tokens"] += m.get("input_tokens", 0)
-        agg["total_output_tokens"] += m.get("output_tokens", 0)
-        agg["latency_sum"] += m.get("tool_call_latency_ms", 0.0)
-        agg["llm_runtime_sum"] += m.get("agent_runtime_ms", 0.0)
-        agg["tool_calls_sum"] += m.get("nb_tool_calls", 0)
-        agg["error_rate_sum"] += m.get("tool_call_error_rate", 0.0)
-        agg["review_fix_requests_sum"] += m.get("review_fix_requests", 0)
+        agg["total_input_tokens"] += input_tokens
+        agg["total_output_tokens"] += output_tokens
+        agg["latency_sum"] += latency
+        agg["llm_runtime_sum"] += runtime
+        agg["tool_calls_sum"] += tool_calls
+        agg["error_rate_sum"] += error_rate
+        agg["review_fix_requests_sum"] += fix_requests
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
-            agg["tool_calls_per_tool"], m.get("tool_calls_per_tool", {})
+            agg["tool_calls_per_tool"], tool_calls_per_tool
         )
         agg["errors_per_tool"] = _merge_per_tool_dict(
-            agg["errors_per_tool"], m.get("errors_per_tool", {})
+            agg["errors_per_tool"], errors_per_tool
         )
         agg["tokens_per_tool"] = _merge_per_tool_dict(
-            agg["tokens_per_tool"], m.get("tokens_per_tool", {})
+            agg["tokens_per_tool"], tokens_per_tool
         )
 
     return aggregated

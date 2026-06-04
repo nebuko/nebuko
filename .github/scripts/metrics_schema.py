@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""
+Metrics schema for agent runtime tracking.
+
+Defines a centralized Metrics dataclass that is used throughout the codebase
+for generating, parsing, and aggregating agent metrics. Provides to_dict(),
+from_dict(), and to_json() methods for serialization/deserialization.
+
+No external dependencies — uses only Python standard library (dataclasses).
+"""
+
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, List, Optional
+import json
+
+
+@dataclass
+class Metrics:
+    """
+    Centralized schema for agent metrics.
+
+    Fields:
+        run_id: UUID string identifying the conversation run.
+        model_name: LLM model identifier (e.g. "default", "gpt-5.5").
+        agent_role: Agent role name ("genius", "ctx", "dev", "review").
+        input_tokens: Number of input/prompt tokens consumed.
+        output_tokens: Number of output/completion tokens generated.
+        complexity: Task complexity level (e.g. "medium", "high").
+        tool_call_latency_ms: Average tool call latency in milliseconds.
+        agent_runtime_ms: Total agent runtime in milliseconds (sum of all calls).
+        agent_runtimes_per_call_ms: Individual call latencies in milliseconds.
+        nb_tool_calls: Total number of tool calls made.
+        tool_call_error_rate: Percentage of tool calls that resulted in errors.
+        start_time: ISO 8601 datetime string when the agent started.
+        end_time: ISO 8601 datetime string when the agent finished.
+        tool_calls_per_tool: Mapping of tool name to call count.
+        errors_per_tool: Mapping of tool name to error count.
+        tokens_per_tool: Mapping of tool name to token usage breakdown.
+        review_fix_requests: Number of times review asked dev to fix something.
+        error: Optional error message if metrics collection failed.
+    """
+
+    run_id: str = ""
+    model_name: str = ""
+    agent_role: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    complexity: str = "N/A"
+    tool_call_latency_ms: float = 0.0
+    agent_runtime_ms: float = 0.0
+    agent_runtimes_per_call_ms: List[float] = field(default_factory=list)
+    nb_tool_calls: int = 0
+    tool_call_error_rate: float = 0.0
+    start_time: str = ""
+    end_time: str = ""
+    tool_calls_per_tool: Dict[str, int] = field(default_factory=dict)
+    errors_per_tool: Dict[str, int] = field(default_factory=dict)
+    tokens_per_tool: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    review_fix_requests: int = 0
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert Metrics to a plain dictionary, excluding None values."""
+        d = asdict(self)
+        return {k: v for k, v in d.items() if v is not None}
+
+    def to_json(self, compact: bool = True) -> str:
+        """
+        Serialize Metrics to a JSON string.
+
+        Args:
+            compact: If True, use compact separators (no spaces).
+                     If False, use pretty-printed format with indentation.
+
+        Returns:
+            JSON string representation of the metrics.
+        """
+        if compact:
+            return json.dumps(self.to_dict(), separators=(",", ":"))
+        return json.dumps(self.to_dict(), indent=2)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Metrics":
+        """
+        Create a Metrics instance from a dictionary.
+
+        Only fields defined in the dataclass are extracted. Extra keys
+        in the dictionary are silently ignored. Missing fields use their
+        default values.
+
+        Args:
+            data: Dictionary containing metrics data.
+
+        Returns:
+            A new Metrics instance.
+        """
+        valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in data.items() if k in valid_fields}
+        return cls(**filtered)
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "Metrics":
+        """
+        Deserialize a Metrics instance from a JSON string.
+
+        Args:
+            json_str: JSON string representation of metrics.
+
+        Returns:
+            A new Metrics instance.
+        """
+        data = json.loads(json_str)
+        return cls.from_dict(data)
