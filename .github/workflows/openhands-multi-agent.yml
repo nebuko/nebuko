@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: 'openrouter/deepseek/deepseek-v4-pro'
+      issue_model:
+        description: 'Model for issue agent'
+        required: false
+        type: string
+        default: 'openrouter/deepseek/deepseek-v4-pro'
       genius_temperature:
         description: 'Temperature for genius agent'
         required: false
@@ -83,6 +88,11 @@ on:
         required: false
         type: string
         default: ''
+      issue_base_url:
+        description: 'Base URL override for issue model'
+        required: false
+        type: string
+        default: ''
       circuit_breaker_threshold:
         description: 'Circuit breaker threshold'
         required: false
@@ -125,6 +135,9 @@ on:
       REVIEW_API_KEY:
         description: 'API key override for the Review agent'
         required: false
+      ISSUE_API_KEY:
+        description: 'API key override for the Issue agent'
+        required: false
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
@@ -149,12 +162,14 @@ jobs:
              (contains(github.event.issue.body, '@@genius') ||
               contains(github.event.issue.body, '@@ctx') ||
               contains(github.event.issue.body, '@@dev') ||
-              contains(github.event.issue.body, '@@review'))) ||
+              contains(github.event.issue.body, '@@review') ||
+              contains(github.event.issue.body, '@@issue'))) ||
             (github.event_name == 'issue_comment' &&
              (contains(github.event.comment.body, '@@genius') ||
               contains(github.event.comment.body, '@@ctx') ||
               contains(github.event.comment.body, '@@dev') ||
-              contains(github.event.comment.body, '@@review')))
+              contains(github.event.comment.body, '@@review') ||
+              contains(github.event.comment.body, '@@issue')))
           )
         env:
             GENIUS_MODEL: ${{ inputs.genius_model || 'openrouter/deepseek/deepseek-v4-pro' }}
@@ -173,6 +188,9 @@ jobs:
             REVIEW_MODEL: ${{ inputs.review_model || 'openrouter/deepseek/deepseek-v4-pro' }}
             REVIEW_BASE_URL : ${{ inputs.review_base_url || '' }}
             REVIEW_API_KEY : ${{ secrets.REVIEW_API_KEY }}
+            ISSUE_MODEL: ${{ inputs.issue_model || 'openrouter/deepseek/deepseek-v4-pro' }}
+            ISSUE_BASE_URL : ${{ inputs.issue_base_url || '' }}
+            ISSUE_API_KEY : ${{ secrets.ISSUE_API_KEY }}
             GENIUS_TEMPERATURE: ${{ inputs.genius_temperature || 0.2 }}
             DEV_TEMPERATURE: ${{ inputs.dev_temperature || 0.0 }}
             LLM_SEED_OVERRIDE: ${{ inputs.llm_seed || 42 }}
@@ -262,7 +280,7 @@ jobs:
               run: |
                   echo "Debug: Checking trigger body..."
                   # Last-mention-wins: avoids @@ctx stealing execution when mentioned in passing
-                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review' | tail -1)
+                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue' | tail -1)
 
                   # Determine prompt and script locations by checking which path exists
                   if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/.agents/prompts" ]; then
@@ -356,6 +374,17 @@ jobs:
                           echo "LLM_BASE_URL=${REVIEW_BASE_URL}" >> $GITHUB_ENV
                           echo "LLM_API_KEY=${REVIEW_API_KEY}" >> $GITHUB_ENV
                           ;;
+                      "@@issue")
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/issue.md" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${ISSUE_MODEL}" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=${GENIUS_TEMPERATURE:-0.2}" >> $GITHUB_ENV
+                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
+                          echo "ROLE_NAME=issue" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${ISSUE_BASE_URL}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${ISSUE_API_KEY}" >> $GITHUB_ENV
+                          ;;
                   esac
 
                   # Safety guard: skip if no valid agent was resolved
@@ -387,8 +416,8 @@ jobs:
 
                     # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
                     # Only applies to human-triggered comments (no bot marker present)
-                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev' || true)
-                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@genius\|@ctx\|@dev' || true)
+                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev\|@@issue' || true)
+                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@@issue\|@genius\|@ctx\|@dev\|@issue' || true)
                     if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
                       echo "Human ping + agent ping detected. Skipping to let human orchestrate."
                       echo "SKIP_AGENT=true" >> $GITHUB_ENV
@@ -641,7 +670,7 @@ jobs:
                 import os
                 role = os.environ.get("ROLE_NAME", "unknown")
                 marker = f"<!-- bot-agent-{role} -->"
-                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer", "review": "Reviewer"}
+                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer", "review": "Reviewer", "issue": "Issue"}
                 display_name = agent_display_names.get(role, role.capitalize())
                 with open("github_comment.md", "r") as f:
                     content = f.read()
