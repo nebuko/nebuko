@@ -31,7 +31,7 @@ on:
       llm_seed:
         description: 'Optional seed for reproducible LLM outputs (runtime concern, not architectural config)'
         required: false
-        type: number
+        type: string
         default: ''
     secrets:
       OPENROUTER_API_KEY:
@@ -311,6 +311,10 @@ jobs:
                   # Step 8: Export skills field (plumbing only — no-op for now)
                   echo "AGENT_SKILLS=${CONFIG_SKILLS}" >> $GITHUB_ENV
 
+                  # Step 9: Export per-invocation overrides for agent_script.py
+                  echo "CONFIG_MODEL=${CONFIG_MODEL}" >> $GITHUB_ENV
+                  echo "CONFIG_TEMPERATURE=${CONFIG_TEMPERATURE}" >> $GITHUB_ENV
+
                   echo "Resolved agent: ROLE_NAME=$TASK MODEL=from-config COMPLEXITY=${COMPLEXITY}"
 
             - name: Prevent all agent-trigger loops & human ping guard
@@ -454,11 +458,9 @@ jobs:
               timeout-minutes: 30
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
-                AGENT_ROLE: ${{ env.ROLE_NAME }}
                 AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
                 LLM_API_KEY: ${{ env.LLM_API_KEY || secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
-                LLM_TEMPERATURE: ${{ env.LLM_TEMPERATURE }}
                 LLM_SEED: ${{ env.LLM_SEED }}
                 LLM_REASONING: ${{ env.LLM_REASONING }}
                 COMPLEXITY: ${{ env.COMPLEXITY }}
