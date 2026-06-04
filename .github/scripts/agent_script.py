@@ -484,11 +484,11 @@ def main():
         )
     elif role_name == "review":
         # Review agent: terminal access for git diff, but no file editing
-        logger.info("Creating review agent with terminal access (TerminalTool + ThinkTool + FinishTool)")
+        logger.info("Creating review agent with terminal access (ThinkTool + FinishTool)")
         agent = Agent(
             llm=llm,
             tools=[],
-            include_default_tools=["TerminalTool", "ThinkTool", "FinishTool"],
+            include_default_tools=["ThinkTool", "FinishTool"],
             system_prompt_kwargs={"cli_mode": True},
             condenser=get_default_condenser(llm=llm),
         )
