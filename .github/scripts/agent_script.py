@@ -186,9 +186,17 @@ def collect_llm_metrics(conversation):
         # Calculate average latency (latency is in seconds, convert to milliseconds)
         tool_call_latency_ms = 0.0
         if combined_metrics.response_latencies:
-            total_latency = sum(lat.latency for lat in combined_metrics.response_latencies)
+            latencies = [lat.latency for lat in combined_metrics.response_latencies]
+            total_latency = sum(latencies)
             # Convert from seconds to milliseconds
-            tool_call_latency_ms = (total_latency / len(combined_metrics.response_latencies)) * 1000
+            tool_call_latency_ms = (total_latency / len(latencies)) * 1000
+            # Total LLM runtime (sum of all call latencies in ms)
+            agent_runtime_ms = round(total_latency * 1000, 2)
+            # Individual call latencies in ms
+            agent_runtimes_per_call_ms = [round(l * 1000, 2) for l in latencies]
+        else:
+            agent_runtime_ms = 0.0
+            agent_runtimes_per_call_ms = []
         
         # Get token usage
         input_tokens = 0
@@ -219,6 +227,8 @@ def collect_llm_metrics(conversation):
             "output_tokens": output_tokens,
             "complexity": os.environ.get("COMPLEXITY", "N/A"),
             "tool_call_latency_ms": tool_call_latency_ms,
+            "agent_runtime_ms": agent_runtime_ms,
+            "agent_runtimes_per_call_ms": agent_runtimes_per_call_ms,
             "nb_tool_calls": nb_tool_calls,
             "tool_call_error_rate": tool_call_error_rate,
             "start_time": start_time,
