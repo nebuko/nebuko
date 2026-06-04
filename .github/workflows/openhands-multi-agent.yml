@@ -163,13 +163,15 @@ jobs:
               contains(github.event.issue.body, '@@ctx') ||
               contains(github.event.issue.body, '@@dev') ||
               contains(github.event.issue.body, '@@review') ||
-              contains(github.event.issue.body, '@@issue'))) ||
+              contains(github.event.issue.body, '@@issue') ||
+              contains(github.event.issue.body, '<agentRunConfig>'))) ||
             (github.event_name == 'issue_comment' &&
              (contains(github.event.comment.body, '@@genius') ||
               contains(github.event.comment.body, '@@ctx') ||
               contains(github.event.comment.body, '@@dev') ||
               contains(github.event.comment.body, '@@review') ||
-              contains(github.event.comment.body, '@@issue')))
+              contains(github.event.comment.body, '@@issue') ||
+              contains(github.event.comment.body, '<agentRunConfig>')))
           )
         env:
             GENIUS_MODEL: ${{ inputs.genius_model || 'openrouter/deepseek/deepseek-v4-pro' }}
@@ -279,8 +281,7 @@ jobs:
             - name: Resolve Agent Configuration
               run: |
                   echo "Debug: Checking trigger body..."
-                  # Last-mention-wins: avoids @@ctx stealing execution when mentioned in passing
-                  LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue' | tail -1)
+                  PROMPT_BASE=""
 
                   # Determine prompt and script locations by checking which path exists
                   if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/.agents/prompts" ]; then
@@ -291,117 +292,188 @@ jobs:
                     echo "AGENT_SCRIPT_URL=.github/scripts/agent_script.py" >> $GITHUB_ENV
                   fi
 
-                  case "$LAST_AGENT" in
-                      "@@genius")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/genius.md" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${GENIUS_MODEL}" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=${GENIUS_TEMPERATURE:-0.2}" >> $GITHUB_ENV
-                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
-                          echo "ROLE_NAME=genius" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${GENIUS_BASE_URL}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${GENIUS_API_KEY}" >> $GITHUB_ENV
-                          ;;
-                      "@@ctx")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${CTX_MODEL}" >> $GITHUB_ENV
-                          echo "ROLE_NAME=ctx" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${CTX_BASE_URL}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${CTX_API_KEY}" >> $GITHUB_ENV
-                          ;;
-                      "@@dev")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=${DEV_TEMPERATURE:-0.0}" >> $GITHUB_ENV
-                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
-                          echo "ROLE_NAME=dev" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                  # Step 1: Try to extract agentRunConfig JSON block
+                  AGENT_CONFIG=$(echo "$TRIGGER_BODY" | sed -n '/<agentRunConfig>/,/<\/agentRunConfig>/p' | sed '1s/.*<agentRunConfig>//; $s/<\/agentRunConfig>.*//' | tr -d '\n' | jq -c '.' 2>/dev/null || echo "")
 
-                          # Parse complexity from the triggering comment (estimated by @genius)
-                          COMPLEXITY_JSON=$(echo "$TRIGGER_BODY" | grep -oP '\{"complexity"\s*:\s*"\w+"\}' || echo '{"complexity": "medium"}')
-                          COMPLEXITY=$(echo "$COMPLEXITY_JSON" | jq -r '.complexity' | tr '[:upper:]' '[:lower:]')
-                          case "$COMPLEXITY" in
-                              "low")
-                                  DEV_MODEL="${DEV_MODEL_LOW}"
-                                  ;;
-                              "high")
-                                  DEV_MODEL="${DEV_MODEL_HIGH}"
-                                  ;;
-                              *)
-                                  DEV_MODEL="${DEV_MODEL_MEDIUM}"
-                                  ;;
-                          esac
-                          echo "LLM_MODEL=$DEV_MODEL" >> $GITHUB_ENV
-                          echo "COMPLEXITY=$COMPLEXITY" >> $GITHUB_ENV
-                          echo "Dev complexity estimated: $COMPLEXITY -> using model: $DEV_MODEL"
+                  if [ -z "$AGENT_CONFIG" ]; then
+                    # Fallback: try trailing JSON object with "task" field
+                    AGENT_CONFIG=$(echo "$TRIGGER_BODY" | grep -oP '\{[^{}]*"task"\s*:\s*"[a-z]+"[^{}]*\}' | tail -1 | jq -c '.' 2>/dev/null || echo "")
+                  fi
 
-                          # Resolve per-complexity base URL
-                          case "$COMPLEXITY" in
-                              "low")
-                                  echo "LLM_BASE_URL=${DEV_MODEL_LOW_BASE_URL}" >> $GITHUB_ENV
-                                  ;;
-                              "high")
-                                  echo "LLM_BASE_URL=${DEV_MODEL_HIGH_BASE_URL}" >> $GITHUB_ENV
-                                  ;;
-                              *)
-                                  echo "LLM_BASE_URL=${DEV_MODEL_MEDIUM_BASE_URL}" >> $GITHUB_ENV
-                                  ;;
-                          esac
+                  # Step 2: Check if trigger is from a bot agent (human-vs-agent guard)
+                  IS_BOT_COMMENT=0
+                  if echo "$TRIGGER_BODY" | head -5 | grep -q '<!-- bot-agent-'; then
+                    IS_BOT_COMMENT=1
+                  fi
 
-                          # Resolve per-complexity API key
-                          case "$COMPLEXITY" in
-                              "low")
-                                  echo "LLM_API_KEY=${DEV_MODEL_LOW_API_KEY}" >> $GITHUB_ENV
-                                  ;;
-                              "high")
-                                  echo "LLM_API_KEY=${DEV_MODEL_HIGH_API_KEY}" >> $GITHUB_ENV
-                                  ;;
-                              *)
-                                  echo "LLM_API_KEY=${DEV_MODEL_MEDIUM_API_KEY}" >> $GITHUB_ENV
-                                  ;;
-                          esac
-                          ;;
-                      "@@review")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/review.md" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${REVIEW_MODEL}" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=0.1" >> $GITHUB_ENV
-                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
-                          echo "ROLE_NAME=review" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${REVIEW_BASE_URL}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${REVIEW_API_KEY}" >> $GITHUB_ENV
-                          ;;
-                      "@@issue")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/issue.md" >> $GITHUB_ENV
-                          echo "LLM_MODEL=${ISSUE_MODEL}" >> $GITHUB_ENV
-                          echo "LLM_TEMPERATURE=${GENIUS_TEMPERATURE:-0.2}" >> $GITHUB_ENV
-                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
-                          echo "ROLE_NAME=issue" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          echo "LLM_BASE_URL=${ISSUE_BASE_URL}" >> $GITHUB_ENV
-                          echo "LLM_API_KEY=${ISSUE_API_KEY}" >> $GITHUB_ENV
-                          ;;
-                  esac
+                  # Step 3: Parse JSON config or fall back to @@mention for humans only
+                  if [ -n "$AGENT_CONFIG" ]; then
+                    # JSON-based invocation (agent→agent)
+                    TASK=$(echo "$AGENT_CONFIG" | jq -r '.task // empty')
+                    CONFIG_COMPLEXITY=$(echo "$AGENT_CONFIG" | jq -r '.complexity // "medium"')
+                    CONFIG_REASONING=$(echo "$AGENT_CONFIG" | jq -r '.reasoning // "none"')
+                    CONFIG_TEMPERATURE=$(echo "$AGENT_CONFIG" | jq -r '.temperature // empty')
+                    CONFIG_ROUND=$(echo "$AGENT_CONFIG" | jq -r '.round // empty')
+                    CONFIG_MODEL=$(echo "$AGENT_CONFIG" | jq -r '.model // empty')
+                    CONFIG_SKILLS=$(echo "$AGENT_CONFIG" | jq -r '.skills // empty')
 
-                  # Safety guard: skip if no valid agent was resolved
-                  if [ -z "$ROLE_NAME" ]; then
-                    echo "No valid agent found in trigger body. Skipping."
+                    echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING"
+                  elif [ "$IS_BOT_COMMENT" -eq 0 ]; then
+                    # @@mention fallback (human only)
+                    LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue' | tail -1)
+                    TASK="${LAST_AGENT#@@}"
+                    CONFIG_COMPLEXITY="medium"
+                    CONFIG_REASONING="none"
+                    CONFIG_TEMPERATURE=""
+                    CONFIG_ROUND=""
+                    CONFIG_MODEL=""
+                    CONFIG_SKILLS=""
+                    echo "Fallback to @@mention: $LAST_AGENT (human trigger)"
+                  else
+                    # Bot comment with no JSON and no @@mention — skip
+                    echo "Bot comment without agentRunConfig or @@mention. Skipping."
                     echo "SKIP_AGENT=true" >> $GITHUB_ENV
                     exit 0
                   fi
 
-                  echo "LAST_AGENT=$LAST_AGENT" >> $GITHUB_ENV
+                  # Step 4: Validate task
+                  if [ -z "$TASK" ]; then
+                    echo "No valid task found in trigger body. Skipping."
+                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                    exit 0
+                  fi
+
+                  # Export TASK for loop prevention guards (Bug Fix #1)
+                  echo "TASK=$TASK" >> $GITHUB_ENV
+
+                  # Step 5: Map task to agent defaults (model, base_url, api_key, prompt)
+                  case "$TASK" in
+                      "genius")
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/genius.md" >> $GITHUB_ENV
+                          echo "ROLE_NAME=genius" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${GENIUS_MODEL}" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=${CONFIG_TEMPERATURE:-${GENIUS_TEMPERATURE:-0.2}}" >> $GITHUB_ENV
+                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${GENIUS_BASE_URL}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${GENIUS_API_KEY}" >> $GITHUB_ENV
+                          ;;
+                      "ctx")
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
+                          echo "ROLE_NAME=ctx" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${CTX_MODEL}" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${CTX_BASE_URL}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${CTX_API_KEY}" >> $GITHUB_ENV
+                          ;;
+                      "dev")
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
+                          echo "ROLE_NAME=dev" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=${CONFIG_TEMPERATURE:-${DEV_TEMPERATURE:-0.0}}" >> $GITHUB_ENV
+                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
+
+                          # Complexity-based model selection
+                          COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
+                          case "$COMPLEXITY" in
+                              "low")
+                                  echo "COMPLEXITY=low" >> $GITHUB_ENV
+                                  ;;
+                              "high")
+                                  echo "COMPLEXITY=high" >> $GITHUB_ENV
+                                  ;;
+                              *)
+                                  echo "COMPLEXITY=medium" >> $GITHUB_ENV
+                                  ;;
+                          esac
+
+                          # Model selection: CONFIG_MODEL override takes priority, then complexity tier
+                          if [ -n "$CONFIG_MODEL" ]; then
+                              # Bug Fix #2: Use explicit check to avoid empty-string fallback producing garbage
+                              echo "LLM_MODEL=${CONFIG_MODEL}" >> $GITHUB_ENV
+                          else
+                              case "$COMPLEXITY" in
+                                  "low")    echo "LLM_MODEL=${DEV_MODEL_LOW}" >> $GITHUB_ENV ;;
+                                  "high")   echo "LLM_MODEL=${DEV_MODEL_HIGH}" >> $GITHUB_ENV ;;
+                                  *)        echo "LLM_MODEL=${DEV_MODEL_MEDIUM}" >> $GITHUB_ENV ;;
+                              esac
+                          fi
+
+                          # Base URL selection: CONFIG_MODEL override takes priority, then complexity tier
+                          if [ -n "$CONFIG_MODEL" ]; then
+                              # When model is overridden, use the default API base URL
+                              echo "LLM_BASE_URL=${API_BASE_URL}" >> $GITHUB_ENV
+                          else
+                              case "$COMPLEXITY" in
+                                  "low")    echo "LLM_BASE_URL=${DEV_MODEL_LOW_BASE_URL}" >> $GITHUB_ENV ;;
+                                  "high")   echo "LLM_BASE_URL=${DEV_MODEL_HIGH_BASE_URL}" >> $GITHUB_ENV ;;
+                                  *)        echo "LLM_BASE_URL=${DEV_MODEL_MEDIUM_BASE_URL}" >> $GITHUB_ENV ;;
+                              esac
+                          fi
+
+                          # API key selection: CONFIG_MODEL override uses default key, then complexity tier
+                          if [ -n "$CONFIG_MODEL" ]; then
+                              echo "LLM_API_KEY=${OPENROUTER_API_KEY}" >> $GITHUB_ENV
+                          else
+                              case "$COMPLEXITY" in
+                                  "low")    echo "LLM_API_KEY=${DEV_MODEL_LOW_API_KEY}" >> $GITHUB_ENV ;;
+                                  "high")   echo "LLM_API_KEY=${DEV_MODEL_HIGH_API_KEY}" >> $GITHUB_ENV ;;
+                                  *)        echo "LLM_API_KEY=${DEV_MODEL_MEDIUM_API_KEY}" >> $GITHUB_ENV ;;
+                              esac
+                          fi
+                          ;;
+                      "review")
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/review.md" >> $GITHUB_ENV
+                          echo "ROLE_NAME=review" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${REVIEW_MODEL}" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=${CONFIG_TEMPERATURE:-0.1}" >> $GITHUB_ENV
+                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${REVIEW_BASE_URL}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${REVIEW_API_KEY}" >> $GITHUB_ENV
+                          ;;
+                      "issue")
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/issue.md" >> $GITHUB_ENV
+                          echo "ROLE_NAME=issue" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          echo "LLM_MODEL=${ISSUE_MODEL}" >> $GITHUB_ENV
+                          echo "LLM_TEMPERATURE=${CONFIG_TEMPERATURE:-${GENIUS_TEMPERATURE:-0.2}}" >> $GITHUB_ENV
+                          echo "LLM_SEED=${LLM_SEED_OVERRIDE:-42}" >> $GITHUB_ENV
+                          echo "LLM_BASE_URL=${ISSUE_BASE_URL}" >> $GITHUB_ENV
+                          echo "LLM_API_KEY=${ISSUE_API_KEY}" >> $GITHUB_ENV
+                          ;;
+                      *)
+                          echo "Unknown task: $TASK"
+                          echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                          exit 1
+                          ;;
+                  esac
+
+                  # Step 6: Export reasoning level for agent_script.py
+                  echo "LLM_REASONING=${CONFIG_REASONING}" >> $GITHUB_ENV
+
+                  # Step 7: Export round counter for agent context
+                  if [ -n "$CONFIG_ROUND" ]; then
+                      echo "AGENT_ROUND=${CONFIG_ROUND}" >> $GITHUB_ENV
+                  else
+                      echo "AGENT_ROUND=" >> $GITHUB_ENV
+                  fi
+
+                  # Step 8: Export skills field (plumbing only — no-op for now)
+                  echo "AGENT_SKILLS=${CONFIG_SKILLS}" >> $GITHUB_ENV
+
+                  echo "Resolved agent: ROLE_NAME=$TASK MODEL=${LLM_MODEL} COMPLEXITY=${COMPLEXITY}"
 
             - name: Prevent all agent-trigger loops & human ping guard
               run: |
                   # Guard 1: Block same-agent loops, allow cross-agent calls
                   CALLER_AGENT=$(echo "$TRIGGER_BODY" | sed -n 's/.*<!-- bot-agent-\([a-z]*\) -->.*/\1/p')
                   if [[ -n "$CALLER_AGENT" ]]; then
-                      TARGET_AGENT=$(echo "$LAST_AGENT" | sed 's/^@@//')
+                      TARGET_AGENT="$TASK"
                       if [[ "$CALLER_AGENT" == "$TARGET_AGENT" ]]; then
                         echo "Same-agent loop detected ($CALLER_AGENT calling itself). Skipping."
                         echo "SKIP_AGENT=true" >> $GITHUB_ENV
