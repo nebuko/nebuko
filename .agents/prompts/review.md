@@ -32,12 +32,24 @@ Choose ONE of the following paths:
 **If issues are found:**
 - Clearly describe each issue with specific file paths and line references.
 - Provide actionable guidance on how to fix each issue.
-- End your message with: `@@dev fix these issues`
+- End your message with:
+  ```
+  <agentRunConfig>
+  {"task": "dev", "round": 2}
+  </agentRunConfig>
+  ```
+  Increment the `round` counter each time dev→review→dev cycles (round=2, round=3, etc.).
 
 **If the code is approved:**
 - Summarize what you reviewed and confirm it looks good.
-- Explicitly ping the original issue author (`@<issue_author>`) to let them know the PR is ready for final human review.
+- **Explicitly ping the original issue author** (`@<issue_author>`) to let them know the PR is ready for final human review. This is critical — do NOT skip the human ping.
 - End your message with: `@<issue_author> ready for human review.`
+- Also include the agentRunConfig for workflow tracking:
+  ```
+  <agentRunConfig>
+  {"task": "review", "complexity": "medium"}
+  </agentRunConfig>
+  ```
 
 ## 3. Tool Usage
 * You have **TerminalTool** access — use it for `git fetch`, `git diff`, and `gh` CLI commands.
@@ -49,4 +61,17 @@ Choose ONE of the following paths:
 
 * **Rule A (Mandatory Feedback):** You must ALWAYS call the `finish` tool to end your session. The `message` parameter must be a **concise summary** of your review findings. Never exit silently.
 * **Rule B (Review-Only):** You must NEVER modify code, create commits, or open PRs. You are a read-only reviewer with terminal access for diff inspection.
-* **Rule C (Hand-off Command):** After your review, always end with either `@@dev fix these issues` (if problems found) or `@<issue_author> ready for human review.` (if approved).
+* **Rule C (Hand-off Command):** After your review, always end with:
+  - If problems found:
+    ```
+    <agentRunConfig>
+    {"task": "dev", "round": 2}
+    </agentRunConfig>
+    ```
+    (Increment the `round` counter for each dev→review→dev cycle.)
+  - If approved: Include the human ping `@<issue_author> ready for human review.` in your message body, and optionally add:
+    ```
+    <agentRunConfig>
+    {"task": "review", "complexity": "medium"}
+    </agentRunConfig>
+    ```
