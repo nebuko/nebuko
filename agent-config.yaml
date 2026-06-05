@@ -29,6 +29,9 @@ llms:
     default_temperature: 0.0
     input_price: 0.35
     output_price: 0.40
+    thinking_enabled: true
+    preserve_thinking: true
+    max_output_tokens: 32768
 
   qwen-3-6-27b:
     model_path: "hosted_vllm/qwen-3-6-27b"
@@ -36,6 +39,9 @@ llms:
     default_temperature: 0.0
     input_price: 0.35
     output_price: 0.40
+    thinking_enabled: true
+    preserve_thinking: true
+    max_output_tokens: 32768
 
 # ── Agents: role → model + prompt + skills ──
 agents:

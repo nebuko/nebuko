@@ -77,13 +77,18 @@ class ProviderConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    """Model path, provider reference, and optional pricing."""
+    """Model path, provider reference, optional pricing, and reasoning parameters."""
 
     model_path: str
     provider_ref: ProviderConfig = Field(alias="provider")
     default_temperature: float = 0.0
     input_price: Optional[float] = None
     output_price: Optional[float] = None
+    # Reasoning / thinking parameters (Qwen3, vLLM, etc.)
+    thinking_enabled: Optional[bool] = None
+    preserve_thinking: Optional[bool] = None
+    thinking_token_budget: Optional[int] = None
+    max_output_tokens: Optional[int] = None
 
 
 class AgentConfig(BaseModel):

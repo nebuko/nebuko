@@ -525,13 +525,38 @@ def main():
         llm_config["temperature"] = temperature
 
     # Reasoning level support (optional — model-dependent)
+    # reasoning_effort is a flat field on the OpenHands SDK LLM class.
+    # On vLLM backends, setting it to "low"/"medium"/"high" automatically
+    # injects enable_thinking=true into the chat template.
     llm_reasoning = os.getenv("LLM_REASONING", "none")
     if llm_reasoning and llm_reasoning != "none":
-        llm_config["reasoning"] = {
-            "enabled": True,
-            "effort": llm_reasoning
-        }
+        llm_config["reasoning_effort"] = llm_reasoning
         logger.info(f"Reasoning enabled: effort={llm_reasoning}")
+
+    # Build litellm_extra_body from LLM config thinking parameters.
+    # These are passed through to vLLM/Qwen3 for thinking mode control.
+    litellm_extra_body = {}
+    chat_template_kwargs = {}
+
+    if agent_cfg and agent_cfg.model_ref.thinking_enabled is not None:
+        chat_template_kwargs["enable_thinking"] = agent_cfg.model_ref.thinking_enabled
+    if agent_cfg and agent_cfg.model_ref.preserve_thinking is not None:
+        chat_template_kwargs["preserve_thinking"] = agent_cfg.model_ref.preserve_thinking
+
+    if chat_template_kwargs:
+        litellm_extra_body["chat_template_kwargs"] = chat_template_kwargs
+
+    # thinking_token_budget is a sampling parameter (top-level, not in chat_template_kwargs)
+    if agent_cfg and agent_cfg.model_ref.thinking_token_budget is not None:
+        litellm_extra_body["thinking_token_budget"] = agent_cfg.model_ref.thinking_token_budget
+
+    if litellm_extra_body:
+        llm_config["litellm_extra_body"] = litellm_extra_body
+        logger.info(f"Thinking parameters: {litellm_extra_body}")
+
+    # max_output_tokens (recommended 32768 for most queries, 81920 for complex problems)
+    if agent_cfg and agent_cfg.model_ref.max_output_tokens is not None:
+        llm_config["max_output_tokens"] = agent_cfg.model_ref.max_output_tokens
 
     llm = LLM(**llm_config)
 
