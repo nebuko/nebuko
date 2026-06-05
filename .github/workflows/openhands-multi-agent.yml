@@ -89,7 +89,7 @@ jobs:
               contains(github.event.comment.body, '<agentRunConfig>')))
           )
         env:
-            CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 15 }}
+            CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 20 }}
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
@@ -395,6 +395,7 @@ jobs:
                 fi
 
             - name: Check Summarizer Gate
+              id: summarize_gate
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME != 'summarize'
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -413,16 +414,41 @@ jobs:
                 echo "Comment count: $COMMENT_COUNT (threshold: $SUMMARIZER_THRESHOLD)"
                 echo "Existing summary comment ID: ${SUMMARY_ID:-none}"
                 
+                # Cache comments JSON for downstream steps (Prepare Context) via temp file
+                echo "$COMMENTS_JSON" > /tmp/issue_comments.json
+                
+                SUMMARIZER_TRIGGERED=false
+                
                 # Trigger summarizer if threshold exceeded AND no summary exists
                 if [ "$COMMENT_COUNT" -ge "$SUMMARIZER_THRESHOLD" ] && [ -z "$SUMMARY_ID" ]; then
                   echo "Threshold exceeded. Posting summarizer trigger."
                   printf '%s\n' '<agentRunConfig>' '{"task": "summarize", "complexity": "low"}' '</agentRunConfig>' > /tmp/summarize_trigger.md
                   gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments -f body=@/tmp/summarize_trigger.md
+                  SUMMARIZER_TRIGGERED=true
                 else
                   echo "Summary not needed (threshold not reached or summary already exists)."
                 fi
                 
+                # Pass summarizer trigger status to acknowledgment step
+                echo "SUMMARIZER_TRIGGERED=$SUMMARIZER_TRIGGERED" >> $GITHUB_OUTPUT
+                
                 echo "::endgroup::"
+
+            - name: Prepare Acknowledgment Body
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              shell: bash
+              run: |
+                ROLE_NAME="${{ env.ROLE_NAME }}"
+                BODY="<!-- bot-agent-${ROLE_NAME} -->
+                🤖 **${ROLE_NAME} agent started** — [View workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+                
+                if [ "${{ steps.summarize_gate.outputs.SUMMARIZER_TRIGGERED }}" = "true" ]; then
+                  BODY="${BODY}
+                
+                📝 A summary will be generated in a follow-up run."
+                fi
+                
+                printf '%s\n' "$BODY" > ./acknowledgment.md
 
             - name: Post Acknowledgment Comment
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
@@ -430,9 +456,7 @@ jobs:
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
                 token: ${{ secrets.GH_PAT }}
-                body: |
-                  <!-- bot-agent-${{ env.ROLE_NAME }} -->
-                  🤖 **${{ env.ROLE_NAME }} agent started** — [View workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+                body-path: ./acknowledgment.md
 
             - name: Prepare Agent Query Context
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
@@ -465,8 +489,12 @@ jobs:
                 export ISSUE_BODY=$(jq -r '.issue.body // "No Description"' "$EVENT_PATH")
                 export ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' "$EVENT_PATH")
                 
-                # Fetch all comments (single API call - reused for both summary check and history)
-                ALL_COMMENTS_JSON=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments)
+                # Reuse comments cached by Summarizer Gate (avoids duplicate API call)
+                if [ -f /tmp/issue_comments.json ]; then
+                  ALL_COMMENTS_JSON=$(cat /tmp/issue_comments.json)
+                else
+                  ALL_COMMENTS_JSON=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments)
+                fi
                 
                 # Format all comments for full history fallback
                 ALL_COMMENTS=$(echo "$ALL_COMMENTS_JSON" | jq -r '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')

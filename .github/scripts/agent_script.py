@@ -538,8 +538,8 @@ def main():
     # Get the current working directory as workspace
     cwd = os.getcwd()
 
-    # Role-aware agent instantiation: restrict genius and issue to thinking tools only
-    if role_name in ("genius", "issue"):
+    # Role-aware agent instantiation: restrict genius, issue, and summarize to thinking tools only
+    if role_name in ("genius", "issue", "summarize"):
         # Genius and Issue agents run on high-cost models; restrict to built-in
         # ThinkTool + FinishTool to eliminate unnecessary tool token consumption.
         # The issue agent's role is purely analytical — it should never execute
