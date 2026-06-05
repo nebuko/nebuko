@@ -30,7 +30,7 @@ llms:
     input_price: 0.35
     output_price: 0.40
 
-  qwen-3-6-27:
+  qwen-3-6-27b:
     model_path: "hosted_vllm/qwen-3-6-27b"
     provider: "${providers.local_vllm}"
     default_temperature: 0.0
