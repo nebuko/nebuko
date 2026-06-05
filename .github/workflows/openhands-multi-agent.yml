@@ -396,7 +396,6 @@ jobs:
 
             - name: Check Summarizer Gate
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME != 'summarize'
-              id: summarizer_gate
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                 SUMMARIZER_THRESHOLD: '10'
@@ -406,28 +405,21 @@ jobs:
                 REPO_NAME="${{ github.repository }}"
                 TARGET_NUMBER="${{ env.TARGET_NUMBER }}"
                 
-                # Count all comments
-                COMMENT_COUNT=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments --jq 'length')
+                # Single API call: fetch comments once, derive count and summary existence
+                COMMENTS_JSON=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments)
+                COMMENT_COUNT=$(echo "$COMMENTS_JSON" | jq 'length')
+                SUMMARY_ID=$(echo "$COMMENTS_JSON" | jq -r '[.[] | select(.body | contains("<!-- bot-agent-summary -->"))] | .[0].id // empty')
+                
                 echo "Comment count: $COMMENT_COUNT (threshold: $SUMMARIZER_THRESHOLD)"
-                
-                # Check if a summary comment already exists
-                SUMMARY_ID=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments \
-                  --jq '.[] | select(.body | contains("<!-- bot-agent-summary -->")) | .id' | head -1)
-                
                 echo "Existing summary comment ID: ${SUMMARY_ID:-none}"
                 
-                # Trigger summarizer if threshold exceeded AND no summary exists AND not already summarizing
+                # Trigger summarizer if threshold exceeded AND no summary exists
                 if [ "$COMMENT_COUNT" -ge "$SUMMARIZER_THRESHOLD" ] && [ -z "$SUMMARY_ID" ]; then
                   echo "Threshold exceeded. Posting summarizer trigger."
-                  
-                  # Post a summarizer trigger comment that will be picked up by the next workflow run
                   printf '%s\n' '<agentRunConfig>' '{"task": "summarize", "complexity": "low"}' '</agentRunConfig>' > /tmp/summarize_trigger.md
                   gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments -f body=@/tmp/summarize_trigger.md
-                  
-                  # Set flag so current run knows a summary is pending
-                  echo "SUMMARIZER_PENDING=true" >> $GITHUB_OUTPUT
                 else
-                  echo "SUMMARIZER_PENDING=false" >> $GITHUB_OUTPUT
+                  echo "Summary not needed (threshold not reached or summary already exists)."
                 fi
                 
                 echo "::endgroup::"
@@ -473,26 +465,27 @@ jobs:
                 export ISSUE_BODY=$(jq -r '.issue.body // "No Description"' "$EVENT_PATH")
                 export ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' "$EVENT_PATH")
                 
-                # Fetch all comments
-                ALL_COMMENTS=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
-                  --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
+                # Fetch all comments (single API call - reused for both summary check and history)
+                ALL_COMMENTS_JSON=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments)
+                
+                # Format all comments for full history fallback
+                ALL_COMMENTS=$(echo "$ALL_COMMENTS_JSON" | jq -r '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
 
-                # Check if a summary comment exists
-                SUMMARY_JSON=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
-                  --jq '.[] | select(.body | contains("<!-- bot-agent-summary -->")) | .body' | head -1 | tr -d '\r' || true)
+                # Check if a summary comment exists (using same data, no extra API call)
+                SUMMARY_JSON=$(echo "$ALL_COMMENTS_JSON" | jq -r '[.[] | select(.body | contains("<!-- bot-agent-summary -->"))] | .[0].body // empty' | tr -d '\r' || true)
 
                 if [ -n "$SUMMARY_JSON" ]; then
                   echo "Summary found. Using summary + recent comments only."
-                  # Extract JSON from summary (remove marker and prose wrapper)
+                  # Extract JSON from summary (between ```json``` fences)
                   SUMMARY_CONTENT=$(echo "$SUMMARY_JSON" | sed -n '/```json/,/```/p' | sed '1d;$d' || true)
                   if [ -z "$SUMMARY_CONTENT" ]; then
-                    # Fallback: extract everything after the marker
+                    # Fallback: extract everything after the marker and answer line
                     SUMMARY_CONTENT=$(echo "$SUMMARY_JSON" | grep -v '<!-- bot-agent-summary -->' | grep -v '\*.*answer\*' | head -20 || true)
                   fi
-                  # Get last 5 comments only
-                  RECENT_COMMENTS=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
-                    --jq '.[-5:] | .[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
-                  export COMMENT_HISTORY="### 📋 Issue Summary (auto-generated)\n${SUMMARY_CONTENT}\n\n---\n### Recent Comments:\n${RECENT_COMMENTS}"
+                  # Get last 5 comments only (from cached JSON, no extra API call)
+                  RECENT_COMMENTS=$(echo "$ALL_COMMENTS_JSON" | jq -r '.[-5:] | .[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
+                  # Use printf for proper newline handling
+                  export COMMENT_HISTORY=$(printf '### 📋 Issue Summary (auto-generated)\n%s\n\n---\n### Recent Comments:\n%s' "$SUMMARY_CONTENT" "$RECENT_COMMENTS")
                 else
                   echo "No summary found. Using full history."
                   export COMMENT_HISTORY="$ALL_COMMENTS"
