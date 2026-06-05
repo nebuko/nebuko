@@ -89,7 +89,7 @@ jobs:
               contains(github.event.comment.body, '<agentRunConfig>')))
           )
         env:
-            CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 15 }}
+            CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 20 }}
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
