@@ -144,6 +144,34 @@ class TestLLMConfig:
         assert config.input_price == 2.0
         assert config.output_price == 8.0
 
+    def test_llm_with_thinking_params(self):
+        """LLMConfig accepts Qwen3 thinking parameters."""
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        config = LLMConfig(
+            model_path="hosted_vllm/qwen-3-6-27b",
+            provider=provider,
+            thinking_enabled=True,
+            preserve_thinking=True,
+            extend_thinking=False,
+            max_output_tokens=32768,
+        )
+        assert config.thinking_enabled is True
+        assert config.preserve_thinking is True
+        assert config.extend_thinking is False
+        assert config.max_output_tokens == 32768
+
+    def test_llm_thinking_params_default_none(self):
+        """Thinking parameters default to None when not specified."""
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        config = LLMConfig(
+            model_path="openrouter/deepseek/v4",
+            provider=provider,
+        )
+        assert config.thinking_enabled is None
+        assert config.preserve_thinking is None
+        assert config.extend_thinking is None
+        assert config.max_output_tokens is None
+
 
 class TestAgentConfig:
     """Test AgentConfig Pydantic model."""
@@ -263,3 +291,97 @@ class TestLoadConfig:
             with pytest.raises(ValidationError):
                 load_config(f.name)
             os.unlink(f.name)
+
+    def test_load_config_with_thinking_params(self):
+        """Config with thinking params loads and resolves correctly."""
+        raw = {
+            "providers": {
+                "local_vllm": {
+                    "api_url": "http://localhost:8000/v1",
+                    "api_token_env": "LOCAL_VLLM_API_TOKEN",
+                }
+            },
+            "llms": {
+                "qwen3": {
+                    "model_path": "hosted_vllm/qwen-3-6-27b",
+                    "provider": "${providers.local_vllm}",
+                    "thinking_enabled": True,
+                    "preserve_thinking": True,
+                    "extend_thinking": False,
+                    "max_output_tokens": 32768,
+                }
+            },
+            "agents": {
+                "dev": {
+                    "model": "${llms.qwen3}",
+                    "temperature": 0.0,
+                    "prompt_file": ".agents/prompts/dev.md",
+                    "skills": [],
+                }
+            },
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            yaml.dump(raw, f)
+            f.flush()
+            config = load_config(f.name)
+
+        llm = config.agents["dev"].model_ref
+        assert llm.thinking_enabled is True
+        assert llm.preserve_thinking is True
+        assert llm.extend_thinking is False
+        assert llm.max_output_tokens == 32768
+
+        os.unlink(f.name)
+
+
+# ── chat_template_kwargs Builder Tests ──────────────────────────────
+
+
+def _build_litellm_extra_body(thinking_enabled, preserve_thinking, extend_thinking):
+    """Replicate the chat_template_kwargs builder from agent_script.py for testing."""
+    chat_template_kwargs = {}
+    if thinking_enabled is not None:
+        chat_template_kwargs["enable_thinking"] = thinking_enabled
+    if preserve_thinking is not None:
+        chat_template_kwargs["preserve_thinking"] = preserve_thinking
+    if extend_thinking is not None:
+        chat_template_kwargs["extend_thinking"] = extend_thinking
+    if chat_template_kwargs:
+        return {"chat_template_kwargs": chat_template_kwargs}
+    return {}
+
+
+class TestChatTemplateKwargsBuilder:
+    """Test the chat_template_kwargs builder logic used by agent_script.py."""
+
+    def test_all_thinking_params_set(self):
+        result = _build_litellm_extra_body(True, True, False)
+        assert result == {
+            "chat_template_kwargs": {
+                "enable_thinking": True,
+                "preserve_thinking": True,
+                "extend_thinking": False,
+            }
+        }
+
+    def test_partial_thinking_params(self):
+        result = _build_litellm_extra_body(True, None, None)
+        assert result == {
+            "chat_template_kwargs": {
+                "enable_thinking": True,
+            }
+        }
+
+    def test_no_thinking_params_returns_empty(self):
+        result = _build_litellm_extra_body(None, None, None)
+        assert result == {}
+
+    def test_thinking_disabled(self):
+        result = _build_litellm_extra_body(False, None, None)
+        assert result == {
+            "chat_template_kwargs": {
+                "enable_thinking": False,
+            }
+        }

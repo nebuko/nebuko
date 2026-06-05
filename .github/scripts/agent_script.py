@@ -458,6 +458,10 @@ def main():
     model = None
     base_url = None
     temperature = None
+    thinking_enabled = None
+    preserve_thinking = None
+    extend_thinking = None
+    max_output_tokens = None
 
     if os.path.isfile(config_path):
         try:
@@ -466,11 +470,17 @@ def main():
             cfg = load_config(config_path)
             agent_cfg = cfg.agents.get(role_name)
             if agent_cfg:
-                model = agent_cfg.model_ref.model_path
-                provider = agent_cfg.model_ref.provider_ref
+                llm_cfg = agent_cfg.model_ref
+                model = llm_cfg.model_path
+                provider = llm_cfg.provider_ref
                 api_key = os.environ.get(provider.api_token_env)
                 base_url = provider.api_url
                 temperature = agent_cfg.temperature
+                # Thinking / reasoning parameters (Qwen3 / vLLM)
+                thinking_enabled = llm_cfg.thinking_enabled
+                preserve_thinking = llm_cfg.preserve_thinking
+                extend_thinking = llm_cfg.extend_thinking
+                max_output_tokens = llm_cfg.max_output_tokens
                 logger.info(
                     f"Loaded config for agent '{role_name}' from {config_path}: "
                     f"model={model}, provider={provider.api_url}"
@@ -532,6 +542,22 @@ def main():
             "effort": llm_reasoning
         }
         logger.info(f"Reasoning enabled: effort={llm_reasoning}")
+
+    # Qwen3 / vLLM thinking parameters via litellm_extra_body
+    chat_template_kwargs = {}
+    if thinking_enabled is not None:
+        chat_template_kwargs["enable_thinking"] = thinking_enabled
+    if preserve_thinking is not None:
+        chat_template_kwargs["preserve_thinking"] = preserve_thinking
+    if extend_thinking is not None:
+        chat_template_kwargs["extend_thinking"] = extend_thinking
+    if chat_template_kwargs:
+        llm_config["litellm_extra_body"] = {"chat_template_kwargs": chat_template_kwargs}
+        logger.info(f"Thinking params enabled: {chat_template_kwargs}")
+
+    if max_output_tokens is not None:
+        llm_config["max_output_tokens"] = max_output_tokens
+        logger.info(f"Max output tokens set to {max_output_tokens}")
 
     llm = LLM(**llm_config)
 
