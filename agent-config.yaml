@@ -30,34 +30,41 @@ llms:
     input_price: 0.35
     output_price: 0.40
 
+  qwen-3-6-27:
+    model_path: "hosted_vllm/qwen-3-6-27b"
+    provider: "${providers.local_vllm}"
+    default_temperature: 0.0
+    input_price: 0.35
+    output_price: 0.40
+
 # ── Agents: role → model + prompt + skills ──
 agents:
   genius:
-    model: "${llms.qwen-3-6-30b}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.2
     prompt_file: ".agents/prompts/genius.md"
     skills: []
 
   dev:
-    model: "${llms.qwen-3-6-30b}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.0
     prompt_file: ".agents/prompts/dev.md"
     skills: []
 
   ctx:
-    model: "${llms.qwen-3-6-30b}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.0
     prompt_file: ".agents/prompts/ctx.md"
     skills: []
 
   review:
-    model: "${llms.qwen-3-6-30b}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.1
     prompt_file: ".agents/prompts/review.md"
     skills: []
 
   issue:
-    model: "${llms.qwen-3-6-30b}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.2
     prompt_file: ".agents/prompts/issue.md"
     skills: []
