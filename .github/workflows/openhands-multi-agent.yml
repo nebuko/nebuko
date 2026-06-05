@@ -13,6 +13,11 @@ on:
         required: false
         type: number
         default: 15
+      summarizer_threshold:
+        description: 'Comment count threshold to trigger summarizer agent (default: 10)'
+        required: false
+        type: number
+        default: 10
       python_version:
         description: 'Python version'
         required: false
@@ -399,7 +404,7 @@ jobs:
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME != 'summarize'
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                SUMMARIZER_THRESHOLD: '10'
+                SUMMARIZER_THRESHOLD: ${{ inputs.summarizer_threshold || 10 }}
               run: |
                 echo "::group::[Step] Check Summarizer Gate"
                 
@@ -421,18 +426,28 @@ jobs:
                 
                 # Trigger summarizer if threshold exceeded AND no summary exists
                 if [ "$COMMENT_COUNT" -ge "$SUMMARIZER_THRESHOLD" ] && [ -z "$SUMMARY_ID" ]; then
-                  echo "Threshold exceeded. Posting summarizer trigger."
-                  printf '%s\n' '<agentRunConfig>' '{"task": "summarize", "complexity": "low"}' '</agentRunConfig>' > /tmp/summarize_trigger.md
-                  gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments -f body=@/tmp/summarize_trigger.md
+                  echo "Threshold exceeded. Writing summarizer trigger."
+                  printf '%s\n' '<!-- bot-agent-summary -->' '<agentRunConfig>' '{"task": "summarize", "complexity": "low"}' '</agentRunConfig>' > ./summarize_trigger.md
                   SUMMARIZER_TRIGGERED=true
                 else
                   echo "Summary not needed (threshold not reached or summary already exists)."
+                  : > ./summarize_trigger.md
+                  SUMMARIZER_TRIGGERED=false
                 fi
                 
                 # Pass summarizer trigger status to acknowledgment step
                 echo "SUMMARIZER_TRIGGERED=$SUMMARIZER_TRIGGERED" >> $GITHUB_OUTPUT
                 
                 echo "::endgroup::"
+
+            - name: Post Summarizer Trigger Comment
+              if: steps.summarize_gate.outputs.SUMMARIZER_TRIGGERED == 'true'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ env.TARGET_NUMBER }}
+                body-path: ./summarize_trigger.md
+                token: ${{ secrets.GH_PAT }}
+                group-id: agent-summary
 
             - name: Prepare Acknowledgment Body
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
@@ -540,7 +555,6 @@ jobs:
               timeout-minutes: 30
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
-                LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
                 AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
                 LLM_API_KEY: ${{ env.LLM_API_KEY || secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
