@@ -27,36 +27,37 @@ Use this workflow in any GitHub project by copying a single workflow file.
 
 ### Configuration Options
 
-| Input | Default | Description |
-|-------|---------|-------------|
-| `genius_model` | `openrouter/deepseek/deepseek-v4-pro` | Model for the genius agent |
-| `dev_model_low` | `openrouter/deepseek/deepseek-v4-flash` | Model for dev agent (low complexity) |
-| `dev_model_medium` | `openrouter/deepseek/deepseek-v4-flash` | Model for dev agent (medium complexity) |
-| `dev_model_high` | `openrouter/deepseek/deepseek-v4-flash` | Model for dev agent (high complexity) |
-| `ctx_model` | `openrouter/deepseek/deepseek-v4-flash` | Model for the ctx agent |
-| `review_model` | `openrouter/deepseek/deepseek-v4-pro` | Model for the review agent |
-| `issue_model` | `openrouter/deepseek/deepseek-v4-pro` | Model for the issue agent |
-| `api_base_url` | `https://openrouter.ai/api/v1/chat/completions` | LLM API base URL |
-| `genius_base_url` | *(empty)* | Base URL override for genius model |
-| `dev_model_low_base_url` | *(empty)* | Base URL override for dev low-complexity model |
-| `dev_model_medium_base_url` | *(empty)* | Base URL override for dev medium-complexity model |
-| `dev_model_high_base_url` | *(empty)* | Base URL override for dev high-complexity model |
-| `ctx_base_url` | *(empty)* | Base URL override for ctx model |
-| `review_base_url` | *(empty)* | Base URL override for review model |
-| `issue_base_url` | *(empty)* | Base URL override for issue model |
-| `genius_api_key` | *(empty)* | API key override for genius model (falls back to `OPENROUTER_API_KEY`) |
-| `dev_model_low_api_key` | *(empty)* | API key override for dev low-complexity model |
-| `dev_model_medium_api_key` | *(empty)* | API key override for dev medium-complexity model |
-| `dev_model_high_api_key` | *(empty)* | API key override for dev high-complexity model |
-| `ctx_api_key` | *(empty)* | API key override for ctx model |
-| `review_api_key` | *(empty)* | API key override for review model |
-| `issue_api_key` | *(empty)* | API key override for issue model |
-| `genius_temperature` | `0.2` | Temperature for genius agent |
-| `dev_temperature` | `0.0` | Temperature for dev agent |
-| `llm_seed` | `42` | Seed for reproducible LLM outputs |
-| `circuit_breaker_threshold` | `15` | Max bot comments before circuit break |
+The system uses a **layered YAML config** (`agent-config.yaml`) instead of flat workflow inputs. This eliminates 25+ duplicated parameters and makes configuration agent-writable and human-readable.
 
-All complexity and future improvements stay centralized in this repo — your workflow file always references the latest version.
+#### Three-Layer Structure
+
+| Layer | Purpose | Example |
+|-------|---------|---------|
+| **Providers** | API endpoint + auth token env var | `openrouter`, `local_vllm` |
+| **LLMs** | Model path, provider reference, temperature | `deepseek-v4-pro`, `qwen-3-6-30b` |
+| **Agents** | Role → model + prompt file + skills | `genius`, `dev`, `ctx`, `review`, `issue` |
+
+#### `${ref}` Syntax
+
+References resolve cross-layer: `${providers.openrouter}` → provider dict, `${llms.deepseek-v4-pro}` → LLM config dict.
+
+#### Minimal Workflow Usage
+
+```yaml
+jobs:
+  agent:
+    uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+    with:
+      agent_config_path: "agent-config.yaml"
+      circuit_breaker_threshold: 15
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+```
+
+Adding an agent is a 5-line stanza in `agent-config.yaml` — no workflow changes needed.
+
+**Backward compatibility**: If `agent-config.yaml` is absent, the workflow falls back to the old env-var-based approach. Existing downstream projects continue to work without modification.
 
 ## How It Works
 

@@ -19,7 +19,6 @@ Environment Variables:
     LLM_MODEL: Language model to use (default: gpt-5.5)
     LLM_BASE_URL: Optional base URL for LLM API
     LLM_TEMPERATURE: Optional sampling temperature (0.0 = deterministic, default: provider default)
-    LLM_SEED: Optional seed for reproducible outputs (default: not set)
 
 Note: Provide either prompt_location argument OR PROMPT_STRING env variable, not both.
 
@@ -451,14 +450,66 @@ def main():
         logger.error(str(e))
         sys.exit(1)
 
-    # Configure LLM
-    api_key = os.getenv("LLM_API_KEY")
+    # Configure LLM — prefer layered config file, fall back to env vars
+    config_path = os.getenv("AGENT_CONFIG_PATH", "agent-config.yaml")
+    role_name = os.environ.get("ROLE_NAME", "unknown")
+
+    api_key = None
+    model = None
+    base_url = None
+    temperature = None
+
+    if os.path.isfile(config_path):
+        try:
+            from config import load_config
+
+            cfg = load_config(config_path)
+            agent_cfg = cfg.agents.get(role_name)
+            if agent_cfg:
+                model = agent_cfg.model_ref.model_path
+                provider = agent_cfg.model_ref.provider_ref
+                api_key = os.environ.get(provider.api_token_env)
+                base_url = provider.api_url
+                temperature = agent_cfg.temperature
+                logger.info(
+                    f"Loaded config for agent '{role_name}' from {config_path}: "
+                    f"model={model}, provider={provider.api_url}"
+                )
+            else:
+                logger.warning(
+                    f"Agent role '{role_name}' not found in config; "
+                    "falling back to env vars"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to load config from {config_path}: {e}; "
+                "falling back to env vars"
+            )
+
+    # Backward-compatible fallback: read from env vars
+    if api_key is None:
+        api_key = os.getenv("LLM_API_KEY")
+    if model is None:
+        model = os.getenv("LLM_MODEL", "gpt-5.5")
+    if base_url is None:
+        base_url = os.getenv("LLM_BASE_URL")
+    if temperature is None and os.getenv("LLM_TEMPERATURE"):
+        temperature = float(os.getenv("LLM_TEMPERATURE"))
+
+    # Per-invocation overrides from agentRunConfig (CONFIG_MODEL / CONFIG_TEMPERATURE)
+    # These allow a caller to override the config file values for a single invocation.
+    config_model = os.getenv("CONFIG_MODEL")
+    if config_model:
+        model = config_model
+        logger.info(f"CONFIG_MODEL override: {model}")
+    config_temperature = os.getenv("CONFIG_TEMPERATURE")
+    if config_temperature:
+        temperature = float(config_temperature)
+        logger.info(f"CONFIG_TEMPERATURE override: {temperature}")
+
     if not api_key:
         logger.error("LLM_API_KEY environment variable is not set.")
         sys.exit(1)
-
-    model = os.getenv("LLM_MODEL", "gpt-5.5")
-    base_url = os.getenv("LLM_BASE_URL")
 
     llm_config = {
         "model": model,
@@ -470,10 +521,8 @@ def main():
     if base_url:
         llm_config["base_url"] = base_url
 
-    if os.getenv("LLM_TEMPERATURE"):
-        llm_config["temperature"] = float(os.getenv("LLM_TEMPERATURE"))
-    if os.getenv("LLM_SEED"):
-        llm_config["seed"] = int(os.getenv("LLM_SEED"))
+    if temperature is not None:
+        llm_config["temperature"] = temperature
 
     # Reasoning level support (optional — model-dependent)
     llm_reasoning = os.getenv("LLM_REASONING", "none")
@@ -490,7 +539,6 @@ def main():
     cwd = os.getcwd()
 
     # Role-aware agent instantiation: restrict genius and issue to thinking tools only
-    role_name = os.environ.get("ROLE_NAME", "unknown")
     if role_name in ("genius", "issue"):
         # Genius and Issue agents run on high-cost models; restrict to built-in
         # ThinkTool + FinishTool to eliminate unnecessary tool token consumption.
