@@ -33,31 +33,31 @@ llms:
 # ── Agents: role → model + prompt + skills ──
 agents:
   genius:
-    model: "${llms.deepseek-v4-pro}"
+    model: "${llms.qwen-3-6-30b}"
     temperature: 0.2
     prompt_file: ".agents/prompts/genius.md"
     skills: []
 
   dev:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.qwen-3-6-30b}"
     temperature: 0.0
     prompt_file: ".agents/prompts/dev.md"
-    skills: [python, devops]
+    skills: []
 
   ctx:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.qwen-3-6-30b}"
     temperature: 0.0
     prompt_file: ".agents/prompts/ctx.md"
     skills: []
 
   review:
-    model: "${llms.deepseek-v4-pro}"
+    model: "${llms.qwen-3-6-30b}"
     temperature: 0.1
     prompt_file: ".agents/prompts/review.md"
     skills: []
 
   issue:
-    model: "${llms.deepseek-v4-pro}"
+    model: "${llms.qwen-3-6-30b}"
     temperature: 0.2
     prompt_file: ".agents/prompts/issue.md"
     skills: []
