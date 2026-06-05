@@ -285,6 +285,12 @@ jobs:
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           ;;
+                      "summarize")
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/summarize.md" >> $GITHUB_ENV
+                          echo "ROLE_NAME=summarize" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          ;;
                       *)
                           echo "Unknown task: $TASK"
                           echo "SKIP_AGENT=true" >> $GITHUB_ENV
@@ -355,8 +361,8 @@ jobs:
                 COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments \
                   --jq '.[] | .body' | tr -d '\r')
                 
-                # Count bot markers (<!-- bot-agent-)
-                BOT_MARKER_COUNT=$(echo "$COMMENT_HISTORY" | grep -c '<!-- bot-agent-' || true)
+                # Count bot markers (excluding summary marker to avoid inflating circuit breaker)
+                BOT_MARKER_COUNT=$(echo "$COMMENT_HISTORY" | grep -o '<!-- bot-agent-[a-z]* -->' | grep -v 'bot-agent-summary' | wc -l || true)
                 AGENT_CALLS=$(( BOT_MARKER_COUNT / 2 ))
                 
                 echo "Agent calls detected: $AGENT_CALLS (threshold: $CIRCUIT_BREAKER_THRESHOLD)"
@@ -387,6 +393,44 @@ jobs:
                 else
                     echo "CIRCUIT_BREAKER_TRIPPED=false" >> $GITHUB_ENV
                 fi
+
+            - name: Check Summarizer Gate
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME != 'summarize'
+              id: summarizer_gate
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                SUMMARIZER_THRESHOLD: '10'
+              run: |
+                echo "::group::[Step] Check Summarizer Gate"
+                
+                REPO_NAME="${{ github.repository }}"
+                TARGET_NUMBER="${{ env.TARGET_NUMBER }}"
+                
+                # Count all comments
+                COMMENT_COUNT=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments --jq 'length')
+                echo "Comment count: $COMMENT_COUNT (threshold: $SUMMARIZER_THRESHOLD)"
+                
+                # Check if a summary comment already exists
+                SUMMARY_ID=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments \
+                  --jq '.[] | select(.body | contains("<!-- bot-agent-summary -->")) | .id' | head -1)
+                
+                echo "Existing summary comment ID: ${SUMMARY_ID:-none}"
+                
+                # Trigger summarizer if threshold exceeded AND no summary exists AND not already summarizing
+                if [ "$COMMENT_COUNT" -ge "$SUMMARIZER_THRESHOLD" ] && [ -z "$SUMMARY_ID" ]; then
+                  echo "Threshold exceeded. Posting summarizer trigger."
+                  
+                  # Post a summarizer trigger comment that will be picked up by the next workflow run
+                  printf '%s\n' '<agentRunConfig>' '{"task": "summarize", "complexity": "low"}' '</agentRunConfig>' > /tmp/summarize_trigger.md
+                  gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments -f body=@/tmp/summarize_trigger.md
+                  
+                  # Set flag so current run knows a summary is pending
+                  echo "SUMMARIZER_PENDING=true" >> $GITHUB_OUTPUT
+                else
+                  echo "SUMMARIZER_PENDING=false" >> $GITHUB_OUTPUT
+                fi
+                
+                echo "::endgroup::"
 
             - name: Post Acknowledgment Comment
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
@@ -429,8 +473,31 @@ jobs:
                 export ISSUE_BODY=$(jq -r '.issue.body // "No Description"' "$EVENT_PATH")
                 export ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' "$EVENT_PATH")
                 
-                export COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                # Fetch all comments
+                ALL_COMMENTS=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
                   --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
+
+                # Check if a summary comment exists
+                SUMMARY_JSON=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                  --jq '.[] | select(.body | contains("<!-- bot-agent-summary -->")) | .body' | head -1 | tr -d '\r' || true)
+
+                if [ -n "$SUMMARY_JSON" ]; then
+                  echo "Summary found. Using summary + recent comments only."
+                  # Extract JSON from summary (remove marker and prose wrapper)
+                  SUMMARY_CONTENT=$(echo "$SUMMARY_JSON" | sed -n '/```json/,/```/p' | sed '1d;$d' || true)
+                  if [ -z "$SUMMARY_CONTENT" ]; then
+                    # Fallback: extract everything after the marker
+                    SUMMARY_CONTENT=$(echo "$SUMMARY_JSON" | grep -v '<!-- bot-agent-summary -->' | grep -v '\*.*answer\*' | head -20 || true)
+                  fi
+                  # Get last 5 comments only
+                  RECENT_COMMENTS=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                    --jq '.[-5:] | .[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
+                  export COMMENT_HISTORY="### 📋 Issue Summary (auto-generated)\n${SUMMARY_CONTENT}\n\n---\n### Recent Comments:\n${RECENT_COMMENTS}"
+                else
+                  echo "No summary found. Using full history."
+                  export COMMENT_HISTORY="$ALL_COMMENTS"
+                fi
+
                 if [[ -z "$COMMENT_HISTORY" ]]; then
                   export COMMENT_HISTORY="No previous comments"
                 fi
@@ -590,16 +657,27 @@ jobs:
               run: |
                 import os
                 role = os.environ.get("ROLE_NAME", "unknown")
-                marker = f"<!-- bot-agent-{role} -->"
-                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer", "review": "Reviewer", "issue": "Issue"}
+                # Map summarize role to "summary" marker as per spec
+                marker_role = "summary" if role == "summarize" else role
+                marker = f"<!-- bot-agent-{marker_role} -->"
+                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer", "review": "Reviewer", "issue": "Issue", "summarize": "Summarizer"}
                 display_name = agent_display_names.get(role, role.capitalize())
                 with open("github_comment.md", "r") as f:
                     content = f.read()
                 with open("github_comment.md", "w") as f:
                     f.write(marker + "\n*" + display_name + " answer*\n\n" + content)
 
+            - name: Post Agent Comment to GitHub (Summarizer)
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME == 'summarize'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ env.TARGET_NUMBER }}
+                body-path: ./github_comment.md
+                token: ${{ secrets.GH_PAT }}
+                group-id: agent-summary
+
             - name: Post Agent Comment to GitHub
-              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME != 'summarize'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}

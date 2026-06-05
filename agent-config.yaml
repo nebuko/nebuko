@@ -68,3 +68,9 @@ agents:
     temperature: 0.2
     prompt_file: ".agents/prompts/issue.md"
     skills: []
+
+  summarize:
+    model: "${llms.qwen-3-6-27b}"
+    temperature: 0.1
+    prompt_file: ".agents/prompts/summarize.md"
+    skills: []
