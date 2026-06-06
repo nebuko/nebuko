@@ -38,7 +38,7 @@ from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.event.llm_convertible.action import ActionEvent
 from openhands.sdk.event.llm_convertible.observation import ObservationEvent
 from openhands.sdk.conversation import get_agent_final_response
-from openhands.tools.preset.default import get_default_agent, get_default_condenser
+from openhands.tools.preset.default import get_default_agent, get_default_condenser, get_default_tools
 from metrics_schema import Metrics
 
 
@@ -538,7 +538,7 @@ def main():
     # Get the current working directory as workspace
     cwd = os.getcwd()
 
-    # Role-aware agent instantiation: restrict genius and issue to thinking tools only
+    # Role-aware agent instantiation
     if role_name in ("genius", "issue"):
         # Genius and Issue agents run on high-cost models; restrict to built-in
         # ThinkTool + FinishTool to eliminate unnecessary tool token consumption.
@@ -558,8 +558,23 @@ def main():
             system_prompt_kwargs={"cli_mode": True},
             condenser=get_default_condenser(llm=llm),
         )
+    elif role_name == "ctx":
+        # Ctx agent is read-only context collector. Restrict to terminal + FinishTool
+        # only — file_editor and task_tracker tool calls are slower than plain bash
+        # commands (grep, find, cat, curl). The ctx agent should use terminal for all
+        # exploration tasks.
+        all_tools = get_default_tools(enable_browser=False)
+        terminal_tools = [t for t in all_tools if t.name == "terminal"]
+        logger.info(f"Creating {role_name} agent with terminal + FinishTool only (bash-only mode)")
+        agent = Agent(
+            llm=llm,
+            tools=terminal_tools,
+            include_default_tools=["FinishTool"],
+            system_prompt_kwargs={"cli_mode": True},
+            condenser=get_default_condenser(llm=llm),
+        )
     else:
-        # ctx, dev, and other agents get full default toolset
+        # dev, review, and other agents get full default toolset
         logger.info(f"Creating {role_name} agent with default tools")
         agent = get_default_agent(
             llm=llm,
