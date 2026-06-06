@@ -474,6 +474,13 @@ jobs:
                 cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
                 echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
                 cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
+
+                # Inject git diff for review agent
+                if [ "$ROLE_NAME" = "review" ]; then
+                    echo -e "\n\n--- GIT DIFF ---\n" >> $FINAL_PROMPT_FILE
+                    git fetch origin main 2>/dev/null || true
+                    git --no-pager diff origin/main...HEAD >> $FINAL_PROMPT_FILE 2>/dev/null || echo "(no diff available)" >> $FINAL_PROMPT_FILE
+                fi
                 # 2. Maintenant on ne passe qu'un seul argument au script !
                 # 2>&1 fusionne stderr dans stdout, stdbuf désactive le buffering pour une écriture immédiate
                 stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" 2>&1 | tee console.log

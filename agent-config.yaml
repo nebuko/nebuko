@@ -67,7 +67,7 @@ agents:
     temperature: 0.1
     prompt_file: ".agents/prompts/review.md"
     skills: []
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
+    tools: ["think", "finish"]
 
   issue:
     model: "${llms.qwen-3-6-27b}"
