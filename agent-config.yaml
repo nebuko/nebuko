@@ -37,34 +37,41 @@ llms:
     input_price: 0.35
     output_price: 0.40
 
-# ── Agents: role → model + prompt + skills ──
+# ── Agents: role → model + prompt + skills + tools ──
+# Tools: terminal, file_editor, task_tracker (SDK tools)
+#        think, finish (built-in defaults)
 agents:
   genius:
     model: "${llms.qwen-3-6-27b}"
     temperature: 0.2
     prompt_file: ".agents/prompts/genius.md"
     skills: []
+    tools: ["think", "finish"]
 
   dev:
     model: "${llms.qwen-3-6-27b}"
     temperature: 0.0
     prompt_file: ".agents/prompts/dev.md"
     skills: []
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   ctx:
     model: "${llms.qwen-3-6-27b}"
     temperature: 0.0
     prompt_file: ".agents/prompts/ctx.md"
     skills: []
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   review:
     model: "${llms.qwen-3-6-27b}"
     temperature: 0.1
     prompt_file: ".agents/prompts/review.md"
     skills: []
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   issue:
     model: "${llms.qwen-3-6-27b}"
     temperature: 0.2
     prompt_file: ".agents/prompts/issue.md"
     skills: []
+    tools: ["think", "finish"]
