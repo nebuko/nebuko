@@ -44,5 +44,5 @@ jobs:
         with:
           issue-number: ${{ github.event.issue.number }}
           token: ${{ secrets.GH_PAT }}
-          tag: bot-snapshot
+          tag: "<!-- bot-snapshot -->"
           body-path: /tmp/snapshot.md
