@@ -1,0 +1,29 @@
+name: Issue Placeholder Comment
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  post-snapshot:
+    runs-on: self-hosted
+    if: github.event.issue.pull_request == null
+    steps:
+      - name: Post Status Snapshot Comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          token: ${{ secrets.GH_PAT }}
+          body: |
+            <!-- bot-snapshot -->
+            **📋 Status Snapshot**
+
+            [⬇️ Scroll to bottom of discussion](#discussion-end)
+
+            ---
+            *Issue created — pending review.*
+
+            <p id="discussion-end">— end of snapshot —</p>
