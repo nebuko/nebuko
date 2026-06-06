@@ -87,12 +87,17 @@ class LLMConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    """Agent role → model + prompt file + skills."""
+    """Agent role → model + prompt file + skills + tools."""
 
     model_ref: LLMConfig = Field(alias="model")
     temperature: float = 0.0
     prompt_file: str
     skills: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(
+        default=[
+            "terminal", "file_editor", "task_tracker", "think", "finish",
+        ]
+    )
 
 
 class AppConfig(BaseModel):

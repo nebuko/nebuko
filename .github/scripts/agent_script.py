@@ -38,7 +38,8 @@ from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.event.llm_convertible.action import ActionEvent
 from openhands.sdk.event.llm_convertible.observation import ObservationEvent
 from openhands.sdk.conversation import get_agent_final_response
-from openhands.tools.preset.default import get_default_agent, get_default_condenser
+from openhands.tools.preset.default import get_default_condenser
+from openhands.sdk.tool.spec import Tool
 from metrics_schema import Metrics
 
 
@@ -458,6 +459,7 @@ def main():
     model = None
     base_url = None
     temperature = None
+    agent_cfg = None
 
     if os.path.isfile(config_path):
         try:
@@ -538,33 +540,39 @@ def main():
     # Get the current working directory as workspace
     cwd = os.getcwd()
 
-    # Role-aware agent instantiation: restrict genius and issue to thinking tools only
-    if role_name in ("genius", "issue"):
-        # Genius and Issue agents run on high-cost models; restrict to built-in
-        # ThinkTool + FinishTool to eliminate unnecessary tool token consumption.
-        # The issue agent's role is purely analytical — it should never execute
-        # terminal commands; when it needs context, it delegates to @@ctx.
-        #
-        # For genius: use NoOpCondenser since genius has zero tool calls
-        # (runs average ~5K input tokens). The GitHub context is injected via
-        # the prompt file (not conversation history), so condensing is unnecessary
-        # and could truncate the genius instructions. The workflow also enforces
-        # a 150KB context size cap for genius to prevent unbounded growth.
-        logger.info(f"Creating {role_name} agent with restricted tools (ThinkTool + FinishTool only)")
-        agent = Agent(
-            llm=llm,
-            tools=[],
-            include_default_tools=["ThinkTool", "FinishTool"],
-            system_prompt_kwargs={"cli_mode": True},
-            condenser=get_default_condenser(llm=llm),
-        )
-    else:
-        # ctx, dev, and other agents get full default toolset
-        logger.info(f"Creating {role_name} agent with default tools")
-        agent = get_default_agent(
-            llm=llm,
-            cli_mode=True,
-        )
+    # YAML-driven tool resolution: read tools from agent config
+    # If agent_cfg is None (config not loaded or role not found), use full defaults
+    default_tool_list = ["terminal", "file_editor", "task_tracker", "think", "finish"]
+    agent_tools = agent_cfg.tools if agent_cfg is not None else default_tool_list
+
+    # Separate SDK tools (terminal, file_editor, task_tracker) from built-in
+    # defaults (think → ThinkTool, finish → FinishTool)
+    sdk_tool_names = {"terminal", "file_editor", "task_tracker"}
+    builtin_tool_map = {"think": "ThinkTool", "finish": "FinishTool"}
+
+    sdk_tools = []
+    include_default_tools = []
+
+    for tool_name in agent_tools:
+        if tool_name in sdk_tool_names:
+            sdk_tools.append(Tool(name=tool_name))
+        elif tool_name in builtin_tool_map:
+            include_default_tools.append(builtin_tool_map[tool_name])
+        else:
+            logger.warning(f"Unknown tool '{tool_name}' for agent '{role_name}' — skipping")
+
+    logger.info(
+        f"Creating {role_name} agent with tools: sdk={[t.name for t in sdk_tools]}, "
+        f"builtins={include_default_tools}"
+    )
+
+    agent = Agent(
+        llm=llm,
+        tools=sdk_tools,
+        include_default_tools=include_default_tools,
+        system_prompt_kwargs={"cli_mode": True},
+        condenser=get_default_condenser(llm=llm),
+    )
 
     # Create conversation
     conversation = Conversation(
