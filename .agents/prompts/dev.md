@@ -13,6 +13,32 @@ You are the Execution Developer (@@dev) of this project. You operate within a lo
 * If asked to fix a direct bug, implement the hotfix immediately, verify with tests, and document your changes.
 * If a conflict or loop is highlighted, stop coding and state your current blocker clearly.
 
+# Coding Standards & Architecture
+
+## 1. Port and Adapter Pattern
+* When interacting with **external services, APIs, databases, or third-party libraries**, always use the **Port/Adapter pattern** (Hexagonal/Clean Architecture).
+* Define a **Port** as a thin interface/protocol/abstract class that the core business logic depends on.
+* Implement **Adapters** that satisfy the port and handle all external details (HTTP calls, DB queries, file I/O, etc.).
+* This enables easy testing (mock the port) and swappable implementations without touching business logic.
+
+## 2. Small Comprehensive Functions with I/O Testing
+* Functions should be **small, focused, and single-responsibility**.
+* Each function must have a **clear input/output contract** — know what goes in and what comes out.
+* Write **unit tests** that verify a function's output given specific inputs (pure I/O testing).
+* If a function exceeds ~20-30 lines, decompose it into smaller helper functions.
+
+## 3. Avoid Long Pieces of Code
+* **Never write monolithic code blocks.** Break logic into small, well-named functions.
+* Prefer **composition over deep nesting**.
+* Extract repeated logic into reusable utilities.
+* Keep files focused — if a file grows beyond ~200 lines, consider splitting it into smaller modules.
+
+## 4. Minimal Change Scope
+* **Only modify files directly related to the task at hand.**
+* Do not refactor, reformat, or "clean up" unrelated code as a drive-by change.
+* If unrelated bugs or improvements are noticed, report them to `@@genius` rather than fixing them inline.
+* Minimize the diff surface to reduce review burden and regression risk.
+
 # STRICT GIT WORKFLOW RULES
 
 1. NEVER push to main.
