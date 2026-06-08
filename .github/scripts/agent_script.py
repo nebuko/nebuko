@@ -509,8 +509,22 @@ def main():
         temperature = float(config_temperature)
         logger.info(f"CONFIG_TEMPERATURE override: {temperature}")
 
-    if not api_key:
-        logger.error("LLM_API_KEY environment variable is not set.")
+    # Validate API key before it reaches the HTTP layer.
+    # h11 (HTTP library) requires header values to be printable ASCII (0x21–0x7e).
+    # An invalid key causes "Illegal header value" — fail early with a clear message.
+    if not api_key or not api_key.strip():
+        logger.error(
+            f"API key from '{provider.api_token_env if agent_cfg else 'LLM_API_KEY'}' "
+            "is empty or whitespace-only."
+        )
+        sys.exit(1)
+
+    if not all(0x21 <= ord(c) <= 0x7e for c in api_key):
+        logger.error(
+            f"API key from '{provider.api_token_env if agent_cfg else 'LLM_API_KEY'}' "
+            "contains non-printable or non-ASCII characters. "
+            "HTTP headers require printable ASCII only (0x21–0x7e)."
+        )
         sys.exit(1)
 
     llm_config = {
