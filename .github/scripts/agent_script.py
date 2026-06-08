@@ -591,11 +591,19 @@ def main():
         f"builtins={include_default_tools}"
     )
 
+    # For ctx and dev agents, disable cli_mode to prevent the SDK from injecting
+    # problem-solving instructions that conflict with the custom prompt.
+    # - ctx: read-only agent that should not provide analysis or solutions.
+    # - dev: must output <agentRunConfig> hand-off block to trigger the review agent.
+    system_prompt_kwargs = (
+        {} if role_name in ("ctx", "dev") else {"cli_mode": True}
+    )
+
     agent = Agent(
         llm=llm,
         tools=sdk_tools,
         include_default_tools=include_default_tools,
-        system_prompt_kwargs={"cli_mode": True},
+        system_prompt_kwargs=system_prompt_kwargs,
         condenser=get_default_condenser(llm=llm),
     )
 
