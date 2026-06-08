@@ -81,3 +81,10 @@ agents:
     prompt_file: ".agents/prompts/issue.md"
     skills: []
     tools: ["think", "finish"]
+
+  issue-reviewer:
+    model: "${llms.qwen-3-6-27b}"
+    temperature: 0.2
+    prompt_file: ".agents/prompts/issue-reviewer.md"
+    skills: []
+    tools: ["think", "finish"]
