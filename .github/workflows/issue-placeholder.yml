@@ -28,15 +28,17 @@ jobs:
             COMMENT_ID="${{ github.event.comment.id }}"
             LATEST_TARGET="#issuecomment-${COMMENT_ID}"
           fi
-          cat > /tmp/snapshot.md << EOF
-          <!-- bot-snapshot -->
-          **📋 Status Snapshot**
-
-          [⬇️ Scroll to bottom of discussion](${LATEST_TARGET})
-
-          ---
-          *Status: pending review*
-          EOF
+          {
+            echo "<!-- bot-snapshot -->"
+            echo ""
+            echo "**📋 Status Snapshot**"
+            echo ""
+            echo "[⬇️ Scroll to bottom of discussion](${LATEST_TARGET})"
+            echo ""
+            echo "---"
+            echo ""
+            echo "*Status: pending review*"
+          } > /tmp/snapshot.md
 
       - name: Post/Update Status Snapshot Comment
         id: post_comment
@@ -46,3 +48,4 @@ jobs:
           token: ${{ secrets.GH_PAT }}
           tag: "<!-- bot-snapshot -->"
           body-path: /tmp/snapshot.md
+          mode: replace
