@@ -32,6 +32,9 @@ on:
       OPENROUTER_API_KEY:
         description: 'Default API key for the LLM provider (used as fallback)'
         required: true
+      LOCAL_VLLM_API_TOKEN:
+        description: 'API key for vLLM"
+        required: true
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
@@ -452,7 +455,7 @@ jobs:
               timeout-minutes: 30
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
-                LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+                LOCAL_VLLM_API_TOKEN: ${{ inputs.LOCAL_VLLM_API_TOKEN || secrets.LOCAL_VLLM_API_TOKEN }}
                 AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
                 LLM_API_KEY: ${{ env.LLM_API_KEY || secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
