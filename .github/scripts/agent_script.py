@@ -591,11 +591,17 @@ def main():
         f"builtins={include_default_tools}"
     )
 
+    # For the ctx agent, disable cli_mode to prevent the SDK from injecting
+    # problem-solving instructions that conflict with ctx's read-only role.
+    system_prompt_kwargs = (
+        {} if role_name == "ctx" else {"cli_mode": True}
+    )
+
     agent = Agent(
         llm=llm,
         tools=sdk_tools,
         include_default_tools=include_default_tools,
-        system_prompt_kwargs={"cli_mode": True},
+        system_prompt_kwargs=system_prompt_kwargs,
         condenser=get_default_condenser(llm=llm),
     )
 
