@@ -1,0 +1,51 @@
+name: Status Snapshot
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  snapshot:
+    runs-on: self-hosted
+    if: |
+      github.event.issue.pull_request == null &&
+      (
+        github.event_name == 'issues' ||
+        (github.event_name == 'issue_comment' && !contains(github.event.comment.body, '<!-- bot-snapshot -->'))
+      )
+    steps:
+      - name: Generate Snapshot Body
+        id: generate_body
+        run: |
+          if [[ "${{ github.event_name }}" == "issues" ]]; then
+            LATEST_TARGET="#issue"
+          else
+            COMMENT_ID="${{ github.event.comment.id }}"
+            LATEST_TARGET="#issuecomment-${COMMENT_ID}"
+          fi
+          {
+            echo "<!-- bot-snapshot -->"
+            echo ""
+            echo "**📋 Status Snapshot**"
+            echo ""
+            echo "[⬇️ Scroll to bottom of discussion](${LATEST_TARGET})"
+            echo ""
+            echo "---"
+            echo ""
+            echo "*Status: pending review*"
+          } > /tmp/snapshot.md
+
+      - name: Post/Update Status Snapshot Comment
+        id: post_comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          token: ${{ secrets.GH_PAT }}
+          tag: "<!-- bot-snapshot -->"
+          body-path: /tmp/snapshot.md
+          mode: replace
