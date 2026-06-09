@@ -1,0 +1,246 @@
+name: RHO — Retrospective Harness Optimization
+
+on:
+  workflow_dispatch:
+    inputs:
+      coreset_size:
+        description: 'Number of challenging tasks to select'
+        required: false
+        type: number
+        default: 5
+      num_variants:
+        description: 'Number of harness variants to generate'
+        required: false
+        type: number
+        default: 3
+      max_issues:
+        description: 'Max closed issues to scan'
+        required: false
+        type: number
+        default: 50
+  schedule:
+    # Run every Sunday at 02:00 UTC
+    - cron: '0 2 * * 0'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+env:
+  PYTHON_VERSION: '3.13'
+  RHO_ARCHIVE_DIR: .rho/trajectories
+  RHO_VARIANTS_DIR: .rho/variants
+  RHO_ROLLOUT_DIR: .rho/rollout
+  SCRIPTS: .github/scripts
+
+jobs:
+  # ── Step 1: Fetch & Archive Trajectories ──────────────────────────────
+  archive-trajectories:
+    runs-on: self-hosted
+    outputs:
+      trajectory_count: ${{ steps.archive.outputs.count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml pydantic
+
+      - name: Fetch and archive trajectories
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RHO_MAX_ISSUES: ${{ inputs.max_issues || 50 }}
+        run: |
+          python "$SCRIPTS/trajectory_archive.py"
+        id: archive
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: rho-trajectories
+          path: ${{ env.RHO_ARCHIVE_DIR }}/
+          retention-days: 7
+
+  # ── Step 2: Select Coreset ────────────────────────────────────────────
+  select-coreset:
+    needs: archive-trajectories
+    runs-on: self-hosted
+    outputs:
+      coreset_size: ${{ steps.select.outputs.size }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install pyyaml pydantic
+
+      - name: Download archive
+        uses: actions/download-artifact@v4
+        with:
+          name: rho-trajectories
+          path: ${{ env.RHO_ARCHIVE_DIR }}/
+
+      - name: Select coreset
+        run: |
+          python "$SCRIPTS/coreset_selector.py"
+        env:
+          RHO_CORESET_SIZE: ${{ inputs.coreset_size || 5 }}
+
+  # ── Step 3: Propose Harness Variants ──────────────────────────────────
+  propose-variants:
+    needs: select-coreset
+    runs-on: self-hosted
+    outputs:
+      variant_count: ${{ steps.propose.outputs.count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install pyyaml pydantic
+
+      - name: Download archive
+        uses: actions/download-artifact@v4
+        with:
+          name: rho-trajectories
+          path: ${{ env.RHO_ARCHIVE_DIR }}/
+
+      - name: Generate variant configs
+        run: |
+          python "$SCRIPTS/harness_proposer.py"
+        env:
+          RHO_NUM_VARIANTS: ${{ inputs.num_variants || 3 }}
+
+      - name: Upload variants
+        uses: actions/upload-artifact@v4
+        with:
+          name: rho-variants
+          path: ${{ env.RHO_VARIANTS_DIR }}/
+          retention-days: 7
+
+  # ── Step 4: Run Rollouts ──────────────────────────────────────────────
+  run-rollouts:
+    needs: propose-variants
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        variant: [baseline, v1, v2, v3]
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml pydantic
+          uv sync --frozen 2>/dev/null || pip install openhands-sdk
+
+      - name: Download archive
+        uses: actions/download-artifact@v4
+        with:
+          name: rho-trajectories
+          path: ${{ env.RHO_ARCHIVE_DIR }}/
+
+      - name: Download variants
+        uses: actions/download-artifact@v4
+        with:
+          name: rho-variants
+          path: ${{ env.RHO_VARIANTS_DIR }}/
+
+      - name: Run rollout for ${{ matrix.variant }}
+        run: |
+          python "$SCRIPTS/rho_rollout.py"
+        env:
+          LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LLM_BASE_URL: https://openrouter.ai/api/v1/chat/completions
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RHO_ROLLOUT_DIR: ${{ env.RHO_ROLLOUT_DIR }}/${{ matrix.variant }}
+
+      - name: Upload rollout results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rho-rollout-${{ matrix.variant }}
+          path: ${{ env.RHO_ROLLOUT_DIR }}/${{ matrix.variant }}/
+          retention-days: 7
+
+  # ── Step 5: Select Winner & Create PR ─────────────────────────────────
+  select-and-promote:
+    needs: run-rollouts
+    runs-on: self-hosted
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install pyyaml pydantic
+
+      - name: Download rollout results
+        uses: actions/download-artifact@v4
+        with:
+          name: rho-rollout-baseline
+          path: ${{ env.RHO_ROLLOUT_DIR }}/
+
+      - name: Download variants
+        uses: actions/download-artifact@v4
+        with:
+          name: rho-variants
+          path: ${{ env.RHO_VARIANTS_DIR }}/
+
+      - name: Select winner
+        id: select
+        run: |
+          python "$SCRIPTS/rho_select.py"
+        env:
+          RHO_ROLLOUT_DIR: ${{ env.RHO_ROLLOUT_DIR }}
+
+      - name: Create PR for winning variant
+        if: steps.select.outcome == 'success'
+        run: |
+          # Extract winner from selection output
+          WINNER=$(python -c "
+          import json, os
+          path = '${{ env.RHO_ROLLOUT_DIR }}/results.json'
+          if os.path.exists(path):
+              print('PR_READY')
+          ")
+
+          if [ "$WINNER" = "PR_READY" ]; then
+            gh pr create \
+              --title "RHO: Auto-optimized harness config" \
+              --body-file "${{ env.RHO_ROLLOUT_DIR }}/pr_description.md" \
+              --base main \
+              --head rho-optimization-${{ github.run_id }} || true
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}

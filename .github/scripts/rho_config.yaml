@@ -1,0 +1,60 @@
+# Retrospective Harness Optimization (RHO) Configuration
+#
+# Controls coreset selection, variant generation, rollout execution,
+# and harness promotion thresholds.
+
+# ── Coreset Selection ─────────────────────────────────────────────────
+coreset:
+  # Number of challenging tasks to select for the coreset
+  size: 5
+  # Minimum number of closed issues to scan before selecting
+  min_issues: 10
+  # Maximum issues to scan (cost control)
+  max_issues: 100
+  # Weighting for difficulty scoring (must sum to ~1.0)
+  difficulty_weights:
+    error_rate: 0.30
+    review_fix_requests: 0.25
+    tool_call_count: 0.20
+    runtime: 0.15
+    token_count: 0.10
+
+# ── Variant Generation ───────────────────────────────────────────────
+variants:
+  # Number of harness variants to generate alongside the baseline
+  num_variants: 3
+  # Mutation strategies the proposer may apply
+  mutation_strategies:
+    - temperature_adjustment
+    - model_swap
+    - tool_reconfiguration
+    - prompt_tuning
+  # Temperature mutation range (± from original)
+  temperature_delta_max: 0.3
+  # Safe fields that can be mutated (never touch secrets or API URLs)
+  mutable_fields:
+    - temperature
+    - model
+    - tools
+    - prompt_file
+
+# ── Rollout Execution ────────────────────────────────────────────────
+rollout:
+  # Max runtime per rollout task (minutes)
+  timeout_minutes: 15
+  # Whether to run variants sequentially (false = parallel where possible)
+  sequential: false
+
+# ── Selection & Promotion ─────────────────────────────────────────────
+selection:
+  # Minimum improvement percentage to propose a PR
+  min_improvement_percent: 5.0
+  # Metrics weighted for comparison
+  improvement_weights:
+    error_rate_reduction: 0.35
+    fix_request_reduction: 0.25
+    latency_reduction: 0.20
+    token_efficiency: 0.10
+    tool_call_reduction: 0.10
+  # Require improvement on at least N metrics
+  min_metrics_improved: 2
