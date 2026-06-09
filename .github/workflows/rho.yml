@@ -1,0 +1,173 @@
+# Retrospective Harness Optimization (RHO) Workflow
+#
+# Orchestrates the RHO pipeline:
+#   FETCH → CORESET → PROPOSE → ROLLOUT → SELECT → PROMOTE (PR)
+#
+# Trigger: Manual dispatch or scheduled cron.
+# Output: A PR with updated agent-config.yaml if a variant outperforms baseline.
+
+name: RHO Harness Optimization
+
+on:
+  workflow_dispatch:
+    inputs:
+      coreset_size:
+        description: 'Number of challenging tasks to select from archive'
+        required: false
+        type: number
+        default: 5
+      num_variants:
+        description: 'Number of harness variants to evaluate'
+        required: false
+        type: number
+        default: 3
+      archive_since:
+        description: 'Only use trajectories closed after this date (YYYY-MM-DD)'
+        required: false
+        type: string
+        default: ''
+      dry_run:
+        description: 'Run analysis only without creating a PR'
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # Every Sunday at 02:00 UTC
+    - cron: '0 2 * * 0'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  rho-pipeline:
+    runs-on: self-hosted
+    timeout-minutes: 120
+    env:
+      PYTHON_VERSION: '3.13'
+      RHO_CORESET_SIZE: ${{ github.event.inputs.coreset_size || '5' }}
+      RHO_NUM_VARIANTS: ${{ github.event.inputs.num_variants || '3' }}
+      RHO_ARCHIVE_SINCE: ${{ github.event.inputs.archive_since || '' }}
+      RHO_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install pydantic pyyaml
+
+      - name: Archive trajectories
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python .github/scripts/trajectory_archive.py \
+            --since "${RHO_ARCHIVE_SINCE}" \
+            --limit 50
+
+      - name: Select coreset
+        run: |
+          export PYTHONPATH=.
+          python .github/scripts/coreset_selector.py \
+            --coreset-size ${RHO_CORESET_SIZE} \
+            --config rho_config.yaml
+
+      - name: Generate harness variants
+        run: |
+          export PYTHONPATH=.
+          python .github/scripts/harness_proposer.py \
+            --variants ${RHO_NUM_VARIANTS} \
+            --config agent-config.yaml \
+            --rho-config rho_config.yaml \
+            --output-dir .rho/variants/
+
+      - name: Run rollout evaluation
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          export PYTHONPATH=.
+          python .github/scripts/rho_rollout.py \
+            --output-dir .rho/rollout/ \
+            --config agent-config.yaml \
+            --rho-config rho_config.yaml
+
+      - name: Select best variant
+        run: |
+          export PYTHONPATH=.
+          python .github/scripts/rho_select.py \
+            --rollout-dir .rho/rollout/ \
+            --threshold 0.0 \
+            $([ "$RHO_DRY_RUN" = "true" ] && echo "--dry-run")
+
+      - name: Upload rollout artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rho-rollout-data
+          path: .rho/
+          retention-days: 14
+
+      - name: Create PR for winning harness
+        if: env.RHO_DRY_RUN == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          RESULT_FILE=".rho/rollout/selection_result.json"
+          if [ ! -f "$RESULT_FILE" ]; then
+            echo "No selection result found — skipping PR creation."
+            exit 0
+          fi
+
+          WINNER=$(python -c "import json; d=json.load(open('$RESULT_FILE')); print(d.get('winner',''))")
+          if [ -z "$WINNER" ] || [ "$WINNER" = "None" ]; then
+            echo "No winner identified — skipping PR creation."
+            exit 0
+          fi
+
+          VARIANT_FILE=".rho/variants/variant-${WINNER}.yaml"
+          if [ ! -f "$VARIANT_FILE" ]; then
+            echo "Variant file not found at $VARIANT_FILE — skipping PR creation."
+            exit 0
+          fi
+
+          BRANCH_NAME="rho/${WINNER}-$(date +%Y%m%d)"
+
+          # Copy winning config as agent-config.yaml
+          cp "$VARIANT_FILE" agent-config.yaml
+
+          # Build PR body from comparison results
+          PR_BODY=$(python -c "
+          import json, sys
+          sys.path.insert(0, '.github/scripts')
+          from rho_select import build_pr_body
+          d = json.load(open('$RESULT_FILE'))
+          print(build_pr_body(d))
+          ")
+
+          # Create branch and commit
+          git config user.name "openhands"
+          git config user.email "openhands@all-hands.dev"
+          git checkout -b "$BRANCH_NAME"
+          git add agent-config.yaml
+          git commit -m "RHO: Apply harness variant '$WINNER' optimization
+
+          Win${WINNER}'
+
+          Auto-generated by the Retrospective Harness Optimization pipeline."
+          git push origin "$BRANCH_NAME"
+
+          # Create PR
+          gh pr create \
+            --base main \
+            --head "$BRANCH_NAME" \
+            --title "RHO: Harness optimization (${WINNER})" \
+            --body "$(echo "$PR_BODY")"

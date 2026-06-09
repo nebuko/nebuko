@@ -1,0 +1,40 @@
+# ── Retrospective Harness Optimization (RHO) Configuration ──
+# Controls coreset selection, variant generation, and promotion thresholds.
+
+# How many challenging past tasks to select for the coreset
+coreset_size: 5
+
+# How many variant harness configurations to test against baseline
+num_variants: 3
+
+# Minimum number of closed issues needed before RHO can run
+min_closed_issues: 10
+
+# Difficulty scoring weights (normalized to 0-1 per dimension, then weighted)
+difficulty_weights:
+  error_rate: 0.30
+  review_fix_requests: 0.25
+  tool_calls: 0.20
+  runtime: 0.15
+  tokens: 0.10
+
+# Mutation strategies the proposer may apply
+mutation_strategies:
+  - temperature_tweak        # ±0.1 adjustment per agent
+  - model_swap               # Swap agent to a different available model
+  - tool_add_remove          # Add/remove non-default tools
+  - prompt_section_append    # Append guidance section to system prompt
+  - prompt_section_replace   # Replace an existing prompt section
+
+# Improvement thresholds for promotion (winner must beat baseline by at least this %)
+improvement_thresholds:
+  error_rate_reduction: 10.0       # % lower error rate
+  fix_requests_reduction: 20.0    # % fewer review fix requests
+  runtime_increase_max: 50.0      # tolerate up to X% longer runtime
+  token_increase_max: 50.0        # tolerate up to X% more tokens
+
+# Safety constraints
+safe_mutations_only: true         # Never mutate secrets, API URLs, providers
+require_pr_review: true           # Winner always goes through PR review
+max_temperature: 1.0              # Hard cap on temperature
+dry_run: false                    # If true, only simulate — never create PRs
