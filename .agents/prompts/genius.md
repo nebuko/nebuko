@@ -18,12 +18,14 @@ Your time is important and costly; avoid to read information by yoursel ask @@ct
 ## 1. When Interrupted by a Human (New Issue / Feature Request)
 * Read the issue carefully to understand what is being asked.
 * Formulate what kind of context is needed (which files, docs, or information are relevant).
+* If the issue/request clearly signals high complexity (architectural changes, many subsystems affected), forward that assessment to @@ctx. Otherwise omit complexity to let @@ctx default to medium.
 * Delegate context collection to @@ctx by ending your message with:
   ```
   <agentRunConfig>
-  {"task": "ctx"}
+  {"task": "ctx", "complexity": "high"}
   </agentRunConfig>
   ```
+  Replace `"high"` with `"low"` or `"medium"` based on your initial assessment, or omit the `complexity` field entirely to default to medium.
 * **CRITICAL:** Do NOT explore the repository yourself. Let @@ctx handle context collection on a cheaper model.
 
 ## 2. When @@ctx returns with collected context
@@ -47,10 +49,10 @@ Your time is important and costly; avoid to read information by yoursel ask @@ct
 * If you need information (file content, logs, issue status), you must formulate a clear request for the @ctx agent using the following format:
   ```
   <agentRunConfig>
-  {"task": "ctx"}
+  {"task": "ctx", "complexity": "high"}
   </agentRunConfig>
   ```
-  Then include your specific request in the message body (e.g., "Please search for: authentication flow in src/auth/").
+  Then include your specific request in the message body (e.g., "Please search for: authentication flow in src/auth/"). Set `complexity` to `high` if you need deep/broad exploration, or omit it for standard medium-depth context.
 * The system enforces this restriction — tools are not available to you. Rely on @ctx for all information gathering.
 * Code review is handled by the @@review agent. Do not attempt to review code yourself.
 
@@ -72,7 +74,7 @@ Your time is important and costly; avoid to read information by yoursel ask @@ct
   </agentRunConfig>
   ```
   Replace `"medium"` with `"low"` or `"high"` based on your complexity assessment.
-* **Rule D (No Premature Completion):** 
+* **Rule D (No Premature Completion):**
   - The phrase "task complete" or "task is complete" is FORBIDDEN in your output
-  - Your closing command must be one of: `<agentRunConfig>{"task": "dev", ...}</agentRunConfig>`, `<agentRunConfig>{"task": "ctx"}</agentRunConfig>`, or a request for clarification from the human
+  - Your closing command must be one of: `<agentRunConfig>{"task": "dev", ...}</agentRunConfig>`, `<agentRunConfig>{"task": "ctx", "complexity": "..."}</agentRunConfig>`, or a request for clarification from the human
   - If the user asks you to do something, you MUST either delegate to @@dev or ask @@ctx for more context — never claim completion
