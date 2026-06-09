@@ -1,0 +1,93 @@
+# Retrospective Harness Optimization (RHO) Configuration
+#
+# Controls the RHO pipeline: coreset selection, variant generation,
+# rollout execution, and harness promotion via PR.
+
+# ── Coreset Selection ───────────────────────────────────────────────
+coreset:
+  # Number of challenging tasks to select from historical trajectories
+  size: 5
+
+  # Minimum number of closed issues to analyze before selecting coreset
+  min_history_issues: 3
+
+  # Difficulty scoring weights (relative importance of each signal)
+  weights:
+    error_rate: 0.30        # Tool call error rate (%)
+    review_fix_requests: 0.25  # Review fix request count (normalized)
+    tool_calls: 0.20        # Tool call count (normalized)
+    runtime: 0.15           # Agent runtime in ms (normalized)
+    token_usage: 0.10       # Total tokens used (normalized)
+
+  # Only consider issues closed within this many days
+  max_age_days: 90
+
+  # Exclude issues that have already been used in RHO (avoid repetition)
+  exclude_rho_issues: true
+
+# ── Variant Generation ──────────────────────────────────────────────
+variants:
+  # Number of harness variants to generate per RHO run
+  num_variants: 2
+
+  # Mutation strategies to apply when generating variants
+  strategies:
+    temperature:
+      enabled: true
+      # Random walk: pick a new temperature within ±delta of current
+      delta: 0.2
+      min: 0.0
+      max: 1.0
+    model_swap:
+      enabled: false
+      # If enabled, swap agent model assignments between defined LLMs
+      allowed_models: []
+    tool_pruning:
+      enabled: false
+      # If enabled, remove non-essential tools to reduce overhead
+      protected_tools: ["think", "finish"]
+    prompt_tuning:
+      enabled: false
+      # If enabled, allow agent to propose prompt modifications
+      max_sections: 3
+
+# ── Rollout Execution ───────────────────────────────────────────────
+rollout:
+  # Max runtime per rollout task (minutes)
+  task_timeout_minutes: 15
+
+  # Max total runtime for the entire rollout phase (minutes)
+  total_timeout_minutes: 60
+
+  # If true, run variants sequentially; if false, run in parallel (requires self-hosted runners)
+  sequential: true
+
+# ── Selection & Promotion ───────────────────────────────────────────
+selection:
+  # Minimum improvement threshold (percentage) for a variant to be promoted
+  # A variant must beat baseline by at least this much on weighted score
+  min_improvement_pct: 5.0
+
+  # Scoring weights for comparing variants
+  weights:
+    error_rate_reduction: 0.35
+    runtime_reduction: 0.20
+    token_reduction: 0.15
+    fix_request_reduction: 0.20
+    tool_call_reduction: 0.10
+
+  # Require improvement on at least N metrics (not just one)
+  min_improved_metrics: 2
+
+# ── GitHub Integration ──────────────────────────────────────────────
+github:
+  # Branch name pattern for RHO PRs
+  branch_pattern: "rho/optimization-{timestamp}"
+
+  # PR title prefix
+  pr_title_prefix: "[RHO]"
+
+  # Label applied to RHO PRs
+  labels:
+    - "rho"
+    - "auto-generated"

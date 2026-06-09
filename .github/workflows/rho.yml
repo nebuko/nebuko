@@ -1,0 +1,377 @@
+# Retrospective Harness Optimization (RHO) Workflow
+#
+# Orchestrates the RHO pipeline:
+#   FETCH → CORESET → PROPOSE → ROLLOUT → SELECT → PROMOTE (PR)
+#
+# Trigger: Manual dispatch or scheduled run
+# Opt-in only — never runs automatically on production issues.
+
+name: RHO Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Look back N days for closed issues'
+        required: false
+        type: number
+        default: 90
+      coreset_size:
+        description: 'Number of challenging tasks to select'
+        required: false
+        type: number
+        default: 5
+      num_variants:
+        description: 'Number of harness variants to evaluate'
+        required: false
+        type: number
+        default: 2
+      create_pr:
+        description: 'Create a PR for the winning variant'
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    # Run every Sunday at 02:00 UTC
+    - cron: '0 2 * * 0'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  # ── Phase 1: Fetch & Archive Trajectories ──────────────────────
+  fetch-trajectories:
+    runs-on: self-hosted
+    outputs:
+      trajectory_count: ${{ steps.archive.outputs.count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml pydantic
+
+      - name: Fetch and archive trajectories
+        id: archive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RHO_DAYS: ${{ inputs.days || 90 }}
+        run: |
+          python .github/scripts/trajectory_archive.py
+          count=$(python -c "
+          import sys, os
+          sys.path.insert(0, '.github/scripts')
+          from trajectory_archive import TrajectoryRepository
+          repo = TrajectoryRepository()
+          print(repo.count())
+          ")
+          echo "count=$count" >> $GITHUB_OUTPUT
+
+  # ── Phase 2: Select Coreset ────────────────────────────────────
+  select-coreset:
+    needs: fetch-trajectories
+    runs-on: self-hosted
+    if: needs.fetch-trajectories.outputs.trajectory_count != '0'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml pydantic
+
+      - name: Select coreset
+        env:
+          RHO_CORESET_SIZE: ${{ inputs.coreset_size || 5 }}
+        run: |
+          python .github/scripts/coreset_selector.py
+
+      - name: Verify coreset
+        run: |
+          python -c "
+          import json
+          with open('.rho/coreset.json') as f:
+            data = json.load(f)
+          assert data['coreset_size'] > 0, 'No tasks in coreset'
+          print(f'Coreset: {data[\"coreset_size\"]} tasks selected from {data[\"total_trajectories\"]} trajectories')
+          for item in data['selected']:
+              print(f'  #{item[\"issue_number\"]}: {item[\"title\"]} (score={item[\"score\"]:.3f})')
+          "
+
+      - name: Upload coreset artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coreset
+          path: .rho/
+
+  # ── Phase 3: Propose Harness Variants ─────────────────────────
+  propose-variants:
+    needs: select-coreset
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml pydantic
+
+      - name: Download coreset artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: coreset
+          path: .rho/
+
+      - name: Build proposer prompt
+        id: prompt
+        run: |
+          python -c "
+          import sys, os, json, yaml
+          sys.path.insert(0, '.github/scripts')
+          from harness_proposer import build_proposer_prompt
+
+          # Load current config
+          with open('agent-config.yaml') as f:
+              config = yaml.safe_load(f)
+
+          # Load coreset
+          with open('.rho/coreset.json') as f:
+              coreset = json.load(f)
+
+          prompt = build_proposer_prompt(config, coreset.get('selected', []))
+          with open('proposer_prompt.txt', 'w') as f:
+              f.write(prompt)
+          print(f'Prompt built ({len(prompt)} chars)')
+          "
+
+      - name: Run proposer agent
+        id: proposer
+        env:
+          AGENT_CONFIG_PATH: agent-config.yaml
+          LLM_API_KEY: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+          LLM_BASE_URL: ${{ secrets.LOCAL_VLLM_API_URL || 'http://192.168.1.64:31728/v1' }}
+          CONFIG_MODEL: ${llms.qwen-3-6-27b}
+          CONFIG_TEMPERATURE: 0.2
+          COMPLEXITY: medium
+        run: |
+          # Use agent_script.py with the proposer prompt
+          python .github/scripts/agent_script.py proposer_prompt.txt
+
+      - name: Parse proposals and generate variant configs
+        run: |
+          # Read the agent's response and parse proposals
+          export PROPOSAL_JSON=$(cat final_message.txt 2>/dev/null || echo "")
+          python .github/scripts/harness_proposer.py
+
+      - name: Upload variant configs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: variants
+          path: .rho/variants/
+
+  # ── Phase 4: Rollout (evaluate variants) ──────────────────────
+  rollout:
+    needs: propose-variants
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        variant: [baseline, variant-A, variant-B]
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml pydantic
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: coreset
+          path: .rho/
+
+      - name: Download variant configs
+        uses: actions/download-artifact@v4
+        with:
+          name: variants
+          path: .rho/variants/
+        continue-on-error: true
+
+      - name: Generate rollout manifest
+        run: |
+          python .github/scripts/rho_rollout.py
+
+      - name: Run rollout tasks for variant
+        timeout-minutes: 30
+        env:
+          AGENT_CONFIG_PATH: ${{ startsWith(matrix.variant, 'variant-') && format('.rho/variants/{0}.yaml', matrix.variant) || 'agent-config.yaml' }}
+          LLM_API_KEY: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+          LLM_BASE_URL: ${{ secrets.LOCAL_VLLM_API_URL || 'http://192.168.1.64:31728/v1' }}
+          RHO_VARIANT_ID: ${{ matrix.variant }}
+        run: |
+          # Run rollout for this variant
+          python -c "
+          import sys, os, json
+          sys.path.insert(0, '.github/scripts')
+          from rho_rollout import load_coreset, build_rollout_tasks, run_rollout_task, save_rollout_results, _extract_metrics_from_output
+
+          coreset = load_coreset()
+          variant_id = os.environ.get('RHO_VARIANT_ID', 'baseline')
+          config_path = os.environ.get('AGENT_CONFIG_PATH', 'agent-config.yaml')
+
+          # Build tasks for this variant only
+          tasks = []
+          for item in coreset.get('selected', []):
+              from rho_rollout import RolloutTask, _build_task_prompt
+              tasks.append(RolloutTask(
+                  task_id=f'{variant_id}-{item[\"issue_number\"]}',
+                  issue_number=item['issue_number'],
+                  issue_title=item['title'],
+                  variant_id=variant_id,
+                  config_path=config_path,
+                  prompt=_build_task_prompt(item),
+              ))
+
+          results = []
+          for task in tasks:
+              result = run_rollout_task(task, timeout_minutes=15)
+              results.append(result)
+              status = 'OK' if result.success else 'FAIL'
+              print(f'  [{status}] {result.task_id}: {result.duration_ms:.0f}ms')
+
+          os.makedirs('.rho/rollouts', exist_ok=True)
+          save_rollout_results(results)
+          print(f'Completed {len(results)} tasks for {variant_id}')
+          "
+
+      - name: Upload rollout results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollout-${{ matrix.variant }}
+          path: .rho/rollouts/results.json
+
+  # ── Phase 5: Select Winner & Create PR ────────────────────────
+  select-and-promote:
+    needs: [rollout, select-coreset]
+    runs-on: self-hosted
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml pydantic
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Merge rollout results
+        run: |
+          python -c "
+          import json, os, glob
+
+          results = []
+          for path in glob.glob('rollout-*/results.json'):
+              with open(path) as f:
+                  data = json.load(f)
+              results.extend(data.get('results', []))
+
+          merged = {
+              'timestamp': data.get('timestamp', ''),
+              'total_tasks': len(results),
+              'results': results,
+          }
+
+          os.makedirs('.rho/rollouts', exist_ok=True)
+          with open('.rho/rollouts/results.json', 'w') as f:
+              json.dump(merged, f, indent=2)
+
+          print(f'Merged {len(results)} results from all variants')
+          "
+
+      - name: Download variant configs for PR
+        run: |
+          if [ -d "variants" ]; then
+            mkdir -p .rho/variants
+            cp variants/* .rho/variants/ 2>/dev/null || true
+          fi
+
+      - name: Select winner and analyze
+        run: |
+          python .github/scripts/rho_select.py
+
+      - name: Create PR for winning variant
+        if: inputs.create_pr != false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RHO_CREATE_PR: true
+        run: |
+          python -c "
+          import sys, os, json
+          sys.path.insert(0, '.github/scripts')
+          from rho_select import load_rollout_results, load_rho_config, compute_variant_scores, select_winner, create_rho_pr
+
+          config = load_rho_config()
+          results = load_rollout_results()
+          selection_config = config.get('selection', {})
+          weights = selection_config.get('weights', {})
+
+          scores = compute_variant_scores(results, weights=weights if weights else None)
+          min_improvement = selection_config.get('min_improvement_pct', 5.0)
+          min_metrics = selection_config.get('min_improved_metrics', 2)
+
+          winner = select_winner(scores, min_improvement_pct=min_improvement, min_improved_metrics=min_metrics)
+
+          if not winner:
+              print('No winner met thresholds. PR not created.')
+              sys.exit(0)
+
+          variant_config = f'.rho/variants/variant-{winner.variant_id}.yaml'
+          if not os.path.isfile(variant_config):
+              print(f'Variant config not found: {variant_config}')
+              sys.exit(1)
+
+          pr_url = create_rho_pr(
+              repo=os.environ['GITHUB_REPOSITORY'],
+              token=os.environ['GITHUB_TOKEN'],
+              winner=winner,
+              variant_config_path=variant_config,
+              scores=scores,
+              rho_config=config,
+          )
+          print(f'PR created: {pr_url}')
+          "

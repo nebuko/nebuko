@@ -1,2 +1,6 @@
 console.log
 .github/scripts/__pycache__/
+.rho/
+final_message.txt
+metrics.json
+proposer_prompt.txt
