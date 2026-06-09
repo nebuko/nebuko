@@ -453,7 +453,7 @@ jobs:
 
                 # Check if summary already exists (capture full body via jq array indexing)
                 SUMMARY_EXISTS=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
-                  --jq '[.[] | select(.body | contains("<!-- bot-agent-summary -->"))][0].body' || true)
+                  --jq -r '[.[] | select(.body | contains("<!-- bot-agent-summary -->"))][0].body // empty' || true)
 
                 echo "Summarizer threshold: $SUMMARIZER_THRESHOLD"
 
@@ -553,7 +553,7 @@ jobs:
                   # Get last 5 comments
                   RECENT_COMMENTS=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
                     --jq '.[-5:] | .[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
-                  export COMMENT_HISTORY="### 📋 Issue Summary (auto-generated)\n${SUMMARY_JSON}\n\n---\n### Recent Comments:\n${RECENT_COMMENTS}"
+                  printf -v COMMENT_HISTORY '### 📋 Issue Summary (auto-generated)\n%s\n\n---\n### Recent Comments:\n%s' "$SUMMARY_JSON" "$RECENT_COMMENTS"
                 fi
                 
                 # Format and write out using a safe single-line python execution
