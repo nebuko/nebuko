@@ -439,6 +439,14 @@ jobs:
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               run: echo "ACK_COMMENT_ID=${{ steps.ack_comment.outputs.comment-id }}" >> $GITHUB_ENV
 
+            - name: Save acknowledgment comment GraphQL node ID
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              run: |
+                NODE_ID=$(gh api "/repos/${{ github.repository }}/issues/comments/${{ env.ACK_COMMENT_ID }}" --jq '.node_id')
+                echo "ACK_COMMENT_NODE_ID=$NODE_ID" >> $GITHUB_ENV
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+
             - name: Prepare Agent Query Context
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               env:
@@ -660,13 +668,15 @@ jobs:
                 mode: create
 
             - name: Minimize acknowledgment comment
-              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ACK_COMMENT_ID != ''
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ACK_COMMENT_ID != '' && env.ACK_COMMENT_NODE_ID != ''
               run: |
-                REPO_NAME="${{ github.repository }}"
-                COMMENT_ID="$ACK_COMMENT_ID"
-                echo "Minimizing comment $COMMENT_ID..."
-                gh api "/repos/$REPO_NAME/issues/comments/$COMMENT_ID/minimize" \
-                  -f ticketed=true
+                echo "Minimizing comment $ACK_COMMENT_ID (node: $ACK_COMMENT_NODE_ID)..."
+                gh api graphql -f query='
+                  mutation($subjectId: ID!) {
+                    minimizeComment(input: {subjectId: $subjectId, classifier: OUTDATED}) {
+                      minimizedComment { minimizedReason }
+                    }
+                  }' -f subjectId="$ACK_COMMENT_NODE_ID"
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
 
