@@ -1,0 +1,57 @@
+# RHO (Retrospective Harness Optimization) Configuration
+#
+# Controls how the RHO pipeline selects tasks, generates variants,
+# and evaluates improvements.
+
+# ── Coreset Selection ──
+coreset:
+  # Number of challenging tasks to select for each RHO round
+  size: 5
+  # Minimum number of closed issues to scan before selecting
+  min_issues_scanned: 10
+  # Maximum age of issues to consider (in days); 0 = no limit
+  max_age_days: 90
+  # Scoring weights for difficulty (must sum to ~1.0)
+  weights:
+    error_rate: 0.30
+    review_fix_requests: 0.25
+    tool_calls: 0.20
+    runtime: 0.15
+    token_usage: 0.10
+
+# ── Variant Generation ──
+variants:
+  # Number of harness variants to generate per RHO round
+  count: 3
+  # Mutation strategies to apply when generating variants
+  strategies:
+    - temperature_adjust
+    - model_swap
+    - tool_subset
+    - prompt_tweak
+  # Temperature mutation range (delta from base)
+  temperature_delta: 0.2
+  # Maximum tool removals per variant
+  max_tool_removals: 2
+
+# ── Evaluation ──
+evaluation:
+  # Minimum improvement percentage to propose a PR
+  min_improvement_pct: 5.0
+  # Metric weights for comparing variants
+  weights:
+    error_rate_reduction: 0.35
+    fix_request_reduction: 0.25
+    efficiency_gain: 0.20
+    cost_reduction: 0.20
+  # Maximum allowed regression on any single metric (%)
+  max_regression_pct: 15.0
+
+# ── Execution ──
+execution:
+  # Timeout per rollout task (in minutes)
+  task_timeout_minutes: 20
+  # Maximum parallel rollouts
+  max_parallel: 3
+  # Cost cap per RHO run (in estimated USD tokens)
+  cost_cap_usd: 5.0

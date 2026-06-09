@@ -1,0 +1,534 @@
+# RHO GitHub Actions Workflow
+
+name: RHO — Retrospective Harness Optimization
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      coreset_size:
+        description: 'Number of challenging tasks to select'
+        required: false
+        type: number
+        default: 5
+      num_variants:
+        description: 'Number of harness variants to test'
+        required: false
+        type: number
+        default: 3
+      max_age_days:
+        description: 'Maximum age of issues to consider (days)'
+        required: false
+        type: number
+        default: 90
+      max_issues:
+        description: 'Maximum number of closed issues to scan'
+        required: false
+        type: number
+        default: 50
+  # Scheduled trigger (weekly on Sunday at 00:00 UTC)
+  schedule:
+    - cron: '0 0 * * 0'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  # ── Step 1: Fetch & Archive Trajectories ──
+  fetch-trajectories:
+    runs-on: self-hosted
+    outputs:
+      trajectory_count: ${{ steps.count.outputs.count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Fetch and archive trajectories
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RHO_ARCHIVE_DIR: .rho/trajectories
+          RHO_MAX_AGE_DAYS: ${{ inputs.max_age_days || 90 }}
+          RHO_MAX_ISSUES: ${{ inputs.max_issues || 50 }}
+        run: |
+          PYTHONPATH=.github/scripts python -m rho.trajectory_archive
+
+      - name: Count trajectories
+        id: count
+        run: |
+          count=$(find .rho/trajectories -name 'issue-*.json' 2>/dev/null | wc -l)
+          echo "count=$count" >> $GITHUB_OUTPUT
+
+      - name: Upload trajectory archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: trajectories
+          path: .rho/trajectories/
+          retention-days: 7
+
+  # ── Step 2: Select Coreset ──
+  select-coreset:
+    needs: fetch-trajectories
+    runs-on: self-hosted
+    if: needs.fetch-trajectories.outputs.trajectory_count > 0
+    outputs:
+      coreset: ${{ steps.select.outputs.coreset }}
+      coreset_size: ${{ steps.select.outputs.size }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download trajectory archive
+        uses: actions/download-artifact@v4
+        with:
+          name: trajectories
+          path: .rho/trajectories/
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Select coreset
+        id: select
+        env:
+          RHO_ARCHIVE_DIR: .rho/trajectories
+          RHO_CONFIG_PATH: .github/scripts/rho/rho_config.yaml
+        run: |
+          coreset_size=${{ inputs.coreset_size || 5 }}
+          # Run coreset selection and capture output
+          PYTHONPATH=.github/scripts python -c "
+          import json, sys
+          sys.path.insert(0, '.github/scripts')
+          from rho.coreset_selector import select_coreset_from_archive
+          
+          scored = select_coreset_from_archive(
+              archive_dir='.rho/trajectories',
+              coreset_size=$coreset_size,
+              rho_config_path='.github/scripts/rho/rho_config.yaml'
+          )
+          
+          coreset_data = []
+          for st in scored:
+              coreset_data.append({
+                  'issue_number': st.trajectory.issue_number,
+                  'title': st.trajectory.issue_title,
+                  'score': st.score,
+                  'metrics_count': len(st.trajectory.metrics)
+              })
+          
+          # Save coreset to file for downstream jobs
+          with open('.rho/coreset.json', 'w') as f:
+              json.dump(coreset_data, f, indent=2)
+          
+          print(json.dumps(coreset_data))
+          " > .rho/coreset_output.json
+          
+          size=$(python -c "import json; print(len(json.load(open('.rho/coreset.json'))))")
+          echo "size=$size" >> $GITHUB_OUTPUT
+          coreset=$(cat .rho/coreset.json | base64)
+          echo "coreset=$coreset" >> $GITHUB_OUTPUT
+
+      - name: Upload coreset
+        uses: actions/upload-artifact@v4
+        with:
+          name: coreset
+          path: .rho/coreset.json
+          retention-days: 7
+
+  # ── Step 3: Propose Harness Variants ──
+  propose-variants:
+    needs: [fetch-trajectories, select-coreset]
+    runs-on: self-hosted
+    outputs:
+      variants_count: ${{ steps.propose.outputs.count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: trajectories
+          path: .rho/trajectories/
+
+      - name: Download coreset
+        uses: actions/download-artifact@v4
+        with:
+          name: coreset
+          path: .rho/
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Build proposer prompt and generate variants
+        id: propose
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RHO_ARCHIVE_DIR: .rho/trajectories
+          RHO_CONFIG_PATH: .github/scripts/rho/rho_config.yaml
+          HARNESS_CONFIG_PATH: agent-config.yaml
+          # Use the same model config as genius agent
+          LLM_API_KEY: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+          LLM_BASE_URL: http://192.168.1.64:31728/v1
+        run: |
+          num_variants=${{ inputs.num_variants || 3 }}
+          
+          # Build proposer prompt and run via agent_script.py
+          PYTHONPATH=.github/scripts python -c "
+          import json, sys, yaml
+          sys.path.insert(0, '.github/scripts')
+          
+          from rho.coreset_selector import select_coreset_from_archive
+          from rho.harness_proposer import build_proposer_prompt
+          
+          # Load configs
+          with open('.github/scripts/rho/rho_config.yaml') as f:
+              rho_config = yaml.safe_load(f)
+          with open('agent-config.yaml') as f:
+              harness_config = yaml.safe_load(f)
+          
+          # Get coreset
+          coreset_size = $num_variants  # Use input value
+          scored = select_coreset_from_archive(
+              archive_dir='.rho/trajectories',
+              coreset_size=coreset_size,
+              rho_config_path='.github/scripts/rho/rho_config.yaml'
+          )
+          
+          # Build prompt
+          prompt = build_proposer_prompt(
+              coreset=scored,
+              harness_config=harness_config,
+              proposer_prompt_file='.agents/prompts/rho_proposer.md'
+          )
+          
+          # Save prompt for agent execution
+          with open('.rho/proposer_prompt.txt', 'w') as f:
+              f.write(prompt)
+          
+          print(f'Proposer prompt saved ({len(prompt)} chars)')
+          "
+
+      - name: Run proposer agent
+        if: env.LLM_API_KEY != ''
+        env:
+          AGENT_CONFIG_PATH: agent-config.yaml
+          LLM_API_KEY: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+          LLM_BASE_URL: http://192.168.1.64:31728/v1
+          CONFIG_MODEL: genius
+        run: |
+          # Run the proposer agent with the built prompt
+          cd .github/scripts
+          python agent_script.py "$GITHUB_WORKSPACE/.rho/proposer_prompt.txt" 2>&1 | tee proposer_output.log
+          cd "$GITHUB_WORKSPACE"
+          
+          # Check if we got a response
+          if [ -f .github/scripts/final_message.txt ]; then
+            cp .github/scripts/final_message.txt .rho/proposer_response.txt
+            echo "Proposer response saved"
+          else
+            echo "No proposer response found — will use default variants"
+            # Create default variants programmatically
+            PYTHONPATH=.github/scripts python -c "
+            import json, yaml
+            
+            with open('agent-config.yaml') as f:
+                base_config = yaml.safe_load(f)
+            
+            variants = []
+            
+            # Variant 1: Slightly higher temperature
+            v1 = {'variant_id': 'v1-temp', 'description': 'Higher temperature for creativity', 'config': base_config}
+            v1['config']['agents']['dev']['temperature'] = 0.2
+            variants.append(v1)
+            
+            # Variant 2: Add task_tracker to review agent
+            v2 = {'variant_id': 'v2-tools', 'description': 'Add tools to review agent', 'config': base_config}
+            if 'review' in v2['config']['agents']:
+                tools = v2['config']['agents']['review'].get('tools', ['think', 'finish'])
+                if 'task_tracker' not in tools:
+                    tools.append('task_tracker')
+                v2['config']['agents']['review']['tools'] = tools
+            variants.append(v2)
+            
+            # Variant 3: Adjust issue agent temperature
+            v3 = {'variant_id': 'v3-issue', 'description': 'Lower issue agent temperature', 'config': base_config}
+            if 'issue' in v3['config']['agents']:
+                v3['config']['agents']['issue']['temperature'] = 0.1
+            variants.append(v3)
+            
+            with open('.rho/variants.json', 'w') as f:
+                json.dump(variants, f, indent=2)
+            print(f'Created {len(variants)} default variants')
+            "
+            echo "count=$num_variants" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Parse proposer response into variants
+        if: hashFiles('.rho/proposer_response.txt') != ''
+        run: |
+          PYTHONPATH=.github/scripts python -c "
+          import json, sys, yaml
+          sys.path.insert(0, '.github/scripts')
+          
+          from rho.harness_proposer import parse_proposals_from_text
+          
+          with open('.rho/proposer_response.txt') as f:
+              response = f.read()
+          
+          proposals = parse_proposals_from_text(response)
+          
+          if not proposals:
+              print('No valid proposals parsed — using defaults')
+              sys.exit(0)
+          
+          with open('agent-config.yaml') as f:
+              base_config = yaml.safe_load(f)
+          
+          from rho.harness_proposer import apply_mutations
+          variants = []
+          for proposal in proposals:
+              variant_config = apply_mutations(base_config, proposal)
+              variants.append({
+                  'variant_id': proposal.variant_id,
+                  'description': proposal.description,
+                  'mutations': [
+                      {
+                          'type': m.type,
+                          'agent': m.agent,
+                          'field': m.field,
+                          'old_value': str(m.old_value),
+                          'new_value': str(m.new_value),
+                          'rationale': m.rationale
+                      }
+                      for m in proposal.mutations
+                  ],
+                  'config': variant_config
+              })
+          
+          with open('.rho/variants.json', 'w') as f:
+              json.dump(variants, f, indent=2)
+          
+          print(f'Parsed {len(variants)} variants from proposer response')
+          "
+          count=$(python -c "import json; print(len(json.load(open('.rho/variants.json'))))")
+          echo "count=$count" >> $GITHUB_OUTPUT
+
+      - name: Upload variants
+        uses: actions/upload-artifact@v4
+        with:
+          name: variants
+          path: .rho/variants.json
+          retention-days: 7
+
+  # ── Step 4: Run Rollouts ──
+  run-rollouts:
+    needs: [select-coreset, propose-variants]
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        variant-index: [0, 1, 2]
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: trajectories
+          path: .rho/trajectories/
+
+      - name: Download coreset
+        uses: actions/download-artifact@v4
+        with:
+          name: coreset
+          path: .rho/
+
+      - name: Download variants
+        uses: actions/download-artifact@v4
+        with:
+          name: variants
+          path: .rho/
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Run rollout for variant ${{ matrix.variant-index }}
+        env:
+          LLM_API_KEY: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+          LLM_BASE_URL: http://192.168.1.64:31728/v1
+          RHO_OUTPUT_DIR: .rho/rollouts/variant-${{ matrix.variant-index }}
+        run: |
+          # Extract variant config
+          PYTHONPATH=.github/scripts python -c "
+          import json, yaml, sys, os
+          
+          with open('.rho/variants.json') as f:
+              variants = json.load(f)
+          
+          idx = ${{ matrix.variant-index }}
+          if idx >= len(variants):
+              print(f'Variant index {idx} out of range ({len(variants)} variants)')
+              sys.exit(0)
+          
+          variant = variants[idx]
+          print(f'Running rollout for variant: {variant[\"variant_id\"]}')
+          print(f'Description: {variant[\"description\"]}')
+          
+          # Write variant config
+          output_dir = f'.rho/rollouts/variant-{idx}'
+          os.makedirs(output_dir, exist_ok=True)
+          
+          config_path = f'{output_dir}/variant-config.yaml'
+          with open(config_path, 'w') as f:
+              yaml.dump(variant['config'], f, default_flow_style=False)
+          
+          print(f'Variant config written to {config_path}')
+          "
+          
+          # The actual agent execution would happen here via agent_script.py
+          # For now, we record the variant config for the selection step
+          echo "Rollout for variant ${{ matrix.variant-index }} configured"
+
+      - name: Upload rollout results
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollout-variant-${{ matrix.variant-index }}
+          path: .rho/rollouts/variant-${{ matrix.variant-index }}/
+          retention-days: 7
+
+  # ── Step 5: Select Winner & Create PR ──
+  select-and-promote:
+    needs: [run-rollouts, propose-variants]
+    runs-on: self-hosted
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download variants
+        uses: actions/download-artifact@v4
+        with:
+          name: variants
+          path: .rho/
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Select best variant and create PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          RHO_CONFIG_PATH: .github/scripts/rho/rho_config.yaml
+        run: |
+          PYTHONPATH=.github/scripts python -c "
+          import json, yaml, sys, subprocess, os
+          from datetime import datetime
+          
+          with open('.rho/variants.json') as f:
+              variants = json.load(f)
+          
+          if not variants:
+              print('No variants to evaluate')
+              sys.exit(0)
+          
+          # Load RHO config for thresholds
+          with open('.github/scripts/rho/rho_config.yaml') as f:
+              rho_config = yaml.safe_load(f)
+          
+          min_improvement = rho_config.get('evaluation', {}).get('min_improvement_pct', 5.0)
+          
+          # For now, since we don't have actual rollout metrics yet,
+          # we select based on the variant with the most interesting mutations
+          # In production, this would compare actual rollout results
+          
+          # Pick the variant with the most mutations as the 'winner'
+          # (In production: pick based on actual metric comparison)
+          winner = max(variants, key=lambda v: len(v.get('mutations', [])))
+          
+          winner_id = winner['variant_id']
+          winner_desc = winner.get('description', 'No description')
+          winner_config = winner.get('config', {})
+          
+          # Build PR body
+          pr_body = []
+          pr_body.append('# RHO Harness Optimization — Automatic Update')
+          pr_body.append('')
+          pr_body.append('> This PR was created by the RHO pipeline on behalf of the agent.')
+          pr_body.append('> It proposes harness configuration changes based on retrospective analysis')
+          pr_body.append('> of past task trajectories.')
+          pr_body.append('')
+          pr_body.append('## Winner: `' + winner_id + '`')
+          pr_body.append('')
+          pr_body.append('**Strategy:** ' + winner_desc)
+          pr_body.append('')
+          pr_body.append('## Mutations')
+          pr_body.append('')
+          
+          for mutation in winner.get('mutations', []):
+              pr_body.append(f'### {mutation[\"type\"]} — {mutation[\"agent\"]}')
+              pr_body.append('')
+              pr_body.append(f'- **Field:** `{mutation[\"field\"]}`')
+              pr_body.append(f'- **Old:** `{mutation[\"old_value\"]}`')
+              pr_body.append(f'- **New:** `{mutation[\"new_value\"]}`')
+              pr_body.append(f'- **Rationale:** {mutation[\"rationale\"]}')
+              pr_body.append('')
+          
+          pr_body.append('---')
+          pr_body.append('')
+          pr_body.append('## Evaluation')
+          pr_body.append('')
+          pr_body.append('*Actual rollout evaluation pending — this PR is based on proposer analysis.*')
+          pr_body.append('')
+          pr_body.append(f'*Generated at {datetime.now().isoformat()}*')
+          
+          pr_body_text = '\n'.join(pr_body)
+          
+          # Write the updated config
+          if winner_config:
+              with open('agent-config.yaml', 'w') as f:
+                  yaml.dump(winner_config, f, default_flow_style=False)
+              
+              # Create branch and PR
+              branch_name = f'rho/harness-opt-{datetime.now().strftime(\"%Y%m%d-%H%M%S\")}'
+              
+              subprocess.run(['git', 'config', 'user.name', 'openhands'], check=False)
+              subprocess.run(['git', 'config', 'user.email', 'openhands@all-hands.dev'], check=False)
+              subprocess.run(['git', 'checkout', '-b', branch_name], check=True)
+              subprocess.run(['git', 'add', 'agent-config.yaml'], check=True)
+              subprocess.run(['git', 'commit', '-m', f'RHO: Update harness config ({winner_id})'], check=True)
+              subprocess.run(['git', 'push', 'origin', branch_name, '--force'], check=True)
+              
+              # Create PR
+              result = subprocess.run(
+                  ['gh', 'pr', 'create',
+                   '--title', f'RHO: Harness Optimization — {winner_id}',
+                   '--body', pr_body_text,
+                   '--head', branch_name,
+                   '--base', 'main'],
+                  capture_output=True, text=True
+              )
+              
+              if result.returncode == 0:
+                  pr_url = result.stdout.strip().split('\n')[0]
+                  print(f'PR created: {pr_url}')
+              else:
+                  print(f'Failed to create PR: {result.stderr}')
+          else:
+              print('No winner config available — skipping PR creation')
+          "
