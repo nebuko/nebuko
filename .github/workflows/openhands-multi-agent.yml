@@ -82,6 +82,7 @@ jobs:
               contains(github.event.issue.body, '@@dev') ||
               contains(github.event.issue.body, '@@review') ||
               contains(github.event.issue.body, '@@issue') ||
+              contains(github.event.issue.body, '@@issue-reviewer') ||
               contains(github.event.issue.body, '<agentRunConfig>'))) ||
             (github.event_name == 'issue_comment' &&
              (contains(github.event.comment.body, '@@genius') ||
@@ -89,6 +90,7 @@ jobs:
               contains(github.event.comment.body, '@@dev') ||
               contains(github.event.comment.body, '@@review') ||
               contains(github.event.comment.body, '@@issue') ||
+              contains(github.event.comment.body, '@@issue-reviewer') ||
               contains(github.event.comment.body, '<agentRunConfig>')))
           )
         env:
@@ -217,7 +219,7 @@ jobs:
                     echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING"
                   elif [ "$IS_BOT_COMMENT" -eq 0 ]; then
                     # @@mention fallback (human only)
-                    LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue' | tail -1)
+                    LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue\|@@issue-reviewer' | tail -1)
                     TASK="${LAST_AGENT#@@}"
                     CONFIG_COMPLEXITY="medium"
                     CONFIG_REASONING="none"
@@ -289,6 +291,12 @@ jobs:
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
                           echo "COMPLEXITY=N/A" >> $GITHUB_ENV
                           ;;
+                      "issue-reviewer")
+                          echo "PROMPT_LOCATION=$PROMPT_BASE/issue-reviewer.md" >> $GITHUB_ENV
+                          echo "ROLE_NAME=issue-reviewer" >> $GITHUB_ENV
+                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                          ;;
                       *)
                           echo "Unknown task: $TASK"
                           echo "SKIP_AGENT=true" >> $GITHUB_ENV
@@ -335,8 +343,8 @@ jobs:
 
                     # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
                     # Only applies to human-triggered comments (no bot marker present)
-                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev\|@@issue' || true)
-                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@@issue\|@genius\|@ctx\|@dev\|@issue' || true)
+                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer' || true)
+                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@genius\|@ctx\|@dev\|@issue\|@issue-reviewer' || true)
                     if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
                       echo "Human ping + agent ping detected. Skipping to let human orchestrate."
                       echo "SKIP_AGENT=true" >> $GITHUB_ENV
@@ -607,7 +615,7 @@ jobs:
                 import os
                 role = os.environ.get("ROLE_NAME", "unknown")
                 marker = f"<!-- bot-agent-{role} -->"
-                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer", "review": "Reviewer", "issue": "Issue"}
+                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer", "review": "Reviewer", "issue": "Issue", "issue-reviewer": "Issue Reviewer"}
                 display_name = agent_display_names.get(role, role.capitalize())
                 with open("github_comment.md", "r") as f:
                     content = f.read()
