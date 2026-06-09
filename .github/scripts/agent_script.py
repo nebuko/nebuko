@@ -579,7 +579,7 @@ def main():
         ("top_k", config_top_k),
         ("repetition_penalty", config_repetition_penalty),
     ):
-        if config_val is not None:
+        if config_val is not None and str(config.val).strip():
             litellm_extra_body[param_name] = float(config_val)
         elif agent_cfg:
             agent_val = getattr(agent_cfg, param_name, None)
