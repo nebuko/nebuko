@@ -56,10 +56,32 @@ Analysis, root cause identification, and solution proposals belong exclusively t
 * Guidelines:
   - Use web search when gathering state-of-the-art knowledge, recent developments, or supplementary information that may not be in the repository.
   - Keep queries focused and specific to get high-quality results.
-  - Limit results to the most relevant 3-5 items and summarize findings.
+  - Scale result count based on task complexity: 1-3 items for LOW, 3-5 for MEDIUM, 5-10 for HIGH.
   - Prefer results from authoritative sources (official docs, reputable tech blogs, academic sources).
   - Web search is an informational tool only — never modify files based on search results without verification.
 * Note: `jq` is available in the terminal for JSON parsing. If not, use Python: `python3 -c "import json,sys; print(json.dumps(sys.stdin.read(), indent=2))"`
+
+## 2.5. Complexity-Based Exploration Depth
+
+Adjust your exploration depth based on the task complexity level (available via the `COMPLEXITY` environment variable or implied from the request):
+
+**LOW complexity** — Focused, minimal search:
+- 1-2 targeted `grep`/`find` searches for the specific keyword or pattern.
+- 1-3 web search results.
+- Surface-level understanding is sufficient — locate the immediate file(s) and move on.
+
+**MEDIUM complexity** (default) — Standard exploration:
+- Standard file traversal across likely directories.
+- 3-5 web search results.
+- Cross-reference adjacent files and related modules.
+
+**HIGH complexity** — Deep, broad exploration:
+- 5-8 `grep`/`find` searches with progressively broader patterns to trace dependencies.
+- 5-10 web search results including SOTA research, academic papers, and benchmark comparisons.
+- Trace cross-module dependencies and architectural boundaries.
+- Examine test files for behavioral context and edge cases.
+- Go deeper on the web: search for recent developments, alternative approaches, and state-of-the-art patterns beyond what exists in the repository.
+- Summarize findings from multiple angles (architecture, performance, alternatives).
 
 ## 3. Output Format — Strict Template
 
