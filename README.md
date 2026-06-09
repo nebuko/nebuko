@@ -34,8 +34,29 @@ The system uses a **layered YAML config** (`agent-config.yaml`) instead of flat 
 | Layer | Purpose | Example |
 |-------|---------|---------|
 | **Providers** | API endpoint + auth token env var | `openrouter`, `local_vllm` |
-| **LLMs** | Model path, provider reference, temperature | `deepseek-v4-pro`, `qwen-3-6-30b` |
-| **Agents** | Role → model + prompt file + skills | `genius`, `dev`, `ctx`, `review`, `issue` |
+| **LLMs** | Model path, provider, temperature, thinking params, sampling params | `deepseek-v4-pro`, `qwen-3-6-30b` |
+| **Agents** | Role → model + prompt file + skills + per-agent sampling overrides | `genius`, `dev`, `ctx`, `review`, `issue` |
+
+#### LLM Sampling Parameters
+
+Each LLM (and optionally each agent) can define sampling parameters to control instruction following:
+
+| Parameter | Type | Description | Typical Range |
+|-----------|------|-------------|---------------|
+| `top_p` | float | Nucleus sampling — lower values produce more deterministic output | 0.1–1.0 |
+| `top_k` | int | Top-K token selection — limits candidate pool | 10–100 |
+| `repetition_penalty` | float | Repetition penalty — values > 1.0 discourage repetition | 1.0–1.5 |
+
+These parameters cascade: per-invocation (`agentRunConfig`) > per-agent (YAML `agents.`) > per-LLM (YAML `llms.`). Lower `top_p` (0.1–0.5) combined with low temperature (0.0) dramatically improves instruction adherence.
+
+#### Dynamic Complexity-Based Temperature
+
+When `complexity` is set in `agentRunConfig` and no explicit `temperature` override is provided, temperature is auto-adjusted:
+- `low` → 0.0 (most deterministic)
+- `medium` → 0.1
+- `high` → 0.3 (more creative)
+
+The agent's base temperature from `agent-config.yaml` serves as a floor — complexity only increases temperature, never decreases it.
 
 #### `${ref}` Syntax
 
@@ -82,10 +103,13 @@ Agents communicate using a structured JSON format called `agentRunConfig`. This 
 |-----------|------|----------|-------------|---------|
 | `task` | string | **yes** | Agent role: `genius`, `ctx`, `dev`, `review`, `issue` | — |
 | `skills` | string[] | no | Skills to attach (reserved for future use) | `[]` |
-| `complexity` | string | no | Task complexity: `low`, `medium`, `high` | `"medium"` |
+| `complexity` | string | no | Task complexity: `low`, `medium`, `high`. Auto-adjusts temperature. | `"medium"` |
 | `reasoning` | string | no | Reasoning effort: `none`, `low`, `medium`, `high` | `"none"` |
 | `round` | int | no | Callback counter for dev↔review cycles | — |
 | `temperature` | float | no | Override default temperature | — |
+| `top_p` | float | no | Nucleus sampling (lower = more deterministic) | from LLM config |
+| `top_k` | int | no | Top-K token selection | from LLM config |
+| `repetition_penalty` | float | no | Repetition penalty (>1.0 reduces repetition) | from LLM config |
 | `model` | string | no | Override the LLM model for this invocation | — |
 
 #### Example Invocations
@@ -103,6 +127,11 @@ Agents communicate using a structured JSON format called `agentRunConfig`. This 
 **Genius plans a high-complexity task:**
 ```json
 {"task": "dev", "complexity": "high", "reasoning": "high"}
+```
+
+**Genius demands strict instruction following:**
+```json
+{"task": "dev", "complexity": "low", "top_p": 0.1, "top_k": 10, "repetition_penalty": 1.2}
 ```
 
 #### Human Invocation (Backward Compatible)

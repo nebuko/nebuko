@@ -77,7 +77,7 @@ class ProviderConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    """Model path, provider reference, optional pricing, and reasoning parameters."""
+    """Model path, provider reference, optional pricing, reasoning, and sampling parameters."""
 
     model_path: str
     provider_ref: ProviderConfig = Field(alias="provider")
@@ -89,6 +89,10 @@ class LLMConfig(BaseModel):
     preserve_thinking: Optional[bool] = None
     thinking_token_budget: Optional[int] = None
     max_output_tokens: Optional[int] = None
+    # Sampling parameters for instruction-following control
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    repetition_penalty: Optional[float] = None
 
 
 class AgentConfig(BaseModel):
@@ -103,6 +107,10 @@ class AgentConfig(BaseModel):
             "terminal", "file_editor", "task_tracker", "think", "finish",
         ]
     )
+    # Per-agent sampling parameter overrides
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    repetition_penalty: Optional[float] = None
 
 
 class AppConfig(BaseModel):

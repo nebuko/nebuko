@@ -508,6 +508,26 @@ def main():
     if config_temperature:
         temperature = float(config_temperature)
         logger.info(f"CONFIG_TEMPERATURE override: {temperature}")
+    else:
+        # Dynamic complexity-based temperature adjustment
+        # If no explicit temperature override, boost temperature based on task complexity
+        config_complexity = os.getenv("CONFIG_COMPLEXITY", "").lower()
+        complexity_temperature_map = {"low": 0.0, "medium": 0.1, "high": 0.3}
+        if config_complexity in complexity_temperature_map:
+            complexity_temp = complexity_temperature_map[config_complexity]
+            # Use max of agent default and complexity temperature as floor
+            if temperature is not None:
+                temperature = max(temperature, complexity_temp)
+            else:
+                temperature = complexity_temp
+            logger.info(
+                f"Complexity-based temperature: complexity={config_complexity} → {temperature}"
+            )
+
+    # Per-invocation sampling parameter overrides (top_p, top_k, repetition_penalty)
+    config_top_p = os.getenv("CONFIG_TOP_P")
+    config_top_k = os.getenv("CONFIG_TOP_K")
+    config_repetition_penalty = os.getenv("CONFIG_REPETITION_PENALTY")
 
     if not api_key:
         logger.error("LLM_API_KEY environment variable is not set.")
@@ -551,6 +571,22 @@ def main():
     # thinking_token_budget is a sampling parameter (top-level, not in chat_template_kwargs)
     if agent_cfg and agent_cfg.model_ref.thinking_token_budget is not None:
         litellm_extra_body["thinking_token_budget"] = agent_cfg.model_ref.thinking_token_budget
+
+    # Sampling parameters for instruction-following control (top_p, top_k, repetition_penalty)
+    # Priority: per-invocation override > per-agent override > per-LLM config
+    for param_name, config_val in (
+        ("top_p", config_top_p),
+        ("top_k", config_top_k),
+        ("repetition_penalty", config_repetition_penalty),
+    ):
+        if config_val is not None:
+            litellm_extra_body[param_name] = float(config_val)
+        elif agent_cfg:
+            agent_val = getattr(agent_cfg, param_name, None)
+            llm_val = getattr(agent_cfg.model_ref, param_name, None)
+            val = agent_val if agent_val is not None else llm_val
+            if val is not None:
+                litellm_extra_body[param_name] = val
 
     if litellm_extra_body:
         llm_config["litellm_extra_body"] = litellm_extra_body
