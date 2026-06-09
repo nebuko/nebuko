@@ -1,0 +1,55 @@
+# ── Retrospective Harness Optimization (RHO) Configuration ──
+# Controls the self-supervised harness improvement pipeline.
+
+# ── Coreset Selection ──
+coreset:
+  # Number of historically difficult tasks to select for optimization
+  size: 5
+  # Maximum number of closed issues to scan for candidate tasks
+  max_issues_scanned: 50
+  # Minimum age of an issue (in days) to qualify as "historical"
+  min_age_days: 1
+  # Difficulty scoring weights (each 0.0–1.0; higher = more influential)
+  difficulty_weights:
+    error_rate:        0.30
+    fix_requests:      0.25
+    tool_calls:        0.20
+    runtime:           0.15
+    token_count:       0.10
+
+# ── Harness Mutation ──
+mutation:
+  # Number of variant harness configurations to generate
+  num_variants: 2
+  # Maximum temperature delta applied per mutation (± range)
+  temperature_delta_max: 0.3
+  # Whether the proposer may swap model assignments between agents
+  allow_model_swap: false
+  # Whether the proposer may add/remove tools from agent tool lists
+  allow_tool_mutation: true
+  # Whether the proposer may modify prompt text sections
+  allow_prompt_mutation: true
+
+# ── Rollout ──
+rollout:
+  # Timeout per individual rollout task (minutes)
+  task_timeout_minutes: 15
+  # Maximum number of parallel rollout jobs (GitHub Actions limits may apply)
+  max_parallel: 3
+
+# ── Selection Thresholds ──
+selection:
+  # Minimum percentage improvement in composite score to promote a variant
+  min_improvement_pct: 5.0
+  # Quantitative vs qualitative weight in final scoring (0.0–1.0)
+  quantitative_weight: 0.70
+  qualitative_weight:  0.30
+  # Maximum allowed increase in average runtime before disqualifying a winner
+  max_runtime_increase_pct: 50.0
+
+# ── Archive ──
+archive:
+  # Directory where trajectories are cached locally
+  path: ".rho/trajectories"
+  # Maximum number of archived trajectories retained (older ones are pruned)
+  max_archived: 200

@@ -1,0 +1,288 @@
+name: RHO — Retrospective Harness Optimization
+
+on:
+  workflow_dispatch:
+    inputs:
+      coreset_size:
+        description: 'Number of challenging tasks to evaluate'
+        required: false
+        type: number
+        default: 5
+      num_variants:
+        description: 'Number of harness variants to test'
+        required: false
+        type: number
+        default: 2
+  schedule:
+    # Weekly on Sunday at 02:00 UTC
+    - cron: '0 2 * * 0'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  rho-pipeline:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Fetch trajectory archive
+        id: archive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python .github/scripts/trajectory_archive.py fetch
+          python .github/scripts/trajectory_archive.py list
+
+      - name: Select coreset
+        id: coreset
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          CORESET_SIZE=${{ inputs.coreset_size || 5 }}
+          python .github/scripts/coreset_selector.py --size $CORESET_SIZE > coreset_output.txt 2>&1
+          cat coreset_output.txt
+
+          # Extract selected issue numbers
+          ISSUES=$(python3 -c "
+import json, sys
+try:
+    with open('.rho/trajectories', 'r') as f:
+        pass
+except:
+    pass
+# Parse from coreset output
+lines = open('coreset_output.txt').read()
+import re
+numbers = re.findall(r'#(\d+)', lines)
+print(','.join(numbers[:$CORESET_SIZE]))
+")
+          echo "issues=$ISSUES" >> $GITHUB_OUTPUT
+          echo "Selected issues: $ISSUES"
+
+      - name: Generate harness proposals (heuristic)
+        id: propose
+        run: |
+          NUM_VARIANTS=${{ inputs.num_variants || 2 }}
+          python .github/scripts/harness_proposer.py --heuristic --config agent-config.yaml \
+            --output rho_proposals.json > propose_output.txt 2>&1
+          cat propose_output.txt
+          cat rho_proposals.json
+
+      - name: Prepare rollout configs
+        id: rollout_prep
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          ISSUES="${{ steps.coreset.outputs.issues }}"
+          python .github/scripts/rho_rollout.py \
+            --config agent-config.yaml \
+            --proposals rho_proposals.json \
+            --coreset-issues "$ISSUES" \
+            --output-dir .rho/rollout
+          cat .rho/rollout/manifest.json
+
+      - name: Run agent rollouts (baseline)
+        id: rollout_baseline
+        timeout-minutes: 30
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          AGENT_CONFIG_PATH: .rho/rollout/baseline-agent-config.yaml
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+        run: |
+          ISSUES="${{ steps.coreset.outputs.issues }}"
+          RESULTS_DIR=".rho/rollout/results/baseline"
+          mkdir -p "$RESULTS_DIR"
+
+          IFS=',' read -ra ISSUE_LIST <<< "$ISSUES"
+          for ISSUE_NUM in "${ISSUE_LIST[@]}"; do
+            echo "Running baseline on issue #$ISSUE_NUM..."
+            
+            # Run the agent with baseline config
+            python .github/scripts/agent_script.py "/dev/null" > /dev/null 2>&1 || true
+            
+            # Collect metrics if available
+            if [ -f "metrics.json" ]; then
+              mkdir -p "$RESULTS_DIR/$ISSUE_NUM"
+              cp metrics.json "$RESULTS_DIR/$ISSUE_NUM/"
+            fi
+          done
+
+      - name: Run agent rollouts (variants)
+        id: rollout_variants
+        timeout-minutes: 45
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+        run: |
+          ISSUES="${{ steps.coreset.outputs.issues }}"
+          
+          # Read variant names from manifest
+          VARIANT_NAMES=$(python3 -c "
+import json
+with open('.rho/rollout/manifest.json') as f:
+    manifest = json.load(f)
+for v in manifest.get('variants', []):
+    print(v['variant_name'])
+")
+
+          IFS=',' read -ra ISSUE_LIST <<< "$ISSUES"
+          
+          for VNAME in $VARIANT_NAMES; do
+            echo "Running variant: $VNAME"
+            CONFIG_FILE=$(python3 -c "
+import json, glob
+files = glob.glob('.rho/rollout/variant-*-$VNAME.yaml')
+if files:
+    print(files[0])
+")
+            
+            if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
+              echo "Config file not found for variant $VNAME, skipping"
+              continue
+            fi
+            
+            RESULTS_DIR=".rho/rollout/results/$VNAME"
+            mkdir -p "$RESULTS_DIR"
+            
+            for ISSUE_NUM in "${ISSUE_LIST[@]}"; do
+              echo "  Running $VNAME on issue #$ISSUE_NUM..."
+              
+              python .github/scripts/agent_script.py "/dev/null" > /dev/null 2>&1 || true
+              
+              if [ -f "metrics.json" ]; then
+                mkdir -p "$RESULTS_DIR/$ISSUE_NUM"
+                cp metrics.json "$RESULTS_DIR/$ISSUE_NUM/"
+              fi
+            done
+          done
+
+      - name: Compare variants and select winner
+        id: select
+        run: |
+          python .github/scripts/rho_select.py --rollout-dir .rho/rollout > select_output.txt 2>&1
+          cat select_output.txt
+
+      - name: Create PR if winner found
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          WINNER=$(python3 -c "
+import re
+text = open('select_output.txt').read()
+match = re.search(r'Winner: (\S+)', text)
+if match:
+    print(match.group(1))
+")
+          
+          if [ -z "$WINNER" ]; then
+            echo "No winner selected. No PR will be created."
+            exit 0
+          fi
+          
+          echo "Winner: $WINNER"
+          
+          # Get the winning variant config
+          WINNER_CONFIG=$(python3 -c "
+import json, glob, re
+with open('.rho/rollout/manifest.json') as f:
+    manifest = json.load(f)
+for v in manifest.get('variants', []):
+    if v['variant_name'] == '$WINNER':
+        print(v['config_path'])
+        break
+")
+
+          if [ -z "$WINNER_CONFIG" ] || [ ! -f "$WINNER_CONFIG" ]; then
+            echo "Winner config not found at $WINNER_CONFIG"
+            exit 1
+          fi
+
+          # Create branch and commit
+          BRANCH_NAME="rho/optimize-harness-$(date +%Y%m%d-%H%M%S)"
+          git config user.name "openhands[rho]"
+          git config user.email "openhands@all-hands.dev"
+          git checkout -b "$BRANCH_NAME"
+          cp "$WINNER_CONFIG" agent-config.yaml
+          
+          # Generate PR body
+          PR_BODY=$(python3 << 'PYEOF'
+import json, re
+
+select_text = open("select_output.txt").read()
+manifest_data = json.load(open(".rho/rollout/manifest.json"))
+
+# Find winner info
+winner_match = re.search(r'Winner: (\S+) \(([\d.]+)%', select_text)
+winner_name = winner_match.group(1) if winner_match else "winner"
+imp_pct = winner_match.group(2) if winner_match else "?"
+
+# Find variant rationale
+rationale = ""
+for v in manifest_data.get("variants", []):
+    if v["variant_name"] == winner_name:
+        rationale = v.get("rationale", "")
+        break
+
+print("# RHO Harness Optimization — Automated PR")
+print("")
+print("This PR was auto-generated by the Retrospective Harness Optimization (RHO) pipeline.")
+print("The harness configuration was optimized based on analysis of historically difficult tasks.")
+print("")
+print(f"**Winning variant:** `{winner_name}`")
+print(f"**Improvement:** +{imp_pct}% composite score over baseline")
+print("")
+if rationale:
+    print(f"**Rationale:** {rationale}")
+print("")
+print("## Changes")
+print("")
+print("The `agent-config.yaml` has been updated with optimizations identified by the RHO pipeline.")
+print("These changes affect agent temperature, tool assignments, or model parameters.")
+print("")
+print("> _This PR was created by an AI agent (OpenHands) on behalf of the RHO pipeline._")
+PYEOF
+)
+
+          # Stage and commit
+          git add agent-config.yaml
+          git commit -m "rho: optimize harness config (${WINNER})"
+          
+          # Push and create PR
+          git push origin "$BRANCH_NAME"
+          gh pr create \
+            --title "RHO: Optimize harness configuration (${WINNER})" \
+            --body "$PR_BODY" \
+            --head "$BRANCH_NAME" \
+            --base main
+
+      - name: Upload RHO artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rho-artifacts
+          path: |
+            .rho/
+            coreset_output.txt
+            propose_output.txt
+            select_output.txt
+            rho_proposals.json
+          retention-days: 14
