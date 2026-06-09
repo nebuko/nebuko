@@ -93,8 +93,13 @@ def validate_agent_run_config(json_str: str) -> ValidationResult:
     # Validate numeric fields
     for field in ("temperature", "top_p", "top_k", "repetition_penalty"):
         if data.get(field) is not None:
-            if not isinstance(data[field], (int, float)):
-                result.add_error(f"'{field}' must be a number, got {type(data[field]).__name__}")
+            val = data[field]
+            if not isinstance(val, (int, float)):
+                result.add_error(f"'{field}' must be a number, got {type(val).__name__}")
+            elif field == "top_p" and not (0 <= val <= 1):
+                result.add_error(f"'{field}' must be in range [0, 1], got {val}")
+            elif field in ("top_k", "repetition_penalty") and val <= 0:
+                result.add_error(f"'{field}' must be positive, got {val}")
 
     if data.get("round") is not None and not isinstance(data["round"], int):
         result.add_error("'round' must be an integer")

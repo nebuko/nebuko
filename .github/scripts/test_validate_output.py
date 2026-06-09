@@ -111,6 +111,36 @@ class TestValidateAgentRunConfig:
         assert result.is_valid is False
         assert any("top_p" in e and "must be a number" in e for e in result.errors)
 
+    def test_top_k_wrong_type(self):
+        result = validate_agent_run_config('{"task": "dev", "top_k": "50"}')
+        assert result.is_valid is False
+        assert any("top_k" in e and "must be a number" in e for e in result.errors)
+
+    def test_repetition_penalty_wrong_type(self):
+        result = validate_agent_run_config('{"task": "dev", "repetition_penalty": "1.1"}')
+        assert result.is_valid is False
+        assert any("repetition_penalty" in e and "must be a number" in e for e in result.errors)
+
+    def test_top_p_out_of_range_high(self):
+        result = validate_agent_run_config('{"task": "dev", "top_p": 1.5}')
+        assert result.is_valid is False
+        assert any("top_p" in e and "range" in e.lower() for e in result.errors)
+
+    def test_top_p_out_of_range_low(self):
+        result = validate_agent_run_config('{"task": "dev", "top_p": -0.1}')
+        assert result.is_valid is False
+        assert any("top_p" in e and "range" in e.lower() for e in result.errors)
+
+    def test_top_k_out_of_range(self):
+        result = validate_agent_run_config('{"task": "dev", "top_k": -1}')
+        assert result.is_valid is False
+        assert any("top_k" in e and "positive" in e.lower() for e in result.errors)
+
+    def test_repetition_penalty_out_of_range(self):
+        result = validate_agent_run_config('{"task": "dev", "repetition_penalty": -0.5}')
+        assert result.is_valid is False
+        assert any("repetition_penalty" in e and "positive" in e.lower() for e in result.errors)
+
     def test_round_wrong_type(self):
         result = validate_agent_run_config('{"task": "dev", "round": "two"}')
         assert result.is_valid is False
