@@ -410,6 +410,7 @@ jobs:
                 fi
 
             - name: Post Acknowledgment Comment
+              id: ack_comment
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               uses: peter-evans/create-or-update-comment@v4
               with:
@@ -420,6 +421,10 @@ jobs:
                 body: |
                   <!-- bot-agent-${{ env.ROLE_NAME }} -->
                   🤖 **${{ env.ROLE_NAME }} agent started** — [View workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            - name: Save acknowledgment comment ID
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              run: echo "ACK_COMMENT_ID=${{ steps.ack_comment.outputs.comment-id }}" >> $GITHUB_ENV
 
             - name: Prepare Agent Query Context
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
@@ -639,7 +644,18 @@ jobs:
                 body-path: ./github_comment.md
                 token: ${{ secrets.GH_PAT }}
                 tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
-                mode: replace
+                mode: create
+
+            - name: Minimize acknowledgment comment
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ACK_COMMENT_ID != ''
+              run: |
+                REPO_NAME="${{ github.repository }}"
+                COMMENT_ID="$ACK_COMMENT_ID"
+                echo "Minimizing comment $COMMENT_ID..."
+                gh api "/repos/$REPO_NAME/issues/comments/$COMMENT_ID/minimize" \
+                  -f ticketed=true
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
 
             - name: Post Additional Message Parts
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && hashFiles('final_message_parts_count.txt') != ''
