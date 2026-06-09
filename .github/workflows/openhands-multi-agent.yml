@@ -215,6 +215,9 @@ jobs:
                     CONFIG_ROUND=$(echo "$AGENT_CONFIG" | jq -r '.round // empty')
                     CONFIG_MODEL=$(echo "$AGENT_CONFIG" | jq -r '.model // empty')
                     CONFIG_SKILLS=$(echo "$AGENT_CONFIG" | jq -r '.skills // empty')
+                    CONFIG_TOP_P=$(echo "$AGENT_CONFIG" | jq -r '.top_p // empty')
+                    CONFIG_TOP_K=$(echo "$AGENT_CONFIG" | jq -r '.top_k // empty')
+                    CONFIG_REPETITION_PENALTY=$(echo "$AGENT_CONFIG" | jq -r '.repetition_penalty // empty')
 
                     echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING"
                   elif [ "$IS_BOT_COMMENT" -eq 0 ]; then
@@ -227,6 +230,9 @@ jobs:
                     CONFIG_ROUND=""
                     CONFIG_MODEL=""
                     CONFIG_SKILLS=""
+                    CONFIG_TOP_P=""
+                    CONFIG_TOP_K=""
+                    CONFIG_REPETITION_PENALTY=""
                     echo "Fallback to @@mention: $LAST_AGENT (human trigger)"
                   else
                     # Bot comment with no JSON and no @@mention — skip
@@ -320,6 +326,9 @@ jobs:
                   # Step 9: Export per-invocation overrides for agent_script.py
                   echo "CONFIG_MODEL=${CONFIG_MODEL}" >> $GITHUB_ENV
                   echo "CONFIG_TEMPERATURE=${CONFIG_TEMPERATURE}" >> $GITHUB_ENV
+                  echo "CONFIG_TOP_P=${CONFIG_TOP_P}" >> $GITHUB_ENV
+                  echo "CONFIG_TOP_K=${CONFIG_TOP_K}" >> $GITHUB_ENV
+                  echo "CONFIG_REPETITION_PENALTY=${CONFIG_REPETITION_PENALTY}" >> $GITHUB_ENV
 
                   echo "Resolved agent: ROLE_NAME=$TASK MODEL=from-config COMPLEXITY=${COMPLEXITY}"
 
