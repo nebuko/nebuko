@@ -264,7 +264,20 @@ jobs:
                           echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
                           echo "ROLE_NAME=ctx" >> $GITHUB_ENV
                           echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+
+                          # Complexity-based context depth
+                          COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
+                          case "$COMPLEXITY" in
+                              "low")
+                                  echo "COMPLEXITY=low" >> $GITHUB_ENV
+                                  ;;
+                              "high")
+                                  echo "COMPLEXITY=high" >> $GITHUB_ENV
+                                  ;;
+                              *)
+                                  echo "COMPLEXITY=medium" >> $GITHUB_ENV
+                                  ;;
+                          esac
                           ;;
                       "dev")
                           echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
