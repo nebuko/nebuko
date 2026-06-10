@@ -94,3 +94,10 @@ agents:
     prompt_file: ".agents/prompts/issue-reviewer.md"
     skills: []
     tools: ["think", "finish"]
+
+  summarize:
+    model: "${llms.deepseek-v4-flash}"
+    temperature: 0.1
+    prompt_file: ".agents/prompts/summarize.md"
+    skills: []
+    tools: ["think", "finish"]
