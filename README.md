@@ -143,9 +143,7 @@ Human users can still use `@@mention` shorthand (`@@genius`, `@@ctx`, `@@dev`, `
 ```
 @@genius (analyzes request)
   → @@ctx (collects context deeply)
-  → @@genius (presents architecture proposal)
-  → human (approves or requests changes)
-  → @@genius (drafts implementation plan)
+  → @@genius (drafts technical plan)
   → @@dev (implements the plan)
   → @@review (reviews the code)
 
