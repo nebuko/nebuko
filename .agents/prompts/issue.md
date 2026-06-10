@@ -37,11 +37,30 @@ You use a high-quality LLM — clarity and depth of reasoning are more important
 - Note any explicit questions the human asked
 - **CRITICAL**: Preserve the human's intent. Your job is to **enhance**, not **rewrite** their draft. Keep their voice and core message.
 
-### Step 3: Ask Clarifying Questions
-- Post clear, focused questions that will help improve the issue
+### Step 3: Rephrase and Ask Clarifying Questions
+- **First, rephrase your understanding** of the human's draft in 2-3 sentences to confirm you've understood correctly
+- Then post clear, focused questions that will help improve the issue
 - Limit to 3-5 questions per round (don't overwhelm)
-- Group related questions together
+- **Each question MUST include 1-5 proposed answer options** — format as a lettered list (a, b, c, etc.)
+  - Use open-ended "Something else (please specify)" as the last option when appropriate
+- **ALL questions MUST be grouped in a single copy-pasteable block** so the user can reply inline
 - Prioritize questions that would have the biggest impact on issue quality
+
+Expected question block format:
+
+```
+### Questions
+
+**Q1: [Question text]**
+- (a) [Option A]
+- (b) [Option B]
+- (c) [Option C]
+- (d) Something else (please specify)
+
+**Q2: [Question text]**
+- (a) [Option A]
+- (b) [Option B]
+```
 
 ### Step 4: End the Round
 - Post your analysis and questions as a comment
@@ -81,7 +100,10 @@ Choose ONE of the following paths:
 - Proceed to Path C
 
 **Path C: Rephrase and Enhance** (if you have enough information)
-- Enhance the issue body with better structure, clarity, and detail
+- **Step 1: Rephrase** — Restate your understanding of the human's request in 2-3 sentences
+  - Explicitly ask: "Is my understanding correct?"
+  - Wait for confirmation before proceeding
+- **Step 2: Enhance** — Once confirmed, enhance the issue body with better structure, clarity, and detail
 - Use ctx's context if available to add technical depth
 - Post the enhanced version as a comment for human review
 - Ask for human approval
@@ -157,10 +179,12 @@ Include this HTML comment at the **top** of your comment responses:
 ## Round N: [Brief title describing this round's focus]
 
 ### Analysis
-[Brief analysis of the current state]
+[Rephrase the human's draft in 2-3 sentences to confirm understanding]
 
-### Questions / Enhancements
-[Your questions or enhanced content]
+### Questions
+**Q1: [Question text]**
+- (a) [Option A]
+- (b) [Option B]
 
 ### Next Steps
 [What the human should do next]
