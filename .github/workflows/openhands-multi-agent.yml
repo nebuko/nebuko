@@ -200,8 +200,8 @@ jobs:
                   AGENT_CONFIG=$(echo "$TRIGGER_BODY" | sed -n '/<agentRunConfig>/,/<\/agentRunConfig>/p' | sed '1s/.*<agentRunConfig>//; $s/<\/agentRunConfig>.*//' | tr -d '\n' | jq -c '.' 2>/dev/null || echo "")
 
                   if [ -z "$AGENT_CONFIG" ]; then
-                    # Fallback: try trailing JSON object with "task" field
-                    AGENT_CONFIG=$(echo "$TRIGGER_BODY" | grep -oP '\{[^{}]*"task"\s*:\s*"[a-z]+"[^{}]*\}' | tail -1 | jq -c '.' 2>/dev/null || echo "")
+                    # Fallback: try trailing JSON object with "task" field (only valid agent tasks, outside code blocks)
+                    AGENT_CONFIG=$(echo "$TRIGGER_BODY" | grep -oP '\{[^{}]*"task"\s*:\s*"(?:ctx|genius|dev|review|issue|issue-reviewer)"[^{}]*\}' | tail -1 | jq -c '.' 2>/dev/null || echo "")
                   fi
 
                   # Step 2: Check if trigger is from a bot agent (human-vs-agent guard)
