@@ -439,7 +439,7 @@ jobs:
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                SUMMARIZER_THRESHOLD: ${{ inputs.summarizer_threshold || 10 }}
+                SUMMARIZER_THRESHOLD: ${{ inputs.summarizer_threshold || 100 }}
               run: |
                 echo "::group::[Step] Check Summarizer Gate"
                 REPO_NAME="${{ github.repository }}"
