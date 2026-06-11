@@ -54,49 +54,49 @@ llms:
 #        think, finish (built-in defaults)
 agents:
   genius:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.2
     prompt_file: ".agents/prompts/genius.md"
     skills: []
     tools: ["think", "finish"]
 
   dev:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.0
     prompt_file: ".agents/prompts/dev.md"
     skills: []
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   ctx:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.0
     prompt_file: ".agents/prompts/ctx.md"
     skills: []
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   review:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.1
     prompt_file: ".agents/prompts/review.md"
     skills: []
     tools: ["think", "finish"]
 
   issue:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.2
     prompt_file: ".agents/prompts/issue.md"
     skills: []
     tools: ["think", "finish"]
 
   issue-reviewer:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.2
     prompt_file: ".agents/prompts/issue-reviewer.md"
     skills: []
     tools: ["think", "finish"]
 
   summarize:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.qwen-3-6-27b}"
     temperature: 0.1
     prompt_file: ".agents/prompts/summarize.md"
     skills: []
