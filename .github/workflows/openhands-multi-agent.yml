@@ -595,6 +595,18 @@ jobs:
                 echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
                 cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
 
+                # Prepend prominent @@dev directive for dev agent so the active
+                # instruction appears first, visually separated from noise.
+                if [ "$ROLE_NAME" = "dev" ]; then
+                    DEV_DIRECTIVE=$(grep -i '@@dev' "$AGENT_QUERY_PATH" | tail -1 || true)
+                    if [ -n "$DEV_DIRECTIVE" ]; then
+                        TEMP_PROMPT=$(mktemp)
+                        echo -e "\n\n>>> ACTIVE DIRECTIVE FOR @@dev <<<\n$DEV_DIRECTIVE\n>>>\n\n" > "$TEMP_PROMPT"
+                        cat $FINAL_PROMPT_FILE >> "$TEMP_PROMPT"
+                        mv "$TEMP_PROMPT" $FINAL_PROMPT_FILE
+                    fi
+                fi
+
                 # Inject git diff for review agent
                 if [ "$ROLE_NAME" = "review" ]; then
                     echo -e "\n\n--- GIT DIFF ---\n" >> $FINAL_PROMPT_FILE
