@@ -13,12 +13,14 @@ Usage:
     python issue_creation.py link --repo owner/repo --parent 123 --child 456
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional, Tuple
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -28,13 +30,13 @@ class TaskDefinition:
     """A single task within a split plan."""
     title: str
     body: str
-    labels: list[str] = field(default_factory=list)
+    labels: List[str] = field(default_factory=list)
 
 
 @dataclass
 class SplitPlan:
     """A plan to split a parent issue into multiple sub-issues."""
-    tasks: list[TaskDefinition]
+    tasks: List[TaskDefinition]
     auto_trigger: bool = True
 
 
@@ -93,7 +95,7 @@ class GitHubClient:
             resp_body = e.read().decode("utf-8", errors="replace")
             raise GithubAPIError(e.code, str(e), resp_body)
 
-    def create_issue(self, title: str, body: str, labels: list[str]) -> int:
+    def create_issue(self, title: str, body: str, labels: List[str]) -> Optional[int]:
         """Create a new issue in the repository.
         
         Args:
@@ -102,7 +104,7 @@ class GitHubClient:
             labels: List of label names.
             
         Returns:
-            The issue number of the newly created issue.
+            The issue number of the newly created issue, or None if absent.
         """
         path = f"/repos/{self.repo}/issues"
         payload = {"title": title, "body": body}
@@ -130,7 +132,7 @@ class GitHubClient:
         
         self._request("POST", path, body)
 
-    def list_sub_issues(self, parent_number: int) -> list[dict]:
+    def list_sub_issues(self, parent_number: int) -> List[dict]:
         """List all sub-issues of a parent issue.
         
         Args:
@@ -198,10 +200,13 @@ def load_split_plan(path: str) -> SplitPlan:
     for i, t in enumerate(tasks_raw):
         if not isinstance(t, dict) or not t.get("title"):
             raise ValueError(f"Task #{i} must have a 'title' field")
+        labels = t.get("labels", [])
+        if not isinstance(labels, list):
+            raise ValueError(f"Task #{i} 'labels' must be a list")
         tasks.append(TaskDefinition(
             title=t["title"],
             body=t.get("body", ""),
-            labels=t.get("labels", []),
+            labels=labels,
         ))
     
     return SplitPlan(
@@ -214,8 +219,12 @@ def create_sub_issues(
     client: GitHubClient,
     plan: SplitPlan,
     parent_number: int,
-) -> list[int]:
+) -> List[int]:
     """Execute a split plan: create issues and link them as sub-issues.
+    
+    Processes each task independently — failures on one task do not abort
+    the remaining tasks. A summary comment is posted on the parent issue
+    if any task fails.
     
     Args:
         client: GitHub API client.
@@ -223,27 +232,61 @@ def create_sub_issues(
         parent_number: Parent issue number.
         
     Returns:
-        List of created issue numbers.
+        List of created issue numbers (only successful creations).
+        
+    Raises:
+        ValueError: If a newly created issue has no valid issue number.
     """
-    created_numbers = []
+    created_numbers: List[int] = []
+    failed_tasks: List[Tuple[int, str, str]] = []  # (idx, title, error)
     
     for idx, task in enumerate(plan.tasks, start=1):
         print(f"[{idx}/{len(plan.tasks)}] Creating sub-issue: {task.title}")
         
-        issue_num = client.create_issue(task.title, task.body, task.labels)
-        print(f"  → Created issue #{issue_num}")
+        try:
+            issue_num = client.create_issue(task.title, task.body, task.labels)
+            if issue_num is None:
+                raise ValueError(
+                    f"Failed to create issue: API response missing 'number' "
+                    f"field for '{task.title}'"
+                )
+            print(f"  → Created issue #{issue_num}")
+            
+            client.add_sub_issue(parent_number, issue_num, position=idx)
+            print(f"  → Linked as sub-issue of #{parent_number} (position {idx})")
+            
+            created_numbers.append(issue_num)
         
-        client.add_sub_issue(parent_number, issue_num, position=idx)
-        print(f"  → Linked as sub-issue of #{parent_number} (position {idx})")
+        except Exception as e:
+            error_msg = str(e)
+            print(f"  → FAILED: {error_msg}")
+            failed_tasks.append((idx, task.title, error_msg))
+    
+    # Post summary on parent if there were failures
+    if failed_tasks:
+        summary_lines = [
+            "⚠️ **Partial decomposition** — some sub-issues could not be created:",
+            "",
+            f"**Succeeded:** {len(created_numbers)}/{len(plan.tasks)}",
+            "",
+            "**Failed tasks:**",
+        ]
+        for idx, title, err in failed_tasks:
+            summary_lines.append(f"- Task #{idx} \"{title}\": `{err}`")
+        summary_lines.append("")
+        summary_lines.append("Please resolve these manually or re-trigger the workflow.")
         
-        created_numbers.append(issue_num)
+        try:
+            client.create_comment(parent_number, "\n".join(summary_lines))
+        except Exception:
+            pass  # Don't fail silently; just skip comment posting
     
     return created_numbers
 
 
 def trigger_workflows(
     client: GitHubClient,
-    issue_numbers: list[int],
+    issue_numbers: List[int],
 ) -> None:
     """Post @@genius comments on sub-issues to trigger their workflows.
     

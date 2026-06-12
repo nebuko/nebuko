@@ -844,10 +844,10 @@ jobs:
                 echo "Split plan detected. Writing to plan file..."
                 echo "$SPLIT_PLAN" | jq '.' > /tmp/split_plan.json
 
-                # Validate the plan has tasks
+                # Validate the plan has tasks (genius prompt requires 3+ steps)
                 TASK_COUNT=$(echo "$SPLIT_PLAN" | jq '.tasks | length')
-                if [ "$TASK_COUNT" -lt 2 ] 2>/dev/null; then
-                  echo "Split plan has fewer than 2 tasks ($TASK_COUNT), skipping decomposition."
+                if [ "$TASK_COUNT" -lt 3 ] 2>/dev/null; then
+                  echo "Split plan has fewer than 3 tasks ($TASK_COUNT), skipping decomposition."
                   exit 0
                 fi
 

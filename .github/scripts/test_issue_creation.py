@@ -105,6 +105,14 @@ class TestLoadSplitPlan:
         assert plan.auto_trigger is True
         os.unlink(path)
 
+    def test_labels_not_a_list_raises(self):
+        path = self._write_plan({
+            "tasks": [{"title": "T", "body": "B", "labels": "not-a-list"}],
+        })
+        with pytest.raises(ValueError, match="labels.*must be a list"):
+            load_split_plan(path)
+        os.unlink(path)
+
 
 # ── GitHubClient Tests (with mocked HTTP) ───────────────────────────
 
@@ -217,6 +225,42 @@ class TestCreateSubIssues:
         assert calls[0][1]["position"] == 1
         assert calls[1][1]["position"] == 2
 
+    @patch("issue_creation.GitHubClient")
+    def test_partial_failure_continues_and_reports(self, MockClient):
+        """If one task fails, remaining tasks still execute and a summary is posted."""
+        mock_client = MagicMock()
+        # 2nd call raises, 3rd succeeds
+        mock_client.create_issue.side_effect = [101, ValueError("API error"), 103]
+
+        plan = SplitPlan(tasks=[
+            TaskDefinition(title="T1", body="B1"),
+            TaskDefinition(title="T2", body="B2"),
+            TaskDefinition(title="T3", body="B3"),
+        ])
+
+        created = create_sub_issues(mock_client, plan, parent_number=50)
+        assert created == [101, 103]  # Only successful ones
+        # Summary comment posted on parent
+        mock_client.create_comment.assert_called_once()
+        body = mock_client.create_comment.call_args[0][1]
+        assert "Partial decomposition" in body
+        assert "T2" in body
+        assert "2/3" in body
+
+    @patch("issue_creation.GitHubClient")
+    def test_none_issue_number_raises(self, MockClient):
+        """create_issue returning None raises ValueError."""
+        mock_client = MagicMock()
+        mock_client.create_issue.return_value = None
+
+        plan = SplitPlan(tasks=[
+            TaskDefinition(title="T1", body="B1"),
+        ])
+
+        created = create_sub_issues(mock_client, plan, parent_number=50)
+        assert created == []  # Task failed, nothing created
+        # Should have logged failure but no issues returned
+
 
 # ── trigger_workflows Tests (mocked) ─────────────────────────────────
 
@@ -231,3 +275,76 @@ class TestTriggerWorkflows:
         assert mock_client.create_comment.call_args_list[0][0][0] == 101
         assert mock_client.create_comment.call_args_list[0][0][1] == "@@genius"
         assert mock_client.create_comment.call_args_list[1][0][0] == 102
+
+
+# ── CLI main() Tests ──────────────────────────────────────────────────
+
+
+class TestCLIMain:
+    def test_no_command_prints_help_and_exits(self, capsys):
+        with patch("sys.argv", ["issue_creation.py"]):
+            with pytest.raises(SystemExit) as exc_info:
+                from issue_creation import main
+                main()
+            assert exc_info.value.code == 1
+            captured = capsys.readouterr()
+            assert "usage" in captured.out.lower()
+
+    @patch("issue_creation.load_split_plan")
+    @patch("issue_creation.GitHubClient")
+    def test_create_command(self, MockClient, mock_load_plan, capsys):
+        mock_client = MagicMock()
+        MockClient.return_value = mock_client
+        mock_client.create_issue.return_value = 99
+        mock_load_plan.return_value = SplitPlan(
+            tasks=[TaskDefinition(title="T", body="B")], auto_trigger=False
+        )
+        
+        with patch("sys.argv", [
+            "issue_creation.py", "create",
+            "--repo", "owner/repo",
+            "--parent", "10",
+            "--plan", "/tmp/plan.json",
+            "--no-trigger",
+        ]):
+            from issue_creation import main
+            main()
+        
+        mock_client.create_issue.assert_called_once_with("T", "B", [])
+        mock_client.add_sub_issue.assert_called_once_with(10, 99, position=1)
+
+    @patch("issue_creation.GitHubClient")
+    def test_list_command(self, MockClient, capsys):
+        mock_client = MagicMock()
+        MockClient.return_value = mock_client
+        mock_client.list_sub_issues.return_value = [
+            {"number": 1, "title": "Sub 1"},
+        ]
+        
+        with patch("sys.argv", [
+            "issue_creation.py", "list",
+            "--repo", "owner/repo",
+            "--parent", "10",
+        ]):
+            from issue_creation import main
+            main()
+        
+        mock_client.list_sub_issues.assert_called_once_with(10)
+        captured = capsys.readouterr()
+        assert "#1: Sub 1" in captured.out
+
+    @patch("issue_creation.GitHubClient")
+    def test_link_command(self, MockClient, capsys):
+        mock_client = MagicMock()
+        MockClient.return_value = mock_client
+        
+        with patch("sys.argv", [
+            "issue_creation.py", "link",
+            "--repo", "owner/repo",
+            "--parent", "10",
+            "--child", "42",
+        ]):
+            from issue_creation import main
+            main()
+        
+        mock_client.add_sub_issue.assert_called_once_with(10, 42)
