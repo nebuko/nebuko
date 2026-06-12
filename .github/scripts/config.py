@@ -117,6 +117,37 @@ class AgentConfig(BaseModel):
     repetition_penalty: Optional[float] = None
 
 
+class WorkflowCondition(BaseModel):
+    """Conditional routing within a workflow step."""
+
+    on_result: str
+    next: Optional[str] = None
+
+
+class WorkflowStep(BaseModel):
+    """A single step in a workflow: agent + routing."""
+
+    name: str
+    agent: str
+    next: Optional[str] = None
+    conditions: Optional[list[WorkflowCondition]] = None
+
+
+class WorkflowTrigger(BaseModel):
+    """Which @@mentions can start this workflow."""
+
+    agents: list[str]
+
+
+class WorkflowDefinition(BaseModel):
+    """A complete workflow definition."""
+
+    name: str
+    description: str
+    trigger: WorkflowTrigger
+    steps: list[WorkflowStep]
+
+
 class AppConfig(BaseModel):
     """Top-level application config: providers → llms → agents."""
 
@@ -126,6 +157,33 @@ class AppConfig(BaseModel):
 
 
 # ── Public API ───────────────────────────────────────────────────────
+
+
+def load_workflow(path: str) -> WorkflowDefinition:
+    """Load and validate a workflow definition YAML file.
+
+    Args:
+        path: Path to the workflow YAML file.
+
+    Returns:
+        A validated WorkflowDefinition instance.
+
+    Raises:
+        FileNotFoundError: If the workflow file does not exist.
+        ValueError: If the config fails validation or cannot be parsed.
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Workflow file not found: {path}")
+
+    with open(path) as f:
+        raw = yaml.safe_load(f)
+
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"Workflow file must contain a YAML mapping, got {type(raw).__name__}"
+        )
+
+    return WorkflowDefinition.model_validate(raw)
 
 
 def load_config(path: str = "agent-config.yaml") -> AppConfig:
