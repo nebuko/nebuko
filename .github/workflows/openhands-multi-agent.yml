@@ -828,6 +828,58 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
 
+            - name: Process Split Plan (Issue Decomposition)
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME == 'genius'
+              run: |
+                SPLIT_PLAN=""
+                if [ -f "./github_comment.md" ]; then
+                  SPLIT_PLAN=$(sed -n '/<splitPlan>/,/<\/splitPlan>/p' ./github_comment.md | sed '1s/.*<splitPlan>//; $s/<\/splitPlan>.*//' | tr -d '\n' | jq -c '.' 2>/dev/null || echo "")
+                fi
+
+                if [ -z "$SPLIT_PLAN" ]; then
+                  echo "No split plan found in agent output."
+                  exit 0
+                fi
+
+                echo "Split plan detected. Writing to plan file..."
+                echo "$SPLIT_PLAN" | jq '.' > /tmp/split_plan.json
+
+                # Validate the plan has tasks (genius prompt requires 3+ steps)
+                TASK_COUNT=$(echo "$SPLIT_PLAN" | jq '.tasks | length')
+                if [ "$TASK_COUNT" -lt 3 ] 2>/dev/null; then
+                  echo "Split plan has fewer than 3 tasks ($TASK_COUNT), skipping decomposition."
+                  exit 0
+                fi
+
+                AUTO_TRIGGER=$(echo "$SPLIT_PLAN" | jq -r '.auto_trigger // true')
+                echo "Split plan contains $TASK_COUNT tasks, auto_trigger=$AUTO_TRIGGER"
+
+                SCRIPT_PATH=".github/scripts/issue_creation.py"
+                if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/issue_creation.py" ]; then
+                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/issue_creation.py"
+                fi
+
+                if [ ! -f "$SCRIPT_PATH" ]; then
+                  echo "ERROR: issue_creation.py not found at $SCRIPT_PATH"
+                  exit 1
+                fi
+
+                TRIGGER_FLAG="--no-trigger"
+                if [ "$AUTO_TRIGGER" = "true" ]; then
+                  TRIGGER_FLAG=""
+                fi
+
+                echo "Creating sub-issues..."
+                python "$SCRIPT_PATH" create \
+                  --repo "${{ github.repository }}" \
+                  --parent "${{ env.TARGET_NUMBER }}" \
+                  --plan /tmp/split_plan.json \
+                  $TRIGGER_FLAG
+
+                echo "Sub-issues created successfully."
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+
             - name: Post Additional Message Parts
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && hashFiles('final_message_parts_count.txt') != ''
               run: |
