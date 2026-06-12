@@ -81,6 +81,7 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
     - The `title` is the sub-issue title (be specific and descriptive).
     - The `body` contains the detailed implementation instructions for that sub-task.
     - Set `auto_trigger: true` to automatically start each sub-issue via @@genius.
+    - **IMPORTANT:** Do NOT nest split plans deeper than one level. Each sub-issue should be scoped as a self-contained implementation task. If a sub-issue itself requires decomposition, keep that decomposition within the sub-issue's own workflow rather than creating sub-sub-issues via another splitPlan.
     - After the `<splitPlan>`, include the normal hand-off:
       ```
       <agentRunConfig>

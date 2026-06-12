@@ -829,7 +829,7 @@ jobs:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
 
             - name: Process Split Plan (Issue Decomposition)
-              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME == 'genius'
               run: |
                 SPLIT_PLAN=""
                 if [ -f "./github_comment.md" ]; then
@@ -857,6 +857,11 @@ jobs:
                 SCRIPT_PATH=".github/scripts/issue_creation.py"
                 if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/issue_creation.py" ]; then
                   SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/issue_creation.py"
+                fi
+
+                if [ ! -f "$SCRIPT_PATH" ]; then
+                  echo "ERROR: issue_creation.py not found at $SCRIPT_PATH"
+                  exit 1
                 fi
 
                 TRIGGER_FLAG="--no-trigger"

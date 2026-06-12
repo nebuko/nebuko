@@ -279,7 +279,7 @@ def create_sub_issues(
         try:
             client.create_comment(parent_number, "\n".join(summary_lines))
         except Exception:
-            pass  # Don't fail silently; just skip comment posting
+            print(f"WARNING: Failed to post summary comment on parent issue #{parent_number}")
     
     return created_numbers
 
