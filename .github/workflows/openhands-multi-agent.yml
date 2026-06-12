@@ -591,9 +591,35 @@ jobs:
 
                 FINAL_PROMPT_FILE="/tmp/final_prompt.md"
 
-                cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
-                echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
-                cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
+                # Extract the most recent @@dev directive from the agent query,
+                # and prepend it so the active instruction appears first before
+                # the role prompt, preventing the dev agent from getting confused
+                # by buried instructions in noisy comment history.
+                DEV_DIRECTIVE=""
+                if [ -f "$AGENT_QUERY_PATH" ]; then
+                  DEV_DIRECTIVE=$(grep -i '@@dev' "$AGENT_QUERY_PATH" | tail -1 || true)
+                fi
+
+                if [ -n "$DEV_DIRECTIVE" ]; then
+                  # Write the directive block first, then the role prompt
+                  cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
+                  echo "" >> $FINAL_PROMPT_FILE
+                  echo "--- ACTIVE INSTRUCTION FOR @@dev ---" >> $FINAL_PROMPT_FILE
+                  echo "**You are currently active as @@dev. Execute the following directive immediately:**" >> $FINAL_PROMPT_FILE
+                  echo "" >> $FINAL_PROMPT_FILE
+                  echo "$DEV_DIRECTIVE" >> $FINAL_PROMPT_FILE
+                  echo "--- END ACTIVE INSTRUCTION ---" >> $FINAL_PROMPT_FILE
+                  echo "" >> $FINAL_PROMPT_FILE
+                  echo "" >> $FINAL_PROMPT_FILE
+                  echo "--- USER REQUEST / GITHUB CONTEXT ---" >> $FINAL_PROMPT_FILE
+                  echo "" >> $FINAL_PROMPT_FILE
+                  cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
+                else
+                  # Fallback: standard prompt assembly when no @@dev directive found
+                  cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
+                  echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
+                  cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
+                fi
 
                 # Inject git diff for review agent
                 if [ "$ROLE_NAME" = "review" ]; then
