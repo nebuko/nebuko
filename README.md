@@ -113,6 +113,9 @@ Agents communicate using a structured JSON format called `agentRunConfig`. This 
 | `top_k` | int | no | Top-K token selection | from LLM config |
 | `repetition_penalty` | float | no | Repetition penalty (>1.0 reduces repetition) | from LLM config |
 | `model` | string | no | Override the LLM model for this invocation | — |
+| `workflow` | string | no | Workflow name (file in `workflows/`) | — |
+| `step` | string | no | Current step name within workflow | first step |
+| `branch` | string | no | Condition key for conditional routing | — |
 
 #### Example Invocations
 
@@ -135,6 +138,76 @@ Agents communicate using a structured JSON format called `agentRunConfig`. This 
 ```json
 {"task": "dev", "complexity": "low", "top_p": 0.1, "top_k": 10, "repetition_penalty": 1.2}
 ```
+
+**Bot handoff with workflow context:**
+```json
+{"task": "ctx", "workflow": "default", "step": "context"}
+```
+
+### Workflows
+
+Workflows are first-class YAML definitions that orchestrate sequences of agents. They live in the `workflows/` directory at the repo root.
+
+#### Defining a Workflow
+
+```yaml
+# workflows/default.yaml
+name: default
+description: "Standard dev workflow: analyze → context → plan → implement → review"
+trigger:
+  agents: [genius]  # which @@mentions can start this workflow
+steps:
+  - name: analyze
+    agent: genius
+    next: context
+
+  - name: context
+    agent: ctx
+    next: plan
+
+  - name: plan
+    agent: genius
+    next: implement
+
+  - name: implement
+    agent: dev
+    next: review
+
+  - name: review
+    agent: review
+    next: null  # terminal step
+```
+
+#### Conditional Branching
+
+Workflows support conditional routing based on agent output:
+
+```yaml
+steps:
+  - name: implement
+    agent: dev
+    conditions:
+      - on_result: "needs_review"
+        next: review
+      - on_result: "needs_revision"
+        next: implement  # loop back
+      - on_result: "default"
+        next: null
+```
+
+#### Built-in Workflows
+
+| Workflow | Description | Trigger |
+|----------|-------------|---------|
+| `default` | Full dev cycle: analyze → context → plan → implement → review | `@@genius` |
+| `review-only` | Standalone code review | `@@review` |
+
+#### Workflow Selection
+
+- **Without `workflow` field**: Direct task routing (backward compatible)
+- **With `workflow` field**: Resolves agent from workflow step definition
+- **With `workflow` + `step`**: Jumps to specific step within workflow
+- **With `branch`**: Triggers conditional routing based on condition key
 
 #### Human Invocation (Backward Compatible)
 

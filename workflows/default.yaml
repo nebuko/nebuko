@@ -1,0 +1,29 @@
+# Default workflow: the standard dev chain
+# genius → ctx → genius (plan) → dev → review
+
+name: default
+description: "Standard development workflow: analyze → context → plan → implement → review"
+
+trigger:
+  agents: [genius]  # which @@mentions can start this workflow
+
+steps:
+  - name: analyze
+    agent: genius
+    next: context
+
+  - name: context
+    agent: ctx
+    next: plan
+
+  - name: plan
+    agent: genius
+    next: implement
+
+  - name: implement
+    agent: dev
+    next: review
+
+  - name: review
+    agent: review
+    next: null  # terminal step
