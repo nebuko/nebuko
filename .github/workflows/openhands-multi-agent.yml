@@ -223,8 +223,11 @@ jobs:
                     CONFIG_TOP_P=$(echo "$AGENT_CONFIG" | jq -r '.top_p // empty')
                     CONFIG_TOP_K=$(echo "$AGENT_CONFIG" | jq -r '.top_k // empty')
                     CONFIG_REPETITION_PENALTY=$(echo "$AGENT_CONFIG" | jq -r '.repetition_penalty // empty')
+                    CONFIG_WORKFLOW=$(echo "$AGENT_CONFIG" | jq -r '.workflow // empty')
+                    CONFIG_STEP=$(echo "$AGENT_CONFIG" | jq -r '.step // empty')
+                    CONFIG_BRANCH=$(echo "$AGENT_CONFIG" | jq -r '.branch // empty')
 
-                    echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING"
+                    echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING workflow=$CONFIG_WORKFLOW step=$CONFIG_STEP"
                   elif [ "$IS_BOT_COMMENT" -eq 0 ]; then
                     # @@mention fallback (human only)
                     LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue\|@@issue-reviewer' | tail -1)
@@ -238,6 +241,12 @@ jobs:
                     CONFIG_TOP_P=""
                     CONFIG_TOP_K=""
                     CONFIG_REPETITION_PENALTY=""
+                    CONFIG_WORKFLOW=""
+                    CONFIG_STEP=""
+                    CONFIG_BRANCH=""
+                    # Construct agentRunConfig JSON for workflow resolver
+                    AGENT_CONFIG=$(jq -n --arg task "$TASK" \
+                      '{task: $task, complexity: "medium", reasoning: "none"}')
                     echo "Fallback to @@mention: $LAST_AGENT (human trigger)"
                   else
                     # Bot comment with no JSON and no @@mention — skip
@@ -256,83 +265,124 @@ jobs:
                   # Export TASK for loop prevention guards (Bug Fix #1)
                   echo "TASK=$TASK" >> $GITHUB_ENV
 
-                  # Step 5: Map task to agent role and prompt location
-                  # The agent script loads model/provider/temperature from the config file
-                  case "$TASK" in
-                      "genius")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/genius.md" >> $GITHUB_ENV
-                          echo "ROLE_NAME=genius" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          ;;
-                      "ctx")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
-                          echo "ROLE_NAME=ctx" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                  # Step 5: Workflow-aware agent routing
+                  # Uses resolve_workflow.py for workflow definitions; falls back to case-based routing
+                  WORKFLOW_SCRIPT=""
+                  if [ -f "$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts/resolve_workflow.py" ]; then
+                    WORKFLOW_SCRIPT="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts/resolve_workflow.py"
+                  elif [ -f ".github/scripts/resolve_workflow.py" ]; then
+                    WORKFLOW_SCRIPT=".github/scripts/resolve_workflow.py"
+                  fi
 
-                          # Complexity-based context depth
-                          COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
-                          case "$COMPLEXITY" in
-                              "low")
-                                  echo "COMPLEXITY=low" >> $GITHUB_ENV
-                                  ;;
-                              "high")
-                                  echo "COMPLEXITY=high" >> $GITHUB_ENV
-                                  ;;
-                              *)
-                                  echo "COMPLEXITY=medium" >> $GITHUB_ENV
-                                  ;;
-                          esac
-                          ;;
-                      "dev")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
-                          echo "ROLE_NAME=dev" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                  if [ -n "$WORKFLOW_SCRIPT" ] && [ -n "$AGENT_CONFIG" ]; then
+                    WORKFLOWS_DIR=""
+                    if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows" ]; then
+                      WORKFLOWS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows"
+                    elif [ -d "workflows" ]; then
+                      WORKFLOWS_DIR="workflows"
+                    fi
 
-                          # Complexity-based model selection (via config file)
-                          COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
-                          case "$COMPLEXITY" in
-                              "low")
-                                  echo "COMPLEXITY=low" >> $GITHUB_ENV
-                                  ;;
-                              "high")
-                                  echo "COMPLEXITY=high" >> $GITHUB_ENV
-                                  ;;
-                              *)
-                                  echo "COMPLEXITY=medium" >> $GITHUB_ENV
-                                  ;;
-                          esac
-                          ;;
-                      "review")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/review.md" >> $GITHUB_ENV
-                          echo "ROLE_NAME=review" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          ;;
-                      "issue")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/issue.md" >> $GITHUB_ENV
-                          echo "ROLE_NAME=issue" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          ;;
-                      "issue-reviewer")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/issue-reviewer.md" >> $GITHUB_ENV
-                          echo "ROLE_NAME=issue-reviewer" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          ;;
-                      "summarize")
-                          echo "PROMPT_LOCATION=$PROMPT_BASE/summarize.md" >> $GITHUB_ENV
-                          echo "ROLE_NAME=summarize" >> $GITHUB_ENV
-                          echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                          echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                          ;;
-                      *)
-                          echo "Unknown task: $TASK"
-                          echo "SKIP_AGENT=true" >> $GITHUB_ENV
-                          exit 1
-                          ;;
-                  esac
+                    RESOLVE_OUTPUT=$(echo "$AGENT_CONFIG" | python "$WORKFLOW_SCRIPT" \
+                      --workflows-dir "$WORKFLOWS_DIR" \
+                      --prompt-base "$PROMPT_BASE" 2>&1 || echo "SKIP_AGENT=true")
+
+                    echo "Workflow resolve output: $RESOLVE_OUTPUT"
+
+                    ROLE_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^ROLE_NAME=' | cut -d= -f2-)
+                    PROMPT_LOCATION=$(echo "$RESOLVE_OUTPUT" | grep '^PROMPT_LOCATION=' | cut -d= -f2-)
+                    WF_SKIP=$(echo "$RESOLVE_OUTPUT" | grep '^SKIP_AGENT=' | cut -d= -f2-)
+
+                    if [ "$WF_SKIP" = "true" ]; then
+                      echo "Workflow routing skipped agent: $(echo "$RESOLVE_OUTPUT" | grep '^REASON=' | cut -d= -f2-)"
+                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                      exit 1
+                    fi
+
+                    echo "PROMPT_LOCATION=$PROMPT_LOCATION" >> $GITHUB_ENV
+                    echo "ROLE_NAME=$ROLE_NAME" >> $GITHUB_ENV
+                    echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+
+                    if [ "$ROLE_NAME" = "dev" ]; then
+                      COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
+                      case "$COMPLEXITY" in
+                          "low") echo "COMPLEXITY=low" >> $GITHUB_ENV ;;
+                          "high") echo "COMPLEXITY=high" >> $GITHUB_ENV ;;
+                          *) echo "COMPLEXITY=medium" >> $GITHUB_ENV ;;
+                      esac
+                    else
+                      echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                    fi
+
+                    WF_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NAME=' | cut -d= -f2-)
+                    WF_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_STEP=' | cut -d= -f2-)
+                    WF_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
+                    echo "WORKFLOW_NAME=$WF_NAME" >> $GITHUB_ENV
+                    echo "WORKFLOW_STEP=$WF_STEP" >> $GITHUB_ENV
+                    echo "WORKFLOW_NEXT=$WF_NEXT" >> $GITHUB_ENV
+                  else
+                    # Fallback: original case-based routing (backward compatible)
+                    case "$TASK" in
+                        "genius")
+                            echo "PROMPT_LOCATION=$PROMPT_BASE/genius.md" >> $GITHUB_ENV
+                            echo "ROLE_NAME=genius" >> $GITHUB_ENV
+                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                            ;;
+                        "ctx")
+                            echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
+                            echo "ROLE_NAME=ctx" >> $GITHUB_ENV
+                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+
+                            COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
+                            case "$COMPLEXITY" in
+                                "low") echo "COMPLEXITY=low" >> $GITHUB_ENV ;;
+                                "high") echo "COMPLEXITY=high" >> $GITHUB_ENV ;;
+                                *) echo "COMPLEXITY=medium" >> $GITHUB_ENV ;;
+                            esac
+                            ;;
+                        "dev")
+                            echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
+                            echo "ROLE_NAME=dev" >> $GITHUB_ENV
+                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+
+                            COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
+                            case "$COMPLEXITY" in
+                                "low") echo "COMPLEXITY=low" >> $GITHUB_ENV ;;
+                                "high") echo "COMPLEXITY=high" >> $GITHUB_ENV ;;
+                                *) echo "COMPLEXITY=medium" >> $GITHUB_ENV ;;
+                            esac
+                            ;;
+                        "review")
+                            echo "PROMPT_LOCATION=$PROMPT_BASE/review.md" >> $GITHUB_ENV
+                            echo "ROLE_NAME=review" >> $GITHUB_ENV
+                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                            ;;
+                        "issue")
+                            echo "PROMPT_LOCATION=$PROMPT_BASE/issue.md" >> $GITHUB_ENV
+                            echo "ROLE_NAME=issue" >> $GITHUB_ENV
+                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                            ;;
+                        "issue-reviewer")
+                            echo "PROMPT_LOCATION=$PROMPT_BASE/issue-reviewer.md" >> $GITHUB_ENV
+                            echo "ROLE_NAME=issue-reviewer" >> $GITHUB_ENV
+                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                            ;;
+                        "summarize")
+                            echo "PROMPT_LOCATION=$PROMPT_BASE/summarize.md" >> $GITHUB_ENV
+                            echo "ROLE_NAME=summarize" >> $GITHUB_ENV
+                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
+                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
+                            ;;
+                        *)
+                            echo "Unknown task: $TASK"
+                            echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                            exit 1
+                            ;;
+                    esac
+                  fi
 
                   # Step 6: Export reasoning level for agent_script.py
                   echo "LLM_REASONING=${CONFIG_REASONING}" >> $GITHUB_ENV
