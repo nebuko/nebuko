@@ -290,6 +290,30 @@ def save_metrics_json(metrics):
         logger.error(f"Failed to save metrics JSON: {e}")
 
 
+def extract_split_plan(message: str) -> str | None:
+    """
+    Extract <splitPlan>...</splitPlan> JSON block from a message.
+
+    Scans the entire message for the XML-like tags and returns the
+    JSON content between them, or None if no split plan is present.
+
+    Args:
+        message: The agent's final message (may contain <splitPlan> tags).
+
+    Returns:
+        Raw JSON string from inside the tags, or None.
+    """
+    import re
+
+    if not message:
+        return None
+
+    match = re.search(r"<splitPlan>\s*(.*?)\s*</splitPlan>", message, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
 def split_message(message: str, max_length: int = 10000) -> list[str]:
     """
     Split a long message into parts, each under max_length.
@@ -668,6 +692,14 @@ def main():
 
     # Save metrics JSON with the new field
     save_metrics_json(metrics)
+
+    # Extract <splitPlan> before splitting the message so the workflow can always find it,
+    # even when the splitPlan lands in part 2+ after message splitting (issue #231).
+    split_plan_json = extract_split_plan(final_message) if final_message else None
+    if split_plan_json:
+        with open("split_plan.json", "w", encoding="utf-8") as f:
+            f.write(split_plan_json)
+        logger.info("Saved split_plan.json for workflow extraction")
 
     # Split long messages into multiple parts, each under the safe limit.
     # GitHub's comment API allows 65,536 chars, but we use 10,000 as a
