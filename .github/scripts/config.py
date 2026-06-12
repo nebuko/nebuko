@@ -92,6 +92,8 @@ class LLMConfig(BaseModel):
     # Sampling parameters for instruction-following control
     top_p: Optional[float] = None
     top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    presence_penalty: Optional[float] = None
     repetition_penalty: Optional[float] = None
 
 
@@ -110,6 +112,8 @@ class AgentConfig(BaseModel):
     # Per-agent sampling parameter overrides
     top_p: Optional[float] = None
     top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    presence_penalty: Optional[float] = None
     repetition_penalty: Optional[float] = None
 
 

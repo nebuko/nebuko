@@ -524,9 +524,11 @@ def main():
                 f"Complexity-based temperature: complexity={config_complexity} → {temperature}"
             )
 
-    # Per-invocation sampling parameter overrides (top_p, top_k, repetition_penalty)
+    # Per-invocation sampling parameter overrides (top_p, top_k, min_p, presence_penalty, repetition_penalty)
     config_top_p = os.getenv("CONFIG_TOP_P")
     config_top_k = os.getenv("CONFIG_TOP_K")
+    config_min_p = os.getenv("CONFIG_MIN_P")
+    config_presence_penalty = os.getenv("CONFIG_PRESENCE_PENALTY")
     config_repetition_penalty = os.getenv("CONFIG_REPETITION_PENALTY")
 
     if not api_key:
@@ -572,11 +574,13 @@ def main():
     if agent_cfg and agent_cfg.model_ref.thinking_token_budget is not None:
         litellm_extra_body["thinking_token_budget"] = agent_cfg.model_ref.thinking_token_budget
 
-    # Sampling parameters for instruction-following control (top_p, top_k, repetition_penalty)
+    # Sampling parameters for instruction-following control
     # Priority: per-invocation override > per-agent override > per-LLM config
     for param_name, config_val in (
         ("top_p", config_top_p),
         ("top_k", config_top_k),
+        ("min_p", config_min_p),
+        ("presence_penalty", config_presence_penalty),
         ("repetition_penalty", config_repetition_penalty),
     ):
         if config_val is not None and str(config_val).strip():
