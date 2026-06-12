@@ -248,8 +248,8 @@ class TestCreateSubIssues:
         assert "2/3" in body
 
     @patch("issue_creation.GitHubClient")
-    def test_none_issue_number_raises(self, MockClient):
-        """create_issue returning None raises ValueError."""
+    def test_none_issue_number_tracked_as_failure(self, MockClient):
+        """create_issue returning None is tracked as failure (no crash)."""
         mock_client = MagicMock()
         mock_client.create_issue.return_value = None
 

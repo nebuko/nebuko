@@ -94,6 +94,8 @@ class GitHubClient:
         except HTTPError as e:
             resp_body = e.read().decode("utf-8", errors="replace")
             raise GithubAPIError(e.code, str(e), resp_body)
+        except Exception as e:
+            raise GithubAPIError(0, f"Request failed: {e}", "")
 
     def create_issue(self, title: str, body: str, labels: List[str]) -> Optional[int]:
         """Create a new issue in the repository.
@@ -297,8 +299,11 @@ def trigger_workflows(
     trigger_body = "@@genius"
     
     for num in issue_numbers:
-        print(f"  → Triggering workflow on issue #{num}")
-        client.create_comment(num, trigger_body)
+        try:
+            client.create_comment(num, trigger_body)
+            print(f"  → Triggered workflow on issue #{num}")
+        except Exception as e:
+            print(f"  → FAILED to trigger issue #{num}: {e}")
 
 
 # ── CLI Interface ────────────────────────────────────────────────────
