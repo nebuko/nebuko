@@ -71,24 +71,6 @@ def normalize_event(
     }
 
 
-def format_env_output(result: dict) -> str:
-    """Format result dict as shell-compatible KEY=value output.
-
-    Multi-line values use heredoc syntax (KEY<<EOF ... EOF).
-    """
-    lines = []
-    for key, value in result.items():
-        if "\n" in value:
-            lines.append(f"{key}<<EOF")
-            lines.append(value)
-            lines.append("EOF")
-        else:
-            # Shell-escape single quotes by replacing ' with '\''
-            escaped = value.replace("'", "'\\''")
-            lines.append(f"echo '{key}={escaped}' >> \"$GITHUB_ENV\" || {key}='{value}'")
-    return "\n".join(lines)
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Normalize GitHub event data for workflow consumption"

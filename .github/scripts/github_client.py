@@ -30,12 +30,13 @@ def _run(
     args: List[str],
     dry_run: bool = False,
     input_data: Optional[str] = None,
+    env: Optional[dict] = None,
 ) -> subprocess.CompletedProcess:
     """Run a gh CLI command and return the result."""
     if dry_run:
         print(f"[DRY RUN] Would run: gh {' '.join(args)}", file=sys.stderr)
         return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
-    return subprocess.run(args, capture_output=True, text=True, input=input_data)
+    return subprocess.run(args, capture_output=True, text=True, input=input_data, env=env)
 
 
 def get_issue_comments(
@@ -70,6 +71,7 @@ def get_issue_comments(
             ".",
         ],
         dry_run=dry_run,
+        env=env,
     )
 
     if result.returncode != 0:
@@ -118,6 +120,7 @@ def get_comment_node_id(
             ".node_id",
         ],
         dry_run=dry_run,
+        env=env,
     )
 
     if result.returncode != 0:
@@ -151,8 +154,6 @@ def post_comment(
         print(f"[DRY RUN] Would post comment to {repo}#{issue_number}", file=sys.stderr)
         return None
 
-    payload = json.dumps({"body": body})
-
     env = os.environ.copy()
     if token:
         env["GH_TOKEN"] = token
@@ -165,6 +166,7 @@ def post_comment(
             f"body={body}",
         ],
         dry_run=dry_run,
+        env=env,
     )
 
     if result.returncode != 0:
@@ -219,6 +221,7 @@ mutation($subjectId: ID!) {
             f"subjectId={node_id}",
         ],
         dry_run=dry_run,
+        env=env,
     )
 
     if result.returncode != 0:

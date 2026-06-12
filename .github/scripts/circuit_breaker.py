@@ -95,7 +95,7 @@ def check_circuit_breaker(
             f"No further agents will be triggered until a human intervenes.\n"
         )
         try:
-            post_comment(repo, issue_number, warning, gh_token, dry_run=False)
+            post_comment(repo, issue_number, warning, gh_token)
         except Exception as e:
             print(f"Failed to post circuit breaker warning: {e}", file=sys.stderr)
 
