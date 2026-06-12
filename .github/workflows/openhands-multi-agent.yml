@@ -592,6 +592,16 @@ jobs:
                 FINAL_PROMPT_FILE="/tmp/final_prompt.md"
 
                 cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
+
+                # Inject prominent directive for dev agent: extract the latest @@dev mention
+                # from the query (which embeds comment history) so the active instruction appears first.
+                if [ "$ROLE_NAME" = "dev" ]; then
+                    DEV_DIRECTIVE=$(grep -oP '(?<=@@dev\b).*' "$AGENT_QUERY_PATH" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' | head -c 500 || echo "")
+                    if [ -n "$DEV_DIRECTIVE" ]; then
+                        echo -e "\n\n### 🔴 DIRECTIVE FOR @@DEV\n${DEV_DIRECTIVE}\n" >> $FINAL_PROMPT_FILE
+                    fi
+                fi
+
                 echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
                 cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
 
