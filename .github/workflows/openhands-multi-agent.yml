@@ -592,6 +592,33 @@ jobs:
                 FINAL_PROMPT_FILE="/tmp/final_prompt.md"
 
                 cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
+
+                # For dev agent: extract the latest plan directive from genius comments
+                # and prepend it prominently so it appears first and separated from noise.
+                if [ "$ROLE_NAME" = "dev" ]; then
+                    GENIUS_PLAN=$(python3 -c '
+import re, sys
+text = open(sys.argv[1]).read()
+# Find all genius answer blocks and take the last one
+matches = re.findall(r"\*Genius answer\*\s*(.*?)<!-- agent-metrics:", text, re.DOTALL)
+if matches:
+    plan = matches[-1].strip()
+    # Strip <agentRunConfig>...</agentRunConfig> block from the plan text
+    plan = re.sub(r"<agentRunConfig>.*?</agentRunConfig>", "", plan, flags=re.DOTALL).strip()
+    # Skip empty plans
+    if plan:
+        print(plan)
+sys.exit(0)
+' "$AGENT_QUERY_PATH" 2>/dev/null || true)
+                    if [ -n "$GENIUS_PLAN" ]; then
+                        echo -e "\n\n⚠️ ACTIVE INSTRUCTION (from @@genius plan)\n" >> $FINAL_PROMPT_FILE
+                        echo "---START OF PLAN DIRECTIVE---" >> $FINAL_PROMPT_FILE
+                        echo "$GENIUS_PLAN" >> $FINAL_PROMPT_FILE
+                        echo "---END OF PLAN DIRECTIVE---" >> $FINAL_PROMPT_FILE
+                        echo "" >> $FINAL_PROMPT_FILE
+                    fi
+                fi
+
                 echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
                 cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
 

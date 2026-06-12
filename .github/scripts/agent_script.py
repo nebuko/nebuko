@@ -627,10 +627,12 @@ def main():
         f"builtins={include_default_tools}"
     )
 
-    # For the ctx agent, disable cli_mode to prevent the SDK from injecting
-    # problem-solving instructions that conflict with ctx's read-only role.
+    # For ctx and dev agents, disable cli_mode to prevent the SDK from injecting
+    # problem-solving instructions that conflict with their roles.
+    # The dev agent receives explicit instructions from @@genius plans and
+    # should follow them literally without SDK-added directives overriding them.
     system_prompt_kwargs = (
-        {} if role_name == "ctx" else {"cli_mode": True}
+        {} if role_name in ("ctx", "dev") else {"cli_mode": True}
     )
 
     agent = Agent(
