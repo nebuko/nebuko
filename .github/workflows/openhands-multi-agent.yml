@@ -598,11 +598,27 @@ jobs:
                 # Inject git diff for review agent
                 if [ "$ROLE_NAME" = "review" ]; then
                     echo -e "\n\n--- GIT DIFF ---\n" >> $FINAL_PROMPT_FILE
-                    PR_NUMBER=$(grep -oP 'PR #\K\d+' "$AGENT_QUERY_PATH" | tail -1)
+
+                    # --- Enhanced PR Discovery for Review Agent ---
+                    # Strategy: API-first discovery of PRs linked to the current issue, with regex fallback.
+                    ISSUE_NUMBER="${{ env.TARGET_NUMBER }}"
+                    PR_NUMBER=""
+
+                    # 1. Primary: Query GitHub API for open PRs referencing this issue
+                    if [ "$ISSUE_NUMBER" != "0" ] && [ -n "$ISSUE_NUMBER" ]; then
+                      PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --search "is:pr #$ISSUE_NUMBER" --json number --jq '.[0].number' 2>/dev/null || echo "")
+                    fi
+
+                    # 2. Fallback: Regex scan of comment history for "PR #<digits>" pattern
+                    if [ -z "$PR_NUMBER" ]; then
+                      PR_NUMBER=$(grep -oP 'PR #\K\d+' "$AGENT_QUERY_PATH" 2>/dev/null | tail -1 || echo "")
+                    fi
+
+                    # 3. Inject diff or failure marker
                     if [ -n "$PR_NUMBER" ]; then
-                        gh pr diff "$PR_NUMBER" --repo "${{ github.repository }}" >> $FINAL_PROMPT_FILE 2>/dev/null || echo "(no diff available)" >> $FINAL_PROMPT_FILE
+                        gh pr diff "$PR_NUMBER" --repo "${{ github.repository }}" >> $FINAL_PROMPT_FILE 2>/dev/null || echo "(no diff available for PR#$PR_NUMBER)" >> $FINAL_PROMPT_FILE
                     else
-                        echo "(no PR number found in context)" >> $FINAL_PROMPT_FILE
+                        echo "(no PR found linked to issue#$ISSUE_NUMBER)" >> $FINAL_PROMPT_FILE
                     fi
                 fi
                 # 2. Maintenant on ne passe qu'un seul argument au script !
