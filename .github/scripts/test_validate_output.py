@@ -73,7 +73,8 @@ class TestValidateAgentRunConfig:
         result = validate_agent_run_config(
             '{"task": "dev", "complexity": "high", "reasoning": "high", '
             '"temperature": 0.3, "top_p": 0.95, "top_k": 50, '
-            '"repetition_penalty": 1.1, "round": 2}'
+            '"min_p": 0.0, "presence_penalty": 1.5, '
+            '"repetition_penalty": 1.0, "round": 2}'
         )
         assert result.is_valid is True
 
@@ -140,6 +141,36 @@ class TestValidateAgentRunConfig:
         result = validate_agent_run_config('{"task": "dev", "repetition_penalty": -0.5}')
         assert result.is_valid is False
         assert any("repetition_penalty" in e and "positive" in e.lower() for e in result.errors)
+
+    def test_min_p_wrong_type(self):
+        result = validate_agent_run_config('{"task": "dev", "min_p": "0.0"}')
+        assert result.is_valid is False
+        assert any("min_p" in e and "must be a number" in e for e in result.errors)
+
+    def test_min_p_out_of_range_high(self):
+        result = validate_agent_run_config('{"task": "dev", "min_p": 1.5}')
+        assert result.is_valid is False
+        assert any("min_p" in e and "range" in e.lower() for e in result.errors)
+
+    def test_min_p_out_of_range_low(self):
+        result = validate_agent_run_config('{"task": "dev", "min_p": -0.1}')
+        assert result.is_valid is False
+        assert any("min_p" in e and "range" in e.lower() for e in result.errors)
+
+    def test_presence_penalty_wrong_type(self):
+        result = validate_agent_run_config('{"task": "dev", "presence_penalty": "1.5"}')
+        assert result.is_valid is False
+        assert any("presence_penalty" in e and "must be a number" in e for e in result.errors)
+
+    def test_presence_penalty_out_of_range_high(self):
+        result = validate_agent_run_config('{"task": "dev", "presence_penalty": 3.0}')
+        assert result.is_valid is False
+        assert any("presence_penalty" in e and "range" in e.lower() for e in result.errors)
+
+    def test_presence_penalty_out_of_range_low(self):
+        result = validate_agent_run_config('{"task": "dev", "presence_penalty": -3.0}')
+        assert result.is_valid is False
+        assert any("presence_penalty" in e and "range" in e.lower() for e in result.errors)
 
     def test_round_wrong_type(self):
         result = validate_agent_run_config('{"task": "dev", "round": "two"}')
