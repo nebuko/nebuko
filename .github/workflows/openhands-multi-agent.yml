@@ -592,6 +592,24 @@ jobs:
                 FINAL_PROMPT_FILE="/tmp/final_prompt.md"
 
                 cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
+
+                # Extract active instruction mentioning the current agent role
+                # and prepend it prominently so the agent sees the directive first.
+                ACTIVE_INSTRUCTION=""
+                if echo "$TRIGGER_BODY" | grep -qi "@@$ROLE_NAME"; then
+                  ACTIVE_INSTRUCTION="$TRIGGER_BODY"
+                elif [ -f "$AGENT_QUERY_PATH" ] && grep -qi "@@$ROLE_NAME" "$AGENT_QUERY_PATH"; then
+                  # Grab the last block mentioning @@$ROLE_NAME from the assembled query file
+                  ACTIVE_INSTRUCTION=$(grep -B2 -A5 "@@$ROLE_NAME" "$AGENT_QUERY_PATH" | tail -20 || true)
+                fi
+
+                if [ -n "$ACTIVE_INSTRUCTION" ]; then
+                  echo "" >> $FINAL_PROMPT_FILE
+                  echo "=== TARGETED INSTRUCTION FOR @$ROLE_NAME ===" >> $FINAL_PROMPT_FILE
+                  echo "$ACTIVE_INSTRUCTION" >> $FINAL_PROMPT_FILE
+                  echo "==============================================" >> $FINAL_PROMPT_FILE
+                fi
+
                 echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
                 cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
 
