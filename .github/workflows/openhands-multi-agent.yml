@@ -831,10 +831,25 @@ jobs:
             - name: Process Split Plan (Issue Decomposition)
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME == 'genius'
               run: |
-                SPLIT_PLAN=""
+                # Combine all message parts into a single file to avoid missing
+                # <splitPlan> blocks that landed in parts 2+ after message splitting.
+                cat /dev/null > /tmp/full_message.txt
                 if [ -f "./github_comment.md" ]; then
-                  SPLIT_PLAN=$(sed -n '/<splitPlan>/,/<\/splitPlan>/p' ./github_comment.md | sed '1s/.*<splitPlan>//; $s/<\/splitPlan>.*//' | tr -d '\n' | jq -c '.' 2>/dev/null || echo "")
+                  cat "./github_comment.md" >> /tmp/full_message.txt
                 fi
+                if [ -f "final_message_parts_count.txt" ]; then
+                  PARTS_COUNT=$(cat final_message_parts_count.txt)
+                  for i in $(seq 2 "$PARTS_COUNT"); do
+                    PART_FILE="final_message_part_${i}.txt"
+                    if [ -f "$PART_FILE" ]; then
+                      echo "" >> /tmp/full_message.txt
+                      cat "$PART_FILE" >> /tmp/full_message.txt
+                    fi
+                  done
+                fi
+
+                SPLIT_PLAN=""
+                SPLIT_PLAN=$(sed -n '/<splitPlan>/,/<\/splitPlan>/p' /tmp/full_message.txt | sed '1s/.*<splitPlan>//; $s/<\/splitPlan>.*//' | tr -d '\n' | jq -c '.' 2>/dev/null || echo "")
 
                 if [ -z "$SPLIT_PLAN" ]; then
                   echo "No split plan found in agent output."
