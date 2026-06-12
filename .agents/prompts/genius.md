@@ -71,7 +71,23 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
   - Draft a detailed, step-by-step technical implementation plan
   - Include specific files to modify, what to change in each, and the order of changes
   - Estimate complexity (LOW/MEDIUM/HIGH)
-  - Hand off to @@dev:
+  - **If the plan involves 3+ independent steps**, decompose it into sub-issues for parallel tracking:
+    - Produce a `<splitPlan>` JSON block with one task per step:
+      ```
+      <splitPlan>
+      {"tasks": [{"title": "Step 1: ...", "body": "..."}, {"title": "Step 2: ...", "body": "..."}], "auto_trigger": true}
+      </splitPlan>
+      ```
+    - The `title` is the sub-issue title (be specific and descriptive).
+    - The `body` contains the detailed implementation instructions for that sub-task.
+    - Set `auto_trigger: true` to automatically start each sub-issue via @@genius.
+    - After the `<splitPlan>`, include the normal hand-off:
+      ```
+      <agentRunConfig>
+      {"task": "dev", "complexity": "high"}
+      </agentRunConfig>
+      ```
+  - **If the plan is simple** (< 3 steps or tightly coupled), skip the splitPlan and just hand off to @@dev directly:
     ```
     <agentRunConfig>
     {"task": "dev", "complexity": "medium"}
