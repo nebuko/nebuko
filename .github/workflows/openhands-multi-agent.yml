@@ -599,13 +599,10 @@ jobs:
                     GENIUS_PLAN=$(python3 -c '
 import re, sys
 text = open(sys.argv[1]).read()
-# Find all genius answer blocks and take the last one
 matches = re.findall(r"\*Genius answer\*\s*(.*?)<!-- agent-metrics:", text, re.DOTALL)
 if matches:
     plan = matches[-1].strip()
-    # Strip <agentRunConfig>...</agentRunConfig> block from the plan text
     plan = re.sub(r"<agentRunConfig>.*?</agentRunConfig>", "", plan, flags=re.DOTALL).strip()
-    # Skip empty plans
     if plan:
         print(plan)
 sys.exit(0)
