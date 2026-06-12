@@ -26,28 +26,32 @@ llms:
   qwen-3-6-30b:
     model_path: "hosted_vllm/qwen-3-6-30b-a3b"
     provider: "${providers.local_vllm}"
-    default_temperature: 0.0
+    default_temperature: 1.0
     input_price: 0.35
     output_price: 0.40
     thinking_enabled: true
     preserve_thinking: true
     max_output_tokens: 32768
     top_p: 0.95
-    top_k: 50
-    repetition_penalty: 1.1
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 1.5
+    repetition_penalty: 1.0
 
   qwen-3-6-27b:
     model_path: "hosted_vllm/qwen-3-6-27b"
     provider: "${providers.local_vllm}"
-    default_temperature: 0.0
+    default_temperature: 1.0
     input_price: 0.35
     output_price: 0.40
     thinking_enabled: true
     preserve_thinking: true
     max_output_tokens: 32768
     top_p: 0.95
-    top_k: 50
-    repetition_penalty: 1.1
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 1.5
+    repetition_penalty: 1.0
 
 # ── Agents: role → model + prompt + skills + tools ──
 # Tools: terminal, file_editor, task_tracker (SDK tools)

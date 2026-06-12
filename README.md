@@ -45,6 +45,8 @@ Each LLM (and optionally each agent) can define sampling parameters to control i
 |-----------|------|-------------|---------------|
 | `top_p` | float | Nucleus sampling — lower values produce more deterministic output | 0.1–1.0 |
 | `top_k` | int | Top-K token selection — limits candidate pool | 10–100 |
+| `min_p` | float | Minimum P sampling — filters tokens below this absolute probability threshold | 0.0–1.0 |
+| `presence_penalty` | float | Presence penalty — discourages repeating tokens based on presence | -2.0–2.0 |
 | `repetition_penalty` | float | Repetition penalty — values > 1.0 discourage repetition | 1.0–1.5 |
 
 These parameters cascade: per-invocation (`agentRunConfig`) > per-agent (YAML `agents.`) > per-LLM (YAML `llms.`). Lower `top_p` (0.1–0.5) combined with low temperature (0.0) dramatically improves instruction adherence.
