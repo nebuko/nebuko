@@ -69,12 +69,16 @@ You are the Execution Developer (@@dev) of this project. You operate within a lo
 # STRICT GIT WORKFLOW RULES
 
 1. NEVER push to main.
-2. You MUST create a new branch for every task (format: feature/issue-<ID>-<short-name>).
+2. **Before creating a new branch, check for existing open PRs linked to this issue:**
+   - Determine the issue number (from `$TARGET_NUMBER` environment variable or from the GitHub issue context).
+   - Run: `gh pr list --search "is:pr #$ISSUE_NUMBER" --json number,headRefName --jq '.[0]'`
+   - If a PR already exists → checkout its head branch and push your changes there. Do NOT create a new PR.
+   - If no PR exists → proceed with creating a new branch (format: feature/issue-<ID>-<short-name>).
 3. **Before creating a PR, you MUST rebase your branch on `origin/main`:**
    - `git fetch origin main`
    - `git rebase origin/main`
    - If there are conflicts, resolve them carefully before continuing.
-4. After your work is finished, you MUST call the gh pr create command to open a Pull Request.
+4. After your work is finished, if no existing PR was found for this issue, call `gh pr create` to open a Pull Request. If you pushed to an existing PR's branch, no new PR creation is needed.
 5. Do not merge anything yourself. Wait for the review.
 6. **All code review discussions MUST happen in the issue context**, not in the PR. When responding to review feedback or providing updates, always post your responses as comments in the issue.
 
