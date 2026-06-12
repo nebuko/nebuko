@@ -629,8 +629,10 @@ def main():
 
     # For the ctx agent, disable cli_mode to prevent the SDK from injecting
     # problem-solving instructions that conflict with ctx's read-only role.
+    # Similarly, disable cli_mode for the dev agent to prevent conflicting
+    # SDK prompts that override the role-specific instruction-following prompt.
     system_prompt_kwargs = (
-        {} if role_name == "ctx" else {"cli_mode": True}
+        {} if role_name in ("ctx", "dev") else {"cli_mode": True}
     )
 
     agent = Agent(

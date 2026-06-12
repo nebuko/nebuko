@@ -591,7 +591,27 @@ jobs:
 
                 FINAL_PROMPT_FILE="/tmp/final_prompt.md"
 
+                # For dev agent: prepend the direct instruction to ensure compliance.
+                # Extract the most recent @@dev mention from comment history and place it
+                # at the top of the final prompt so it dominates over any noise below.
+                DEV_DIRECTIVE_BLOCK=""
+                if [ "$ROLE_NAME" = "dev" ]; then
+                    # Search the agent query (which contains full comment history) for @@dev mentions.
+                    # Take the context around the LAST occurrence (most recent comment).
+                    DEV_INSTRUCTION=$(awk '/@@dev/{match_found=1} match_found && /^---/{print "---"; exit} match_found{print}' "$AGENT_QUERY_PATH" 2>/dev/null | head -20 || echo "")
+
+                    if [[ -n "$DEV_INSTRUCTION" ]]; then
+                        DEV_DIRECTIVE_BLOCK="⚠️ ACTIVE INSTRUCTION FOR @@DEV\nThe following instruction was directed at you. Follow it precisely:\n\n$(echo "$DEV_INSTRUCTION")\n\n--- END OF DIRECTIVE ---"
+                    fi
+                fi
+
                 cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
+
+                # Insert directive block right after role prompt if one exists
+                if [[ -n "$DEV_DIRECTIVE_BLOCK" ]]; then
+                    echo -e "\n\n$DEV_DIRECTIVE_BLOCK" >> $FINAL_PROMPT_FILE
+                fi
+
                 echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
                 cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
 
