@@ -226,8 +226,9 @@ jobs:
                     CONFIG_WORKFLOW=$(echo "$AGENT_CONFIG" | jq -r '.workflow // empty')
                     CONFIG_STEP=$(echo "$AGENT_CONFIG" | jq -r '.step // empty')
                     CONFIG_BRANCH=$(echo "$AGENT_CONFIG" | jq -r '.branch // empty')
+                    CONFIG_PR_NUMBER=$(echo "$AGENT_CONFIG" | jq -r '.pr_number // empty')
 
-                    echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING workflow=$CONFIG_WORKFLOW step=$CONFIG_STEP"
+                    echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING workflow=$CONFIG_WORKFLOW step=$CONFIG_STEP pr_number=$CONFIG_PR_NUMBER"
                   elif [ "$IS_BOT_COMMENT" -eq 0 ]; then
                     # @@mention fallback (human only)
                     LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue\|@@issue-reviewer' | tail -1)
@@ -244,6 +245,11 @@ jobs:
                     CONFIG_WORKFLOW=""
                     CONFIG_STEP=""
                     CONFIG_BRANCH=""
+                    CONFIG_PR_NUMBER=""
+                    # Parse explicit PR override: "@@review PR #NNN"
+                    if [ "$TASK" = "review" ]; then
+                      CONFIG_PR_NUMBER=$(echo "$TRIGGER_BODY" | grep -oP '@@review\s+PR\s+#\K\d+' || echo "")
+                    fi
                     # Construct agentRunConfig JSON for workflow resolver
                     AGENT_CONFIG=$(jq -n --arg task "$TASK" \
                       '{task: $task, complexity: "medium", reasoning: "none"}')
@@ -403,6 +409,7 @@ jobs:
                   echo "CONFIG_TOP_P=${CONFIG_TOP_P}" >> $GITHUB_ENV
                   echo "CONFIG_TOP_K=${CONFIG_TOP_K}" >> $GITHUB_ENV
                   echo "CONFIG_REPETITION_PENALTY=${CONFIG_REPETITION_PENALTY}" >> $GITHUB_ENV
+                  echo "CONFIG_PR_NUMBER=${CONFIG_PR_NUMBER}" >> $GITHUB_ENV
 
                   echo "Resolved agent: ROLE_NAME=$TASK MODEL=from-config COMPLEXITY=${COMPLEXITY}"
 
@@ -660,21 +667,30 @@ jobs:
                     echo -e "\n\n--- GIT DIFF ---\n" >> $FINAL_PROMPT_FILE
 
                     # --- Enhanced PR Discovery for Review Agent ---
-                    # Strategy: API-first discovery of PRs linked to the current issue, with regex fallback.
+                    # Priority 1 > 2 > 3 (first match wins)
                     ISSUE_NUMBER="${{ env.TARGET_NUMBER }}"
                     PR_NUMBER=""
 
-                    # 1. Primary: Query GitHub API for open PRs referencing this issue
-                    if [ "$ISSUE_NUMBER" != "0" ] && [ -n "$ISSUE_NUMBER" ]; then
-                      PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --search "is:pr #$ISSUE_NUMBER" --json number --jq '.[0].number' 2>/dev/null || echo "")
+                    # 1. HIGHEST PRIORITY: Explicit PR number from agentRunConfig JSON (dev agent hand-off)
+                    #    or from human override syntax "@@review PR #NNN"
+                    if [ -n "${{ env.CONFIG_PR_NUMBER }}" ] && [ "${{ env.CONFIG_PR_NUMBER }}" != "null" ]; then
+                      PR_NUMBER="${{ env.CONFIG_PR_NUMBER }}"
+                      echo "PR discovered via explicit pr_number: #$PR_NUMBER"
                     fi
 
-                    # 2. Fallback: Regex scan of comment history for "PR #<digits>" pattern
+                    # 2. Fallback: Query GitHub API for open PRs referencing this issue
+                    if [ -z "$PR_NUMBER" ] && [ "$ISSUE_NUMBER" != "0" ] && [ -n "$ISSUE_NUMBER" ]; then
+                      PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --search "is:pr #$ISSUE_NUMBER" --json number --jq '.[0].number' 2>/dev/null || echo "")
+                      echo "PR discovered via API ($ISSUE_NUMBER): ${PR_NUMBER:-none}"
+                    fi
+
+                    # 3. Final fallback: Regex scan of comment history for "PR #<digits>" pattern
                     if [ -z "$PR_NUMBER" ]; then
                       PR_NUMBER=$(grep -oP 'PR #\K\d+' "$AGENT_QUERY_PATH" 2>/dev/null | tail -1 || echo "")
+                      echo "PR discovered via regex fallback: ${PR_NUMBER:-none}"
                     fi
 
-                    # 3. Inject diff or failure marker
+                    # 4. Inject diff or failure marker
                     if [ -n "$PR_NUMBER" ]; then
                         gh pr diff "$PR_NUMBER" --repo "${{ github.repository }}" >> $FINAL_PROMPT_FILE 2>/dev/null || echo "(no diff available for PR#$PR_NUMBER)" >> $FINAL_PROMPT_FILE
                     else
