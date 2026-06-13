@@ -832,7 +832,17 @@ jobs:
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME == 'genius'
               run: |
                 SPLIT_PLAN=""
-                if [ -f "./github_comment.md" ]; then
+
+                # Priority 1: Check for pre-extracted split_plan.json (issue #231 fix)
+                # The agent_script.py now extracts <splitPlan> before message splitting,
+                # so it survives multi-part message fragmentation.
+                if [ -f "split_plan.json" ]; then
+                  SPLIT_PLAN=$(jq -c '.' split_plan.json 2>/dev/null || echo "")
+                  echo "Found split_plan.json (pre-extracted by agent_script.py)"
+                fi
+
+                # Priority 2: Fallback to parsing github_comment.md (single-part messages)
+                if [ -z "$SPLIT_PLAN" ] && [ -f "./github_comment.md" ]; then
                   SPLIT_PLAN=$(sed -n '/<splitPlan>/,/<\/splitPlan>/p' ./github_comment.md | sed '1s/.*<splitPlan>//; $s/<\/splitPlan>.*//' | tr -d '\n' | jq -c '.' 2>/dev/null || echo "")
                 fi
 
