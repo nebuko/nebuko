@@ -8,10 +8,89 @@ import unittest
 # Import the module under test
 sys.path.insert(0, os.path.dirname(__file__))
 from agent_script import (
+    extract_split_plan,
     split_message,
     _split_at_boundaries,
     _split_at_sentence_boundaries,
 )
+
+
+class TestExtractSplitPlan(unittest.TestCase):
+    """Test extract_split_plan functionality."""
+
+    def test_extract_simple_split_plan(self):
+        """Simple splitPlan with valid JSON should be extracted."""
+        message = "Some text\n\n<splitPlan>{\"tasks\": [{\"title\": \"Task 1\"}], \"auto_trigger\": true}</splitPlan>\n\nMore text"
+        result = extract_split_plan(message)
+        self.assertIsNotNone(result)
+        self.assertIn('"tasks"', result)
+        self.assertIn('"Task 1"', result)
+
+    def test_no_split_plan_returns_none(self):
+        """Message without splitPlan tags should return None."""
+        message = "This is a regular message without any plan."
+        result = extract_split_plan(message)
+        self.assertIsNone(result)
+
+    def test_empty_string_returns_none(self):
+        """Empty string should return None."""
+        result = extract_split_plan("")
+        self.assertIsNone(result)
+
+    def test_none_returns_none(self):
+        """None input should return None."""
+        result = extract_split_plan(None)
+        self.assertIsNone(result)
+
+    def test_multiline_json_in_split_plan(self):
+        """Multi-line JSON inside splitPlan tags should be extracted."""
+        json_content = (
+            '{\n'
+            '  "tasks": [\n'
+            '    {"title": "Step 1", "body": "Do thing one"},\n'
+            '    {"title": "Step 2", "body": "Do thing two"}\n'
+            '  ],\n'
+            '  "auto_trigger": true\n'
+            '}'
+        )
+        message = f"Intro text\n\n<splitPlan>\n{json_content}\n</splitPlan>\n\nClosing text"
+        result = extract_split_plan(message)
+        self.assertIsNotNone(result)
+        self.assertIn('Step 1', result)
+        self.assertIn('Step 2', result)
+        self.assertIn('auto_trigger', result)
+
+    def test_split_plan_with_whitespace_around_tags(self):
+        """Whitespace around tags should be stripped."""
+        message = "<splitPlan>   {\"tasks\": []}   </splitPlan>"
+        result = extract_split_plan(message)
+        self.assertEqual(result, '{"tasks": []}')
+
+    def test_split_plan_only(self):
+        """Message containing only splitPlan tags."""
+        message = '<splitPlan>{"tasks": [{"title": "A"}]}</splitPlan>'
+        result = extract_split_plan(message)
+        self.assertEqual(result, '{"tasks": [{"title": "A"}]}')
+
+    def test_large_message_with_split_plan_deep_inside(self):
+        """Simulates issue #231: splitPlan deep in a long message that would be split into parts."""
+        # Simulate what genius produces - a long plan where splitPlan may end up in part 2+
+        intro = "Implementation Plan\n\n" + ("Detailed analysis paragraph.\n\n") * 80
+        json_block = '{"tasks": [{"title": "Task 1"}, {"title": "Task 2"}, {"title": "Task 3"}], "auto_trigger": true}'
+        closing = "\n\nHand-off instructions.\n\n<agentRunConfig>\n{\"task\": \"dev\", \"complexity\": \"high\"}\n</agentRunConfig>"
+        message = f"{intro}<splitPlan>\n{json_block}\n</splitPlan>{closing}"
+        result = extract_split_plan(message)
+        self.assertIsNotNone(result)
+        self.assertIn("Task 1", result)
+        self.assertIn("Task 3", result)
+
+    def test_special_chars_in_json(self):
+        """JSON with special characters should be preserved."""
+        json_content = '{"tasks": [{"title": "Fix bug in foo_bar()", "body": "Update regex pattern: ^[a-z]+$"}]}'
+        message = f"<splitPlan>{json_content}</splitPlan>"
+        result = extract_split_plan(message)
+        self.assertIn("foo_bar()", result)
+        self.assertIn("^[a-z]+$", result)
 
 
 class TestSplitMessageBasic(unittest.TestCase):
