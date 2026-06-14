@@ -1,8 +1,10 @@
 """Tests for query_context.py."""
 
 import json
+import subprocess
 import tempfile
 import os
+from unittest.mock import patch
 
 import pytest
 
@@ -195,3 +197,101 @@ class TestBuildHistoryString:
         assert "### charlie a écrit :" in result
         assert "Extracted summary" in result
         assert "full body text here" not in result
+
+
+class TestMain:
+    """Test main() CLI entry point with mocked dependencies."""
+
+    def _write_event(self, data):
+        """Helper to write event JSON to a temp file and return path."""
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        json.dump(data, f)
+        f.close()
+        return f.name
+
+    def test_main_writes_output_file_and_prints_keys(self, capsys):
+        """main() writes formatted query to output file and prints KEY=value pairs."""
+        event_path = self._write_event({
+            "issue": {
+                "title": "Test issue",
+                "body": "Test body",
+                "user": {"login": "alice"},
+            }
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="git@github.com:owner/repo.git\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "42", "--event-path", event_path, "--output-file", "/tmp/test_output.md"]),
+        ):
+            from query_context import main
+            main()
+
+        captured = capsys.readouterr()
+        assert "AGENT_QUERY_PATH=/tmp/test_output.md" in captured.out
+        assert "ISSUE_TITLE=Test issue" in captured.out
+        assert "ISSUE_AUTHOR=alice" in captured.out
+        assert "ISSUE_BODY=Test body" in captured.out
+
+        with open("/tmp/test_output.md", "r") as f:
+            content = f.read()
+        assert "Test issue" in content
+        assert "Test body" in content
+        assert "alice" in content
+        os.unlink(event_path)
+
+    def test_main_uses_heredoc_for_multiline_values(self, capsys):
+        """main() uses heredoc format for multi-line body and history values."""
+        event_path = self._write_event({
+            "issue": {
+                "title": "Title",
+                "body": "Line one\nLine two",
+                "user": {"login": "bob"},
+            }
+        })
+
+        with (
+            patch(
+                "query_context.get_issue_comments",
+                return_value=[{"body": "Comment body", "user": {"login": "charlie"}}],
+            ),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "99", "--event-path", event_path, "--output-file", "/tmp/test_heredoc.md"]),
+        ):
+            from query_context import main
+            main()
+
+        captured = capsys.readouterr()
+        assert "ISSUE_BODY<<EOF" in captured.out
+        assert "Line one\nLine two" in captured.out
+        assert "COMMENT_HISTORY<<EOF" in captured.out
+        os.unlink(event_path)
+
+    def test_main_writes_to_github_env_when_set(self, capsys, monkeypatch):
+        """main() appends KEY=value pairs to GITHUB_ENV file when env var is set."""
+        github_env_path = "/tmp/test_github_env"
+        monkeypatch.setenv("GITHUB_ENV", github_env_path)
+
+        event_path = self._write_event({
+            "issue": {
+                "title": "Env test",
+                "body": "Body text",
+                "user": {"login": "dave"},
+            }
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "10", "--event-path", event_path, "--output-file", "/tmp/test_env.md"]),
+        ):
+            from query_context import main
+            main()
+
+        with open(github_env_path, "r") as f:
+            env_content = f.read()
+        assert "AGENT_QUERY_PATH=/tmp/test_env.md" in env_content
+        assert "ISSUE_TITLE=Env test" in env_content
+        assert "ISSUE_AUTHOR=dave" in env_content
+        os.unlink(event_path)
+        os.unlink(github_env_path)
