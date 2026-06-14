@@ -74,6 +74,10 @@ permissions:
     pull-requests: write
     issues: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
     run-task:
         runs-on: self-hosted
@@ -977,3 +981,50 @@ jobs:
                   SCRIPT_PATH=".github/scripts/summarize_metrics.py"
                 fi
                 python "$SCRIPT_PATH"
+
+    subtask-completion-notifier:
+        runs-on: ubuntu-latest
+        if: |
+          github.event_name == 'issues' &&
+          github.event.action == 'closed' &&
+          startsWith(github.event.issue.title, '[Sub-task')
+        steps:
+            - name: Notify parent issue of sub-task completion
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+                  REPOSITORY: ${{ github.repository }}
+                  ISSUE_NUMBER: ${{ github.event.issue.number }}
+                  ISSUE_TITLE: ${{ github.event.issue.title }}
+              run: |
+                # Extract 1-based index from title: [Sub-task N/M]
+                INDEX=$(echo "$ISSUE_TITLE" | grep -oP '\[Sub-task \K[0-9]+')
+                ZERO_INDEX=$((INDEX - 1))
+
+                # Fast path: resolve parent from parent-{N} label
+                PARENT_NUMBER=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  "https://api.github.com/repos/$REPOSITORY/issues/$ISSUE_NUMBER/labels" \
+                  | jq -r '.[] | select(.name | startswith("parent-")) | .name' \
+                  | head -1 \
+                  | sed 's/parent-//')
+
+                # Fallback: resolve parent via native sub-issue relationship
+                if [ -z "$PARENT_NUMBER" ] || [ "$PARENT_NUMBER" = "null" ]; then
+                  PARENT_NUMBER=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "X-GitHub-Api-Version: 2022-11-28" \
+                    "https://api.github.com/repos/$REPOSITORY/issues/$ISSUE_NUMBER" \
+                    | jq -r '.parent.duplicate_of // empty')
+                fi
+
+                if [ -z "$PARENT_NUMBER" ] || [ "$PARENT_NUMBER" = "null" ]; then
+                  echo "ERROR: Could not resolve parent issue number for sub-task #$ISSUE_NUMBER"
+                  exit 1
+                fi
+
+                echo "Sub-task #$ISSUE_NUMBER (index $ZERO_INDEX) completed. Notifying parent #$PARENT_NUMBER"
+
+                curl -s -X POST \
+                  -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  "https://api.github.com/repos/$REPOSITORY/issues/$PARENT_NUMBER/comments" \
+                  -d "{\"body\": \"@@genius <!-- subtask-complete: $ZERO_INDEX -->\"}"
