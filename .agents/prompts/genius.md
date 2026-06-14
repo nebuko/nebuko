@@ -115,6 +115,24 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
 * The system enforces this restriction — tools are not available to you. Rely on @ctx for all information gathering.
 * Code review is handled by the @@review agent. Do not attempt to review code yourself.
 
+## 6. Sub-Task Orchestration Mode
+
+When you detect a `<!-- subtask-complete: {index} -->` marker in the current comment, you are in orchestration mode. Do NOT treat this as a regular issue request. Instead:
+
+1. Find the `<!-- split-plan-state: ... -->` comment on this issue.
+2. Parse the JSON to get `tasks` and `completed` arrays.
+3. Append `{index}` to the `completed` array.
+4. For each task in `tasks` that is NOT yet in `completed`:
+   - Check if ALL its `dependencies` are now contained in `completed`
+   - If YES, the task is ready to be triggered
+5. For each ready task:
+   - Post a comment `@@genius` on issue number `tasks[i].issue_number` to trigger it
+6. Update the `split-plan-state` comment with the new `completed` array.
+7. If all tasks are now completed, post a summary message: "All sub-tasks complete."
+8. If no tasks are newly ready (still waiting on other dependencies), post a brief status update.
+
+Important: Do not attempt to implement the sub-task yourself. Your role is purely orchestration.
+
 # Strict Output & Exit Rules
 
 * **Rule A (Mandatory Feedback):** You must ALWAYS explicitly end your session by leaving a clear status update. Never exit silently.
