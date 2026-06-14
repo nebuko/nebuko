@@ -83,7 +83,7 @@ def check_summarizer_gate(
             "HAS_SUMMARY": "false",
         }
 
-    comments = get_issue_comments(repo, issue_number, gh_token)
+    comments = get_issue_comments(repo, issue_number, gh_token, dry_run=dry_run)
 
     non_bot_count = count_non_bot_comments(comments)
     has_summary = has_summary_comment(comments)

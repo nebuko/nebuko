@@ -72,7 +72,7 @@ def check_circuit_breaker(
             "BOT_MARKER_COUNT": "0",
         }
 
-    comments = get_issue_comments(repo, issue_number, gh_token)
+    comments = get_issue_comments(repo, issue_number, gh_token, dry_run=dry_run)
     bot_count, summary_count = count_bot_markers(comments)
 
     # Agent calls = (total bot markers - summary markers) / 2
