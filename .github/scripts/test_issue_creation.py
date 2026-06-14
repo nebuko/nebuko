@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 
@@ -16,6 +17,7 @@ from issue_creation import (
     TaskDefinition,
     create_sub_issues,
     load_split_plan,
+    store_split_plan_state,
     trigger_workflows,
 )
 
@@ -29,12 +31,26 @@ class TestTaskDefinition:
         assert task.title == "Do something"
         assert task.body == "Details here"
         assert task.labels == []
+        assert task.dependencies == []
 
     def test_with_labels(self):
         task = TaskDefinition(
             title="Fix bug", body="Fix the bug", labels=["bug", "priority"]
         )
         assert task.labels == ["bug", "priority"]
+
+    def test_with_dependencies(self):
+        task = TaskDefinition(
+            title="Step 2", body="...", dependencies=[1]
+        )
+        assert task.dependencies == [1]
+
+    def test_with_all_fields(self):
+        task = TaskDefinition(
+            title="Step 3", body="...", labels=["backend"], dependencies=[1, 2]
+        )
+        assert task.labels == ["backend"]
+        assert task.dependencies == [1, 2]
 
 
 # ── SplitPlan Tests ──────────────────────────────────────────────────
@@ -113,8 +129,35 @@ class TestLoadSplitPlan:
             load_split_plan(path)
         os.unlink(path)
 
+    def test_dependencies_loaded(self):
+        path = self._write_plan({
+            "tasks": [
+                {"title": "Step 1", "body": "B1", "dependencies": []},
+                {"title": "Step 2", "body": "B2", "dependencies": [1]},
+                {"title": "Step 3", "body": "B3", "dependencies": [1, 2]},
+            ],
+        })
+        plan = load_split_plan(path)
+        assert plan.tasks[0].dependencies == []
+        assert plan.tasks[1].dependencies == [1]
+        assert plan.tasks[2].dependencies == [1, 2]
+        os.unlink(path)
 
-# ── GitHubClient Tests (with mocked HTTP) ───────────────────────────
+    def test_dependencies_default_empty(self):
+        path = self._write_plan({
+            "tasks": [{"title": "T", "body": "B"}],
+        })
+        plan = load_split_plan(path)
+        assert plan.tasks[0].dependencies == []
+        os.unlink(path)
+
+    def test_dependencies_not_a_list_raises(self):
+        path = self._write_plan({
+            "tasks": [{"title": "T", "body": "B", "dependencies": "not-a-list"}],
+        })
+        with pytest.raises(ValueError, match="dependencies.*must be a list"):
+            load_split_plan(path)
+        os.unlink(path)
 
 
 def make_mock_response(data, status=200):
@@ -210,13 +253,36 @@ class TestCreateSubIssues:
         ])
 
         created = create_sub_issues(mock_client, plan, parent_number=50)
-        assert created == [101, 102, 103]
+        assert len(created) == 3
+        assert created[0] == {"index": 1, "number": 101, "dependencies": []}
+        assert created[1] == {"index": 2, "number": 102, "dependencies": []}
+        assert created[2] == {"index": 3, "number": 103, "dependencies": []}
         assert mock_client.create_issue.call_count == 3
         assert mock_client.add_sub_issue.call_count == 3
         # Verify sub_issue_id (internal id) is passed, not display number
         assert mock_client.add_sub_issue.call_args_list[0][0][1] == 1001
         assert mock_client.add_sub_issue.call_args_list[1][0][1] == 1002
         assert mock_client.add_sub_issue.call_args_list[2][0][1] == 1003
+
+    @patch("issue_creation.GitHubClient")
+    def test_return_includes_dependencies(self, MockClient):
+        mock_client = MagicMock()
+        mock_client.create_issue.side_effect = [
+            {"number": 101, "id": 1001},
+            {"number": 102, "id": 1002},
+            {"number": 103, "id": 1003},
+        ]
+
+        plan = SplitPlan(tasks=[
+            TaskDefinition(title="Step 1", body="B1", dependencies=[]),
+            TaskDefinition(title="Step 2", body="B2", dependencies=[1]),
+            TaskDefinition(title="Step 3", body="B3", dependencies=[1, 2]),
+        ])
+
+        created = create_sub_issues(mock_client, plan, parent_number=50)
+        assert created[0]["dependencies"] == []
+        assert created[1]["dependencies"] == [1]
+        assert created[2]["dependencies"] == [1, 2]
 
     @patch("issue_creation.GitHubClient")
     def test_position_ordering(self, MockClient):
@@ -251,7 +317,9 @@ class TestCreateSubIssues:
         ])
 
         created = create_sub_issues(mock_client, plan, parent_number=50)
-        assert created == [101, 103]  # Only successful ones
+        assert len(created) == 2
+        assert created[0]["number"] == 101
+        assert created[1]["number"] == 103
         # Summary comment posted on parent
         mock_client.create_comment.assert_called_once()
         body = mock_client.create_comment.call_args[0][1]
@@ -278,15 +346,87 @@ class TestCreateSubIssues:
 
 
 class TestTriggerWorkflows:
-    @patch("issue_creation.GitHubClient")
-    def test_posts_genius_on_each(self, MockClient):
+    def test_posts_genius_on_each_ready_task(self):
         mock_client = MagicMock()
-        trigger_workflows(mock_client, [101, 102])
+        tasks = [
+            {"index": 1, "number": 101, "dependencies": []},
+            {"index": 2, "number": 102, "dependencies": []},
+        ]
+        trigger_workflows(mock_client, tasks)
         assert mock_client.create_comment.call_count == 2
-        # create_comment(issue_number, body) uses positional args
         assert mock_client.create_comment.call_args_list[0][0][0] == 101
         assert mock_client.create_comment.call_args_list[0][0][1] == "@@genius"
         assert mock_client.create_comment.call_args_list[1][0][0] == 102
+
+    def test_skips_tasks_with_dependencies(self):
+        mock_client = MagicMock()
+        tasks = [
+            {"index": 1, "number": 101, "dependencies": []},
+            {"index": 2, "number": 102, "dependencies": [1]},
+            {"index": 3, "number": 103, "dependencies": [1, 2]},
+        ]
+        trigger_workflows(mock_client, tasks)
+        # Only task 1 (no deps) should be triggered
+        assert mock_client.create_comment.call_count == 1
+        assert mock_client.create_comment.call_args_list[0][0][0] == 101
+
+    def test_no_tasks_triggered_when_all_have_deps(self):
+        mock_client = MagicMock()
+        tasks = [
+            {"index": 1, "number": 101, "dependencies": [2]},
+            {"index": 2, "number": 102, "dependencies": [1]},
+        ]
+        trigger_workflows(mock_client, tasks)
+        assert mock_client.create_comment.call_count == 0
+
+    def test_trigger_error_does_not_abort_others(self, capsys):
+        mock_client = MagicMock()
+        # First call raises, second succeeds
+        mock_client.create_comment.side_effect = [ValueError("API error"), None]
+        tasks = [
+            {"index": 1, "number": 101, "dependencies": []},
+            {"index": 2, "number": 102, "dependencies": []},
+        ]
+        trigger_workflows(mock_client, tasks)
+        assert mock_client.create_comment.call_count == 2
+
+
+# ── store_split_plan_state Tests (mocked) ────────────────────────────
+
+
+class TestStoreSplitPlanState:
+    def test_posts_hidden_comment_with_state(self):
+        mock_client = MagicMock()
+        tasks = [
+            {"index": 1, "number": 101, "dependencies": []},
+            {"index": 2, "number": 102, "dependencies": [1]},
+        ]
+        store_split_plan_state(mock_client, parent_number=50, tasks_with_numbers=tasks)
+        mock_client.create_comment.assert_called_once()
+        body = mock_client.create_comment.call_args[0][1]
+        assert body.startswith("<!-- split-plan-state: ")
+        assert body.endswith(" -->")
+        # Extract and parse the JSON state
+        json_str = body[len("<!-- split-plan-state: "):-len(" -->")]
+        state = json.loads(json_str)
+        assert len(state["tasks"]) == 2
+        assert state["tasks"][0]["index"] == 1
+        assert state["tasks"][0]["issue_number"] == 101
+        assert state["tasks"][0]["dependencies"] == []
+        assert state["tasks"][1]["index"] == 2
+        assert state["tasks"][1]["issue_number"] == 102
+        assert state["tasks"][1]["dependencies"] == [1]
+        assert state["completed"] == []
+
+    def test_error_is_handled_gracefully(self, capsys):
+        mock_client = MagicMock()
+        mock_client.create_comment.side_effect = ValueError("API error")
+        tasks = [
+            {"index": 1, "number": 101, "dependencies": []},
+        ]
+        store_split_plan_state(mock_client, parent_number=50, tasks_with_numbers=tasks)
+        captured = capsys.readouterr()
+        assert "FAILED to store split plan state" in captured.out
 
 
 # ── CLI main() Tests ──────────────────────────────────────────────────
