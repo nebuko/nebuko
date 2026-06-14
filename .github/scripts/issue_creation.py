@@ -265,12 +265,15 @@ def create_sub_issues(
     """
     created: List[Dict[str, Any]] = []
     failed_tasks: List[Tuple[int, str, str]] = []  # (idx, title, error)
-    
+    total = len(plan.tasks)
+
     for idx, task in enumerate(plan.tasks, start=1):
-        print(f"[{idx}/{len(plan.tasks)}] Creating sub-issue: {task.title}")
-        
+        prefixed_title = f"[Sub-task {idx}/{total}] {task.title}"
+        labels_with_parent = list(task.labels) + [f"parent-{parent_number}"]
+        print(f"[{idx}/{total}] Creating sub-issue: {prefixed_title}")
+
         try:
-            result = client.create_issue(task.title, task.body, task.labels)
+            result = client.create_issue(prefixed_title, task.body, labels_with_parent)
             if result is None:
                 raise ValueError(
                     f"Failed to create issue: API response missing required "
