@@ -570,57 +570,11 @@ jobs:
 
             - name: Prepare Agent Query Context
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
-              env:
-                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                ISSUE_TEMPLATE: |
-                  # 📰 GITHUB CONTEXT
-
-                  An issue comment was triggered. Please review the details below (including full history) and take appropriate action.
-
-                  ## Issue Author
-                  {author}
-
-                  ## Issue Title
-                  {title}
-
-                  ## Issue Original Description
-                  {body}
-
-                  ---
-
-                  ## Full Comment History
-                  {history}
               run: |
-                EVENT_PATH="${{ github.event_path }}"
-                REPO_NAME="${{ github.repository }}"
-                
-                ISSUE_NUMBER="${{ env.TARGET_NUMBER }}"
-                export ISSUE_TITLE=$(jq -r '.issue.title // "No Title"' "$EVENT_PATH")
-                export ISSUE_BODY=$(jq -r '.issue.body // "No Description"' "$EVENT_PATH")
-                export ISSUE_AUTHOR=$(jq -r '.issue.user.login // "unknown"' "$EVENT_PATH")
-                
-                export COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
-                  --jq '.[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
-                if [[ -z "$COMMENT_HISTORY" ]]; then
-                  export COMMENT_HISTORY="No previous comments"
-                fi
-
-                # If a bot-agent-summary comment exists, prefer summary + recent comments
-                SUMMARY_LINE=$(echo "$COMMENT_HISTORY" | grep -m1 '<!-- bot-agent-summary -->' || true)
-                if [[ -n "$SUMMARY_LINE" ]]; then
-                  echo "Summary marker found. Using summary + last 5 comments only."
-                  # Extract the summary JSON (the block after the marker)
-                  SUMMARY_JSON=$(echo "$COMMENT_HISTORY" | sed -n '/<!-- bot-agent-summary -->/,/^---/p' | sed '1d' | head -n -1)
-                  # Get last 5 comments
-                  RECENT_COMMENTS=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
-                    --jq '.[-5:] | .[] | "### \(.user.login) a écrit :\n\(.body)\n---\n"' | tr -d '\r')
-                  printf -v COMMENT_HISTORY '### 📋 Issue Summary (auto-generated)\n%s\n\n---\n### Recent Comments:\n%s' "$SUMMARY_JSON" "$RECENT_COMMENTS"
-                fi
-                
-                # Format and write out using a safe single-line python execution
-                python3 -c 'import os; print(os.environ["ISSUE_TEMPLATE"].format(title=os.environ.get("ISSUE_TITLE",""), body=os.environ.get("ISSUE_BODY",""), author=os.environ.get("ISSUE_AUTHOR","unknown"), history=os.environ.get("COMMENT_HISTORY","")))' > /tmp/ready_prompt.md
-                
-                echo "AGENT_QUERY_PATH=/tmp/ready_prompt.md" >> $GITHUB_ENV
+                python3 .github/scripts/query_context.py \
+                  --issue-number ${{ github.event.issue.number }} \
+                  --output-file /tmp/ready_prompt.md \
+                  --event-path ${{ github.event_path }} >> $GITHUB_ENV
 
             - name: Configure git to use GH_PAT for workflow file access
               if: env.SKIP_AGENT == 'false'
