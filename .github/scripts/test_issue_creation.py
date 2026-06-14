@@ -259,6 +259,16 @@ class TestCreateSubIssues:
         assert created[2] == {"index": 3, "number": 103, "dependencies": []}
         assert mock_client.create_issue.call_count == 3
         assert mock_client.add_sub_issue.call_count == 3
+        # Verify titles are prefixed with [Sub-task N/M]
+        assert mock_client.create_issue.call_args_list[0][0][0] == "[Sub-task 1/3] Task A"
+        assert mock_client.create_issue.call_args_list[1][0][0] == "[Sub-task 2/3] Task B"
+        assert mock_client.create_issue.call_args_list[2][0][0] == "[Sub-task 3/3] Task C"
+        # Verify parent label is added to all issues
+        assert "parent-50" in mock_client.create_issue.call_args_list[0][0][2]
+        assert "parent-50" in mock_client.create_issue.call_args_list[1][0][2]
+        assert "parent-50" in mock_client.create_issue.call_args_list[2][0][2]
+        # Verify existing labels are preserved alongside parent label
+        assert "bug" in mock_client.create_issue.call_args_list[2][0][2]
         # Verify sub_issue_id (internal id) is passed, not display number
         assert mock_client.add_sub_issue.call_args_list[0][0][1] == 1001
         assert mock_client.add_sub_issue.call_args_list[1][0][1] == 1002
@@ -462,7 +472,7 @@ class TestCLIMain:
             from issue_creation import main
             main()
         
-        mock_client.create_issue.assert_called_once_with("T", "B", [])
+        mock_client.create_issue.assert_called_once_with("[Sub-task 1/1] T", "B", ["parent-10"])
         # Verify internal id (999) is passed, not display number (99)
         mock_client.add_sub_issue.assert_called_once_with(10, 999, position=1)
 
