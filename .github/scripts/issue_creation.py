@@ -20,7 +20,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -31,6 +31,7 @@ class TaskDefinition:
     title: str
     body: str
     labels: List[str] = field(default_factory=list)
+    dependencies: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -223,10 +224,14 @@ def load_split_plan(path: str) -> SplitPlan:
         labels = t.get("labels", [])
         if not isinstance(labels, list):
             raise ValueError(f"Task #{i} 'labels' must be a list")
+        dependencies = t.get("dependencies", [])
+        if not isinstance(dependencies, list):
+            raise ValueError(f"Task #{i} 'dependencies' must be a list")
         tasks.append(TaskDefinition(
             title=t["title"],
             body=t.get("body", ""),
             labels=labels,
+            dependencies=dependencies,
         ))
     
     return SplitPlan(
@@ -239,7 +244,7 @@ def create_sub_issues(
     client: GitHubClient,
     plan: SplitPlan,
     parent_number: int,
-) -> List[int]:
+) -> List[Dict[str, Any]]:
     """Execute a split plan: create issues and link them as sub-issues.
     
     Processes each task independently — failures on one task do not abort
@@ -252,12 +257,13 @@ def create_sub_issues(
         parent_number: Parent issue number.
         
     Returns:
-        List of created issue numbers (only successful creations).
+        List of dicts with "index", "number", and "dependencies" for each
+        successfully created issue.
         
     Raises:
         ValueError: If a newly created issue has no valid issue number.
     """
-    created_numbers: List[int] = []
+    created: List[Dict[str, Any]] = []
     failed_tasks: List[Tuple[int, str, str]] = []  # (idx, title, error)
     
     for idx, task in enumerate(plan.tasks, start=1):
@@ -277,7 +283,11 @@ def create_sub_issues(
             client.add_sub_issue(parent_number, issue_id, position=idx)
             print(f"  → Linked as sub-issue of #{parent_number} (position {idx})")
             
-            created_numbers.append(issue_num)
+            created.append({
+                "index": idx,
+                "number": issue_num,
+                "dependencies": task.dependencies,
+            })
         
         except Exception as e:
             error_msg = str(e)
@@ -289,7 +299,7 @@ def create_sub_issues(
         summary_lines = [
             "⚠️ **Partial decomposition** — some sub-issues could not be created:",
             "",
-            f"**Succeeded:** {len(created_numbers)}/{len(plan.tasks)}",
+            f"**Succeeded:** {len(created)}/{len(plan.tasks)}",
             "",
             "**Failed tasks:**",
         ]
@@ -303,27 +313,74 @@ def create_sub_issues(
         except Exception:
             print(f"WARNING: Failed to post summary comment on parent issue #{parent_number}")
     
-    return created_numbers
+    return created
+
+
+def store_split_plan_state(
+    client: GitHubClient,
+    parent_number: int,
+    tasks_with_numbers: List[Dict[str, Any]],
+) -> None:
+    """Post a hidden comment on the parent issue with the dependency graph state.
+    
+    The comment uses HTML comment syntax so it's invisible in the UI but
+    accessible via the API and readable by agents scanning issue history.
+    
+    Args:
+        client: GitHub API client.
+        parent_number: Parent issue number.
+        tasks_with_numbers: List of task dicts with "index", "number", "dependencies".
+    """
+    state = {
+        "tasks": [
+            {
+                "index": t["index"],
+                "issue_number": t["number"],
+                "dependencies": t.get("dependencies", []),
+            }
+            for t in tasks_with_numbers
+        ],
+        "completed": [],
+    }
+    body = f"<!-- split-plan-state: {json.dumps(state)} -->"
+    try:
+        client.create_comment(parent_number, body)
+        print(f"  → Stored split plan state on parent issue #{parent_number}")
+    except Exception as e:
+        print(f"  → FAILED to store split plan state: {e}")
 
 
 def trigger_workflows(
     client: GitHubClient,
-    issue_numbers: List[int],
+    tasks_with_numbers: List[Dict[str, Any]],
 ) -> None:
-    """Post @@genius comments on sub-issues to trigger their workflows.
+    """Post @@genius comments only on tasks with no pending dependencies.
     
     Args:
         client: GitHub API client.
-        issue_numbers: List of issue numbers to trigger.
+        tasks_with_numbers: List of task dicts with "index", "number", "dependencies".
+            Only tasks whose "dependencies" list is empty will be triggered.
     """
     trigger_body = "@@genius"
+    triggered = 0
+    skipped = 0
     
-    for num in issue_numbers:
+    for task in tasks_with_numbers:
+        if task.get("dependencies"):
+            skipped += 1
+            continue
+        
+        num = task["number"]
         try:
             client.create_comment(num, trigger_body)
             print(f"  → Triggered workflow on issue #{num}")
+            triggered += 1
         except Exception as e:
             print(f"  → FAILED to trigger issue #{num}: {e}")
+    
+    if skipped:
+        print(f"  → Skipped {skipped} task(s) with unmet dependencies")
+    print(f"  → Total triggered: {triggered}/{len(tasks_with_numbers)}")
 
 
 # ── CLI Interface ────────────────────────────────────────────────────
@@ -366,13 +423,17 @@ def main():
 
     if args.command == "create":
         plan = load_split_plan(args.plan)
-        created = create_sub_issues(client, plan, args.parent)
+        tasks_with_numbers = create_sub_issues(client, plan, args.parent)
+        
+        if tasks_with_numbers:
+            store_split_plan_state(client, args.parent, tasks_with_numbers)
         
         if plan.auto_trigger and not args.no_trigger:
-            print("Triggering workflows on sub-issues...")
-            trigger_workflows(client, created)
+            print("Triggering workflows on ready sub-issues...")
+            trigger_workflows(client, tasks_with_numbers)
         
-        print(f"\nCreated {len(created)} sub-issue(s): {created}")
+        created_numbers = [t["number"] for t in tasks_with_numbers]
+        print(f"\nCreated {len(created_numbers)} sub-issue(s): {created_numbers}")
 
     elif args.command == "list":
         subs = client.list_sub_issues(args.parent)
