@@ -153,17 +153,17 @@ class TestGitHubClient:
 
     @patch("issue_creation.urlopen")
     def test_create_issue(self, mock_urlopen):
-        mock_urlopen.return_value = make_mock_response({"number": 42})
+        mock_urlopen.return_value = make_mock_response({"number": 42, "id": 12345})
         client = GitHubClient(repo="owner/repo", token="test-token")
-        num = client.create_issue("Test Issue", "Body", ["label1"])
-        assert num == 42
+        result = client.create_issue("Test Issue", "Body", ["label1"])
+        assert result == {"number": 42, "id": 12345}
         mock_urlopen.assert_called_once()
 
     @patch("issue_creation.urlopen")
     def test_add_sub_issue(self, mock_urlopen):
         mock_urlopen.return_value = make_mock_response({})
         client = GitHubClient(repo="owner/repo", token="test-token")
-        client.add_sub_issue(parent_number=10, child_number=42, position=1)
+        client.add_sub_issue(parent_number=10, sub_issue_id=12345, position=1)
         mock_urlopen.assert_called_once()
 
     @patch("issue_creation.urlopen")
@@ -197,7 +197,11 @@ class TestCreateSubIssues:
     @patch("issue_creation.GitHubClient")
     def test_creates_and_links_issues(self, MockClient):
         mock_client = MagicMock()
-        mock_client.create_issue.side_effect = [101, 102, 103]
+        mock_client.create_issue.side_effect = [
+            {"number": 101, "id": 1001},
+            {"number": 102, "id": 1002},
+            {"number": 103, "id": 1003},
+        ]
 
         plan = SplitPlan(tasks=[
             TaskDefinition(title="Task A", body="Body A"),
@@ -209,11 +213,15 @@ class TestCreateSubIssues:
         assert created == [101, 102, 103]
         assert mock_client.create_issue.call_count == 3
         assert mock_client.add_sub_issue.call_count == 3
+        # Verify sub_issue_id (internal id) is passed, not display number
+        assert mock_client.add_sub_issue.call_args_list[0][0][1] == 1001
+        assert mock_client.add_sub_issue.call_args_list[1][0][1] == 1002
+        assert mock_client.add_sub_issue.call_args_list[2][0][1] == 1003
 
     @patch("issue_creation.GitHubClient")
     def test_position_ordering(self, MockClient):
         mock_client = MagicMock()
-        mock_client.create_issue.return_value = 100
+        mock_client.create_issue.return_value = {"number": 100, "id": 999}
 
         plan = SplitPlan(tasks=[
             TaskDefinition(title="T1", body="B1"),
@@ -230,7 +238,11 @@ class TestCreateSubIssues:
         """If one task fails, remaining tasks still execute and a summary is posted."""
         mock_client = MagicMock()
         # 2nd call raises, 3rd succeeds
-        mock_client.create_issue.side_effect = [101, ValueError("API error"), 103]
+        mock_client.create_issue.side_effect = [
+            {"number": 101, "id": 1001},
+            ValueError("API error"),
+            {"number": 103, "id": 1003},
+        ]
 
         plan = SplitPlan(tasks=[
             TaskDefinition(title="T1", body="B1"),
@@ -295,7 +307,7 @@ class TestCLIMain:
     def test_create_command(self, MockClient, mock_load_plan, capsys):
         mock_client = MagicMock()
         MockClient.return_value = mock_client
-        mock_client.create_issue.return_value = 99
+        mock_client.create_issue.return_value = {"number": 99, "id": 999}
         mock_load_plan.return_value = SplitPlan(
             tasks=[TaskDefinition(title="T", body="B")], auto_trigger=False
         )
@@ -311,7 +323,8 @@ class TestCLIMain:
             main()
         
         mock_client.create_issue.assert_called_once_with("T", "B", [])
-        mock_client.add_sub_issue.assert_called_once_with(10, 99, position=1)
+        # Verify internal id (999) is passed, not display number (99)
+        mock_client.add_sub_issue.assert_called_once_with(10, 999, position=1)
 
     @patch("issue_creation.GitHubClient")
     def test_list_command(self, MockClient, capsys):
@@ -337,6 +350,7 @@ class TestCLIMain:
     def test_link_command(self, MockClient, capsys):
         mock_client = MagicMock()
         MockClient.return_value = mock_client
+        mock_client.get_issue_by_number.return_value = 98765
         
         with patch("sys.argv", [
             "issue_creation.py", "link",
@@ -347,4 +361,6 @@ class TestCLIMain:
             from issue_creation import main
             main()
         
-        mock_client.add_sub_issue.assert_called_once_with(10, 42)
+        mock_client.get_issue_by_number.assert_called_once_with(42)
+        # Verify internal id (98765) is passed, not display number (42)
+        mock_client.add_sub_issue.assert_called_once_with(10, 98765)

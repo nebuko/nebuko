@@ -97,7 +97,7 @@ class GitHubClient:
         except Exception as e:
             raise GithubAPIError(0, f"Request failed: {e}", "")
 
-    def create_issue(self, title: str, body: str, labels: List[str]) -> Optional[int]:
+    def create_issue(self, title: str, body: str, labels: List[str]) -> Optional[dict]:
         """Create a new issue in the repository.
         
         Args:
@@ -106,7 +106,8 @@ class GitHubClient:
             labels: List of label names.
             
         Returns:
-            The issue number of the newly created issue, or None if absent.
+            A dict with "number" (display number) and "id" (internal ID),
+            or None if the response is missing required fields.
         """
         path = f"/repos/{self.repo}/issues"
         payload = {"title": title, "body": body}
@@ -114,9 +115,13 @@ class GitHubClient:
             payload["labels"] = labels
         
         result = self._request("POST", path, payload)
-        return result.get("number")
+        number = result.get("number")
+        iid = result.get("id")
+        if number is None or iid is None:
+            return None
+        return {"number": number, "id": iid}
 
-    def add_sub_issue(self, parent_number: int, child_number: int, position: Optional[int] = None) -> None:
+    def add_sub_issue(self, parent_number: int, sub_issue_id: int, position: Optional[int] = None) -> None:
         """Link an issue as a sub-issue of a parent.
         
         Uses the sub-issues API endpoint.
@@ -124,15 +129,28 @@ class GitHubClient:
         
         Args:
             parent_number: Parent issue number.
-            child_number: Child issue number to link.
+            sub_issue_id: Internal ID of the child issue (not display number).
             position: Position in the sub-issue list (optional).
         """
         path = f"/repos/{self.repo}/issues/{parent_number}/sub_issues"
-        body = {"issue_number": child_number}
+        body = {"sub_issue_id": sub_issue_id}
         if position is not None:
             body["position"] = position
         
         self._request("POST", path, body)
+
+    def get_issue_by_number(self, issue_number: int) -> Optional[int]:
+        """Fetch the internal ID of an issue by its display number.
+        
+        Args:
+            issue_number: Display number of the issue.
+            
+        Returns:
+            Internal ID of the issue, or None if not found.
+        """
+        path = f"/repos/{self.repo}/issues/{issue_number}"
+        result = self._request("GET", path)
+        return result.get("id")
 
     def list_sub_issues(self, parent_number: int) -> List[dict]:
         """List all sub-issues of a parent issue.
@@ -246,15 +264,17 @@ def create_sub_issues(
         print(f"[{idx}/{len(plan.tasks)}] Creating sub-issue: {task.title}")
         
         try:
-            issue_num = client.create_issue(task.title, task.body, task.labels)
-            if issue_num is None:
+            result = client.create_issue(task.title, task.body, task.labels)
+            if result is None:
                 raise ValueError(
-                    f"Failed to create issue: API response missing 'number' "
-                    f"field for '{task.title}'"
+                    f"Failed to create issue: API response missing required "
+                    f"fields for '{task.title}'"
                 )
-            print(f"  → Created issue #{issue_num}")
+            issue_num = result["number"]
+            issue_id = result["id"]
+            print(f"  → Created issue #{issue_num} (id={issue_id})")
             
-            client.add_sub_issue(parent_number, issue_num, position=idx)
+            client.add_sub_issue(parent_number, issue_id, position=idx)
             print(f"  → Linked as sub-issue of #{parent_number} (position {idx})")
             
             created_numbers.append(issue_num)
@@ -363,8 +383,12 @@ def main():
             print(f"No sub-issues found for #{args.parent}")
 
     elif args.command == "link":
-        client.add_sub_issue(args.parent, args.child)
-        print(f"Linked #{args.child} as sub-issue of #{args.parent}")
+        sub_issue_id = client.get_issue_by_number(args.child)
+        if sub_issue_id is None:
+            print(f"ERROR: Could not find issue #{args.child}")
+            sys.exit(1)
+        client.add_sub_issue(args.parent, sub_issue_id)
+        print(f"Linked #{args.child} (id={sub_issue_id}) as sub-issue of #{args.parent}")
 
 
 if __name__ == "__main__":
