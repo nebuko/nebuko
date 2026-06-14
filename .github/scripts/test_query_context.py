@@ -16,7 +16,7 @@ from query_context import (
 
 
 class TestLoadEventData:
-    """Test load_event_data function with real GitHub event JSON fixtures."""
+    """Test load_event_data function with real GitHub event JSON fixtures (10 tests)."""
 
     def _write_event(self, data):
         """Helper to write event JSON to a temp file and return path."""
@@ -68,11 +68,116 @@ class TestLoadEventData:
 
         os.unlink(path)
 
+    def test_missing_title_specifically(self):
+        """When title is missing but body and user exist, title defaults to ''."""
+        event_data = {"issue": {"body": "A body", "user": {"login": "bob"}}}
+        path = self._write_event(event_data)
+
+        result = load_event_data(path)
+
+        assert result["title"] == ""
+        assert result["body"] == "A body"
+        assert result["author"] == "bob"
+
+        os.unlink(path)
+
+    def test_missing_body_specifically(self):
+        """When body is missing but title and user exist, body defaults to ''."""
+        event_data = {"issue": {"title": "A title", "user": {"login": "carol"}}}
+        path = self._write_event(event_data)
+
+        result = load_event_data(path)
+
+        assert result["title"] == "A title"
+        assert result["body"] == ""
+        assert result["author"] == "carol"
+
+        os.unlink(path)
+
+    def test_missing_issue_object(self):
+        """When .issue key is entirely absent, all fields default to ''."""
+        event_data = {"other_key": "some value"}
+        path = self._write_event(event_data)
+
+        result = load_event_data(path)
+
+        assert result["title"] == ""
+        assert result["body"] == ""
+        assert result["author"] == ""
+
+        os.unlink(path)
+
+    def test_malformed_json_raises(self):
+        """Reading malformed JSON raises an exception."""
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        f.write("this is not valid json {{{")
+        f.close()
+        path = f.name
+
+        with pytest.raises(json.JSONDecodeError):
+            load_event_data(path)
+
+        os.unlink(path)
+
+    def test_empty_file_raises(self):
+        """Reading an empty file raises an exception."""
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        f.write("")
+        f.close()
+        path = f.name
+
+        with pytest.raises(json.JSONDecodeError):
+            load_event_data(path)
+
+        os.unlink(path)
+
+    def test_extra_fields_ignored(self):
+        """Extra fields in the issue object are silently ignored."""
+        event_data = {
+            "issue": {
+                "title": "T",
+                "body": "B",
+                "user": {"login": "u"},
+                "state": "open",
+                "labels": ["bug"],
+                "number": 42,
+            }
+        }
+        path = self._write_event(event_data)
+
+        result = load_event_data(path)
+
+        assert result["title"] == "T"
+        assert result["body"] == "B"
+        assert result["author"] == "u"
+        assert "state" not in result
+
+        os.unlink(path)
+
+    def test_unicode_in_event_data(self):
+        """Unicode characters in event data are preserved correctly."""
+        event_data = {
+            "issue": {
+                "title": "日本語タイトル",
+                "body": "你好世界",
+                "user": {"login": "émoji-user 🚀"},
+            }
+        }
+        path = self._write_event(event_data)
+
+        result = load_event_data(path)
+
+        assert result["title"] == "日本語タイトル"
+        assert result["body"] == "你好世界"
+        assert result["author"] == "émoji-user 🚀"
+
+        os.unlink(path)
+
 
 class TestExtractSummaryFromComment:
-    """Test extract_summary_from_comment regex extraction."""
+    """Test extract_summary_from_comment regex extraction (15 tests)."""
 
-    def test_summary_with_marker_returns_stripped_text(self):
+    def test_valid_summary(self):
         """Comment with bot-agent-summary marker returns stripped summary."""
         comment = (
             "<!-- bot-agent-summary -->\n"
@@ -94,7 +199,7 @@ class TestExtractSummaryFromComment:
 
         assert result is None
 
-    def test_whitespace_around_summary_is_stripped(self):
+    def test_whitespace_stripped(self):
         """Whitespace around summary text is properly stripped."""
         comment = (
             "<!-- bot-agent-summary -->\n"
@@ -121,9 +226,116 @@ class TestExtractSummaryFromComment:
 
         assert result == "Flexible spaces summary"
 
+    def test_multiple_markers_first_wins(self):
+        """When multiple markers exist, the first one wins."""
+        comment = (
+            "<!-- bot-agent-summary -->\n"
+            "First summary\n"
+            "---\n"
+            "<!-- bot-agent-summary -->\n"
+            "Second summary\n"
+            "---\n"
+        )
+
+        result = extract_summary_from_comment(comment)
+
+        assert result == "First summary"
+
+    def test_marker_without_terminator(self):
+        """Marker without `---` terminator returns None (no match)."""
+        comment = "<!-- bot-agent-summary -->\nNo terminator here\nmore text"
+
+        result = extract_summary_from_comment(comment)
+
+        # ^--- requires --- at start of line; without it, no match
+        assert result is None
+
+    def test_empty_content_between_markers(self):
+        """Empty content between marker and terminator returns empty string."""
+        comment = "<!-- bot-agent-summary -->\n---"
+
+        result = extract_summary_from_comment(comment)
+
+        assert result == ""
+
+    def test_whitespace_only_content(self):
+        """Whitespace-only content between markers returns empty string after strip."""
+        comment = "<!-- bot-agent-summary -->\n   \n  \n---"
+
+        result = extract_summary_from_comment(comment)
+
+        assert result == ""
+
+    def test_nested_markers(self):
+        """Nested or embedded marker-like content within summary is preserved."""
+        comment = (
+            "<!-- bot-agent-summary -->\n"
+            "Contains <!-- another-comment --> inside\n"
+            "---\n"
+        )
+
+        result = extract_summary_from_comment(comment)
+
+        assert "Contains <!-- another-comment --> inside" == result
+
+    def test_marker_at_beginning(self):
+        """Marker at very beginning of comment body works correctly."""
+        comment = "<!-- bot-agent-summary -->\nAt the start\n---"
+
+        result = extract_summary_from_comment(comment)
+
+        assert result == "At the start"
+
+    def test_marker_after_preamble(self):
+        """Marker appearing after some preamble text still matches."""
+        comment = "Some preamble text before the marker.\n<!-- bot-agent-summary -->\nAfter preamble\n---"
+
+        result = extract_summary_from_comment(comment)
+
+        assert result == "After preamble"
+
+    def test_marker_with_no_space_in_comment(self):
+        """Marker written as <!--bot-agent-summary--> (no spaces) still matches due to regex \\s*."""
+        comment = "<!--bot-agent-summary-->\nCompact marker\n---"
+
+        result = extract_summary_from_comment(comment)
+
+        assert result == "Compact marker"
+
+    def test_multiple_dashes_first_line(self):
+        """Multiple --- lines: the first one terminates the summary."""
+        comment = (
+            "<!-- bot-agent-summary -->\n"
+            "Line one\n"
+            "---\n"
+            "---\n"
+            "More dashes\n"
+        )
+
+        result = extract_summary_from_comment(comment)
+
+        assert result == "Line one"
+
+    def test_comment_with_only_marker(self):
+        """Comment containing only the marker with nothing else returns None."""
+        comment = "<!-- bot-agent-summary -->"
+
+        result = extract_summary_from_comment(comment)
+
+        assert result is None
+
+    def test_very_long_summary_content(self):
+        """Very long summary content is extracted without truncation."""
+        long_text = "word " * 5000
+        comment = f"<!-- bot-agent-summary -->\n{long_text}\n---\n"
+
+        result = extract_summary_from_comment(comment)
+
+        assert len(result) == len(long_text.strip())
+
 
 class TestFormatQueryTemplate:
-    """Test format_query_template placeholder replacement."""
+    """Test format_query_template placeholder replacement (15 tests)."""
 
     def test_all_placeholders_replaced(self):
         """Template with all placeholders present replaces them correctly."""
@@ -156,9 +368,77 @@ class TestFormatQueryTemplate:
 
         assert result == "something"
 
+    def test_title_missing_individually(self):
+        """When title is None/empty, it falls back to empty string."""
+        result = format_query_template(None, "body", "author", "history", "{title}|{body}|{author}|{history}")
+        assert result == "|body|author|history"
+
+    def test_body_missing_individually(self):
+        """When body is None/empty, it falls back to empty string."""
+        result = format_query_template("title", None, "author", "history", "{title}|{body}|{author}|{history}")
+        assert result == "title||author|history"
+
+    def test_author_missing_individually(self):
+        """When author is None/empty, it falls back to empty string."""
+        result = format_query_template("title", "body", None, "history", "{title}|{body}|{author}|{history}")
+        assert result == "title|body||history"
+
+    def test_history_missing_individually(self):
+        """When history is None/empty, it falls back to empty string."""
+        result = format_query_template("title", "body", "author", None, "{title}|{body}|{author}|{history}")
+        assert result == "title|body|author|"
+
+    def test_all_fields_empty(self):
+        """All fields as empty strings produces minimal output."""
+        result = format_query_template("", "", "", "", "{title}{body}{author}{history}")
+        assert result == ""
+
+    def test_very_long_content(self):
+        """Very long content is handled without truncation."""
+        long_text = "x" * 10000
+        result = format_query_template(long_text, long_text, long_text, long_text, "{title}{body}{author}{history}")
+        assert len(result) == 40000
+
+    def test_special_characters_quotes(self):
+        """Quotes and backticks in content are preserved."""
+        result = format_query_template('say "hello"', 'use `code`', 'user"name', 'quoted "text"', "{title}|{body}|{author}|{history}")
+        assert 'say "hello"' in result
+        assert 'use `code`' in result
+        assert 'user"name' in result
+
+    def test_special_characters_html(self):
+        """HTML tags in content are preserved."""
+        result = format_query_template("<h1>Title</h1>", "<p>Body</p>", "<b>Bold</b>", "<em>Em</em>", "{title}|{body}|{author}|{history}")
+        assert "<h1>Title</h1>" in result
+        assert "<p>Body</p>" in result
+
+    def test_special_characters_newlines(self):
+        """Newlines in content are preserved."""
+        result = format_query_template("line1\nline2", "a\nb\nc", "x\ny", "h1\nh2", "{title}|{body}|{author}|{history}")
+        assert "line1\nline2" in result
+        assert "a\nb\nc" in result
+
+    def test_unicode_content(self):
+        """Unicode characters (emoji, CJK, etc.) are preserved."""
+        result = format_query_template("日本語テスト", "你好世界", "émoji 🚀", "üñîcödé", "{title}|{body}|{author}|{history}")
+        assert "日本語テスト" in result
+        assert "你好世界" in result
+        assert "émoji 🚀" in result
+        assert "üñîcödé" in result
+
+    def test_no_placeholders(self):
+        """Template with no placeholders returns the template unchanged."""
+        result = format_query_template("a", "b", "c", "d", "plain text only")
+        assert result == "plain text only"
+
+    def test_duplicate_placeholder_in_template(self):
+        """Placeholder appearing multiple times in template is replaced each time."""
+        result = format_query_template("X", "Y", "Z", "W", "{title}{title}{title}")
+        assert result == "XXX"
+
 
 class TestBuildHistoryString:
-    """Test _build_history_string internal helper."""
+    """Test _build_history_string internal helper (7 tests)."""
 
     def test_no_comments_returns_default_message(self):
         """Empty comments list returns 'No previous comments'."""
@@ -198,9 +478,58 @@ class TestBuildHistoryString:
         assert "Extracted summary" in result
         assert "full body text here" not in result
 
+    def test_multiple_comments_mixed(self):
+        """Multiple comments with mixed summary/no-summary are formatted correctly."""
+        comments = [
+            {"body": "Plain comment", "user": {"login": "user1"}},
+            {"body": "<!-- bot-agent-summary -->\nSummary text\n---\nBody", "user": {"login": "user2"}},
+            {"body": "Another plain", "user": {"login": "user3"}},
+        ]
+
+        from query_context import _build_history_string
+
+        result = _build_history_string(comments)
+
+        assert "### user1 a écrit :" in result
+        assert "Plain comment" in result
+        assert "### user2 a écrit :" in result
+        assert "Summary text" in result
+        assert "### user3 a écrit :" in result
+        assert "Another plain" in result
+
+    def test_missing_user_login_defaults_to_unknown(self):
+        """Comment with missing user login defaults to 'unknown'."""
+        comments = [{"body": "No user", "user": {}}]
+
+        from query_context import _build_history_string
+
+        result = _build_history_string(comments)
+
+        assert "### unknown a écrit :" in result
+
+    def test_missing_user_key_defaults_to_unknown(self):
+        """Comment with no user key at all defaults to 'unknown'."""
+        comments = [{"body": "No user key"}]
+
+        from query_context import _build_history_string
+
+        result = _build_history_string(comments)
+
+        assert "### unknown a écrit :" in result
+
+    def test_empty_body_comment(self):
+        """Comment with empty body is included with empty content."""
+        comments = [{"body": "", "user": {"login": "empty-user"}}]
+
+        from query_context import _build_history_string
+
+        result = _build_history_string(comments)
+
+        assert "### empty-user a écrit :" in result
+
 
 class TestMain:
-    """Test main() CLI entry point with mocked dependencies."""
+    """Test main() CLI entry point with mocked dependencies (15 tests)."""
 
     def _write_event(self, data):
         """Helper to write event JSON to a temp file and return path."""
@@ -209,7 +538,7 @@ class TestMain:
         f.close()
         return f.name
 
-    def test_main_writes_output_file_and_prints_keys(self, capsys):
+    def test_valid_invocation_writes_output_and_prints_keys(self, capsys):
         """main() writes formatted query to output file and prints KEY=value pairs."""
         event_path = self._write_event({
             "issue": {
@@ -240,7 +569,7 @@ class TestMain:
         assert "alice" in content
         os.unlink(event_path)
 
-    def test_main_uses_heredoc_for_multiline_values(self, capsys):
+    def test_heredoc_for_multiline_values(self, capsys):
         """main() uses heredoc format for multi-line body and history values."""
         event_path = self._write_event({
             "issue": {
@@ -267,7 +596,7 @@ class TestMain:
         assert "COMMENT_HISTORY<<EOF" in captured.out
         os.unlink(event_path)
 
-    def test_main_writes_to_github_env_when_set(self, capsys, monkeypatch):
+    def test_writes_to_github_env_when_set(self, capsys, monkeypatch):
         """main() appends KEY=value pairs to GITHUB_ENV file when env var is set."""
         github_env_path = "/tmp/test_github_env"
         monkeypatch.setenv("GITHUB_ENV", github_env_path)
@@ -295,3 +624,226 @@ class TestMain:
         assert "ISSUE_AUTHOR=dave" in env_content
         os.unlink(event_path)
         os.unlink(github_env_path)
+
+    def test_missing_issue_number_raises(self):
+        """Missing --issue-number argument raises SystemExit."""
+        with (
+            patch("sys.argv", ["query_context.py"]),
+        ):
+            from query_context import main
+            with pytest.raises(SystemExit):
+                main()
+
+    def test_custom_output_file(self, capsys):
+        """Custom --output-file path is used correctly."""
+        output_path = "/tmp/custom_query_output.md"
+        event_path = self._write_event({
+            "issue": {"title": "T", "body": "B", "user": {"login": "u"}}
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "1", "--event-path", event_path, "--output-file", output_path]),
+        ):
+            from query_context import main
+            main()
+
+        captured = capsys.readouterr()
+        assert f"AGENT_QUERY_PATH={output_path}" in captured.out
+        assert os.path.exists(output_path)
+        os.unlink(event_path)
+        os.unlink(output_path)
+
+    def test_custom_event_path(self, capsys):
+        """Custom --event-path reads from the specified location."""
+        event_path = self._write_event({
+            "issue": {"title": "CustomPath", "body": "Body", "user": {"login": "evan"}}
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "5", "--event-path", event_path, "--output-file", "/tmp/test_custom_path.md"]),
+        ):
+            from query_context import main
+            main()
+
+        captured = capsys.readouterr()
+        assert "ISSUE_TITLE=CustomPath" in captured.out
+        os.unlink(event_path)
+
+    def test_output_file_contains_formatted_template(self):
+        """Output file contains properly formatted DEFAULT_TEMPLATE content."""
+        event_path = self._write_event({
+            "issue": {"title": "MyTitle", "body": "MyBody", "user": {"login": "myauthor"}}
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "7", "--event-path", event_path, "--output-file", "/tmp/test_template.md"]),
+        ):
+            from query_context import main
+            main()
+
+        with open("/tmp/test_template.md", "r") as f:
+            content = f.read()
+        assert "## Issue Context" in content
+        assert "**Title:** MyTitle" in content
+        assert "**Author:** myauthor" in content
+        assert "## History" in content
+        os.unlink(event_path)
+        os.unlink("/tmp/test_template.md")
+
+    def test_key_value_parsing_of_output(self, capsys):
+        """stdout output can be parsed as KEY=value pairs."""
+        event_path = self._write_event({
+            "issue": {"title": "KvTest", "body": "Sbody", "user": {"login": "kvuser"}}
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "3", "--event-path", event_path, "--output-file", "/tmp/test_kv.md"]),
+        ):
+            from query_context import main
+            main()
+
+        captured = capsys.readouterr()
+        lines = captured.out.strip().split("\n")
+        kv_pairs = {}
+        for line in lines:
+            if "=" in line:
+                key, val = line.split("=", 1)
+                kv_pairs[key] = val
+        assert kv_pairs["AGENT_QUERY_PATH"] == "/tmp/test_kv.md"
+        assert kv_pairs["ISSUE_TITLE"] == "KvTest"
+        assert kv_pairs["ISSUE_AUTHOR"] == "kvuser"
+        os.unlink(event_path)
+
+    def test_with_comments_containing_summaries(self, capsys):
+        """main() correctly processes comments containing bot-agent-summary markers."""
+        event_path = self._write_event({
+            "issue": {"title": "SummaryTest", "body": "Body", "user": {"login": "alice"}}
+        })
+
+        comments = [
+            {
+                "body": "<!-- bot-agent-summary -->\nGenius was here\n---\nFull genius comment",
+                "user": {"login": "genius-bot"},
+            },
+        ]
+
+        with (
+            patch("query_context.get_issue_comments", return_value=comments),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "8", "--event-path", event_path, "--output-file", "/tmp/test_summaries.md"]),
+        ):
+            from query_context import main
+            main()
+
+        with open("/tmp/test_summaries.md", "r") as f:
+            content = f.read()
+        # The summary should appear in the output, not the full comment
+        assert "Genius was here" in content
+        assert "Full genius comment" not in content
+        os.unlink(event_path)
+        os.unlink("/tmp/test_summaries.md")
+
+    def test_with_empty_comments_list(self, capsys):
+        """main() handles empty comment list gracefully."""
+        event_path = self._write_event({
+            "issue": {"title": "NoComments", "body": "Body", "user": {"login": "solo"}}
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "11", "--event-path", event_path, "--output-file", "/tmp/test_nocomments.md"]),
+        ):
+            from query_context import main
+            main()
+
+        captured = capsys.readouterr()
+        assert "No previous comments" in captured.out or "COMMENT_HISTORY=No previous comments" in captured.out
+        os.unlink(event_path)
+
+    def test_special_characters_in_title(self, capsys):
+        """main() handles special characters in issue title."""
+        event_path = self._write_event({
+            "issue": {"title": 'Fix: "auth" bug & `code` <html>', "body": "Body", "user": {"login": "special-user"}}
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "12", "--event-path", event_path, "--output-file", "/tmp/test_special.md"]),
+        ):
+            from query_context import main
+            main()
+
+        captured = capsys.readouterr()
+        assert "ISSUE_TITLE=Fix: \"auth\" bug & `code` <html>" in captured.out
+        os.unlink(event_path)
+
+    def test_large_body_content(self, capsys):
+        """main() handles large body content via heredoc."""
+        large_body = "Line of text.\n" * 500
+        event_path = self._write_event({
+            "issue": {"title": "Large", "body": large_body, "user": {"login": "big"}}
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "13", "--event-path", event_path, "--output-file", "/tmp/test_large.md"]),
+        ):
+            from query_context import main
+            main()
+
+        captured = capsys.readouterr()
+        assert "ISSUE_BODY<<EOF" in captured.out
+        assert "EOF" in captured.out
+        os.unlink(event_path)
+
+    def test_custom_issue_template_env_var(self, capsys, monkeypatch):
+        """main() respects ISSUE_TEMPLATE environment variable for custom template."""
+        custom_template = "CUSTOM: {title} by {author}\n{history}"
+        monkeypatch.setenv("ISSUE_TEMPLATE", custom_template)
+
+        event_path = self._write_event({
+            "issue": {"title": "CustTpl", "body": "B", "user": {"login": "tst"}}
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "14", "--event-path", event_path, "--output-file", "/tmp/test_custom_tpl.md"]),
+        ):
+            from query_context import main
+            main()
+
+        with open("/tmp/test_custom_tpl.md", "r") as f:
+            content = f.read()
+        assert "CUSTOM: CustTpl by tst" in content
+        os.unlink(event_path)
+        os.unlink("/tmp/test_custom_tpl.md")
+
+    def test_stderr_output_verification(self, capsys):
+        """main() writes informational message to stderr."""
+        event_path = self._write_event({
+            "issue": {"title": "Stderr", "body": "B", "user": {"login": "u"}}
+        })
+
+        with (
+            patch("query_context.get_issue_comments", return_value=[]),
+            patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="owner/repo\n")),
+            patch("sys.argv", ["query_context.py", "--issue-number", "15", "--event-path", event_path, "--output-file", "/tmp/test_stderr.md"]),
+        ):
+            from query_context import main
+            main()
+
+        captured = capsys.readouterr()
+        assert "Wrote agent query context to /tmp/test_stderr.md" in captured.err
+        os.unlink(event_path)
