@@ -36,7 +36,7 @@ def _run(
     if dry_run:
         print(f"[DRY RUN] Would run: gh {' '.join(args)}", file=sys.stderr)
         return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
-    return subprocess.run(args, capture_output=True, text=True, input=input_data, env=env)
+    return subprocess.run(_gh_cli + args, capture_output=True, text=True, input=input_data, env=env)
 
 
 def get_issue_comments(
