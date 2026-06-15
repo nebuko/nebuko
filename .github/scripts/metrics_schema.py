@@ -45,6 +45,7 @@ class Metrics:
     agent_role: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    max_context_window: int = 0
     complexity: str = "N/A"
     tool_call_latency_ms: float = 0.0
     agent_runtime_ms: float = 0.0

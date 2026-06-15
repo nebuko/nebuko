@@ -232,7 +232,7 @@ class TestMetricsSchema(unittest.TestCase):
         # Verify dict has all expected keys
         expected_keys = {
             "run_id", "model_name", "agent_role", "input_tokens", "output_tokens",
-            "complexity", "tool_call_latency_ms", "agent_runtime_ms",
+            "max_context_window", "complexity", "tool_call_latency_ms", "agent_runtime_ms",
             "agent_runtimes_per_call_ms", "nb_tool_calls", "tool_call_error_rate",
             "start_time", "end_time", "tool_calls_per_tool", "errors_per_tool",
             "tokens_per_tool", "review_fix_requests",
