@@ -202,9 +202,11 @@ def collect_llm_metrics(conversation):
         # Get token usage
         input_tokens = 0
         output_tokens = 0
+        max_context_window = 0
         if combined_metrics.accumulated_token_usage:
             input_tokens = combined_metrics.accumulated_token_usage.prompt_tokens
             output_tokens = combined_metrics.accumulated_token_usage.completion_tokens
+            max_context_window = combined_metrics.accumulated_token_usage.context_window
         
         # Compute per-tool statistics
         tool_calls_per_tool = _compute_tool_calls_per_tool(conversation)
@@ -226,6 +228,7 @@ def collect_llm_metrics(conversation):
             agent_role=role_name,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            max_context_window=max_context_window,
             complexity=os.environ.get("COMPLEXITY", "N/A"),
             tool_call_latency_ms=tool_call_latency_ms,
             agent_runtime_ms=agent_runtime_ms,
