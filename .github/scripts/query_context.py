@@ -215,36 +215,32 @@ def main():
     with open(args.output_file, "w", encoding="utf-8") as f:
         f.write(query)
 
-    # Output KEY=value pairs to stdout for GITHUB_ENV consumption
+    # ─────────────────────────────────────────────────────────────
+    # Output to stdout for >> $GITHUB_ENV consumption
+    # ─────────────────────────────────────────────────────────────
     print(f"AGENT_QUERY_PATH={args.output_file}")
     print(f"ISSUE_TITLE={event_data['title']}")
     print(f"ISSUE_AUTHOR={event_data['author']}")
 
-    if "\n" in event_data["body"]:
-        print("ISSUE_BODY<<EOF")
-        print(event_data["body"])
-        print("EOF")
+    # Strip trailing whitespace/newlines to prevent parser confusion
+    body_val = event_data["body"].strip()
+    if "\n" in body_val:
+        print("ISSUE_BODY<<BODY_HEREDOC")
+        print(body_val)
+        print("BODY_HEREDOC")
     else:
-        print(f"ISSUE_BODY={event_data['body']}")
+        print(f"ISSUE_BODY={body_val}")
 
-    if "\n" in history:
-        print("COMMENT_HISTORY<<EOF")
-        print(history)
-        print("EOF")
+    history_val = history.strip()
+    if "\n" in history_val:
+        print("COMMENT_HISTORY<<HISTORY_HEREDOC")
+        print(history_val)
+        print("HISTORY_HEREDOC")
     else:
-        print(f"COMMENT_HISTORY={history}")
+        print(f"COMMENT_HISTORY={history_val}")
 
+    # Log to stderr only (won't interfere with GITHUB_ENV)
     print(f"Wrote agent query context to {args.output_file}", file=sys.stderr)
-
-    # Also write to GITHUB_ENV if available
-    github_env = os.environ.get("GITHUB_ENV", "")
-    if github_env:
-        with open(github_env, "a") as f:
-            f.write(f"AGENT_QUERY_PATH={args.output_file}\n")
-            f.write(f"ISSUE_TITLE={event_data['title']}\n")
-            f.write(f"ISSUE_AUTHOR={event_data['author']}\n")
-            f.write(f"ISSUE_BODY<<EOF\n{event_data['body']}\nEOF\n")
-            f.write(f"COMMENT_HISTORY<<EOF\n{history}\nEOF\n")
 
 
 if __name__ == "__main__":
