@@ -570,6 +570,8 @@ jobs:
 
             - name: Prepare Agent Query Context
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
               run: |
                 python3 .github/scripts/query_context.py \
                   --issue-number ${{ github.event.issue.number }} \
