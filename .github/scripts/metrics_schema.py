@@ -25,6 +25,7 @@ class Metrics:
         agent_role: Agent role name ("genius", "ctx", "dev", "review").
         input_tokens: Number of input/prompt tokens consumed.
         output_tokens: Number of output/completion tokens generated.
+        max_context_window: Peak context window observed during the run (used for KV cache estimation).
         complexity: Task complexity level (e.g. "medium", "high").
         tool_call_latency_ms: Average tool call latency in milliseconds.
         agent_runtime_ms: Total agent runtime in milliseconds (sum of all calls).
@@ -45,6 +46,7 @@ class Metrics:
     agent_role: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    max_context_window: int = 0
     complexity: str = "N/A"
     tool_call_latency_ms: float = 0.0
     agent_runtime_ms: float = 0.0
