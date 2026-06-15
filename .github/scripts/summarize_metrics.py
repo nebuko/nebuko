@@ -301,7 +301,7 @@ def generate_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Agent Statistics Summary")
     lines.append("")
-    lines.append("| Model | Runs | Input Tokens | Output Tokens | Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Avg Error Rate |")
+    lines.append("| Model | Runs | Input Tokens | Output Tokens | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Avg Error Rate |")
     lines.append("|-------|------|-------------|---------------|-------------------|------------------|----------------------|----------------|----------------|")
 
     grand_runs = 0
@@ -357,13 +357,12 @@ def generate_agent_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Agent Statistics Summary")
     lines.append("")
-    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
     lines.append("|-------|------|-------------|---------------|-------------------|------------------|----------------------|----------------|-------------|--------------|----------------|")
 
     grand_runs = 0
     grand_input = 0
     grand_output = 0
-    grand_context_window = 0
 
     # Define a stable sort order for known agents
     agent_order = {"genius": 0, "ctx": 1, "dev": 2}
@@ -403,14 +402,12 @@ def generate_agent_summary_table(aggregated):
         grand_runs += runs
         grand_input += input_tokens
         grand_output += output_tokens
-        grand_context_window += agg["total_context_window"]
 
     lines.append("")
     lines.append(
         f"**Totals:** {grand_runs} run{'s' if grand_runs != 1 else ''} "
         f"· {format_number(grand_input)} input tokens "
-        f"· {format_number(grand_output)} output tokens "
-        f"· {format_number(grand_context_window)} max context window"
+        f"· {format_number(grand_output)} output tokens"
     )
 
     return lines
@@ -424,7 +421,7 @@ def generate_model_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Model Statistics Summary")
     lines.append("")
-    lines.append("| Model | Runs | Input Tokens | Output Tokens | Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("| Model | Runs | Input Tokens | Output Tokens | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
     lines.append("|-------|------|-------------|---------------|-------------------|------------------|----------------------|----------------|-------------|--------------|----------------|")
 
     for model in sorted(aggregated.keys()):
