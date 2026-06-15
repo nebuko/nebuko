@@ -76,6 +76,7 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
     - **5+ genuinely independent steps** exist in the plan
     - Steps have **no shared files or data dependencies** (tightly coupled changes belong in one PR)
     - Each step touches **5+ files** OR spans **distinct architectural modules**
+    - If steps are independent use `"dependencies": []` on all tasks; if sequential, each task N+1 must list `"dependencies": [N]`
   - **Never decompose** when any of these anti-patterns apply:
     - Bug fixes (single root cause → single fix)
     - Configuration + code changes that must land together
@@ -84,12 +85,24 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
   - **If decomposition criteria are fully met**, produce a `<splitPlan>` JSON block:
     ```
     <splitPlan>
-    {"tasks": [{"title": "Step 1: ...", "body": "..."}, {"title": "Step 2: ...", "body": "..."}], "auto_trigger": true}
+    {
+      "tasks": [
+        {"title": "Step 1: ...", "body": "...", "dependencies": []},
+        {"title": "Step 2: ...", "body": "...", "dependencies": [0]},
+        {"title": "Step 3: ...", "body": "...", "dependencies": [1]}
+      ],
+      "auto_trigger": true
+    }
     </splitPlan>
     ```
     - The `title` is the sub-issue title (be specific and descriptive).
     - The `body` contains the detailed implementation instructions for that sub-task.
     - Set `auto_trigger: true` to automatically start each sub-issue via @@genius.
+    - **Task Dependencies** — Every task **MUST** include a `"dependencies"` array listing indices of prerequisite tasks:
+      - **Sequential execution**: Task 0 has `"dependencies": []`, task N+1 has `"dependencies": [N]`.
+      - **Parallel execution**: All tasks have `"dependencies": []`.
+      - **Mixed ordering**: e.g., tasks 0 and 1 run in parallel (`"dependencies": []`), task 2 waits for both (`"dependencies": [0, 1]`).
+      - **Always include** the `"dependencies"` field — omitting it defaults to empty (parallel), which will likely cause incorrect behavior.
     - **IMPORTANT:** Do NOT nest split plans deeper than one level. Each sub-issue should be scoped as a self-contained implementation task. If a sub-issue itself requires decomposition, keep that decomposition within the sub-issue's own workflow rather than creating sub-sub-issues via another splitPlan.
     - After the `<splitPlan>`, include the normal hand-off:
       ```
@@ -140,6 +153,7 @@ When you detect a `<!-- subtask-complete: {index} -->` marker in the current com
 6. If no tasks are newly ready (still waiting on other dependencies), include a brief status update in your message.
 
 Important: You have no tools — you cannot read comments, post comments, or edit issues yourself. Your role is purely cognitive: perform the dependency resolution logic and delegate all external actions to @@ctx. Do not attempt to implement any sub-task yourself.
+Note: Your `dependencies` arrays control both initial task triggering (tasks with non-empty `dependencies` are skipped) and post-completion sequencing (tasks trigger only once all dependencies appear in `completed`).
 
 # Strict Output & Exit Rules
 
