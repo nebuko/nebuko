@@ -31,6 +31,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -312,6 +313,30 @@ def extract_split_plan(message: str) -> str | None:
         return None
 
     match = re.search(r"<splitPlan>\s*(.*?)\s*</splitPlan>", message, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def extract_spec_stubs(message: str) -> str | None:
+    """
+    Extract <specStubs>...</specStubs> JSON block from a message.
+
+    Scans the entire message for the XML-like tags and returns the
+    JSON content between them, or None if no spec stubs are present.
+
+    Args:
+        message: The agent's final message (may contain <specStubs> tags).
+
+    Returns:
+        Raw JSON string from inside the tags, or None.
+    """
+    import re
+
+    if not message:
+        return None
+
+    match = re.search(r"<specStubs>\s*(.*?)\s*</specStubs>", message, re.DOTALL)
     if match:
         return match.group(1).strip()
     return None
@@ -703,6 +728,21 @@ def main():
         with open("split_plan.json", "w", encoding="utf-8") as f:
             f.write(split_plan_json)
         logger.info("Saved split_plan.json for workflow extraction")
+
+    # Extract <specStubs> and write stub files to disk for the dev agent to fill in.
+    spec_stubs_json = extract_spec_stubs(final_message) if final_message else None
+    if spec_stubs_json:
+        with open("spec_stubs.json", "w", encoding="utf-8") as f:
+            f.write(spec_stubs_json)
+        logger.info("Saved spec_stubs.json")
+        stubs_data = json.loads(spec_stubs_json)
+        for file_entry in stubs_data.get("files", []):
+            filepath = file_entry["path"]
+            content = file_entry["content"]
+            path_obj = Path(filepath)
+            path_obj.parent.mkdir(parents=True, exist_ok=True)
+            path_obj.write_text(content, encoding="utf-8")
+            logger.info(f"Created stub file: {filepath}")
 
     # Split long messages into multiple parts, each under the safe limit.
     # GitHub's comment API allows 65,536 chars, but we use 10,000 as a

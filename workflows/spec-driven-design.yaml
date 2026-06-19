@@ -1,0 +1,26 @@
+name: spec-driven-design
+description: "Spec-first workflow: analyze -> context -> generate stubs -> implement -> review"
+
+trigger:
+  agents: [genius]
+
+steps:
+  - name: analyze
+    agent: genius
+    next: context
+
+  - name: context
+    agent: ctx
+    next: spec
+
+  - name: spec
+    agent: genius
+    next: implement
+
+  - name: implement
+    agent: dev
+    next: review
+
+  - name: review
+    agent: review
+    next: null

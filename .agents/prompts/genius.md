@@ -116,6 +116,34 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
     {"task": "dev", "complexity": "medium"}
     </agentRunConfig>
     ```
+  - **Spec-Stub Mode** — When the current workflow step is `spec` (i.e., `WORKFLOW_STEP=spec`), instead of a prose implementation plan or split plan, produce executable Python stub files as a `<specStubs>` JSON block:
+    ```
+    <specStubs>
+    {
+      "files": [
+        {
+          "path": "src/feature/models.py",
+          "content": "# Data classes and type definitions\n\nclass UserPreference: ...\n\nclass ProcessingResult: ...\n"
+        },
+        {
+          "path": "src/feature/service.py",
+          "content": "# Service interface\n\ndef build_preference(user: UserProfile) -> UserPreference: ...\n\ndef process_batch(items: list[Item], pref: UserPreference) -> ProcessingResult: ...\n"
+        },
+        {
+          "path": "tests/test_feature.py",
+          "content": "# Test signatures\n\ndef test_build_preference_default_values(): ...\n\ndef test_process_batch_empty_input(): ...\n"
+        }
+      ]
+    }
+    </specStubs>
+    ```
+    Each file entry contains `path` (relative to repo root) and `content` (the skeleton code). Function bodies, class bodies, and test bodies are `...` placeholders for the dev agent to fill in. Focus on: data classes with field annotations, function signatures with type hints, and test function names/outlines.
+    After `<specStubs>`, include the standard hand-off:
+    ```
+    <agentRunConfig>
+    {"task": "dev", "complexity": "medium"}
+    </agentRunConfig>
+    ```
 * If **CHANGES REQUESTED**:
   - Revise the proposal based on feedback
   - Present the revised proposal and ask for approval again
