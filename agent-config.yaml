@@ -41,7 +41,7 @@ llms:
   qwen-3-6-27b:
     model_path: "hosted_vllm/qwen-3-6-27b"
     provider: "${providers.local_vllm}"
-    default_temperature: 1.0
+    default_temperature: 0.7
     input_price: 0.35
     output_price: 0.40
     thinking_enabled: true
@@ -59,56 +59,49 @@ llms:
 agents:
   genius:
     model: "${llms.qwen-3-6-27b}"
-    temperature: 0.2
+    temperature: 1.0
     prompt_file: ".agents/prompts/genius.md"
     skills: []
     tools: ["think", "finish"]
 
   dev:
     model: "${llms.qwen-3-6-27b}"
-    temperature: 0.0
     prompt_file: ".agents/prompts/dev.md"
     skills: []
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   ctx:
     model: "${llms.qwen-3-6-27b}"
-    temperature: 0.0
     prompt_file: ".agents/prompts/ctx.md"
     skills: []
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   review:
     model: "${llms.qwen-3-6-27b}"
-    temperature: 0.1
     prompt_file: ".agents/prompts/review.md"
     skills: []
     tools: ["think", "finish"]
 
   issue:
     model: "${llms.qwen-3-6-27b}"
-    temperature: 0.2
     prompt_file: ".agents/prompts/issue.md"
     skills: []
     tools: ["think", "finish"]
 
   issue-reviewer:
     model: "${llms.qwen-3-6-27b}"
-    temperature: 0.2
     prompt_file: ".agents/prompts/issue-reviewer.md"
     skills: []
     tools: ["think", "finish"]
 
   summarize:
     model: "${llms.qwen-3-6-27b}"
-    temperature: 0.1
     prompt_file: ".agents/prompts/summarize.md"
     skills: []
     tools: ["think", "finish"]
 
   debug:
     model: "${llms.qwen-3-6-27b}"
-    temperature: 0.0
     prompt_file: ".agents/prompts/debug.md"
     skills: []
     tools: ["terminal", "file_editor", "think", "finish"]
