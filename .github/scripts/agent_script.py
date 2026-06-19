@@ -735,13 +735,21 @@ def main():
         with open("spec_stubs.json", "w", encoding="utf-8") as f:
             f.write(spec_stubs_json)
         logger.info("Saved spec_stubs.json")
-        stubs_data = json.loads(spec_stubs_json)
+        try:
+            stubs_data = json.loads(spec_stubs_json)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse spec_stubs.json: {e}")
+            stubs_data = {"files": []}
+        repo_root = Path.cwd().resolve()
         for file_entry in stubs_data.get("files", []):
             filepath = file_entry["path"]
             content = file_entry["content"]
-            path_obj = Path(filepath)
-            path_obj.parent.mkdir(parents=True, exist_ok=True)
-            path_obj.write_text(content, encoding="utf-8")
+            resolved = (repo_root / filepath).resolve()
+            if not str(resolved).startswith(str(repo_root)):
+                logger.warning(f"Path traversal blocked: {filepath}")
+                continue
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            resolved.write_text(content, encoding="utf-8")
             logger.info(f"Created stub file: {filepath}")
 
     # Split long messages into multiple parts, each under the safe limit.
