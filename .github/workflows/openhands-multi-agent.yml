@@ -92,6 +92,7 @@ jobs:
               contains(github.event.issue.body, '@@review') ||
               contains(github.event.issue.body, '@@issue') ||
               contains(github.event.issue.body, '@@issue-reviewer') ||
+              contains(github.event.issue.body, '@@debug') ||
               contains(github.event.issue.body, '<agentRunConfig>'))) ||
             (github.event_name == 'issue_comment' &&
              (contains(github.event.comment.body, '@@genius') ||
@@ -100,6 +101,7 @@ jobs:
               contains(github.event.comment.body, '@@review') ||
               contains(github.event.comment.body, '@@issue') ||
               contains(github.event.comment.body, '@@issue-reviewer') ||
+              contains(github.event.issue.body, '@@debug') ||
               contains(github.event.comment.body, '<agentRunConfig>')))
           )
         env:
@@ -235,7 +237,7 @@ jobs:
                     echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING workflow=$CONFIG_WORKFLOW step=$CONFIG_STEP pr_number=$CONFIG_PR_NUMBER"
                   elif [ "$IS_BOT_COMMENT" -eq 0 ]; then
                     # @@mention fallback (human only)
-                    LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue\|@@issue-reviewer' | tail -1)
+                    LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue\|@@issue-reviewer\|@@debug' | tail -1)
                     TASK="${LAST_AGENT#@@}"
                     CONFIG_COMPLEXITY="medium"
                     CONFIG_REASONING="none"
@@ -437,8 +439,8 @@ jobs:
 
                     # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
                     # Only applies to human-triggered comments (no bot marker present)
-                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer' || true)
-                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@genius\|@ctx\|@dev\|@issue\|@issue-reviewer' || true)
+                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@@debug' || true)
+                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@genius\|@ctx\|@dev\|@issue\|@issue-reviewer\|@@debug' || true)
                     if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
                       echo "Human ping + agent ping detected. Skipping to let human orchestrate."
                       echo "SKIP_AGENT=true" >> $GITHUB_ENV
