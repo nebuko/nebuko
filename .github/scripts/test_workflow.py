@@ -674,3 +674,81 @@ class TestSubWorkflowResolution:
             assert result["PARENT_WORKFLOW"] == ""
             assert result["PARENT_WORKFLOW_STEP"] == ""
 
+    def test_sub_workflow_terminal_with_conditions(self):
+        """Terminal sub-workflow return-to-parent respects conditions on the sub-workflow step."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "start", "agent": "genius", "next": "subtask"},
+                    {
+                        "name": "subtask",
+                        "workflow": "child",
+                        "conditions": [
+                            {"on_result": "approved", "next": "deploy"},
+                            {"on_result": "rejected", "next": "fix"},
+                            {"on_result": "default", "next": "deploy"},
+                        ],
+                    },
+                    {"name": "deploy", "agent": "dev", "next": None},
+                    {"name": "fix", "agent": "dev", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
+                "name": "child",
+                "description": "Child workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "review-step", "agent": "review", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+
+            # With branch="approved" → should go to "deploy"
+            result = resolve(
+                {
+                    "task": "review",
+                    "workflow": "child",
+                    "step": "review-step",
+                    "branch": "approved",
+                    "parent_workflow": "parent",
+                    "parent_workflow_step": "subtask",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "dev"
+            assert result["WORKFLOW_NAME"] == "parent"
+            assert result["WORKFLOW_STEP"] == "deploy"
+
+            # With branch="rejected" → should go to "fix"
+            result = resolve(
+                {
+                    "task": "review",
+                    "workflow": "child",
+                    "step": "review-step",
+                    "branch": "rejected",
+                    "parent_workflow": "parent",
+                    "parent_workflow_step": "subtask",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "dev"
+            assert result["WORKFLOW_NAME"] == "parent"
+            assert result["WORKFLOW_STEP"] == "fix"
+
+            # With no branch → falls back to linear next (None here), so workflow completes
+            result = resolve(
+                {
+                    "task": "review",
+                    "workflow": "child",
+                    "step": "review-step",
+                    "parent_workflow": "parent",
+                    "parent_workflow_step": "subtask",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["SKIP_AGENT"] == "true"  # No linear next, so terminal
+

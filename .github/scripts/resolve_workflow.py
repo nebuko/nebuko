@@ -174,13 +174,14 @@ def _resolve_sub_workflow_entry(
 def _resolve_return_to_parent(
     parent_workflow_name: str,
     parent_workflow_step_name: str,
+    branch_key: str,
     workflows_dir: str,
     prompt_base: str,
 ) -> Optional[dict]:
     """Resolve returning to parent workflow after sub-workflow completion.
 
     Loads the parent workflow, finds the step that was the sub-workflow entry point,
-    and resolves the next step after it.
+    and resolves the next step after it using conditional routing if available.
     """
     parent_file = Path(workflows_dir) / f"{parent_workflow_name}.yaml"
     if not parent_file.exists():
@@ -213,8 +214,23 @@ def _resolve_return_to_parent(
             "REASON": f"Step '{parent_workflow_step_name}' not found in parent workflow",
         }
 
-    # Get the next step after the sub-workflow step
-    next_step_name = sub_wf_step.next
+    # Resolve next step — support conditional routing
+    next_step_name = None
+    if branch_key and sub_wf_step.conditions:
+        branch_matched = False
+        for condition in sub_wf_step.conditions:
+            if condition.on_result == branch_key:
+                next_step_name = condition.next
+                branch_matched = True
+                break
+        if not branch_matched:
+            for condition in sub_wf_step.conditions:
+                if condition.on_result == "default":
+                    next_step_name = condition.next
+                    break
+    else:
+        next_step_name = sub_wf_step.next
+
     if not next_step_name:
         # Sub-workflow step was terminal in parent — workflow ends here
         return {
@@ -288,67 +304,49 @@ def resolve_workflow_step(
     Returns:
         Dict with routing variables.
     """
-    # Check for sub-workflow completion: current step is terminal and we're in a sub-workflow
-    # We need to load the current workflow to check if the step is terminal
+    # Load workflow definition
     workflow_file = Path(workflows_dir) / f"{workflow_name}.yaml"
-    current_wf = None
-    if workflow_file.exists():
-        try:
-            current_wf = load_workflow(str(workflow_file))
-        except (FileNotFoundError, ValueError):
-            pass
+    if not workflow_file.exists():
+        # Fall back to direct task mapping if workflow file not found
+        prompt_file = TASK_TO_PROMPT.get(task)
+        if not prompt_file:
+            return {"SKIP_AGENT": "true", "REASON": f"Unknown task: {task}"}
+        return {
+            "ROLE_NAME": task,
+            "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
+            "WORKFLOW_NAME": workflow_name,
+            "WORKFLOW_STEP": "",
+            "WORKFLOW_NEXT": "",
+            "PARENT_WORKFLOW": parent_workflow,
+            "PARENT_WORKFLOW_STEP": parent_workflow_step,
+            "SKIP_AGENT": "false",
+        }
 
-    if current_wf:
-        current_step = None
-        for step in current_wf.steps:
-            if step.name == step_name:
-                current_step = step
-                break
-
-        if current_step and parent_workflow and _is_terminal_step(current_step):
-            # Sub-workflow has completed — return control to parent
-            return _resolve_return_to_parent(
-                parent_workflow, parent_workflow_step, workflows_dir, prompt_base
-            )
-
-    # Normal resolution (or non-terminal step)
-    if current_wf is None:
-        workflow_file = Path(workflows_dir) / f"{workflow_name}.yaml"
-        if not workflow_file.exists():
-            # Fall back to direct task mapping if workflow file not found
-            prompt_file = TASK_TO_PROMPT.get(task)
-            if not prompt_file:
-                return {"SKIP_AGENT": "true", "REASON": f"Unknown task: {task}"}
-            return {
-                "ROLE_NAME": task,
-                "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
-                "WORKFLOW_NAME": workflow_name,
-                "WORKFLOW_STEP": "",
-                "WORKFLOW_NEXT": "",
-                "PARENT_WORKFLOW": parent_workflow,
-                "PARENT_WORKFLOW_STEP": parent_workflow_step,
-                "SKIP_AGENT": "false",
-            }
-
-        try:
-            current_wf = load_workflow(str(workflow_file))
-        except (FileNotFoundError, ValueError) as e:
-            print(f"Warning: Failed to load workflow {workflow_name}: {e}", file=sys.stderr)
-            prompt_file = TASK_TO_PROMPT.get(task)
-            if not prompt_file:
-                return {"SKIP_AGENT": "true", "REASON": f"Unknown task: {task}"}
-            return {
-                "ROLE_NAME": task,
-                "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
-                "WORKFLOW_NAME": workflow_name,
-                "WORKFLOW_STEP": "",
-                "WORKFLOW_NEXT": "",
-                "PARENT_WORKFLOW": parent_workflow,
-                "PARENT_WORKFLOW_STEP": parent_workflow_step,
-                "SKIP_AGENT": "false",
-            }
+    try:
+        current_wf = load_workflow(str(workflow_file))
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Warning: Failed to load workflow {workflow_name}: {e}", file=sys.stderr)
+        prompt_file = TASK_TO_PROMPT.get(task)
+        if not prompt_file:
+            return {"SKIP_AGENT": "true", "REASON": f"Unknown task: {task}"}
+        return {
+            "ROLE_NAME": task,
+            "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
+            "WORKFLOW_NAME": workflow_name,
+            "WORKFLOW_STEP": "",
+            "WORKFLOW_NEXT": "",
+            "PARENT_WORKFLOW": parent_workflow,
+            "PARENT_WORKFLOW_STEP": parent_workflow_step,
+            "SKIP_AGENT": "false",
+        }
 
     # Find current step
+    current_step = None
+    for step in current_wf.steps:
+        if step.name == step_name:
+            current_step = step
+            break
+
     if current_step is None:
         if not step_name and current_wf.steps:
             current_step = current_wf.steps[0]
@@ -363,6 +361,12 @@ def resolve_workflow_step(
                 "SKIP_AGENT": "true",
                 "REASON": f"Workflow {workflow_name} has no steps",
             }
+
+    # Check for sub-workflow completion: terminal step and we're in a sub-workflow
+    if parent_workflow and _is_terminal_step(current_step):
+        return _resolve_return_to_parent(
+            parent_workflow, parent_workflow_step, branch_key, workflows_dir, prompt_base
+        )
 
     # Check if this is a sub-workflow entry step
     if current_step.workflow:
