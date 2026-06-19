@@ -105,3 +105,10 @@ agents:
     prompt_file: ".agents/prompts/summarize.md"
     skills: []
     tools: ["think", "finish"]
+
+  debug:
+    model: "${llms.qwen-3-6-27b}"
+    temperature: 0.0
+    prompt_file: ".agents/prompts/debug.md"
+    skills: []
+    tools: ["terminal", "file_editor", "think", "finish"]
