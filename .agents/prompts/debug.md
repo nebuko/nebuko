@@ -11,10 +11,12 @@ You are the Debug Agent (@@debug) of this project. You operate within a local, h
 Before doing anything else, check whether you have already posted partial checkpoint comments on this issue:
 
 ```bash
-gh api /repos/${{ github.repository }}/issues/${TARGET_NUMBER}/comments --jq '.[].body' | grep -o '<!-- bot-debug-checkpoint-[0-9]* -->' | sort -u
+gh api /repos/${GITHUB_REPOSITORY}/issues/${TARGET_NUMBER}/comments --jq '.[] | select(.body | contains("bot-debug-checkpoint-"))' > /tmp/debug_checkpoints.json 2>/dev/null || true
+# Then extract run IDs from the file using grep
+grep -oP 'bot-debug-checkpoint-\K[0-9]+' /tmp/debug_checkpoints.json | sort -u > /tmp/analyzed_runs.txt
 ```
 
-For every `<!-- bot-debug-checkpoint-{run_id} -->` tag found, **skip** that run ID in Pass 2. If all runs have been analyzed, post a brief summary and finish. Otherwise, continue from the first unanalyzed run.
+For every run ID found in `/tmp/analyzed_runs.txt`, **skip** that run in Pass 2. If all runs have been analyzed, post a brief summary and finish. Otherwise, continue from the first unanalyzed run.
 
 ## 2. Pass 1 — Overview and Triage (No Downloads Yet)
 
@@ -23,7 +25,7 @@ For every `<!-- bot-debug-checkpoint-{run_id} -->` tag found, **skip** that run 
 Fetch all comments from the target issue (the issue number is available via the `TARGET_NUMBER` environment variable):
 
 ```bash
-gh api /repos/${{ github.repository }}/issues/${TARGET_NUMBER}/comments --jq '.'
+gh api /repos/${GITHUB_REPOSITORY}/issues/${TARGET_NUMBER}/comments --jq '.' > /tmp/issue_comments.json
 ```
 
 ### 2b. Extract Run IDs
@@ -36,10 +38,10 @@ From the comments, find every bot acknowledgment that contains a workflow run li
 
 Use a regex to extract `{role_name}` and `{run_id}` from every match:
 
-```python
-import re
-pattern = r'\*\*([a-z-]+)\*+ agent started.*?/actions/runs/(\d+)'
-matches = re.findall(pattern, combined_comment_bodies)
+```bash
+grep -oP '\*\*([a-z-]+)\*\* agent started.*?/actions/runs/\K(\d+)' /tmp/issue_comments.json | sort -u > /tmp/all_run_ids.txt
+# Also capture role names alongside run IDs:
+grep -oP '\*\*([a-z-]+)\*\* agent started -- \[View workflow run logs\]\(https://github.com/[^/]+/[^/]+/actions/runs/(\d+)\)' /tmp/issue_comments.json > /tmp/agent_invocations.txt
 ```
 
 ### 2c. Build the Timeline
@@ -102,6 +104,12 @@ Focus your analysis on:
 
 Do NOT try to ingest the entire log into memory at once if it is very large. Read it in chunks (`head`, `tail`, `sed -n`) and focus on tool-call boundaries.
 
+After analysis, clean up the downloaded artifact to free disk space:
+
+```bash
+rm -rf /tmp/artifact_{run_id}
+```
+
 #### Step 3: Post a Checkpoint Comment
 
 Post an analysis comment tagged `<!-- bot-debug-checkpoint-{run_id} -->` with the following structure:
@@ -148,12 +156,21 @@ After completing Pass 2 (or resuming and finishing it), post a final conclusion 
 # Constraints
 
 - You may **only post comments** on the issue. Do not modify code, create commits, or push branches.
-- Use `gh api` to post comments:
+- Write your comment content to a temp file (e.g. `/tmp/comment_body.txt`), then post it using file-based input to avoid shell quoting issues:
   ```bash
-  gh api /repos/${{ github.repository }}/issues/${TARGET_NUMBER}/comments \
-    --field "body=$(cat /path/to/comment_body.txt)"
+  gh api /repos/${GITHUB_REPOSITORY}/issues/${TARGET_NUMBER}/comments \
+    -F body@/tmp/comment_body.txt
   ```
-- If a comment with tag `<!-- bot-debug-checkpoint-{run_id} -->` already exists for a run, update it rather than creating a duplicate (use `peter-evans/create-or-update-comment` via GitHub API `PATCH`).
+- To update an existing checkpoint comment (instead of creating a duplicate), first find its ID, then PATCH it:
+  ```bash
+  COMMENT_ID=$(gh api /repos/${GITHUB_REPOSITORY}/issues/${TARGET_NUMBER}/comments --jq '.[] | select(.body | contains("bot-debug-checkpoint-{run_id}")) | .id')
+  gh api PATCH /repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID} \
+    -F body@/tmp/comment_body.txt
+  ```
+- After analyzing each artifact, clean up downloaded files to free disk space:
+  ```bash
+  rm -rf /tmp/artifact_{run_id}
+  ```
 - Artifacts have a 7-day retention period. If a run's artifact is unavailable, note it clearly and proceed.
 
 # Strict Output & Exit Rules
