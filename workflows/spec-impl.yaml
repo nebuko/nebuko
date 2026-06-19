@@ -1,0 +1,21 @@
+# Spec Implementation workflow: Phase 2 of spec-driven development
+# Triggered after human approves stub PR. genius verifies → dev implements → review
+
+name: spec-impl
+description: "Phase 2 — Verify stubs, implement full solution, and submit final PR"
+
+trigger:
+  agents: [genius]
+
+steps:
+  - name: stub_verify
+    agent: genius
+    next: implement
+
+  - name: implement
+    agent: dev
+    next: review
+
+  - name: review
+    agent: review
+    next: null  # terminal step

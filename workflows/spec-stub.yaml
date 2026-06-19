@@ -1,0 +1,25 @@
+# Spec Stub workflow: Phase 1 of spec-driven development
+# genius → ctx → genius (stub spec) → dev creates skeleton files + DRAFT PR
+
+name: spec-stub
+description: "Phase 1 — Generate code stubs and submit a draft PR for human validation before full implementation"
+
+trigger:
+  agents: [genius]
+
+steps:
+  - name: analyze
+    agent: genius
+    next: context
+
+  - name: context
+    agent: ctx
+    next: plan
+
+  - name: plan
+    agent: genius
+    next: stub_impl
+
+  - name: stub_impl
+    agent: dev
+    next: null  # terminal step — waits for human review of draft PR

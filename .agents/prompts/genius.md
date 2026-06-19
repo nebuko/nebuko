@@ -116,6 +116,44 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
     {"task": "dev", "complexity": "medium"}
     </agentRunConfig>
     ```
+  - **Spec-driven workflow (stub mode)**: If the issue or your analysis indicates a spec-driven approach is desired (check for references to spec-driven development, PR #275, or explicit request for stub-first workflow):
+    - Produce a `<stubSpec>` JSON block describing what skeleton files should be created:
+      ```
+      <stubSpec>
+      {
+        "files": [
+          {
+            "path": "relative/path/to/file.py",
+            "description": "Brief description of what this file does",
+            "structures": [
+              {"type": "class|def", "name": "ClassName", "params": "(self, arg1, arg2)", "return_type": "ReturnType", "description": "What it does"},
+            ]
+          }
+        ]
+      }
+      </stubSpec>
+      ```
+    - After the `<stubSpec>`, hand off to @@dev via the spec-stub workflow:
+      ```
+      <agentRunConfig>
+      {"task": "dev", "workflow": "spec-stub", "step": "stub_impl", "complexity": "medium"}
+      </agentRunConfig>
+    ```
+* **Stub Verification Mode (Phase B — spec-impl workflow)**: If you detect `WORKFLOW_STEP=stub_verify` or if re-invoked on an issue where a stub PR exists and has been approved by a human:
+  - Request @@ctx to fetch the stub PR diff and original stubSpec.
+  - Compare the actual stub files against the spec to verify all declared structures exist.
+  - If everything aligns, hand off to @@dev for full implementation:
+    ```
+    <agentRunConfig>
+    {"task": "dev", "workflow": "spec-impl", "step": "implement", "complexity": "medium"}
+    </agentRunConfig>
+    ```
+  - If mismatches exist, describe them clearly and ask @@dev to fix the stubs before continuing:
+    ```
+    <agentRunConfig>
+    {"task": "dev", "message": "Stub corrections needed: ..."}
+    </agentRunConfig>
+    ```
 * If **CHANGES REQUESTED**:
   - Revise the proposal based on feedback
   - Present the revised proposal and ask for approval again
