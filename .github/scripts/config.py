@@ -19,7 +19,7 @@ import re
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ── ${ref} Resolver ──────────────────────────────────────────────────
@@ -125,12 +125,25 @@ class WorkflowCondition(BaseModel):
 
 
 class WorkflowStep(BaseModel):
-    """A single step in a workflow: agent + routing."""
+    """A single step in a workflow: agent + routing.
+
+    A step is either an agent invocation or a sub-workflow invocation, never both.
+    """
 
     name: str
-    agent: str
+    agent: Optional[str] = None
+    workflow: Optional[str] = None
+    path: Optional[str] = None
     next: Optional[str] = None
     conditions: Optional[list[WorkflowCondition]] = None
+
+    @model_validator(mode="after")
+    def _validate_agent_or_workflow(self) -> "WorkflowStep":
+        if not self.agent and not self.workflow:
+            raise ValueError("Step must have either 'agent' or 'workflow'")
+        if self.agent and self.workflow:
+            raise ValueError("Step cannot have both 'agent' and 'workflow'")
+        return self
 
 
 class WorkflowTrigger(BaseModel):

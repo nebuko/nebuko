@@ -1,0 +1,15 @@
+name: demo-composition
+description: "Demonstrates sub-workflow composition"
+trigger:
+  agents: [genius]
+steps:
+  - name: analyze
+    agent: genius
+    next: subtask
+
+  - name: subtask
+    workflow: review-only
+    next: finalize
+
+  - name: finalize
+    agent: genius

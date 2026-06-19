@@ -17,6 +17,31 @@ from config import (
 )
 
 
+# ── Sub-workflow Schema Tests ────────────────────────────────────────
+
+
+class TestWorkflowStepSubWorkflow:
+    """Test WorkflowStep with sub-workflow support."""
+
+    def test_step_with_workflow_only(self):
+        step = WorkflowStep(name="subtask", workflow="review-only")
+        assert step.workflow == "review-only"
+        assert step.agent is None
+
+    def test_step_with_workflow_and_path(self):
+        step = WorkflowStep(name="subtask", workflow="cve", path=".custom/cve.yaml")
+        assert step.workflow == "cve"
+        assert step.path == ".custom/cve.yaml"
+
+    def test_step_missing_both_raises(self):
+        with pytest.raises(ValueError, match="either"):
+            WorkflowStep(name="broken", next="foo")
+
+    def test_step_has_both_raises(self):
+        with pytest.raises(ValueError, match="both"):
+            WorkflowStep(name="bad", agent="dev", workflow="review-only")
+
+
 # ── Workflow Model Tests ─────────────────────────────────────────────
 
 
@@ -441,3 +466,211 @@ class TestResolveWorkflowRouting:
             # branch "done" matched → next is None (explicitly terminated)
             # Must NOT fall through to default "review"
             assert result["WORKFLOW_NEXT"] == ""
+
+
+# ── Sub-workflow Resolver Tests ────────────────────────────────────────
+
+
+class TestSubWorkflowResolution:
+    """Test sub-workflow entry, traversal, and return-to-parent."""
+
+    def _import_resolver(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from resolve_workflow import resolve_workflow_routing
+        return resolve_workflow_routing
+
+    def test_sub_workflow_entry_to_first_step(self):
+        """When a step references a workflow, resolve to its first step."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create parent workflow with sub-workflow step
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "start", "agent": "genius", "next": "subtask"},
+                    {
+                        "name": "subtask",
+                        "workflow": "child",
+                        "next": "end",
+                    },
+                    {"name": "end", "agent": "dev", "next": None},
+                ],
+            }))
+            # Create child workflow
+            (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
+                "name": "child",
+                "description": "Child workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "scan", "agent": "ctx", "next": "report"},
+                    {"name": "report", "agent": "review", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                {"task": "genius", "workflow": "parent", "step": "subtask"},
+                tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "ctx"
+            assert result["WORKFLOW_NAME"] == "child"
+            assert result["WORKFLOW_STEP"] == "scan"
+            assert result["WORKFLOW_NEXT"] == "report"
+            assert result["PARENT_WORKFLOW"] == "parent"
+            assert result["PARENT_WORKFLOW_STEP"] == "subtask"
+            assert result["SKIP_AGENT"] == "false"
+
+    def test_sub_workflow_with_custom_path(self):
+        """Sub-workflow can use path: to specify a custom location."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subdir = Path(tmpdir) / "custom"
+            subdir.mkdir()
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {
+                        "name": "subtask",
+                        "workflow": "external",
+                        "path": str(subdir / "custom-wf.yaml"),
+                        "next": None,
+                    },
+                ],
+            }))
+            (subdir / "custom-wf.yaml").write_text(yaml.dump({
+                "name": "external",
+                "description": "External workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "run", "agent": "dev", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                {"task": "genius", "workflow": "parent", "step": "subtask"},
+                tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "dev"
+            assert result["WORKFLOW_NAME"] == "external"
+            assert result["WORKFLOW_STEP"] == "run"
+            assert result["PARENT_WORKFLOW"] == "parent"
+
+    def test_sub_workflow_terminal_returns_to_parent(self):
+        """Terminal step in sub-workflow returns control to parent's next step."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "start", "agent": "genius", "next": "subtask"},
+                    {"name": "subtask", "workflow": "child", "next": "finalize"},
+                    {"name": "finalize", "agent": "dev", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
+                "name": "child",
+                "description": "Child workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "only-step", "agent": "review", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                {
+                    "task": "review",
+                    "workflow": "child",
+                    "step": "only-step",
+                    "parent_workflow": "parent",
+                    "parent_workflow_step": "subtask",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "dev"
+            assert result["WORKFLOW_NAME"] == "parent"
+            assert result["WORKFLOW_STEP"] == "finalize"
+            assert result["PARENT_WORKFLOW"] == ""
+            assert result["PARENT_WORKFLOW_STEP"] == ""
+
+    def test_sub_workflow_multi_step_completion(self):
+        """Multi-step sub-workflow: second step continues normally, last step returns."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "subtask", "workflow": "child", "next": "after"},
+                    {"name": "after", "agent": "genius", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
+                "name": "child",
+                "description": "Child workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "first", "agent": "ctx", "next": "last"},
+                    {"name": "last", "agent": "review", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            # Step 1: enter sub-workflow (already tested above)
+
+            # Step 2: continue within child (non-terminal step)
+            result = resolve(
+                {
+                    "task": "ctx",
+                    "workflow": "child",
+                    "step": "first",
+                    "parent_workflow": "parent",
+                    "parent_workflow_step": "subtask",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "ctx"
+            assert result["WORKFLOW_NEXT"] == "last"
+            assert result["PARENT_WORKFLOW"] == "parent"
+
+            # Step 3: terminal step → return to parent
+            result = resolve(
+                {
+                    "task": "review",
+                    "workflow": "child",
+                    "step": "last",
+                    "parent_workflow": "parent",
+                    "parent_workflow_step": "subtask",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "genius"
+            assert result["WORKFLOW_NAME"] == "parent"
+            assert result["WORKFLOW_STEP"] == "after"
+            assert result["PARENT_WORKFLOW"] == ""
+
+    def test_normal_step_preserves_empty_parent(self):
+        """Normal agent step without parent context keeps parent fields empty."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "simple.yaml").write_text(yaml.dump({
+                "name": "simple",
+                "description": "Simple workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "step1", "agent": "genius", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                {"task": "genius", "workflow": "simple", "step": "step1"},
+                tmpdir, ".agents/prompts",
+            )
+            assert result["PARENT_WORKFLOW"] == ""
+            assert result["PARENT_WORKFLOW_STEP"] == ""
+

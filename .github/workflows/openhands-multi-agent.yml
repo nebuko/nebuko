@@ -326,9 +326,13 @@ jobs:
                     WF_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NAME=' | cut -d= -f2-)
                     WF_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_STEP=' | cut -d= -f2-)
                     WF_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
+                    WF_PARENT=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
+                    WF_PARENT_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
                     echo "WORKFLOW_NAME=$WF_NAME" >> $GITHUB_ENV
                     echo "WORKFLOW_STEP=$WF_STEP" >> $GITHUB_ENV
                     echo "WORKFLOW_NEXT=$WF_NEXT" >> $GITHUB_ENV
+                    echo "PARENT_WORKFLOW=$WF_PARENT" >> $GITHUB_ENV
+                    echo "PARENT_WORKFLOW_STEP=$WF_PARENT_STEP" >> $GITHUB_ENV
                   else
                     # Fallback: original case-based routing (backward compatible)
                     case "$TASK" in
