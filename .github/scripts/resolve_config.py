@@ -139,6 +139,8 @@ def resolve_config(
         config_workflow = agent_config.get("workflow", "")
         config_step = agent_config.get("step", "")
         config_branch = agent_config.get("branch", "")
+        config_parent_workflow = agent_config.get("parent_workflow", "")
+        config_parent_workflow_step = agent_config.get("parent_workflow_step", "")
     elif not is_bot:
         # @@mention fallback (human only)
         task = extract_mention_agent(trigger_body) or ""
@@ -154,6 +156,8 @@ def resolve_config(
         config_workflow = ""
         config_step = ""
         config_branch = ""
+        config_parent_workflow = ""
+        config_parent_workflow_step = ""
     else:
         # Bot comment without agentRunConfig — skip
         return {"SKIP_AGENT": "true", "REASON": "Bot comment without agentRunConfig"}
@@ -181,6 +185,8 @@ def resolve_config(
             "workflow": config_workflow,
             "step": config_step,
             "branch": config_branch,
+            "parent_workflow": config_parent_workflow,
+            "parent_workflow_step": config_parent_workflow_step,
         },
         workflows_dir,
         prompt_base,
@@ -216,6 +222,8 @@ def resolve_config(
         "WORKFLOW_NAME": wf_result.get("WORKFLOW_NAME", ""),
         "WORKFLOW_STEP": wf_result.get("WORKFLOW_STEP", ""),
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
+        "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
+        "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
         "SKIP_AGENT": "false",
     }
 
