@@ -24,7 +24,11 @@ from typing import Optional
 
 # Import resolve_workflow directly (same directory)
 sys.path.insert(0, os.path.dirname(__file__))
+from config import load_workflow
 from resolve_workflow import resolve_workflow_routing, TASK_TO_PROMPT
+
+# Regex for safe workflow names: alphanumeric, hyphens, underscores only
+_SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def extract_agent_run_config(trigger_body: str) -> Optional[dict]:
@@ -163,46 +167,48 @@ def resolve_config(
     elif not is_bot:
         # /workflow command normalization (human only): first line "/workflow <name>"
         wf_name = extract_workflow_command(trigger_body)
-        if wf_name:
-            sys.path.insert(0, os.path.dirname(__file__))
-            from config import load_workflow
+        wf_resolved = False
+        task = ""
+
+        if wf_name and _SAFE_WF_NAME_RE.match(wf_name):
             wf_file = Path(workflows_dir) / f"{wf_name}.yaml"
             try:
                 wf_def = load_workflow(str(wf_file))
                 task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
-            except (FileNotFoundError, ValueError):
-                task = ""
-            config_complexity = "medium"
-            config_reasoning = "none"
-            config_temperature = ""
-            config_round = ""
-            config_model = ""
-            config_skills = ""
-            config_top_p = ""
-            config_top_k = ""
-            config_repetition_penalty = ""
-            config_workflow = wf_name
-            config_step = ""
-            config_branch = ""
-            config_parent_workflow = ""
-            config_parent_workflow_step = ""
-        else:
-            # @@mention fallback (human only)
+                if task:
+                    wf_resolved = True
+            except FileNotFoundError:
+                print(
+                    f"Warning: workflow '{wf_name}' not found at {wf_file}, "
+                    f"falling back to @@mention",
+                    file=sys.stderr,
+                )
+            except ValueError as e:
+                print(
+                    f"Warning: workflow '{wf_name}' invalid ({e}), "
+                    f"falling back to @@mention",
+                    file=sys.stderr,
+                )
+
+        if not wf_resolved:
+            # Fall through to @@mention if /workflow was invalid/unresolvable
             task = extract_mention_agent(trigger_body) or ""
-            config_complexity = "medium"
-            config_reasoning = "none"
-            config_temperature = ""
-            config_round = ""
-            config_model = ""
-            config_skills = ""
-            config_top_p = ""
-            config_top_k = ""
-            config_repetition_penalty = ""
-            config_workflow = ""
-            config_step = ""
-            config_branch = ""
-            config_parent_workflow = ""
-            config_parent_workflow_step = ""
+            wf_name = None
+
+        config_complexity = "medium"
+        config_reasoning = "none"
+        config_temperature = ""
+        config_round = ""
+        config_model = ""
+        config_skills = ""
+        config_top_p = ""
+        config_top_k = ""
+        config_repetition_penalty = ""
+        config_workflow = wf_name if wf_name and wf_resolved else ""
+        config_step = ""
+        config_branch = ""
+        config_parent_workflow = ""
+        config_parent_workflow_step = ""
     else:
         # Bot comment without agentRunConfig — skip
         return {"SKIP_AGENT": "true", "REASON": "Bot comment without agentRunConfig"}

@@ -295,8 +295,46 @@ class TestResolveConfigWithWorkflowCommand:
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
-        # Nonexistent workflow -> task is empty -> skip
-        assert result["SKIP_AGENT"] == "true"
+        # Nonexistent workflow -> falls through to @@mention
+        assert result["TASK"] == "genius"
+        assert result["ROLE_NAME"] == "genius"
+        assert result["WORKFLOW_NAME"] == ""
+        assert result["SKIP_AGENT"] == "false"
+
+    def test_workflow_malformed_name_falls_through_mentions(self):
+        """Workflow names with special chars are rejected and fall through."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        body = '/workflow "../etc/passwd"\n@@dev help'
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["TASK"] == "dev"
+        assert result["WORKFLOW_NAME"] == ""
+        assert result["SKIP_AGENT"] == "false"
+
+    def test_workflow_empty_agents_falls_through_mentions(self):
+        """Workflow with no trigger agents falls through to @@mention."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        # Create a workflow with empty agents
+        with open(os.path.join(workflows_dir, "empty-agents.yaml"), "w") as f:
+            f.write(
+                "name: empty-agents\n"
+                "description: No agents\n"
+                "trigger:\n"
+                "  agents: []\n"
+                "steps:\n"
+                "  - name: review\n"
+                "    agent: review\n"
+                "    next: null\n"
+            )
+        body = "/workflow empty-agents\n@@ctx gather context"
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["TASK"] == "ctx"
+        assert result["ROLE_NAME"] == "ctx"
+        assert result["WORKFLOW_NAME"] == ""
+        assert result["SKIP_AGENT"] == "false"
 
     def test_workflow_not_on_first_line_ignored(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
@@ -306,6 +344,17 @@ class TestResolveConfigWithWorkflowCommand:
 
         # Not on first line, no @@mention -> skip
         assert result["SKIP_AGENT"] == "true"
+
+    def test_workflow_not_on_first_line_falls_through_mention(self):
+        """When /workflow not on first line but @@mention present, use mention."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        body = "Some intro text\n/workflow default\n@@dev please help"
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["TASK"] == "dev"
+        assert result["ROLE_NAME"] == "dev"
+        assert result["WORKFLOW_NAME"] == ""
 
     def test_agent_run_config_takes_precedence_over_workflow(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
