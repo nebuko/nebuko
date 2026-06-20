@@ -94,6 +94,25 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
     return None
 
 
+def extract_workflow_command(trigger_body: str) -> Optional[str]:
+    """Extract /workflow command from the first line of trigger body.
+
+    Only matches if the first non-empty line starts with "/workflow <name>".
+    Returns the workflow name or None.
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        Workflow name string or None.
+    """
+    first_line = trigger_body.split("\n", 1)[0].strip()
+    match = re.match(r"^/workflow\s+(\S+)", first_line)
+    if match:
+        return match.group(1)
+    return None
+
+
 def resolve_config(
     trigger_body: str,
     prompt_base: str,
@@ -142,22 +161,48 @@ def resolve_config(
         config_parent_workflow = agent_config.get("parent_workflow", "")
         config_parent_workflow_step = agent_config.get("parent_workflow_step", "")
     elif not is_bot:
-        # @@mention fallback (human only)
-        task = extract_mention_agent(trigger_body) or ""
-        config_complexity = "medium"
-        config_reasoning = "none"
-        config_temperature = ""
-        config_round = ""
-        config_model = ""
-        config_skills = ""
-        config_top_p = ""
-        config_top_k = ""
-        config_repetition_penalty = ""
-        config_workflow = ""
-        config_step = ""
-        config_branch = ""
-        config_parent_workflow = ""
-        config_parent_workflow_step = ""
+        # /workflow command normalization (human only): first line "/workflow <name>"
+        wf_name = extract_workflow_command(trigger_body)
+        if wf_name:
+            sys.path.insert(0, os.path.dirname(__file__))
+            from config import load_workflow
+            wf_file = Path(workflows_dir) / f"{wf_name}.yaml"
+            try:
+                wf_def = load_workflow(str(wf_file))
+                task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
+            except (FileNotFoundError, ValueError):
+                task = ""
+            config_complexity = "medium"
+            config_reasoning = "none"
+            config_temperature = ""
+            config_round = ""
+            config_model = ""
+            config_skills = ""
+            config_top_p = ""
+            config_top_k = ""
+            config_repetition_penalty = ""
+            config_workflow = wf_name
+            config_step = ""
+            config_branch = ""
+            config_parent_workflow = ""
+            config_parent_workflow_step = ""
+        else:
+            # @@mention fallback (human only)
+            task = extract_mention_agent(trigger_body) or ""
+            config_complexity = "medium"
+            config_reasoning = "none"
+            config_temperature = ""
+            config_round = ""
+            config_model = ""
+            config_skills = ""
+            config_top_p = ""
+            config_top_k = ""
+            config_repetition_penalty = ""
+            config_workflow = ""
+            config_step = ""
+            config_branch = ""
+            config_parent_workflow = ""
+            config_parent_workflow_step = ""
     else:
         # Bot comment without agentRunConfig — skip
         return {"SKIP_AGENT": "true", "REASON": "Bot comment without agentRunConfig"}

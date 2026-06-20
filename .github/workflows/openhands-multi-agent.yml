@@ -93,7 +93,8 @@ jobs:
               contains(github.event.issue.body, '@@issue') ||
               contains(github.event.issue.body, '@@issue-reviewer') ||
               contains(github.event.issue.body, '@@debug') ||
-              contains(github.event.issue.body, '<agentRunConfig>'))) ||
+              contains(github.event.issue.body, '<agentRunConfig>') ||
+              contains(github.event.issue.body, '/workflow'))) ||
             (github.event_name == 'issue_comment' &&
              (contains(github.event.comment.body, '@@genius') ||
               contains(github.event.comment.body, '@@ctx') ||
@@ -102,7 +103,8 @@ jobs:
               contains(github.event.comment.body, '@@issue') ||
               contains(github.event.comment.body, '@@issue-reviewer') ||
               contains(github.event.issue.body, '@@debug') ||
-              contains(github.event.comment.body, '<agentRunConfig>')))
+              contains(github.event.comment.body, '<agentRunConfig>') ||
+              contains(github.event.comment.body, '/workflow')))
           )
         env:
             CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 25 }}
@@ -216,7 +218,10 @@ jobs:
                     IS_BOT_COMMENT=1
                   fi
 
-                  # Step 3: Parse JSON config or fall back to @@mention for humans only
+                  # Step 2b: Check for /workflow command on first line (human only)
+                  WORKFLOW_CMD=$(echo "$TRIGGER_BODY" | head -1 | grep -oP '^\s*/workflow\s+\K\S+' || echo "")
+
+                  # Step 3: Parse JSON config, /workflow command, or fall back to @@mention for humans only
                   if [ -n "$AGENT_CONFIG" ]; then
                     # JSON-based invocation (agent→agent)
                     TASK=$(echo "$AGENT_CONFIG" | jq -r '.task // empty')
@@ -235,6 +240,35 @@ jobs:
                     CONFIG_PR_NUMBER=$(echo "$AGENT_CONFIG" | jq -r '.pr_number // empty')
 
                     echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING workflow=$CONFIG_WORKFLOW step=$CONFIG_STEP pr_number=$CONFIG_PR_NUMBER"
+                  elif [ -n "$WORKFLOW_CMD" ] && [ "$IS_BOT_COMMENT" -eq 0 ]; then
+                    # /workflow command invocation (human only)
+                    SCRIPTS_DIR=""
+                    WFLOWS_DIR=""
+                    if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows" ]; then
+                      SCRIPTS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts"
+                      WFLOWS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows"
+                    else
+                      SCRIPTS_DIR=".github/scripts"
+                      WFLOWS_DIR="workflows"
+                    fi
+                    TASK=$(PYTHONPATH="$SCRIPTS_DIR" python3 -c "from config import load_workflow; w=load_workflow('$WFLOWS_DIR/$WORKFLOW_CMD.yaml'); print(w.trigger.agents[0])" 2>/dev/null || echo "")
+                    CONFIG_COMPLEXITY="medium"
+                    CONFIG_REASONING="none"
+                    CONFIG_TEMPERATURE=""
+                    CONFIG_ROUND=""
+                    CONFIG_MODEL=""
+                    CONFIG_SKILLS=""
+                    CONFIG_TOP_P=""
+                    CONFIG_TOP_K=""
+                    CONFIG_REPETITION_PENALTY=""
+                    CONFIG_WORKFLOW="$WORKFLOW_CMD"
+                    CONFIG_STEP=""
+                    CONFIG_BRANCH=""
+                    CONFIG_PR_NUMBER=""
+                    # Construct agentRunConfig JSON for workflow resolver
+                    AGENT_CONFIG=$(jq -n --arg task "$TASK" --arg wf "$CONFIG_WORKFLOW" \
+                      '{task: $task, complexity: "medium", reasoning: "none", workflow: $wf}')
+                    echo "/workflow command detected: workflow=$WORKFLOW_CMD task=$TASK (human trigger)"
                   elif [ "$IS_BOT_COMMENT" -eq 0 ]; then
                     # @@mention fallback (human only)
                     LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue\|@@issue-reviewer\|@@debug' | tail -1)
