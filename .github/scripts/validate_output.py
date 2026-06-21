@@ -45,10 +45,57 @@ class ValidationResult:
         self.is_valid = False
 
 
+MAX_RETRIES = 2
+
+
 def extract_agent_run_configs(text: str) -> list[str]:
     """Extract all agentRunConfig JSON strings from text."""
     matches = AGENT_RUN_CONFIG_PATTERN.findall(text)
     return [match.strip() for match in matches if match.strip()]
+
+
+def should_retry_agent(comment_body: str, role: str, retry_count: int = 0) -> dict:
+    """Determine if an agent comment is missing its expected <agentRunConfig>.
+
+    All agents are expected to produce an agentRunConfig block — either a real
+    hand-off task or ``wait_for_human``.  If none is found the agent should be
+    retried (up to *MAX_RETRIES* times), after which we escalate to genius.
+
+    Args:
+        comment_body: The posted agent comment.
+        role: Agent role name (e.g. "dev", "ctx").
+        retry_count: How many times this agent has already been retried.
+
+    Returns:
+        Dict with keys RETRY (true/false), optional AGENT, and optional ESCALATE.
+    """
+    configs = extract_agent_run_configs(comment_body)
+
+    if configs:
+        # Has at least one agentRunConfig — check whether it signals intentional stop
+        for config_str in configs:
+            try:
+                config = json.loads(config_str)
+                if isinstance(config, dict) and config.get("task") == "wait_for_human":
+                    return {"RETRY": "false"}
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # Has valid hand-off (non-wait_for_human) → no retry needed
+        return {"RETRY": "false"}
+
+    # No agentRunConfig found — retry or escalate
+    if retry_count >= MAX_RETRIES:
+        return {
+            "RETRY": "true",
+            "AGENT": "genius",
+            "ESCALATE": "true",
+        }
+
+    return {
+        "RETRY": "true",
+        "AGENT": role,
+        "ESCALATE": "false",
+    }
 
 
 def validate_agent_run_config(json_str: str) -> ValidationResult:
@@ -70,7 +117,7 @@ def validate_agent_run_config(json_str: str) -> ValidationResult:
         result.add_error("agentRunConfig missing required field: 'task'")
 
     # Validate known fields' types
-    valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer"}
+    valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer", "wait_for_human"}
     if data.get("task") and data["task"] not in valid_tasks:
         result.add_error(
             f"Invalid task '{data['task']}'. Must be one of: {valid_tasks}"
@@ -176,16 +223,60 @@ def validate_agent_output(
     return result
 
 
+def check_retry(comment_file: str, role: str, retry_count: int = 0) -> dict:
+    """CLI subcommand: check-retry.
+
+    Reads a comment file and determines whether the agent should be retried.
+
+    Args:
+        comment_file: Path to the comment file.
+        role: Agent role name.
+        retry_count: Number of previous retries.
+
+    Returns:
+        Dict with RETRY=true/false, optional AGENT and ESCALATE.
+    """
+    with open(comment_file, "r", encoding="utf-8") as f:
+        text = f.read()
+    return should_retry_agent(text, role, retry_count)
+
+
 def main():
-    """CLI entry point: validate output from stdin or file."""
+    """CLI entry point: validate output or check-retry from file."""
     if len(sys.argv) < 2:
-        print("Usage: python validate_output.py <file> [role]")
-        print("  file: path to agent output file")
-        print("  role: agent role (ctx, dev, etc.) for role-specific checks")
+        print("Usage: python validate_output.py <command> [args]")
+        print("Commands:")
+        print("  validate <file> [role]           Validate output for issues")
+        print("  check-retry --comment-file <f> --role <r> [--retry-count <n>]")
+        print("                                   Check if agent should be retried")
         sys.exit(1)
 
-    filepath = sys.argv[1]
-    role = sys.argv[2] if len(sys.argv) > 2 else ""
+    command = sys.argv[1]
+
+    if command == "check-retry":
+        import argparse
+
+        parser = argparse.ArgumentParser(description="Check retry decision")
+        parser.add_argument("--comment-file", required=True, help="Path to comment file")
+        parser.add_argument("--role", required=True, help="Agent role name")
+        parser.add_argument(
+            "--retry-count", type=int, default=0, help="Current retry count"
+        )
+        args = parser.parse_args(sys.argv[2:])
+
+        result = check_retry(args.comment_file, args.role, args.retry_count)
+
+        for key, value in result.items():
+            print(f"{key}={value}")
+        sys.exit(0)
+
+    if command == "validate" or command.endswith(".md") or command.endswith(".txt"):
+        # Backward compat: first arg is file path
+        filepath = command
+        role = sys.argv[2] if len(sys.argv) > 2 else ""
+    else:
+        print(f"Unknown command: {command}")
+        sys.exit(1)
 
     with open(filepath, "r", encoding="utf-8") as f:
         text = f.read()

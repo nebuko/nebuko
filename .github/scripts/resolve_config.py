@@ -216,6 +216,14 @@ def resolve_config(
     if not task:
         return {"SKIP_AGENT": "true", "REASON": "No valid task found"}
 
+    # wait_for_human is an intentional stop — skip gracefully
+    if task == "wait_for_human":
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": "Intentional wait_for_human (no automated next step)",
+            "TASK": task,
+        }
+
     # Validate task
     if task not in TASK_TO_PROMPT:
         return {"SKIP_AGENT": "true", "REASON": f"Unknown task: {task}"}

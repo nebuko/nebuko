@@ -3,9 +3,11 @@
 from validate_output import (
     ValidationResult,
     extract_agent_run_configs,
+    should_retry_agent,
     validate_agent_run_config,
     validate_forbidden_sections,
     validate_agent_output,
+    MAX_RETRIES,
 )
 
 
@@ -271,3 +273,78 @@ class LLMConfig(BaseModel):
     def test_empty_text(self):
         result = validate_agent_output("", "dev")
         assert result.is_valid is True
+
+
+class TestShouldRetryAgent:
+    def test_missing_handoff_requires_retry(self):
+        text = "Here is my analysis. No hand-off block."
+        result = should_retry_agent(text, "dev", retry_count=0)
+        assert result["RETRY"] == "true"
+        assert result["AGENT"] == "dev"
+        assert result["ESCALATE"] == "false"
+
+    def test_valid_handoff_no_retry(self):
+        text = """Done with work.
+<agentRunConfig>
+{"task": "review", "complexity": "medium"}
+</agentRunConfig>
+"""
+        result = should_retry_agent(text, "dev", retry_count=0)
+        assert result["RETRY"] == "false"
+
+    def test_wait_for_human_no_retry(self):
+        text = """Proposal complete. Awaiting human approval.
+<agentRunConfig>
+{"task": "wait_for_human"}
+</agentRunConfig>
+"""
+        result = should_retry_agent(text, "genius", retry_count=0)
+        assert result["RETRY"] == "false"
+
+    def test_max_retries_escalate_to_genius(self):
+        text = "Incomplete output without agentRunConfig."
+        result = should_retry_agent(text, "dev", retry_count=MAX_RETRIES)
+        assert result["RETRY"] == "true"
+        assert result["AGENT"] == "genius"
+        assert result["ESCALATE"] == "true"
+
+    def test_below_max_retries_no_escalation(self):
+        text = "Incomplete output."
+        result = should_retry_agent(text, "ctx", retry_count=1)
+        assert result["RETRY"] == "true"
+        assert result["AGENT"] == "ctx"
+        assert result["ESCALATE"] == "false"
+
+    def test_empty_comment_requires_retry(self):
+        result = should_retry_agent("", "dev", retry_count=0)
+        assert result["RETRY"] == "true"
+
+    def test_malformed_json_still_detected(self):
+        text = """Work done.
+<agentRunConfig>
+{bad json}
+</agentRunConfig>
+"""
+        # Malformed JSON still counts as having an agentRunConfig block present
+        result = should_retry_agent(text, "dev", retry_count=0)
+        assert result["RETRY"] == "false"
+
+    def test_wait_for_human_any_role(self):
+        text = """Approved!
+<agentRunConfig>
+{"task": "wait_for_human"}
+</agentRunConfig>
+"""
+        result = should_retry_agent(text, "review", retry_count=0)
+        assert result["RETRY"] == "false"
+
+    def test_escalation_at_exactly_max_retries(self):
+        text = "No handoff."
+        result = should_retry_agent(text, "ctx", retry_count=MAX_RETRIES)
+        assert result["AGENT"] == "genius"
+
+    def test_no_escalation_just_below_max(self):
+        text = "No handoff."
+        result = should_retry_agent(text, "ctx", retry_count=MAX_RETRIES - 1)
+        assert result["AGENT"] == "ctx"
+        assert result["ESCALATE"] == "false"

@@ -100,3 +100,31 @@ class TestCheckLoopGuard:
             "dev",
         )
         assert result["SKIP_AGENT"] == "false"
+
+
+class TestRetryCallBypass:
+    def test_retry_call_bypasses_same_agent_loop(self):
+        """When retry_call=True, same-agent loop detection is skipped."""
+        result = check_loop_guard(
+            "<!-- bot-agent-dev -->\n@@dev <!-- auto-retry: 1 -->",
+            "dev",
+            retry_call=True,
+        )
+        assert result["SKIP_AGENT"] == "false"
+
+    def test_normal_same_agent_still_blocked_without_flag(self):
+        """Without retry_call flag, same-agent loops are still blocked."""
+        result = check_loop_guard(
+            "<!-- bot-agent-dev -->\nContent",
+            "dev",
+            retry_call=False,
+        )
+        assert result["SKIP_AGENT"] == "true"
+
+    def test_retry_call_default_is_false(self):
+        """Default behavior should NOT bypass (backward compat)."""
+        result = check_loop_guard(
+            "<!-- bot-agent-dev -->\nContent",
+            "dev",
+        )
+        assert result["SKIP_AGENT"] == "true"

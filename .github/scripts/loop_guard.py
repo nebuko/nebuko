@@ -62,16 +62,26 @@ def detect_human_plus_agent_ping(trigger_body: str) -> bool:
     return len(agent_mentions) > 0 and len(human_mentions) > 0
 
 
-def check_loop_guard(trigger_body: str, current_agent: str) -> dict:
+def check_loop_guard(
+    trigger_body: str,
+    current_agent: str,
+    retry_call: bool = False,
+) -> dict:
     """Run both loop guards and determine if agent should skip.
 
     Args:
         trigger_body: Raw trigger body text.
         current_agent: Current agent name being invoked.
+        retry_call: If True, this is an intentional auto-retry — bypass same-agent
+            loop detection.
 
     Returns:
         Dict with SKIP_AGENT (true/false) and optional REASON.
     """
+    # Guard 0: Retry bypass — intentional retry is never a loop
+    if retry_call:
+        return {"SKIP_AGENT": "false"}
+
     # Guard 1: Same-agent loop detection
     if detect_same_agent_loop(trigger_body, current_agent):
         caller_match = re.search(r"<!-- bot-agent-([a-z][a-z-]*) -->", trigger_body)
@@ -110,6 +120,11 @@ def main():
         help="Path to trigger body file, or '-' for stdin",
     )
     parser.add_argument(
+        "--retry-call",
+        action="store_true",
+        help="Bypass same-agent loop detection (intentional auto-retry)",
+    )
+    parser.add_argument(
         "--env-file",
         default="",
         help="Path to GITHUB_ENV file to append results",
@@ -123,7 +138,7 @@ def main():
         with open(args.trigger_body, "r", encoding="utf-8") as f:
             trigger_body = f.read()
 
-    result = check_loop_guard(trigger_body, args.current_agent)
+    result = check_loop_guard(trigger_body, args.current_agent, args.retry_call)
 
     for key, value in result.items():
         print(f"{key}={value}")

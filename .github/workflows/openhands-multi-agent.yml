@@ -225,6 +225,13 @@ jobs:
                     WORKFLOW_CMD=""
                   fi
 
+                  # Step 2c: Extract auto-retry count from trigger body (if present)
+                  RETRY_COUNT=$(echo "$TRIGGER_BODY" | sed -n 's/.*<!-- auto-retry: \([0-9]*\) -->.*/\1/p' || echo "0")
+                  if [ -z "$RETRY_COUNT" ]; then
+                    RETRY_COUNT=0
+                  fi
+                  echo "RETRY_COUNT=$RETRY_COUNT" >> $GITHUB_ENV
+
                   # Step 3: Parse JSON config, /workflow command, or fall back to @@mention for humans only
                   if [ -n "$AGENT_CONFIG" ]; then
                     # JSON-based invocation (agent→agent)
@@ -844,6 +851,33 @@ jobs:
                 token: ${{ secrets.GH_PAT }}
                 tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
                 mode: create
+
+            - name: Validate agent output — auto-retry if missing hand-off
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              run: |
+                SCRIPTS_DIR=""
+                if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts" ]; then
+                  SCRIPTS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts"
+                else
+                  SCRIPTS_DIR=".github/scripts"
+                fi
+                RETRY_RESULT=$(PYTHONPATH="$SCRIPTS_DIR" python3 "$SCRIPTS_DIR/validate_output.py" check-retry \
+                  --comment-file ./github_comment.md \
+                  --role "$ROLE_NAME" \
+                  --retry-count "${RETRY_COUNT:-0}")
+                echo "$RETRY_RESULT" >> $GITHUB_ENV
+                # Prepare retry comment body file with incremented counter
+                NEXT_RETRY=$(( ${RETRY_COUNT:-0} + 1 ))
+                AGENT_NAME="${AGENT:-$ROLE_NAME}"
+                echo "@@$AGENT_NAME <!-- auto-retry: $NEXT_RETRY -->" > ./retry_comment.md
+
+            - name: Auto-retry agent or escalate
+              if: env.RETRY == 'true' && env.TARGET_NUMBER != '0'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ env.TARGET_NUMBER }}
+                body-path: ./retry_comment.md
+                token: ${{ secrets.GH_PAT }}
 
             - name: Minimize acknowledgment comment
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ACK_COMMENT_ID != '' && env.ACK_COMMENT_NODE_ID != ''
