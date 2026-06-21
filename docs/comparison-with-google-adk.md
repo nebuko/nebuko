@@ -1,5 +1,11 @@
 # Comparative Analysis: git-flow-ai vs Google ADK
 
+> **Last updated:** 2026-06-21
+>
+> This document compares git-flow-ai's YAML-driven, GitHub-native multi-agent orchestration against Google's Agent Development Kit (ADK), a code-first Python SDK for building deployable agent applications. It covers paradigm differences, runtime models, workflow composition, handoff mechanisms, human-in-the-loop patterns, state management, and observability — concluding that the two tools serve different domains rather than competing directly.
+
+---
+
 ## Executive Summary
 
 These two projects solve the same problem (multi-agent orchestration) from fundamentally different angles. **git-flow-ai is a configuration-driven, YAML-based orchestration layer that runs on GitHub Actions. Google ADK is a code-first Python SDK for building agent applications as deployable services.** They occupy different layers of the stack.
