@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-These two projects solve the same problem (multi-agent orchestration) from fundamentally different angles. **git-flow-ai is a configuration-driven, YAML-based orchestration layer that runs on GitHub Actions. Google ADK is a code-first Python SDK for building agent applications as deployable services.** They occupy different layers of the stack.
+These two projects solve the same problem (multi-agent orchestration) from fundamentally different angles. **git-flow-ai is a configuration-driven, YAML-based orchestration layer that runs on GitHub Actions.** **Google ADK is a code-first Python SDK for building agent applications as deployable services.** They occupy different layers of the stack.
 
 ---
 
@@ -27,6 +27,8 @@ steps:
 ```
 
 **Google ADK** defines workflows programmatically in Python:
+
+> **Note:** The Google ADK code snippets throughout this document are illustrative and approximate the conceptual equivalent. They may not reflect the exact ADK API surface — refer to [Google ADK documentation](https://adk.dev/) and the [official repository](https://github.com/google/adk-python) for authoritative usage.
 
 ```python
 from google.adk.agent import SequentialAgent, ConditionalAgent
@@ -192,7 +194,7 @@ graph = StateGraph(AppState)
 
 ---
 
-## Concrete Example: Converting `spec-driven-design` to ADK
+## 9. Concrete Example: Converting `spec-driven-design` to ADK
 
 The `spec-driven-design` workflow from the issue would look roughly like this in ADK:
 
@@ -245,7 +247,7 @@ graph.add_node("review_impl", review_agent, terminal=True)
 
 ---
 
-## When to Use Which
+## 10. When to Use Which
 
 | Scenario | Prefer |
 |----------|--------|
@@ -260,6 +262,6 @@ graph.add_node("review_impl", review_agent, terminal=True)
 
 ---
 
-## Assessment
+## 11. Assessment
 
 This is not a competition between equivalents. **git-flow-ai is a DevOps-specific orchestration pattern** that leverages GitHub's existing infrastructure (Actions, issues, PRs, Git) as its runtime. **Google ADK is a general-purpose agent SDK** for building applications. The conversion above shows they can express similar workflows, but each is optimized for its domain.
