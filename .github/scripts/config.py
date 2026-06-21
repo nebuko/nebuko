@@ -95,6 +95,7 @@ class LLMConfig(BaseModel):
     min_p: Optional[float] = None
     presence_penalty: Optional[float] = None
     repetition_penalty: Optional[float] = None
+    stop_sequences: Optional[list[str]] = None
 
 
 class AgentConfig(BaseModel):
@@ -115,6 +116,7 @@ class AgentConfig(BaseModel):
     min_p: Optional[float] = None
     presence_penalty: Optional[float] = None
     repetition_penalty: Optional[float] = None
+    stop_sequences: Optional[list[str]] = None
 
 
 class WorkflowCondition(BaseModel):
