@@ -325,9 +325,10 @@ class TestShouldRetryAgent:
 {bad json}
 </agentRunConfig>
 """
-        # Malformed JSON still counts as having an agentRunConfig block present
+        # Malformed JSON in agentRunConfig — treat as missing hand-off → retry
         result = should_retry_agent(text, "dev", retry_count=0)
-        assert result["RETRY"] == "false"
+        assert result["RETRY"] == "true"
+        assert result["AGENT"] == "dev"
 
     def test_wait_for_human_any_role(self):
         text = """Approved!

@@ -869,7 +869,14 @@ jobs:
                 # Prepare retry comment body file with incremented counter
                 NEXT_RETRY=$(( ${RETRY_COUNT:-0} + 1 ))
                 AGENT_NAME="${AGENT:-$ROLE_NAME}"
-                echo "@@$AGENT_NAME <!-- auto-retry: $NEXT_RETRY -->" > ./retry_comment.md
+                ESCALATE="${ESCALATE:-false}"
+                if [ "$ESCALATE" = "true" ]; then
+                  # Escalation — add context so genius knows which agent failed
+                  printf '%s\n\n⚠️ Auto-escalation: Agent @@%s failed to produce a valid hand-off after %s retries.\n' \
+                    "@@$AGENT_NAME <!-- auto-retry: $NEXT_RETRY -->" "$ROLE_NAME" "$RETRY_COUNT" > ./retry_comment.md
+                else
+                  echo "@@$AGENT_NAME <!-- auto-retry: $NEXT_RETRY -->" > ./retry_comment.md
+                fi
 
             - name: Auto-retry agent or escalate
               if: env.RETRY == 'true' && env.TARGET_NUMBER != '0'

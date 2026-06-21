@@ -72,16 +72,24 @@ def should_retry_agent(comment_body: str, role: str, retry_count: int = 0) -> di
     configs = extract_agent_run_configs(comment_body)
 
     if configs:
-        # Has at least one agentRunConfig — check whether it signals intentional stop
+        # Has at least one agentRunConfig — check whether any are parseable
+        any_valid = False
         for config_str in configs:
             try:
                 config = json.loads(config_str)
                 if isinstance(config, dict) and config.get("task") == "wait_for_human":
                     return {"RETRY": "false"}
+                if isinstance(config, dict) and "task" in config:
+                    any_valid = True
             except (json.JSONDecodeError, TypeError):
+                # Malformed JSON in agentRunConfig — do NOT count as valid;
+                # fall through so we can retry the agent
                 pass
-        # Has valid hand-off (non-wait_for_human) → no retry needed
-        return {"RETRY": "false"}
+        # At least one config had valid JSON with a task → no retry needed
+        if any_valid:
+            return {"RETRY": "false"}
+        # Had <agentRunConfig> blocks but all were unparseable — treat as missing
+        # hand-off and trigger a retry below
 
     # No agentRunConfig found — retry or escalate
     if retry_count >= MAX_RETRIES:
