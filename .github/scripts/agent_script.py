@@ -619,6 +619,14 @@ def main():
             if val is not None:
                 litellm_extra_body[param_name] = val
 
+    # Stop sequences (list type — resolved separately from scalar params)
+    if agent_cfg:
+        agent_stop = getattr(agent_cfg, "stop_sequences", None)
+        llm_stop = getattr(agent_cfg.model_ref, "stop_sequences", None)
+        stop_seq = agent_stop if agent_stop else llm_stop
+        if stop_seq:
+            litellm_extra_body["stop"] = stop_seq
+
     if litellm_extra_body:
         llm_config["litellm_extra_body"] = litellm_extra_body
         logger.info(f"Thinking parameters: {litellm_extra_body}")
