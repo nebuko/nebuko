@@ -41,6 +41,12 @@ from openhands.sdk.conversation import get_agent_final_response
 from openhands.tools.preset.default import get_default_condenser
 from openhands.sdk.tool.spec import Tool
 from metrics_schema import Metrics
+from state_manager import (
+    WorkflowState,
+    StateMetrics,
+    build_state,
+    wrap_comment_with_state,
+)
 
 
 logger = get_logger(__name__)
@@ -704,6 +710,53 @@ def main():
     # Save metrics JSON with the new field
     save_metrics_json(metrics)
 
+    # ── Build Workflow State ──────────────────────────────────────
+    # Extract previous state from agent's prompt context if available,
+    # or start fresh. Build a new state snapshot with current step data.
+    prev_state = None
+    prev_state_path = os.environ.get("PREV_STATE_FILE", "")
+    if prev_state_path and os.path.isfile(prev_state_path):
+        try:
+            with open(prev_state_path, "r", encoding="utf-8") as f:
+                import json as _json
+                prev_state = WorkflowState.model_validate(_json.load(f))
+        except Exception as e:
+            logger.warning(f"Failed to load previous state: {e}")
+
+    role_name = os.environ.get("ROLE_NAME", "")
+    workflow_name = os.environ.get("WORKFLOW_NAME", "")
+    workflow_step = os.environ.get("WORKFLOW_STEP", "")
+    parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
+    parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
+
+    # Derive phase from workflow step conventions
+    phase = ""
+    if workflow_step:
+        low = workflow_step.lower()
+        if any(k in low for k in ("analyze", "context")):
+            phase = "analysis"
+        elif "plan" in low:
+            phase = "planning"
+        elif any(k in low for k in ("stub", "human_approval")):
+            phase = "stub"
+        elif "implement" in low:
+            phase = "execution"
+        elif "review" in low:
+            phase = "review"
+
+    new_state = build_state(
+        prev_state,
+        workflow=workflow_name,
+        step=workflow_step,
+        agent=role_name,
+        phase=phase,
+        summary=final_message[:300] if final_message else "",
+        metrics_dict=metrics.to_dict(),
+        parent_workflow=parent_workflow,
+        parent_workflow_step=parent_workflow_step,
+    )
+    logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
+
     # Extract <splitPlan> before splitting the message so the workflow can always find it,
     # even when the splitPlan lands in part 2+ after message splitting (issue #231).
     split_plan_json = extract_split_plan(final_message) if final_message else None
@@ -714,19 +767,23 @@ def main():
 
     # Split long messages into multiple parts, each under the safe limit.
     # GitHub's comment API allows 65,536 chars, but we use 10,000 as a
-    # comfortable limit leaving room for bot markers and metrics comments.
+    # comfortable limit leaving room for bot markers, state section, and metrics.
     MAX_MESSAGE_LENGTH = 10000
     message_parts = split_message(final_message, MAX_MESSAGE_LENGTH) if final_message else []
 
     if not message_parts:
         logger.warning("No final agent message found in events")
+        # Save state JSON for downstream processing even without a message
+        with open("workflow_state.json", "w", encoding="utf-8") as f:
+            f.write(new_state.model_dump_json(exclude_defaults=True))
         metrics_json = metrics.to_json(compact=True)
         sentinel = f"__NO_FINAL_MESSAGE__\n<!-- agent-metrics: {metrics_json} -->"
         with open("final_message.txt", "w", encoding="utf-8") as f:
             f.write(sentinel)
         logger.info("Saved sentinel + metrics comment (no final message)")
     else:
-        # Append metrics as hidden HTML comment for later aggregation on issue close
+        # Append legacy metrics HTML comment for backward compatibility with
+        # existing aggregation scripts (summarize_metrics.py still reads this).
         metrics_json = metrics.to_json(compact=True)
         metrics_comment = f"\n\n<!-- agent-metrics: {metrics_json} -->"
 
@@ -736,12 +793,23 @@ def main():
             for i in range(total):
                 message_parts[i] = f"*(Part {i + 1}/{total})*\n\n{message_parts[i]}"
 
+        # Prepend collapsed state section to the first message part
+        state_section = wrap_comment_with_state(new_state, "")
+        # Remove trailing newline from state section to avoid double spacing
+        state_section = state_section.rstrip("\n")
+
         # Write part 1 to the standard file (backward compatible)
         with open("final_message.txt", "w", encoding="utf-8") as f:
+            f.write(state_section)
+            f.write("\n\n")
             f.write(message_parts[0])
             if len(message_parts) == 1:  # Only single-part messages get metrics here
                 f.write(metrics_comment)
         logger.info(f"Saved first message part ({len(message_parts[0])} characters)")
+
+        # Save state JSON for downstream consumption (workflow, next agent)
+        with open("workflow_state.json", "w", encoding="utf-8") as f:
+            f.write(new_state.model_dump_json(exclude_defaults=True))
 
         # Write additional parts if the message was split
         if len(message_parts) > 1:
