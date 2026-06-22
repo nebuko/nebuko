@@ -110,9 +110,6 @@ class AgentConfig(BaseModel):
             "terminal", "file_editor", "task_tracker", "think", "finish",
         ]
     )
-    # Pin rules: step names where this agent's comment should be pinned
-    # for high-fidelity context injection into subsequent steps
-    pin_on_steps: list[str] = Field(default_factory=list)
     # Per-agent sampling parameter overrides
     top_p: Optional[float] = None
     top_k: Optional[int] = None

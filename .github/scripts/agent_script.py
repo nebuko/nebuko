@@ -714,12 +714,11 @@ def main():
     # Extract previous state from agent's prompt context if available,
     # or start fresh. Build a new state snapshot with current step data.
     prev_state = None
-    prev_state_path = os.environ.get("PREV_STATE_FILE", "")
-    if prev_state_path and os.path.isfile(prev_state_path):
+    prev_state_path = os.environ.get("PREV_STATE_FILE", "/tmp/prev_workflow_state.json")
+    if os.path.isfile(prev_state_path):
         try:
             with open(prev_state_path, "r", encoding="utf-8") as f:
-                import json as _json
-                prev_state = WorkflowState.model_validate(_json.load(f))
+                prev_state = WorkflowState.model_validate(json.load(f))
         except Exception as e:
             logger.warning(f"Failed to load previous state: {e}")
 
