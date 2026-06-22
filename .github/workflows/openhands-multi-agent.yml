@@ -38,8 +38,8 @@ on:
         description: 'Default API key for the LLM provider (used as fallback)'
         required: true
       LOCAL_VLLM_API_TOKEN:
-        description: 'API key for vLLM'
-        required: true
+        description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
+        required: false
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
