@@ -287,7 +287,7 @@ def main():
         if prev_state:
             with open(state_file_path, "w", encoding="utf-8") as sf:
                 sf.write(state_to_json(prev_state, compact=True))
-            print(f"Saved previous workflow state to {state_file_path} (v{prev_state.version})")
+            print(f"Saved previous workflow state to {state_file_path} (v{prev_state.version})", file=sys.stderr)
         else:
             print("No previous workflow state found in comments", file=sys.stderr)
     except Exception as e:
