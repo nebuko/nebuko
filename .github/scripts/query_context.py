@@ -28,7 +28,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from github_client import get_issue_comments
 from state_manager import (
+    extract_state,
     extract_state_from_body,
+    state_to_json,
     strip_state_section,
 )
 
@@ -281,7 +283,6 @@ def main():
     # Save extracted workflow state as JSON for the next agent step
     state_file_path = os.environ.get("PREV_STATE_FILE", "/tmp/prev_workflow_state.json")
     try:
-        from state_manager import extract_state, state_to_json
         prev_state = extract_state(comments)
         if prev_state:
             with open(state_file_path, "w", encoding="utf-8") as sf:

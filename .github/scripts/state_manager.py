@@ -146,7 +146,9 @@ def extract_state(comments: list[dict[str, Any]]) -> Optional[WorkflowState]:
         Parsed WorkflowState or None if no state found.
     """
     for comment in reversed(comments):
-        body = comment.get("body", "")
+        body = comment.get("body")
+        if not body:
+            continue
         match = _STATE_JSON_RE.search(body)
         if match:
             json_str = match.group(1).strip()
@@ -350,9 +352,17 @@ def wrap_comment_with_state(state: WorkflowState, body: str) -> str:
 
 
 def strip_state_section(body: str) -> str:
-    """Remove the state collapsed section from a comment body, returning just the human-readable content."""
-    # Remove the entire <details>...</details> block
-    cleaned = re.sub(r"<details>.*?</details>\s*", "", body, flags=re.DOTALL)
+    """Remove the workflow state collapsed section from a comment body, returning just the human-readable content.
+    
+    Only targets the specific <details> block with the '🤖 Workflow State' summary label,
+    preserving any other legitimate <details> blocks in the content.
+    """
+    cleaned = re.sub(
+        r"<details>\s*<summary>🤖 Workflow State.*?</details>\s*",
+        "",
+        body,
+        flags=re.DOTALL,
+    )
     return cleaned.strip()
 
 

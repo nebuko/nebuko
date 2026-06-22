@@ -23,6 +23,7 @@ from state_manager import (
     StateMetrics,
     build_state,
     wrap_comment_with_state,
+    extract_state,
     extract_state_from_body,
     strip_state_section,
     extract_legacy_metrics,
@@ -259,6 +260,72 @@ class TestStateRoundtrip(unittest.TestCase):
         self.assertEqual(restored.current_context["approved"], True)
         self.assertIsNotNone(restored.metrics)
         self.assertEqual(restored.metrics.input_tokens, 3000)
+
+
+class TestExtractState(unittest.TestCase):
+    """Test extract_state() — the primary entry point that works with a list of comment dicts."""
+
+    def _make_state(self, version: int) -> WorkflowState:
+        """Create a WorkflowState with the given version by chaining build_state calls."""
+        state = None
+        for i in range(1, version + 1):
+            state = build_state(state, agent="test")
+        return state
+
+    def _make_state_body(self, version: int = 1) -> str:
+        """Create a comment body containing an embedded workflow state section."""
+        state = self._make_state(version)
+        return wrap_comment_with_state(state, "Some agent message content")
+
+    def test_no_comments_returns_none(self):
+        self.assertIsNone(extract_state([]))
+
+    def test_single_comment_without_state_returns_none(self):
+        comments = [{"body": "Just a regular comment"}]
+        self.assertIsNone(extract_state(comments))
+
+    def test_single_comment_with_state_returns_state(self):
+        body = self._make_state_body(version=3)
+        comments = [{"id": 100, "body": body}]
+        state = extract_state(comments)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 3)
+        self.assertEqual(state.agent, "test")
+
+    def test_multiple_comments_returns_last_with_state(self):
+        body1 = self._make_state_body(version=1)
+        body2 = "No state here"
+        body3 = self._make_state_body(version=2)
+        comments = [
+            {"id": 100, "body": body1},
+            {"id": 200, "body": body2},
+            {"id": 300, "body": body3},
+        ]
+        state = extract_state(comments)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 2)  # Last one wins
+
+    def test_mixed_comments_skips_non_state(self):
+        body_v1 = self._make_state_body(version=1)
+        body_v5 = self._make_state_body(version=5)
+        comments = [
+            {"id": 10, "body": "Hello"},
+            {"id": 20, "body": body_v1},
+            {"id": 30, "body": "World"},
+            {"id": 40, "body": body_v5},
+            {"id": 50, "body": "End"},
+        ]
+        state = extract_state(comments)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 5)
+
+    def test_empty_body_does_not_crash(self):
+        comments = [{"id": 1, "body": ""}]
+        self.assertIsNone(extract_state(comments))
+
+    def test_none_body_does_not_crash(self):
+        comments = [{"id": 1, "body": None}]
+        self.assertIsNone(extract_state(comments))
 
 
 if __name__ == "__main__":

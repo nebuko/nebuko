@@ -29,6 +29,7 @@ see README.md in this directory.
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -45,7 +46,6 @@ from state_manager import (
     WorkflowState,
     StateMetrics,
     build_state,
-    wrap_comment_with_state,
 )
 
 
@@ -729,19 +729,19 @@ def main():
     parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
     parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
 
-    # Derive phase from workflow step conventions
+    # Derive phase from workflow step name using exact keyword matching
     phase = ""
     if workflow_step:
-        low = workflow_step.lower()
-        if any(k in low for k in ("analyze", "context")):
+        tokens = set(re.split(r"[_\-]", workflow_step.lower()))
+        if tokens & {"analyze", "context"}:
             phase = "analysis"
-        elif "plan" in low:
+        elif "plan" in tokens:
             phase = "planning"
-        elif any(k in low for k in ("stub", "human_approval")):
+        elif tokens & {"stub", "human_approval"}:
             phase = "stub"
-        elif "implement" in low:
+        elif "implement" in tokens:
             phase = "execution"
-        elif "review" in low:
+        elif "review" in tokens:
             phase = "review"
 
     new_state = build_state(
@@ -784,6 +784,9 @@ def main():
     else:
         # Append legacy metrics HTML comment for backward compatibility with
         # existing aggregation scripts (summarize_metrics.py still reads this).
+        # TODO: Remove this legacy comment once all consumers migrate to reading
+        # metrics from workflow_state.json (StateMetrics field). Currently both
+        # sources exist which creates a risk of double-counting.
         metrics_json = metrics.to_json(compact=True)
         metrics_comment = f"\n\n<!-- agent-metrics: {metrics_json} -->"
 
@@ -793,15 +796,11 @@ def main():
             for i in range(total):
                 message_parts[i] = f"*(Part {i + 1}/{total})*\n\n{message_parts[i]}"
 
-        # Prepend collapsed state section to the first message part
-        state_section = wrap_comment_with_state(new_state, "")
-        # Remove trailing newline from state section to avoid double spacing
-        state_section = state_section.rstrip("\n")
-
         # Write part 1 to the standard file (backward compatible)
+        # Note: workflow_state.json is the authoritative source for the state section.
+        # The GitHub Actions workflow step prepends the collapsed state section to
+        # github_comment.md, so we do NOT prepend it here to avoid duplication.
         with open("final_message.txt", "w", encoding="utf-8") as f:
-            f.write(state_section)
-            f.write("\n\n")
             f.write(message_parts[0])
             if len(message_parts) == 1:  # Only single-part messages get metrics here
                 f.write(metrics_comment)
