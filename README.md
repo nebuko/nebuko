@@ -12,18 +12,32 @@ The system uses a **five-agent architecture** powered by OpenHands:
 - **@@review (Senior Code Reviewer)**: Inspects code changes, identifies bugs/edge-cases/regressions, and provides thorough code review verdicts. Has terminal access for git diff inspection but cannot modify code.
 - **@@issue (Issue Refinement Agent)**: Helps humans create clear, well-structured, and actionable GitHub issues through iterative refinement. Collaborates with the human to clarify requirements, calls @@ctx for context when needed, and produces polished final issues.
 
-## 🧩 Usage in Other Projects
+## 🔧 Usage in Other Projects
 
-Use this workflow in any GitHub project by copying a single workflow file.
+Use this workflow in any GitHub project by copying the workflow and configuration files below.
+
+### Prerequisites
+
+> ⚠️ **Self-Hosted Runner Required**: This workflow runs on a self-hosted GitHub Actions runner (`runs-on: self-hosted`). You must [set up a self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners) on your repository before using this tool.
 
 ### Quick Start
 
-1. **Copy** `workflow.yaml` from this repo into your project's `.github/workflows/` directory
-2. **Add required secrets** to your repository:
+1. **Copy the workflow file** — Copy `.github/workflows/openhands-multi-agent.yml` from this repo into your project's `.github/workflows/` directory.
+
+2. **Add `agent-config.yaml`** — Copy or create an `agent-config.yaml` file at your repo root. This file defines providers, LLMs, and agent configurations. See [this repo's config](./agent-config.yaml) for a reference.
+
+3. **Add workflows** — Copy the `workflows/` directory (containing `default.yaml`, `review-only.yaml`, etc.) to your repo root. At minimum, you need `workflows/default.yaml` to run the standard dev cycle.
+
+4. **Add required secrets** to your repository:
    - `OPENROUTER_API_KEY` — your LLM API key (e.g., OpenRouter)
    - `GH_PAT` — a GitHub Personal Access Token with `repo` and `workflow` scopes
-3. **Customize** models, temperature, and other settings in the workflow file if desired
-4. **Start using** by mentioning `@@genius`, `@@ctx`, `@@dev`, `@@review`, or `@@issue` in issues or comments
+   - `LOCAL_VLLM_API_TOKEN` *(optional)* — only needed if using a local vLLM provider
+
+5. **Customize** models, temperature, and other settings in `agent-config.yaml` to match your setup.
+
+6. **Start using** by mentioning `@@genius`, `@@ctx`, `@@dev`, `@@review`, or `@@issue` in issues or comments, or by running `/workflow default` to start the full dev cycle.
+
+> 💡 **Prompts are auto-fetched**: The `.agents/prompts/` directory is automatically fetched from the git-flow-ai repo if missing on first run. No manual setup needed.
 
 ### Configuration Options
 
