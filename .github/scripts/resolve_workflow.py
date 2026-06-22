@@ -25,6 +25,7 @@ Output (written to --env-file):
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,11 @@ from typing import Optional
 import yaml
 
 from config import WorkflowStep, WorkflowDefinition, load_workflow
+
+try:
+    from remote_workflow import fetch_remote_workflow
+except ImportError:
+    fetch_remote_workflow = None  # type: ignore
 
 # Default task-to-prompt mapping (backward compatibility fallback)
 TASK_TO_PROMPT = {
@@ -121,11 +127,32 @@ def _resolve_sub_workflow_entry(
 ) -> Optional[dict]:
     """Resolve entry into a sub-workflow from a step that references another workflow.
 
+    Supports three sources:
+    - ``repo`` — remote git repository (cloned & cached locally)
+    - ``path`` — explicit filesystem path
+    - ``workflow`` — name resolved from ``workflows_dir``
+
     Loads the target workflow and returns the first step's resolution along with
     parent tracking information.
     """
     # Determine target workflow path
-    if current_step.path:
+    if current_step.repo:
+        if fetch_remote_workflow is None:
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": "remote_workflow module is not available",
+            }
+        try:
+            target_path = fetch_remote_workflow(
+                current_step.repo, current_step.ref, current_step.workflow_name
+            )
+        except (RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f"Warning: Failed to fetch remote workflow: {e}", file=sys.stderr)
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": f"Failed to fetch remote workflow: {e}",
+            }
+    elif current_step.path:
         target_path = current_step.path
     elif current_step.workflow:
         target_path = str(Path(workflows_dir) / f"{current_step.workflow}.yaml")
@@ -368,8 +395,8 @@ def resolve_workflow_step(
             parent_workflow, parent_workflow_step, branch_key, workflows_dir, prompt_base
         )
 
-    # Check if this is a sub-workflow entry step
-    if current_step.workflow:
+    # Check if this is a sub-workflow entry step (local or remote)
+    if current_step.workflow or current_step.repo:
         return _resolve_sub_workflow_entry(current_step, current_wf, workflows_dir, prompt_base)
 
     # Resolve next step

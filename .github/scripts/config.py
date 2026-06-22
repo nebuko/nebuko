@@ -129,22 +129,54 @@ class WorkflowCondition(BaseModel):
 class WorkflowStep(BaseModel):
     """A single step in a workflow: agent + routing.
 
-    A step is either an agent invocation or a sub-workflow invocation, never both.
+    A step can be:
+    - An agent invocation (agent)
+    - A local sub-workflow reference (workflow, optionally with path)
+    - A remote git repo workflow (repo + ref + optional workflow_name)
     """
 
     name: str
     agent: Optional[str] = None
     workflow: Optional[str] = None
     path: Optional[str] = None
+    # Git-based remote workflow source
+    repo: Optional[str] = None
+    ref: Optional[str] = None
+    workflow_name: Optional[str] = None
     next: Optional[str] = None
     conditions: Optional[list[WorkflowCondition]] = None
 
     @model_validator(mode="after")
-    def _validate_agent_or_workflow(self) -> "WorkflowStep":
-        if not self.agent and not self.workflow:
-            raise ValueError("Step must have either 'agent' or 'workflow'")
+    def _validate_step_source(self) -> "WorkflowStep":
+        # Note: `path` is an optional companion to `workflow`, not a standalone source.
+        # `repo` is mutually exclusive with `agent` and `workflow`.
+        if not self.agent and not self.workflow and not self.repo:
+            raise ValueError(
+                "Step must have exactly one of 'agent', 'workflow', or 'repo'"
+            )
         if self.agent and self.workflow:
-            raise ValueError("Step cannot have both 'agent' and 'workflow'")
+            raise ValueError(
+                "Step cannot have both 'agent' and 'workflow'"
+            )
+        if self.agent and self.repo:
+            raise ValueError(
+                "Step cannot have both 'agent' and 'repo'"
+            )
+        if self.workflow and self.repo:
+            raise ValueError(
+                "Step cannot have both 'workflow' and 'repo'"
+            )
+
+        if self.repo:
+            if not self.ref:
+                raise ValueError("'repo' requires 'ref' (commit SHA, tag, or branch)")
+            if not self.repo.startswith("https://"):
+                raise ValueError("'repo' URL must use HTTPS scheme")
+            if self.workflow_name:
+                if ".." in self.workflow_name or self.workflow_name.startswith("/"):
+                    raise ValueError(
+                        "'workflow_name' must not contain '..' or start with '/'"
+                    )
         return self
 
 
