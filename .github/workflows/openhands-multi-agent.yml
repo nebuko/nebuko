@@ -172,6 +172,8 @@ jobs:
                 echo "TARGET_NUMBER=$TARGET_NUMBER" >> $GITHUB_ENV
                 echo "TRIGGER_AUTHOR=$TRIGGER_AUTHOR" >> $GITHUB_ENV
                 echo "EVENT_TYPE=$EVENT_TYPE" >> $GITHUB_ENV
+                echo "ISSUE_URL=${{ github.event.issue.html_url }}" >> $GITHUB_ENV
+                echo "REPO_NAME=${{ github.repository }}" >> $GITHUB_ENV
                 echo "Normalized event: $EVENT_TYPE -> TARGET_NUMBER=$TARGET_NUMBER"
 
             - name: Set up Python

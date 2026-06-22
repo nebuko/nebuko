@@ -87,6 +87,16 @@ class StateMetrics(BaseModel):
         )
 
 
+class IssueInfo(BaseModel):
+    """Static issue metadata embedded in workflow state."""
+
+    number: int
+    url: str
+    title: str
+    author: str
+    repo: str
+
+
 class WorkflowState(BaseModel):
     """
     Structured workflow state embedded in GitHub comments.
@@ -109,6 +119,7 @@ class WorkflowState(BaseModel):
             (pending tasks, constraints, decisions, etc.).
         parent_workflow: Parent workflow name if currently in a sub-workflow.
         parent_workflow_step: Step in parent that triggered the sub-workflow.
+        issue: Static issue metadata (number, URL, title, author, repo).
     """
 
     version: int = 1
@@ -122,6 +133,7 @@ class WorkflowState(BaseModel):
     current_context: dict[str, Any] = Field(default_factory=dict)
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None
+    issue: Optional[IssueInfo] = None
 
 
 # ── Extraction ─────────────────────────────────────────────────────────
@@ -194,6 +206,7 @@ def build_state(
     context_updates: Optional[dict[str, Any]] = None,
     parent_workflow: Optional[str] = None,
     parent_workflow_step: Optional[str] = None,
+    issue: Optional[IssueInfo] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -216,6 +229,7 @@ def build_state(
         context_updates: Key-value pairs to merge into current_context.
         parent_workflow: Parent workflow name (if in a sub-workflow).
         parent_workflow_step: Parent step name (if in a sub-workflow).
+        issue: Issue metadata (once set, persists across transitions).
 
     Returns:
         A new WorkflowState instance.
@@ -228,6 +242,7 @@ def build_state(
         base_workflow = ""
         base_parent_wf = None
         base_parent_step = None
+        base_issue = None
     else:
         base_version = prev_state.version
         base_history = list(prev_state.history)
@@ -236,6 +251,7 @@ def build_state(
         base_workflow = prev_state.workflow
         base_parent_wf = prev_state.parent_workflow
         base_parent_step = prev_state.parent_workflow_step
+        base_issue = prev_state.issue
 
     # Build history entry for the current step
     entry = HistoryEntry(
@@ -268,6 +284,9 @@ def build_state(
     new_parent_wf = parent_workflow if parent_workflow is not None else base_parent_wf
     new_parent_step = parent_workflow_step if parent_workflow_step is not None else base_parent_step
 
+    # Preserve issue info across transitions (once set, it persists)
+    new_issue = issue or base_issue
+
     return WorkflowState(
         version=base_version + 1,
         workflow=workflow or base_workflow,
@@ -280,6 +299,7 @@ def build_state(
         current_context=new_context,
         parent_workflow=new_parent_wf,
         parent_workflow_step=new_parent_step,
+        issue=new_issue,
     )
 
 
