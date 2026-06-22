@@ -821,19 +821,47 @@ jobs:
                 with open(os.environ['GITHUB_ENV'], 'a') as ge:
                     ge.write("HAS_COMMENT=true\n")
 
-            - name: Add bot marker to comment
+            - name: Add bot marker and workflow state to comment
               if: always() && env.SKIP_AGENT == 'false'
               shell: python
               run: |
                 import os
+                import json
+                import sys
+
+                sys.path.insert(0, ".github/scripts")
+
                 role = os.environ.get("ROLE_NAME", "unknown")
                 marker = f"<!-- bot-agent-{role} -->"
-                agent_display_names = {"genius": "Genius", "ctx": "Ctx", "dev": "Developer", "review": "Reviewer", "issue": "Issue", "issue-reviewer": "Issue Reviewer", "summarize": "Summarizer"}
+                agent_display_names = {
+                    "genius": "Genius", "ctx": "Ctx", "dev": "Developer",
+                    "review": "Reviewer", "issue": "Issue",
+                    "issue-reviewer": "Issue Reviewer", "summarize": "Summarizer",
+                }
                 display_name = agent_display_names.get(role, role.capitalize())
-                with open("github_comment.md", "r") as f:
+
+                with open("github_comment.md", "r", encoding="utf-8") as f:
                     content = f.read()
-                with open("github_comment.md", "w") as f:
-                    f.write(marker + "\n*" + display_name + " answer*\n\n" + content)
+
+                # Remove legacy metrics comment — metrics are now in the workflow state
+                # Preserve for backward compat during transition: keep it in the body
+                # but the authoritative source is the state JSON section.
+
+                # Prepend collapsed workflow state section if available
+                state_section = ""
+                state_file = "workflow_state.json"
+                if os.path.isfile(state_file) and os.path.getsize(state_file) > 0:
+                    try:
+                        from state_manager import WorkflowState, format_collapsed_section
+                        with open(state_file, "r", encoding="utf-8") as sf:
+                            state = WorkflowState.model_validate(json.load(sf))
+                        state_section = format_collapsed_section(state)
+                    except Exception as e:
+                        print(f"Warning: Failed to load workflow state: {e}", flush=True)
+
+                prefix = state_section + marker + "\n*" + display_name + " answer*\n\n"
+                with open("github_comment.md", "w", encoding="utf-8") as f:
+                    f.write(prefix + content)
 
             - name: Post Agent Comment to GitHub
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
