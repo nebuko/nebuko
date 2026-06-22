@@ -278,6 +278,20 @@ def main():
     # Build structured state context from latest workflow state
     state_context = _build_state_context(comments)
 
+    # Save extracted workflow state as JSON for the next agent step
+    state_file_path = os.environ.get("PREV_STATE_FILE", "/tmp/prev_workflow_state.json")
+    try:
+        from state_manager import extract_state, state_to_json
+        prev_state = extract_state(comments)
+        if prev_state:
+            with open(state_file_path, "w", encoding="utf-8") as sf:
+                sf.write(state_to_json(prev_state, compact=True))
+            print(f"Saved previous workflow state to {state_file_path} (v{prev_state.version})")
+        else:
+            print("No previous workflow state found in comments", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: Failed to save previous state: {e}", file=sys.stderr)
+
     # Format template
     template_str = os.environ.get("ISSUE_TEMPLATE", DEFAULT_TEMPLATE)
     query = format_query_template(

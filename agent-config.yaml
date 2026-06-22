@@ -65,6 +65,7 @@ agents:
     prompt_file: ".agents/prompts/genius.md"
     skills: []
     tools: ["think", "finish"]
+    pin_on_steps: ["plan"]
 
   dev:
     model: "${llms.qwen-3-6-27b}"
@@ -77,6 +78,7 @@ agents:
     prompt_file: ".agents/prompts/ctx.md"
     skills: []
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
+    pin_on_steps: ["context"]
 
   review:
     model: "${llms.qwen-3-6-27b}"

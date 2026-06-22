@@ -32,11 +32,22 @@ Your time is important and costly; avoid to read information by yoursel ask @@ct
 
 When @@ctx returns with collected context, determine which phase you are in before producing output:
 
-1. **Check if you have an existing proposal awaiting approval** — Scan the comment history for `<!-- genius-state: phase=proposal,status=awaiting_approval -->` in your own previous comments.
+**First, check the Workflow State section.** Look for a collapsed `<details>` section at the top of recent comments containing JSON workflow state. The state includes a `phase` field and `history` array that tells you exactly where the workflow is.
+
+1. **If workflow state exists with `phase` field:**
+   - Use the `phase` value directly (e.g., `"phase": "planning"` means you're in planning phase).
+   - Check `history` to see which steps have already executed.
+   - Look for your previous proposal in the history (agent=genius, step=plan, pin=true).
+   - If a human has responded since your proposal → **Phase B** (respond to approval/rejection).
+   - If no human response yet → **Phase A** (produce proposal again).
+
+2. **If no workflow state found (legacy mode)** — Scan the comment history for `<!-- genius-state: phase=proposal,status=awaiting_approval -->` in your own previous comments.
    - If found AND the human has responded since your proposal was posted → you are in **Phase B** (respond to approval/rejection).
    - If found but no human response yet → something went wrong; produce a proposal again (Phase A).
-2. **If no existing proposal found** — you are seeing this issue for the first time → you are in **Phase A** (produce architecture proposal).
-3. **Default** — If unsure, assume Phase A and produce an architecture proposal.
+
+3. **If no existing proposal found** — you are seeing this issue for the first time → you are in **Phase A** (produce architecture proposal).
+
+4. **Default** — If unsure, assume Phase A and produce an architecture proposal.
 
 ## 3. Phase A — Architecture Proposal (First Presentation)
 
