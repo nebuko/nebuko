@@ -1,5 +1,6 @@
 """Tests for remote workflow support (config.py schema, remote_workflow.py, resolve integration)."""
 
+import importlib
 import os
 import subprocess
 import tempfile
@@ -102,6 +103,19 @@ class TestRemoteWorkflowStepSchema:
         assert step.agent == "genius"
         assert step.repo is None
 
+    def test_path_without_workflow_raises(self):
+        with pytest.raises(ValueError, match="exactly one"):
+            WorkflowStep(name="bad", path="/some/path.yaml")
+
+    def test_repo_and_path_raises(self):
+        with pytest.raises(ValueError, match="both.*repo.*path"):
+            WorkflowStep(
+                name="bad",
+                repo="https://github.com/org/workflows.git",
+                ref="main",
+                path="/local/override.yaml",
+            )
+
 
 def _mock_result(returncode=0, stdout="", stderr=""):
     """Helper to create a proper mock subprocess result."""
@@ -129,7 +143,6 @@ class TestCacheUtils:
             os.environ.pop("WORKFLOW_CACHE_DIR", None)
 
     def _import_module(self):
-        import importlib
         import remote_workflow
         importlib.reload(remote_workflow)
         return remote_workflow
@@ -182,7 +195,6 @@ class TestFetchRemoteWorkflow:
             os.environ.pop("WORKFLOW_CACHE_DIR", None)
 
     def _import_module(self):
-        import importlib
         import remote_workflow
         importlib.reload(remote_workflow)
         return remote_workflow
@@ -309,7 +321,6 @@ class TestCacheCleanup:
             os.environ.pop("WORKFLOW_CACHE_DIR", None)
 
     def _import_module(self):
-        import importlib
         import remote_workflow
         importlib.reload(remote_workflow)
         return remote_workflow
@@ -393,7 +404,6 @@ class TestResolverWithRemoteWorkflows:
     """Test resolve_workflow.py handles repo-based sub-workflow steps."""
 
     def _import_resolver(self):
-        import importlib
         import resolve_workflow
         importlib.reload(resolve_workflow)
         return resolve_workflow.resolve_workflow_routing
@@ -426,7 +436,6 @@ class TestResolverWithRemoteWorkflows:
         Path(mock_wf_path).write_text(mock_wf_content)
 
         import resolve_workflow as rw_mod
-        import importlib
         importlib.reload(rw_mod)
 
         with patch.object(rw_mod, "fetch_remote_workflow", return_value=mock_wf_path):
@@ -454,7 +463,6 @@ class TestResolverWithRemoteWorkflows:
         }))
 
         import resolve_workflow as rw_mod
-        import importlib
         importlib.reload(rw_mod)
 
         with patch.object(rw_mod, "fetch_remote_workflow", side_effect=RuntimeError("network error")):

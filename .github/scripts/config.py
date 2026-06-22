@@ -149,7 +149,7 @@ class WorkflowStep(BaseModel):
     @model_validator(mode="after")
     def _validate_step_source(self) -> "WorkflowStep":
         # Note: `path` is an optional companion to `workflow`, not a standalone source.
-        # `repo` is mutually exclusive with `agent` and `workflow`.
+        # `repo` is mutually exclusive with `agent`, `workflow`, and `path`.
         if not self.agent and not self.workflow and not self.repo:
             raise ValueError(
                 "Step must have exactly one of 'agent', 'workflow', or 'repo'"
@@ -165,6 +165,10 @@ class WorkflowStep(BaseModel):
         if self.workflow and self.repo:
             raise ValueError(
                 "Step cannot have both 'workflow' and 'repo'"
+            )
+        if self.repo and self.path:
+            raise ValueError(
+                "Step cannot have both 'repo' and 'path'"
             )
 
         if self.repo:
