@@ -6,6 +6,9 @@ Reads the GitHub event payload, fetches issue comments via github_client,
 extracts bot-agent-summary markers, builds a history string, formats it
 against a template, and writes the result to an output file.
 
+Also extracts workflow state from collapsed JSON sections in comments and
+injects structured history into the agent context.
+
 Usage:
     python query_context.py --issue-number <n> [--output-file <path>] \\
         [--event-path <path>]
@@ -24,6 +27,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from github_client import get_issue_comments
+from state_manager import (
+    extract_state,
+    extract_state_from_body,
+    state_to_json,
+    strip_state_section,
+)
 
 
 DEFAULT_TEMPLATE = (
@@ -33,6 +42,7 @@ DEFAULT_TEMPLATE = (
     "---\n\n"
     "{body}\n\n"
     "---\n\n"
+    "{state_context}"
     "## History\n\n"
     "{history}"
 )
@@ -80,10 +90,10 @@ def extract_summary_from_comment(comment_body: str):
     return None
 
 
-def format_query_template(title, body, author, history, template_str):
+def format_query_template(title, body, author, history, template_str, state_context=""):
     """Replace placeholders in template string with provided values.
 
-    Supports {title}, {body}, {author}, {history} placeholders.
+    Supports {title}, {body}, {author}, {history}, {state_context} placeholders.
     Falls back to empty string for any missing values.
 
     Args:
@@ -92,6 +102,7 @@ def format_query_template(title, body, author, history, template_str):
         author: Issue author login.
         history: Comment history string.
         template_str: Template string with placeholders.
+        state_context: Workflow state context string (default: "").
 
     Returns:
         Formatted string with all placeholders replaced.
@@ -101,6 +112,7 @@ def format_query_template(title, body, author, history, template_str):
         body=body or "",
         author=author or "",
         history=history or "",
+        state_context=state_context or "",
     )
 
 
@@ -144,7 +156,9 @@ def _build_history_string(comments) -> str:
     """Build formatted history string from comments.
 
     For each comment, tries to extract a bot-agent-summary. If found, uses
-    the summary; otherwise uses the raw comment body.
+    the summary; otherwise strips the state section and uses the raw comment body.
+    State sections (collapsed JSON) are stripped from the visible history to
+    reduce noise, but structured state is extracted separately.
 
     Args:
         comments: List of comment dicts from GitHub API.
@@ -160,10 +174,72 @@ def _build_history_string(comments) -> str:
         body = comment.get("body", "")
         author = comment.get("user", {}).get("login", "unknown")
         summary = extract_summary_from_comment(body)
-        content = summary if summary is not None else body
+        if summary is not None:
+            content = summary
+        else:
+            # Strip the collapsed state JSON section to reduce noise in history
+            content = strip_state_section(body)
+        if not content.strip():
+            continue
         parts.append(f"### {author} a écrit :\n{content}\n---\n")
 
     return "\n".join(parts)
+
+
+def _build_state_context(comments) -> str:
+    """Extract the latest workflow state and format it as context for agents.
+
+    Scans comments in reverse for the latest workflow state JSON section.
+    If found, formats a compact summary of the state including history and
+    pinned references.
+
+    Args:
+        comments: List of comment dicts from GitHub API.
+
+    Returns:
+        Formatted state context string (empty if no state found).
+    """
+    for comment in reversed(comments):
+        body = comment.get("body", "")
+        state = extract_state_from_body(body)
+        if state:
+            lines = [
+                "## Workflow State",
+                "",
+                f"- **Workflow:** {state.workflow}",
+                f"- **Step:** {state.step}",
+                f"- **Agent:** {state.agent}",
+                f"- **Version:** {state.version}",
+            ]
+            if state.phase:
+                lines.append(f"- **Phase:** {state.phase}")
+            if state.history:
+                lines.append("")
+                lines.append("**Execution History:**")
+                lines.append("")
+                for entry in state.history:
+                    pin_marker = " 📌" if entry.pin else ""
+                    lines.append(
+                        f"- [{entry.agent}/{entry.step}]"
+                        f"{pin_marker}: {entry.summary[:120]}"
+                    )
+            if state.pinned_comment_ids:
+                lines.append("")
+                lines.append(
+                    "**Pinned Comment IDs:** "
+                    f"{', '.join(str(c) for c in state.pinned_comment_ids)}"
+                    " *(full content should be fetched at runtime)*"
+                )
+            if state.current_context:
+                lines.append("")
+                lines.append("**Current Context:**")
+                lines.append("")
+                for k, v in state.current_context.items():
+                    lines.append(f"- **{k}:** {v}")
+            lines.append("")
+            lines.append("---\n\n")
+            return "\n".join(lines)
+    return ""
 
 
 def main():
@@ -201,6 +277,22 @@ def main():
     # Build history string
     history = _build_history_string(comments)
 
+    # Build structured state context from latest workflow state
+    state_context = _build_state_context(comments)
+
+    # Save extracted workflow state as JSON for the next agent step
+    state_file_path = os.environ.get("PREV_STATE_FILE", "/tmp/prev_workflow_state.json")
+    try:
+        prev_state = extract_state(comments)
+        if prev_state:
+            with open(state_file_path, "w", encoding="utf-8") as sf:
+                sf.write(state_to_json(prev_state, compact=True))
+            print(f"Saved previous workflow state to {state_file_path} (v{prev_state.version})")
+        else:
+            print("No previous workflow state found in comments", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: Failed to save previous state: {e}", file=sys.stderr)
+
     # Format template
     template_str = os.environ.get("ISSUE_TEMPLATE", DEFAULT_TEMPLATE)
     query = format_query_template(
@@ -209,6 +301,7 @@ def main():
         author=event_data["author"],
         history=history,
         template_str=template_str,
+        state_context=state_context,
     )
 
     # Write output file
