@@ -43,6 +43,7 @@ from openhands.tools.preset.default import get_default_condenser
 from openhands.sdk.tool.spec import Tool
 from metrics_schema import Metrics
 from state_manager import (
+    IssueInfo,
     WorkflowState,
     StateMetrics,
     build_state,
@@ -743,6 +744,23 @@ def main():
         elif "review" in tokens:
             phase = "review"
 
+    # Build issue info from environment variables
+    issue_number_str = os.environ.get("TARGET_NUMBER")
+    issue_url = os.environ.get("ISSUE_URL")
+    issue_title = os.environ.get("ISSUE_TITLE")
+    issue_author = os.environ.get("ISSUE_AUTHOR")
+    issue_repo = os.environ.get("REPO_NAME")
+
+    issue_info = None
+    if issue_number_str and issue_url and issue_title:
+        issue_info = IssueInfo(
+            number=int(issue_number_str),
+            url=issue_url,
+            title=issue_title,
+            author=issue_author or "",
+            repo=issue_repo or "",
+        )
+
     new_state = build_state(
         prev_state,
         workflow=workflow_name,
@@ -753,6 +771,7 @@ def main():
         metrics_dict=metrics.to_dict(),
         parent_workflow=parent_workflow,
         parent_workflow_step=parent_workflow_step,
+        issue=issue_info,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 
