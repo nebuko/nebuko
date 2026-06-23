@@ -295,7 +295,10 @@ def main():
     state_context = _build_state_context(comments)
 
     # Save extracted workflow state as JSON for the next agent step
-    state_file_path = os.environ.get("PREV_STATE_FILE", "/tmp/prev_workflow_state.json")
+    # Use RUNNER_TEMP for per-run isolation (avoids cross-contamination on self-hosted runners)
+    state_file_path = os.path.join(
+        os.environ.get("RUNNER_TEMP", "/tmp"), "prev_workflow_state.json"
+    )
     try:
         prev_state = extract_state(comments)
         if prev_state:
@@ -303,7 +306,10 @@ def main():
                 sf.write(state_to_json(prev_state, compact=True))
             print(f"Saved previous workflow state to {state_file_path} (v{prev_state.version})", file=sys.stderr)
         else:
-            print("No previous workflow state found in comments", file=sys.stderr)
+            if os.path.isfile(state_file_path):
+                os.remove(state_file_path)
+                print(f"Removed stale state file: {state_file_path}", file=sys.stderr)
+            print("No previous workflow state found in comments — starting fresh", file=sys.stderr)
     except Exception as e:
         print(f"Warning: Failed to save previous state: {e}", file=sys.stderr)
 
