@@ -18,6 +18,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from state_manager import (
+    Dispatch,
     WorkflowState,
     HistoryEntry,
     StateMetrics,
@@ -26,6 +27,7 @@ from state_manager import (
     wrap_comment_with_state,
     extract_state,
     extract_state_from_body,
+    extract_dispatch_from_state,
     strip_state_section,
     extract_legacy_metrics,
 )
@@ -384,6 +386,86 @@ class TestIssueInfo(unittest.TestCase):
         self.assertIsNotNone(restored.issue)
         self.assertEqual(restored.issue.number, 10)
         self.assertEqual(restored.issue.author, "Author")
+
+
+class TestDispatch(unittest.TestCase):
+    """Tests for Dispatch model and integration with WorkflowState."""
+
+    def test_dispatch_default_values(self):
+        d = Dispatch()
+        self.assertEqual(d.status, "advance")
+        self.assertIsNone(d.task_hint)
+        self.assertEqual(d.complexity, "medium")
+
+    def test_dispatch_invalid_status_raises(self):
+        with self.assertRaises(ValueError):
+            Dispatch(status="invalid")
+
+    def test_dispatch_all_statuses_valid(self):
+        for status in ("advance", "loop", "hold", "terminate"):
+            d = Dispatch(status=status)
+            self.assertEqual(d.status, status)
+
+    def test_dispatch_with_task_hint(self):
+        d = Dispatch(status="advance", task_hint="dev")
+        self.assertEqual(d.task_hint, "dev")
+
+    def test_dispatch_with_sampling_params(self):
+        d = Dispatch(
+            status="advance", temperature=0.7, top_p=0.9, min_p=0.1,
+            repetition_penalty=1.2, presence_penalty=0.5
+        )
+        self.assertEqual(d.temperature, 0.7)
+        self.assertEqual(d.top_p, 0.9)
+
+    def test_dispatch_in_workflow_state(self):
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        self.assertIsNone(state.dispatch)
+        state.dispatch = Dispatch(status="advance")
+        self.assertEqual(state.dispatch.status, "advance")
+
+    def test_dispatch_roundtrip_via_json(self):
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        state.dispatch = Dispatch(status="loop", task_hint="dev", complexity="high")
+        json_str = state.model_dump_json()
+        restored = WorkflowState.model_validate_json(json_str)
+        self.assertIsNotNone(restored.dispatch)
+        self.assertEqual(restored.dispatch.status, "loop")
+        self.assertEqual(restored.dispatch.task_hint, "dev")
+
+
+class TestExtractDispatchFromState(unittest.TestCase):
+    """Tests for extract_dispatch_from_state function."""
+
+    def test_returns_none_when_no_state(self):
+        self.assertIsNone(extract_dispatch_from_state("just some text"))
+
+    def test_returns_none_when_no_dispatch(self):
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        body = wrap_comment_with_state(state, "test comment")
+        result = extract_dispatch_from_state(body)
+        self.assertIsNone(result)
+
+    def test_returns_dispatch_from_state(self):
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        state.dispatch = Dispatch(status="advance", task_hint="dev")
+        body = wrap_comment_with_state(state, "test comment")
+        result = extract_dispatch_from_state(body)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "advance")
+        self.assertEqual(result.task_hint, "dev")
+
+    def test_uses_prev_state_cache(self):
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        state.dispatch = Dispatch(status="hold")
+        result = extract_dispatch_from_state("irrelevant body", prev_state=state)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "hold")
+
+    def test_prev_state_without_dispatch_returns_none(self):
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        result = extract_dispatch_from_state("some body", prev_state=state)
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

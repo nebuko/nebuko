@@ -236,6 +236,20 @@ def _build_state_context(comments) -> str:
                 lines.append("")
                 for k, v in state.current_context.items():
                     lines.append(f"- **{k}:** {v}")
+            if state.dispatch:
+                d = state.dispatch
+                lines.append("")
+                lines.append("**Dispatch:**")
+                lines.append("")
+                lines.append(f"- **Status:** {d.status}")
+                if d.task_hint:
+                    lines.append(f"- **Task Hint:** {d.task_hint}")
+                if d.complexity and d.complexity != "medium":
+                    lines.append(f"- **Complexity:** {d.complexity}")
+                if d.reasoning and d.reasoning != "none":
+                    lines.append(f"- **Reasoning:** {d.reasoning}")
+                if d.reason:
+                    lines.append(f"- **Reason:** {d.reason}")
             lines.append("")
             lines.append("---\n\n")
             return "\n".join(lines)
