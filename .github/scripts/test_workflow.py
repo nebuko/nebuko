@@ -34,7 +34,7 @@ class TestWorkflowStepSubWorkflow:
         assert step.path == ".custom/cve.yaml"
 
     def test_step_missing_both_raises(self):
-        with pytest.raises(ValueError, match="either"):
+        with pytest.raises(ValueError, match="exactly one"):
             WorkflowStep(name="broken", next="foo")
 
     def test_step_has_both_raises(self):
