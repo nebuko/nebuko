@@ -22,22 +22,28 @@ Use this workflow in any GitHub project by copying the workflow and configuratio
 
 ### Quick Start
 
-1. **Copy the workflow file** — Copy `.github/workflows/openhands-multi-agent.yml` from this repo into your project's `.github/workflows/` directory.
+1. **Add the reusable workflow** — Create a workflow file in your project's `.github/workflows/` directory that references this repo:
+
+   ```yaml
+   jobs:
+     agent:
+       uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+       with:
+         agent_config_path: "agent-config.yaml"
+       secrets:
+         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+         GH_PAT: ${{ secrets.GH_PAT }}
+   ```
 
 2. **Add `agent-config.yaml`** — Copy or create an `agent-config.yaml` file at your repo root. This file defines providers, LLMs, and agent configurations. See [this repo's config](./agent-config.yaml) for a reference.
 
-3. **Add workflows** — Copy the `workflows/` directory (containing `default.yaml`, `review-only.yaml`, etc.) to your repo root. At minimum, you need `workflows/default.yaml` to run the standard dev cycle.
-
-4. **Add required secrets** to your repository:
+3. **Add required secrets** to your repository:
    - `OPENROUTER_API_KEY` — your LLM API key (e.g., OpenRouter)
    - `GH_PAT` — a GitHub Personal Access Token with `repo` and `workflow` scopes
-   - `LOCAL_VLLM_API_TOKEN` *(optional)* — only needed if using a local vLLM provider
 
-5. **Customize** models, temperature, and other settings in `agent-config.yaml` to match your setup.
+4. **Start using** by commenting `/workflow default` on an issue to start the full dev cycle (genius → ctx → genius → dev → review), or mentioning `@@genius`, `@@ctx`, `@@dev`, or `@@review` directly.
 
-6. **Start using** by mentioning `@@genius`, `@@ctx`, `@@dev`, `@@review`, or `@@issue` in issues or comments, or by running `/workflow default` to start the full dev cycle.
-
-> 💡 **Prompts are auto-fetched**: The `.agents/prompts/` directory is automatically fetched from the git-flow-ai repo if missing on first run. No manual setup needed.
+> 💡 **Zero-copy setup**: Workflows, prompts, and scripts are automatically fetched from the git-flow-ai repo on every run. You only need `agent-config.yaml` locally — no local `workflows/` directory required.
 
 ### Configuration Options
 
@@ -86,7 +92,6 @@ jobs:
     uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
     with:
       agent_config_path: "agent-config.yaml"
-      circuit_breaker_threshold: 15
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GH_PAT: ${{ secrets.GH_PAT }}
@@ -95,6 +100,16 @@ jobs:
 Adding an agent is a 5-line stanza in `agent-config.yaml` — no workflow changes needed.
 
 **Backward compatibility**: If `agent-config.yaml` is absent, the workflow falls back to the old env-var-based approach. Existing downstream projects continue to work without modification.
+
+### Advanced Configuration
+
+**Customizing models and settings** — Adjust models, temperature, and other parameters in `agent-config.yaml` to match your setup.
+
+**Custom workflows** — If you want to define custom workflows beyond the default, add a `workflows/` directory at your repo root. Local workflows take precedence over the auto-fetched ones.
+
+**Local vLLM provider** — Add the `LOCAL_VLLM_API_TOKEN` secret if using a local vLLM provider.
+
+**Circuit breaker** — Set `circuit_breaker_threshold` to limit the maximum number of agent iterations before the workflow stops (default: 15).
 
 ## How It Works
 
