@@ -11,8 +11,13 @@ from resolve_config import (
     extract_mention_agent,
     extract_workflow_command,
     resolve_config,
+    resolve_next_agent_from_workflow,
+    count_consecutive_same_agent,
 )
 from resolve_workflow import TASK_TO_PROMPT
+
+
+import unittest
 
 
 class TestExtractAgentRunConfig:
@@ -388,3 +393,60 @@ class TestResolveConfigWithWorkflowCommand:
 
         # Bot comments should skip even with /workflow
         assert result["SKIP_AGENT"] == "true"
+
+
+
+class TestResolveNextAgentFromWorkflow(unittest.TestCase):
+    """Tests for resolve_next_agent_from_workflow function."""
+
+    def test_task_hint_overrides_workflow(self):
+        result = resolve_next_agent_from_workflow("dev", "default", "analyze", "workflows")
+        self.assertEqual(result, "dev")
+
+    def test_resolves_next_from_default_workflow(self):
+        result = resolve_next_agent_from_workflow(None, "default", "analyze", "workflows")
+        self.assertEqual(result, "ctx")
+
+    def test_returns_none_for_missing_workflow(self):
+        result = resolve_next_agent_from_workflow(None, "nonexistent", "analyze", "workflows")
+        self.assertIsNone(result)
+
+    def test_returns_none_for_empty_workflow_name(self):
+        result = resolve_next_agent_from_workflow(None, "", "analyze", "workflows")
+        self.assertIsNone(result)
+
+    def test_returns_none_for_terminal_step(self):
+        # "review" is the last step in default.yaml (next: null)
+        result = resolve_next_agent_from_workflow(None, "default", "review", "workflows")
+        self.assertIsNone(result)
+
+
+class TestCountConsecutiveSameAgent(unittest.TestCase):
+    """Tests for count_consecutive_same_agent function."""
+
+    def test_empty_history(self):
+        from state_manager import HistoryEntry
+        count = count_consecutive_same_agent([], "dev")
+        self.assertEqual(count, 0)
+
+    def test_single_match(self):
+        from state_manager import HistoryEntry
+        history = [HistoryEntry(step="s", agent="dev")]
+        count = count_consecutive_same_agent(history, "dev")
+        self.assertEqual(count, 1)
+
+    def test_mixed_agents(self):
+        from state_manager import HistoryEntry
+        history = [
+            HistoryEntry(step="s1", agent="genius"),
+            HistoryEntry(step="s2", agent="dev"),
+            HistoryEntry(step="s3", agent="dev"),
+        ]
+        count = count_consecutive_same_agent(history, "dev")
+        self.assertEqual(count, 2)
+
+    def test_different_agent(self):
+        from state_manager import HistoryEntry
+        history = [HistoryEntry(step="s1", agent="genius")]
+        count = count_consecutive_same_agent(history, "dev")
+        self.assertEqual(count, 0)
