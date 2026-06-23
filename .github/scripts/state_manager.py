@@ -154,6 +154,16 @@ class IssueInfo(BaseModel):
     repo: str
 
 
+class PullRequestInfo(BaseModel):
+    """Static pull request metadata embedded in workflow state."""
+
+    number: int
+    url: str
+    title: str
+    author: str
+    repo: str
+
+
 class WorkflowState(BaseModel):
     """
     Structured workflow state embedded in GitHub comments.
@@ -177,6 +187,7 @@ class WorkflowState(BaseModel):
         parent_workflow: Parent workflow name if currently in a sub-workflow.
         parent_workflow_step: Step in parent that triggered the sub-workflow.
         issue: Static issue metadata (number, URL, title, author, repo).
+        pull_request: Static PR metadata (number, URL, title, author, repo).
     """
 
     version: int = 1
@@ -191,6 +202,7 @@ class WorkflowState(BaseModel):
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None
     issue: Optional[IssueInfo] = None
+    pull_request: Optional[PullRequestInfo] = None
     dispatch: Optional[Dispatch] = None
 
 
@@ -292,6 +304,7 @@ def build_state(
     parent_workflow: Optional[str] = None,
     parent_workflow_step: Optional[str] = None,
     issue: Optional[IssueInfo] = None,
+    pull_request: Optional[PullRequestInfo] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -315,6 +328,7 @@ def build_state(
         parent_workflow: Parent workflow name (if in a sub-workflow).
         parent_workflow_step: Parent step name (if in a sub-workflow).
         issue: Issue metadata (once set, persists across transitions).
+        pull_request: PR metadata (once set, persists across transitions).
 
     Returns:
         A new WorkflowState instance.
@@ -328,6 +342,7 @@ def build_state(
         base_parent_wf = None
         base_parent_step = None
         base_issue = None
+        base_pr = None
     else:
         base_version = prev_state.version
         base_history = list(prev_state.history)
@@ -337,6 +352,7 @@ def build_state(
         base_parent_wf = prev_state.parent_workflow
         base_parent_step = prev_state.parent_workflow_step
         base_issue = prev_state.issue
+        base_pr = prev_state.pull_request
 
     # Build history entry for the current step
     entry = HistoryEntry(
@@ -372,6 +388,9 @@ def build_state(
     # Preserve issue info across transitions (once set, it persists)
     new_issue = issue or base_issue
 
+    # Preserve PR info across transitions (once set, it persists)
+    new_pr = pull_request or base_pr
+
     return WorkflowState(
         version=base_version + 1,
         workflow=workflow or base_workflow,
@@ -385,6 +404,7 @@ def build_state(
         parent_workflow=new_parent_wf,
         parent_workflow_step=new_parent_step,
         issue=new_issue,
+        pull_request=new_pr,
     )
 
 

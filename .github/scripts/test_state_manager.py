@@ -23,6 +23,7 @@ from state_manager import (
     HistoryEntry,
     StateMetrics,
     IssueInfo,
+    PullRequestInfo,
     build_state,
     wrap_comment_with_state,
     extract_state,
@@ -386,6 +387,63 @@ class TestIssueInfo(unittest.TestCase):
         self.assertIsNotNone(restored.issue)
         self.assertEqual(restored.issue.number, 10)
         self.assertEqual(restored.issue.author, "Author")
+
+
+class TestPullRequestInfo(unittest.TestCase):
+    """Test PullRequestInfo model and build_state() PR persistence."""
+
+    def test_pr_info_creation(self):
+        info = PullRequestInfo(
+            number=42,
+            url="https://github.com/repo/name/pull/42",
+            title="Test PR",
+            author="testuser",
+            repo="repo/name",
+        )
+        self.assertEqual(info.number, 42)
+        self.assertEqual(info.url, "https://github.com/repo/name/pull/42")
+        self.assertEqual(info.title, "Test PR")
+        self.assertEqual(info.author, "testuser")
+        self.assertEqual(info.repo, "repo/name")
+
+    def test_pr_in_workflow_state(self):
+        info = PullRequestInfo(number=1, url="http://example.com/1", title="T", author="A", repo="R")
+        state = WorkflowState(workflow="test", step="s", agent="a", pull_request=info)
+        self.assertIsNotNone(state.pull_request)
+        self.assertEqual(state.pull_request.number, 1)
+
+    def test_pr_defaults_to_none(self):
+        state = WorkflowState(workflow="test", step="s", agent="a")
+        self.assertIsNone(state.pull_request)
+
+    def test_build_state_sets_pr_on_initial(self):
+        info = PullRequestInfo(number=7, url="http://u/7", title="Title", author="Auth", repo="Repo")
+        state = build_state(None, workflow="w", step="s", agent="a", pull_request=info)
+        self.assertIsNotNone(state.pull_request)
+        self.assertEqual(state.pull_request.number, 7)
+
+    def test_build_state_preserves_pr_across_transitions(self):
+        info = PullRequestInfo(number=99, url="http://u/99", title="T", author="A", repo="R")
+        s1 = build_state(None, workflow="w", step="analyze", agent="genius", pull_request=info)
+        s2 = build_state(s1, workflow="w", step="implement", agent="dev")
+        self.assertIsNotNone(s2.pull_request)
+        self.assertEqual(s2.pull_request.number, 99)
+
+    def test_build_state_overrides_pr_if_provided(self):
+        info1 = PullRequestInfo(number=1, url="http://u/1", title="T1", author="A1", repo="R1")
+        info2 = PullRequestInfo(number=2, url="http://u/2", title="T2", author="A2", repo="R2")
+        s1 = build_state(None, workflow="w", step="s", agent="a", pull_request=info1)
+        s2 = build_state(s1, workflow="w", step="s2", agent="a2", pull_request=info2)
+        self.assertEqual(s2.pull_request.number, 2)
+
+    def test_pr_roundtrip_via_json(self):
+        info = PullRequestInfo(number=10, url="http://url", title="My Title", author="Author", repo="Owner/Repo")
+        state = WorkflowState(workflow="w", step="s", agent="a", pull_request=info)
+        json_str = state.model_dump_json(exclude_defaults=True)
+        restored = WorkflowState.model_validate_json(json_str)
+        self.assertIsNotNone(restored.pull_request)
+        self.assertEqual(restored.pull_request.number, 10)
+        self.assertEqual(restored.pull_request.author, "Author")
 
 
 class TestDispatch(unittest.TestCase):

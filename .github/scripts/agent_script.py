@@ -44,6 +44,7 @@ from openhands.sdk.tool.spec import Tool
 from metrics_schema import Metrics
 from state_manager import (
     IssueInfo,
+    PullRequestInfo,
     WorkflowState,
     StateMetrics,
     build_state,
@@ -763,6 +764,23 @@ def main():
             repo=issue_repo or "",
         )
 
+    # Build PR info from environment variables
+    pr_number_str = os.environ.get("PR_NUMBER")
+    pr_url = os.environ.get("PR_URL")
+    pr_title = os.environ.get("PR_TITLE")
+    pr_author = os.environ.get("PR_AUTHOR")
+    pr_repo = os.environ.get("REPO_NAME")
+
+    pr_info = None
+    if pr_number_str and pr_url and pr_title:
+        pr_info = PullRequestInfo(
+            number=int(pr_number_str),
+            url=pr_url,
+            title=pr_title,
+            author=pr_author or "",
+            repo=pr_repo or "",
+        )
+
     new_state = build_state(
         prev_state,
         workflow=workflow_name,
@@ -774,6 +792,7 @@ def main():
         parent_workflow=parent_workflow,
         parent_workflow_step=parent_workflow_step,
         issue=issue_info,
+        pull_request=pr_info,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 
