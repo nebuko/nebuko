@@ -21,6 +21,7 @@ from state_manager import (
     WorkflowState,
     HistoryEntry,
     StateMetrics,
+    IssueInfo,
     build_state,
     wrap_comment_with_state,
     extract_state,
@@ -326,6 +327,63 @@ class TestExtractState(unittest.TestCase):
     def test_none_body_does_not_crash(self):
         comments = [{"id": 1, "body": None}]
         self.assertIsNone(extract_state(comments))
+
+
+class TestIssueInfo(unittest.TestCase):
+    """Test IssueInfo model and build_state() issue persistence."""
+
+    def test_issue_info_creation(self):
+        info = IssueInfo(
+            number=42,
+            url="https://github.com/repo/name/issues/42",
+            title="Test issue",
+            author="testuser",
+            repo="repo/name",
+        )
+        self.assertEqual(info.number, 42)
+        self.assertEqual(info.url, "https://github.com/repo/name/issues/42")
+        self.assertEqual(info.title, "Test issue")
+        self.assertEqual(info.author, "testuser")
+        self.assertEqual(info.repo, "repo/name")
+
+    def test_issue_in_workflow_state(self):
+        info = IssueInfo(number=1, url="http://example.com/1", title="T", author="A", repo="R")
+        state = WorkflowState(workflow="test", step="s", agent="a", issue=info)
+        self.assertIsNotNone(state.issue)
+        self.assertEqual(state.issue.number, 1)
+
+    def test_issue_defaults_to_none(self):
+        state = WorkflowState(workflow="test", step="s", agent="a")
+        self.assertIsNone(state.issue)
+
+    def test_build_state_sets_issue_on_initial(self):
+        info = IssueInfo(number=7, url="http://u/7", title="Title", author="Auth", repo="Repo")
+        state = build_state(None, workflow="w", step="s", agent="a", issue=info)
+        self.assertIsNotNone(state.issue)
+        self.assertEqual(state.issue.number, 7)
+
+    def test_build_state_preserves_issue_across_transitions(self):
+        info = IssueInfo(number=99, url="http://u/99", title="T", author="A", repo="R")
+        s1 = build_state(None, workflow="w", step="analyze", agent="genius", issue=info)
+        s2 = build_state(s1, workflow="w", step="implement", agent="dev")
+        self.assertIsNotNone(s2.issue)
+        self.assertEqual(s2.issue.number, 99)
+
+    def test_build_state_overrides_issue_if_provided(self):
+        info1 = IssueInfo(number=1, url="http://u/1", title="T1", author="A1", repo="R1")
+        info2 = IssueInfo(number=2, url="http://u/2", title="T2", author="A2", repo="R2")
+        s1 = build_state(None, workflow="w", step="s", agent="a", issue=info1)
+        s2 = build_state(s1, workflow="w", step="s2", agent="a2", issue=info2)
+        self.assertEqual(s2.issue.number, 2)
+
+    def test_issue_roundtrip_via_json(self):
+        info = IssueInfo(number=10, url="http://url", title="My Title", author="Author", repo="Owner/Repo")
+        state = WorkflowState(workflow="w", step="s", agent="a", issue=info)
+        json_str = state.model_dump_json(exclude_defaults=True)
+        restored = WorkflowState.model_validate_json(json_str)
+        self.assertIsNotNone(restored.issue)
+        self.assertEqual(restored.issue.number, 10)
+        self.assertEqual(restored.issue.author, "Author")
 
 
 if __name__ == "__main__":
