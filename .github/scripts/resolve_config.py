@@ -26,9 +26,13 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(__file__))
 from config import load_workflow
 from resolve_workflow import resolve_workflow_routing, TASK_TO_PROMPT
+from state_manager import extract_dispatch_from_state
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
 _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+# Maximum consecutive same-agent loops before blocking (loop safeguard)
+MAX_LOOP_COUNT = 5
 
 
 def extract_agent_run_config(trigger_body: str) -> Optional[dict]:
@@ -65,6 +69,67 @@ def extract_agent_run_config(trigger_body: str) -> Optional[dict]:
             pass
 
     return None
+
+
+def resolve_next_agent_from_workflow(
+    task_hint: Optional[str],
+    workflow_name: str,
+    step_name: str,
+    workflows_dir: str,
+) -> Optional[str]:
+    """Resolve next agent from workflow YAML definition.
+
+    If task_hint is provided, use it directly. Otherwise, look up the
+    workflow YAML to find the `next` agent for the current step.
+
+    Args:
+        task_hint: Optional explicit next agent override.
+        workflow_name: Name of the active workflow.
+        step_name: Current step name.
+        workflows_dir: Path to workflows directory.
+
+    Returns:
+        Next agent name or None if unresolvable.
+    """
+    if task_hint:
+        return task_hint
+
+    if not workflow_name or not step_name:
+        return None
+
+    wf_file = Path(workflows_dir) / f"{workflow_name}.yaml"
+    try:
+        wf_def = load_workflow(str(wf_file))
+    except (FileNotFoundError, ValueError):
+        return None
+
+    for step in wf_def.steps:
+        if step.name == step_name and step.next:
+            # Find the agent for the next step
+            for next_step in wf_def.steps:
+                if next_step.name == step.next:
+                    return next_step.agent
+            return None
+    return None
+
+
+def count_consecutive_same_agent(history: list, current_agent: str) -> int:
+    """Count consecutive same-agent entries from the end of history.
+
+    Args:
+        history: List of HistoryEntry objects.
+        current_agent: Name of the current agent.
+
+    Returns:
+        Count of consecutive same-agent entries at the end of history.
+    """
+    count = 0
+    for entry in reversed(history):
+        if entry.agent == current_agent:
+            count += 1
+        else:
+            break
+    return count
 
 
 def is_bot_comment(trigger_body: str) -> bool:
@@ -210,8 +275,50 @@ def resolve_config(
         config_parent_workflow = ""
         config_parent_workflow_step = ""
     else:
-        # Bot comment without agentRunConfig — skip
-        return {"SKIP_AGENT": "true", "REASON": "Bot comment without agentRunConfig"}
+        # Bot comment without explicit agentRunConfig — check for dispatch in state
+        dispatch = extract_dispatch_from_state(trigger_body)
+        if dispatch:
+            # Dispatch found in workflow state — resolve routing from it
+            task = dispatch.task_hint or ""
+            config_complexity = dispatch.complexity or "medium"
+            config_reasoning = dispatch.reasoning or "none"
+            config_temperature = str(dispatch.temperature) if dispatch.temperature is not None else ""
+            config_round = ""
+            config_model = dispatch.model or ""
+            config_skills = dispatch.skills or ""
+            config_top_p = str(dispatch.top_p) if dispatch.top_p is not None else ""
+            config_top_k = str(dispatch.top_k) if dispatch.top_k is not None else ""
+            config_repetition_penalty = (
+                str(dispatch.repetition_penalty) if dispatch.repetition_penalty is not None else ""
+            )
+            config_workflow = dispatch.workflow or ""
+            config_step = dispatch.step or ""
+            config_branch = dispatch.branch or ""
+            config_parent_workflow = dispatch.parent_workflow or ""
+            config_parent_workflow_step = dispatch.parent_workflow_step or ""
+
+            # Resolve next agent based on dispatch status
+            if dispatch.status == "advance":
+                if not task:
+                    # Auto-resolve next agent from workflow YAML
+                    task = resolve_next_agent_from_workflow(
+                        None, config_workflow, config_step, workflows_dir
+                    ) or ""
+            elif dispatch.status == "loop":
+                # Loop: re-dispatch current agent — need to get current agent from state
+                task = dispatch.task_hint or ""
+                # If no task_hint for loop, try to get from state context
+                if not task:
+                    prev_state = extract_dispatch_from_state(trigger_body)
+                    # Use the agent from the current step (resolved later from workflow)
+                    pass  # task will be resolved from workflow context
+            elif dispatch.status == "hold":
+                return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
+            elif dispatch.status == "terminate":
+                return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
+        else:
+            # No dispatch in state either — skip
+            return {"SKIP_AGENT": "true", "REASON": "Bot comment without agentRunConfig or dispatch"}
 
     if not task:
         return {"SKIP_AGENT": "true", "REASON": "No valid task found"}

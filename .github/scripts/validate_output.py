@@ -111,6 +111,47 @@ def validate_agent_run_config(json_str: str) -> ValidationResult:
     return result
 
 
+VALID_DISPATCH_STATUSES = {"advance", "loop", "hold", "terminate"}
+
+
+def validate_dispatch(data: dict) -> ValidationResult:
+    """Validate a dispatch dict (from WorkflowState.dispatch).
+
+    Args:
+        data: Dict containing dispatch fields.
+
+    Returns:
+        ValidationResult with any issues found.
+    """
+    result = ValidationResult(is_valid=True)
+
+    if not isinstance(data, dict):
+        result.add_error("dispatch must be a JSON object")
+        return result
+
+    status = data.get("status")
+    if status and status not in VALID_DISPATCH_STATUSES:
+        result.add_error(
+            f"Invalid dispatch status '{status}'. Must be one of: {VALID_DISPATCH_STATUSES}"
+        )
+
+    # Validate task_hint if present
+    valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer"}
+    if data.get("task_hint") and data["task_hint"] not in valid_tasks:
+        result.add_error(
+            f"Invalid task_hint '{data['task_hint']}'. Must be one of: {valid_tasks}"
+        )
+
+    # Reuse agentRunConfig validators for shared fields
+    config_result = validate_agent_run_config(json.dumps(data))
+    # Filter out 'task' errors since dispatch uses 'task_hint' instead
+    filtered = [e for e in config_result.errors if "missing required field: 'task'" not in e]
+    for error in filtered:
+        result.add_error(error)
+
+    return result
+
+
 def validate_forbidden_sections(
     text: str, forbidden_headers: Optional[list[str]] = None
 ) -> ValidationResult:
