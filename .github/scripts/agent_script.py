@@ -715,7 +715,9 @@ def main():
     # Extract previous state from agent's prompt context if available,
     # or start fresh. Build a new state snapshot with current step data.
     prev_state = None
-    prev_state_path = os.environ.get("PREV_STATE_FILE", "/tmp/prev_workflow_state.json")
+    prev_state_path = os.path.join(
+        os.environ.get("RUNNER_TEMP", "/tmp"), "prev_workflow_state.json"
+    )
     if os.path.isfile(prev_state_path):
         try:
             with open(prev_state_path, "r", encoding="utf-8") as f:
