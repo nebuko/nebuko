@@ -713,6 +713,15 @@ jobs:
                         echo "(no PR found linked to issue#$ISSUE_NUMBER)" >> $FINAL_PROMPT_FILE
                     fi
                 fi
+                # Set PR metadata env vars for agent_script.py (populates WorkflowState.pull_request)
+                # PR_NUMBER may be set by the review agent block above, or via CONFIG_PR_NUMBER
+                PR_ENV="${PR_NUMBER:-${{ env.CONFIG_PR_NUMBER }}}"
+                if [ -n "$PR_ENV" ] && [ "$PR_ENV" != "null" ]; then
+                    export PR_NUMBER="$PR_ENV"
+                    export PR_URL="https://github.com/${{ github.repository }}/pull/$PR_NUMBER"
+                    export PR_TITLE=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json title --jq '.title' 2>/dev/null || echo "")
+                    export PR_AUTHOR=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json author --jq '.author.login' 2>/dev/null || echo "")
+                fi
                 # 2. Maintenant on ne passe qu'un seul argument au script !
                 # 2>&1 fusionne stderr dans stdout, stdbuf désactive le buffering pour une écriture immédiate
                 stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" 2>&1 | tee console.log
