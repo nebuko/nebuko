@@ -215,6 +215,14 @@ def resolve_config(
     if agent_config:
         # JSON-based invocation (agent→agent)
         task = agent_config.get("task", "")
+
+        # Special case: wait_for_human — intentional stop, no agent runs
+        if task == "wait_for_human":
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": "wait_for_human — workflow paused for human review",
+            }
+
         config_complexity = agent_config.get("complexity", "medium")
         config_reasoning = agent_config.get("reasoning", "none")
         config_temperature = agent_config.get("temperature", "")

@@ -884,6 +884,92 @@ jobs:
                 tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
                 mode: create
 
+            - name: Validate agent output — auto-retry if missing hand-off
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              env:
+                ROLE_NAME: ${{ env.ROLE_NAME }}
+              run: |
+                SCRIPT_PATH=".github/scripts/validate_output.py"
+                if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/validate_output.py" ]; then
+                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/validate_output.py"
+                fi
+
+                echo "Checking agent output for missing hand-off..."
+
+                # Get current retry count from issue labels
+                RETRY_COUNT=0
+                REPO_NAME="${{ github.repository }}"
+                TARGET_NUMBER="${{ env.TARGET_NUMBER }}"
+                CURRENT_RETRY=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/labels \
+                  --jq '.[] | select(.name | startswith("retry-count:")) | .name' 2>/dev/null | head -1 || echo "")
+
+                if [ -n "$CURRENT_RETRY" ]; then
+                  RETRY_COUNT=$(echo "$CURRENT_RETRY" | sed 's/retry-count://')
+                  echo "Current retry count: $RETRY_COUNT"
+                fi
+
+                # Run validation check
+                RETRY_RESULT=$(python "$SCRIPT_PATH" check-retry \
+                  --comment-file ./github_comment.md \
+                  --role "$ROLE_NAME" \
+                  --retry-count "$RETRY_COUNT")
+
+                echo "Retry validation result: $RETRY_RESULT"
+
+                # Parse result into env vars
+                RETRY=$(echo "$RETRY_RESULT" | grep "^RETRY=" | cut -d= -f2)
+                RETRY_AGENT=$(echo "$RETRY_RESULT" | grep "^AGENT=" | cut -d= -f2)
+                ESCALATE=$(echo "$RETRY_RESULT" | grep "^ESCALATE=" | cut -d= -f2)
+
+                echo "RETRY=$RETRY" >> $GITHUB_ENV
+                echo "RETRY_AGENT=$RETRY_AGENT" >> $GITHUB_ENV
+                echo "ESCALATE=$ESCALATE" >> $GITHUB_ENV
+                echo "RETRY_COUNT=$RETRY_COUNT" >> $GITHUB_ENV
+
+                if [ "$RETRY" = "false" ]; then
+                  echo "Agent output has valid hand-off. No retry needed."
+                  exit 0
+                fi
+
+                if [ "$ESCALATE" = "true" ]; then
+                  echo "Max retries ($RETRY_COUNT) exceeded. Escalating to @@genius."
+                else
+                  echo "Agent output missing hand-off. Will re-trigger @@${RETRY_AGENT}."
+                fi
+
+            - name: Auto-retry agent or escalate
+              if: env.RETRY == 'true' && env.TARGET_NUMBER != '0'
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+              run: |
+                REPO_NAME="${{ github.repository }}"
+                TARGET_NUMBER="${{ env.TARGET_NUMBER }}"
+                RETRY_AGENT="${{ env.RETRY_AGENT }}"
+                RETRY_COUNT="${{ env.RETRY_COUNT }}"
+                ESCALATE="${{ env.ESCALATE }}"
+
+                # Clean up old retry-count labels
+                OLD_LABELS=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/labels \
+                  --jq '.[] | select(.name | startswith("retry-count:")) | .name' 2>/dev/null || echo "")
+
+                for label in $OLD_LABELS; do
+                  gh api -X DELETE /repos/$REPO_NAME/issues/$TARGET_NUMBER/labels/"$label" 2>/dev/null || true
+                done
+
+                if [ "$ESCALATE" = "true" ]; then
+                  # Escalate to genius
+                  COMMENT_BODY="@@genius"
+                else
+                  # Increment retry count and label the issue for tracking
+                  NEW_COUNT=$((RETRY_COUNT + 1))
+                  echo "retry-count:$NEW_COUNT" | xargs -I {} gh api -X POST /repos/$REPO_NAME/issues/$TARGET_NUMBER/labels -F "name={}" 2>/dev/null || true
+                  COMMENT_BODY="@@${RETRY_AGENT}"
+                fi
+
+                echo "Posting retry comment: '$COMMENT_BODY'"
+                gh api -X POST /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments \
+                  -f "body=$COMMENT_BODY"
+
             - name: Minimize acknowledgment comment
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ACK_COMMENT_ID != '' && env.ACK_COMMENT_NODE_ID != ''
               run: |

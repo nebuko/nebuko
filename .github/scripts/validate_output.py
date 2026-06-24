@@ -70,7 +70,7 @@ def validate_agent_run_config(json_str: str) -> ValidationResult:
         result.add_error("agentRunConfig missing required field: 'task'")
 
     # Validate known fields' types
-    valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer"}
+    valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer", "wait_for_human"}
     if data.get("task") and data["task"] not in valid_tasks:
         result.add_error(
             f"Invalid task '{data['task']}'. Must be one of: {valid_tasks}"
@@ -136,7 +136,7 @@ def validate_dispatch(data: dict) -> ValidationResult:
         )
 
     # Validate task_hint if present
-    valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer"}
+    valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer", "wait_for_human"}
     if data.get("task_hint") and data["task_hint"] not in valid_tasks:
         result.add_error(
             f"Invalid task_hint '{data['task_hint']}'. Must be one of: {valid_tasks}"
@@ -217,30 +217,128 @@ def validate_agent_output(
     return result
 
 
+# Maximum retries before escalating to genius
+MAX_RETRIES = 2
+
+
+def should_retry_agent(comment_body: str, role: str, retry_count: int = 0) -> dict:
+    """Determine if an agent comment is missing its expected <agentRunConfig> and should be retried.
+
+    Args:
+        comment_body: The agent's output comment text.
+        role: The agent role name (e.g., "dev", "ctx", "review").
+        retry_count: Number of times this agent has already been retried.
+
+    Returns:
+        Dict with keys:
+        - RETRY: "true" or "false"
+        - AGENT: agent name to retry (if RETRY=true)
+        - ESCALATE: "true" if retries exhausted, escalate to genius
+    """
+    configs = extract_agent_run_configs(comment_body)
+    if configs:
+        # Has agentRunConfig — check if it's wait_for_human (intentional stop)
+        for config_str in configs:
+            try:
+                config = json.loads(config_str)
+                if config.get("task") == "wait_for_human":
+                    return {"RETRY": "false"}  # Intentional stop, no retry needed
+            except json.JSONDecodeError:
+                pass
+        return {"RETRY": "false"}  # Has proper hand-off to another agent
+
+    # No agentRunConfig found — agent output is incomplete, should retry
+    if retry_count >= MAX_RETRIES:
+        # Escalate to genius after max retries
+        return {"RETRY": "true", "AGENT": "genius", "ESCALATE": "true"}
+
+    return {"RETRY": "true", "AGENT": role, "ESCALATE": "false"}
+
+
 def main():
     """CLI entry point: validate output from stdin or file."""
     if len(sys.argv) < 2:
-        print("Usage: python validate_output.py <file> [role]")
-        print("  file: path to agent output file")
-        print("  role: agent role (ctx, dev, etc.) for role-specific checks")
+        print("Usage: python validate_output.py <command> [options]")
+        print("Commands:")
+        print("  validate <file> [role]      Validate agent output")
+        print("  check-retry --comment-file <file> --role <role> [--retry-count N]")
+        print("    Check if agent output should be retried")
         sys.exit(1)
 
-    filepath = sys.argv[1]
-    role = sys.argv[2] if len(sys.argv) > 2 else ""
+    command = sys.argv[1]
 
-    with open(filepath, "r", encoding="utf-8") as f:
-        text = f.read()
+    if command == "check-retry":
+        # Parse arguments for check-retry
+        comment_file = ""
+        role = ""
+        retry_count = 0
 
-    result = validate_agent_output(text, role)
+        i = 2
+        while i < len(sys.argv):
+            if sys.argv[i] == "--comment-file" and i + 1 < len(sys.argv):
+                comment_file = sys.argv[i + 1]
+                i += 2
+            elif sys.argv[i] == "--role" and i + 1 < len(sys.argv):
+                role = sys.argv[i + 1]
+                i += 2
+            elif sys.argv[i] == "--retry-count" and i + 1 < len(sys.argv):
+                retry_count = int(sys.argv[i + 1])
+                i += 2
+            else:
+                i += 1
 
-    if result.is_valid:
-        print("VALID: No issues found")
-        sys.exit(0)
+        if not comment_file or not role:
+            print("ERROR: --comment-file and --role are required for check-retry")
+            sys.exit(1)
+
+        with open(comment_file, "r", encoding="utf-8") as f:
+            comment_body = f.read()
+
+        result = should_retry_agent(comment_body, role, retry_count)
+
+        for key, value in result.items():
+            print(f"{key}={value}")
+
+    elif command == "validate":
+        filepath = sys.argv[2] if len(sys.argv) > 2 else ""
+        role = sys.argv[3] if len(sys.argv) > 3 else ""
+
+        if not filepath:
+            print("ERROR: file path required for validate")
+            sys.exit(1)
+
+        with open(filepath, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        result = validate_agent_output(text, role)
+
+        if result.is_valid:
+            print("VALID: No issues found")
+            sys.exit(0)
+        else:
+            print(f"INVALID: {len(result.errors)} issue(s) found:")
+            for error in result.errors:
+                print(f"  - {error}")
+            sys.exit(1)
+
     else:
-        print(f"INVALID: {len(result.errors)} issue(s) found:")
-        for error in result.errors:
-            print(f"  - {error}")
-        sys.exit(1)
+        # Backward compatibility: treat first arg as file path (validate mode)
+        filepath = sys.argv[1]
+        role = sys.argv[2] if len(sys.argv) > 2 else ""
+
+        with open(filepath, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        result = validate_agent_output(text, role)
+
+        if result.is_valid:
+            print("VALID: No issues found")
+            sys.exit(0)
+        else:
+            print(f"INVALID: {len(result.errors)} issue(s) found:")
+            for error in result.errors:
+                print(f"  - {error}")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
