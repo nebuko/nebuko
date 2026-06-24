@@ -26,7 +26,11 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(__file__))
 from config import load_workflow
 from resolve_workflow import resolve_workflow_routing, TASK_TO_PROMPT
-from state_manager import extract_dispatch_from_state
+from state_manager import (
+    WorkflowState,
+    extract_dispatch_from_state,
+    extract_state_from_body,
+)
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
 _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -110,6 +114,80 @@ def resolve_next_agent_from_workflow(
                 if next_step.name == step.next:
                     return next_step.agent
             return None
+    return None
+
+
+def _load_prev_state(prev_state_path: str) -> Optional[WorkflowState]:
+    """Load previous WorkflowState from a JSON file."""
+    if not os.path.isfile(prev_state_path):
+        return None
+    try:
+        with open(prev_state_path, "r", encoding="utf-8") as f:
+            data = json.loads(f.read())
+        return WorkflowState.model_validate(data)
+    except (json.JSONDecodeError, Exception):
+        return None
+
+
+def resolve_auto_resume_agent(
+    prev_state_path: str,
+    workflows_dir: str,
+) -> Optional[str]:
+    """Determine which agent to auto-resume based on previous workflow state.
+
+    When a human posts a plain comment (no @@mention, no /workflow, no JSON
+    config), this function checks for an active workflow in hold or advance
+    status and returns the appropriate agent to resume.
+
+    Args:
+        prev_state_path: Path to prev_workflow_state.json file.
+        workflows_dir: Path to workflows directory.
+
+    Returns:
+        Agent name to auto-resume, or None if no auto-resume should occur.
+    """
+    prev_state = _load_prev_state(prev_state_path)
+    if not prev_state:
+        return None
+
+    if not prev_state.workflow or not prev_state.step:
+        return None
+
+    dispatch = prev_state.dispatch
+    if not dispatch:
+        return None
+
+    # Terminated workflows should not auto-resume
+    if dispatch.status == "terminate":
+        return None
+
+    # Hold: auto-resume the current agent (human input is now available)
+    if dispatch.status == "hold":
+        # Check for explicit task_hint first
+        if dispatch.task_hint:
+            return dispatch.task_hint
+        # Otherwise look up the agent for the current step in workflow YAML
+        wf_file = Path(workflows_dir) / f"{prev_state.workflow}.yaml"
+        try:
+            wf_def = load_workflow(str(wf_file))
+            for step in wf_def.steps:
+                if step.name == prev_state.step:
+                    return step.agent
+        except (FileNotFoundError, ValueError):
+            pass
+        # Fallback: use the agent recorded in the state
+        return prev_state.agent or None
+
+    # Advance: resolve the next agent from workflow YAML
+    if dispatch.status == "advance":
+        return resolve_next_agent_from_workflow(
+            dispatch.task_hint,
+            prev_state.workflow,
+            prev_state.step,
+            workflows_dir,
+        )
+
+    # Loop or unknown status — no auto-resume
     return None
 
 
@@ -259,6 +337,19 @@ def resolve_config(
             # Fall through to @@mention if /workflow was invalid/unresolvable
             task = extract_mention_agent(trigger_body) or ""
             wf_name = None
+
+        # Auto-resume: if no explicit task found, check for active workflow state
+        if not task:
+            prev_state_path = os.path.join(
+                os.environ.get("RUNNER_TEMP", "/tmp"), "prev_workflow_state.json"
+            )
+            task = resolve_auto_resume_agent(prev_state_path, workflows_dir) or ""
+            if task:
+                print(
+                    f"Auto-resume: no explicit mention found, resuming agent '{task}' "
+                    f"from previous workflow state",
+                    file=sys.stderr,
+                )
 
         config_complexity = "medium"
         config_reasoning = "none"

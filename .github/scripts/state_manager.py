@@ -66,6 +66,14 @@ class Dispatch(BaseModel):
     provide a task hint. The workflow engine resolves routing from this field
     plus the workflow definition.
 
+    Status semantics:
+        advance: Move to the next step in the workflow. Auto-resolves the next
+            agent from the workflow YAML or uses task_hint override.
+        loop: Re-dispatch the same agent (used when an agent needs to retry).
+        hold: Pause execution and wait for human input. When a human posts a
+            plain comment (no @@mention), the system auto-resumes this agent.
+        terminate: End the workflow. No further auto-resume will occur.
+
     Fields:
         status: Outcome indicator ("advance", "loop", "hold", "terminate").
         task_hint: Optional suggested next agent (overrides workflow YAML).

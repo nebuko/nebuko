@@ -95,16 +95,7 @@ jobs:
               contains(github.event.issue.body, '@@debug') ||
               contains(github.event.issue.body, '<agentRunConfig>') ||
               contains(github.event.issue.body, '/workflow'))) ||
-            (github.event_name == 'issue_comment' &&
-             (contains(github.event.comment.body, '@@genius') ||
-              contains(github.event.comment.body, '@@ctx') ||
-              contains(github.event.comment.body, '@@dev') ||
-              contains(github.event.comment.body, '@@review') ||
-              contains(github.event.comment.body, '@@issue') ||
-              contains(github.event.comment.body, '@@issue-reviewer') ||
-              contains(github.event.issue.body, '@@debug') ||
-              contains(github.event.comment.body, '<agentRunConfig>') ||
-              contains(github.event.comment.body, '/workflow')))
+            github.event_name == 'issue_comment'
           )
         env:
             CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 25 }}
@@ -191,6 +182,20 @@ jobs:
                   # Install OpenHands SDK and tools from git repository
                   uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-sdk"
                   uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-tools"
+
+            - name: Extract Previous Workflow State
+              if: github.event_name == 'issue_comment' && env.TARGET_NUMBER != '0'
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  SCRIPTS_DIR=""
+                  if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts" ]; then
+                    SCRIPTS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts"
+                  else
+                    SCRIPTS_DIR=".github/scripts"
+                  fi
+                  PYTHONPATH="$SCRIPTS_DIR" python3 "$SCRIPTS_DIR/extract_prev_state.py" \
+                    --issue-number "$TARGET_NUMBER" --repo "$REPO_NAME"
 
             - name: Resolve Agent Configuration
               run: |
