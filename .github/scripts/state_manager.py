@@ -266,7 +266,7 @@ def extract_state(comments: list[dict[str, Any]]) -> Optional[WorkflowState]:
                 return WorkflowState.model_validate(data)
             except (json.JSONDecodeError, Exception) as e:
                 print(f"Warning: Failed to parse workflow state: {e}", flush=True)
-                return None
+                continue
     return None
 
 
