@@ -796,3 +796,244 @@ class TestSubWorkflowResolution:
             )
             assert result["SKIP_AGENT"] == "true"  # No linear next, so terminal
 
+
+# ── Spec-Driven Workflow Tests ───────────────────────────────────────
+
+
+class TestSpecDrivenWorkflow:
+    """Test spec-driven workflow resolution with conditional routing and skills."""
+
+    def _import_resolver(self):
+        import importlib
+        import sys
+        if "." not in sys.path:
+            sys.path.insert(0, ".")
+        resolve_workflow = importlib.import_module("resolve_workflow")
+        return resolve_workflow.resolve_workflow_step
+
+    def test_po_in_task_to_prompt(self):
+        """Verify po agent is registered in TASK_TO_PROMPT."""
+        import importlib
+        import sys
+        if "." not in sys.path:
+            sys.path.insert(0, ".")
+        resolve_workflow = importlib.import_module("resolve_workflow")
+        assert "po" in resolve_workflow.TASK_TO_PROMPT
+        assert resolve_workflow.TASK_TO_PROMPT["po"] == "po.md"
+
+    def test_spec_step_resolves_po_agent(self):
+        """The 'spec' step should resolve to the po agent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
+                "name": "spec-driven",
+                "description": "Spec-driven development",
+                "trigger": {"agents": ["po"]},
+                "steps": [
+                    {"name": "spec", "agent": "po", "next": "spec_approval"},
+                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                "po", "spec-driven", "spec", "", tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "po"
+            assert result["WORKFLOW_NAME"] == "spec-driven"
+            assert result["WORKFLOW_STEP"] == "spec"
+            assert result["WORKFLOW_NEXT"] == "spec_approval"
+            assert result["STEP_SKILLS"] == ""
+
+    def test_spec_approval_with_approved_branch(self):
+        """spec_approval with branch='approved' should route to architect."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
+                "name": "spec-driven",
+                "description": "Spec-driven development",
+                "trigger": {"agents": ["po"]},
+                "steps": [
+                    {"name": "spec", "agent": "po", "next": "spec_approval"},
+                    {
+                        "name": "spec_approval",
+                        "agent": "genius",
+                        "conditions": [
+                            {"on_result": "approved", "next": "architect"},
+                            {"on_result": "rejected", "next": "spec"},
+                            {"on_result": "default", "next": "architect"},
+                        ],
+                        "next": "architect",
+                    },
+                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
+                    {"name": "stub_review", "agent": "review", "next": "stub_approval"},
+                    {
+                        "name": "stub_approval",
+                        "agent": "genius",
+                        "conditions": [
+                            {"on_result": "approved", "next": "implement"},
+                            {"on_result": "rejected", "next": "stub"},
+                            {"on_result": "default", "next": "implement"},
+                        ],
+                        "next": "implement",
+                    },
+                    {"name": "implement", "agent": "dev", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                "genius", "spec-driven", "spec_approval", "approved", tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "genius"
+            assert result["WORKFLOW_NEXT"] == "architect"
+
+    def test_spec_approval_with_rejected_branch(self):
+        """spec_approval with branch='rejected' should route back to spec."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
+                "name": "spec-driven",
+                "description": "Spec-driven development",
+                "trigger": {"agents": ["po"]},
+                "steps": [
+                    {"name": "spec", "agent": "po", "next": "spec_approval"},
+                    {
+                        "name": "spec_approval",
+                        "agent": "genius",
+                        "conditions": [
+                            {"on_result": "approved", "next": "architect"},
+                            {"on_result": "rejected", "next": "spec"},
+                            {"on_result": "default", "next": "architect"},
+                        ],
+                        "next": "architect",
+                    },
+                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
+                    {"name": "stub_review", "agent": "review", "next": "stub_approval"},
+                    {
+                        "name": "stub_approval",
+                        "agent": "genius",
+                        "conditions": [
+                            {"on_result": "approved", "next": "implement"},
+                            {"on_result": "rejected", "next": "stub"},
+                            {"on_result": "default", "next": "implement"},
+                        ],
+                        "next": "implement",
+                    },
+                    {"name": "implement", "agent": "dev", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                "genius", "spec-driven", "spec_approval", "rejected", tmpdir, ".agents/prompts",
+            )
+            assert result["WORKFLOW_NEXT"] == "spec"
+
+    def test_stub_step_includes_stub_only_skill(self):
+        """The stub step should inject the stub-only skill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
+                "name": "spec-driven",
+                "description": "Spec-driven development",
+                "trigger": {"agents": ["po"]},
+                "steps": [
+                    {"name": "spec", "agent": "po", "next": "spec_approval"},
+                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
+                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
+                    {"name": "stub_review", "agent": "review", "next": "stub_approval"},
+                    {"name": "stub_approval", "agent": "genius", "next": "implement"},
+                    {"name": "implement", "agent": "dev", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                "dev", "spec-driven", "stub", "", tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "dev"
+            assert result["STEP_SKILLS"] == "stub-only"
+
+    def test_implement_step_has_no_skills(self):
+        """The implement step should NOT have stub-only skill — full implementation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
+                "name": "spec-driven",
+                "description": "Spec-driven development",
+                "trigger": {"agents": ["po"]},
+                "steps": [
+                    {"name": "spec", "agent": "po", "next": "spec_approval"},
+                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
+                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
+                    {"name": "stub_review", "agent": "review", "next": "stub_approval"},
+                    {"name": "stub_approval", "agent": "genius", "next": "implement"},
+                    {"name": "implement", "agent": "dev", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                "dev", "spec-driven", "implement", "", tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "dev"
+            assert result["STEP_SKILLS"] == ""
+
+    def test_stub_approval_with_default_branch_routes_to_implement(self):
+        """stub_approval with no branch (default) should route to implement."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
+                "name": "spec-driven",
+                "description": "Spec-driven development",
+                "trigger": {"agents": ["po"]},
+                "steps": [
+                    {"name": "spec", "agent": "po", "next": "spec_approval"},
+                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
+                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
+                    {"name": "stub_review", "agent": "review", "next": "stub_approval"},
+                    {
+                        "name": "stub_approval",
+                        "agent": "genius",
+                        "conditions": [
+                            {"on_result": "approved", "next": "implement"},
+                            {"on_result": "rejected", "next": "stub"},
+                            {"on_result": "default", "next": "implement"},
+                        ],
+                        "next": "implement",
+                    },
+                    {"name": "implement", "agent": "dev", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                "genius", "spec-driven", "stub_approval", "", tmpdir, ".agents/prompts",
+            )
+            assert result["WORKFLOW_NEXT"] == "implement"
+
+    def test_implement_is_terminal_step(self):
+        """The implement step has next=null, making it terminal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
+                "name": "spec-driven",
+                "description": "Spec-driven development",
+                "trigger": {"agents": ["po"]},
+                "steps": [
+                    {"name": "spec", "agent": "po", "next": "spec_approval"},
+                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
+                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
+                    {"name": "stub_review", "agent": "review", "next": "stub_approval"},
+                    {"name": "stub_approval", "agent": "genius", "next": "implement"},
+                    {"name": "implement", "agent": "dev", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                "dev", "spec-driven", "implement", "", tmpdir, ".agents/prompts",
+            )
+            assert result["ROLE_NAME"] == "dev"
+            assert result["WORKFLOW_NEXT"] == ""
+
