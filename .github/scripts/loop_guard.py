@@ -24,16 +24,20 @@ import re
 import sys
 
 
-def detect_same_agent_loop(trigger_body: str, current_agent: str) -> bool:
+def detect_same_agent_loop(trigger_body: str, current_agent: str, retry_call: bool = False) -> bool:
     """Check if trigger body is from the same agent (loop detection).
 
     Args:
         trigger_body: Raw trigger body text.
         current_agent: Current agent name being invoked.
+        retry_call: If True, this is an intentional retry — bypass same-agent check.
 
     Returns:
-        True if same-agent loop detected.
+        True if same-agent loop detected (and not a retry bypass).
     """
+    if retry_call:
+        return False
+
     match = re.search(r"<!-- bot-agent-([a-z][a-z-]*) -->", trigger_body)
     if match:
         caller_agent = match.group(1)
@@ -62,18 +66,23 @@ def detect_human_plus_agent_ping(trigger_body: str) -> bool:
     return len(agent_mentions) > 0 and len(human_mentions) > 0
 
 
-def check_loop_guard(trigger_body: str, current_agent: str) -> dict:
+def check_loop_guard(trigger_body: str, current_agent: str, retry_call: bool = False) -> dict:
     """Run both loop guards and determine if agent should skip.
 
     Args:
         trigger_body: Raw trigger body text.
         current_agent: Current agent name being invoked.
+        retry_call: If True, this is an intentional retry — bypass same-agent check.
 
     Returns:
         Dict with SKIP_AGENT (true/false) and optional REASON.
     """
+    # Retry bypass: intentional system-initiated retry — skip all guards
+    if retry_call:
+        return {"SKIP_AGENT": "false", "REASON": "Retry bypass — intentional retry"}
+
     # Guard 1: Same-agent loop detection
-    if detect_same_agent_loop(trigger_body, current_agent):
+    if detect_same_agent_loop(trigger_body, current_agent, retry_call):
         caller_match = re.search(r"<!-- bot-agent-([a-z][a-z-]*) -->", trigger_body)
         caller = caller_match.group(1) if caller_match else "?"
         return {
@@ -114,6 +123,12 @@ def main():
         default="",
         help="Path to GITHUB_ENV file to append results",
     )
+    parser.add_argument(
+        "--retry-call",
+        action="store_true",
+        default=False,
+        help="If set, bypass same-agent loop detection (intentional retry)",
+    )
 
     args = parser.parse_args()
 
@@ -123,7 +138,7 @@ def main():
         with open(args.trigger_body, "r", encoding="utf-8") as f:
             trigger_body = f.read()
 
-    result = check_loop_guard(trigger_body, args.current_agent)
+    result = check_loop_guard(trigger_body, args.current_agent, args.retry_call)
 
     for key, value in result.items():
         print(f"{key}={value}")

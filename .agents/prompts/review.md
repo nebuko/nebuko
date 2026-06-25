@@ -39,10 +39,10 @@ Choose ONE of the following paths:
 - Summarize what you reviewed and confirm it looks good.
 - **Explicitly ping the original issue author** (`@<issue_author>`) to let them know the PR is ready for final human review. This is critical — do NOT skip the human ping.
 - End your message with: `@<issue_author> ready for human review.`
-- Also include the agentRunConfig for workflow tracking:
+- Include the `wait_for_human` hand-off so the workflow knows to stop and wait for human review:
   ```
   <agentRunConfig>
-  {"task": "review", "complexity": "medium"}
+  {"task": "wait_for_human"}
   </agentRunConfig>
   ```
 
@@ -63,9 +63,9 @@ Choose ONE of the following paths:
     </agentRunConfig>
     ```
     (Increment the `round` counter for each dev→review→dev cycle.)
-  - If approved: Include the human ping `@<issue_author> ready for human review.` in your message body, and optionally add:
+  - If approved: Include the human ping `@<issue_author> ready for human review.` in your message body, and include:
     ```
     <agentRunConfig>
-    {"task": "review", "complexity": "medium"}
+    {"task": "wait_for_human"}
     </agentRunConfig>
     ```

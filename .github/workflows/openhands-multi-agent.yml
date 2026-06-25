@@ -168,6 +168,14 @@ jobs:
                   echo "EOF"
                 } >> "$GITHUB_ENV"
 
+                # Detect retry-call marker for auto-retry bypass
+                if echo "$TRIGGER_BODY" | grep -q '<!-- retry-call:'; then
+                  echo "RETRY_CALL=true" >> $GITHUB_ENV
+                  echo "Retry call marker detected — loop guard will be bypassed"
+                else
+                  echo "RETRY_CALL=false" >> $GITHUB_ENV
+                fi
+
                 # Simple variables can remain as is, provided they contain no newlines
                 echo "TARGET_NUMBER=$TARGET_NUMBER" >> $GITHUB_ENV
                 echo "TRIGGER_AUTHOR=$TRIGGER_AUTHOR" >> $GITHUB_ENV
@@ -475,6 +483,13 @@ jobs:
 
             - name: Prevent all agent-trigger loops & human ping guard
               run: |
+                  # Retry bypass: intentional system-initiated retry — skip all guards
+                  if [[ "${RETRY_CALL}" == "true" ]]; then
+                    echo "Retry bypass — intentional retry. Allowing."
+                    echo "SKIP_AGENT=false" >> $GITHUB_ENV
+                    exit 0
+                  fi
+
                   # Guard 1: Block same-agent loops, allow cross-agent calls
                   CALLER_AGENT=$(echo "$TRIGGER_BODY" | sed -n 's/.*<!-- bot-agent-\([a-z]*\) -->.*/\1/p')
                   if [[ -n "$CALLER_AGENT" ]]; then
@@ -883,6 +898,69 @@ jobs:
                 token: ${{ secrets.GH_PAT }}
                 tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
                 mode: create
+
+            - name: Validate agent output — auto-retry if missing hand-off
+              if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              run: |
+                echo "Checking agent output for required hand-off..."
+
+                # Read retry count from issue label (persists across workflow runs)
+                RETRY_COUNT=$(gh api /repos/${{ github.repository }}/issues/${{ env.TARGET_NUMBER }}/labels \
+                  --jq '.[] | select(.name | startswith("retry-count:")) | .name' | \
+                  sed 's/retry-count://' || echo "0")
+                RETRY_COUNT=${RETRY_COUNT:-0}
+
+                RESULT=$(python .github/scripts/validate_output.py check-retry \
+                  --comment-file ./github_comment.md \
+                  --role "${ROLE_NAME}" \
+                  --retry-count "$RETRY_COUNT")
+                echo "Validation result: $RESULT"
+                echo "$RESULT" >> $GITHUB_ENV
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+
+            - name: Auto-retry agent or escalate
+              if: env.RETRY == 'true' && env.TARGET_NUMBER != '0'
+              run: |
+                # Read current retry count from label
+                RETRY_COUNT=$(gh api /repos/${{ github.repository }}/issues/${{ env.TARGET_NUMBER }}/labels \
+                  --jq '.[] | select(.name | startswith("retry-count:")) | .name' | \
+                  sed 's/retry-count://' || echo "0")
+                RETRY_COUNT=${RETRY_COUNT:-0}
+                NEXT_COUNT=$((RETRY_COUNT + 1))
+
+                # Remove old retry-count label and set new one
+                OLD_LABEL=$(gh api /repos/${{ github.repository }}/issues/${{ env.TARGET_NUMBER }}/labels \
+                  --jq '.[] | select(.name | startswith("retry-count:")) | .name' | head -1 || echo "")
+                if [ -n "$OLD_LABEL" ]; then
+                  gh api -X DELETE /repos/${{ github.repository }}/issues/${{ env.TARGET_NUMBER }}/labels/"$OLD_LABEL"
+                fi
+                gh api -X POST /repos/${{ github.repository }}/issues/${{ env.TARGET_NUMBER }}/labels \
+                  -f name="retry-count:$NEXT_COUNT"
+
+                # Determine agent to re-trigger (use ESCALATE flag to pick genius if needed)
+                TARGET_AGENT="${AGENT}"
+
+                echo "Re-triggering @@$TARGET_AGENT (retry attempt $NEXT_COUNT)..."
+
+                # Post retry comment with RETRY_CALL marker
+                gh api -X POST /repos/${{ github.repository }}/issues/${{ env.TARGET_NUMBER }}/comments \
+                  -f body="<!-- retry-call: $TARGET_AGENT -->\n@@$TARGET_AGENT"
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+                AGENT: ${{ env.AGENT }}
+
+            - name: Reset retry count on successful hand-off
+              if: env.RETRY == 'false' && env.TARGET_NUMBER != '0'
+              run: |
+                OLD_LABEL=$(gh api /repos/${{ github.repository }}/issues/${{ env.TARGET_NUMBER }}/labels \
+                  --jq '.[] | select(.name | startswith("retry-count:")) | .name' | head -1 || echo "")
+                if [ -n "$OLD_LABEL" ]; then
+                  echo "Removing retry label $OLD_LABEL (successful hand-off)"
+                  gh api -X DELETE /repos/${{ github.repository }}/issues/${{ env.TARGET_NUMBER }}/labels/"$OLD_LABEL"
+                fi
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
 
             - name: Minimize acknowledgment comment
               if: always() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ACK_COMMENT_ID != '' && env.ACK_COMMENT_NODE_ID != ''
