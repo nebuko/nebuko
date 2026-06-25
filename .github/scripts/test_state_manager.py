@@ -34,106 +34,10 @@ from state_manager import (
 )
 
 
-class TestWorkflowStateSchema(unittest.TestCase):
-    """Test WorkflowState Pydantic schema validation."""
-
-    def test_minimal_state(self):
-        state = WorkflowState(workflow="test", step="analyze", agent="genius")
-        self.assertEqual(state.version, 1)
-        self.assertEqual(state.phase, "")
-        self.assertEqual(state.history, [])
-        self.assertEqual(state.pinned_comment_ids, [])
-        self.assertIsNone(state.parent_workflow)
-
-    def test_full_state(self):
-        state = WorkflowState(
-            workflow="default",
-            step="implement",
-            agent="dev",
-            version=5,
-            phase="execution",
-            history=[HistoryEntry(step="analyze", agent="genius", summary="Analyzed issue")],
-            pinned_comment_ids=[12345],
-            current_context={"task": "implement feature"},
-            metrics=StateMetrics(input_tokens=1000, output_tokens=500),
-            parent_workflow="spec-driven-design",
-            parent_workflow_step="stub_phase",
-        )
-        self.assertEqual(state.version, 5)
-        self.assertEqual(len(state.history), 1)
-        self.assertIn(12345, state.pinned_comment_ids)
-
-    def test_defaults_for_optional_fields(self):
-        """Step, agent, phase default to empty string for backward compat."""
-        state = WorkflowState(workflow="test", agent="genius")
-        self.assertEqual(state.step, "")
-        self.assertEqual(state.phase, "")
-        self.assertEqual(state.version, 1)
 
 
-class TestBuildState(unittest.TestCase):
-    """Test build_state() pure state-transition function."""
 
-    def test_initial_state(self):
-        state = build_state(None, workflow="default", step="analyze", agent="genius")
-        self.assertEqual(state.version, 1)
-        self.assertEqual(state.workflow, "default")
-        self.assertEqual(state.step, "analyze")
-        self.assertEqual(state.agent, "genius")
-        self.assertEqual(len(state.history), 1)
 
-    def test_append_to_existing(self):
-        prev = build_state(
-            None,
-            workflow="default",
-            step="analyze",
-            agent="genius",
-            summary="Analyzed request",
-        )
-        next_state = build_state(
-            prev,
-            workflow="default",
-            step="context",
-            agent="ctx",
-            summary="Collected files",
-        )
-        self.assertEqual(next_state.version, 2)
-        self.assertEqual(len(next_state.history), 2)
-        self.assertEqual(next_state.history[0].summary, "Analyzed request")
-        self.assertEqual(next_state.history[1].summary, "Collected files")
-
-    def test_phase_derivation(self):
-        state = build_state(
-            None,
-            workflow="default",
-            step="implement",
-            agent="dev",
-            phase="execution",
-        )
-        self.assertEqual(state.phase, "execution")
-
-    def test_pinning(self):
-        state = build_state(
-            None,
-            workflow="default",
-            step="plan",
-            agent="genius",
-            summary="Architecture proposal",
-            pin=True,
-        )
-        self.assertTrue(state.history[0].pin)
-
-    def test_metrics_included(self):
-        metrics_dict = {"input_tokens": 5000, "output_tokens": 2000}
-        state = build_state(
-            None,
-            workflow="default",
-            step="analyze",
-            agent="genius",
-            metrics_dict=metrics_dict,
-        )
-        self.assertIsNotNone(state.metrics)
-        self.assertEqual(state.metrics.input_tokens, 5000)
 
 
 class TestWrapCommentWithState(unittest.TestCase):

@@ -12,7 +12,9 @@ Use this structure for your specification:
 
 ```
 ## Feature: <short description of the feature>
+<description of the feature focus on problem we want to solve>
 
+## Scenarios
 ### Scenario 1: <scenario name>
 - WHEN <triggering condition>
 - THEN <expected outcome>
