@@ -102,8 +102,16 @@ def resolve_workflow_routing(
         "WORKFLOW_NEXT": "",
         "PARENT_WORKFLOW": "",
         "PARENT_WORKFLOW_STEP": "",
+        "STEP_SKILLS": "",
         "SKIP_AGENT": "false",
     }
+
+
+def _skills_to_string(skill_list: list[str] | None) -> str:
+    """Convert an optional skill list to a comma-separated string."""
+    if not skill_list:
+        return ""
+    return ",".join(skill_list)
 
 
 def _is_terminal_step(step: WorkflowStep) -> bool:
@@ -194,6 +202,7 @@ def _resolve_sub_workflow_entry(
         "WORKFLOW_NEXT": second_step,
         "PARENT_WORKFLOW": workflow.name,
         "PARENT_WORKFLOW_STEP": current_step.name,
+        "STEP_SKILLS": _skills_to_string(first_step.skill),
         "SKIP_AGENT": "false",
     }
 
@@ -300,6 +309,7 @@ def _resolve_return_to_parent(
         "WORKFLOW_NEXT": next_step.next or "",
         "PARENT_WORKFLOW": "",
         "PARENT_WORKFLOW_STEP": "",
+        "STEP_SKILLS": _skills_to_string(next_step.skill),
         "SKIP_AGENT": "false",
     }
 
@@ -346,6 +356,7 @@ def resolve_workflow_step(
             "WORKFLOW_NEXT": "",
             "PARENT_WORKFLOW": parent_workflow,
             "PARENT_WORKFLOW_STEP": parent_workflow_step,
+            "STEP_SKILLS": "",
             "SKIP_AGENT": "false",
         }
 
@@ -364,6 +375,7 @@ def resolve_workflow_step(
             "WORKFLOW_NEXT": "",
             "PARENT_WORKFLOW": parent_workflow,
             "PARENT_WORKFLOW_STEP": parent_workflow_step,
+            "STEP_SKILLS": "",
             "SKIP_AGENT": "false",
         }
 
@@ -431,6 +443,7 @@ def resolve_workflow_step(
         "WORKFLOW_NEXT": next_step or "",
         "PARENT_WORKFLOW": parent_workflow,
         "PARENT_WORKFLOW_STEP": parent_workflow_step,
+        "STEP_SKILLS": _skills_to_string(current_step.skill),
         "SKIP_AGENT": "false",
     }
 

@@ -85,6 +85,50 @@ class TestWorkflowStep:
         assert len(step.conditions) == 3
         assert step.conditions[0].on_result == "needs_review"
 
+    def test_step_with_skills(self):
+        step = WorkflowStep(name="dev", agent="dev", skill=["python"])
+        assert step.skill == ["python"]
+
+    def test_step_with_multiple_skills(self):
+        step = WorkflowStep(name="dev", agent="dev", skill=["python", "rust"])
+        assert step.skill == ["python", "rust"]
+
+    def test_step_without_skills_defaults_to_none(self):
+        step = WorkflowStep(name="dev", agent="dev")
+        assert step.skill is None
+
+
+# ── Skills Helper Tests ──────────────────────────────────────────────
+
+
+class TestSkillsToString:
+    """Test _skills_to_string helper from resolve_workflow."""
+
+    def _import_helper(self):
+        import importlib
+        import sys
+        # Ensure the scripts directory is on the path
+        if "." not in sys.path:
+            sys.path.insert(0, ".")
+        resolve_workflow = importlib.import_module("resolve_workflow")
+        return resolve_workflow._skills_to_string
+
+    def test_none_returns_empty(self):
+        to_str = self._import_helper()
+        assert to_str(None) == ""
+
+    def test_empty_list_returns_empty(self):
+        to_str = self._import_helper()
+        assert to_str([]) == ""
+
+    def test_single_skill(self):
+        to_str = self._import_helper()
+        assert to_str(["python"]) == "python"
+
+    def test_multiple_skills(self):
+        to_str = self._import_helper()
+        assert to_str(["python", "rust"]) == "python,rust"
+
 
 class TestWorkflowTrigger:
     """Test WorkflowTrigger Pydantic model."""

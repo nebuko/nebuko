@@ -486,6 +486,18 @@ def main():
         logger.error(str(e))
         sys.exit(1)
 
+    # Load skill context if available
+    skill_context_file = os.environ.get("SKILL_CONTEXT_FILE", "")
+    if skill_context_file and os.path.isfile(skill_context_file):
+        try:
+            with open(skill_context_file, "r") as f:
+                skill_content = f.read()
+            if skill_content:
+                prompt = f"{prompt}\n\n## Skills\n\n{skill_content}"
+                logger.info(f"Injected skill context ({len(skill_content)} characters)")
+        except (IOError, OSError) as e:
+            logger.warning(f"Failed to load skill context: {e}")
+
     # Configure LLM — prefer layered config file, fall back to env vars
     config_path = os.getenv("AGENT_CONFIG_PATH", "agent-config.yaml")
     role_name = os.environ.get("ROLE_NAME", "unknown")

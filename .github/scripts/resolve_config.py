@@ -372,6 +372,7 @@ def resolve_config(
         "LLM_REASONING": config_reasoning,
         "AGENT_ROUND": config_round or "",
         "AGENT_SKILLS": config_skills or "",
+        "STEP_SKILLS": wf_result.get("STEP_SKILLS", ""),
         "CONFIG_MODEL": config_model or "",
         "CONFIG_TEMPERATURE": config_temperature or "",
         "CONFIG_TOP_P": config_top_p or "",
