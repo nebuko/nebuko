@@ -19,11 +19,11 @@ def extract_state_from_body(body: str) -> Optional[WorkflowState]:
         try:
             data = json.loads(json_str)
             return WorkflowState.model_validate(data)
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             return None
     return None
 
-def extract_lastest_state_from_comments(comments: list[dict[str, Any]]) -> Optional[WorkflowState]:
+def extract_latest_state_from_comments(comments: list[dict[str, Any]]) -> Optional[WorkflowState]:
     """
     Extract the latest WorkflowState from a list of GitHub comments.
 
@@ -46,7 +46,6 @@ def extract_lastest_state_from_comments(comments: list[dict[str, Any]]) -> Optio
             try:
                 data = json.loads(json_str)
                 return WorkflowState.model_validate(data)
-            except (json.JSONDecodeError, Exception) as e:
-                print(f"Warning: Failed to parse workflow state: {e}", flush=True)
+            except Exception:
                 continue
     return None

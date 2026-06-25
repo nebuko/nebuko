@@ -18,7 +18,7 @@ from .features.build_state.build_state import build_state
 from .features.to_json.to_json import state_to_json
 from .features.comment.to_git_comment import format_collapsed_section
 from .features.get_last_state.get_last_state import (
-    extract_lastest_state_from_comments,
+    extract_latest_state_from_comments,
     extract_state_from_body,
 )
 
@@ -49,7 +49,7 @@ __all__ = [
     "build_state",
     "state_to_json",
     "format_collapsed_section",
-    "extract_lastest_state_from_comments",
+    "extract_latest_state_from_comments",
     "extract_state_from_body",
     "extract_dispatch_from_state",
     # Facade

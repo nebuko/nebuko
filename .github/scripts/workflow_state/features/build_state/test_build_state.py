@@ -1,6 +1,6 @@
 import unittest
 
-from .build_state import build_state
+from workflow_state import WorkflowState, build_state
 
 class TestBuildState(unittest.TestCase):
     """Test build_state() pure state-transition function."""
