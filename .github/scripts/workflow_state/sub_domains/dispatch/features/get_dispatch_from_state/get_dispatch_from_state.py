@@ -1,4 +1,4 @@
-from typing import Optional 
+from typing import Optional
 
 from .....features.get_last_state.get_last_state import extract_state_from_body
 from .....workflow_state import WorkflowState

@@ -9,7 +9,7 @@ def legacy_metrics_to_state_metrics(metrics_json_str: str) -> Optional[StateMetr
     try:
         data = json.loads(metrics_json_str)
         return StateMetrics.from_full_metrics_dict(data)
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         return None
 
 

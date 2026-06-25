@@ -61,7 +61,7 @@ def to_git_comment(state: WorkflowState) -> str:
     from .features.comment.to_git_comment import format_collapsed_section
     return format_collapsed_section(state)
 
-def from_body(body: str) -> WorkflowState:
+def from_body(body: str) -> Optional[WorkflowState]:
     from .features.get_last_state.get_last_state import extract_state_from_body
     return extract_state_from_body(body)
 
