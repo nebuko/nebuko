@@ -26,7 +26,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from github_client import get_issue_comments
+from github_client import get_comment_body, get_issue_comments
 from state_manager import (
     extract_state,
     extract_state_from_body,
@@ -186,15 +186,16 @@ def _build_history_string(comments) -> str:
     return "\n".join(parts)
 
 
-def _build_state_context(comments) -> str:
+def _build_state_context(comments, repo: str) -> str:
     """Extract the latest workflow state and format it as context for agents.
 
     Scans comments in reverse for the latest workflow state JSON section.
     If found, formats a compact summary of the state including history and
-    pinned references.
+    pinned references. Pinned comment bodies are fetched and included in full.
 
     Args:
         comments: List of comment dicts from GitHub API.
+        repo: Repository in format owner/repo.
 
     Returns:
         Formatted state context string (empty if no state found).
@@ -224,12 +225,19 @@ def _build_state_context(comments) -> str:
                         f"{pin_marker}: {entry.summary[:120]}"
                     )
             if state.pinned_comment_ids:
-                lines.append("")
-                lines.append(
-                    "**Pinned Comment IDs:** "
-                    f"{', '.join(str(c) for c in state.pinned_comment_ids)}"
-                    " *(full content should be fetched at runtime)*"
-                )
+                # Fetch full content of pinned comments
+                pinned_contents = []
+                for cid in state.pinned_comment_ids:
+                    content = get_comment_body(str(cid), repo)
+                    if content:
+                        pinned_contents.append(
+                            f"### Pinned Comment #{cid}\n\n{content}"
+                        )
+                if pinned_contents:
+                    lines.append("")
+                    lines.append("**Pinned Context:**")
+                    lines.append("")
+                    lines.extend(pinned_contents)
             if state.current_context:
                 lines.append("")
                 lines.append("**Current Context:**")
@@ -291,8 +299,8 @@ def main():
     # Build history string
     history = _build_history_string(comments)
 
-    # Build structured state context from latest workflow state
-    state_context = _build_state_context(comments)
+    # Build structured state context from latest workflow state (fetches pinned comment bodies)
+    state_context = _build_state_context(comments, repo_name)
 
     # Save extracted workflow state as JSON for the next agent step
     # Use RUNNER_TEMP for per-run isolation (avoids cross-contamination on self-hosted runners)

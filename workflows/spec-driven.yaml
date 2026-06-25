@@ -1,0 +1,52 @@
+# Spec-Driven Development Workflow
+# po → [human spec approval] → genius (architect) → dev (stub) → review → [human stub approval] → dev (implement)
+
+name: spec-driven
+description: "Spec-driven development: spec → stub → implement"
+
+trigger:
+  agents: [po]  # which @@mentions can start this workflow
+
+steps:
+  - name: spec
+    agent: po
+    next: spec_approval
+
+  - name: spec_approval
+    agent: genius
+    conditions:
+      - on_result: approved
+        next: architect
+      - on_result: rejected
+        next: spec
+      - on_result: default
+        next: architect
+    next: architect
+
+  - name: architect
+    agent: genius
+    next: stub
+
+  - name: stub
+    agent: dev
+    skill: [stub-only]
+    next: stub_review
+
+  - name: stub_review
+    agent: review
+    next: stub_approval
+
+  - name: stub_approval
+    agent: genius
+    conditions:
+      - on_result: approved
+        next: implement
+      - on_result: rejected
+        next: stub
+      - on_result: default
+        next: implement
+    next: implement
+
+  - name: implement
+    agent: dev
+    next: null  # terminal step — stub review is the quality gate

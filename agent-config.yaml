@@ -107,3 +107,9 @@ agents:
     prompt_file: ".agents/prompts/debug.md"
     skills: []
     tools: ["terminal", "file_editor", "think", "finish"]
+
+  po:
+    model: "${llms.qwen-3-6-27b}"
+    prompt_file: ".agents/prompts/po.md"
+    skills: []
+    tools: ["think", "finish"]
