@@ -145,6 +145,7 @@ class WorkflowStep(BaseModel):
     workflow_name: Optional[str] = None
     next: Optional[str] = None
     conditions: Optional[list[WorkflowCondition]] = None
+    skill: Optional[list[str]] = None
 
     @model_validator(mode="after")
     def _validate_step_source(self) -> "WorkflowStep":

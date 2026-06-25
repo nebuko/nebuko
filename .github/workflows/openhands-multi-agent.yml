@@ -380,11 +380,13 @@ jobs:
                     WF_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
                     WF_PARENT=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
                     WF_PARENT_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
+                    STEP_SKILLS=$(echo "$RESOLVE_OUTPUT" | grep '^STEP_SKILLS=' | cut -d= -f2-)
                     echo "WORKFLOW_NAME=$WF_NAME" >> $GITHUB_ENV
                     echo "WORKFLOW_STEP=$WF_STEP" >> $GITHUB_ENV
                     echo "WORKFLOW_NEXT=$WF_NEXT" >> $GITHUB_ENV
                     echo "PARENT_WORKFLOW=$WF_PARENT" >> $GITHUB_ENV
                     echo "PARENT_WORKFLOW_STEP=$WF_PARENT_STEP" >> $GITHUB_ENV
+                    echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
                   else
                     # Fallback: original case-based routing (backward compatible)
                     case "$TASK" in
@@ -460,8 +462,47 @@ jobs:
                       echo "AGENT_ROUND=" >> $GITHUB_ENV
                   fi
 
-                  # Step 8: Export skills field (plumbing only — no-op for now)
-                  echo "AGENT_SKILLS=${CONFIG_SKILLS}" >> $GITHUB_ENV
+                  # Step 8: Load skill files and concatenate content
+                  ALL_SKILLS="${CONFIG_SKILLS}"
+                  if [ -n "${STEP_SKILLS}" ]; then
+                    if [ -n "$ALL_SKILLS" ]; then
+                      ALL_SKILLS="${ALL_SKILLS},${STEP_SKILLS}"
+                    else
+                      ALL_SKILLS="${STEP_SKILLS}"
+                    fi
+                  fi
+
+                  SKILL_CONTENT=""
+                  if [ -n "$ALL_SKILLS" ]; then
+                    SKILLS_DIR=""
+                    if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/skills" ]; then
+                      SKILLS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/skills"
+                    elif [ -d "skills" ]; then
+                      SKILLS_DIR="skills"
+                    fi
+
+                    if [ -n "$SKILLS_DIR" ]; then
+                      IFS=',' read -ra SKILL_NAMES <<< "$ALL_SKILLS"
+                      for skill_name in "${SKILL_NAMES[@]}"; do
+                        skill_file="${SKILLS_DIR}/${skill_name}.md"
+                        if [ -f "$skill_file" ]; then
+                          SKILL_CONTENT="${SKILL_CONTENT}--- Skill: ${skill_name} ---
+$(cat "$skill_file")
+"
+                        else
+                          echo "Warning: Skill file not found: $skill_file"
+                        fi
+                      done
+                    fi
+                  fi
+
+                  echo "AGENT_SKILLS=${ALL_SKILLS}" >> $GITHUB_ENV
+                  if [ -n "$SKILL_CONTENT" ]; then
+                    printf "%s" "$SKILL_CONTENT" > /tmp/skill_context.md
+                    echo "SKILL_CONTEXT_FILE=/tmp/skill_context.md" >> $GITHUB_ENV
+                  else
+                    echo "SKILL_CONTEXT_FILE=" >> $GITHUB_ENV
+                  fi
 
                   # Step 9: Export per-invocation overrides for agent_script.py
                   echo "CONFIG_MODEL=${CONFIG_MODEL}" >> $GITHUB_ENV
