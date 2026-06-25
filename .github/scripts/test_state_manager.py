@@ -331,6 +331,23 @@ class TestExtractState(unittest.TestCase):
         comments = [{"id": 1, "body": None}]
         self.assertIsNone(extract_state(comments))
 
+    def test_malformed_latest_state_falls_through_to_valid_earlier(self):
+        """When the newest comment has state markers but malformed JSON,
+        extract_state should skip it and find the earlier valid state."""
+        body_valid = self._make_state_body(version=3)
+        body_malformed = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            "{\"invalid json\n"
+            "<!-- WORKFLOW_STATE_END -->"
+        )
+        comments = [
+            {"id": 100, "body": body_valid},
+            {"id": 200, "body": body_malformed},  # Newest — malformed
+        ]
+        state = extract_state(comments)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 3)
+
 
 class TestIssueInfo(unittest.TestCase):
     """Test IssueInfo model and build_state() issue persistence."""
