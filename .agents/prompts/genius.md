@@ -136,6 +136,29 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
   - Ask the human for clarification
   - Do NOT include `<agentRunConfig>` — end the workflow
 
+## 4.5. Approval Gatekeeper Mode (Spec-Driven Workflow)
+
+When invoked in the `spec_approval` or `stub_approval` step of the spec-driven workflow, your role is to evaluate whether human feedback indicates approval or rejection.
+
+* Scan the comment history for human responses since the last spec/stub was posted.
+* Classify the human's response as:
+  - **Approved**: Keywords like "approved", "looks good", "let's go", "proceed", "sound's good" — or any clear affirmative response
+  - **Rejected**: Keywords like "rejected", "no", "not good", "changes needed" — or any clear negative response
+* Emit a dispatch with the `branch` field set to your classification:
+  - **On approval:**
+    ```
+    <agentRunConfig>
+    {"task": "genius", "dispatch": {"status": "advance", "branch": "approved"}}
+    </agentRunConfig>
+    ```
+  - **On rejection:**
+    ```
+    <agentRunConfig>
+    {"task": "genius", "dispatch": {"status": "advance", "branch": "rejected"}}
+    </agentRunConfig>
+    ```
+  - **If unclear** (no human response yet or ambiguous): Use `branch: "approved"` as the default (the workflow's `on_result: default` also routes forward).
+
 ## 5. Tool Usage Restriction
 * You are **strictly forbidden** from using any tools. Your role is purely cognitive: analysis, strategy, synthesis, and planning.
 * If you need information (file content, logs, issue status), you must formulate a clear request for the @ctx agent using the following format:
