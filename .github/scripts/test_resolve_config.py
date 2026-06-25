@@ -394,6 +394,42 @@ class TestResolveConfigWithWorkflowCommand:
         # Bot comments should skip even with /workflow
         assert result["SKIP_AGENT"] == "true"
 
+    def test_step_skills_passed_through_from_workflow(self):
+        """STEP_SKILLS from workflow resolver are passed through in resolve_config output."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        # Create a workflow with skills on a step
+        with open(os.path.join(workflows_dir, "with-skills.yaml"), "w") as f:
+            f.write(
+                "name: with-skills\n"
+                "description: Workflow with skills\n"
+                "trigger:\n"
+                "  agents: [dev]\n"
+                "steps:\n"
+                "  - name: implement\n"
+                "    agent: dev\n"
+                "    skill: [python, rust]\n"
+                "    next: null\n"
+            )
+        body = (
+            '<agentRunConfig>{"task": "dev", "workflow": "with-skills", '
+            '"step": "implement"}</agentRunConfig>'
+        )
+
+        result = resolve_config(body, prompt_base, workflows_dir)
+
+        assert result["ROLE_NAME"] == "dev"
+        assert result["WORKFLOW_NAME"] == "with-skills"
+        assert result["STEP_SKILLS"] == "python,rust"
+
+    def test_step_skills_empty_when_not_defined(self):
+        """STEP_SKILLS is empty when workflow step has no skill field."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        body = "/workflow default\nPlease analyze this issue."
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["STEP_SKILLS"] == ""
+
 
 
 class TestResolveNextAgentFromWorkflow(unittest.TestCase):

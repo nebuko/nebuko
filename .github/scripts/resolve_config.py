@@ -356,16 +356,6 @@ def resolve_config(
     role_name = wf_result["ROLE_NAME"]
     prompt_location = wf_result["PROMPT_LOCATION"]
 
-    # Merge step-level skills (from workflow YAML) with config-level skills.
-    # Step skills are additions (union), preserving existing config skills.
-    step_skills = wf_result.get("STEP_SKILLS", "") or ""
-    merged_skills = config_skills or ""
-    if step_skills:
-        if merged_skills:
-            merged_skills = f"{merged_skills},{step_skills}"
-        else:
-            merged_skills = step_skills
-
     # Determine complexity for dev/ctx agents
     complexity = "N/A"
     if role_name in ("dev", "ctx"):
@@ -381,7 +371,8 @@ def resolve_config(
         "COMPLEXITY": complexity,
         "LLM_REASONING": config_reasoning,
         "AGENT_ROUND": config_round or "",
-        "AGENT_SKILLS": merged_skills or "",
+        "AGENT_SKILLS": config_skills or "",
+        "STEP_SKILLS": wf_result.get("STEP_SKILLS", ""),
         "CONFIG_MODEL": config_model or "",
         "CONFIG_TEMPERATURE": config_temperature or "",
         "CONFIG_TOP_P": config_top_p or "",

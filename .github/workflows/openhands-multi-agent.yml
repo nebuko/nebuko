@@ -472,7 +472,8 @@ jobs:
                     fi
                   fi
 
-                  SKILL_CONTENT=""
+                  echo "AGENT_SKILLS=${ALL_SKILLS}" >> $GITHUB_ENV
+
                   if [ -n "$ALL_SKILLS" ]; then
                     SKILLS_DIR=""
                     if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/skills" ]; then
@@ -482,24 +483,24 @@ jobs:
                     fi
 
                     if [ -n "$SKILLS_DIR" ]; then
-                      IFS=',' read -ra SKILL_NAMES <<< "$ALL_SKILLS"
+                      > /tmp/skill_context.md
+                      IFS=',' read -ra SKILL_NAMES <<< "$(echo "$ALL_SKILLS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')"
                       for skill_name in "${SKILL_NAMES[@]}"; do
                         skill_file="${SKILLS_DIR}/${skill_name}.md"
                         if [ -f "$skill_file" ]; then
-                          SKILL_CONTENT="${SKILL_CONTENT}--- Skill: ${skill_name} ---
-$(cat "$skill_file")
-"
+                          printf -- "--- Skill: %s ---\n%s\n" "$skill_name" "$(cat "$skill_file")" >> /tmp/skill_context.md
                         else
                           echo "Warning: Skill file not found: $skill_file"
                         fi
                       done
+                      if [ -s /tmp/skill_context.md ]; then
+                        echo "SKILL_CONTEXT_FILE=/tmp/skill_context.md" >> $GITHUB_ENV
+                      else
+                        echo "SKILL_CONTEXT_FILE=" >> $GITHUB_ENV
+                      fi
+                    else
+                      echo "SKILL_CONTEXT_FILE=" >> $GITHUB_ENV
                     fi
-                  fi
-
-                  echo "AGENT_SKILLS=${ALL_SKILLS}" >> $GITHUB_ENV
-                  if [ -n "$SKILL_CONTENT" ]; then
-                    printf "%s" "$SKILL_CONTENT" > /tmp/skill_context.md
-                    echo "SKILL_CONTEXT_FILE=/tmp/skill_context.md" >> $GITHUB_ENV
                   else
                     echo "SKILL_CONTEXT_FILE=" >> $GITHUB_ENV
                   fi
