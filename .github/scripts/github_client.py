@@ -88,6 +88,49 @@ def get_issue_comments(
         return []
 
 
+def get_comment_body(
+    comment_id: str,
+    repo: str,
+    token: Optional[str] = None,
+    dry_run: bool = False,
+) -> Optional[str]:
+    """Fetch the body text of a GitHub issue comment by its numeric ID.
+
+    Args:
+        comment_id: The numeric comment ID.
+        repo: Repository in format owner/repo.
+        token: GitHub token.
+        dry_run: If True, return None.
+
+    Returns:
+        Comment body text, or None on failure.
+    """
+    if dry_run:
+        return None
+
+    env = os.environ.copy()
+    if token:
+        env["GH_TOKEN"] = token
+
+    result = _run(
+        [
+            "api",
+            f"/repos/{repo}/issues/comments/{comment_id}",
+            "--jq",
+            ".body",
+        ],
+        dry_run=dry_run,
+        env=env,
+    )
+
+    if result.returncode != 0:
+        print(f"Error fetching comment body: {result.stderr.strip()}", file=sys.stderr)
+        return None
+
+    body = result.stdout.strip()
+    return body if body else None
+
+
 def get_comment_node_id(
     comment_id: str,
     repo: str,
@@ -252,6 +295,13 @@ def main():
     p_node.add_argument("--token")
     p_node.add_argument("--dry-run", action="store_true")
 
+    # get-body
+    p_body = subparsers.add_parser("get-body", help="Get comment body text")
+    p_body.add_argument("--comment-id", required=True)
+    p_body.add_argument("--repo")
+    p_body.add_argument("--token")
+    p_body.add_argument("--dry-run", action="store_true")
+
     # post-comment
     p_post = subparsers.add_parser("post-comment", help="Post a comment")
     p_post.add_argument("--repo", required=True)
@@ -275,6 +325,10 @@ def main():
         node_id = get_comment_node_id(args.comment_id, args.repo or "", args.token, args.dry_run)
         if node_id:
             print(node_id)
+    elif args.command == "get-body":
+        body = get_comment_body(args.comment_id, args.repo or "", args.token, args.dry_run)
+        if body:
+            print(body)
     elif args.command == "post-comment":
         result = post_comment(args.repo, args.issue_number, args.body, args.token, args.dry_run)
         if result:

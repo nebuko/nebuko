@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from github_client import (
+    get_comment_body,
     get_issue_comments,
     get_comment_node_id,
     post_comment,
@@ -69,6 +70,28 @@ class TestGetCommentNodeId:
         mock_run.return_value = MagicMock(returncode=1, stderr="error")
 
         result = get_comment_node_id("123", "owner/repo")
+        assert result is None
+
+
+class TestGetCommentBody:
+    """Test get_comment_body function."""
+
+    def test_dry_run_returns_none(self):
+        result = get_comment_body("123", "owner/repo", dry_run=True)
+        assert result is None
+
+    @patch("github_client.subprocess.run")
+    def test_returns_body(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="This is the comment body")
+
+        result = get_comment_body("123", "owner/repo")
+        assert result == "This is the comment body"
+
+    @patch("github_client.subprocess.run")
+    def test_returns_none_on_error(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stderr="error")
+
+        result = get_comment_body("123", "owner/repo")
         assert result is None
 
 
