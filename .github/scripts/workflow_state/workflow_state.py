@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Any, Optional
 
 from features.to_json.to_json import state_to_json
-from feature.to_git_comment.to_git_comment import format_collapsed_section
+from features.comment.to_git_comment import format_collapsed_section
 from features.get_last_state.get_last_state import extract_lastest_state_from_comments, extract_state_from_body
 from features.build_state.build_state import build_state
 
@@ -66,5 +66,38 @@ def to_git_comment(state: WorkflowState) -> str:
 def from_body(body: str) -> WorkflowState:
     return extract_state_from_body(body)
 
-def go_next() -> WorkflowState:
-    return build_s
+def go_next(
+    prev_state: Optional[WorkflowState] = None,
+    *,
+    workflow: str = "",
+    step: str = "",
+    agent: str = "",
+    phase: str = "",
+    summary: str = "",
+    comment_id: Optional[int] = None,
+    artifacts: Optional[list[str]] = None,
+    pin: bool = False,
+    metrics_dict: Optional[dict[str, Any]] = None,
+    context_updates: Optional[dict[str, Any]] = None,
+    parent_workflow: Optional[str] = None,
+    parent_workflow_step: Optional[str] = None,
+    issue: Optional[IssueInfo] = None,
+    pull_request: Optional[PullRequestInfo] = None,
+) -> WorkflowState:
+    return build_state(
+        prev_state=prev_state,
+        workflow=workflow,
+        step=step,
+        agent=agent,
+        phase=phase,
+        summary=summary,
+        comment_id=comment_id,
+        artifacts=artifacts,
+        pin=pin,
+        metrics_dict=metrics_dict,
+        context_updates=context_updates,
+        parent_workflow=parent_workflow,
+        parent_workflow_step=parent_workflow_step,
+        issue=issue,
+        pull_request=pull_request,
+    )
