@@ -26,7 +26,7 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(__file__))
 from config import load_workflow
 from resolve_workflow import resolve_workflow_routing, TASK_TO_PROMPT
-from state_manager import extract_dispatch_from_state
+from workflow_state import extract_dispatch_from_state
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
 _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")

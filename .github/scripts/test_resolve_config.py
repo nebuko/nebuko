@@ -461,18 +461,18 @@ class TestCountConsecutiveSameAgent(unittest.TestCase):
     """Tests for count_consecutive_same_agent function."""
 
     def test_empty_history(self):
-        from state_manager import HistoryEntry
+        from workflow_state import HistoryEntry
         count = count_consecutive_same_agent([], "dev")
         self.assertEqual(count, 0)
 
     def test_single_match(self):
-        from state_manager import HistoryEntry
+        from workflow_state import HistoryEntry
         history = [HistoryEntry(step="s", agent="dev")]
         count = count_consecutive_same_agent(history, "dev")
         self.assertEqual(count, 1)
 
     def test_mixed_agents(self):
-        from state_manager import HistoryEntry
+        from workflow_state import HistoryEntry
         history = [
             HistoryEntry(step="s1", agent="genius"),
             HistoryEntry(step="s2", agent="dev"),
@@ -482,7 +482,7 @@ class TestCountConsecutiveSameAgent(unittest.TestCase):
         self.assertEqual(count, 2)
 
     def test_different_agent(self):
-        from state_manager import HistoryEntry
+        from workflow_state import HistoryEntry
         history = [HistoryEntry(step="s1", agent="genius")]
         count = count_consecutive_same_agent(history, "dev")
         self.assertEqual(count, 0)

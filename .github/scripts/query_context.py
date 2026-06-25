@@ -27,12 +27,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from github_client import get_comment_body, get_issue_comments
-from state_manager import (
-    extract_state,
+from workflow_state import (
+    extract_latest_state_from_comments as extract_state,
     extract_state_from_body,
     state_to_json,
-    strip_state_section,
 )
+from workflow_state.features.comment.to_git_comment import strip_state_section
 
 
 DEFAULT_TEMPLATE = (
