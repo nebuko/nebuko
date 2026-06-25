@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for state_manager.py — workflow state management module.
+"""Tests for workflow_state.py — workflow state management module.
 
 Tests cover:
 - WorkflowState schema validation
@@ -17,7 +17,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from state_manager import (
+from workflow_state import (
     Dispatch,
     WorkflowState,
     HistoryEntry,
@@ -25,11 +25,15 @@ from state_manager import (
     IssueInfo,
     PullRequestInfo,
     build_state,
-    wrap_comment_with_state,
-    extract_state,
+    extract_latest_state_from_comments as extract_state,
     extract_state_from_body,
     extract_dispatch_from_state,
+)
+from workflow_state.features.comment.to_git_comment import (
     strip_state_section,
+    wrap_comment_with_state,
+)
+from workflow_state.sub_domains.state_metrics.features.legacy.legacy import (
     extract_legacy_metrics,
 )
 

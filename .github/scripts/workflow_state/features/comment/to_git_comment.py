@@ -1,6 +1,7 @@
 import re
 
-from ...workflow_state import WorkflowState, to_json, STATE_MARKER_START, STATE_MARKER_END
+from ...workflow_state import WorkflowState, STATE_MARKER_START, STATE_MARKER_END
+from ..to_json.to_json import state_to_json
 
 def format_collapsed_section(state: WorkflowState) -> str:
     """
@@ -25,7 +26,7 @@ def format_collapsed_section(state: WorkflowState) -> str:
     Returns:
         Markdown string ready to prepend to a comment body.
     """
-    json_str = to_json(state, compact=False)
+    json_str = state_to_json(state, compact=False)
     summary_label = f"🤖 Workflow State (v{state.version})"
 
     lines = [

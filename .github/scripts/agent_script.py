@@ -42,7 +42,7 @@ from openhands.sdk.conversation import get_agent_final_response
 from openhands.tools.preset.default import get_default_condenser
 from openhands.sdk.tool.spec import Tool
 from metrics_schema import Metrics
-from state_manager import (
+from workflow_state import (
     IssueInfo,
     PullRequestInfo,
     WorkflowState,
