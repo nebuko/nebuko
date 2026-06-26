@@ -22,5 +22,8 @@ def extract_and_strip_split_plan(message: str) -> tuple[str | None, str]:
     return (json_str, stripped)
 
 
+# Alias for facade compatibility
+generate_split_plan_summary = split_plan_summary
+
 # Re-export from sub-domain for direct usage
-__all__ = ["extract_and_strip_split_plan", "split_plan_summary"]
+__all__ = ["extract_and_strip_split_plan", "split_plan_summary", "generate_split_plan_summary"]
