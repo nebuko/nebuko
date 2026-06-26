@@ -17,6 +17,9 @@ from .features.resolve_refs.resolve_refs import resolve_refs, REF_PATTERN
 from .features.load_config.load_config import load_config
 from .features.load_workflow.load_workflow import load_workflow
 
+# Facade module constants
+from .config import CONFIG_DEFAULT_PATH
+
 __all__ = [
     # App Config entities
     "ProviderConfig",
@@ -33,4 +36,6 @@ __all__ = [
     "REF_PATTERN",
     "load_config",
     "load_workflow",
+    # Constants
+    "CONFIG_DEFAULT_PATH",
 ]
