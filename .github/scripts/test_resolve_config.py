@@ -647,3 +647,44 @@ class TestForceNextStepIntegration(unittest.TestCase):
         result = self._resolve_with_state("/workflow force-next-step context", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["TASK"], "ctx")
+
+    def test_force_next_step_next_step_does_not_exist_in_workflow(self):
+        """When step.next references a step not in the workflow, return a clear error."""
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        # Malformed workflow: analyze.next points to 'nonexistent' which doesn't exist
+        malformed_yaml = (
+            "name: broken\n"
+            "description: Broken workflow\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: nonexistent\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: null\n"
+        )
+        with open(os.path.join(workflows_dir, "broken.yaml"), "w") as f:
+            f.write(malformed_yaml)
+        import json as _json
+        state_json_str = (
+            '{"version": 1, "workflow": "broken", "step": "analyze", "agent": "genius"}'
+        )
+        state_block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + state_json_str
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        result = resolve_config(
+            "/workflow force-next-step\n\n" + state_block,
+            prompt_base,
+            workflows_dir,
+            is_bot=False,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("does not exist", result["REASON"])

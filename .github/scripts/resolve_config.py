@@ -319,6 +319,11 @@ def resolve_config(
                                 config_step = next_s.name
                                 task = next_s.agent
                                 break
+                        else:
+                            return {
+                                "SKIP_AGENT": "true",
+                                "REASON": f"force-next-step: step '{current_step_in_wf}' references next step '{step.next}' which does not exist in workflow '{config_workflow}'",
+                            }
                         break
                 else:
                     return {
