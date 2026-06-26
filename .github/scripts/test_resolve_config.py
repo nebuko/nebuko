@@ -10,6 +10,7 @@ from resolve_config import (
     is_bot_comment,
     extract_mention_agent,
     extract_workflow_command,
+    extract_force_next_command,
     resolve_config,
     resolve_next_agent_from_workflow,
     count_consecutive_same_agent,
@@ -486,3 +487,163 @@ class TestCountConsecutiveSameAgent(unittest.TestCase):
         history = [HistoryEntry(step="s1", agent="genius")]
         count = count_consecutive_same_agent(history, "dev")
         self.assertEqual(count, 0)
+
+
+class TestExtractForceNextCommand(unittest.TestCase):
+    """Tests for extract_force_next_command function."""
+
+    def test_basic_force_next_step(self):
+        result = extract_force_next_command("/workflow force-next-step")
+        self.assertEqual(result, ("force-next-step", None))
+
+    def test_force_next_step_with_target(self):
+        result = extract_force_next_command("/workflow force-next-step implement")
+        self.assertEqual(result, ("force-next-step", "implement"))
+
+    def test_force_next_step_with_multiline_input(self):
+        result = extract_force_next_command("/workflow force-next-step implement\nSome description here")
+        self.assertEqual(result, ("force-next-step", "implement"))
+
+    def test_not_force_next_step(self):
+        result = extract_force_next_command("/workflow default")
+        self.assertIsNone(result)
+
+    def test_empty_body(self):
+        result = extract_force_next_command("")
+        self.assertIsNone(result)
+
+    def test_extra_text_after_target(self):
+        result = extract_force_next_command("/workflow force-next-step implement some extra text")
+        self.assertIsNone(result)
+
+    def test_force_next_step_with_underscore_target(self):
+        result = extract_force_next_command("/workflow force-next-step code_review")
+        self.assertEqual(result, ("force-next-step", "code_review"))
+
+
+class TestForceNextStepIntegration(unittest.TestCase):
+    """Integration tests for /workflow force-next-step command."""
+
+    @staticmethod
+    def _default_workflow_yaml():
+        return (
+            "name: default\n"
+            "description: Standard workflow\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: context\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: plan\n"
+            "  - name: plan\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    @staticmethod
+    def _build_state_json(workflow="default", step="implement", parent_workflow=None, parent_workflow_step=None):
+        import json as _json
+        state = {
+            "version": 1,
+            "workflow": workflow,
+            "step": step,
+            "agent": "dev",
+        }
+        if parent_workflow:
+            state["parent_workflow"] = parent_workflow
+        if parent_workflow_step:
+            state["parent_workflow_step"] = parent_workflow_step
+        return f"<!-- WORKFLOW_STATE_START -->\n{_json.dumps(state)}\n<!-- WORKFLOW_STATE_END -->"
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(self._default_workflow_yaml())
+        return prompt_base, workflows_dir
+
+    def _resolve_with_state(self, body, state_json):
+        prompt_base, workflows_dir = self._setup_dirs()
+        full_body = body + "\n\n" + state_json
+        return resolve_config(full_body, prompt_base, workflows_dir, is_bot=False)
+
+    def test_force_next_step_auto_advance(self):
+        state_json = self._build_state_json(workflow="default", step="implement")
+        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "review")
+
+    def test_force_next_step_with_explicit_target(self):
+        state_json = self._build_state_json(workflow="default", step="analyze")
+        result = self._resolve_with_state("/workflow force-next-step implement", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "dev")
+
+    def test_force_next_step_no_workflow_state(self):
+        prompt_base, workflows_dir = self._setup_dirs()
+        result = resolve_config("/workflow force-next-step", prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("no workflow state found", result["REASON"])
+
+    def test_force_next_step_terminal_step(self):
+        state_json = self._build_state_json(workflow="default", step="review")
+        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("terminal", result["REASON"])
+
+    def test_force_next_step_invalid_target_step(self):
+        state_json = self._build_state_json(workflow="default", step="analyze")
+        result = self._resolve_with_state("/workflow force-next-step nonexistent", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("not found", result["REASON"])
+
+    def test_force_next_step_path_traversal_workflow_name(self):
+        state_json = self._build_state_json(workflow="../etc/passwd", step="hack")
+        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("invalid workflow name", result["REASON"])
+
+    def test_force_next_step_path_traversal_target_step(self):
+        state_json = self._build_state_json(workflow="default", step="analyze")
+        result = self._resolve_with_state("/workflow force-next-step ../../etc/passwd", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("invalid target step", result["REASON"])
+
+    def test_force_next_step_invalid_workflow_file(self):
+        state_json = self._build_state_json(workflow="nonexistent_workflow", step="analyze")
+        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("not found", result["REASON"])
+
+    def test_force_next_step_current_step_not_in_workflow(self):
+        state_json = self._build_state_json(workflow="default", step="nonexistent_step")
+        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("not found", result["REASON"])
+
+    def test_force_next_step_preserves_parent_workflow(self):
+        # Note: parent workflow fields are preserved by resolve_config.
+        # Downstream resolve_workflow.py may reject if parent workflow YAML
+        # doesn't exist — that's separate from force-next-step logic.
+        state_json = self._build_state_json(workflow="default", step="implement")
+        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["WORKFLOW_NAME"], "default")
+
+    def test_force_next_step_jumps_to_context(self):
+        state_json = self._build_state_json(workflow="default", step="analyze")
+        result = self._resolve_with_state("/workflow force-next-step context", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "ctx")
