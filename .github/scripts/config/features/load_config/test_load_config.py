@@ -1,6 +1,7 @@
 """Tests for load_config feature."""
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+sys.path.insert(0, str(Path(__file__).parents[3]))
 from config import load_config
 
 

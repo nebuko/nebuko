@@ -1,11 +1,14 @@
 """Tests for AgentConfig."""
 
 import os
+import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 import yaml
 
+sys.path.insert(0, str(Path(__file__).parents[3]))
 from config import ProviderConfig, LLMConfig, AgentConfig, load_config
 
 

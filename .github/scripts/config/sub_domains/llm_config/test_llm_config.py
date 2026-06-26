@@ -1,8 +1,13 @@
 """Tests for LLMConfig."""
 
+import os
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
+sys.path.insert(0, str(Path(__file__).parents[3]))
 from config import ProviderConfig, LLMConfig
 
 
