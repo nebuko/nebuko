@@ -325,6 +325,52 @@ def extract_split_plan(message: str) -> str | None:
     return None
 
 
+def strip_split_plan(message: str) -> str:
+    """
+    Remove <splitPlan>...</splitPlan> block from a message.
+
+    Args:
+        message: The agent's final message.
+
+    Returns:
+        Message with the <splitPlan> block removed (including surrounding blank lines).
+    """
+    return re.sub(r"\n*<splitPlan>.*?</splitPlan>\n*", "\n\n", message, flags=re.DOTALL).strip() + "\n"
+
+
+def split_plan_summary(json_str: str) -> str:
+    """
+    Generate a human-readable markdown summary from a split plan JSON.
+
+    Args:
+        json_str: The split plan JSON string.
+
+    Returns:
+        A markdown table summarizing tasks and their dependencies.
+    """
+    try:
+        plan = json.loads(json_str)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+
+    tasks = plan.get("tasks", [])
+    if not tasks:
+        return ""
+
+    total = len(tasks)
+    lines = [f"---\n📋 **Split Plan** — {total} sub-task{'s' if total != 1 else ''} will be created:", ""]
+    lines.append("| # | Task | Dependencies |")
+    lines.append("|---|------|-------------|")
+
+    for i, task in enumerate(tasks, start=1):
+        title = task.get("title", "")
+        deps = task.get("dependencies", [])
+        dep_str = ", ".join(f"#{d + 1}" for d in deps) if deps else "—"
+        lines.append(f"| {i} | {title} | {dep_str} |")
+
+    return "\n".join(lines)
+
+
 def split_message(message: str, max_length: int = 10000) -> list[str]:
     """
     Split a long message into parts, each under max_length.
@@ -815,6 +861,15 @@ def main():
         with open("split_plan.json", "w", encoding="utf-8") as f:
             f.write(split_plan_json)
         logger.info("Saved split_plan.json for workflow extraction")
+
+    # Strip <splitPlan> JSON block from the posted comment and replace with a human-readable
+    # summary (issue #257). The full JSON stays in split_plan.json for sub-issue creation.
+    if split_plan_json:
+        summary = split_plan_summary(split_plan_json)
+        final_message = strip_split_plan(final_message)
+        if summary:
+            final_message = final_message.rstrip() + f"\n\n{summary}\n"
+        logger.info("Stripped <splitPlan> from comment, replaced with summary")
 
     # Split long messages into multiple parts, each under the safe limit.
     # GitHub's comment API allows 65,536 chars, but we use 10,000 as a

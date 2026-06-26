@@ -115,6 +115,7 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
       - **Mixed ordering**: e.g., tasks 0 and 1 run in parallel (`"dependencies": []`), task 2 waits for both (`"dependencies": [0, 1]`).
       - **Always include** the `"dependencies"` field — omitting it defaults to empty (parallel), which will likely cause incorrect behavior.
     - **IMPORTANT:** Do NOT nest split plans deeper than one level. Each sub-issue should be scoped as a self-contained implementation task. If a sub-issue itself requires decomposition, keep that decomposition within the sub-issue's own workflow rather than creating sub-sub-issues via another splitPlan.
+    - **Note:** The `<splitPlan>` block will be automatically extracted and stripped from the posted GitHub comment. A human-readable summary table will be appended instead. The raw JSON is saved as `split_plan.json` for sub-issue creation.
     - After the `<splitPlan>`, include the normal hand-off:
       ```
       <agentRunConfig>
