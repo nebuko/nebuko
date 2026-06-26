@@ -1,0 +1,250 @@
+"""Build output feature — workflow state building, split plan handling, and output file writing."""
+
+import json
+import os
+import re
+
+from openhands.sdk import get_logger
+from openhands.sdk.conversation import get_agent_final_response
+
+from metrics_schema import Metrics
+from workflow_state import IssueInfo, PullRequestInfo, WorkflowState
+from workflow_state.features.build_state.build_state import build_state
+
+from agent_script.sub_domains.split_plan.split_plan import (
+    extract_split_plan,
+    strip_split_plan,
+    split_plan_summary,
+)
+from agent_script.sub_domains.message_splitter.message_splitter import split_message
+
+logger = get_logger(__name__)
+
+
+def _load_prev_state() -> WorkflowState | None:
+    """Load previous workflow state from disk, or return None."""
+    prev_state_path = os.path.join(
+        os.environ.get("RUNNER_TEMP", "/tmp"), "prev_workflow_state.json"
+    )
+    if not os.path.isfile(prev_state_path):
+        return None
+    try:
+        with open(prev_state_path, "r", encoding="utf-8") as f:
+            return WorkflowState.model_validate(json.load(f))
+    except Exception as e:
+        logger.warning(f"Failed to load previous state: {e}")
+        return None
+
+
+def _derive_phase(workflow_step: str) -> str:
+    """Derive phase name from workflow step using keyword matching."""
+    if not workflow_step:
+        return ""
+    tokens = set(re.split(r"[_\-]", workflow_step.lower()))
+    if tokens & {"analyze", "context"}:
+        return "analysis"
+    if "plan" in tokens:
+        return "planning"
+    if tokens & {"stub", "human_approval"}:
+        return "stub"
+    if "implement" in tokens:
+        return "execution"
+    if "review" in tokens:
+        return "review"
+    return ""
+
+
+def _build_issue_info() -> IssueInfo | None:
+    """Build IssueInfo from environment variables."""
+    issue_number_str = os.environ.get("TARGET_NUMBER")
+    issue_url = os.environ.get("ISSUE_URL")
+    issue_title = os.environ.get("ISSUE_TITLE")
+    issue_author = os.environ.get("ISSUE_AUTHOR")
+    issue_repo = os.environ.get("REPO_NAME")
+
+    if not (issue_number_str and issue_url and issue_title):
+        return None
+
+    return IssueInfo(
+        number=int(issue_number_str),
+        url=issue_url,
+        title=issue_title,
+        author=issue_author or "",
+        repo=issue_repo or "",
+    )
+
+
+def _build_pr_info() -> PullRequestInfo | None:
+    """Build PullRequestInfo from environment variables."""
+    pr_number_str = os.environ.get("PR_NUMBER")
+    pr_url = os.environ.get("PR_URL")
+    pr_title = os.environ.get("PR_TITLE")
+    pr_author = os.environ.get("PR_AUTHOR")
+    pr_repo = os.environ.get("REPO_NAME")
+
+    if not (pr_number_str and pr_url and pr_title):
+        return None
+
+    return PullRequestInfo(
+        number=int(pr_number_str),
+        url=pr_url,
+        title=pr_title,
+        author=pr_author or "",
+        repo=pr_repo or "",
+    )
+
+
+def _save_split_plan(json_str: str) -> None:
+    """Save split plan JSON to file."""
+    with open("split_plan.json", "w", encoding="utf-8") as f:
+        f.write(json_str)
+    logger.info("Saved split_plan.json for workflow extraction")
+
+
+def _replace_split_plan_with_summary(message: str, json_str: str) -> str:
+    """Strip <splitPlan> from message and replace with human-readable summary."""
+    summary = split_plan_summary(json_str)
+    stripped = strip_split_plan(message)
+    if summary:
+        stripped = stripped.rstrip() + f"\n\n{summary}\n"
+    logger.info("Stripped <splitPlan> from comment, replaced with summary")
+    return stripped
+
+
+def _write_output_files(final_message: str, message_parts: list[str], metrics: Metrics, new_state: WorkflowState) -> None:
+    """Write final message parts, workflow state JSON, and metrics to output files."""
+    MAX_MESSAGE_LENGTH = 10000
+
+    if not message_parts:
+        logger.warning("No final agent message found in events")
+        with open("workflow_state.json", "w", encoding="utf-8") as f:
+            f.write(new_state.model_dump_json(exclude_defaults=True))
+        metrics_json = metrics.to_json(compact=True)
+        sentinel = f"__NO_FINAL_MESSAGE__\n<!-- agent-metrics: {metrics_json} -->"
+        with open("final_message.txt", "w", encoding="utf-8") as f:
+            f.write(sentinel)
+        logger.info("Saved sentinel + metrics comment (no final message)")
+        return
+
+    metrics_json = metrics.to_json(compact=True)
+    metrics_comment = f"\n\n<!-- agent-metrics: {metrics_json} -->"
+
+    # Add part indicators for multi-part messages
+    if len(message_parts) > 1:
+        total = len(message_parts)
+        for i in range(total):
+            message_parts[i] = f"*(Part {i + 1}/{total})*\n\n{message_parts[i]}"
+
+    # Write part 1
+    with open("final_message.txt", "w", encoding="utf-8") as f:
+        f.write(message_parts[0])
+        if len(message_parts) == 1:
+            f.write(metrics_comment)
+    logger.info(f"Saved first message part ({len(message_parts[0])} characters)")
+
+    # Save workflow state
+    with open("workflow_state.json", "w", encoding="utf-8") as f:
+        f.write(new_state.model_dump_json(exclude_defaults=True))
+
+    # Write additional parts if split
+    if len(message_parts) > 1:
+        with open("final_message_parts_count.txt", "w", encoding="utf-8") as f:
+            f.write(str(len(message_parts)))
+
+        for i, part in enumerate(message_parts[1:], start=2):
+            filename = f"final_message_part_{i}.txt"
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(part)
+                if i == len(message_parts):
+                    f.write(metrics_comment)
+            logger.info(f"Saved message part {i} ({len(part)} characters)")
+
+        logger.info(f"Message split into {len(message_parts)} parts (was {len(final_message)} characters)")
+    else:
+        logger.info(f"Final agent message saved ({len(message_parts[0])} characters, no splitting needed)")
+
+
+def build_output(
+    conversation,
+    metrics: Metrics,
+    args=None,
+    prev_state: WorkflowState | None = None,
+    split_plan_json: str | None = None,
+) -> dict:
+    """
+    Build workflow state and write output files.
+
+    Orchestrates: final response extraction, phase derivation, issue/PR info
+    building, WorkflowState creation, split plan handling, message splitting,
+    and output file writing.
+
+    Args:
+        conversation: The completed OpenHands Conversation object.
+        metrics: Collected Metrics object.
+        args: Parsed argparse namespace (unused, retained for compatibility).
+        prev_state: Previous WorkflowState, or None to load from disk.
+        split_plan_json: Pre-extracted split plan JSON, or None to extract from message.
+
+    Returns:
+        Dict with keys: 'workflow_state', 'split_plan_json', 'final_message'.
+    """
+    # ── Final response ───────────────────────────────────────────
+    final_message = get_agent_final_response(conversation.state.events)
+
+    # ── Review fix request counting ──────────────────────────────
+    review_fix_requests = final_message.count("@@dev fix this") if final_message else 0
+    metrics.review_fix_requests = review_fix_requests
+
+    # ── Load previous state if not provided ───────────────────────
+    if prev_state is None:
+        prev_state = _load_prev_state()
+
+    # ── Environment-derived fields ───────────────────────────────
+    role_name = os.environ.get("ROLE_NAME", "")
+    workflow_name = os.environ.get("WORKFLOW_NAME", "")
+    workflow_step = os.environ.get("WORKFLOW_STEP", "")
+    parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
+    parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
+    phase = _derive_phase(workflow_step)
+
+    # ── Issue / PR info ──────────────────────────────────────────
+    issue_info = _build_issue_info()
+    pr_info = _build_pr_info()
+
+    # ── Build workflow state ─────────────────────────────────────
+    new_state = build_state(
+        prev_state,
+        workflow=workflow_name,
+        step=workflow_step,
+        agent=role_name,
+        phase=phase,
+        summary=final_message[:300] if final_message else "",
+        metrics_dict=metrics.to_dict(),
+        parent_workflow=parent_workflow,
+        parent_workflow_step=parent_workflow_step,
+        issue=issue_info,
+        pull_request=pr_info,
+    )
+    logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
+
+    # ── Split plan handling ──────────────────────────────────────
+    if split_plan_json is None:
+        split_plan_json = extract_split_plan(final_message) if final_message else None
+
+    if split_plan_json:
+        _save_split_plan(split_plan_json)
+        final_message = _replace_split_plan_with_summary(final_message, split_plan_json)
+
+    # ── Message splitting ────────────────────────────────────────
+    message_parts = split_message(final_message, 10000) if final_message else []
+
+    # ── Write output files ───────────────────────────────────────
+    _write_output_files(final_message, message_parts, metrics, new_state)
+
+    logger.info("Task completed successfully")
+
+    return {
+        "workflow_state": new_state,
+        "split_plan_json": split_plan_json,
+        "final_message": final_message,
+    }
