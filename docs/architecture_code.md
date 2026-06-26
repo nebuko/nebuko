@@ -141,22 +141,14 @@ from ...sub_domains.state_metrics.state_metrics import StateMetrics
 
 When migrating remaining code from `state_manager` to `workflow_state`:
 
-- [ ] Search for remaining `from state_manager import` statements in `.github/scripts/`
-- [ ] Map each imported symbol to its new location in `workflow_state/`
-- [ ] Verify `workflow_state.py` facade exports cover all needed symbols
-- [ ] Run tests after each import migration: `python -m pytest .github/scripts/ -v`
-- [ ] Add `__init__.py` to any new packages created (currently the package uses implicit namespace packages)
-- [ ] Remove `state_manager.py` and `test_state_manager.py` once all references are migrated
+- [x] Search for remaining `from state_manager import` statements in `.github/scripts/`
+- [x] Map each imported symbol to its new location in `workflow_state/`
+- [x] Verify `workflow_state.py` facade exports cover all needed symbols
+- [x] Run tests after each import migration: `python -m pytest .github/scripts/ -v`
+- [x] Add `__init__.py` to any new packages created (currently the package uses implicit namespace packages)
+- [x] Remove `state_manager.py` and `test_state_manager.py` once all references are migrated
 
-### Current Known Importers of `state_manager`
-
-| File | Symbols Imported |
-|------|-----------------|
-| `agent_script.py` | `WorkflowState, HistoryEntry, StateMetrics, IssueInfo, PullRequestInfo, extract_state, build_state, format_collapsed_section, STATE_MARKER_START, STATE_MARKER_END` |
-| `query_context.py` | `WorkflowState, HistoryEntry, extract_state` |
-| `resolve_config.py` | `extract_dispatch_from_state` |
-| `test_resolve_config.py` | `HistoryEntry` |
-| `test_state_manager.py` | Various (tests the old module) |
+Migration completed. All consumers now import from `workflow_state/`. `state_manager.py` has been removed. `test_state_manager.py` never existed.
 
 ---
 
