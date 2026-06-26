@@ -57,7 +57,7 @@ def extract_agent_run_config(trigger_body: str) -> Optional[dict]:
             pass
 
     # Strategy 2: Trailing JSON object with valid task field
-    task_names = r"(?:issue-reviewer|ctx|genius|dev|review|issue)"
+    task_names = r"(?:issue-reviewer|ctx|genius|dev|review|issue|debug|summarize|po)"
     match = re.search(
         r"\{[^{}]*\"task\"\s*:\s*\"" + task_names + r"\"[^{}]*\}",
         trigger_body,
@@ -155,7 +155,7 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
         Agent name string or None.
     """
     agents = re.findall(
-        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue)",
+        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|debug)",
         trigger_body,
     )
     if agents:
@@ -177,6 +177,21 @@ def extract_workflow_command(trigger_body: str) -> Optional[str]:
     """
     first_line = trigger_body.split("\n", 1)[0].strip()
     match = re.match(r"^/workflow\s+(\S+)", first_line)
+    if match:
+        return match.group(1)
+    return None
+
+
+def extract_pr_number_from_mention(trigger_body: str) -> Optional[str]:
+    """Extract PR number from '@@review PR #NNN' pattern in trigger body.
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        PR number string or None.
+    """
+    match = re.search(r"@@review\s+PR\s+#(\d+)", trigger_body)
     if match:
         return match.group(1)
     return None
@@ -247,6 +262,7 @@ def resolve_config(
         config_workflow = agent_config.get("workflow", "")
         config_step = agent_config.get("step", "")
         config_branch = agent_config.get("branch", "")
+        config_pr_number = agent_config.get("pr_number", "")
         config_parent_workflow = agent_config.get("parent_workflow", "")
         config_parent_workflow_step = agent_config.get("parent_workflow_step", "")
     elif not is_bot:
@@ -346,6 +362,7 @@ def resolve_config(
             config_top_k = ""
             config_repetition_penalty = ""
             config_branch = ""
+            config_pr_number = ""
             config_parent_workflow = prev_state.parent_workflow or ""
             config_parent_workflow_step = prev_state.parent_workflow_step or ""
         else:
@@ -391,6 +408,7 @@ def resolve_config(
             config_workflow = wf_name if wf_name and wf_resolved else ""
             config_step = ""
             config_branch = ""
+            config_pr_number = extract_pr_number_from_mention(trigger_body) or ""
             config_parent_workflow = ""
             config_parent_workflow_step = ""
     else:
@@ -413,6 +431,7 @@ def resolve_config(
             config_workflow = dispatch.workflow or ""
             config_step = dispatch.step or ""
             config_branch = dispatch.branch or ""
+            config_pr_number = ""
             config_parent_workflow = dispatch.parent_workflow or ""
             config_parent_workflow_step = dispatch.parent_workflow_step or ""
 
@@ -497,6 +516,7 @@ def resolve_config(
         "CONFIG_TOP_P": config_top_p or "",
         "CONFIG_TOP_K": config_top_k or "",
         "CONFIG_REPETITION_PENALTY": config_repetition_penalty or "",
+        "CONFIG_PR_NUMBER": config_pr_number or "",
         "WORKFLOW_NAME": wf_result.get("WORKFLOW_NAME", ""),
         "WORKFLOW_STEP": wf_result.get("WORKFLOW_STEP", ""),
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
