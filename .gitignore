@@ -1,3 +1,3 @@
 console.log
-.github/scripts/__pycache__/
+__pycache__/
 openhands-task-logs/
