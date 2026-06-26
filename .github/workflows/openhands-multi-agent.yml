@@ -965,13 +965,6 @@ jobs:
                 echo "Split plan detected. Writing to plan file..."
                 echo "$SPLIT_PLAN" | jq '.' > /tmp/split_plan.json
 
-                # Validate the plan has tasks (genius prompt requires 5+ steps)
-                TASK_COUNT=$(echo "$SPLIT_PLAN" | jq '.tasks | length')
-                if [ "$TASK_COUNT" -lt 5 ] 2>/dev/null; then
-                  echo "Split plan has fewer than 5 tasks ($TASK_COUNT), skipping decomposition."
-                  exit 0
-                fi
-
                 AUTO_TRIGGER=$(echo "$SPLIT_PLAN" | jq -r '.auto_trigger // true')
                 echo "Split plan contains $TASK_COUNT tasks, auto_trigger=$AUTO_TRIGGER"
 
