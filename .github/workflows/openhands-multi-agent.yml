@@ -905,7 +905,7 @@ jobs:
                 state_file = "workflow_state.json"
                 if os.path.isfile(state_file) and os.path.getsize(state_file) > 0:
                     try:
-                        from state_manager import WorkflowState, format_collapsed_section
+                        from workflow_state import WorkflowState, format_collapsed_section
                         with open(state_file, "r", encoding="utf-8") as sf:
                             state = WorkflowState.model_validate(json.load(sf))
                         state_section = format_collapsed_section(state)
