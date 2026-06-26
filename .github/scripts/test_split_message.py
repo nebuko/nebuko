@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for split_message function in agent_script.py"""
 
+import json
 import sys
 import os
 import unittest
@@ -9,6 +10,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 from agent_script import (
     extract_split_plan,
+    strip_split_plan,
+    split_plan_summary,
     split_message,
     _split_at_boundaries,
     _split_at_sentence_boundaries,
@@ -91,6 +94,97 @@ class TestExtractSplitPlan(unittest.TestCase):
         result = extract_split_plan(message)
         self.assertIn("foo_bar()", result)
         self.assertIn("^[a-z]+$", result)
+
+
+class TestStripSplitPlan(unittest.TestCase):
+    """Test strip_split_plan functionality."""
+
+    def test_strip_split_plan_from_message(self):
+        """splitPlan block should be removed from message."""
+        message = "Some intro text\n\n<splitPlan>{\"tasks\": []}</splitPlan>\n\nClosing text"
+        result = strip_split_plan(message)
+        self.assertNotIn("<splitPlan>", result)
+        self.assertNotIn("</splitPlan>", result)
+        self.assertIn("Some intro text", result)
+        self.assertIn("Closing text", result)
+
+    def test_strip_split_plan_no_tag_unchanged(self):
+        """Message without splitPlan tag should be unchanged (except trailing newline)."""
+        message = "Regular message without any tags."
+        result = strip_split_plan(message)
+        self.assertEqual(result, "Regular message without any tags.\n")
+
+    def test_strip_split_plan_only(self):
+        """Message containing only splitPlan should yield empty-ish result."""
+        message = '<splitPlan>{"tasks": []}</splitPlan>'
+        result = strip_split_plan(message)
+        self.assertNotIn("<splitPlan>", result)
+        self.assertEqual(result.strip(), "")
+
+    def test_strip_split_plan_with_multiline_json(self):
+        """Multi-line JSON in splitPlan should be stripped cleanly."""
+        json_block = '{\n  "tasks": [\n    {"title": "Task 1"}\n  ]\n}'
+        message = f"Intro\n\n<splitPlan>\n{json_block}\n</splitPlan>\n\nOutro"
+        result = strip_split_plan(message)
+        self.assertNotIn("Task 1", result)
+        self.assertIn("Intro", result)
+        self.assertIn("Outro", result)
+
+
+class TestSplitPlanSummary(unittest.TestCase):
+    """Test split_plan_summary functionality."""
+
+    def test_summary_with_tasks_and_dependencies(self):
+        """Summary should include task count, titles, and dependency references."""
+        json_str = json.dumps({
+            "tasks": [
+                {"title": "Task A", "dependencies": []},
+                {"title": "Task B", "dependencies": [0]},
+                {"title": "Task C", "dependencies": [0, 1]},
+            ],
+            "auto_trigger": True,
+        })
+        result = split_plan_summary(json_str)
+        self.assertIn("3 sub-tasks", result)
+        self.assertIn("| 1 | Task A | — |", result)
+        self.assertIn("| 2 | Task B | #1 |", result)
+        self.assertIn("| 3 | Task C | #1, #2 |", result)
+
+    def test_summary_single_task(self):
+        """Single task should use singular 'sub-task'."""
+        json_str = json.dumps({"tasks": [{"title": "Only task", "dependencies": []}]})
+        result = split_plan_summary(json_str)
+        self.assertIn("1 sub-task", result)
+        self.assertIn("| 1 | Only task | — |", result)
+
+    def test_summary_empty_tasks_returns_empty(self):
+        """Empty tasks array should return empty string."""
+        json_str = json.dumps({"tasks": []})
+        result = split_plan_summary(json_str)
+        self.assertEqual(result, "")
+
+    def test_summary_invalid_json_returns_empty(self):
+        """Invalid JSON should return empty string."""
+        result = split_plan_summary("not valid json")
+        self.assertEqual(result, "")
+
+    def test_summary_none_input_returns_empty(self):
+        """None input should return empty string."""
+        result = split_plan_summary("")
+        self.assertEqual(result, "")
+
+    def test_summary_with_markdown_table_format(self):
+        """Output should contain proper markdown table structure."""
+        json_str = json.dumps({
+            "tasks": [
+                {"title": "Step 1", "dependencies": []},
+                {"title": "Step 2", "dependencies": [0]},
+            ],
+        })
+        result = split_plan_summary(json_str)
+        self.assertIn("| # | Task | Dependencies |", result)
+        self.assertIn("|---|------|-------------|", result)
+        self.assertIn("📋 **Split Plan**", result)
 
 
 class TestSplitMessageBasic(unittest.TestCase):
