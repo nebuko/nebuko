@@ -7,7 +7,7 @@ from openhands.sdk import get_logger
 logger = get_logger(__name__)
 
 
-def resolve_llm_config(args, prompt: str) -> tuple[dict, str]:
+def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     """
     Resolve LLM configuration from layered sources.
 
@@ -21,7 +21,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str]:
         prompt: The loaded prompt string (passed through unchanged).
 
     Returns:
-        Tuple of (llm_config_dict, prompt).
+        Tuple of (llm_config_dict, prompt, agent_cfg_or_none).
 
     Raises:
         ValueError: If no API key can be resolved.
@@ -170,4 +170,4 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str]:
     if agent_cfg and agent_cfg.model_ref.max_output_tokens is not None:
         llm_config["max_output_tokens"] = agent_cfg.model_ref.max_output_tokens
 
-    return (llm_config, prompt)
+    return (llm_config, prompt, agent_cfg)

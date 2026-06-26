@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Slim entry point — orchestrates the agent_script features via the facade."""
+
+import argparse
+import os
+import sys
+from datetime import datetime, timezone
+
+from openhands.sdk import get_logger
+from metrics_schema import Metrics
+from workflow_state import (
+    IssueInfo,
+    PullRequestInfo,
+    WorkflowState,
+    StateMetrics,
+    build_state,
+)
+from agent_script import (
+    load_prompt,
+    collect_and_save_metrics,
+    extract_and_strip_split_plan,
+    generate_split_plan_summary,
+    resolve_llm_config,
+    run_agent,
+    build_output,
+)
+
+logger = get_logger(__name__)
+
+
+def main():
+    """Run the task with the provided prompt."""
+    # 1. Parse args
+    parser = argparse.ArgumentParser(
+        description="Run OpenHands agent for arbitrary tasks"
+    )
+    parser.add_argument(
+        "prompt_location",
+        nargs="?",
+        help=(
+            "Path to a local file or URL containing the prompt "
+            "(optional if PROMPT_STRING is set)"
+        ),
+    )
+    args = parser.parse_args()
+
+    # 2. Resolve prompt source
+    prompt_string = os.getenv("PROMPT_STRING")
+    prompt_location = args.prompt_location
+
+    if prompt_string and prompt_location:
+        logger.error("Error: Both PROMPT_STRING and prompt_location provided.")
+        sys.exit(1)
+    if not prompt_string and not prompt_location:
+        logger.error("Error: Neither PROMPT_STRING nor prompt_location provided.")
+        sys.exit(1)
+
+    try:
+        prompt = prompt_string if prompt_string else load_prompt(prompt_location)
+        logger.info(f"Loaded prompt ({len(prompt)} characters)")
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(1)
+
+    # 3. Inject skill context
+    skill_context_file = os.environ.get("SKILL_CONTEXT_FILE", "")
+    if skill_context_file and os.path.isfile(skill_context_file):
+        try:
+            with open(skill_context_file, "r") as f:
+                skill_content = f.read()
+            if skill_content:
+                prompt = f"{prompt}\n\n## Skills\n\n{skill_content}"
+                logger.info(f"Injected skill context ({len(skill_content)} characters)")
+        except (IOError, OSError) as e:
+            logger.warning(f"Failed to load skill context: {e}")
+
+    # 4. Resolve LLM config
+    llm_config, prompt, agent_cfg = resolve_llm_config(args, prompt)
+
+    # 5. Run agent
+    conversation = run_agent(llm_config, prompt, args, agent_cfg=agent_cfg)
+
+    # 6. Collect metrics
+    metrics = collect_and_save_metrics(conversation)
+
+    # 7. Build output
+    output = build_output(conversation, metrics, args)
+
+    logger.info("Task completed successfully")
+
+
+if __name__ == "__main__":
+    main()
