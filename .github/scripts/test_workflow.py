@@ -667,7 +667,16 @@ class TestSpecDrivenWorkflow:
                     {"name": "architect", "agent": "genius", "next": "stub"},
                     {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
                     {"name": "stub_review", "agent": "review", "next": "stub_approval"},
-                    {"name": "stub_approval", "agent": "genius", "next": "implement"},
+                    {
+                        "name": "stub_approval",
+                        "agent": "genius",
+                        "conditions": [
+                            {"on_result": "approved", "next": "implement"},
+                            {"on_result": "rejected", "next": "stub"},
+                            {"on_result": "default", "next": "implement"},
+                        ],
+                        "next": "implement",
+                    },
                     {"name": "implement", "agent": "dev", "next": None},
                 ],
             }))
