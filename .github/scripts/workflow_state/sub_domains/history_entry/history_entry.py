@@ -9,5 +9,6 @@ class HistoryEntry(BaseModel):
     agent: str
     summary: str = ""
     comment_id: Optional[int] = None
+    commit_id: Optional[str] = None
     artifacts: list[str] = Field(default_factory=list)
     pin: bool = False

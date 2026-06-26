@@ -68,3 +68,22 @@ class TestBuildState(unittest.TestCase):
         )
         self.assertIsNotNone(state.metrics)
         self.assertEqual(state.metrics.input_tokens, 5000)
+
+    def test_commit_id_flows_through(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+            commit_id="abc123def456",
+        )
+        self.assertEqual(state.history[0].commit_id, "abc123def456")
+
+    def test_commit_id_defaults_to_none(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+        )
+        self.assertIsNone(state.history[0].commit_id)

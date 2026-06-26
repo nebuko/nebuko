@@ -15,6 +15,7 @@ def build_state(
     phase: str = "",
     summary: str = "",
     comment_id: Optional[int] = None,
+    commit_id: Optional[str] = None,
     artifacts: Optional[list[str]] = None,
     pin: bool = False,
     metrics_dict: Optional[dict[str, Any]] = None,
@@ -78,6 +79,7 @@ def build_state(
         agent=agent,
         summary=summary,
         comment_id=comment_id,
+        commit_id=commit_id,
         artifacts=artifacts or [],
         pin=pin,
     )

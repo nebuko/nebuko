@@ -219,6 +219,7 @@ def build_output(
         agent=role_name,
         phase=phase,
         summary=final_message[:300] if final_message else "",
+        commit_id=os.environ.get("GITHUB_SHA"),
         metrics_dict=metrics.to_dict(),
         parent_workflow=parent_workflow,
         parent_workflow_step=parent_workflow_step,

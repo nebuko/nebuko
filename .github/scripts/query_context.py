@@ -220,9 +220,10 @@ def _build_state_context(comments, repo: str) -> str:
                 lines.append("")
                 for entry in state.history:
                     pin_marker = " 📌" if entry.pin else ""
+                    commit_marker = f" ({entry.commit_id[:7]})" if entry.commit_id else ""
                     lines.append(
                         f"- [{entry.agent}/{entry.step}]"
-                        f"{pin_marker}: {entry.summary[:120]}"
+                        f"{commit_marker}{pin_marker}: {entry.summary[:120]}"
                     )
             if state.pinned_comment_ids:
                 # Fetch full content of pinned comments
