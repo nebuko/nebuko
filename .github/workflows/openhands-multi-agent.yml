@@ -206,264 +206,108 @@ jobs:
                     echo "AGENT_SCRIPT_URL=.github/scripts/agent_script.py" >> $GITHUB_ENV
                   fi
 
-                  # Step 1: Try to extract agentRunConfig JSON block
-                  AGENT_CONFIG=$(echo "$TRIGGER_BODY" | sed -n '/<agentRunConfig>/,/<\/agentRunConfig>/p' | sed '1s/.*<agentRunConfig>//; $s/<\/agentRunConfig>.*//' | tr -d '\n' | jq -c '.' 2>/dev/null || echo "")
-
-                  if [ -z "$AGENT_CONFIG" ]; then
-                    # Fallback: try trailing JSON object with "task" field (only valid agent names, outside code blocks)
-                    AGENT_CONFIG=$(echo "$TRIGGER_BODY" | grep -oP '\{[^{}]*"task"\s*:\s*"(?:ctx|genius|dev|review|issue|issue-reviewer)"[^{}]*\}' | tail -1 | jq -c '.' 2>/dev/null || echo "")
-                  fi
-
-                  # Step 2: Check if trigger is from a bot agent (human-vs-agent guard)
-                  IS_BOT_COMMENT=0
-                  if echo "$TRIGGER_BODY" | head -5 | grep -q '<!-- bot-agent-'; then
-                    IS_BOT_COMMENT=1
-                  fi
-
-                  # Step 2b: Check for /workflow command on first line (human only)
-                  WORKFLOW_CMD=$(echo "$TRIGGER_BODY" | head -1 | sed -n 's/^[[:space:]]*\/workflow[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p')
-                  # Validate: only allow safe characters (alphanumeric, hyphen, underscore)
-                  if ! echo "$WORKFLOW_CMD" | grep -qE '^[a-zA-Z0-9_-]+$'; then
-                    WORKFLOW_CMD=""
-                  fi
-
-                  # Step 3: Parse JSON config, /workflow command, or fall back to @@mention for humans only
-                  if [ -n "$AGENT_CONFIG" ]; then
-                    # JSON-based invocation (agent→agent)
-                    TASK=$(echo "$AGENT_CONFIG" | jq -r '.task // empty')
-                    CONFIG_COMPLEXITY=$(echo "$AGENT_CONFIG" | jq -r '.complexity // "medium"')
-                    CONFIG_REASONING=$(echo "$AGENT_CONFIG" | jq -r '.reasoning // "none"')
-                    CONFIG_TEMPERATURE=$(echo "$AGENT_CONFIG" | jq -r '.temperature // empty')
-                    CONFIG_ROUND=$(echo "$AGENT_CONFIG" | jq -r '.round // empty')
-                    CONFIG_MODEL=$(echo "$AGENT_CONFIG" | jq -r '.model // empty')
-                    CONFIG_SKILLS=$(echo "$AGENT_CONFIG" | jq -r '.skills // empty')
-                    CONFIG_TOP_P=$(echo "$AGENT_CONFIG" | jq -r '.top_p // empty')
-                    CONFIG_TOP_K=$(echo "$AGENT_CONFIG" | jq -r '.top_k // empty')
-                    CONFIG_REPETITION_PENALTY=$(echo "$AGENT_CONFIG" | jq -r '.repetition_penalty // empty')
-                    CONFIG_WORKFLOW=$(echo "$AGENT_CONFIG" | jq -r '.workflow // empty')
-                    CONFIG_STEP=$(echo "$AGENT_CONFIG" | jq -r '.step // empty')
-                    CONFIG_BRANCH=$(echo "$AGENT_CONFIG" | jq -r '.branch // empty')
-                    CONFIG_PR_NUMBER=$(echo "$AGENT_CONFIG" | jq -r '.pr_number // empty')
-
-                    echo "Parsed agentRunConfig: task=$TASK complexity=$CONFIG_COMPLEXITY reasoning=$CONFIG_REASONING workflow=$CONFIG_WORKFLOW step=$CONFIG_STEP pr_number=$CONFIG_PR_NUMBER"
-                  elif [ "$IS_BOT_COMMENT" -eq 0 ]; then
-                    # Human trigger — try /workflow command first, then @@mention fallback
-                    WF_TASK=""
-                    WF_SUCCESS=false
-                    if [ -n "$WORKFLOW_CMD" ]; then
-                      SCRIPTS_DIR=""
-                      WFLOWS_DIR=""
-                      if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows" ]; then
-                        SCRIPTS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts"
-                        WFLOWS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows"
-                      else
-                        SCRIPTS_DIR=".github/scripts"
-                        WFLOWS_DIR="workflows"
-                      fi
-                      WF_TASK=$(PYTHONPATH="$SCRIPTS_DIR" python3 -c "from config import load_workflow; w=load_workflow('$WFLOWS_DIR/$WORKFLOW_CMD.yaml'); print(w.trigger.agents[0])" 2>/dev/null || echo "")
-                      if [ -n "$WF_TASK" ]; then
-                        WF_SUCCESS=true
-                      fi
-                    fi
-
-                    if [ "$WF_SUCCESS" = true ]; then
-                      TASK="$WF_TASK"
-                      CONFIG_COMPLEXITY="medium"
-                      CONFIG_REASONING="none"
-                      CONFIG_TEMPERATURE=""
-                      CONFIG_ROUND=""
-                      CONFIG_MODEL=""
-                      CONFIG_SKILLS=""
-                      CONFIG_TOP_P=""
-                      CONFIG_TOP_K=""
-                      CONFIG_REPETITION_PENALTY=""
-                      CONFIG_WORKFLOW="$WORKFLOW_CMD"
-                      CONFIG_STEP=""
-                      CONFIG_BRANCH=""
-                      CONFIG_PR_NUMBER=""
-                      AGENT_CONFIG=$(jq -n --arg task "$TASK" --arg wf "$CONFIG_WORKFLOW" \
-                        '{task: $task, complexity: "medium", reasoning: "none", workflow: $wf}')
-                      echo "/workflow command detected: workflow=$WORKFLOW_CMD task=$TASK (human trigger)"
-                    else
-                      # @@mention fallback (or /workflow was invalid/unresolvable)
-                      LAST_AGENT=$(echo "$TRIGGER_BODY" | grep -o '@@genius\|@@ctx\|@@dev\|@@review\|@@issue\|@@issue-reviewer\|@@debug' | tail -1)
-                      TASK="${LAST_AGENT#@@}"
-                      CONFIG_COMPLEXITY="medium"
-                      CONFIG_REASONING="none"
-                      CONFIG_TEMPERATURE=""
-                      CONFIG_ROUND=""
-                      CONFIG_MODEL=""
-                      CONFIG_SKILLS=""
-                      CONFIG_TOP_P=""
-                      CONFIG_TOP_K=""
-                      CONFIG_REPETITION_PENALTY=""
-                      CONFIG_WORKFLOW=""
-                      CONFIG_STEP=""
-                      CONFIG_BRANCH=""
-                      CONFIG_PR_NUMBER=""
-                      # Parse explicit PR override: "@@review PR #NNN"
-                      if [ "$TASK" = "review" ]; then
-                        CONFIG_PR_NUMBER=$(echo "$TRIGGER_BODY" | sed -n 's/.*@@review\s\+PR\s\+#\([0-9]\{1,\}\).*/\1/p')
-                      fi
-                      # Construct agentRunConfig JSON for workflow resolver
-                      AGENT_CONFIG=$(jq -n --arg task "$TASK" \
-                        '{task: $task, complexity: "medium", reasoning: "none"}')
-                      echo "Fallback to @@mention: $LAST_AGENT (human trigger)"
-                    fi
+                  # Determine script and workflow paths
+                  SCRIPTS_DIR=""
+                  WFLOWS_DIR=""
+                  if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows" ]; then
+                    SCRIPTS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts"
+                    WFLOWS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows"
                   else
-                    # Bot comment with no JSON and no @@mention — skip
-                    echo "Bot comment without agentRunConfig or @@mention. Skipping."
+                    SCRIPTS_DIR=".github/scripts"
+                    WFLOWS_DIR="workflows"
+                  fi
+
+                  # Step 1-5: Resolve agent configuration using Python resolver
+                  # Handles: agentRunConfig JSON, force-next-step, @@mention, dispatch, workflow routing
+                  if [ ! -f "$SCRIPTS_DIR/resolve_config.py" ]; then
+                    echo "ERROR: resolve_config.py not found at $SCRIPTS_DIR/resolve_config.py"
                     echo "SKIP_AGENT=true" >> $GITHUB_ENV
-                    exit 0
+                    exit 1
                   fi
 
-                  # Step 4: Validate task
-                  if [ -z "$TASK" ]; then
-                    echo "No valid task found in trigger body. Skipping."
-                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
-                    exit 0
-                  fi
+                  PYTHONPATH="$SCRIPTS_DIR" python3 "$SCRIPTS_DIR/resolve_config.py" \
+                    --trigger-body - \
+                    --prompt-base "$PROMPT_BASE" \
+                    --workflows-dir "$WFLOWS_DIR" \
+                    <<< "$TRIGGER_BODY" > /tmp/resolve_config_output.txt 2>/tmp/resolve_config_stderr.txt
+                  RESOLVE_EXIT_CODE=$?
+                  RESOLVE_OUTPUT=$(cat /tmp/resolve_config_output.txt)
 
-                  # Export TASK for loop prevention guards (Bug Fix #1)
-                  echo "TASK=$TASK" >> $GITHUB_ENV
-
-                  # Step 5: Workflow-aware agent routing
-                  # Uses resolve_workflow.py for workflow definitions; falls back to case-based routing
-                  WORKFLOW_SCRIPT=""
-                  if [ -f "$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts/resolve_workflow.py" ]; then
-                    WORKFLOW_SCRIPT="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts/resolve_workflow.py"
-                  elif [ -f ".github/scripts/resolve_workflow.py" ]; then
-                    WORKFLOW_SCRIPT=".github/scripts/resolve_workflow.py"
-                  fi
-
-                  if [ -n "$WORKFLOW_SCRIPT" ] && [ -n "$AGENT_CONFIG" ]; then
-                    WORKFLOWS_DIR=""
-                    if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows" ]; then
-                      WORKFLOWS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows"
-                    elif [ -d "workflows" ]; then
-                      WORKFLOWS_DIR="workflows"
-                    fi
-
-                    RESOLVE_OUTPUT=$(echo "$AGENT_CONFIG" | python "$WORKFLOW_SCRIPT" \
-                      --workflows-dir "$WORKFLOWS_DIR" \
-                      --prompt-base "$PROMPT_BASE" 2>&1 || echo "SKIP_AGENT=true")
-
-                    echo "Workflow resolve output: $RESOLVE_OUTPUT"
-
-                    ROLE_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^ROLE_NAME=' | cut -d= -f2-)
-                    PROMPT_LOCATION=$(echo "$RESOLVE_OUTPUT" | grep '^PROMPT_LOCATION=' | cut -d= -f2-)
-                    WF_SKIP=$(echo "$RESOLVE_OUTPUT" | grep '^SKIP_AGENT=' | cut -d= -f2-)
-
-                    if [ "$WF_SKIP" = "true" ]; then
-                      echo "Workflow routing skipped agent: $(echo "$RESOLVE_OUTPUT" | grep '^REASON=' | cut -d= -f2-)"
+                  if [ $RESOLVE_EXIT_CODE -ne 0 ]; then
+                    STDERR_CONTENT=$(cat /tmp/resolve_config_stderr.txt 2>/dev/null || echo "stderr unavailable")
+                    echo "WARNING: resolve_config.py exited with code $RESOLVE_EXIT_CODE"
+                    echo "STDERR: $STDERR_CONTENT"
+                    # Check if we got partial output despite the error
+                    if ! echo "$RESOLVE_OUTPUT" | grep -q '^TASK='; then
+                      echo "No valid output from resolver. Skipping agent."
                       echo "SKIP_AGENT=true" >> $GITHUB_ENV
                       exit 1
                     fi
-
-                    echo "PROMPT_LOCATION=$PROMPT_LOCATION" >> $GITHUB_ENV
-                    echo "ROLE_NAME=$ROLE_NAME" >> $GITHUB_ENV
-                    echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-
-                    if [ "$ROLE_NAME" = "dev" ]; then
-                      COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
-                      case "$COMPLEXITY" in
-                          "low") echo "COMPLEXITY=low" >> $GITHUB_ENV ;;
-                          "high") echo "COMPLEXITY=high" >> $GITHUB_ENV ;;
-                          *) echo "COMPLEXITY=medium" >> $GITHUB_ENV ;;
-                      esac
-                    else
-                      echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                    fi
-
-                    WF_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NAME=' | cut -d= -f2-)
-                    WF_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_STEP=' | cut -d= -f2-)
-                    WF_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
-                    WF_PARENT=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
-                    WF_PARENT_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
-                    STEP_SKILLS=$(echo "$RESOLVE_OUTPUT" | grep '^STEP_SKILLS=' | cut -d= -f2-)
-                    echo "WORKFLOW_NAME=$WF_NAME" >> $GITHUB_ENV
-                    echo "WORKFLOW_STEP=$WF_STEP" >> $GITHUB_ENV
-                    echo "WORKFLOW_NEXT=$WF_NEXT" >> $GITHUB_ENV
-                    echo "PARENT_WORKFLOW=$WF_PARENT" >> $GITHUB_ENV
-                    echo "PARENT_WORKFLOW_STEP=$WF_PARENT_STEP" >> $GITHUB_ENV
-                    echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
-                  else
-                    # Fallback: original case-based routing (backward compatible)
-                    case "$TASK" in
-                        "genius")
-                            echo "PROMPT_LOCATION=$PROMPT_BASE/genius.md" >> $GITHUB_ENV
-                            echo "ROLE_NAME=genius" >> $GITHUB_ENV
-                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                            ;;
-                        "ctx")
-                            echo "PROMPT_LOCATION=$PROMPT_BASE/ctx.md" >> $GITHUB_ENV
-                            echo "ROLE_NAME=ctx" >> $GITHUB_ENV
-                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-
-                            COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
-                            case "$COMPLEXITY" in
-                                "low") echo "COMPLEXITY=low" >> $GITHUB_ENV ;;
-                                "high") echo "COMPLEXITY=high" >> $GITHUB_ENV ;;
-                                *) echo "COMPLEXITY=medium" >> $GITHUB_ENV ;;
-                            esac
-                            ;;
-                        "dev")
-                            echo "PROMPT_LOCATION=$PROMPT_BASE/dev.md" >> $GITHUB_ENV
-                            echo "ROLE_NAME=dev" >> $GITHUB_ENV
-                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-
-                            COMPLEXITY=$(echo "$CONFIG_COMPLEXITY" | tr '[:upper:]' '[:lower:]')
-                            case "$COMPLEXITY" in
-                                "low") echo "COMPLEXITY=low" >> $GITHUB_ENV ;;
-                                "high") echo "COMPLEXITY=high" >> $GITHUB_ENV ;;
-                                *) echo "COMPLEXITY=medium" >> $GITHUB_ENV ;;
-                            esac
-                            ;;
-                        "review")
-                            echo "PROMPT_LOCATION=$PROMPT_BASE/review.md" >> $GITHUB_ENV
-                            echo "ROLE_NAME=review" >> $GITHUB_ENV
-                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                            ;;
-                        "issue")
-                            echo "PROMPT_LOCATION=$PROMPT_BASE/issue.md" >> $GITHUB_ENV
-                            echo "ROLE_NAME=issue" >> $GITHUB_ENV
-                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                            ;;
-                        "issue-reviewer")
-                            echo "PROMPT_LOCATION=$PROMPT_BASE/issue-reviewer.md" >> $GITHUB_ENV
-                            echo "ROLE_NAME=issue-reviewer" >> $GITHUB_ENV
-                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                            ;;
-                        "summarize")
-                            echo "PROMPT_LOCATION=$PROMPT_BASE/summarize.md" >> $GITHUB_ENV
-                            echo "ROLE_NAME=summarize" >> $GITHUB_ENV
-                            echo "AGENT_SELECTED=true" >> $GITHUB_ENV
-                            echo "COMPLEXITY=N/A" >> $GITHUB_ENV
-                            ;;
-                        *)
-                            echo "Unknown task: $TASK"
-                            echo "SKIP_AGENT=true" >> $GITHUB_ENV
-                            exit 1
-                            ;;
-                    esac
                   fi
 
+                  echo "Resolve output: $RESOLVE_OUTPUT"
+
+                  # Parse KEY=value output
+                  SKIP_AGENT=$(echo "$RESOLVE_OUTPUT" | grep '^SKIP_AGENT=' | cut -d= -f2-)
+                  TASK=$(echo "$RESOLVE_OUTPUT" | grep '^TASK=' | cut -d= -f2-)
+                  ROLE_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^ROLE_NAME=' | cut -d= -f2-)
+                  PROMPT_LOCATION=$(echo "$RESOLVE_OUTPUT" | grep '^PROMPT_LOCATION=' | cut -d= -f2-)
+                  AGENT_SELECTED=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_SELECTED=' | cut -d= -f2-)
+                  COMPLEXITY=$(echo "$RESOLVE_OUTPUT" | grep '^COMPLEXITY=' | cut -d= -f2-)
+                  LLM_REASONING=$(echo "$RESOLVE_OUTPUT" | grep '^LLM_REASONING=' | cut -d= -f2-)
+                  AGENT_ROUND=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_ROUND=' | cut -d= -f2-)
+                  AGENT_SKILLS=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_SKILLS=' | cut -d= -f2-)
+                  STEP_SKILLS=$(echo "$RESOLVE_OUTPUT" | grep '^STEP_SKILLS=' | cut -d= -f2-)
+                  CONFIG_MODEL=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_MODEL=' | cut -d= -f2-)
+                  CONFIG_TEMPERATURE=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TEMPERATURE=' | cut -d= -f2-)
+                  CONFIG_TOP_P=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TOP_P=' | cut -d= -f2-)
+                  CONFIG_TOP_K=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TOP_K=' | cut -d= -f2-)
+                  CONFIG_REPETITION_PENALTY=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_REPETITION_PENALTY=' | cut -d= -f2-)
+                  WORKFLOW_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NAME=' | cut -d= -f2-)
+                  WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_STEP=' | cut -d= -f2-)
+                  WORKFLOW_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
+                  PARENT_WORKFLOW=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
+                  PARENT_WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
+
+                  # Handle skip
+                  if [ "$SKIP_AGENT" = "true" ]; then
+                    REASON=$(echo "$RESOLVE_OUTPUT" | grep '^REASON=' | cut -d= -f2-)
+                    echo "Skipping agent: ${REASON:-no reason provided}"
+                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                    exit 0
+                  fi
+
+                  # Parse explicit PR override: "@@review PR #NNN" (not handled by resolve_config.py)
+                  CONFIG_PR_NUMBER=""
+                  if [ "$ROLE_NAME" = "review" ]; then
+                    CONFIG_PR_NUMBER=$(echo "$TRIGGER_BODY" | sed -n 's/.*@@review\s\+PR\s\+#\([0-9]\{1,\}\).*/\1/p')
+                  fi
+
+                  # Export core variables
+                  echo "TASK=$TASK" >> $GITHUB_ENV
+                  echo "PROMPT_LOCATION=$PROMPT_LOCATION" >> $GITHUB_ENV
+                  echo "ROLE_NAME=$ROLE_NAME" >> $GITHUB_ENV
+                  echo "AGENT_SELECTED=$AGENT_SELECTED" >> $GITHUB_ENV
+                  echo "COMPLEXITY=$COMPLEXITY" >> $GITHUB_ENV
+                  echo "WORKFLOW_NAME=$WORKFLOW_NAME" >> $GITHUB_ENV
+                  echo "WORKFLOW_STEP=$WORKFLOW_STEP" >> $GITHUB_ENV
+                  echo "WORKFLOW_NEXT=$WORKFLOW_NEXT" >> $GITHUB_ENV
+                  echo "PARENT_WORKFLOW=$PARENT_WORKFLOW" >> $GITHUB_ENV
+                  echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
+                  echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
+
                   # Step 6: Export reasoning level for agent_script.py
-                  echo "LLM_REASONING=${CONFIG_REASONING}" >> $GITHUB_ENV
+                  echo "LLM_REASONING=${LLM_REASONING}" >> $GITHUB_ENV
 
                   # Step 7: Export round counter for agent context
-                  if [ -n "$CONFIG_ROUND" ]; then
-                      echo "AGENT_ROUND=${CONFIG_ROUND}" >> $GITHUB_ENV
+                  if [ -n "$AGENT_ROUND" ]; then
+                      echo "AGENT_ROUND=${AGENT_ROUND}" >> $GITHUB_ENV
                   else
                       echo "AGENT_ROUND=" >> $GITHUB_ENV
                   fi
 
                   # Step 8: Load skill files and concatenate content
-                  ALL_SKILLS="${CONFIG_SKILLS}"
+                  ALL_SKILLS="${AGENT_SKILLS}"
                   if [ -n "${STEP_SKILLS}" ]; then
                     if [ -n "$ALL_SKILLS" ]; then
                       ALL_SKILLS="${ALL_SKILLS},${STEP_SKILLS}"
@@ -513,7 +357,7 @@ jobs:
                   echo "CONFIG_REPETITION_PENALTY=${CONFIG_REPETITION_PENALTY}" >> $GITHUB_ENV
                   echo "CONFIG_PR_NUMBER=${CONFIG_PR_NUMBER}" >> $GITHUB_ENV
 
-                  echo "Resolved agent: ROLE_NAME=$TASK MODEL=from-config COMPLEXITY=${COMPLEXITY}"
+                  echo "Resolved agent: ROLE_NAME=$ROLE_NAME MODEL=from-config COMPLEXITY=${COMPLEXITY}"
 
             - name: Prevent all agent-trigger loops & human ping guard
               run: |
