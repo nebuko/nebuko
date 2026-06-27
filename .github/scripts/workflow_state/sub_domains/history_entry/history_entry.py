@@ -11,3 +11,4 @@ class HistoryEntry(BaseModel):
     comment_id: Optional[int] = None
     artifacts: list[str] = Field(default_factory=list)
     pin: bool = False
+    result: Optional[str] = None

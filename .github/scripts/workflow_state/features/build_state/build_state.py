@@ -17,6 +17,7 @@ def build_state(
     comment_id: Optional[int] = None,
     artifacts: Optional[list[str]] = None,
     pin: bool = False,
+    result: Optional[str] = None,
     metrics_dict: Optional[dict[str, Any]] = None,
     context_updates: Optional[dict[str, Any]] = None,
     parent_workflow: Optional[str] = None,
@@ -80,6 +81,7 @@ def build_state(
         comment_id=comment_id,
         artifacts=artifacts or [],
         pin=pin,
+        result=result,
     )
     new_history = base_history + [entry]
 
