@@ -828,6 +828,23 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("REASON", result)
 
+    def test_dispatch_advance_default_workflow_analyze_to_ctx(self):
+        """Regression #377: dispatch.advance with no task field on default workflow resolves analyze→ctx.
+
+        Reproduces the exact scenario from the issue: genius finishes the 'analyze' step
+        with dispatch.advance (no explicit task). The resolver should parse the workflow
+        state, find the next step in default.yaml ('context'), and select agent 'ctx'.
+        """
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(workflow="default", step="analyze", agent="genius")
+        body = (
+            '<agentRunConfig>{"dispatch": {"status": "advance"}, "complexity": "medium"}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
 
 class TestE2EDispatchWorkflowResolution(unittest.TestCase):
     """End-to-end: agent finishes with dispatch → config resolver uses workflow YAML."""
