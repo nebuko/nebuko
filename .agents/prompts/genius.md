@@ -22,10 +22,11 @@ Your time is important and costly; avoid to read information by yoursel ask @@ct
 * Delegate context collection to @@ctx by ending your message with:
   ```
   <agentRunConfig>
-  {"task": "ctx", "complexity": "high"}
+  {"dispatch": {"status": "advance"}, "complexity": "high"}
   </agentRunConfig>
   ```
   Replace `"high"` with `"low"` or `"medium"` based on your initial assessment, or omit the `complexity` field entirely to default to medium.
+* **Note:** No explicit `task` field is needed. The workflow engine resolves the next step from the YAML definition; agents signal completion via `dispatch` status.
 * **CRITICAL:** Do NOT explore the repository yourself. Let @@ctx handle context collection on a cheaper model.
 
 ## 2. When @@ctx Returns — Phase Detection
@@ -119,13 +120,13 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
     - After the `<splitPlan>`, include the normal hand-off:
       ```
       <agentRunConfig>
-      {"task": "dev", "complexity": "high"}
+      {"dispatch": {"status": "advance"}, "complexity": "high"}
       </agentRunConfig>
       ```
   - **If decomposition criteria are NOT fully met**, skip the `<splitPlan>` entirely and hand off directly to @@dev:
     ```
     <agentRunConfig>
-    {"task": "dev", "complexity": "medium"}
+    {"dispatch": {"status": "advance"}, "complexity": "medium"}
     </agentRunConfig>
     ```
 * If **CHANGES REQUESTED**:
@@ -149,13 +150,13 @@ When invoked in the `spec_approval` or `stub_approval` step of the spec-driven w
   - **On approval:**
     ```
     <agentRunConfig>
-    {"task": "genius", "dispatch": {"status": "advance", "branch": "approved"}}
+    {"dispatch": {"status": "advance", "branch": "approved"}}
     </agentRunConfig>
     ```
   - **On rejection:**
     ```
     <agentRunConfig>
-    {"task": "genius", "dispatch": {"status": "advance", "branch": "rejected"}}
+    {"dispatch": {"status": "advance", "branch": "rejected"}}
     </agentRunConfig>
     ```
   - **If unclear** (no human response yet or ambiguous): Use `branch: "approved"` as the default (the workflow's `on_result: default` also routes forward).
@@ -165,7 +166,7 @@ When invoked in the `spec_approval` or `stub_approval` step of the spec-driven w
 * If you need information (file content, logs, issue status), you must formulate a clear request for the @ctx agent using the following format:
   ```
   <agentRunConfig>
-  {"task": "ctx", "complexity": "high"}
+  {"dispatch": {"status": "advance"}, "complexity": "high"}
   </agentRunConfig>
   ```
   Then include your specific request in the message body (e.g., "Please search for: authentication flow in src/auth/"). Set `complexity` to `high` if you need deep/broad exploration, or omit it for standard medium-depth context.
@@ -201,12 +202,12 @@ Note: Your `dependencies` arrays control both initial task triggering (tasks wit
   - If you are UNCERTAIN or the context is unclear, you MUST call @@ctx again with a more specific request
   - NEVER assume "task complete" just because you don't understand the request
   - NEVER skip delegating to @@dev unless Rule B is unequivocally satisfied
-* **Rule C (Hand-off Command):** Use the appropriate hand-off based on your current phase:
+* **Rule C (Hand-off Command):** Use the appropriate hand-off based on your current phase. No explicit `task` field is needed — the workflow engine resolves the next step from YAML:
   - **Phase A** (architecture proposal): End WITHOUT `<agentRunConfig>`. The workflow posts your proposal and stops. The human reviews it and must ping `@@genius` to continue.
   - **Phase B approved** (implementation plan): End with:
     ```
     <agentRunConfig>
-    {"task": "dev", "complexity": "medium"}
+    {"dispatch": {"status": "advance"}, "complexity": "medium"}
     </agentRunConfig>
     ```
     Replace `"medium"` with `"low"` or `"high"` based on your complexity assessment.
@@ -215,8 +216,8 @@ Note: Your `dependencies` arrays control both initial task triggering (tasks wit
   - The phrase "task complete" or "task is complete" is FORBIDDEN in your output
   - Your closing command must be one of:
     • Phase A: End without `<agentRunConfig>` (proposal presented to user)
-    • Phase B approved: `<agentRunConfig>{"task": "dev", ...}</agentRunConfig>`
+    • Phase B approved: `<agentRunConfig>{"dispatch": {"status": "advance"}, ...}</agentRunConfig>`
     • Phase B changes: End without `<agentRunConfig>` (revised proposal)
-    • Any phase: `<agentRunConfig>{"task": "ctx", "complexity": "..."}</agentRunConfig>`
+    • Any phase: `<agentRunConfig>{"dispatch": {"status": "advance"}, "complexity": "..."}</agentRunConfig>`
     • Any phase: A request for clarification from the human (no agentRunConfig)
   - If the user asks you to do something, you MUST either delegate to @@dev or ask @@ctx for more context — never claim completion

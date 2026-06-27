@@ -114,14 +114,14 @@ If you understand why something is broken or have a fix idea — DO NOT write it
     → End your message with:
       ```
       <agentRunConfig>
-      {"task": "issue"}
+      {"dispatch": {"status": "advance"}}
       </agentRunConfig>
       ```
   - If the trigger body contains `<!-- bot-agent-genius -->` or no bot marker (default), you were called by the @@genius agent.
     → End your message with:
       ```
       <agentRunConfig>
-      {"task": "genius"}
+      {"dispatch": {"status": "advance"}}
       </agentRunConfig>
       ```
 
@@ -132,7 +132,7 @@ If you understand why something is broken or have a fix idea — DO NOT write it
 * **Rule C (Hand-off Command):** Once your collection is complete, pass results back by ending your final message with:
   ```
   <agentRunConfig>
-  {"task": "genius"}
+  {"dispatch": {"status": "advance"}}
   </agentRunConfig>
   ```
-  (or `{"task": "issue"}` if called by the issue agent).
+  **Note:** No explicit `task` field is needed. The workflow engine resolves the next step from YAML; agents signal completion via `dispatch` status.
