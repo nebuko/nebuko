@@ -150,6 +150,23 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         self.assertEqual(result.history[0].comment_id, 123)
         # noise_comment is NOT counted as a state comment
 
+    def test_invalid_schema_json_does_not_shift_alignment(self):
+        """A comment with valid JSON but invalid WorkflowState schema must not be counted
+        as a state comment, preventing index alignment shifts."""
+        entry_a = {"step": "analyze", "agent": "genius"}
+        comment_123 = _make_state_comment(123, history_entries=[entry_a], version=1)
+        # Valid JSON inside state markers, but missing required fields → invalid WorkflowState
+        invalid_json = json.dumps({"not_a_state": True})
+        invalid_comment = _make_comment(
+            f"{STATE_MARKER_START}\n{invalid_json}\n{STATE_MARKER_END}", 777
+        )
+        comment_456 = _make_state_comment(456, history_entries=[entry_a], version=2)
+
+        result = extract_latest_state_from_comments([comment_123, invalid_comment, comment_456])
+
+        # invalid_comment must NOT shift the alignment: history[0] → 123, not 777
+        self.assertEqual(result.history[0].comment_id, 123)
+
 
 if __name__ == "__main__":
     unittest.main()

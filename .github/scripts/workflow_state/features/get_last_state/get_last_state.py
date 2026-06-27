@@ -52,7 +52,7 @@ def extract_latest_state_from_comments(comments: list[dict[str, Any]]) -> Option
     Returns:
         Parsed WorkflowState (with enriched history) or None if no state found.
     """
-    # Collect all comments containing valid state JSON (chronological order)
+    # Collect all comments containing valid WorkflowState JSON (chronological order)
     state_comments: list[dict[str, Any]] = []
     for comment in comments:
         body = comment.get("body")
@@ -62,9 +62,10 @@ def extract_latest_state_from_comments(comments: list[dict[str, Any]]) -> Option
         if match:
             json_str = match.group(1).strip()
             try:
-                json.loads(json_str)  # Validate JSON is parseable
+                data = json.loads(json_str)
+                WorkflowState.model_validate(data)
                 state_comments.append(comment)
-            except (json.JSONDecodeError, ValueError):
+            except Exception:
                 continue
 
     # Extract the latest state (last comment in reverse = most recent)
