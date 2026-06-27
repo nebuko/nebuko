@@ -390,3 +390,80 @@ class TestEmptyWorkflowDefinition:
             agent_hint="dev",
         )
         assert result == {"task": "dev"}
+
+
+class TestDefaultWorkflowWithRealFile:
+    """Test resolve_next_from_workflow against the real workflows/default.yaml file.
+
+    Regression tests for issue #380: dispatch.advance from 'analyze' step
+    must resolve to 'ctx' agent using the actual workflow definition on disk.
+    """
+
+    @pytest.fixture
+    def real_workflows_dir(self) -> Path:
+        """Path to the real workflows/ directory at repo root."""
+        return Path(__file__).resolve().parent.parent.parent / "workflows"
+
+    def test_analyze_resolves_to_ctx(self, real_workflows_dir):
+        """Issue #380 scenario: genius finishes 'analyze' → next agent is ctx."""
+        resolve = _import_resolver()
+        result = resolve(
+            "default", "analyze", str(real_workflows_dir),
+        )
+        assert result == {"task": "ctx", "step": "context"}
+
+    def test_context_resolves_to_genius_plan(self, real_workflows_dir):
+        """ctx finishes 'context' → next agent is genius (plan step)."""
+        resolve = _import_resolver()
+        result = resolve(
+            "default", "context", str(real_workflows_dir),
+        )
+        assert result == {"task": "genius", "step": "plan"}
+
+    def test_plan_resolves_to_dev(self, real_workflows_dir):
+        """genius finishes 'plan' → next agent is dev."""
+        resolve = _import_resolver()
+        result = resolve(
+            "default", "plan", str(real_workflows_dir),
+        )
+        assert result == {"task": "dev", "step": "implement"}
+
+    def test_implement_resolves_to_review(self, real_workflows_dir):
+        """dev finishes 'implement' → next agent is review."""
+        resolve = _import_resolver()
+        result = resolve(
+            "default", "implement", str(real_workflows_dir),
+        )
+        assert result == {"task": "review", "step": "review"}
+
+    def test_review_is_terminal_returns_none(self, real_workflows_dir):
+        """review step is terminal (next: null) → returns None."""
+        resolve = _import_resolver()
+        result = resolve(
+            "default", "review", str(real_workflows_dir),
+        )
+        assert result is None
+
+    def test_full_default_workflow_progression(self, real_workflows_dir):
+        """End-to-end walkthrough of the entire default workflow chain."""
+        resolve = _import_resolver()
+
+        # analyze → context (ctx)
+        result = resolve("default", "analyze", str(real_workflows_dir))
+        assert result == {"task": "ctx", "step": "context"}
+
+        # context → plan (genius)
+        result = resolve("default", "context", str(real_workflows_dir))
+        assert result == {"task": "genius", "step": "plan"}
+
+        # plan → implement (dev)
+        result = resolve("default", "plan", str(real_workflows_dir))
+        assert result == {"task": "dev", "step": "implement"}
+
+        # implement → review (review)
+        result = resolve("default", "implement", str(real_workflows_dir))
+        assert result == {"task": "review", "step": "review"}
+
+        # review → None (terminal)
+        result = resolve("default", "review", str(real_workflows_dir))
+        assert result is None
