@@ -827,3 +827,246 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         # resolve_next_from_workflow returns None for missing workflow when agent_hint=None
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("REASON", result)
+
+
+class TestE2EDispatchWorkflowResolution(unittest.TestCase):
+    """End-to-end: agent finishes with dispatch → config resolver uses workflow YAML."""
+
+    @staticmethod
+    def _approval_workflow_yaml():
+        return (
+            "name: approval\n"
+            "description: Approval workflow with conditional branching\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: spec\n"
+            "    agent: po\n"
+            "    next: spec_approval\n"
+            "  - name: spec_approval\n"
+            "    agent: genius\n"
+            "    conditions:\n"
+            "      - on_result: approved\n"
+            "        next: implement\n"
+            "      - on_result: rejected\n"
+            "        next: spec\n"
+            "      - on_result: default\n"
+            "        next: implement\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    @staticmethod
+    def _build_state_json(workflow, step, agent, dispatch_status=None, dispatch_task=None):
+        import json as _json
+        state = {
+            "version": 1,
+            "workflow": workflow,
+            "step": step,
+            "agent": agent,
+        }
+        if dispatch_status:
+            state["dispatch"] = {
+                "status": dispatch_status,
+                "task": dispatch_task or "",
+                "complexity": "medium",
+            }
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "approval.yaml"), "w") as f:
+            f.write(self._approval_workflow_yaml())
+        return prompt_base, workflows_dir
+
+    def test_dispatch_advance_resolves_correct_next_agent(self):
+        """Agent finishes with dispatch→advance; resolver picks up next agent from workflow."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        # Agent "po" finished step "spec", dispatch advances to next step
+        state_json = self._build_state_json(
+            workflow="approval", step="spec", agent="po",
+            dispatch_status="advance", dispatch_task="",
+        )
+        body = (
+            '<agentRunConfig>{"task": "dev", "dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # After "spec", next step is "spec_approval" with agent "genius"
+        self.assertEqual(result["TASK"], "genius")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        # WORKFLOW_STEP is set from the resolved next step
+        self.assertEqual(result["WORKFLOW_STEP"], "")  # not populated in agent_config path
+
+    def test_dispatch_with_branch_approved(self):
+        """Dispatch with branch=approved resolves to implement step."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(
+            workflow="approval", step="spec_approval", agent="genius",
+        )
+        body = (
+            '<agentRunConfig>{"task": "dev", "dispatch": {"branch": "approved"}}'
+            '</agentRunConfig>\n\n' + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # branch_result="approved" → condition routes to "implement" → agent "dev"
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_dispatch_with_branch_rejected(self):
+        """Dispatch with branch=rejected loops back to spec step."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(
+            workflow="approval", step="spec_approval", agent="genius",
+        )
+        body = (
+            '<agentRunConfig>{"task": "dev", "dispatch": {"branch": "rejected"}}'
+            '</agentRunConfig>\n\n' + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # branch_result="rejected" → condition routes to "spec" → agent "po"
+        self.assertEqual(result["TASK"], "po")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_full_workflow_simulation_through_resolver(self):
+        """Simulate a full workflow run through resolve_config with mock workflow state."""
+        prompt_base, workflows_dir = self._setup_dirs()
+
+        # Step 1: spec → spec_approval
+        state = self._build_state_json("approval", "spec", "po")
+        result = resolve_config(
+            '<agentRunConfig>{"task": "po"}</agentRunConfig>\n\n' + state,
+            prompt_base, workflows_dir, is_bot=False,
+        )
+        self.assertEqual(result["TASK"], "genius")
+        self.assertEqual(result["ROLE_NAME"], "genius")
+
+        # Step 2: spec_approval (approved) → implement
+        state = self._build_state_json("approval", "spec_approval", "genius")
+        result = resolve_config(
+            '<agentRunConfig>{"task": "genius", "dispatch": {"branch": "approved"}}'
+            '</agentRunConfig>\n\n' + state,
+            prompt_base, workflows_dir, is_bot=False,
+        )
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["ROLE_NAME"], "dev")
+
+        # Step 3: implement → review
+        state = self._build_state_json("approval", "implement", "dev")
+        result = resolve_config(
+            '<agentRunConfig>{"task": "dev"}</agentRunConfig>\n\n' + state,
+            prompt_base, workflows_dir, is_bot=False,
+        )
+        self.assertEqual(result["TASK"], "review")
+        self.assertEqual(result["ROLE_NAME"], "review")
+
+        # Step 4: review (terminal) → SKIP
+        state = self._build_state_json("approval", "review", "review")
+        result = resolve_config(
+            '<agentRunConfig>{"task": "review"}</agentRunConfig>\n\n' + state,
+            prompt_base, workflows_dir, is_bot=False,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "true")
+
+
+class TestForceNextStepWithWorkflowDriven(unittest.TestCase):
+    """Force-next-step command alongside workflow-driven resolution."""
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(TestWorkflowDrivenResolution._default_workflow_yaml())
+        return prompt_base, workflows_dir
+
+    def _build_state_json(self, workflow="default", step="analyze", agent="genius"):
+        import json as _json
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({"version": 1, "workflow": workflow, "step": step, "agent": agent})
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def test_force_next_step_with_workflow_driven_no_conflict(self):
+        """force-next-step works correctly when there's no agentRunConfig (human command)."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json("default", "analyze", "genius")
+        body = "/workflow force-next-step\n\n" + state_json
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # Auto-advance: analyze.next = context → agent ctx
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_force_next_step_explicit_target_with_workflow_driven(self):
+        """force-next-step with explicit target overrides normal workflow progression."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json("default", "analyze", "genius")
+        body = "/workflow force-next-step implement\n\n" + state_json
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # Explicit target "implement" → agent dev (bypasses normal analyze→context flow)
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+
+class TestHumanWorkflowOverridePrecedence(unittest.TestCase):
+    """Human /workflow command takes precedence over workflow state."""
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(TestWorkflowDrivenResolution._default_workflow_yaml())
+        with open(os.path.join(workflows_dir, "review-only.yaml"), "w") as f:
+            f.write(
+                "name: review-only\n"
+                "description: Review only workflow\n"
+                "trigger:\n"
+                "  agents: [review]\n"
+                "steps:\n"
+                "  - name: review\n"
+                "    agent: review\n"
+                "    next: null\n"
+            )
+        return prompt_base, workflows_dir
+
+    def test_workflow_command_precedence_over_workflow_state(self):
+        """/workflow command takes precedence even when workflow state exists."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + '{"version": 1, "workflow": "default", "step": "analyze", "agent": "genius"}'
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        body = "/workflow review-only\n\n" + state_json
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # /workflow review-only should take precedence and resolve to first agent of review-only
+        self.assertEqual(result["ROLE_NAME"], "review")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_workflow_command_precedence_over_mention(self):
+        """/workflow command takes precedence over @@mention."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = "/workflow default\n@@dev please implement something"
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # /workflow default triggers the workflow — genius is the trigger agent
+        self.assertEqual(result["ROLE_NAME"], "genius")
+        self.assertEqual(result["SKIP_AGENT"], "false")
