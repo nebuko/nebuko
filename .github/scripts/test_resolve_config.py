@@ -2,6 +2,7 @@
 
 import tempfile
 import os
+from pathlib import Path
 
 import pytest
 
@@ -436,25 +437,30 @@ class TestResolveConfigWithWorkflowCommand:
 class TestResolveNextAgentFromWorkflow(unittest.TestCase):
     """Tests for resolve_next_agent_from_workflow function."""
 
+    @staticmethod
+    def _real_workflows_dir():
+        """Return the path to the real workflows/ directory at the repo root."""
+        return str(Path(__file__).resolve().parents[2] / "workflows")
+
     def test_task_hint_overrides_workflow(self):
-        result = resolve_next_agent_from_workflow("dev", "default", "analyze", "workflows")
+        result = resolve_next_agent_from_workflow("dev", "default", "analyze", self._real_workflows_dir())
         self.assertEqual(result, "dev")
 
     def test_resolves_next_from_default_workflow(self):
-        result = resolve_next_agent_from_workflow(None, "default", "analyze", "workflows")
+        result = resolve_next_agent_from_workflow(None, "default", "analyze", self._real_workflows_dir())
         self.assertEqual(result, "ctx")
 
     def test_returns_none_for_missing_workflow(self):
-        result = resolve_next_agent_from_workflow(None, "nonexistent", "analyze", "workflows")
+        result = resolve_next_agent_from_workflow(None, "nonexistent", "analyze", self._real_workflows_dir())
         self.assertIsNone(result)
 
     def test_returns_none_for_empty_workflow_name(self):
-        result = resolve_next_agent_from_workflow(None, "", "analyze", "workflows")
+        result = resolve_next_agent_from_workflow(None, "", "analyze", self._real_workflows_dir())
         self.assertIsNone(result)
 
     def test_returns_none_for_terminal_step(self):
         # "review" is the last step in default.yaml (next: null)
-        result = resolve_next_agent_from_workflow(None, "default", "review", "workflows")
+        result = resolve_next_agent_from_workflow(None, "default", "review", self._real_workflows_dir())
         self.assertIsNone(result)
 
 
