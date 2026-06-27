@@ -449,6 +449,103 @@ def resolve_workflow_step(
     }
 
 
+def resolve_next_from_workflow(
+    workflow_name: str,
+    current_step_name: str,
+    workflows_dir: str,
+    agent_hint: Optional[str] = None,
+    branch_result: Optional[str] = None,
+) -> Optional[dict]:
+    """Resolve the next step in a workflow given the current step.
+
+    Loads the workflow YAML, finds the current step, and determines the next
+    step based on the ``next`` field or conditional routing via ``conditions``.
+
+    Args:
+        workflow_name: Name of the workflow (stem of the .yaml file).
+        current_step_name: Name of the current step.
+        workflows_dir: Path to the workflows directory.
+        agent_hint: Fallback agent name when no workflow resolution is found.
+        branch_result: Condition key for conditional routing (e.g. "approved").
+
+    Returns:
+        ``{"task": "<agent>", "step": "<name>"}`` for linear routing,
+        ``{"task": "<agent>", "step": "<name>", "branch": "<key>"}`` for
+        conditional branches, ``{"task": "<hint>"}`` for agent hint fallback,
+        or ``None`` for terminal/missing cases.
+    """
+    workflow_file = Path(workflows_dir) / f"{workflow_name}.yaml"
+
+    # Load workflow
+    try:
+        workflow = load_workflow(str(workflow_file))
+    except (FileNotFoundError, ValueError):
+        if agent_hint:
+            return {"task": agent_hint}
+        return None
+
+    # Find current step
+    current_step = None
+    for step in workflow.steps:
+        if step.name == current_step_name:
+            current_step = step
+            break
+
+    if current_step is None:
+        if agent_hint:
+            return {"task": agent_hint}
+        return None
+
+    # Check for terminal step
+    if _is_terminal_step(current_step):
+        if agent_hint:
+            return {"task": agent_hint}
+        return None
+
+    # Resolve target step name
+    target_step_name: Optional[str] = None
+    branch_key: Optional[str] = None
+
+    if branch_result and current_step.conditions:
+        # Try to match a specific condition
+        for condition in current_step.conditions:
+            if condition.on_result == branch_result:
+                target_step_name = condition.next
+                branch_key = branch_result
+                break
+        # Fall back to default condition if no exact match
+        if target_step_name is None:
+            for condition in current_step.conditions:
+                if condition.on_result == "default":
+                    target_step_name = condition.next
+                    branch_key = "default"
+                    break
+    else:
+        # Follow linear next field
+        target_step_name = current_step.next
+
+    if target_step_name is None:
+        return None
+
+    # Look up target step to get its agent
+    target_step = None
+    for step in workflow.steps:
+        if step.name == target_step_name:
+            target_step = step
+            break
+
+    if target_step is None:
+        return None
+
+    result: dict = {
+        "task": target_step.agent,
+        "step": target_step.name,
+    }
+    if branch_key:
+        result["branch"] = branch_key
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description="Resolve workflow routing for agent")
     parser.add_argument(
