@@ -125,8 +125,8 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         self.assertIsNone(result.history[1].comment_id)
         self.assertIsNone(result.history[2].comment_id)
 
-    def test_preserves_existing_comment_ids(self):
-        """If a history entry already has comment_id from a prior enrichment, it's preserved (re-confirmed)."""
+    def test_index_enrichment_overwrites_existing_comment_ids(self):
+        """Index-based enrichment takes precedence over any pre-existing comment_id values."""
         entry_a = {"step": "analyze", "agent": "genius", "comment_id": 789}
         entry_b = {"step": "plan", "agent": "genius", "comment_id": None}
         comment_123 = _make_state_comment(123, history_entries=[entry_a], version=1)
