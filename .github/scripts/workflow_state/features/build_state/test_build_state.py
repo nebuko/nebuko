@@ -57,6 +57,26 @@ class TestBuildState(unittest.TestCase):
         )
         self.assertTrue(state.history[0].pin)
 
+    def test_result_field(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="dev",
+            agent="dev",
+            summary="Implementation done",
+            result="All tests passed",
+        )
+        self.assertEqual(state.history[0].result, "All tests passed")
+
+    def test_result_defaults_to_none(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+        )
+        self.assertIsNone(state.history[0].result)
+
     def test_metrics_included(self):
         metrics_dict = {"input_tokens": 5000, "output_tokens": 2000}
         state = build_state(
