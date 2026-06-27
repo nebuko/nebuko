@@ -433,3 +433,61 @@ class TestDefaultWorkflowWithRealFile:
         resolve = _import_resolver()
         result = resolve("default", "review", str(_real_workflows_dir()))
         assert result is None
+
+    def test_body_from_issue_resolves_to_ctx(self):
+        """End-to-end test: parse the exact body text from issue #377 and verify ctx is resolved.
+
+        The genius agent finishes the 'analyze' step with dispatch.advance (no task field).
+        The body contains a WORKFLOW_STATE block. The resolver should extract the state,
+        find the next step in default.yaml ('context'), and return agent 'ctx'.
+        """
+        resolve = _import_resolver()
+
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from workflow_state.features.get_last_state.get_last_state import extract_state_from_body
+
+        body = (
+            "<summary>🤖 Workflow State (v1)</summary>\n"
+            "\n"
+            "```json\n"
+            "<!-- WORKFLOW_STATE_START -->\n"
+            '{\n'
+            '  "workflow": "default",\n'
+            '  "step": "analyze",\n'
+            '  "agent": "genius",\n'
+            '  "phase": "analysis",\n'
+            '  "history": [\n'
+            '    {\n'
+            '      "step": "analyze",\n'
+            '      "agent": "genius",\n'
+            '      "summary": "Genius answer summary"\n'
+            "    }\n"
+            "  ],\n"
+            '  "metrics": {\n'
+            '    "run_id": "d17d26d4-c4de-4808-b80b-e353d79e0563",\n'
+            '    "model_name": "default",\n'
+            '    "agent_role": "genius",\n'
+            '    "input_tokens": 8069,\n'
+            '    "output_tokens": 276\n'
+            "  },\n"
+            '  "issue": {\n'
+            '    "number": 377,\n'
+            '    "url": "https://github.com/olivier-norture/git-flow-ai/issues/377",\n'
+            '    "title": "fix workflow force-next-step requires an active workflow",\n'
+            '    "author": "olivier-norture",\n'
+            '    "repo": "olivier-norture/git-flow-ai"\n'
+            "  }\n"
+            "}\n"
+            "<!-- WORKFLOW_STATE_END -->\n"
+            "```\n"
+        )
+
+        state = extract_state_from_body(body)
+        assert state is not None
+        assert state.workflow == "default"
+        assert state.step == "analyze"
+        assert state.agent == "genius"
+
+        result = resolve(state.workflow, state.step, str(_real_workflows_dir()))
+        assert result == {"task": "ctx", "step": "context"}
