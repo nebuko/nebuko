@@ -390,3 +390,46 @@ class TestEmptyWorkflowDefinition:
             agent_hint="dev",
         )
         assert result == {"task": "dev"}
+
+
+def _real_workflows_dir() -> Path:
+    """Return the path to the real workflows/ directory in the repo root."""
+    return Path(__file__).resolve().parents[2] / "workflows"
+
+
+class TestDefaultWorkflowWithRealFile:
+    """Test resolve_next_from_workflow against the real workflows/default.yaml.
+
+    Regression test for issue #377 — ensures dispatch.advance from the
+    'analyze' step correctly resolves to the 'ctx' agent.
+    """
+
+    def test_analyze_resolves_to_ctx(self):
+        """dispatch.advance from analyze step → ctx agent (context step)."""
+        resolve = _import_resolver()
+        result = resolve("default", "analyze", str(_real_workflows_dir()))
+        assert result == {"task": "ctx", "step": "context"}
+
+    def test_context_resolves_to_genius_plan(self):
+        """dispatch.advance from context step → genius agent (plan step)."""
+        resolve = _import_resolver()
+        result = resolve("default", "context", str(_real_workflows_dir()))
+        assert result == {"task": "genius", "step": "plan"}
+
+    def test_plan_resolves_to_dev_implement(self):
+        """dispatch.advance from plan step → dev agent (implement step)."""
+        resolve = _import_resolver()
+        result = resolve("default", "plan", str(_real_workflows_dir()))
+        assert result == {"task": "dev", "step": "implement"}
+
+    def test_implement_resolves_to_review(self):
+        """dispatch.advance from implement step → review agent."""
+        resolve = _import_resolver()
+        result = resolve("default", "implement", str(_real_workflows_dir()))
+        assert result == {"task": "review", "step": "review"}
+
+    def test_review_is_terminal_returns_none(self):
+        """Review is the terminal step — returns None."""
+        resolve = _import_resolver()
+        result = resolve("default", "review", str(_real_workflows_dir()))
+        assert result is None
