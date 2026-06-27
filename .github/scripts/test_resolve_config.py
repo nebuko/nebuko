@@ -688,3 +688,142 @@ class TestForceNextStepIntegration(unittest.TestCase):
         )
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("does not exist", result["REASON"])
+
+
+class TestWorkflowDrivenResolution(unittest.TestCase):
+    """Tests for workflow-driven resolution in resolve_config() agent_config branch."""
+
+    @staticmethod
+    def _default_workflow_yaml():
+        return (
+            "name: default\n"
+            "description: Standard workflow\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: context\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: plan\n"
+            "  - name: plan\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    @staticmethod
+    def _build_state_json(workflow="default", step="analyze", agent="genius"):
+        import json as _json
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({"version": 1, "workflow": workflow, "step": step, "agent": agent})
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(self._default_workflow_yaml())
+        return prompt_base, workflows_dir
+
+    def test_workflow_driven_resolution_with_agent_hint(self):
+        """Workflow-driven resolution resolves next step from workflow state."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(workflow="default", step="analyze", agent="genius")
+        body = (
+            '<agentRunConfig>{"task": "dev", "complexity": "medium"}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # After "analyze", next step is "context" with agent "ctx"
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_workflow_driven_resolution_with_branch_result(self):
+        """Workflow-driven resolution passes branch_result from dispatch dict."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(workflow="default", step="analyze", agent="genius")
+        body = (
+            '<agentRunConfig>{"task": "dev", "dispatch": {"branch": "approved"}}'
+            '</agentRunConfig>\n\n' + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # Linear resolution (no conditions in default workflow) — follows "next" field
+        self.assertEqual(result["TASK"], "ctx")
+
+    def test_terminal_step_returns_skip(self):
+        """Terminal step returns SKIP_AGENT when workflow-driven resolution finds no next step."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        # "review" is terminal (next: null) — should return None from resolve_next_from_workflow
+        state_json = self._build_state_json(workflow="default", step="review", agent="review")
+        body = (
+            '<agentRunConfig>{"task": "dev", "complexity": "medium"}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("Terminal step reached", result["REASON"])
+
+    def test_fallback_to_agent_hint_when_no_workflow_state(self):
+        """When no workflow state exists, fall back to agent hint (task field)."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = '<agentRunConfig>{"task": "dev", "complexity": "high"}</agentRunConfig>'
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["COMPLEXITY"], "high")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_backward_compatibility_simple_agent_run_config(self):
+        """Simple agentRunConfig without workflow state still works as before."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = (
+            '<agentRunConfig>{"task": "dev", "complexity": "low", '
+            '"reasoning": "high", "temperature": "0.5", "round": "3"}</agentRunConfig>'
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["COMPLEXITY"], "low")
+        self.assertEqual(result["LLM_REASONING"], "high")
+        self.assertEqual(result["CONFIG_TEMPERATURE"], "0.5")
+        self.assertEqual(result["AGENT_ROUND"], "3")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_workflow_driven_overrides_agent_hint(self):
+        """Workflow-driven resolution overrides the agent hint with the actual next step agent."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(workflow="default", step="plan", agent="genius")
+        # Agent hint is "dev" but workflow says after "plan" comes "implement" -> agent "dev"
+        body = (
+            '<agentRunConfig>{"task": "dev", "complexity": "medium"}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["TASK"], "dev")
+
+    def test_missing_workflow_file_returns_skip(self):
+        """When workflow file doesn't exist, return SKIP_AGENT (broken state)."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + '{"version": 1, "workflow": "nonexistent", "step": "analyze", "agent": "genius"}'
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        body = (
+            '<agentRunConfig>{"task": "dev", "complexity": "medium"}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # resolve_next_from_workflow returns None for missing workflow when agent_hint=None
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("REASON", result)
