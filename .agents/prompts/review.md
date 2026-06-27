@@ -30,7 +30,7 @@ Choose ONE of the following paths:
 - End your message with:
   ```
   <agentRunConfig>
-  {"task": "dev", "round": 2}
+  {"dispatch": {"status": "advance"}, "round": 2}
   </agentRunConfig>
   ```
   Increment the `round` counter each time dev→review→dev cycles (round=2, round=3, etc.).
@@ -42,7 +42,7 @@ Choose ONE of the following paths:
 - Also include the agentRunConfig for workflow tracking:
   ```
   <agentRunConfig>
-  {"task": "review", "complexity": "medium"}
+  {"dispatch": {"status": "advance"}, "complexity": "medium"}
   </agentRunConfig>
   ```
 
@@ -59,13 +59,13 @@ Choose ONE of the following paths:
   - If problems found:
     ```
     <agentRunConfig>
-    {"task": "dev", "round": 2}
+    {"dispatch": {"status": "advance"}, "round": 2}
     </agentRunConfig>
     ```
     (Increment the `round` counter for each dev→review→dev cycle.)
   - If approved: Include the human ping `@<issue_author> ready for human review.` in your message body, and optionally add:
     ```
     <agentRunConfig>
-    {"task": "review", "complexity": "medium"}
+    {"dispatch": {"status": "advance"}, "complexity": "medium"}
     </agentRunConfig>
     ```
