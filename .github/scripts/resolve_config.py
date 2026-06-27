@@ -272,10 +272,20 @@ def resolve_config(
                 task = wf_result["task"]
                 config_step = wf_result.get("step", config_step)
             else:
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": "Terminal step reached",
-                }
+                dispatch_status = dispatch.get("status", "") if isinstance(dispatch, dict) else ""
+                if dispatch_status == "hold":
+                    return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
+                elif dispatch_status == "terminate":
+                    return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
+                elif dispatch_status == "loop":
+                    task = prev_state.agent or ""
+                elif dispatch_status == "advance":
+                    task = agent_hint
+                else:
+                    return {
+                        "SKIP_AGENT": "true",
+                        "REASON": "Terminal step reached",
+                    }
         else:
             # No workflow state — fall back to agent hint
             task = agent_hint

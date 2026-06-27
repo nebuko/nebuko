@@ -911,6 +911,21 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         # WORKFLOW_STEP is set from the resolved next step
         self.assertEqual(result["WORKFLOW_STEP"], "")  # not populated in agent_config path
 
+    def test_dispatch_advance_without_task_field(self):
+        """Regression: dispatch-only advance (no task field) must resolve next agent from workflow."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(
+            workflow="approval", step="spec", agent="po",
+        )
+        body = (
+            '<agentRunConfig>{"dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # After "spec", next step is "spec_approval" with agent "genius"
+        self.assertEqual(result["TASK"], "genius")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
     def test_dispatch_with_branch_approved(self):
         """Dispatch with branch=approved resolves to implement step."""
         prompt_base, workflows_dir = self._setup_dirs()
