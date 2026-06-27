@@ -25,7 +25,11 @@ from typing import Optional
 # Import resolve_workflow directly (same directory)
 sys.path.insert(0, os.path.dirname(__file__))
 from config import load_workflow
-from resolve_workflow import resolve_workflow_routing, TASK_TO_PROMPT
+from resolve_workflow import (
+    resolve_workflow_routing,
+    resolve_next_from_workflow,
+    TASK_TO_PROMPT,
+)
 from workflow_state import extract_dispatch_from_state, extract_state_from_body
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
@@ -233,8 +237,11 @@ def resolve_config(
     agent_config = extract_agent_run_config(trigger_body)
 
     if agent_config:
-        # JSON-based invocation (agent→agent)
-        task = agent_config.get("task", "")
+        # JSON-based invocation (agent→agent) — workflow-driven resolution
+        agent_hint = agent_config.get("task", "")
+        dispatch = agent_config.get("dispatch", {})
+        branch_result = dispatch.get("branch") if isinstance(dispatch, dict) else None
+
         config_complexity = agent_config.get("complexity", "medium")
         config_reasoning = agent_config.get("reasoning", "none")
         config_temperature = agent_config.get("temperature", "")
@@ -249,6 +256,29 @@ def resolve_config(
         config_branch = agent_config.get("branch", "")
         config_parent_workflow = agent_config.get("parent_workflow", "")
         config_parent_workflow_step = agent_config.get("parent_workflow_step", "")
+
+        # Attempt workflow-driven resolution using previous workflow state
+        prev_state = extract_state_from_body(trigger_body)
+        if prev_state and prev_state.workflow and prev_state.step:
+            # Don't pass agent_hint — we want None for terminal/missing to trigger SKIP_AGENT
+            wf_result = resolve_next_from_workflow(
+                prev_state.workflow,
+                prev_state.step,
+                workflows_dir,
+                agent_hint=None,
+                branch_result=branch_result,
+            )
+            if wf_result:
+                task = wf_result["task"]
+                config_step = wf_result.get("step", config_step)
+            else:
+                return {
+                    "SKIP_AGENT": "true",
+                    "REASON": "Terminal step reached",
+                }
+        else:
+            # No workflow state — fall back to agent hint
+            task = agent_hint
     elif not is_bot:
         # Check for force-next-step command first (human only)
         force_next = extract_force_next_command(trigger_body)
@@ -420,17 +450,19 @@ def resolve_config(
             if dispatch.status == "advance":
                 if not task:
                     # Auto-resolve next agent from workflow YAML
-                    task = resolve_next_agent_from_workflow(
-                        None, config_workflow, config_step, workflows_dir
-                    ) or ""
+                    wf_result = resolve_next_from_workflow(
+                        config_workflow, config_step, workflows_dir
+                    )
+                    if wf_result:
+                        task = wf_result["task"]
+                        config_step = wf_result.get("step", config_step)
             elif dispatch.status == "loop":
-                # Loop: re-dispatch current agent — need to get current agent from state
+                # Loop: re-dispatch current agent — use task_hint or resolve from state
                 task = dispatch.task_hint or ""
-                # If no task_hint for loop, try to get from state context
                 if not task:
-                    prev_state = extract_dispatch_from_state(trigger_body)
-                    # Use the agent from the current step (resolved later from workflow)
-                    pass  # task will be resolved from workflow context
+                    prev_state = extract_state_from_body(trigger_body)
+                    if prev_state:
+                        task = prev_state.agent or ""
             elif dispatch.status == "hold":
                 return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
             elif dispatch.status == "terminate":
