@@ -515,7 +515,12 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
               run: |
-                python3 .github/scripts/query_context.py \
+                SCRIPT_PATH=".github/scripts/query_context.py"
+                if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/query_context.py" ]; then
+                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/query_context.py"
+                fi
+              
+                python3 $SCRIPT_PATH \
                   --issue-number ${{ github.event.issue.number }} \
                   --output-file /tmp/ready_prompt.md \
                   --event-path ${{ github.event_path }} >> $GITHUB_ENV
