@@ -523,6 +523,16 @@ def resolve_config(
         comp_lower = config_complexity.lower() if config_complexity else "medium"
         complexity = comp_lower if comp_lower in ("low", "high") else "medium"
 
+    # Build matched rule identifier for debugging
+    wf_name = wf_result.get("WORKFLOW_NAME", "")
+    wf_step = wf_result.get("WORKFLOW_STEP", "")
+    if wf_name and wf_step:
+        matched_rule = f"workflow:{wf_name}/step:{wf_step}"
+    elif wf_name:
+        matched_rule = f"workflow:{wf_name}"
+    else:
+        matched_rule = ""
+
     # Build result
     result = {
         "TASK": task,
@@ -544,6 +554,7 @@ def resolve_config(
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
         "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
         "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
+        "MATCHED_RULE": matched_rule,
         "SKIP_AGENT": "false",
     }
 

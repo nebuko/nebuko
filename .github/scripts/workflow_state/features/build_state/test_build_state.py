@@ -88,3 +88,32 @@ class TestBuildState(unittest.TestCase):
         )
         self.assertIsNotNone(state.metrics)
         self.assertEqual(state.metrics.input_tokens, 5000)
+
+    def test_resolution_included(self):
+        from workflow_state import StepResolution
+        resolution = StepResolution(
+            role_name="dev",
+            selected_workflow="spec-driven-design",
+            selected_step="implement",
+            matched_rule="workflow:spec-driven-design/step:implement",
+            timestamp="2024-01-01T00:00:00+00:00",
+        )
+        state = build_state(
+            None,
+            workflow="spec-driven-design",
+            step="implement",
+            agent="dev",
+            resolution=resolution,
+        )
+        self.assertIsNotNone(state.resolution)
+        self.assertEqual(state.resolution.role_name, "dev")
+        self.assertEqual(state.resolution.matched_rule, "workflow:spec-driven-design/step:implement")
+
+    def test_resolution_defaults_to_none(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+        )
+        self.assertIsNone(state.resolution)

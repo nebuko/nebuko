@@ -3,12 +3,13 @@
 import json
 import os
 import re
+from datetime import datetime, timezone
 
 from openhands.sdk import get_logger
 from openhands.sdk.conversation import get_agent_final_response
 
 from metrics_schema import Metrics
-from workflow_state import IssueInfo, PullRequestInfo, WorkflowState
+from workflow_state import IssueInfo, PullRequestInfo, StepResolution, WorkflowState
 from workflow_state.features.build_state.build_state import build_state
 
 from agent_script.sub_domains.split_plan.split_plan import (
@@ -91,6 +92,35 @@ def _build_pr_info() -> PullRequestInfo | None:
         title=pr_title,
         author=pr_author or "",
         repo=pr_repo or "",
+    )
+
+
+def _build_resolution() -> StepResolution:
+    """Build StepResolution from resolve_config environment variables."""
+    return StepResolution(
+        input_workflow=os.environ.get("WORKFLOW_NAME", ""),
+        input_step=os.environ.get("WORKFLOW_STEP", ""),
+        input_complexity=os.environ.get("COMPLEXITY", ""),
+        role_name=os.environ.get("ROLE_NAME", ""),
+        prompt_location=os.environ.get("PROMPT_LOCATION", ""),
+        agent_selected=os.environ.get("AGENT_SELECTED", "false"),
+        selected_workflow=os.environ.get("WORKFLOW_NAME", ""),
+        selected_step=os.environ.get("WORKFLOW_STEP", ""),
+        next_step=os.environ.get("WORKFLOW_NEXT", ""),
+        skip_agent=os.environ.get("SKIP_AGENT", "false"),
+        config_model=os.environ.get("CONFIG_MODEL", ""),
+        config_temperature=os.environ.get("CONFIG_TEMPERATURE", ""),
+        config_top_p=os.environ.get("CONFIG_TOP_P", ""),
+        config_top_k=os.environ.get("CONFIG_TOP_K", ""),
+        config_repetition_penalty=os.environ.get("CONFIG_REPETITION_PENALTY", ""),
+        agent_round=os.environ.get("AGENT_ROUND", ""),
+        agent_skills=os.environ.get("AGENT_SKILLS", ""),
+        step_skills=os.environ.get("STEP_SKILLS", ""),
+        reasoning=os.environ.get("LLM_REASONING", ""),
+        matched_rule=os.environ.get("MATCHED_RULE", ""),
+        parent_workflow=os.environ.get("PARENT_WORKFLOW", ""),
+        parent_workflow_step=os.environ.get("PARENT_WORKFLOW_STEP", ""),
+        timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
 
@@ -210,6 +240,7 @@ def build_output(
     # ── Issue / PR info ──────────────────────────────────────────
     issue_info = _build_issue_info()
     pr_info = _build_pr_info()
+    resolution = _build_resolution()
 
     # ── Build workflow state ─────────────────────────────────────
     new_state = build_state(
@@ -224,6 +255,7 @@ def build_output(
         parent_workflow_step=parent_workflow_step,
         issue=issue_info,
         pull_request=pr_info,
+        resolution=resolution,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 
