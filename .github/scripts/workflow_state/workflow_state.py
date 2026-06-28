@@ -7,6 +7,7 @@ from .sub_domains.state_metrics.state_metrics import StateMetrics
 from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.dispatch.dispatch import Dispatch
+from .sub_domains.step_resolution.step_resolution import StepResolution
 
 STATE_MARKER_START = "<!-- WORKFLOW_STATE_START -->"
 STATE_MARKER_END = "<!-- WORKFLOW_STATE_END -->"
@@ -52,6 +53,7 @@ class WorkflowState(BaseModel):
     issue: Optional[IssueInfo] = None
     pull_request: Optional[PullRequestInfo] = None
     dispatch: Optional[Dispatch] = None
+    resolution: Optional[StepResolution] = None
 
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json
@@ -83,6 +85,7 @@ def go_next(
     parent_workflow_step: Optional[str] = None,
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
+    resolution: Optional[StepResolution] = None,
 ) -> WorkflowState:
     from .features.build_state.build_state import build_state
     return build_state(
@@ -102,4 +105,5 @@ def go_next(
         parent_workflow_step=parent_workflow_step,
         issue=issue,
         pull_request=pull_request,
+        resolution=resolution,
     )
