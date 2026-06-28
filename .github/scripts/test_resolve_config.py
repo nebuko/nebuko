@@ -695,6 +695,58 @@ class TestForceNextStepIntegration(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("does not exist", result["REASON"])
 
+    def test_force_next_step_fallback_to_issue_comments(self):
+        """When trigger_body has no state but repo/issue_number are provided, fetch from comments."""
+        import json as _json
+        from unittest.mock import patch
+
+        prompt_base, workflows_dir = self._setup_dirs()
+
+        # State block that would appear in a prior bot comment
+        state_json_str = _json.dumps({
+            "version": 1,
+            "workflow": "default",
+            "step": "implement",
+            "agent": "dev",
+        })
+        state_block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + state_json_str
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        comments = [{"body": state_block, "id": 123}]
+
+        # Trigger body has NO embedded state — only the command
+        body = "/workflow force-next-step"
+
+        with patch(
+            "resolve_config.get_issue_comments", return_value=comments
+        ) as mock_get:
+            result = resolve_config(
+                body,
+                prompt_base,
+                workflows_dir,
+                is_bot=False,
+                repo="owner/repo",
+                issue_number=42,
+            )
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "review")
+        mock_get.assert_called_once_with("owner/repo", 42)
+
+    def test_force_next_step_fallback_skipped_when_no_repo(self):
+        """When repo/issue_number are not provided, no fallback occurs — returns error."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        result = resolve_config(
+            "/workflow force-next-step",
+            prompt_base,
+            workflows_dir,
+            is_bot=False,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("no workflow state found", result["REASON"])
+
 
 class TestWorkflowDrivenResolution(unittest.TestCase):
     """Tests for workflow-driven resolution in resolve_config() agent_config branch."""
