@@ -2,6 +2,7 @@
 
 import tempfile
 import os
+from pathlib import Path
 
 import pytest
 
@@ -436,25 +437,30 @@ class TestResolveConfigWithWorkflowCommand:
 class TestResolveNextAgentFromWorkflow(unittest.TestCase):
     """Tests for resolve_next_agent_from_workflow function."""
 
+    @staticmethod
+    def _real_workflows_dir():
+        """Return the path to the real workflows/ directory at the repo root."""
+        return str(Path(__file__).resolve().parents[2] / "workflows")
+
     def test_task_hint_overrides_workflow(self):
-        result = resolve_next_agent_from_workflow("dev", "default", "analyze", "workflows")
+        result = resolve_next_agent_from_workflow("dev", "default", "analyze", self._real_workflows_dir())
         self.assertEqual(result, "dev")
 
     def test_resolves_next_from_default_workflow(self):
-        result = resolve_next_agent_from_workflow(None, "default", "analyze", "workflows")
+        result = resolve_next_agent_from_workflow(None, "default", "analyze", self._real_workflows_dir())
         self.assertEqual(result, "ctx")
 
     def test_returns_none_for_missing_workflow(self):
-        result = resolve_next_agent_from_workflow(None, "nonexistent", "analyze", "workflows")
+        result = resolve_next_agent_from_workflow(None, "nonexistent", "analyze", self._real_workflows_dir())
         self.assertIsNone(result)
 
     def test_returns_none_for_empty_workflow_name(self):
-        result = resolve_next_agent_from_workflow(None, "", "analyze", "workflows")
+        result = resolve_next_agent_from_workflow(None, "", "analyze", self._real_workflows_dir())
         self.assertIsNone(result)
 
     def test_returns_none_for_terminal_step(self):
         # "review" is the last step in default.yaml (next: null)
-        result = resolve_next_agent_from_workflow(None, "default", "review", "workflows")
+        result = resolve_next_agent_from_workflow(None, "default", "review", self._real_workflows_dir())
         self.assertIsNone(result)
 
 
@@ -828,6 +834,23 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("REASON", result)
 
+    def test_dispatch_advance_default_workflow_analyze_to_ctx(self):
+        """Regression #377: dispatch.advance with no task field on default workflow resolves analyze→ctx.
+
+        Reproduces the exact scenario from the issue: genius finishes the 'analyze' step
+        with dispatch.advance (no explicit task). The resolver should parse the workflow
+        state, find the next step in default.yaml ('context'), and select agent 'ctx'.
+        """
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(workflow="default", step="analyze", agent="genius")
+        body = (
+            '<agentRunConfig>{"dispatch": {"status": "advance"}, "complexity": "medium"}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
 
 class TestE2EDispatchWorkflowResolution(unittest.TestCase):
     """End-to-end: agent finishes with dispatch → config resolver uses workflow YAML."""
@@ -997,6 +1020,119 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
 
 
+class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
+    """E2E: dispatch.advance with default workflow resolves next agent from workflow YAML.
+
+    Regression test for issue #377 — ensures the exact body format from the issue
+    (WORKFLOW_STATE + dispatch.advance without task field) correctly resolves
+    to the ctx agent when the current step is 'analyze' in the 'default' workflow.
+    """
+
+    @staticmethod
+    def _default_workflow_yaml():
+        return (
+            "name: default\n"
+            "description: Standard workflow\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: context\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: plan\n"
+            "  - name: plan\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    @staticmethod
+    def _build_state_json(workflow="default", step="analyze", agent="genius"):
+        import json as _json
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({"version": 1, "workflow": workflow, "step": step, "agent": agent})
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(self._default_workflow_yaml())
+        return prompt_base, workflows_dir
+
+    def test_dispatch_advance_analyze_resolves_to_ctx(self):
+        """Exact scenario from issue #377: dispatch.advance from analyze → ctx."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(
+            workflow="default", step="analyze", agent="genius",
+        )
+        # Body matches the exact format from issue #377:
+        # dispatch.advance with NO task field, workflow state present
+        body = (
+            '<agentRunConfig>{"dispatch": {"status": "advance"}, "complexity": "medium"}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # After "analyze" in default workflow, next step is "context" → agent "ctx"
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_dispatch_advance_context_resolves_to_genius(self):
+        """dispatch.advance from context step → genius (plan step)."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(
+            workflow="default", step="context", agent="ctx",
+        )
+        body = (
+            '<agentRunConfig>{"dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["TASK"], "genius")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_dispatch_advance_implement_resolves_to_dev(self):
+        """dispatch.advance from implement step → dev (implement step)."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(
+            workflow="default", step="plan", agent="genius",
+        )
+        body = (
+            '<agentRunConfig>{"dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_dispatch_advance_terminal_step_returns_skip(self):
+        """dispatch.advance from terminal review step → SKIP_AGENT."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json(
+            workflow="default", step="review", agent="review",
+        )
+        body = (
+            '<agentRunConfig>{"dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
+            + state_json
+        )
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # Terminal step: resolve_next_from_workflow returns None,
+        # dispatch.advance falls back to empty agent_hint → no valid task
+        self.assertEqual(result["SKIP_AGENT"], "true")
+
+
 class TestForceNextStepWithWorkflowDriven(unittest.TestCase):
     """Force-next-step command alongside workflow-driven resolution."""
 
@@ -1084,4 +1220,82 @@ class TestHumanWorkflowOverridePrecedence(unittest.TestCase):
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         # /workflow default triggers the workflow — genius is the trigger agent
         self.assertEqual(result["ROLE_NAME"], "genius")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+
+class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
+    """Integration tests using the real workflows/default.yaml file from the repo root.
+
+    Regression for issue #377 — ensures the full resolve_config pipeline correctly
+    parses WORKFLOW_STATE markers, dispatch.advance without task field, and resolves
+    the next agent against the actual workflow definition on disk.
+    """
+
+    @staticmethod
+    def _real_workflows_dir():
+        """Return path to the real workflows/ directory in the repo root."""
+        from pathlib import Path
+        return Path(__file__).resolve().parents[2] / "workflows"
+
+    @staticmethod
+    def _setup_prompt_base():
+        """Create minimal prompt files required by resolve_config."""
+        prompt_base = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        return prompt_base
+
+    @staticmethod
+    def _build_issue_body():
+        """Reproduce the exact body from issue #377.
+
+        Contains:
+        - WORKFLOW_STATE block: workflow=default, step=analyze, agent=genius
+        - agentRunConfig: dispatch.advance with no task field
+        Expected: resolves to agent 'ctx'.
+        """
+        return (
+            "<summary>🤖 Workflow State (v1)</summary>\n"
+            "\n"
+            "```json\n"
+            "<!-- WORKFLOW_STATE_START -->\n"
+            '{"workflow": "default", "step": "analyze", "agent": "genius", "phase": "analysis", '
+            '"history": [{"step": "analyze", "agent": "genius", "summary": "delegate context collection"}], '
+            '"metrics": {"run_id": "d17d26d4-c4de-4808-b80b-e353d79e0563", "model_name": "default", '
+            '"agent_role": "genius", "input_tokens": 8069, "output_tokens": 276, '
+            '"tool_call_latency_ms": 9842.795133590698, "agent_runtime_ms": 9842.8}, '
+            '"issue": {"number": 377, "url": "https://github.com/olivier-norture/git-flow-ai/issues/377", '
+            '"title": "fix workflow force-next-step requires an active workflow", '
+            '"author": "olivier-norture", "repo": "olivier-norture/git-flow-ai"}}\n'
+            "<!-- WORKFLOW_STATE_END -->\n"
+            "```\n"
+            "\n"
+            "</details>\n"
+            "<!-- bot-agent-genius -->\n"
+            "*Genius answer*\n"
+            "\n"
+            "I need to understand the code flow for `force-next-step`.\n"
+            "\n"
+            '<agentRunConfig>{"dispatch": {"status": "advance"}, "complexity": "medium"}</agentRunConfig>\n'
+            "\n"
+            "<!-- agent-metrics: {...} -->"
+        )
+
+    def test_exact_issue_input_resolves_to_ctx(self):
+        """Exact scenario from issue #377: dispatch.advance from analyze → ctx agent.
+
+        The body contains a WORKFLOW_STATE (workflow=default, step=analyze, agent=genius)
+        and an agentRunConfig with dispatch.advance but NO task field.
+        resolve_config should parse the state, look up the next step in the real
+        workflows/default.yaml, and resolve to agent 'ctx'.
+        """
+        prompt_base = self._setup_prompt_base()
+        workflows_dir = str(self._real_workflows_dir())
+        body = self._build_issue_body()
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=True)
+
+        self.assertEqual(result["TASK"], "ctx",
+            "dispatch.advance from 'analyze' step in default workflow should resolve to 'ctx' agent")
         self.assertEqual(result["SKIP_AGENT"], "false")
