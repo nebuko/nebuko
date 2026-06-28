@@ -86,6 +86,7 @@ def go_next(
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
+    dispatch: Optional[Dispatch] = None,
 ) -> WorkflowState:
     from .features.build_state.build_state import build_state
     return build_state(
@@ -106,4 +107,5 @@ def go_next(
         issue=issue,
         pull_request=pull_request,
         resolution=resolution,
+        dispatch=dispatch,
     )

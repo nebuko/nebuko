@@ -4,12 +4,20 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from typing import Optional
 
 from openhands.sdk import get_logger
 from openhands.sdk.conversation import get_agent_final_response
 
 from metrics_schema import Metrics
-from workflow_state import IssueInfo, PullRequestInfo, StepResolution, WorkflowState
+from validate_output import extract_agent_run_configs
+from workflow_state import (
+    Dispatch,
+    IssueInfo,
+    PullRequestInfo,
+    StepResolution,
+    WorkflowState,
+)
 from workflow_state.features.build_state.build_state import build_state
 
 from agent_script.sub_domains.split_plan.split_plan import (
@@ -20,6 +28,48 @@ from agent_script.sub_domains.split_plan.split_plan import (
 from agent_script.sub_domains.message_splitter.message_splitter import split_message
 
 logger = get_logger(__name__)
+
+
+def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
+    """Convert an agentRunConfig JSON string to a Dispatch object.
+
+    Maps agentRunConfig fields (task, complexity, etc.) to Dispatch fields
+    (task_hint, complexity, etc.). Defaults status to 'advance'.
+
+    Args:
+        json_str: Raw JSON string from an <agentRunConfig> block.
+
+    Returns:
+        Dispatch instance, or None if parsing fails.
+    """
+    try:
+        data = json.loads(json_str)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    # Map 'task' -> 'task_hint', default status to 'advance'
+    return Dispatch(
+        status=data.get("status", "advance"),
+        task_hint=data.get("task"),
+        complexity=data.get("complexity", "medium"),
+        reasoning=data.get("reasoning", "none"),
+        model=data.get("model"),
+        temperature=data.get("temperature"),
+        top_p=data.get("top_p"),
+        top_k=data.get("top_k"),
+        min_p=data.get("min_p"),
+        presence_penalty=data.get("presence_penalty"),
+        repetition_penalty=data.get("repetition_penalty"),
+        workflow=data.get("workflow"),
+        step=data.get("step"),
+        branch=data.get("branch"),
+        parent_workflow=data.get("parent_workflow"),
+        parent_workflow_step=data.get("parent_workflow_step"),
+        skills=data.get("skills"),
+    )
 
 
 def _load_prev_state() -> WorkflowState | None:
@@ -243,6 +293,13 @@ def build_output(
     pr_info = _build_pr_info()
     resolution = _build_resolution()
 
+    # ── Extract dispatch from agent output ────────────────────────
+    dispatch: Optional[Dispatch] = None
+    if final_message:
+        configs = extract_agent_run_configs(final_message)
+        if configs:
+            dispatch = agent_run_config_to_dispatch(configs[-1])  # Use last config block
+
     # ── Build workflow state ─────────────────────────────────────
     new_state = build_state(
         prev_state,
@@ -257,6 +314,7 @@ def build_output(
         issue=issue_info,
         pull_request=pr_info,
         resolution=resolution,
+        dispatch=dispatch,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 

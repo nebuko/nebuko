@@ -6,6 +6,7 @@ from ...sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from ...sub_domains.history_entry.history_entry import HistoryEntry
 from ...sub_domains.state_metrics.state_metrics import StateMetrics
 from ...sub_domains.step_resolution.step_resolution import StepResolution
+from ...sub_domains.dispatch.dispatch import Dispatch
 
 def build_state(
     prev_state: Optional[WorkflowState],
@@ -26,6 +27,7 @@ def build_state(
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
+    dispatch: Optional[Dispatch] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -51,6 +53,7 @@ def build_state(
         issue: Issue metadata (once set, persists across transitions).
         pull_request: PR metadata (once set, persists across transitions).
         resolution: Step resolution context from resolve_config (replaced each transition).
+        dispatch: Agent dispatch outcome from agentRunConfig (replaced each transition).
 
     Returns:
         A new WorkflowState instance.
@@ -129,4 +132,5 @@ def build_state(
         issue=new_issue,
         pull_request=new_pr,
         resolution=resolution,
+        dispatch=dispatch,
     )
