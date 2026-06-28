@@ -98,6 +98,7 @@ def _build_pr_info() -> PullRequestInfo | None:
 def _build_resolution() -> StepResolution:
     """Build StepResolution from resolve_config environment variables."""
     return StepResolution(
+        task=os.environ.get("TASK", ""),
         input_workflow=os.environ.get("WORKFLOW_NAME", ""),
         input_step=os.environ.get("WORKFLOW_STEP", ""),
         input_complexity=os.environ.get("COMPLEXITY", ""),

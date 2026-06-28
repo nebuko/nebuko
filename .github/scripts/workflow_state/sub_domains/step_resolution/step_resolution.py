@@ -4,22 +4,27 @@ from pydantic import BaseModel
 class StepResolution(BaseModel):
     """Captures the full context of a step resolution decision for debugging.
 
-    Stores the inputs that led to an agent selection, the selected configuration,
+    Stores the resolution request parameters, the selected configuration,
     and metadata about the matching rule. Populated from resolve_config() output
     after each workflow step resolution.
 
+    Note: input_* and selected_* fields share the same underlying environment
+    variables (WORKFLOW_NAME, WORKFLOW_STEP) since resolve_config overwrites
+    them with its output before StepResolution is constructed. Both sets
+    capture the final resolved values for debugging completeness.
+
     Fields:
-        # Decision inputs
-        input_workflow: Workflow name requested at resolution time.
-        input_step: Step name requested at resolution time.
+        task: Task description passed to resolve_config.
+        input_workflow: Workflow name at resolution time (same as selected_workflow).
+        input_step: Step name at resolution time (same as selected_step).
         input_complexity: Complexity level used in resolution.
 
         # Decision outputs
         role_name: Resolved agent role (e.g., "dev", "ctx", "genius").
         prompt_location: Path to the resolved prompt file.
         agent_selected: "true" if an agent was selected, "false" otherwise.
-        selected_workflow: Workflow name from resolution result.
-        selected_step: Step name from resolution result.
+        selected_workflow: Workflow name from resolution result (same as input_workflow).
+        selected_step: Step name from resolution result (same as input_step).
         next_step: Next step name from resolution result.
         skip_agent: "true" if agent execution should be skipped.
 
@@ -42,6 +47,7 @@ class StepResolution(BaseModel):
     """
 
     # Decision inputs
+    task: str = ""
     input_workflow: str = ""
     input_step: str = ""
     input_complexity: str = ""
