@@ -233,34 +233,92 @@ def resolve_config(
     if is_bot is None:
         is_bot = is_bot_comment(trigger_body)
 
-    # Step 1: Extract agentRunConfig JSON
-    agent_config = extract_agent_run_config(trigger_body)
+    # Step 1: Try to get dispatch from workflow_state (primary path)
+    # Falls back to XML <agentRunConfig> block (backward compatible)
+    prev_state = extract_state_from_body(trigger_body)
+    dispatch_obj = prev_state.dispatch if prev_state else None
 
-    if agent_config:
-        # JSON-based invocation (agent→agent) — workflow-driven resolution
-        agent_hint = agent_config.get("task", "")
-        dispatch = agent_config.get("dispatch", {})
+    # Extract XML agentRunConfig as fallback
+    xml_config = extract_agent_run_config(trigger_body)
+
+    # Determine which source to use: dispatch from state > XML block
+    config_source = None  # 'dispatch' or 'xml'
+    if dispatch_obj:
+        config_source = 'dispatch'
+    elif xml_config:
+        config_source = 'xml'
+
+    if config_source == 'dispatch':
+        # Dispatch from workflow_state (structured, primary path)
+        agent_hint = dispatch_obj.task_hint or ""
+        branch_result = dispatch_obj.branch
+
+        config_complexity = dispatch_obj.complexity or "medium"
+        config_reasoning = dispatch_obj.reasoning or "none"
+        config_temperature = str(dispatch_obj.temperature) if dispatch_obj.temperature is not None else ""
+        config_round = ""
+        config_model = dispatch_obj.model or ""
+        config_skills = json.dumps(dispatch_obj.skills) if dispatch_obj.skills else ""
+        config_top_p = str(dispatch_obj.top_p) if dispatch_obj.top_p is not None else ""
+        config_top_k = str(dispatch_obj.top_k) if dispatch_obj.top_k is not None else ""
+        config_repetition_penalty = str(dispatch_obj.repetition_penalty) if dispatch_obj.repetition_penalty is not None else ""
+        config_workflow = dispatch_obj.workflow or ""
+        config_step = dispatch_obj.step or ""
+        config_branch = dispatch_obj.branch or ""
+        config_parent_workflow = dispatch_obj.parent_workflow or ""
+        config_parent_workflow_step = dispatch_obj.parent_workflow_step or ""
+
+        # Workflow-driven resolution using previous workflow state
+        if prev_state and prev_state.workflow and prev_state.step:
+            wf_result = resolve_next_from_workflow(
+                prev_state.workflow,
+                prev_state.step,
+                workflows_dir,
+                agent_hint=None,
+                branch_result=branch_result,
+            )
+            if wf_result:
+                task = wf_result["task"]
+                config_step = wf_result.get("step", config_step)
+            else:
+                dispatch_status = dispatch_obj.status or ""
+                if dispatch_status == "hold":
+                    return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
+                elif dispatch_status == "terminate":
+                    return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
+                elif dispatch_status == "loop":
+                    task = prev_state.agent or ""
+                elif dispatch_status == "advance":
+                    task = agent_hint
+                else:
+                    return {
+                        "SKIP_AGENT": "true",
+                        "REASON": "Terminal step reached",
+                    }
+        else:
+            task = agent_hint
+    elif config_source == 'xml':
+        # XML <agentRunConfig> block (backward-compatible fallback)
+        agent_hint = xml_config.get("task", "")
+        dispatch = xml_config.get("dispatch", {})
         branch_result = dispatch.get("branch") if isinstance(dispatch, dict) else None
 
-        config_complexity = agent_config.get("complexity", "medium")
-        config_reasoning = agent_config.get("reasoning", "none")
-        config_temperature = agent_config.get("temperature", "")
-        config_round = agent_config.get("round", "")
-        config_model = agent_config.get("model", "")
-        config_skills = agent_config.get("skills", "")
-        config_top_p = agent_config.get("top_p", "")
-        config_top_k = agent_config.get("top_k", "")
-        config_repetition_penalty = agent_config.get("repetition_penalty", "")
-        config_workflow = agent_config.get("workflow", "")
-        config_step = agent_config.get("step", "")
-        config_branch = agent_config.get("branch", "")
-        config_parent_workflow = agent_config.get("parent_workflow", "")
-        config_parent_workflow_step = agent_config.get("parent_workflow_step", "")
+        config_complexity = xml_config.get("complexity", "medium")
+        config_reasoning = xml_config.get("reasoning", "none")
+        config_temperature = xml_config.get("temperature", "")
+        config_round = xml_config.get("round", "")
+        config_model = xml_config.get("model", "")
+        config_skills = xml_config.get("skills", "")
+        config_top_p = xml_config.get("top_p", "")
+        config_top_k = xml_config.get("top_k", "")
+        config_repetition_penalty = xml_config.get("repetition_penalty", "")
+        config_workflow = xml_config.get("workflow", "")
+        config_step = xml_config.get("step", "")
+        config_branch = xml_config.get("branch", "")
+        config_parent_workflow = xml_config.get("parent_workflow", "")
+        config_parent_workflow_step = xml_config.get("parent_workflow_step", "")
 
-        # Attempt workflow-driven resolution using previous workflow state
-        prev_state = extract_state_from_body(trigger_body)
         if prev_state and prev_state.workflow and prev_state.step:
-            # Don't pass agent_hint — we want None for terminal/missing to trigger SKIP_AGENT
             wf_result = resolve_next_from_workflow(
                 prev_state.workflow,
                 prev_state.step,
@@ -287,7 +345,6 @@ def resolve_config(
                         "REASON": "Terminal step reached",
                     }
         else:
-            # No workflow state — fall back to agent hint
             task = agent_hint
     elif not is_bot:
         # Check for force-next-step command first (human only)
