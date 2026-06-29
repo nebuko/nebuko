@@ -30,7 +30,6 @@ from resolve_workflow import (
     resolve_next_from_workflow,
     TASK_TO_PROMPT,
 )
-from state_resolver import StateResolver
 from trigger_parser import parse_trigger
 from workflow_state import (
     extract_dispatch_from_state,
