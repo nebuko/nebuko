@@ -312,6 +312,10 @@ def build_output(
             recovery_md = recovery_trace_to_markdown(trace)
             context_updates["recovery_log"] = recovery_md
             logger.info(f"Captured recovery trace ({trace.total_tool_calls} tool calls) for next run")
+    elif prev_state and prev_state.current_context and "recovery_log" in prev_state.current_context:
+        # Agent succeeded — clear stale recovery log so it doesn't persist forward
+        context_updates["recovery_log"] = ""
+        logger.info("Cleared stale recovery log from previous failed run")
 
     # ── Build workflow state ─────────────────────────────────────
     new_state = build_state(

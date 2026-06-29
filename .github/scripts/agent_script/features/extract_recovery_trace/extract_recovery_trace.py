@@ -128,11 +128,11 @@ def extract_recovery_trace(conversation, max_traces: int = 20) -> Optional[Recov
         return None
 
     # Build observation lookup: action_id -> ObservationEvent
-    obs_map: dict[int, ObservationEvent] = {}
+    obs_map: dict[str, ObservationEvent] = {}
     for obs_event in events:
         if isinstance(obs_event, ObservationEvent):
-            if hasattr(obs_event, "id"):
-                obs_map[obs_event.id] = obs_event
+            if hasattr(obs_event, "action_id") and obs_event.action_id:
+                obs_map[obs_event.action_id] = obs_event
 
     # Match actions to observations via action_id reference
     traces: list[ToolCallTrace] = []

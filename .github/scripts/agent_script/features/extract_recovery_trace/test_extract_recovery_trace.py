@@ -89,6 +89,93 @@ class TestExtractRecoveryTrace(unittest.TestCase):
         conv.state.events = [MagicMock()]
         self.assertIsNone(extract_recovery_trace(conv))
 
+    def _make_tool_call(self, tc_id: str, name: str):
+        from openhands.sdk.llm.message import MessageToolCall
+        return MessageToolCall(id=tc_id, name=name, arguments="{}", origin="completion")
+
+    def _make_action(self, action_id: str, tool_name: str, summary: str):
+        from openhands.sdk.event.llm_convertible.action import ActionEvent
+        return ActionEvent(
+            id=action_id,
+            source="agent",
+            tool_name=tool_name,
+            tool_call_id=f"call_{action_id}",
+            thought=[],
+            tool_call=self._make_tool_call(f"call_{action_id}", tool_name),
+            llm_response_id=f"resp_{action_id}",
+            summary=summary,
+        )
+
+    def _make_observation(self, obs_id: str, action_id: str, content: str, is_error: bool = False):
+        from openhands.sdk.event.llm_convertible.observation import ObservationEvent
+        # Use model_construct to bypass pydantic discriminator validation
+        return ObservationEvent.model_construct(
+            id=obs_id,
+            source="environment",
+            tool_name="terminal",
+            tool_call_id=f"call_{action_id}",
+            action_id=action_id,
+            observation=MagicMock(content=content, is_error=is_error),
+        )
+
+    def _make_conv(self, events: list, prompt_tokens: int = 0, completion_tokens: int = 0):
+        conv = MagicMock()
+        conv.state.events = events
+        conv.conversation_stats.get_combined_metrics.return_value.accumulated_token_usage.prompt_tokens = prompt_tokens
+        conv.conversation_stats.get_combined_metrics.return_value.accumulated_token_usage.completion_tokens = completion_tokens
+        return conv
+
+    def test_basic_extraction_with_events(self):
+        """Verify tool calls are extracted from a conversation with ActionEvent/ObservationEvent pairs."""
+        action = self._make_action("act_001", "terminal", "run git status")
+        observation = self._make_observation("obs_001", "act_001", "clean working tree")
+        conv = self._make_conv([action, observation], 500, 100)
+
+        trace = extract_recovery_trace(conv)
+        self.assertIsNotNone(trace)
+        self.assertEqual(trace.total_tool_calls, 1)
+        self.assertEqual(trace.errors_count, 0)
+        self.assertEqual(trace.input_tokens, 500)
+        self.assertEqual(trace.output_tokens, 100)
+        self.assertEqual(len(trace.tool_calls), 1)
+        self.assertEqual(trace.tool_calls[0].tool_name, "terminal")
+        self.assertIn("git status", trace.tool_calls[0].input_summary)
+        self.assertIn("clean working tree", trace.tool_calls[0].output_summary)
+        self.assertFalse(trace.tool_calls[0].error)
+
+    def test_error_detection_from_observation(self):
+        """Verify error observations are detected and counted."""
+        action = self._make_action("act_err", "terminal", "run bad command")
+        observation = self._make_observation("obs_err", "act_err", "Error: command failed", is_error=True)
+        conv = self._make_conv([action, observation])
+
+        trace = extract_recovery_trace(conv)
+        self.assertIsNotNone(trace)
+        self.assertEqual(trace.errors_count, 1)
+        self.assertTrue(trace.tool_calls[0].error)
+
+    def test_max_traces_limiting(self):
+        """Verify max_traces parameter limits the number of extracted traces."""
+        events = []
+        for i in range(10):
+            events.append(self._make_action(f"act_{i}", "terminal", f"command {i}"))
+            events.append(self._make_observation(f"obs_{i}", f"act_{i}", f"result {i}"))
+        conv = self._make_conv(events)
+
+        trace = extract_recovery_trace(conv, max_traces=5)
+        self.assertIsNotNone(trace)
+        self.assertEqual(trace.total_tool_calls, 5)
+
+    def test_actions_without_observations(self):
+        """Tool calls without matching observations should still be captured."""
+        action = self._make_action("act_no_obs", "file_editor", "view file")
+        conv = self._make_conv([action])
+
+        trace = extract_recovery_trace(conv)
+        self.assertIsNotNone(trace)
+        self.assertEqual(trace.total_tool_calls, 1)
+        self.assertEqual(trace.tool_calls[0].output_summary, "")
+
 
 class TestRecoveryTraceToMarkdown(unittest.TestCase):
     """Test markdown formatting of recovery traces."""
