@@ -307,6 +307,7 @@ def main():
     state_file_path = os.path.join(
         os.environ.get("RUNNER_TEMP", "/tmp"), "prev_workflow_state.json"
     )
+    prev_state = None
     try:
         prev_state = extract_state(comments)
         if prev_state:
@@ -321,6 +322,12 @@ def main():
     except Exception as e:
         print(f"Warning: Failed to save previous state: {e}", file=sys.stderr)
 
+    # Inject recovery log if a previous agent failed mid-execution
+    recovery_log = ""
+    if prev_state and prev_state.current_context and "recovery_log" in prev_state.current_context:
+        recovery_log = prev_state.current_context["recovery_log"]
+        print(f"Detected recovery log from previous failed run ({len(recovery_log)} chars)", file=sys.stderr)
+
     # Format template
     template_str = os.environ.get("ISSUE_TEMPLATE", DEFAULT_TEMPLATE)
     query = format_query_template(
@@ -331,6 +338,15 @@ def main():
         template_str=template_str,
         state_context=state_context,
     )
+
+    # Append recovery log right before ## History section if present
+    if recovery_log:
+        history_marker = "\n## History\n"
+        if history_marker in query:
+            query = query.replace(history_marker, f"\n{recovery_log}\n## History\n", 1)
+        else:
+            query += f"\n{recovery_log}\n"
+        print("Injected recovery log into agent query context", file=sys.stderr)
 
     # Write output file
     with open(args.output_file, "w", encoding="utf-8") as f:
