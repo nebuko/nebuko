@@ -696,6 +696,125 @@ class TestForceNextStepIntegration(unittest.TestCase):
         self.assertIn("does not exist", result["REASON"])
 
 
+class TestForceNextStepFallbackFromComments(unittest.TestCase):
+    """Tests for force-next-step fallback: fetching state from issue comments."""
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(self._default_workflow_yaml())
+        return prompt_base, workflows_dir
+
+    @staticmethod
+    def _default_workflow_yaml():
+        return (
+            "name: default\n"
+            "description: Standard workflow\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: context\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: plan\n"
+            "  - name: plan\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    @staticmethod
+    def _build_state_block(workflow="default", step="analyze"):
+        import json as _json
+        state = {
+            "version": 1,
+            "workflow": workflow,
+            "step": step,
+            "agent": "genius",
+        }
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    @staticmethod
+    def _comments_with_state(state_block):
+        return [
+            {"body": "Some discussion comment", "id": 111},
+            {"body": state_block, "id": 222},
+        ]
+
+    def test_fallback_fetches_state_from_comments(self):
+        """When trigger_body has no state but repo/issue_number provided, fetch from comments."""
+        from unittest.mock import patch
+
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_block = self._build_state_block(workflow="default", step="analyze")
+        comments = self._comments_with_state(state_block)
+
+        with patch("resolve_config.get_issue_comments", return_value=comments):
+            result = resolve_config(
+                "/workflow force-next-step",
+                prompt_base,
+                workflows_dir,
+                is_bot=False,
+                repo="owner/repo",
+                issue_number=42,
+            )
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        # analyze.next = context -> agent ctx
+        self.assertEqual(result["TASK"], "ctx")
+
+    def test_fallback_no_state_in_comments_returns_error(self):
+        """When comments have no workflow state, still returns error."""
+        from unittest.mock import patch
+
+        prompt_base, workflows_dir = self._setup_dirs()
+        comments = [{"body": "No state here", "id": 111}]
+
+        with patch("resolve_config.get_issue_comments", return_value=comments):
+            result = resolve_config(
+                "/workflow force-next-step",
+                prompt_base,
+                workflows_dir,
+                is_bot=False,
+                repo="owner/repo",
+                issue_number=42,
+            )
+
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("no workflow state found", result["REASON"])
+
+    def test_no_fallback_without_repo_or_issue_number(self):
+        """Without repo/issue_number, no fallback occurs — returns error as before."""
+        prompt_base, workflows_dir = self._setup_dirs()
+
+        result = resolve_config(
+            "/workflow force-next-step",
+            prompt_base,
+            workflows_dir,
+            is_bot=False,
+            repo=None,
+            issue_number=None,
+        )
+
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("no workflow state found", result["REASON"])
+
+
 class TestWorkflowDrivenResolution(unittest.TestCase):
     """Tests for workflow-driven resolution in resolve_config() agent_config branch."""
 

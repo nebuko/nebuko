@@ -30,7 +30,12 @@ from resolve_workflow import (
     resolve_next_from_workflow,
     TASK_TO_PROMPT,
 )
-from workflow_state import extract_dispatch_from_state, extract_state_from_body
+from workflow_state import (
+    extract_dispatch_from_state,
+    extract_state_from_body,
+    extract_latest_state_from_comments,
+)
+from github_client import get_issue_comments
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
 _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -211,6 +216,8 @@ def resolve_config(
     prompt_base: str,
     workflows_dir: str,
     is_bot: Optional[bool] = None,
+    repo: Optional[str] = None,
+    issue_number: Optional[int] = None,
 ) -> dict:
     """Resolve complete agent configuration from trigger body.
 
@@ -226,6 +233,8 @@ def resolve_config(
         prompt_base: Path to prompt files directory.
         workflows_dir: Path to workflows directory.
         is_bot: Pre-determined bot status (None = auto-detect).
+        repo: Repository in owner/name format (for fetching comments).
+        issue_number: Issue/PR number (for fetching comments).
 
     Returns:
         Dict with all environment variables to set.
@@ -352,6 +361,11 @@ def resolve_config(
         if force_next:
             _, target_step = force_next
             prev_state = extract_state_from_body(trigger_body)
+            if not prev_state or not prev_state.workflow:
+                # Fallback: fetch workflow state from issue comments
+                if repo and issue_number:
+                    comments = get_issue_comments(repo, issue_number)
+                    prev_state = extract_latest_state_from_comments(comments)
             if not prev_state or not prev_state.workflow:
                 return {
                     "SKIP_AGENT": "true",
@@ -648,6 +662,18 @@ def main():
         default="",
         help="Path to GITHUB_ENV file to append results",
     )
+    parser.add_argument(
+        "--repo",
+        type=str,
+        default=None,
+        help="Repository in owner/name format (for fetching comments)",
+    )
+    parser.add_argument(
+        "--issue-number",
+        type=int,
+        default=None,
+        help="Issue/PR number (for fetching comments)",
+    )
 
     args = parser.parse_args()
 
@@ -669,6 +695,8 @@ def main():
         prompt_base=args.prompt_base,
         workflows_dir=args.workflows_dir,
         is_bot=is_bot,
+        repo=args.repo,
+        issue_number=args.issue_number,
     )
 
     # Output as KEY=value pairs
