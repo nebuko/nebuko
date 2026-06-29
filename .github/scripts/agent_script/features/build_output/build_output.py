@@ -26,6 +26,10 @@ from agent_script.sub_domains.split_plan.split_plan import (
     split_plan_summary,
 )
 from agent_script.sub_domains.message_splitter.message_splitter import split_message
+from agent_script.features.extract_recovery_trace.extract_recovery_trace import (
+    extract_recovery_trace,
+    recovery_trace_to_markdown,
+)
 
 logger = get_logger(__name__)
 
@@ -300,6 +304,19 @@ def build_output(
         if configs:
             dispatch = agent_run_config_to_dispatch(configs[-1])  # Use last config block
 
+    # ── Recovery log: capture execution trace on failure ──────────
+    context_updates = {}
+    if not final_message:
+        trace = extract_recovery_trace(conversation)
+        if trace:
+            recovery_md = recovery_trace_to_markdown(trace)
+            context_updates["recovery_log"] = recovery_md
+            logger.info(f"Captured recovery trace ({trace.total_tool_calls} tool calls) for next run")
+    elif prev_state and prev_state.current_context and "recovery_log" in prev_state.current_context:
+        # Agent succeeded — clear stale recovery log so it doesn't persist forward
+        context_updates["recovery_log"] = ""
+        logger.info("Cleared stale recovery log from previous failed run")
+
     # ── Build workflow state ─────────────────────────────────────
     new_state = build_state(
         prev_state,
@@ -309,6 +326,7 @@ def build_output(
         phase=phase,
         summary=final_message[:300] if final_message else "",
         metrics_dict=metrics.to_dict(),
+        context_updates=context_updates or None,
         parent_workflow=parent_workflow,
         parent_workflow_step=parent_workflow_step,
         issue=issue_info,
