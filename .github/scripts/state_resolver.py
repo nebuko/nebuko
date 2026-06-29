@@ -94,3 +94,39 @@ class StateResolver:
         except (json.JSONDecodeError, Exception) as e:
             logger.warning(f"Failed to parse explicit_state_json: {e}")
             return None
+
+
+def main():
+    """CLI entry point for state resolution.
+
+    Usage:
+        python state_resolver.py --trigger <text> [--prev-state-json <json>] [--output-file <path>]
+    """
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Resolve workflow state from available sources")
+    parser.add_argument("--trigger", type=str, default="", help="Trigger message body text")
+    parser.add_argument("--prev-state-json", type=str, default="", help="Previous workflow state JSON string")
+    parser.add_argument("--output-file", type=str, default="", help="Output file path for workflow_state.json")
+
+    args = parser.parse_args()
+
+    resolver = StateResolver()
+    state = resolver.resolve(
+        trigger=args.trigger,
+        explicit_state_json=args.prev_state_json or None,
+    )
+
+    output_json = json.dumps(state.model_dump())
+
+    if args.output_file:
+        with open(args.output_file, "w") as f:
+            f.write(output_json)
+        logger.info(f"Wrote workflow_state.json to {args.output_file}")
+    else:
+        print(output_json)
+
+
+if __name__ == "__main__":
+    main()
