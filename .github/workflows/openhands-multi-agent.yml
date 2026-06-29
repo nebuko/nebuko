@@ -229,6 +229,8 @@ jobs:
                     --trigger-body - \
                     --prompt-base "$PROMPT_BASE" \
                     --workflows-dir "$WFLOWS_DIR" \
+                    --repo "$REPO_NAME" \
+                    --issue-number "$TARGET_NUMBER" \
                     <<< "$TRIGGER_BODY" > /tmp/resolve_config_output.txt 2>/tmp/resolve_config_stderr.txt
                   RESOLVE_EXIT_CODE=$?
                   RESOLVE_OUTPUT=$(cat /tmp/resolve_config_output.txt)
