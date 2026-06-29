@@ -30,19 +30,14 @@ from resolve_workflow import (
     resolve_next_from_workflow,
     TASK_TO_PROMPT,
 )
+from state_resolver import StateResolver
+from trigger_parser import parse_trigger
 from workflow_state import (
     extract_dispatch_from_state,
     extract_state_from_body,
     extract_latest_state_from_comments,
 )
 from github_client import get_issue_comments
-from trigger_parser import (
-    _extract_agent_run_config,
-    _is_bot_comment,
-    _extract_mention_agent,
-    _extract_workflow_command,
-    _extract_force_next_command,
-)
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
 _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -56,8 +51,10 @@ def extract_agent_run_config(trigger_body: str) -> Optional[dict]:
 
     Delegates to trigger_parser for the parsing logic.
     Kept as a wrapper for backward compatibility with existing callers.
+    Returns the full raw config dict (not just parsed hints).
     """
-    return _extract_agent_run_config(trigger_body)
+    from trigger_parser import _extract_agent_run_config as _raw_extract
+    return _raw_extract(trigger_body)
 
 
 def resolve_next_agent_from_workflow(
@@ -126,7 +123,7 @@ def is_bot_comment(trigger_body: str) -> bool:
 
     Delegates to trigger_parser for the detection logic.
     """
-    return _is_bot_comment(trigger_body)
+    return parse_trigger(trigger_body).is_bot_comment
 
 
 def extract_mention_agent(trigger_body: str) -> Optional[str]:
@@ -134,7 +131,7 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
 
     Delegates to trigger_parser for the extraction logic.
     """
-    return _extract_mention_agent(trigger_body)
+    return parse_trigger(trigger_body).agent_name
 
 
 def extract_workflow_command(trigger_body: str) -> Optional[str]:
@@ -142,7 +139,7 @@ def extract_workflow_command(trigger_body: str) -> Optional[str]:
 
     Delegates to trigger_parser for the extraction logic.
     """
-    return _extract_workflow_command(trigger_body)
+    return parse_trigger(trigger_body).workflow_name
 
 
 def extract_force_next_command(trigger_body: str) -> Optional[tuple]:
@@ -151,12 +148,12 @@ def extract_force_next_command(trigger_body: str) -> Optional[tuple]:
     Delegates to trigger_parser for the extraction logic.
     Wraps the result back into the tuple format expected by downstream callers.
     """
-    force_next = _extract_force_next_command(trigger_body)
-    if not force_next:
+    fn = parse_trigger(trigger_body).force_next_step
+    if not fn:
         return None
-    if force_next == "force-next-step":
+    if fn == "force-next-step":
         return ("force-next-step", None)
-    return ("force-next-step", force_next)
+    return ("force-next-step", fn)
 
 
 def resolve_config(
