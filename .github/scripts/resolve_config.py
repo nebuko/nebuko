@@ -36,6 +36,13 @@ from workflow_state import (
     extract_latest_state_from_comments,
 )
 from github_client import get_issue_comments
+from trigger_parser import (
+    _extract_agent_run_config,
+    _is_bot_comment,
+    _extract_mention_agent,
+    _extract_workflow_command,
+    _extract_force_next_command,
+)
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
 _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -47,37 +54,10 @@ MAX_LOOP_COUNT = 5
 def extract_agent_run_config(trigger_body: str) -> Optional[dict]:
     """Extract agentRunConfig JSON block from trigger body text.
 
-    First tries the structured <agentRunConfig> block.
-    Falls back to trailing JSON object with "task" field.
-
-    Args:
-        trigger_body: Raw trigger body text.
-
-    Returns:
-        Parsed dict or None.
+    Delegates to trigger_parser for the parsing logic.
+    Kept as a wrapper for backward compatibility with existing callers.
     """
-    # Strategy 1: <agentRunConfig> JSON block
-    match = re.search(r"<agentRunConfig>(.*?)</agentRunConfig>", trigger_body, re.DOTALL)
-    if match:
-        json_str = match.group(1).strip().replace("\n", "")
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
-
-    # Strategy 2: Trailing JSON object with valid task field
-    task_names = r"(?:issue-reviewer|ctx|genius|dev|review|issue)"
-    match = re.search(
-        r"\{[^{}]*\"task\"\s*:\s*\"" + task_names + r"\"[^{}]*\}",
-        trigger_body,
-    )
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            pass
-
-    return None
+    return _extract_agent_run_config(trigger_body)
 
 
 def resolve_next_agent_from_workflow(
@@ -144,71 +124,39 @@ def count_consecutive_same_agent(history: list, current_agent: str) -> int:
 def is_bot_comment(trigger_body: str) -> bool:
     """Check if trigger body starts with a bot-agent marker.
 
-    Args:
-        trigger_body: Raw trigger body text.
-
-    Returns:
-        True if first 5 lines contain <!-- bot-agent-.
+    Delegates to trigger_parser for the detection logic.
     """
-    first_lines = "\n".join(trigger_body.split("\n")[:5])
-    return "<!-- bot-agent-" in first_lines
+    return _is_bot_comment(trigger_body)
 
 
 def extract_mention_agent(trigger_body: str) -> Optional[str]:
     """Extract the last @@mention agent name from trigger body.
 
-    Args:
-        trigger_body: Raw trigger body text.
-
-    Returns:
-        Agent name string or None.
+    Delegates to trigger_parser for the extraction logic.
     """
-    agents = re.findall(
-        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue)",
-        trigger_body,
-    )
-    if agents:
-        return agents[-1].replace("@@", "")
-    return None
+    return _extract_mention_agent(trigger_body)
 
 
 def extract_workflow_command(trigger_body: str) -> Optional[str]:
     """Extract /workflow command from the first line of trigger body.
 
-    Only matches if the first non-empty line starts with "/workflow <name>".
-    Returns the workflow name or None.
-
-    Args:
-        trigger_body: Raw trigger body text.
-
-    Returns:
-        Workflow name string or None.
+    Delegates to trigger_parser for the extraction logic.
     """
-    first_line = trigger_body.split("\n", 1)[0].strip()
-    match = re.match(r"^/workflow\s+(\S+)", first_line)
-    if match:
-        return match.group(1)
-    return None
+    return _extract_workflow_command(trigger_body)
 
 
 def extract_force_next_command(trigger_body: str) -> Optional[tuple]:
     """Extract '/workflow force-next-step' command from the first line.
 
-    Supports optional target step: '/workflow force-next-step implement'.
-    Returns ('force-next-step', target_step_or_none) or None.
-
-    Args:
-        trigger_body: Raw trigger body text.
-
-    Returns:
-        Tuple of ('force-next-step', target_step) or None.
+    Delegates to trigger_parser for the extraction logic.
+    Wraps the result back into the tuple format expected by downstream callers.
     """
-    first_line = trigger_body.split("\n", 1)[0].strip()
-    match = re.match(r"^/workflow\s+force-next-step(?:\s+(\S+))?$", first_line)
-    if match:
-        target_step = match.group(1)  # Optional explicit target step name
-        return ("force-next-step", target_step)
-    return None
+    force_next = _extract_force_next_command(trigger_body)
+    if not force_next:
+        return None
+    if force_next == "force-next-step":
+        return ("force-next-step", None)
+    return ("force-next-step", force_next)
 
 
 def resolve_config(

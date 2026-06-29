@@ -39,6 +39,7 @@ class WorkflowState(BaseModel):
     """
 
     version: int = 1
+    schema_version: int = 1
     workflow: str = ""
     step: str = ""
     agent: str = ""
