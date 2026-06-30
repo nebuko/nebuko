@@ -22,6 +22,10 @@ llms:
     default_temperature: 0.0
     input_price: 0.12
     output_price: 0.18
+  
+  claude-sonnet-5:
+    model_path: "openrouter/anthropic/claude-sonnet-5"
+    provider: "${providers.openrouter}"
 
   qwen-3-6-30b:
     model_path: "hosted_vllm/qwen-3-6-30b-a3b"
@@ -67,7 +71,7 @@ agents:
     tools: ["think", "finish"]
 
   dev:
-    model: "${llms.deepseek-v4-flash}"
+    model: "${llms.claude-sonnet-5}"
     prompt_file: ".agents/prompts/dev.md"
     skills: []
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
