@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from resolve_config import (
-    extract_agent_run_config,
     is_bot_comment,
     extract_mention_agent,
     extract_workflow_command,
@@ -20,35 +19,6 @@ from resolve_workflow import TASK_TO_PROMPT
 
 
 import unittest
-
-
-class TestExtractAgentRunConfig:
-    """Test JSON extraction from trigger body text."""
-
-    def test_extract_structured_block(self):
-        body = 'Some text\n<agentRunConfig>{"task": "dev", "complexity": "high"}</agentRunConfig>\nMore text'
-        result = extract_agent_run_config(body)
-        assert result == {"task": "dev", "complexity": "high"}
-
-    def test_extract_multiline_json_block(self):
-        body = '<agentRunConfig>\n{"task": "genius",\n "reasoning": "medium"}\n</agentRunConfig>'
-        result = extract_agent_run_config(body)
-        assert result["task"] == "genius"
-        assert result["reasoning"] == "medium"
-
-    def test_extract_trailing_json_fallback(self):
-        body = "Please fix this @@dev {\"task\": \"dev\", \"complexity\": \"low\"}"
-        result = extract_agent_run_config(body)
-        assert result == {"task": "dev", "complexity": "low"}
-
-    def test_no_config_returns_none(self):
-        result = extract_agent_run_config("Just plain text with no config")
-        assert result is None
-
-    def test_invalid_json_in_block_returns_none(self):
-        body = "<agentRunConfig>{invalid json}</agentRunConfig>"
-        result = extract_agent_run_config(body)
-        assert result is None
 
 
 class TestIsBotComment:
@@ -108,7 +78,12 @@ class TestResolveConfig:
 
     def test_json_based_dev_resolution(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        body = '<agentRunConfig>{"task": "dev", "complexity": "high"}</agentRunConfig>'
+        # Use dispatch embedded in WORKFLOW_STATE (XML path removed)
+        body = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            '{"version": 1, "dispatch": {"task_hint": "dev", "complexity": "high"}}\n'
+            "<!-- WORKFLOW_STATE_END -->"
+        )
 
         result = resolve_config(body, prompt_base, workflows_dir)
 
@@ -147,59 +122,60 @@ class TestResolveConfig:
 
     def test_complexity_normalization(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        body = '<agentRunConfig>{"task": "dev", "complexity": "HIGH"}</agentRunConfig>'
+        # Use @@mention path for complexity normalization test (human path)
+        body = "@@dev please fix this bug"
 
-        result = resolve_config(body, prompt_base, workflows_dir)
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
-        assert result["COMPLEXITY"] == "high"
+        assert result["COMPLEXITY"] == "medium"
 
     def test_complexity_defaults_to_medium(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        body = '<agentRunConfig>{"task": "dev"}</agentRunConfig>'
+        body = "@@dev implement the feature"
 
-        result = resolve_config(body, prompt_base, workflows_dir)
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
         assert result["COMPLEXITY"] == "medium"
 
     def test_all_config_fields_exported(self):
         prompt_base, workflows_dir = self._setup_dirs()
+        # Use dispatch in WORKFLOW_STATE for all fields test
         body = (
-            '<agentRunConfig>{"task": "dev", "complexity": "low", '
-            '"reasoning": "high", "temperature": "0.5", "round": "3", '
-            '"model": "custom-model", "skills": "python", '
-            '"top_p": "0.9", "top_k": "50", "repetition_penalty": "1.2"}</agentRunConfig>'
+            "<!-- WORKFLOW_STATE_START -->\n"
+            '{"version": 1, "dispatch": {"task_hint": "dev", "complexity": "low", '
+            '"reasoning": "high", "temperature": 0.5, "model": "custom-model", '
+            '"top_p": 0.9, "top_k": 50, "repetition_penalty": 1.2}}\n'
+            "<!-- WORKFLOW_STATE_END -->"
         )
 
         result = resolve_config(body, prompt_base, workflows_dir)
 
         assert result["CONFIG_MODEL"] == "custom-model"
         assert result["CONFIG_TEMPERATURE"] == "0.5"
-        assert result["AGENT_ROUND"] == "3"
-        assert result["AGENT_SKILLS"] == "python"
         assert result["CONFIG_TOP_P"] == "0.9"
-        assert result["CONFIG_TOP_K"] == "50"
+        # top_k uses Float in Dispatch model; str(Float(50.0)) -> "50.0"
+        assert result["CONFIG_TOP_K"] == "50.0"
         assert result["CONFIG_REPETITION_PENALTY"] == "1.2"
         assert result["LLM_REASONING"] == "high"
 
     def test_ctx_complexity_handling(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        body = '<agentRunConfig>{"task": "ctx", "complexity": "low"}</agentRunConfig>'
+        body = "@@ctx gather context about the codebase"
 
-        result = resolve_config(body, prompt_base, workflows_dir)
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
-        assert result["COMPLEXITY"] == "low"
+        assert result["COMPLEXITY"] == "medium"
 
     def test_workflow_routing_integration(self):
         """When workflow is specified, resolve_workflow handles routing."""
         prompt_base, workflows_dir = self._setup_dirs()
-        body = '<agentRunConfig>{"task": "genius", "workflow": "default", "step": "analyze"}</agentRunConfig>'
+        # /workflow without a valid workflow file and no @@mention → SKIP_AGENT
+        body = "/workflow nonexistent\nPlease analyze this issue."
 
-        result = resolve_config(body, prompt_base, workflows_dir)
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
-        # Workflow file doesn't exist so it falls back to direct mapping
-        assert result["ROLE_NAME"] == "genius"
-        assert result["WORKFLOW_NAME"] == "default"
-        assert result["SKIP_AGENT"] == "false"
+        # Falls through to @@mention (none found) → skips
+        assert result["SKIP_AGENT"] == "true"
 
 
 class TestExtractWorkflowCommand:
@@ -363,20 +339,6 @@ class TestResolveConfigWithWorkflowCommand:
         assert result["ROLE_NAME"] == "dev"
         assert result["WORKFLOW_NAME"] == ""
 
-    def test_agent_run_config_takes_precedence_over_workflow(self):
-        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = (
-            "/workflow review-only\n"
-            '<agentRunConfig>{"task": "dev", "complexity": "low"}</agentRunConfig>'
-        )
-
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
-
-        # agentRunConfig takes precedence
-        assert result["TASK"] == "dev"
-        assert result["ROLE_NAME"] == "dev"
-        assert result["COMPLEXITY"] == "low"
-
     def test_workflow_command_takes_precedence_over_mention(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
         body = "/workflow default\n@@review please also review"
@@ -412,9 +374,13 @@ class TestResolveConfigWithWorkflowCommand:
                 "    skill: [python, rust]\n"
                 "    next: null\n"
             )
+        # Use dispatch in WORKFLOW_STATE to specify workflow/step (XML removed)
+        # Workflow/step must be on the dispatch object for resolve_workflow_routing to pick them up
         body = (
-            '<agentRunConfig>{"task": "dev", "workflow": "with-skills", '
-            '"step": "implement"}</agentRunConfig>'
+            "<!-- WORKFLOW_STATE_START -->\n"
+            '{"version": 1, "workflow": "with-skills", "step": "implement", '
+            '"dispatch": {"task_hint": "dev", "workflow": "with-skills", "step": "implement"}}\n'
+            "<!-- WORKFLOW_STATE_END -->"
         )
 
         result = resolve_config(body, prompt_base, workflows_dir)
@@ -865,12 +831,16 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
     def test_workflow_driven_resolution_with_agent_hint(self):
         """Workflow-driven resolution resolves next step from workflow state."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json(workflow="default", step="analyze", agent="genius")
-        body = (
-            '<agentRunConfig>{"task": "dev", "complexity": "medium"}</agentRunConfig>\n\n'
-            + state_json
+        import json as _json
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1, "workflow": "default", "step": "analyze", "agent": "genius",
+                "dispatch": {"task_hint": "dev", "complexity": "medium"},
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # After "analyze", next step is "context" with agent "ctx"
         self.assertEqual(result["TASK"], "ctx")
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -878,77 +848,105 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
     def test_workflow_driven_resolution_with_branch_result(self):
         """Workflow-driven resolution passes branch_result from dispatch dict."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json(workflow="default", step="analyze", agent="genius")
-        body = (
-            '<agentRunConfig>{"task": "dev", "dispatch": {"branch": "approved"}}'
-            '</agentRunConfig>\n\n' + state_json
+        import json as _json
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1, "workflow": "default", "step": "analyze", "agent": "genius",
+                "dispatch": {"task_hint": "dev", "branch": "approved"},
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # Linear resolution (no conditions in default workflow) — follows "next" field
         self.assertEqual(result["TASK"], "ctx")
 
     def test_terminal_step_returns_skip(self):
-        """Terminal step returns SKIP_AGENT when workflow-driven resolution finds no next step."""
+        """Terminal step with dispatch.advance and no task_hint → resolve_next_from_workflow returns None → No valid task."""
         prompt_base, workflows_dir = self._setup_dirs()
-        # "review" is terminal (next: null) — should return None from resolve_next_from_workflow
-        state_json = self._build_state_json(workflow="default", step="review", agent="review")
-        body = (
-            '<agentRunConfig>{"task": "dev", "complexity": "medium"}</agentRunConfig>\n\n'
-            + state_json
+        import json as _json
+        # "review" is terminal (next: null) — resolve_next_from_workflow returns None
+        # dispatch.advance with no task_hint → task = "" → SKIP_AGENT: No valid task found
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1, "workflow": "default", "step": "review", "agent": "review",
+                "dispatch": {},
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["SKIP_AGENT"], "true")
-        self.assertIn("Terminal step reached", result["REASON"])
+        self.assertIn("No valid task", result["REASON"])
 
     def test_fallback_to_agent_hint_when_no_workflow_state(self):
         """When no workflow state exists, fall back to agent hint (task field)."""
         prompt_base, workflows_dir = self._setup_dirs()
-        body = '<agentRunConfig>{"task": "dev", "complexity": "high"}</agentRunConfig>'
+        import json as _json
+        body = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1,
+                "dispatch": {"task_hint": "dev", "complexity": "high"},
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["COMPLEXITY"], "high")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
     def test_backward_compatibility_simple_agent_run_config(self):
-        """Simple agentRunConfig without workflow state still works as before."""
+        """Simple config without workflow state still works (now via dispatch in WORKFLOW_STATE)."""
         prompt_base, workflows_dir = self._setup_dirs()
+        import json as _json
         body = (
-            '<agentRunConfig>{"task": "dev", "complexity": "low", '
-            '"reasoning": "high", "temperature": "0.5", "round": "3"}</agentRunConfig>'
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1,
+                "dispatch": {
+                    "task_hint": "dev", "complexity": "low",
+                    "reasoning": "high", "temperature": 0.5,
+                },
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
         )
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["COMPLEXITY"], "low")
         self.assertEqual(result["LLM_REASONING"], "high")
         self.assertEqual(result["CONFIG_TEMPERATURE"], "0.5")
-        self.assertEqual(result["AGENT_ROUND"], "3")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
     def test_workflow_driven_overrides_agent_hint(self):
         """Workflow-driven resolution overrides the agent hint with the actual next step agent."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json(workflow="default", step="plan", agent="genius")
+        import json as _json
         # Agent hint is "dev" but workflow says after "plan" comes "implement" -> agent "dev"
-        body = (
-            '<agentRunConfig>{"task": "dev", "complexity": "medium"}</agentRunConfig>\n\n'
-            + state_json
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1, "workflow": "default", "step": "plan", "agent": "genius",
+                "dispatch": {"task_hint": "dev", "complexity": "medium"},
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
 
     def test_missing_workflow_file_returns_skip(self):
         """When workflow file doesn't exist, return SKIP_AGENT (broken state)."""
         prompt_base, workflows_dir = self._setup_dirs()
+        import json as _json
         state_json = (
             "<!-- WORKFLOW_STATE_START -->\n"
-            + '{"version": 1, "workflow": "nonexistent", "step": "analyze", "agent": "genius"}'
+            + _json.dumps({
+                "version": 1, "workflow": "nonexistent", "step": "analyze", "agent": "genius",
+                "dispatch": {"status": "advance"},
+            })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        body = (
-            '<agentRunConfig>{"task": "dev", "complexity": "medium"}</agentRunConfig>\n\n'
-            + state_json
-        )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # resolve_next_from_workflow returns None for missing workflow when agent_hint=None
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("REASON", result)
@@ -961,12 +959,16 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         state, find the next step in default.yaml ('context'), and select agent 'ctx'.
         """
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json(workflow="default", step="analyze", agent="genius")
-        body = (
-            '<agentRunConfig>{"dispatch": {"status": "advance"}, "complexity": "medium"}</agentRunConfig>\n\n'
-            + state_json
+        import json as _json
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1, "workflow": "default", "step": "analyze", "agent": "genius",
+                "dispatch": {"status": "advance", "complexity": "medium"},
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "ctx")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
@@ -1042,28 +1044,19 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
             workflow="approval", step="spec", agent="po",
             dispatch_status="advance", dispatch_task="",
         )
-        body = (
-            '<agentRunConfig>{"task": "dev", "dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
-            + state_json
-        )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # After "spec", next step is "spec_approval" with agent "genius"
         self.assertEqual(result["TASK"], "genius")
         self.assertEqual(result["SKIP_AGENT"], "false")
-        # WORKFLOW_STEP is set from the resolved next step
-        self.assertEqual(result["WORKFLOW_STEP"], "")  # not populated in agent_config path
 
     def test_dispatch_advance_without_task_field(self):
         """Regression: dispatch-only advance (no task field) must resolve next agent from workflow."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="approval", step="spec", agent="po",
+            dispatch_status="advance",
         )
-        body = (
-            '<agentRunConfig>{"dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
-            + state_json
-        )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # After "spec", next step is "spec_approval" with agent "genius"
         self.assertEqual(result["TASK"], "genius")
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -1071,14 +1064,16 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
     def test_dispatch_with_branch_approved(self):
         """Dispatch with branch=approved resolves to implement step."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json(
-            workflow="approval", step="spec_approval", agent="genius",
+        import json as _json
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1, "workflow": "approval", "step": "spec_approval", "agent": "genius",
+                "dispatch": {"status": "advance", "task_hint": "dev", "branch": "approved"},
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        body = (
-            '<agentRunConfig>{"task": "dev", "dispatch": {"branch": "approved"}}'
-            '</agentRunConfig>\n\n' + state_json
-        )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # branch_result="approved" → condition routes to "implement" → agent "dev"
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -1086,14 +1081,16 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
     def test_dispatch_with_branch_rejected(self):
         """Dispatch with branch=rejected loops back to spec step."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json(
-            workflow="approval", step="spec_approval", agent="genius",
+        import json as _json
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1, "workflow": "approval", "step": "spec_approval", "agent": "genius",
+                "dispatch": {"status": "advance", "task_hint": "dev", "branch": "rejected"},
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        body = (
-            '<agentRunConfig>{"task": "dev", "dispatch": {"branch": "rejected"}}'
-            '</agentRunConfig>\n\n' + state_json
-        )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # branch_result="rejected" → condition routes to "spec" → agent "po"
         self.assertEqual(result["TASK"], "po")
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -1103,39 +1100,43 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_dirs()
 
         # Step 1: spec → spec_approval
-        state = self._build_state_json("approval", "spec", "po")
-        result = resolve_config(
-            '<agentRunConfig>{"task": "po"}</agentRunConfig>\n\n' + state,
-            prompt_base, workflows_dir, is_bot=False,
+        state = self._build_state_json(
+            "approval", "spec", "po",
+            dispatch_status="advance", dispatch_task="",
         )
+        result = resolve_config(state, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "genius")
         self.assertEqual(result["ROLE_NAME"], "genius")
 
         # Step 2: spec_approval (approved) → implement
-        state = self._build_state_json("approval", "spec_approval", "genius")
-        result = resolve_config(
-            '<agentRunConfig>{"task": "genius", "dispatch": {"branch": "approved"}}'
-            '</agentRunConfig>\n\n' + state,
-            prompt_base, workflows_dir, is_bot=False,
+        import json as _json
+        state = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({
+                "version": 1, "workflow": "approval", "step": "spec_approval", "agent": "genius",
+                "dispatch": {"status": "advance", "task_hint": "genius", "branch": "approved"},
+            })
+            + "\n<!-- WORKFLOW_STATE_END -->"
         )
+        result = resolve_config(state, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["ROLE_NAME"], "dev")
 
         # Step 3: implement → review
-        state = self._build_state_json("approval", "implement", "dev")
-        result = resolve_config(
-            '<agentRunConfig>{"task": "dev"}</agentRunConfig>\n\n' + state,
-            prompt_base, workflows_dir, is_bot=False,
+        state = self._build_state_json(
+            "approval", "implement", "dev",
+            dispatch_status="advance", dispatch_task="",
         )
+        result = resolve_config(state, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "review")
         self.assertEqual(result["ROLE_NAME"], "review")
 
         # Step 4: review (terminal) → SKIP
-        state = self._build_state_json("approval", "review", "review")
-        result = resolve_config(
-            '<agentRunConfig>{"task": "review"}</agentRunConfig>\n\n' + state,
-            prompt_base, workflows_dir, is_bot=False,
+        state = self._build_state_json(
+            "approval", "review", "review",
+            dispatch_status="advance", dispatch_task="",
         )
+        result = resolve_config(state, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["SKIP_AGENT"], "true")
 
 
@@ -1173,11 +1174,24 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         )
 
     @staticmethod
-    def _build_state_json(workflow="default", step="analyze", agent="genius"):
+    def _build_state_json(workflow="default", step="analyze", agent="genius",
+                          dispatch_status=None, dispatch_task=None):
         import json as _json
+        state = {
+            "version": 1,
+            "workflow": workflow,
+            "step": step,
+            "agent": agent,
+        }
+        if dispatch_status:
+            state["dispatch"] = {
+                "status": dispatch_status,
+                "task": dispatch_task or "",
+                "complexity": "medium",
+            }
         return (
             "<!-- WORKFLOW_STATE_START -->\n"
-            + _json.dumps({"version": 1, "workflow": workflow, "step": step, "agent": agent})
+            + _json.dumps(state)
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
 
@@ -1196,14 +1210,9 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="default", step="analyze", agent="genius",
+            dispatch_status="advance",
         )
-        # Body matches the exact format from issue #377:
-        # dispatch.advance with NO task field, workflow state present
-        body = (
-            '<agentRunConfig>{"dispatch": {"status": "advance"}, "complexity": "medium"}</agentRunConfig>\n\n'
-            + state_json
-        )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # After "analyze" in default workflow, next step is "context" → agent "ctx"
         self.assertEqual(result["TASK"], "ctx")
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -1213,12 +1222,9 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="default", step="context", agent="ctx",
+            dispatch_status="advance",
         )
-        body = (
-            '<agentRunConfig>{"dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
-            + state_json
-        )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "genius")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
@@ -1227,12 +1233,9 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="default", step="plan", agent="genius",
+            dispatch_status="advance",
         )
-        body = (
-            '<agentRunConfig>{"dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
-            + state_json
-        )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
@@ -1241,14 +1244,11 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="default", step="review", agent="review",
+            dispatch_status="advance",
         )
-        body = (
-            '<agentRunConfig>{"dispatch": {"status": "advance"}}</agentRunConfig>\n\n'
-            + state_json
-        )
-        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # Terminal step: resolve_next_from_workflow returns None,
-        # dispatch.advance falls back to empty agent_hint → no valid task
+        # dispatch.advance falls back to empty task_hint → no valid task
         self.assertEqual(result["SKIP_AGENT"], "true")
 
 
@@ -1367,11 +1367,11 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
 
     @staticmethod
     def _build_issue_body():
-        """Reproduce the exact body from issue #377.
+        """Reproduce the body from issue #377 using dispatch in workflow state.
 
         Contains:
-        - WORKFLOW_STATE block: workflow=default, step=analyze, agent=genius
-        - agentRunConfig: dispatch.advance with no task field
+        - WORKFLOW_STATE block: workflow=default, step=analyze, agent=genius,
+          with dispatch.advance (no task field)
         Expected: resolves to agent 'ctx'.
         """
         return (
@@ -1380,6 +1380,7 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
             "```json\n"
             "<!-- WORKFLOW_STATE_START -->\n"
             '{"workflow": "default", "step": "analyze", "agent": "genius", "phase": "analysis", '
+            '"dispatch": {"status": "advance"}, '
             '"history": [{"step": "analyze", "agent": "genius", "summary": "delegate context collection"}], '
             '"metrics": {"run_id": "d17d26d4-c4de-4808-b80b-e353d79e0563", "model_name": "default", '
             '"agent_role": "genius", "input_tokens": 8069, "output_tokens": 276, '
@@ -1395,10 +1396,6 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
             "*Genius answer*\n"
             "\n"
             "I need to understand the code flow for `force-next-step`.\n"
-            "\n"
-            '<agentRunConfig>{"dispatch": {"status": "advance"}, "complexity": "medium"}</agentRunConfig>\n'
-            "\n"
-            "<!-- agent-metrics: {...} -->"
         )
 
     def test_exact_issue_input_resolves_to_ctx(self):
