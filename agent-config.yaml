@@ -71,7 +71,7 @@ agents:
     tools: ["think", "finish"]
 
   dev:
-    model: "${llms.claude-sonnet-5}"
+    model: "${llms.qwen-3-6-27b"
     prompt_file: ".agents/prompts/dev.md"
     skills: []
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
