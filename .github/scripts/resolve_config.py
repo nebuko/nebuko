@@ -44,42 +44,6 @@ _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 MAX_LOOP_COUNT = 5
 
 
-def extract_agent_run_config(trigger_body: str) -> Optional[dict]:
-    """Extract agentRunConfig JSON block from trigger body text.
-
-    First tries the structured <agentRunConfig> block.
-    Falls back to trailing JSON object with "task" field.
-
-    Args:
-        trigger_body: Raw trigger body text.
-
-    Returns:
-        Parsed dict or None.
-    """
-    # Strategy 1: <agentRunConfig> JSON block
-    match = re.search(r"<agentRunConfig>(.*?)</agentRunConfig>", trigger_body, re.DOTALL)
-    if match:
-        json_str = match.group(1).strip().replace("\n", "")
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
-
-    # Strategy 2: Trailing JSON object with valid task field
-    task_names = r"(?:issue-reviewer|ctx|genius|dev|review|issue)"
-    match = re.search(
-        r"\{[^{}]*\"task\"\s*:\s*\"" + task_names + r"\"[^{}]*\}",
-        trigger_body,
-    )
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            pass
-
-    return None
-
-
 def resolve_next_agent_from_workflow(
     task_hint: Optional[str],
     workflow_name: str,
@@ -222,11 +186,10 @@ def resolve_config(
     """Resolve complete agent configuration from trigger body.
 
     This replaces the 223-line bash block. Steps:
-    1. Extract agentRunConfig JSON
+    1. Extract dispatch from workflow_state
     2. Bot detection
-    3. Parse config or fallback to @@mention
-    4. Route via resolve_workflow.py or case-based fallback
-    5. Build result dict with all env vars
+    3. Route via resolve_workflow.py or case-based fallback
+    4. Build result dict with all env vars
 
     Args:
         trigger_body: Raw trigger body text.
@@ -243,21 +206,10 @@ def resolve_config(
         is_bot = is_bot_comment(trigger_body)
 
     # Step 1: Try to get dispatch from workflow_state (primary path)
-    # Falls back to XML <agentRunConfig> block (backward compatible)
     prev_state = extract_state_from_body(trigger_body)
     dispatch_obj = prev_state.dispatch if prev_state else None
 
-    # Extract XML agentRunConfig as fallback
-    xml_config = extract_agent_run_config(trigger_body)
-
-    # Determine which source to use: dispatch from state > XML block
-    config_source = None  # 'dispatch' or 'xml'
     if dispatch_obj:
-        config_source = 'dispatch'
-    elif xml_config:
-        config_source = 'xml'
-
-    if config_source == 'dispatch':
         # Dispatch from workflow_state (structured, primary path)
         agent_hint = dispatch_obj.task_hint or ""
         branch_result = dispatch_obj.branch
@@ -291,55 +243,6 @@ def resolve_config(
                 config_step = wf_result.get("step", config_step)
             else:
                 dispatch_status = dispatch_obj.status or ""
-                if dispatch_status == "hold":
-                    return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
-                elif dispatch_status == "terminate":
-                    return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
-                elif dispatch_status == "loop":
-                    task = prev_state.agent or ""
-                elif dispatch_status == "advance":
-                    task = agent_hint
-                else:
-                    return {
-                        "SKIP_AGENT": "true",
-                        "REASON": "Terminal step reached",
-                    }
-        else:
-            task = agent_hint
-    elif config_source == 'xml':
-        # XML <agentRunConfig> block (backward-compatible fallback)
-        agent_hint = xml_config.get("task", "")
-        dispatch = xml_config.get("dispatch", {})
-        branch_result = dispatch.get("branch") if isinstance(dispatch, dict) else None
-
-        config_complexity = xml_config.get("complexity", "medium")
-        config_reasoning = xml_config.get("reasoning", "none")
-        config_temperature = xml_config.get("temperature", "")
-        config_round = xml_config.get("round", "")
-        config_model = xml_config.get("model", "")
-        config_skills = xml_config.get("skills", "")
-        config_top_p = xml_config.get("top_p", "")
-        config_top_k = xml_config.get("top_k", "")
-        config_repetition_penalty = xml_config.get("repetition_penalty", "")
-        config_workflow = xml_config.get("workflow", "")
-        config_step = xml_config.get("step", "")
-        config_branch = xml_config.get("branch", "")
-        config_parent_workflow = xml_config.get("parent_workflow", "")
-        config_parent_workflow_step = xml_config.get("parent_workflow_step", "")
-
-        if prev_state and prev_state.workflow and prev_state.step:
-            wf_result = resolve_next_from_workflow(
-                prev_state.workflow,
-                prev_state.step,
-                workflows_dir,
-                agent_hint=None,
-                branch_result=branch_result,
-            )
-            if wf_result:
-                task = wf_result["task"]
-                config_step = wf_result.get("step", config_step)
-            else:
-                dispatch_status = dispatch.get("status", "") if isinstance(dispatch, dict) else ""
                 if dispatch_status == "hold":
                     return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
                 elif dispatch_status == "terminate":
