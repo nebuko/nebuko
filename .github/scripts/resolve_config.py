@@ -175,6 +175,456 @@ def extract_force_next_command(trigger_body: str) -> Optional[tuple]:
     return None
 
 
+# ── Helper methods for resolve_config ──────────────────────────────────────
+
+
+def _parse_trigger_body(trigger_body: str) -> tuple:
+    """Extract workflow state and dispatch from the current trigger body.
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        Tuple of (prev_state, dispatch_obj).
+    """
+    prev_state = extract_state_from_body(trigger_body)
+    dispatch_obj = prev_state.dispatch if prev_state else None
+    return prev_state, dispatch_obj
+
+
+def _fetch_workflow_state_from_history(
+    repo: Optional[str],
+    issue_number: Optional[int],
+) -> Optional["WorkflowState"]:
+    """Fetch latest workflow state from issue comment history.
+
+    Args:
+        repo: Repository in owner/name format.
+        issue_number: Issue/PR number.
+
+    Returns:
+        Latest WorkflowState from comments, or None.
+    """
+    if not repo or not issue_number:
+        return None
+    try:
+        comments = get_issue_comments(repo, issue_number)
+        return extract_latest_state_from_comments(comments)
+    except Exception:
+        return None
+
+
+def _resolve_dispatch_path(
+    prev_state: "WorkflowState",
+    dispatch_obj: "Dispatch",
+    workflows_dir: str,
+) -> dict:
+    """Resolve config when a dispatch object is present in the trigger body.
+
+    Handles dispatch statuses (advance, loop, hold, terminate) and
+    workflow-driven step progression.
+
+    Args:
+        prev_state: WorkflowState from the trigger body.
+        dispatch_obj: Dispatch object extracted from prev_state.
+        workflows_dir: Path to workflows directory.
+
+    Returns:
+        Config dict with task and all config_* variables, or SKIP_AGENT dict.
+    """
+    agent_hint = dispatch_obj.task_hint or ""
+    branch_result = dispatch_obj.branch
+
+    config = {
+        "task": "",
+        "config_complexity": dispatch_obj.complexity or "medium",
+        "config_reasoning": dispatch_obj.reasoning or "none",
+        "config_temperature": str(dispatch_obj.temperature) if dispatch_obj.temperature is not None else "",
+        "config_round": "",
+        "config_model": dispatch_obj.model or "",
+        "config_skills": json.dumps(dispatch_obj.skills) if dispatch_obj.skills else "",
+        "config_top_p": str(dispatch_obj.top_p) if dispatch_obj.top_p is not None else "",
+        "config_top_k": str(dispatch_obj.top_k) if dispatch_obj.top_k is not None else "",
+        "config_repetition_penalty": str(dispatch_obj.repetition_penalty) if dispatch_obj.repetition_penalty is not None else "",
+        "config_workflow": dispatch_obj.workflow or "",
+        "config_step": dispatch_obj.step or "",
+        "config_branch": dispatch_obj.branch or "",
+        "config_parent_workflow": dispatch_obj.parent_workflow or "",
+        "config_parent_workflow_step": dispatch_obj.parent_workflow_step or "",
+    }
+
+    # Workflow-driven resolution using previous workflow state
+    if prev_state and prev_state.workflow and prev_state.step:
+        wf_result = resolve_next_from_workflow(
+            prev_state.workflow,
+            prev_state.step,
+            workflows_dir,
+            agent_hint=None,
+            branch_result=branch_result,
+        )
+        if wf_result:
+            config["task"] = wf_result["task"]
+            config["config_step"] = wf_result.get("step", config["config_step"])
+        else:
+            dispatch_status = dispatch_obj.status or ""
+            if dispatch_status == "hold":
+                return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
+            elif dispatch_status == "terminate":
+                return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
+            elif dispatch_status == "loop":
+                config["task"] = prev_state.agent or ""
+            elif dispatch_status == "advance":
+                config["task"] = agent_hint
+            else:
+                return {
+                    "SKIP_AGENT": "true",
+                    "REASON": "Terminal step reached",
+                }
+    else:
+        config["task"] = agent_hint
+
+    return config
+
+
+def _resolve_human_path(
+    trigger_body: str,
+    repo: Optional[str],
+    issue_number: Optional[int],
+    workflows_dir: str,
+) -> dict:
+    """Resolve config for a human-triggered comment.
+
+    Handles force-next-step commands, /workflow commands, and @@mentions.
+    Falls back to fetching workflow state from comment history when needed.
+
+    Args:
+        trigger_body: Raw trigger body text.
+        repo: Repository in owner/name format.
+        issue_number: Issue/PR number.
+        workflows_dir: Path to workflows directory.
+
+    Returns:
+        Config dict with task and config_* variables, or SKIP_AGENT dict.
+    """
+    # Check for force-next-step command first (human only)
+    force_next = extract_force_next_command(trigger_body)
+    if force_next:
+        _, target_step = force_next
+        prev_state = extract_state_from_body(trigger_body)
+        if not prev_state or not prev_state.workflow:
+            # Fallback: fetch workflow state from issue comments
+            prev_state = _fetch_workflow_state_from_history(repo, issue_number)
+        if not prev_state or not prev_state.workflow:
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": "force-next-step requires an active workflow (no workflow state found)",
+            }
+        config_workflow = prev_state.workflow
+        if not _SAFE_WF_NAME_RE.match(config_workflow):
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": f"force-next-step: invalid workflow name '{config_workflow}'",
+            }
+        current_step_in_wf = prev_state.step
+        wf_file_force = Path(workflows_dir) / f"{config_workflow}.yaml"
+        try:
+            wf_def = load_workflow(str(wf_file_force))
+        except (FileNotFoundError, ValueError) as e:
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": f"force-next-step: workflow '{config_workflow}' not found ({e})",
+            }
+
+        if target_step:
+            if not _SAFE_WF_NAME_RE.match(target_step):
+                return {
+                    "SKIP_AGENT": "true",
+                    "REASON": f"force-next-step: invalid target step name '{target_step}'",
+                }
+            # Explicit target step — validate it exists in the workflow
+            step_found = False
+            for step in wf_def.steps:
+                if step.name == target_step:
+                    step_found = True
+                    if not step.agent:
+                        return {
+                            "SKIP_AGENT": "true",
+                            "REASON": f"force-next-step: step '{target_step}' has no agent defined",
+                        }
+                    config_step = target_step
+                    task = step.agent
+                    break
+            if not step_found:
+                return {
+                    "SKIP_AGENT": "true",
+                    "REASON": f"force-next-step: step '{target_step}' not found in workflow '{config_workflow}'",
+                }
+        elif current_step_in_wf:
+            # Auto-advance: find current step and get its .next (skip conditions)
+            for step in wf_def.steps:
+                if step.name == current_step_in_wf:
+                    if not step.next:
+                        return {
+                            "SKIP_AGENT": "true",
+                            "REASON": f"force-next-step: current step '{current_step_in_wf}' is terminal (no next step)",
+                        }
+                    for next_s in wf_def.steps:
+                        if next_s.name == step.next:
+                            if not next_s.agent:
+                                return {
+                                    "SKIP_AGENT": "true",
+                                    "REASON": f"force-next-step: next step '{next_s.name}' has no agent defined",
+                                }
+                            config_step = next_s.name
+                            task = next_s.agent
+                            break
+                    else:
+                        return {
+                            "SKIP_AGENT": "true",
+                            "REASON": f"force-next-step: step '{current_step_in_wf}' references next step '{step.next}' which does not exist in workflow '{config_workflow}'",
+                        }
+                    break
+            else:
+                return {
+                    "SKIP_AGENT": "true",
+                    "REASON": f"force-next-step: current step '{current_step_in_wf}' not found in workflow '{config_workflow}'",
+                }
+        else:
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": "force-next-step: no current step in workflow state",
+            }
+
+        return {
+            "task": task,
+            "config_step": config_step,
+            "config_workflow": config_workflow,
+            "config_complexity": "medium",
+            "config_reasoning": "none",
+            "config_temperature": "",
+            "config_round": "",
+            "config_model": "",
+            "config_skills": "",
+            "config_top_p": "",
+            "config_top_k": "",
+            "config_repetition_penalty": "",
+            "config_branch": "",
+            "config_parent_workflow": prev_state.parent_workflow or "",
+            "config_parent_workflow_step": prev_state.parent_workflow_step or "",
+        }
+
+    # Normal /workflow command normalization (human only)
+    wf_name = extract_workflow_command(trigger_body)
+    wf_resolved = False
+    task = ""
+
+    if wf_name and _SAFE_WF_NAME_RE.match(wf_name):
+        wf_file = Path(workflows_dir) / f"{wf_name}.yaml"
+        try:
+            wf_def = load_workflow(str(wf_file))
+            task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
+            if task:
+                wf_resolved = True
+        except FileNotFoundError:
+            print(
+                f"Warning: workflow '{wf_name}' not found at {wf_file}, "
+                f"falling back to @@mention",
+                file=sys.stderr,
+            )
+        except ValueError as e:
+            print(
+                f"Warning: workflow '{wf_name}' invalid ({e}), "
+                f"falling back to @@mention",
+                file=sys.stderr,
+            )
+
+    if not wf_resolved:
+        # Fall through to @@mention if /workflow was invalid/unresolvable
+        task = extract_mention_agent(trigger_body) or ""
+        wf_name = None
+
+    return {
+        "task": task,
+        "config_workflow": wf_name if wf_name and wf_resolved else "",
+        "config_step": "",
+        "config_complexity": "medium",
+        "config_reasoning": "none",
+        "config_temperature": "",
+        "config_round": "",
+        "config_model": "",
+        "config_skills": "",
+        "config_top_p": "",
+        "config_top_k": "",
+        "config_repetition_penalty": "",
+        "config_branch": "",
+        "config_parent_workflow": "",
+        "config_parent_workflow_step": "",
+    }
+
+
+def _resolve_bot_fallback_path(
+    trigger_body: str,
+    workflows_dir: str,
+) -> dict:
+    """Resolve config for a bot comment without a dispatch object.
+
+    Checks for dispatch in workflow state, or returns SKIP_AGENT.
+
+    Args:
+        trigger_body: Raw trigger body text.
+        workflows_dir: Path to workflows directory.
+
+    Returns:
+        Config dict with task and config_* variables, or SKIP_AGENT dict.
+    """
+    dispatch = extract_dispatch_from_state(trigger_body)
+    if not dispatch:
+        return {"SKIP_AGENT": "true", "REASON": "Bot comment without agentRunConfig or dispatch"}
+
+    config = {
+        "task": dispatch.task_hint or "",
+        "config_complexity": dispatch.complexity or "medium",
+        "config_reasoning": dispatch.reasoning or "none",
+        "config_temperature": str(dispatch.temperature) if dispatch.temperature is not None else "",
+        "config_round": "",
+        "config_model": dispatch.model or "",
+        "config_skills": dispatch.skills or "",
+        "config_top_p": str(dispatch.top_p) if dispatch.top_p is not None else "",
+        "config_top_k": str(dispatch.top_k) if dispatch.top_k is not None else "",
+        "config_repetition_penalty": (
+            str(dispatch.repetition_penalty) if dispatch.repetition_penalty is not None else ""
+        ),
+        "config_workflow": dispatch.workflow or "",
+        "config_step": dispatch.step or "",
+        "config_branch": dispatch.branch or "",
+        "config_parent_workflow": dispatch.parent_workflow or "",
+        "config_parent_workflow_step": dispatch.parent_workflow_step or "",
+    }
+
+    # Resolve next agent based on dispatch status
+    if dispatch.status == "advance":
+        if not config["task"]:
+            # Auto-resolve next agent from workflow YAML
+            wf_result = resolve_next_from_workflow(
+                config["config_workflow"], config["config_step"], workflows_dir
+            )
+            if wf_result:
+                config["task"] = wf_result["task"]
+                config["config_step"] = wf_result.get("step", config["config_step"])
+    elif dispatch.status == "loop":
+        # Loop: re-dispatch current agent — use task_hint or resolve from state
+        config["task"] = dispatch.task_hint or ""
+        if not config["task"]:
+            prev_state = extract_state_from_body(trigger_body)
+            if prev_state:
+                config["task"] = prev_state.agent or ""
+    elif dispatch.status == "hold":
+        return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
+    elif dispatch.status == "terminate":
+        return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
+
+    return config
+
+
+def _build_result(
+    config: dict,
+    prompt_base: str,
+    workflows_dir: str,
+) -> dict:
+    """Build the final result dict from resolved config values.
+
+    Validates the task, routes via resolve_workflow_routing, and
+    constructs the full environment variable dict.
+
+    Args:
+        config: Config dict with task and config_* variables.
+        prompt_base: Path to prompt files directory.
+        workflows_dir: Path to workflows directory.
+
+    Returns:
+        Dict with all environment variables to set.
+    """
+    task = config.get("task", "")
+    if not task:
+        return {"SKIP_AGENT": "true", "REASON": "No valid task found"}
+
+    # Validate task
+    if task not in TASK_TO_PROMPT:
+        return {"SKIP_AGENT": "true", "REASON": f"Unknown task: {task}"}
+
+    # Workflow-aware routing
+    wf_result = resolve_workflow_routing(
+        {
+            "task": task,
+            "complexity": config.get("config_complexity", "medium"),
+            "reasoning": config.get("config_reasoning", "none"),
+            "model": config.get("config_model", ""),
+            "temperature": config.get("config_temperature", ""),
+            "round": config.get("config_round", ""),
+            "skills": config.get("config_skills", ""),
+            "top_p": config.get("config_top_p", ""),
+            "top_k": config.get("config_top_k", ""),
+            "repetition_penalty": config.get("config_repetition_penalty", ""),
+            "workflow": config.get("config_workflow", ""),
+            "step": config.get("config_step", ""),
+            "branch": config.get("config_branch", ""),
+            "parent_workflow": config.get("config_parent_workflow", ""),
+            "parent_workflow_step": config.get("config_parent_workflow_step", ""),
+        },
+        workflows_dir,
+        prompt_base,
+    )
+
+    if wf_result.get("SKIP_AGENT") == "true":
+        return wf_result
+
+    role_name = wf_result["ROLE_NAME"]
+    prompt_location = wf_result["PROMPT_LOCATION"]
+
+    # Determine complexity for dev/ctx agents
+    complexity = "N/A"
+    if role_name in ("dev", "ctx"):
+        comp_lower = config.get("config_complexity", "medium").lower() if config.get("config_complexity") else "medium"
+        complexity = comp_lower if comp_lower in ("low", "high") else "medium"
+
+    # Build matched rule identifier for debugging
+    wf_name = wf_result.get("WORKFLOW_NAME", "")
+    wf_step = wf_result.get("WORKFLOW_STEP", "")
+    if wf_name and wf_step:
+        matched_rule = f"workflow:{wf_name}/step:{wf_step}"
+    elif wf_name:
+        matched_rule = f"workflow:{wf_name}"
+    else:
+        matched_rule = ""
+
+    # Build result
+    result = {
+        "TASK": task,
+        "ROLE_NAME": role_name,
+        "PROMPT_LOCATION": prompt_location,
+        "AGENT_SELECTED": "true",
+        "COMPLEXITY": complexity,
+        "LLM_REASONING": config.get("config_reasoning", "none"),
+        "AGENT_ROUND": config.get("config_round", ""),
+        "AGENT_SKILLS": config.get("config_skills", ""),
+        "STEP_SKILLS": wf_result.get("STEP_SKILLS", ""),
+        "CONFIG_MODEL": config.get("config_model", ""),
+        "CONFIG_TEMPERATURE": config.get("config_temperature", ""),
+        "CONFIG_TOP_P": config.get("config_top_p", ""),
+        "CONFIG_TOP_K": config.get("config_top_k", ""),
+        "CONFIG_REPETITION_PENALTY": config.get("config_repetition_penalty", ""),
+        "WORKFLOW_NAME": wf_result.get("WORKFLOW_NAME", ""),
+        "WORKFLOW_STEP": wf_result.get("WORKFLOW_STEP", ""),
+        "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
+        "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
+        "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
+        "MATCHED_RULE": matched_rule,
+        "SKIP_AGENT": "false",
+    }
+
+    return result
+
+
 def resolve_config(
     trigger_body: str,
     prompt_base: str,
@@ -205,334 +655,21 @@ def resolve_config(
     if is_bot is None:
         is_bot = is_bot_comment(trigger_body)
 
-    # Step 1: Try to get dispatch from workflow_state (primary path)
-    prev_state = extract_state_from_body(trigger_body)
-    dispatch_obj = prev_state.dispatch if prev_state else None
+    # Parse trigger body for workflow state and dispatch
+    prev_state, dispatch_obj = _parse_trigger_body(trigger_body)
 
-    if dispatch_obj:
-        # Dispatch from workflow_state (structured, primary path)
-        agent_hint = dispatch_obj.task_hint or ""
-        branch_result = dispatch_obj.branch
-
-        config_complexity = dispatch_obj.complexity or "medium"
-        config_reasoning = dispatch_obj.reasoning or "none"
-        config_temperature = str(dispatch_obj.temperature) if dispatch_obj.temperature is not None else ""
-        config_round = ""
-        config_model = dispatch_obj.model or ""
-        config_skills = json.dumps(dispatch_obj.skills) if dispatch_obj.skills else ""
-        config_top_p = str(dispatch_obj.top_p) if dispatch_obj.top_p is not None else ""
-        config_top_k = str(dispatch_obj.top_k) if dispatch_obj.top_k is not None else ""
-        config_repetition_penalty = str(dispatch_obj.repetition_penalty) if dispatch_obj.repetition_penalty is not None else ""
-        config_workflow = dispatch_obj.workflow or ""
-        config_step = dispatch_obj.step or ""
-        config_branch = dispatch_obj.branch or ""
-        config_parent_workflow = dispatch_obj.parent_workflow or ""
-        config_parent_workflow_step = dispatch_obj.parent_workflow_step or ""
-
-        # Workflow-driven resolution using previous workflow state
-        if prev_state and prev_state.workflow and prev_state.step:
-            wf_result = resolve_next_from_workflow(
-                prev_state.workflow,
-                prev_state.step,
-                workflows_dir,
-                agent_hint=None,
-                branch_result=branch_result,
-            )
-            if wf_result:
-                task = wf_result["task"]
-                config_step = wf_result.get("step", config_step)
-            else:
-                dispatch_status = dispatch_obj.status or ""
-                if dispatch_status == "hold":
-                    return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
-                elif dispatch_status == "terminate":
-                    return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
-                elif dispatch_status == "loop":
-                    task = prev_state.agent or ""
-                elif dispatch_status == "advance":
-                    task = agent_hint
-                else:
-                    return {
-                        "SKIP_AGENT": "true",
-                        "REASON": "Terminal step reached",
-                    }
-        else:
-            task = agent_hint
+    # Route to appropriate handler based on state presence
+    if prev_state and dispatch_obj:
+        config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)
     elif not is_bot:
-        # Check for force-next-step command first (human only)
-        force_next = extract_force_next_command(trigger_body)
-        if force_next:
-            _, target_step = force_next
-            prev_state = extract_state_from_body(trigger_body)
-            if not prev_state or not prev_state.workflow:
-                # Fallback: fetch workflow state from issue comments
-                if repo and issue_number:
-                    comments = get_issue_comments(repo, issue_number)
-                    prev_state = extract_latest_state_from_comments(comments)
-            if not prev_state or not prev_state.workflow:
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": "force-next-step requires an active workflow (no workflow state found)",
-                }
-            config_workflow = prev_state.workflow
-            if not _SAFE_WF_NAME_RE.match(config_workflow):
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": f"force-next-step: invalid workflow name '{config_workflow}'",
-                }
-            current_step_in_wf = prev_state.step
-            wf_file_force = Path(workflows_dir) / f"{config_workflow}.yaml"
-            try:
-                wf_def = load_workflow(str(wf_file_force))
-            except (FileNotFoundError, ValueError) as e:
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": f"force-next-step: workflow '{config_workflow}' not found ({e})",
-                }
-
-            if target_step:
-                if not _SAFE_WF_NAME_RE.match(target_step):
-                    return {
-                        "SKIP_AGENT": "true",
-                        "REASON": f"force-next-step: invalid target step name '{target_step}'",
-                    }
-                # Explicit target step — validate it exists in the workflow
-                step_found = False
-                for step in wf_def.steps:
-                    if step.name == target_step:
-                        step_found = True
-                        if not step.agent:
-                            return {
-                                "SKIP_AGENT": "true",
-                                "REASON": f"force-next-step: step '{target_step}' has no agent defined",
-                            }
-                        config_step = target_step
-                        task = step.agent
-                        break
-                if not step_found:
-                    return {
-                        "SKIP_AGENT": "true",
-                        "REASON": f"force-next-step: step '{target_step}' not found in workflow '{config_workflow}'",
-                    }
-            elif current_step_in_wf:
-                # Auto-advance: find current step and get its .next (skip conditions)
-                for step in wf_def.steps:
-                    if step.name == current_step_in_wf:
-                        if not step.next:
-                            return {
-                                "SKIP_AGENT": "true",
-                                "REASON": f"force-next-step: current step '{current_step_in_wf}' is terminal (no next step)",
-                            }
-                        for next_s in wf_def.steps:
-                            if next_s.name == step.next:
-                                if not next_s.agent:
-                                    return {
-                                        "SKIP_AGENT": "true",
-                                        "REASON": f"force-next-step: next step '{next_s.name}' has no agent defined",
-                                    }
-                                config_step = next_s.name
-                                task = next_s.agent
-                                break
-                        else:
-                            return {
-                                "SKIP_AGENT": "true",
-                                "REASON": f"force-next-step: step '{current_step_in_wf}' references next step '{step.next}' which does not exist in workflow '{config_workflow}'",
-                            }
-                        break
-                else:
-                    return {
-                        "SKIP_AGENT": "true",
-                        "REASON": f"force-next-step: current step '{current_step_in_wf}' not found in workflow '{config_workflow}'",
-                    }
-            else:
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": "force-next-step: no current step in workflow state",
-                }
-
-            config_complexity = "medium"
-            config_reasoning = "none"
-            config_temperature = ""
-            config_round = ""
-            config_model = ""
-            config_skills = ""
-            config_top_p = ""
-            config_top_k = ""
-            config_repetition_penalty = ""
-            config_branch = ""
-            config_parent_workflow = prev_state.parent_workflow or ""
-            config_parent_workflow_step = prev_state.parent_workflow_step or ""
-        else:
-            # Normal /workflow command normalization (human only)
-            wf_name = extract_workflow_command(trigger_body)
-            wf_resolved = False
-            task = ""
-
-            if wf_name and _SAFE_WF_NAME_RE.match(wf_name):
-                wf_file = Path(workflows_dir) / f"{wf_name}.yaml"
-                try:
-                    wf_def = load_workflow(str(wf_file))
-                    task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
-                    if task:
-                        wf_resolved = True
-                except FileNotFoundError:
-                    print(
-                        f"Warning: workflow '{wf_name}' not found at {wf_file}, "
-                        f"falling back to @@mention",
-                        file=sys.stderr,
-                    )
-                except ValueError as e:
-                    print(
-                        f"Warning: workflow '{wf_name}' invalid ({e}), "
-                        f"falling back to @@mention",
-                        file=sys.stderr,
-                    )
-
-            if not wf_resolved:
-                # Fall through to @@mention if /workflow was invalid/unresolvable
-                task = extract_mention_agent(trigger_body) or ""
-                wf_name = None
-
-            config_complexity = "medium"
-            config_reasoning = "none"
-            config_temperature = ""
-            config_round = ""
-            config_model = ""
-            config_skills = ""
-            config_top_p = ""
-            config_top_k = ""
-            config_repetition_penalty = ""
-            config_workflow = wf_name if wf_name and wf_resolved else ""
-            config_step = ""
-            config_branch = ""
-            config_parent_workflow = ""
-            config_parent_workflow_step = ""
+        config = _resolve_human_path(trigger_body, repo, issue_number, workflows_dir)
     else:
-        # Bot comment without explicit agentRunConfig — check for dispatch in state
-        dispatch = extract_dispatch_from_state(trigger_body)
-        if dispatch:
-            # Dispatch found in workflow state — resolve routing from it
-            task = dispatch.task_hint or ""
-            config_complexity = dispatch.complexity or "medium"
-            config_reasoning = dispatch.reasoning or "none"
-            config_temperature = str(dispatch.temperature) if dispatch.temperature is not None else ""
-            config_round = ""
-            config_model = dispatch.model or ""
-            config_skills = dispatch.skills or ""
-            config_top_p = str(dispatch.top_p) if dispatch.top_p is not None else ""
-            config_top_k = str(dispatch.top_k) if dispatch.top_k is not None else ""
-            config_repetition_penalty = (
-                str(dispatch.repetition_penalty) if dispatch.repetition_penalty is not None else ""
-            )
-            config_workflow = dispatch.workflow or ""
-            config_step = dispatch.step or ""
-            config_branch = dispatch.branch or ""
-            config_parent_workflow = dispatch.parent_workflow or ""
-            config_parent_workflow_step = dispatch.parent_workflow_step or ""
+        config = _resolve_bot_fallback_path(trigger_body, workflows_dir)
 
-            # Resolve next agent based on dispatch status
-            if dispatch.status == "advance":
-                if not task:
-                    # Auto-resolve next agent from workflow YAML
-                    wf_result = resolve_next_from_workflow(
-                        config_workflow, config_step, workflows_dir
-                    )
-                    if wf_result:
-                        task = wf_result["task"]
-                        config_step = wf_result.get("step", config_step)
-            elif dispatch.status == "loop":
-                # Loop: re-dispatch current agent — use task_hint or resolve from state
-                task = dispatch.task_hint or ""
-                if not task:
-                    prev_state = extract_state_from_body(trigger_body)
-                    if prev_state:
-                        task = prev_state.agent or ""
-            elif dispatch.status == "hold":
-                return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
-            elif dispatch.status == "terminate":
-                return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
-        else:
-            # No dispatch in state either — skip
-            return {"SKIP_AGENT": "true", "REASON": "Bot comment without agentRunConfig or dispatch"}
+    if config.get("SKIP_AGENT") == "true":
+        return config
 
-    if not task:
-        return {"SKIP_AGENT": "true", "REASON": "No valid task found"}
-
-    # Validate task
-    if task not in TASK_TO_PROMPT:
-        return {"SKIP_AGENT": "true", "REASON": f"Unknown task: {task}"}
-
-    # Step 5: Workflow-aware routing
-    wf_result = resolve_workflow_routing(
-        {
-            "task": task,
-            "complexity": config_complexity,
-            "reasoning": config_reasoning,
-            "model": config_model,
-            "temperature": config_temperature,
-            "round": config_round,
-            "skills": config_skills,
-            "top_p": config_top_p,
-            "top_k": config_top_k,
-            "repetition_penalty": config_repetition_penalty,
-            "workflow": config_workflow,
-            "step": config_step,
-            "branch": config_branch,
-            "parent_workflow": config_parent_workflow,
-            "parent_workflow_step": config_parent_workflow_step,
-        },
-        workflows_dir,
-        prompt_base,
-    )
-
-    if wf_result.get("SKIP_AGENT") == "true":
-        return wf_result
-
-    role_name = wf_result["ROLE_NAME"]
-    prompt_location = wf_result["PROMPT_LOCATION"]
-
-    # Determine complexity for dev/ctx agents
-    complexity = "N/A"
-    if role_name in ("dev", "ctx"):
-        comp_lower = config_complexity.lower() if config_complexity else "medium"
-        complexity = comp_lower if comp_lower in ("low", "high") else "medium"
-
-    # Build matched rule identifier for debugging
-    wf_name = wf_result.get("WORKFLOW_NAME", "")
-    wf_step = wf_result.get("WORKFLOW_STEP", "")
-    if wf_name and wf_step:
-        matched_rule = f"workflow:{wf_name}/step:{wf_step}"
-    elif wf_name:
-        matched_rule = f"workflow:{wf_name}"
-    else:
-        matched_rule = ""
-
-    # Build result
-    result = {
-        "TASK": task,
-        "ROLE_NAME": role_name,
-        "PROMPT_LOCATION": prompt_location,
-        "AGENT_SELECTED": "true",
-        "COMPLEXITY": complexity,
-        "LLM_REASONING": config_reasoning,
-        "AGENT_ROUND": config_round or "",
-        "AGENT_SKILLS": config_skills or "",
-        "STEP_SKILLS": wf_result.get("STEP_SKILLS", ""),
-        "CONFIG_MODEL": config_model or "",
-        "CONFIG_TEMPERATURE": config_temperature or "",
-        "CONFIG_TOP_P": config_top_p or "",
-        "CONFIG_TOP_K": config_top_k or "",
-        "CONFIG_REPETITION_PENALTY": config_repetition_penalty or "",
-        "WORKFLOW_NAME": wf_result.get("WORKFLOW_NAME", ""),
-        "WORKFLOW_STEP": wf_result.get("WORKFLOW_STEP", ""),
-        "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
-        "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
-        "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
-        "MATCHED_RULE": matched_rule,
-        "SKIP_AGENT": "false",
-    }
-
-    return result
+    return _build_result(config, prompt_base, workflows_dir)
 
 
 def main():
