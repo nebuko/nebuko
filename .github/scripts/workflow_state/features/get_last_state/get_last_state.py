@@ -33,7 +33,7 @@ def _enrich_history_with_comment_ids(
     state (discovered via index alignment rather than by agent name).
     """
     for i, entry in enumerate(history):
-        if i < len(state_comments):
+        if i < len(state_comments) and entry.comment_id is None:
             entry.comment_id = state_comments[i].get("id")
 
 

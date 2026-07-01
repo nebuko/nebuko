@@ -125,8 +125,8 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         self.assertIsNone(result.history[1].comment_id)
         self.assertIsNone(result.history[2].comment_id)
 
-    def test_index_enrichment_overwrites_existing_comment_ids(self):
-        """Index-based enrichment takes precedence over any pre-existing comment_id values."""
+    def test_stored_comment_ids_are_preserved_during_enrichment(self):
+        """Stored comment_id values survive enrichment unchanged; only None entries get enriched."""
         entry_a = {"step": "analyze", "agent": "genius", "comment_id": 789}
         entry_b = {"step": "plan", "agent": "genius", "comment_id": None}
         comment_123 = _make_state_comment(123, history_entries=[entry_a], version=1)
@@ -134,8 +134,9 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
 
         result = extract_latest_state_from_comments([comment_123, comment_456])
 
-        # entry_a was originally in comment_123 (not comment_789), so it gets 123
-        self.assertEqual(result.history[0].comment_id, 123)
+        # entry_a's stored comment_id (789) is preserved — not overwritten by index alignment
+        self.assertEqual(result.history[0].comment_id, 789)
+        # entry_b had None, so it gets enriched from index alignment
         self.assertEqual(result.history[1].comment_id, 456)
 
     def test_non_state_comments_are_ignored(self):
