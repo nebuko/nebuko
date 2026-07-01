@@ -117,3 +117,50 @@ class TestBuildState(unittest.TestCase):
             agent="genius",
         )
         self.assertIsNone(state.resolution)
+
+    def test_inject_context_default_true(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+        )
+        self.assertTrue(state.history[0].inject_context)
+
+    def test_inject_context_explicit_false(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="context",
+            agent="ctx",
+            inject_context=False,
+        )
+        self.assertFalse(state.history[0].inject_context)
+
+    def test_inject_context_explicit_true(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+            inject_context=True,
+        )
+        self.assertTrue(state.history[0].inject_context)
+
+    def test_inject_context_persists_across_entries(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="context",
+            agent="ctx",
+            inject_context=False,
+        )
+        next_state = build_state(
+            prev,
+            workflow="default",
+            step="implement",
+            agent="dev",
+            inject_context=True,
+        )
+        self.assertFalse(next_state.history[0].inject_context)
+        self.assertTrue(next_state.history[1].inject_context)

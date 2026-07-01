@@ -19,6 +19,7 @@ def build_state(
     comment_id: Optional[int] = None,
     artifacts: Optional[list[str]] = None,
     pin: bool = False,
+    inject_context: bool = True,
     result: Optional[str] = None,
     metrics_dict: Optional[dict[str, Any]] = None,
     context_updates: Optional[dict[str, Any]] = None,
@@ -87,6 +88,7 @@ def build_state(
         comment_id=comment_id,
         artifacts=artifacts or [],
         pin=pin,
+        inject_context=inject_context,
         result=result,
     )
     new_history = base_history + [entry]
