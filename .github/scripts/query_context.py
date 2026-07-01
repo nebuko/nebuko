@@ -376,6 +376,9 @@ def main():
     history = _build_history_string(filtered_comments)
 
     # Build structured state context from latest workflow state (fetches pinned comment bodies)
+    # NOTE: Intentionally passes UNFILTERED comments — _build_state_context scans ALL comments
+    # to locate the latest workflow state JSON (which may reside in a comment excluded from
+    # history display by inject_context=False). Filtering applies only to history display.
     state_context = _build_state_context(comments, repo_name)
 
     # Save extracted workflow state as JSON for the next agent step
