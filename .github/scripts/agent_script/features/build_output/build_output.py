@@ -318,6 +318,9 @@ def build_output(
         logger.info("Cleared stale recovery log from previous failed run")
 
     # ── Build workflow state ─────────────────────────────────────
+    inject_context_str = os.environ.get("INJECT_CONTEXT", "true")
+    inject_context = inject_context_str.lower() not in ("false", "0", "no")
+
     new_state = build_state(
         prev_state,
         workflow=workflow_name,
@@ -333,6 +336,7 @@ def build_output(
         pull_request=pr_info,
         resolution=resolution,
         dispatch=dispatch,
+        inject_context=inject_context,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 
