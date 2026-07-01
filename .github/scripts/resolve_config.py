@@ -15,12 +15,11 @@ Usage:
 """
 
 import argparse
-import json
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # Import resolve_workflow directly (same directory)
 sys.path.insert(0, os.path.dirname(__file__))
@@ -242,7 +241,7 @@ def _resolve_dispatch_path(
         "config_temperature": str(dispatch_obj.temperature) if dispatch_obj.temperature is not None else "",
         "config_round": "",
         "config_model": dispatch_obj.model or "",
-        "config_skills": json.dumps(dispatch_obj.skills) if dispatch_obj.skills else "",
+        "config_skills": dispatch_obj.skills or "",
         "config_top_p": str(dispatch_obj.top_p) if dispatch_obj.top_p is not None else "",
         "config_top_k": str(dispatch_obj.top_k) if dispatch_obj.top_k is not None else "",
         "config_repetition_penalty": str(dispatch_obj.repetition_penalty) if dispatch_obj.repetition_penalty is not None else "",
@@ -291,6 +290,7 @@ def _resolve_human_path(
     repo: Optional[str],
     issue_number: Optional[int],
     workflows_dir: str,
+    prev_state: Optional["WorkflowState"] = None,
 ) -> dict:
     """Resolve config for a human-triggered comment.
 
@@ -302,6 +302,8 @@ def _resolve_human_path(
         repo: Repository in owner/name format.
         issue_number: Issue/PR number.
         workflows_dir: Path to workflows directory.
+        prev_state: Pre-fetched workflow state (from comment history).
+            If None or without workflow, will attempt to fetch from history.
 
     Returns:
         Config dict with task and config_* variables, or SKIP_AGENT dict.
@@ -310,22 +312,24 @@ def _resolve_human_path(
     force_next = extract_force_next_command(trigger_body)
     if force_next:
         _, target_step = force_next
-        prev_state = extract_state_from_body(trigger_body)
-        if not prev_state or not prev_state.workflow:
-            # Fallback: fetch workflow state from issue comments
-            prev_state = _fetch_workflow_state_from_history(repo, issue_number)
-        if not prev_state or not prev_state.workflow:
+        # Use pre-fetched state, fall back to body, then to comment history
+        fs_state = prev_state
+        if not fs_state:
+            fs_state = extract_state_from_body(trigger_body)
+        if not fs_state or not fs_state.workflow:
+            fs_state = _fetch_workflow_state_from_history(repo, issue_number)
+        if not fs_state or not fs_state.workflow:
             return {
                 "SKIP_AGENT": "true",
                 "REASON": "force-next-step requires an active workflow (no workflow state found)",
             }
-        config_workflow = prev_state.workflow
+        config_workflow = fs_state.workflow
         if not _SAFE_WF_NAME_RE.match(config_workflow):
             return {
                 "SKIP_AGENT": "true",
                 "REASON": f"force-next-step: invalid workflow name '{config_workflow}'",
             }
-        current_step_in_wf = prev_state.step
+        current_step_in_wf = fs_state.step
         wf_file_force = Path(workflows_dir) / f"{config_workflow}.yaml"
         try:
             wf_def = load_workflow(str(wf_file_force))
@@ -409,8 +413,8 @@ def _resolve_human_path(
             "config_top_k": "",
             "config_repetition_penalty": "",
             "config_branch": "",
-            "config_parent_workflow": prev_state.parent_workflow or "",
-            "config_parent_workflow_step": prev_state.parent_workflow_step or "",
+            "config_parent_workflow": fs_state.parent_workflow or "",
+            "config_parent_workflow_step": fs_state.parent_workflow_step or "",
         }
 
     # Normal /workflow command normalization (human only)
@@ -526,6 +530,64 @@ def _resolve_bot_fallback_path(
     return config
 
 
+def _resolve_workflow_next_step(
+    prev_state: "WorkflowState",
+    dispatch_obj: Optional[Any],
+    workflows_dir: str,
+) -> dict:
+    """Resolve next step from workflow YAML when state exists but no dispatch.
+
+    Uses prev_state.workflow + prev_state.step to look up the next agent
+    in the workflow definition.
+
+    Args:
+        prev_state: Workflow state containing workflow name and current step.
+        dispatch_obj: Optional dispatch object (expected to be None).
+        workflows_dir: Path to workflows directory.
+
+    Returns:
+        Config dict with resolved task and config_* variables.
+    """
+    wf_name = prev_state.workflow
+    current_step = prev_state.step
+
+    if not _SAFE_WF_NAME_RE.match(wf_name):
+        return {"SKIP_AGENT": "true", "REASON": f"Invalid workflow name '{wf_name}'"}
+
+    config = {
+        "task": "",
+        "config_complexity": "medium",
+        "config_reasoning": "none",
+        "config_temperature": "",
+        "config_round": "",
+        "config_model": "",
+        "config_skills": "",
+        "config_top_p": "",
+        "config_top_k": "",
+        "config_repetition_penalty": "",
+        "config_workflow": wf_name,
+        "config_step": current_step or "",
+        "config_branch": "",
+        "config_parent_workflow": "",
+        "config_parent_workflow_step": "",
+    }
+
+    # Resolve next step from workflow YAML
+    wf_result = resolve_next_from_workflow(wf_name, current_step, workflows_dir)
+    if wf_result:
+        config["task"] = wf_result["task"]
+        config["config_step"] = wf_result.get("step", config["config_step"])
+        if wf_result.get("branch"):
+            config["config_branch"] = wf_result["branch"]
+    else:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": "Terminal step reached or workflow resolution failed",
+        }
+
+    return config
+
+
 def _build_result(
     config: dict,
     prompt_base: str,
@@ -635,11 +697,18 @@ def resolve_config(
 ) -> dict:
     """Resolve complete agent configuration from trigger body.
 
-    This replaces the 223-line bash block. Steps:
-    1. Extract dispatch from workflow_state
-    2. Bot detection
-    3. Route via resolve_workflow.py or case-based fallback
-    4. Build result dict with all env vars
+    Orchestrates helper methods to determine agent task and parameters:
+    1. Parse trigger body for workflow state and dispatch (_parse_trigger_body).
+    2. Bot detection (if not pre-determined).
+    3. If no state in body, fetch from issue comment history.
+    4. Route based on what was found (human commands take precedence):
+       - State + dispatch → _resolve_dispatch_path.
+       - /workflow force-next-step → _resolve_human_path (regardless of state).
+       - /workflow command by human → _resolve_human_path.
+       - State without dispatch → _resolve_workflow_next_step.
+       - Human trigger without state → _resolve_human_path.
+       - Bot fallback → _resolve_bot_fallback_path.
+    5. Build result dict with all env vars (_build_result).
 
     Args:
         trigger_body: Raw trigger body text.
@@ -658,9 +727,34 @@ def resolve_config(
     # Parse trigger body for workflow state and dispatch
     prev_state, dispatch_obj = _parse_trigger_body(trigger_body)
 
-    # Route to appropriate handler based on state presence
+    # Check for human commands early — they take precedence over workflow state
+    # regardless of whether prev_state exists (they need to resolve the command)
+    force_next = extract_force_next_command(trigger_body)
+    wf_override = extract_workflow_command(trigger_body)
+
+    # Centralized fallback: if no state from current body, try comment history
+    if not prev_state:
+        prev_state = _fetch_workflow_state_from_history(repo, issue_number)
+        if prev_state:
+            dispatch_obj = prev_state.dispatch
+
+    # Route to appropriate handler based on what was found
     if prev_state and dispatch_obj:
         config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)
+    elif force_next:
+        # Force-next-step is a human command that must always go through
+        # _resolve_human_path so it can handle validation/error cases.
+        config = _resolve_human_path(
+            trigger_body, repo, issue_number, workflows_dir, prev_state
+        )
+    elif prev_state and prev_state.workflow and not is_bot and wf_override:
+        # Human provided /workflow override — use human path to honor the command
+        # even though prev_state.workflow is available from history.
+        config = _resolve_human_path(
+            trigger_body, repo, issue_number, workflows_dir, prev_state
+        )
+    elif prev_state and prev_state.workflow:
+        config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir)
     elif not is_bot:
         config = _resolve_human_path(trigger_body, repo, issue_number, workflows_dir)
     else:
