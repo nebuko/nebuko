@@ -847,3 +847,119 @@ class TestMain:
         captured = capsys.readouterr()
         assert "Wrote agent query context to /tmp/test_stderr.md" in captured.err
         os.unlink(event_path)
+
+
+class TestInjectContextFiltering:
+    """Test _get_injectable_comment_ids and _filter_comments_by_inject_context."""
+
+    def test_no_state_returns_none(self):
+        """When no state exists, _get_injectable_comment_ids returns None."""
+        from query_context import _get_injectable_comment_ids
+
+        result = _get_injectable_comment_ids(None)
+        assert result is None
+
+    def test_no_state_returns_all_comments(self):
+        """When no state exists, all comments pass through unfiltered."""
+        from query_context import _filter_comments_by_inject_context
+
+        comments = [
+            {"id": 1, "body": "First"},
+            {"id": 2, "body": "Second"},
+        ]
+        result = _filter_comments_by_inject_context(comments, None)
+        assert len(result) == 2
+
+    def test_inject_context_true_includes_comment(self):
+        """Comments matching history entries with inject_context=True are included."""
+        from query_context import _filter_comments_by_inject_context
+        from workflow_state import WorkflowState
+        from workflow_state import HistoryEntry
+
+        state = WorkflowState(
+            history=[
+                HistoryEntry(step="analyze", agent="genius", comment_id=1, inject_context=True),
+            ]
+        )
+        comments = [
+            {"id": 1, "body": "Included"},
+            {"id": 2, "body": "Excluded"},
+        ]
+        result = _filter_comments_by_inject_context(comments, state)
+        assert len(result) == 1
+        assert result[0]["id"] == 1
+
+    def test_inject_context_false_excludes_comment(self):
+        """Comments matching history entries with inject_context=False are excluded."""
+        from query_context import _filter_comments_by_inject_context
+        from workflow_state import WorkflowState
+        from workflow_state import HistoryEntry
+
+        state = WorkflowState(
+            history=[
+                HistoryEntry(step="analyze", agent="genius", comment_id=1, inject_context=True),
+                HistoryEntry(step="context", agent="ctx", comment_id=2, inject_context=False),
+            ]
+        )
+        comments = [
+            {"id": 1, "body": "Included"},
+            {"id": 2, "body": "Excluded"},
+        ]
+        result = _filter_comments_by_inject_context(comments, state)
+        assert len(result) == 1
+        assert result[0]["id"] == 1
+
+    def test_entry_without_comment_id_ignored(self):
+        """History entries without comment_id don't filter any comments."""
+        from query_context import _filter_comments_by_inject_context
+        from workflow_state import WorkflowState
+        from workflow_state import HistoryEntry
+
+        state = WorkflowState(
+            history=[
+                HistoryEntry(step="analyze", agent="genius", comment_id=None, inject_context=True),
+                HistoryEntry(step="context", agent="ctx", comment_id=2, inject_context=True),
+            ]
+        )
+        comments = [
+            {"id": 1, "body": "Excluded"},
+            {"id": 2, "body": "Included"},
+        ]
+        result = _filter_comments_by_inject_context(comments, state)
+        assert len(result) == 1
+        assert result[0]["id"] == 2
+
+    def test_empty_history_filters_all(self):
+        """Empty history results in all comments being filtered out."""
+        from query_context import _filter_comments_by_inject_context
+        from workflow_state import WorkflowState
+
+        state = WorkflowState(history=[])
+        comments = [
+            {"id": 1, "body": "First"},
+            {"id": 2, "body": "Second"},
+        ]
+        result = _filter_comments_by_inject_context(comments, state)
+        assert len(result) == 0
+
+    def test_default_inject_context_is_true(self):
+        """HistoryEntry defaults inject_context to True for backward compatibility."""
+        from workflow_state import HistoryEntry
+
+        entry = HistoryEntry(step="analyze", agent="genius", comment_id=5)
+        assert entry.inject_context is True
+
+    def test_duplicate_comment_ids_deduplicated(self):
+        """Multiple entries referencing same comment_id works correctly."""
+        from query_context import _get_injectable_comment_ids
+        from workflow_state import WorkflowState
+        from workflow_state import HistoryEntry
+
+        state = WorkflowState(
+            history=[
+                HistoryEntry(step="analyze", agent="genius", comment_id=1, inject_context=True),
+                HistoryEntry(step="plan", agent="genius", comment_id=1, inject_context=True),
+            ]
+        )
+        ids = _get_injectable_comment_ids(state)
+        assert ids == {1}

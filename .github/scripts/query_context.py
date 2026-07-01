@@ -152,6 +152,47 @@ def _resolve_repo_name() -> str:
     return ""
 
 
+def _get_injectable_comment_ids(state) -> set[int] | None:
+    """Extract comment IDs from workflow history where inject_context=True.
+
+    Returns None if no state is available (signals: include all comments).
+
+    Args:
+        state: WorkflowState instance, or None.
+
+    Returns:
+        Set of comment IDs eligible for injection, or None.
+    """
+    if state is None:
+        return None
+
+    ids: set[int] = set()
+    for entry in state.history:
+        if entry.comment_id and entry.inject_context:
+            ids.add(entry.comment_id)
+    return ids
+
+
+def _filter_comments_by_inject_context(comments, state) -> list[dict]:
+    """Filter comments based on workflow_state.history inject_context settings.
+
+    If state exists, only includes comments whose ID appears in history entries
+    with inject_context=True. If no state is available, returns all comments.
+
+    Args:
+        comments: List of comment dicts from GitHub API.
+        state: WorkflowState instance, or None.
+
+    Returns:
+        Filtered list of comment dicts.
+    """
+    allowed_ids = _get_injectable_comment_ids(state)
+    if allowed_ids is None:
+        return comments
+
+    return [c for c in comments if c.get("id") in allowed_ids]
+
+
 def _build_history_string(comments) -> str:
     """Build formatted history string from comments.
 
@@ -296,8 +337,21 @@ def main():
     # Fetch comments
     comments = get_issue_comments(repo_name, args.issue_number)
 
-    # Build history string
-    history = _build_history_string(comments)
+    # Extract workflow state FIRST (needed for inject_context filtering)
+    prev_state = None
+    try:
+        prev_state = extract_state(comments)
+    except Exception as e:
+        print(f"Warning: Failed to extract state for inject_context: {e}", file=sys.stderr)
+
+    # Filter comments by inject_context settings from workflow history
+    filtered_comments = _filter_comments_by_inject_context(comments, prev_state)
+    if filtered_comments is not comments:
+        skipped = len(comments) - len(filtered_comments)
+        print(f"Filtered {skipped} comments based on inject_context settings", file=sys.stderr)
+
+    # Build history string from filtered comments
+    history = _build_history_string(filtered_comments)
 
     # Build structured state context from latest workflow state (fetches pinned comment bodies)
     state_context = _build_state_context(comments, repo_name)
@@ -307,9 +361,7 @@ def main():
     state_file_path = os.path.join(
         os.environ.get("RUNNER_TEMP", "/tmp"), "prev_workflow_state.json"
     )
-    prev_state = None
     try:
-        prev_state = extract_state(comments)
         if prev_state:
             with open(state_file_path, "w", encoding="utf-8") as sf:
                 sf.write(state_to_json(prev_state, compact=True))
