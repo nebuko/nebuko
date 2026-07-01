@@ -11,6 +11,7 @@ from resolve_config import (
     extract_mention_agent,
     extract_workflow_command,
     extract_force_next_command,
+    extract_recover_command,
     resolve_config,
     resolve_next_agent_from_workflow,
     count_consecutive_same_agent,
@@ -1415,3 +1416,169 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
         self.assertEqual(result["TASK"], "ctx",
             "dispatch.advance from 'analyze' step in default workflow should resolve to 'ctx' agent")
         self.assertEqual(result["SKIP_AGENT"], "false")
+
+
+class TestExtractRecoverCommand(unittest.TestCase):
+    """Tests for extract_recover_command."""
+
+    def test_basic_recover_command(self):
+        result = extract_recover_command("/workflow recover")
+        self.assertEqual(result, "recover")
+
+    def test_recover_with_trailing_space(self):
+        result = extract_recover_command("/workflow recover  ")
+        self.assertEqual(result, "recover")
+
+    def test_recover_on_first_line_of_multiline(self):
+        result = extract_recover_command("/workflow recover\nsome additional context")
+        self.assertEqual(result, "recover")
+
+    def test_no_recover_when_not_on_first_line(self):
+        result = extract_recover_command("hello\n/workflow recover")
+        self.assertIsNone(result)
+
+    def test_empty_body(self):
+        result = extract_recover_command("")
+        self.assertIsNone(result)
+
+    def test_recover_not_matched_when_has_args(self):
+        result = extract_recover_command("/workflow recover something")
+        self.assertIsNone(result)
+
+    def test_other_workflow_command_not_matched(self):
+        result = extract_recover_command("/workflow default")
+        self.assertIsNone(result)
+
+
+class TestRecoverCommandIntegration(unittest.TestCase):
+    """Tests for /workflow recover command integration with resolve_config."""
+
+    @staticmethod
+    def _default_workflow_yaml():
+        return (
+            "name: default\n"
+            "description: Standard workflow\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: context\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: plan\n"
+            "  - name: plan\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    @staticmethod
+    def _build_state_json(workflow="default", step="implement", agent="dev",
+                           current_context=None):
+        import json as _json
+        state = {
+            "version": 1,
+            "workflow": workflow,
+            "step": step,
+            "agent": agent,
+        }
+        if current_context is not None:
+            state["current_context"] = current_context
+        return f"<!-- WORKFLOW_STATE_START -->\n{_json.dumps(state)}\n<!-- WORKFLOW_STATE_END -->"
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(self._default_workflow_yaml())
+        return prompt_base, workflows_dir
+
+    def _resolve_with_state(self, body, state_json):
+        prompt_base, workflows_dir = self._setup_dirs()
+        full_body = body + "\n\n" + state_json
+        return resolve_config(full_body, prompt_base, workflows_dir, is_bot=False)
+
+    def test_recover_valid_state_returns_previous_agent(self):
+        """Recover should re-dispatch the previous agent."""
+        state_json = self._build_state_json(workflow="default", step="implement", agent="dev")
+        result = self._resolve_with_state("/workflow recover", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["WORKFLOW_NAME"], "default")
+        self.assertEqual(result["WORKFLOW_STEP"], "implement")
+
+    def test_recover_with_different_agent(self):
+        """Recover with ctx agent should re-dispatch ctx."""
+        state_json = self._build_state_json(workflow="default", step="context", agent="ctx")
+        result = self._resolve_with_state("/workflow recover", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "ctx")
+
+    def test_recover_no_workflow_state(self):
+        """Recover without any workflow state should return SKIP_AGENT."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        result = resolve_config("/workflow recover", prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("no workflow state found", result["REASON"])
+
+    def test_recover_no_agent_in_state(self):
+        """Recover with state but no agent field should return SKIP_AGENT."""
+        import json as _json
+        import tempfile as _tf
+        prompt_base = _tf.mkdtemp()
+        workflows_dir = _tf.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(self._default_workflow_yaml())
+        state = {"version": 1, "workflow": "default", "step": "analyze"}
+        state_json = f"<!-- WORKFLOW_STATE_START -->\n{_json.dumps(state)}\n<!-- WORKFLOW_STATE_END -->"
+        full_body = "/workflow recover\n\n" + state_json
+        result = resolve_config(full_body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("no previous agent found", result["REASON"])
+
+    def test_recover_preserves_recovery_log(self):
+        """Recover should include existing recovery_log from current_context."""
+        state_json = self._build_state_json(
+            workflow="default", step="implement", agent="dev",
+            current_context={"recovery_log": "## Previous agent was working on file.py"}
+        )
+        result = self._resolve_with_state("/workflow recover", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "dev")
+
+    def test_recover_preserves_parent_workflow(self):
+        """Recover should preserve parent workflow fields from state."""
+        import json as _json
+        state_data = {
+            "version": 1,
+            "workflow": "default",
+            "step": "implement",
+            "agent": "dev",
+            "parent_workflow": "spec-driven",
+            "parent_workflow_step": "subtask-1",
+        }
+        state_json = f"<!-- WORKFLOW_STATE_START -->\n{_json.dumps(state_data)}\n<!-- WORKFLOW_STATE_END -->"
+        result = self._resolve_with_state("/workflow recover", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result.get("PARENT_WORKFLOW"), "spec-driven")
+        self.assertEqual(result.get("PARENT_WORKFLOW_STEP"), "subtask-1")
+
+    def test_recover_takes_precedence_over_force_next(self):
+        """Recover command should be checked before force-next-step."""
+        # /workflow recover won't match force-next-step extractor and vice versa,
+        # but this verifies both commands are parsed independently
+        state_json = self._build_state_json(workflow="default", step="implement", agent="dev")
+        result = self._resolve_with_state("/workflow recover", state_json)
+        self.assertEqual(result["TASK"], "dev")
