@@ -849,6 +849,45 @@ class TestMain:
         os.unlink(event_path)
 
 
+class TestIsBotComment:
+    """Test _is_bot_comment helper function."""
+
+    def test_bot_user_type(self):
+        """GitHub API reports bots with user.type == 'Bot'."""
+        from query_context import _is_bot_comment
+
+        comment = {"id": 1, "user": {"login": "github-actions", "type": "Bot"}}
+        assert _is_bot_comment(comment) is True
+
+    def test_login_contains_bot_suffix(self):
+        """Bots with [bot] suffix in login are detected even without type field."""
+        from query_context import _is_bot_comment
+
+        comment = {"id": 1, "user": {"login": "dependabot[bot]"}}
+        assert _is_bot_comment(comment) is True
+
+    def test_human_user_type(self):
+        """Human users have type == 'User' and are not considered bots."""
+        from query_context import _is_bot_comment
+
+        comment = {"id": 1, "user": {"login": "alice", "type": "User"}}
+        assert _is_bot_comment(comment) is False
+
+    def test_missing_user_dict(self):
+        """Comments without a user key are treated as non-bot (user comments)."""
+        from query_context import _is_bot_comment
+
+        comment = {"id": 1, "body": "Orphan comment"}
+        assert _is_bot_comment(comment) is False
+
+    def test_missing_user_fields(self):
+        """Empty user dict is treated as non-bot."""
+        from query_context import _is_bot_comment
+
+        comment = {"id": 1, "user": {}}
+        assert _is_bot_comment(comment) is False
+
+
 class TestInjectContextFiltering:
     """Test _get_injectable_comment_ids and _filter_comments_by_inject_context."""
 
@@ -864,14 +903,14 @@ class TestInjectContextFiltering:
         from query_context import _filter_comments_by_inject_context
 
         comments = [
-            {"id": 1, "body": "First"},
-            {"id": 2, "body": "Second"},
+            {"id": 1, "body": "First", "user": {"type": "Bot"}},
+            {"id": 2, "body": "Second", "user": {"type": "User"}},
         ]
         result = _filter_comments_by_inject_context(comments, None)
         assert len(result) == 2
 
-    def test_inject_context_true_includes_comment(self):
-        """Comments matching history entries with inject_context=True are included."""
+    def test_inject_context_true_includes_bot_comment(self):
+        """Bot comments matching history entries with inject_context=True are included."""
         from query_context import _filter_comments_by_inject_context
         from workflow_state import WorkflowState
         from workflow_state import HistoryEntry
@@ -882,15 +921,15 @@ class TestInjectContextFiltering:
             ]
         )
         comments = [
-            {"id": 1, "body": "Included"},
-            {"id": 2, "body": "Excluded"},
+            {"id": 1, "body": "Included", "user": {"type": "Bot"}},
+            {"id": 2, "body": "Excluded", "user": {"type": "Bot"}},
         ]
         result = _filter_comments_by_inject_context(comments, state)
         assert len(result) == 1
         assert result[0]["id"] == 1
 
-    def test_inject_context_false_excludes_comment(self):
-        """Comments matching history entries with inject_context=False are excluded."""
+    def test_inject_context_false_excludes_bot_comment(self):
+        """Bot comments matching history entries with inject_context=False are excluded."""
         from query_context import _filter_comments_by_inject_context
         from workflow_state import WorkflowState
         from workflow_state import HistoryEntry
@@ -902,8 +941,8 @@ class TestInjectContextFiltering:
             ]
         )
         comments = [
-            {"id": 1, "body": "Included"},
-            {"id": 2, "body": "Excluded"},
+            {"id": 1, "body": "Included", "user": {"type": "Bot"}},
+            {"id": 2, "body": "Excluded", "user": {"type": "Bot"}},
         ]
         result = _filter_comments_by_inject_context(comments, state)
         assert len(result) == 1
@@ -922,25 +961,46 @@ class TestInjectContextFiltering:
             ]
         )
         comments = [
-            {"id": 1, "body": "Excluded"},
-            {"id": 2, "body": "Included"},
+            {"id": 1, "body": "Excluded", "user": {"type": "Bot"}},
+            {"id": 2, "body": "Included", "user": {"type": "Bot"}},
         ]
         result = _filter_comments_by_inject_context(comments, state)
         assert len(result) == 1
         assert result[0]["id"] == 2
 
-    def test_empty_history_filters_all(self):
-        """Empty history results in all comments being filtered out."""
+    def test_empty_history_filters_only_bot_comments(self):
+        """Empty history filters bot comments but preserves user comments."""
         from query_context import _filter_comments_by_inject_context
         from workflow_state import WorkflowState
 
         state = WorkflowState(history=[])
         comments = [
-            {"id": 1, "body": "First"},
-            {"id": 2, "body": "Second"},
+            {"id": 1, "body": "User requirement", "user": {"type": "User"}},
+            {"id": 2, "body": "Bot output", "user": {"type": "Bot"}},
         ]
         result = _filter_comments_by_inject_context(comments, state)
-        assert len(result) == 0
+        assert len(result) == 1
+        assert result[0]["id"] == 1
+        assert result[0]["body"] == "User requirement"
+
+    def test_user_comments_always_pass_through(self):
+        """User comments are never filtered regardless of inject_context settings."""
+        from query_context import _filter_comments_by_inject_context
+        from workflow_state import WorkflowState
+        from workflow_state import HistoryEntry
+
+        state = WorkflowState(
+            history=[
+                HistoryEntry(step="analyze", agent="genius", comment_id=1, inject_context=True),
+            ]
+        )
+        comments = [
+            {"id": 1, "body": "Bot included", "user": {"type": "Bot"}},
+            {"id": 2, "body": "User feedback", "user": {"login": "alice", "type": "User"}},
+            {"id": 3, "body": "User follow-up", "user": {"login": "bob", "type": "User"}},
+        ]
+        result = _filter_comments_by_inject_context(comments, state)
+        assert len(result) == 3
 
     def test_default_inject_context_is_true(self):
         """HistoryEntry defaults inject_context to True for backward compatibility."""

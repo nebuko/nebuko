@@ -173,11 +173,33 @@ def _get_injectable_comment_ids(state) -> set[int] | None:
     return ids
 
 
+def _is_bot_comment(comment: dict) -> bool:
+    """Check if a comment was authored by a bot/agent rather than a human user.
+
+    User comments must NEVER be filtered out — they contain requirements,
+    feedback, and clarifications that the agent needs to see.
+    Only bot/agent comments are subject to inject_context filtering.
+
+    Args:
+        comment: Comment dict from GitHub API (contains 'user' key).
+
+    Returns:
+        True if the comment was authored by a bot agent.
+    """
+    user = comment.get("user", {})
+    return user.get("type") == "Bot" or "[bot]" in user.get("login", "")
+
+
 def _filter_comments_by_inject_context(comments, state) -> list[dict]:
     """Filter comments based on workflow_state.history inject_context settings.
 
-    If state exists, only includes comments whose ID appears in history entries
-    with inject_context=True. If no state is available, returns all comments.
+    **User comments are NEVER filtered** — they always pass through regardless
+    of inject_context settings. Only bot-authored comments (agents) are subject
+    to the inject_context whitelist.
+
+    If state exists, bot comments whose ID does not appear in history entries
+    with inject_context=True are excluded. If no state is available, returns
+    all comments.
 
     Args:
         comments: List of comment dicts from GitHub API.
@@ -190,7 +212,7 @@ def _filter_comments_by_inject_context(comments, state) -> list[dict]:
     if allowed_ids is None:
         return comments
 
-    return [c for c in comments if c.get("id") in allowed_ids]
+    return [c for c in comments if not _is_bot_comment(c) or c.get("id") in allowed_ids]
 
 
 def _build_history_string(comments) -> str:
