@@ -547,5 +547,62 @@ class TestExtractDispatchFromState(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestDispatchSerialization(unittest.TestCase):
+    """Test that dispatch data is properly visible in serialized JSON output.
+
+    Validates the fix for issue #416: all-defaults Dispatch was producing
+    "dispatch": {} in JSON, which looked like missing data.
+    """
+
+    def _serialize(self, state):
+        """Serialize a state and return the parsed JSON dict."""
+        json_str = wrap_comment_with_state(state, "")
+        json_block = json_str.split("<!-- WORKFLOW_STATE_START -->")[1].split("<!-- WORKFLOW_STATE_END -->")[0]
+        return json.loads(json_block.strip())
+
+    def test_all_defaults_dispatch_vanishes(self):
+        """All-defaults Dispatch should not appear in serialized JSON."""
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        state.dispatch = Dispatch(status="advance", complexity="medium")
+        data = self._serialize(state)
+        self.assertNotIn("dispatch", data)
+
+    def test_non_defaults_dispatch_preserved(self):
+        """Non-default dispatch fields must appear in serialized JSON."""
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        state.dispatch = Dispatch(status="loop", task_hint="dev", complexity="high")
+        data = self._serialize(state)
+        self.assertIn("dispatch", data)
+        self.assertEqual(data["dispatch"]["status"], "loop")
+        self.assertEqual(data["dispatch"]["task_hint"], "dev")
+        self.assertEqual(data["dispatch"]["complexity"], "high")
+
+    def test_no_dispatch_absent(self):
+        """When dispatch is None, the key must not appear in JSON."""
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        data = self._serialize(state)
+        self.assertNotIn("dispatch", data)
+
+    def test_dispatch_roundtrip_after_collapse(self):
+        """Collapsed (absent) dispatch must round-trip correctly via comment body."""
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        state.dispatch = Dispatch(status="advance")
+        body = wrap_comment_with_state(state, "content")
+        restored = extract_state_from_body(body)
+        self.assertIsNotNone(restored)
+        self.assertIsNone(restored.dispatch)
+
+    def test_non_default_dispatch_roundtrip(self):
+        """Non-default dispatch must round-trip through comment body intact."""
+        state = WorkflowState(workflow="w", step="s", agent="a")
+        state.dispatch = Dispatch(status="hold", reason="waiting on review")
+        body = wrap_comment_with_state(state, "content")
+        restored = extract_state_from_body(body)
+        self.assertIsNotNone(restored)
+        self.assertIsNotNone(restored.dispatch)
+        self.assertEqual(restored.dispatch.status, "hold")
+        self.assertEqual(restored.dispatch.reason, "waiting on review")
+
+
 if __name__ == "__main__":
     unittest.main()

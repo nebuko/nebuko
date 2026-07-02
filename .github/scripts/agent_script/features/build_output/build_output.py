@@ -19,6 +19,7 @@ from workflow_state import (
     WorkflowState,
 )
 from workflow_state.features.build_state.build_state import build_state
+from workflow_state.features.to_json.to_json import state_to_json
 
 from agent_script.sub_domains.split_plan.split_plan import (
     extract_split_plan,
@@ -218,7 +219,7 @@ def _write_output_files(final_message: str, message_parts: list[str], metrics: M
     if not message_parts:
         logger.warning("No final agent message found in events")
         with open("workflow_state.json", "w", encoding="utf-8") as f:
-            f.write(new_state.model_dump_json(exclude_defaults=True))
+            f.write(state_to_json(new_state))
         metrics_json = metrics.to_json(compact=True)
         sentinel = f"__NO_FINAL_MESSAGE__\n<!-- agent-metrics: {metrics_json} -->"
         with open("final_message.txt", "w", encoding="utf-8") as f:
@@ -244,7 +245,7 @@ def _write_output_files(final_message: str, message_parts: list[str], metrics: M
 
     # Save workflow state
     with open("workflow_state.json", "w", encoding="utf-8") as f:
-        f.write(new_state.model_dump_json(exclude_defaults=True))
+        f.write(state_to_json(new_state))
 
     # Write additional parts if split
     if len(message_parts) > 1:
