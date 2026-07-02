@@ -96,6 +96,38 @@ class TestAgentRunConfigToDispatch(unittest.TestCase):
         result = agent_run_config_to_dispatch(data)
         self.assertEqual(result.status, "terminate")
 
+    def test_nested_dispatch_structure(self):
+        """Agents emit {\"dispatch\": {...}, \"complexity\": \"...\"} — must unwrap."""
+        data = '{"dispatch": {"status": "advance"}, "complexity": "high"}'
+        result = agent_run_config_to_dispatch(data)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "advance")
+        self.assertEqual(result.complexity, "high")
+
+    def test_nested_dispatch_with_all_fields(self):
+        """Nested dispatch with multiple fields plus top-level complexity."""
+        data = '{"dispatch": {"status": "loop", "task": "dev", "workflow": "custom", "step": "review"}, "complexity": "low"}'
+        result = agent_run_config_to_dispatch(data)
+        self.assertEqual(result.status, "loop")
+        self.assertEqual(result.task_hint, "dev")
+        self.assertEqual(result.complexity, "low")
+        self.assertEqual(result.workflow, "custom")
+        self.assertEqual(result.step, "review")
+
+    def test_nested_dispatch_complexity_inside_overrides_top_level(self):
+        """If complexity appears both inside dispatch and at top-level, nested wins after unwrap."""
+        data = '{"dispatch": {"status": "advance", "complexity": "high"}, "complexity": "low"}'
+        result = agent_run_config_to_dispatch(data)
+        # data.update(dispatch) puts "high" into data; data.get("complexity") sees "high"
+        self.assertEqual(result.complexity, "high")
+
+    def test_flat_format_still_works(self):
+        """Backward compat: flat format without nested dispatch still works."""
+        data = '{"status": "advance", "complexity": "medium"}'
+        result = agent_run_config_to_dispatch(data)
+        self.assertEqual(result.status, "advance")
+        self.assertEqual(result.complexity, "medium")
+
 
 class TestStripAgentRunConfigs(unittest.TestCase):
     """Test the _strip_agent_run_configs() function."""
