@@ -72,7 +72,7 @@ jobs:
               contains(github.event.issue.body, '@@issue') ||
               contains(github.event.issue.body, '@@issue-reviewer') ||
               contains(github.event.issue.body, '@@debug') ||
-              contains(github.event.issue.body, '<agentRunConfig>') ||
+              contains(github.event.issue.body, '@@summarize') ||
               contains(github.event.issue.body, '/workflow'))) ||
             (github.event_name == 'issue_comment' &&
              (contains(github.event.comment.body, '@@genius') ||
@@ -82,7 +82,7 @@ jobs:
               contains(github.event.comment.body, '@@issue') ||
               contains(github.event.comment.body, '@@issue-reviewer') ||
               contains(github.event.issue.body, '@@debug') ||
-              contains(github.event.comment.body, '<agentRunConfig>') ||
+              contains(github.event.comment.body, '@@summarize') ||
               contains(github.event.comment.body, '/workflow')))
           )
         env:
@@ -460,9 +460,7 @@ jobs:
                 issue-number: ${{ env.TARGET_NUMBER }}
                 token: ${{ secrets.GH_PAT }}
                 body: |
-                  <agentRunConfig>
-                  {"task": "summarize", "complexity": "low"}
-                  </agentRunConfig>
+                  @@summarize
                 tag: "<!-- bot-agent-summary -->"
                 mode: replace
 
@@ -628,6 +626,8 @@ jobs:
                         metrics_match = re.search(r'<!-- agent-metrics:.*?-->', content)
                         metrics_comment = metrics_match.group(0) if metrics_match else ""
                         content = re.sub(r'\n?\n?<!-- agent-metrics:.*?-->', '', content).strip()
+                        # Safety-net: strip any <agentRunConfig> blocks that leaked through
+                        content = re.sub(r'\n?<agentRunConfig>.*?</agentRunConfig>\n?', '', content, flags=re.DOTALL).strip()
 
                         if content:
                             logger.info(f"Using final_message.txt ({len(content)} characters)")

@@ -2,7 +2,7 @@
 
 import json
 import unittest
-from build_output import agent_run_config_to_dispatch
+from build_output import agent_run_config_to_dispatch, _strip_agent_run_configs
 
 
 class TestAgentRunConfigToDispatch(unittest.TestCase):
@@ -95,6 +95,53 @@ class TestAgentRunConfigToDispatch(unittest.TestCase):
         data = '{"task": "ctx", "status": "terminate"}'
         result = agent_run_config_to_dispatch(data)
         self.assertEqual(result.status, "terminate")
+
+
+class TestStripAgentRunConfigs(unittest.TestCase):
+    """Test the _strip_agent_run_configs() function."""
+
+    def test_removes_single_block(self):
+        msg = "Hello world\n<agentRunConfig>{\"dispatch\": {\"status\": \"advance\"}}</agentRunConfig>"
+        result = _strip_agent_run_configs(msg)
+        self.assertEqual(result, "Hello world")
+        self.assertNotIn("agentRunConfig", result)
+
+    def test_removes_multiple_blocks(self):
+        msg = ("First part\n"
+                "<agentRunConfig>{\"task\": \"genius\"}</agentRunConfig>\n"
+                "Middle part\n"
+                "<agentRunConfig>{\"task\": \"dev\"}</agentRunConfig>\n"
+                "Last part")
+        result = _strip_agent_run_configs(msg)
+        # Regex consumes surrounding newlines, collapsing adjacent paragraphs
+        self.assertEqual(result, "First partMiddle partLast part")
+
+    def test_noop_when_no_blocks(self):
+        msg = "Just regular text without any XML blocks"
+        result = _strip_agent_run_configs(msg)
+        self.assertEqual(result, msg)
+
+    def test_multiline_json_in_block(self):
+        msg = ("Response text\n"
+                "<agentRunConfig>\n"
+                "{\n"
+                "  \"dispatch\": {\n"
+                "    \"status\": \"advance\",\n"
+                "    \"complexity\": \"high\"\n"
+                "  }\n"
+                "}\n"
+                "</agentRunConfig>")
+        result = _strip_agent_run_configs(msg)
+        self.assertEqual(result, "Response text")
+        self.assertNotIn("agentRunConfig", result)
+
+    def test_preserves_agent_metrics(self):
+        msg = ("Content\n"
+                "<!-- agent-metrics: {} -->\n"
+                "<agentRunConfig>{\"status\": \"advance\"}</agentRunConfig>")
+        result = _strip_agent_run_configs(msg)
+        self.assertIn("agent-metrics", result)
+        self.assertNotIn("agentRunConfig", result)
 
 
 if __name__ == "__main__":
