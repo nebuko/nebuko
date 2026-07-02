@@ -425,6 +425,17 @@ def main():
             query += f"\n{recovery_log}\n"
         print("Injected recovery log into agent query context", file=sys.stderr)
 
+    # Append human resume input if present (workflow was paused, human provided input)
+    human_resume_input = os.environ.get("HUMAN_RESUME_INPUT", "").strip()
+    if human_resume_input:
+        history_marker = "\n## History\n"
+        resume_section = f"\n## Human Resume Input\n\n{human_resume_input}\n\n"
+        if history_marker in query:
+            query = query.replace(history_marker, f"{resume_section}## History\n", 1)
+        else:
+            query += f"{resume_section}"
+        print("Injected human resume input into agent query context", file=sys.stderr)
+
     # Write output file
     with open(args.output_file, "w", encoding="utf-8") as f:
         f.write(query)

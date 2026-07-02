@@ -174,6 +174,26 @@ def extract_force_next_command(trigger_body: str) -> Optional[tuple]:
     return None
 
 
+def extract_resume_command(trigger_body: str) -> Optional[str]:
+    """Extract '/workflow resume' command from the first line.
+
+    Returns the human-provided input text (everything after '/workflow resume')
+    or None if the command is not present. If the command is present but has
+    no trailing text, returns an empty string.
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        Human input text (str), empty string if no input, or None if not a resume command.
+    """
+    first_line = trigger_body.split("\n", 1)[0].strip()
+    match = re.match(r"^/workflow\s+resume(?:\s+(.+))?$", first_line)
+    if match:
+        return match.group(1) if match.group(1) is not None else ""
+    return None
+
+
 # ── Helper methods for resolve_config ──────────────────────────────────────
 
 
@@ -211,6 +231,115 @@ def _fetch_workflow_state_from_history(
         return extract_latest_state_from_comments(comments)
     except Exception:
         return None
+
+
+def _resolve_resume_path(
+    prev_state: "WorkflowState",
+    trigger_body: str,
+    workflows_dir: str,
+) -> dict:
+    """Resolve config to re-run the currently held step after /workflow resume.
+
+    Validates that dispatch.status == "hold", looks up the current step in the
+    workflow YAML, then builds a config for the same step/agent (replaying so the
+    agent can process the human's response). Copies dispatch parameters from the
+    previously stored dispatch. Injects human input into current_context so the
+    agent prompt can reference it.
+
+    Args:
+        prev_state: WorkflowState containing the held workflow/step/agent.
+        trigger_body: Raw trigger body containing the /workflow resume command.
+        workflows_dir: Path to workflows directory.
+
+    Returns:
+        Config dict for re-running the held step, or SKIP_AGENT dict.
+    """
+    dispatch = prev_state.dispatch
+
+    # Validate that this step is actually on hold
+    if dispatch is None or dispatch.status != "hold":
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"resume: step is not on hold (dispatch.status='{dispatch.status if dispatch else 'none'}')",
+        }
+
+    wf_name = prev_state.workflow
+    if not wf_name or not _SAFE_WF_NAME_RE.match(wf_name):
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"resume: invalid or missing workflow name '{wf_name}'",
+        }
+
+    wf_file = Path(workflows_dir) / f"{wf_name}.yaml"
+    try:
+        wf_def = load_workflow(str(wf_file))
+    except (FileNotFoundError, ValueError) as e:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"resume: workflow '{wf_name}' not found ({e})",
+        }
+
+    current_step_in_wf = prev_state.step
+    if not current_step_in_wf:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": "resume: no current step in workflow state",
+        }
+
+    # Find the current step definition to get its agent
+    step_def = None
+    for step in wf_def.steps:
+        if step.name == current_step_in_wf:
+            step_def = step
+            break
+
+    if step_def is None:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"resume: step '{current_step_in_wf}' not found in workflow '{wf_name}'",
+        }
+
+    if not step_def.agent:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"resume: step '{current_step_in_wf}' has no agent defined",
+        }
+
+    # Extract human input text from the resume command
+    human_input = extract_resume_command(trigger_body)
+    if human_input is None:
+        human_input = ""
+
+    # Copy dispatch parameters from previous state so the step re-runs
+    # with the same LLM settings (model, temperature, etc.)
+    config = {
+        "task": step_def.agent,
+        "config_complexity": dispatch.complexity or "medium",
+        "config_reasoning": dispatch.reasoning or "none",
+        "config_temperature": (
+            str(dispatch.temperature) if dispatch.temperature is not None else ""
+        ),
+        "config_round": "",
+        "config_model": dispatch.model or "",
+        "config_skills": dispatch.skills or "",
+        "config_top_p": (
+            str(dispatch.top_p) if dispatch.top_p is not None else ""
+        ),
+        "config_top_k": (
+            str(dispatch.top_k) if dispatch.top_k is not None else ""
+        ),
+        "config_repetition_penalty": (
+            str(dispatch.repetition_penalty) if dispatch.repetition_penalty is not None else ""
+        ),
+        "config_workflow": wf_name,
+        "config_step": current_step_in_wf,
+        "config_branch": dispatch.branch or "",
+        "config_parent_workflow": dispatch.parent_workflow or "",
+        "config_parent_workflow_step": dispatch.parent_workflow_step or "",
+        "config_human_resume_input": human_input,
+    }
+
+    return config
 
 
 def _resolve_dispatch_path(
@@ -681,6 +810,7 @@ def _build_result(
         "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
         "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
         "MATCHED_RULE": matched_rule,
+        "HUMAN_RESUME_INPUT": config.get("config_human_resume_input", ""),
         "SKIP_AGENT": "false",
     }
 
@@ -730,6 +860,7 @@ def resolve_config(
     # Check for human commands early — they take precedence over workflow state
     # regardless of whether prev_state exists (they need to resolve the command)
     force_next = extract_force_next_command(trigger_body)
+    resume_cmd = extract_resume_command(trigger_body)
     wf_override = extract_workflow_command(trigger_body)
 
     # Centralized fallback: if no state from current body, try comment history
@@ -739,7 +870,10 @@ def resolve_config(
             dispatch_obj = prev_state.dispatch
 
     # Route to appropriate handler based on what was found
-    if prev_state and dispatch_obj:
+    if resume_cmd is not None and prev_state and prev_state.workflow:
+        # /workflow resume — re-run the held/current step with human input
+        config = _resolve_resume_path(prev_state, trigger_body, workflows_dir)
+    elif prev_state and dispatch_obj:
         config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)
     elif force_next:
         # Force-next-step is a human command that must always go through
