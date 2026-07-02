@@ -1,0 +1,21 @@
+# Default workflow: the standard dev chain
+# genius → ctx → genius (plan) → dev → review
+
+name: think
+description: "Simple workflow to think about a subject and help user to define and understand something"
+
+trigger:
+  agents: [genius]  # which @@mentions can start this workflow
+
+steps:
+  - name: analyze
+    agent: genius
+    next: context
+
+  - name: context
+    agent: ctx
+    next: plan
+
+  - name: plan
+    agent: genius
+    next: null
