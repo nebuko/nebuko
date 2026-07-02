@@ -11,6 +11,7 @@ from resolve_config import (
     extract_mention_agent,
     extract_workflow_command,
     extract_force_next_command,
+    extract_resume_command,
     resolve_config,
     resolve_next_agent_from_workflow,
     count_consecutive_same_agent,
@@ -1415,3 +1416,266 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
         self.assertEqual(result["TASK"], "ctx",
             "dispatch.advance from 'analyze' step in default workflow should resolve to 'ctx' agent")
         self.assertEqual(result["SKIP_AGENT"], "false")
+
+
+class TestExtractResumeCommand(unittest.TestCase):
+    """Tests for extract_resume_command function."""
+
+    def test_bare_resume_command(self):
+        """Bare '/workflow resume' returns empty string."""
+        result = extract_resume_command("/workflow resume")
+        self.assertEqual(result, "")
+
+    def test_resume_with_input(self):
+        """'/workflow resume <text>' returns the text."""
+        result = extract_resume_command("/workflow resume Yes, approved.")
+        self.assertEqual(result, "Yes, approved.")
+
+    def test_resume_with_multiline_input(self):
+        """Only first line is considered for the command."""
+        body = "/workflow resume Go ahead\nSecond line content"
+        result = extract_resume_command(body)
+        self.assertEqual(result, "Go ahead")
+
+    def test_not_resume_command(self):
+        """Non-resume commands return None."""
+        result = extract_resume_command("/workflow default")
+        self.assertIsNone(result)
+
+    def test_empty_body(self):
+        result = extract_resume_command("")
+        self.assertIsNone(result)
+
+    def test_resume_with_extra_whitespace(self):
+        """Leading/trailing whitespace on first line is handled."""
+        result = extract_resume_command("  /workflow resume approved  ")
+        self.assertEqual(result, "approved")
+
+    def test_force_next_step_is_not_resume(self):
+        result = extract_resume_command("/workflow force-next-step implement")
+        self.assertIsNone(result)
+
+
+class TestResumeIntegration(unittest.TestCase):
+    """Integration tests for /workflow resume command."""
+
+    @staticmethod
+    def _setup_prompt_base():
+        import tempfile
+        prompt_base = tempfile.mkdtemp()
+        os.makedirs(os.path.join(prompt_base, "dev"), exist_ok=True)
+        os.makedirs(os.path.join(prompt_base, "genius"), exist_ok=True)
+        os.makedirs(os.path.join(prompt_base, "ctx"), exist_ok=True)
+        os.makedirs(os.path.join(prompt_base, "review"), exist_ok=True)
+        for role in ("dev", "genius", "ctx", "review"):
+            with open(os.path.join(prompt_base, role, "system.md"), "w") as f:
+                f.write(f"# {role} prompt")
+        return prompt_base
+
+    @staticmethod
+    def _default_workflow_yaml():
+        return (
+            "name: default\n"
+            "description: Standard workflow\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: context\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: plan\n"
+            "  - name: plan\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    def _build_state_json(self, workflow, step, agent, dispatch_status="hold", **kwargs):
+        import json
+        data = {
+            "version": 1,
+            "workflow": workflow,
+            "step": step,
+            "agent": agent,
+            "phase": step,
+            "history": [],
+            "dispatch": {
+                "status": dispatch_status,
+                "complexity": kwargs.get("complexity", "high"),
+                "reasoning": kwargs.get("reasoning", "deep"),
+            },
+        }
+        return json.dumps(data)
+
+    def _build_trigger_body_with_state(self, command, state_json):
+        lines = [
+            command,
+            "<details>",
+            "<summary>🤖 Workflow State (v1)</summary>",
+            "",
+            "```json",
+            "<!-- WORKFLOW_STATE_START -->",
+            state_json,
+            "<!-- WORKFLOW_STATE_END -->",
+            "```",
+            "",
+            "</details>",
+        ]
+        return "\n".join(lines)
+
+    def test_resume_reruns_held_step(self):
+        """Resume should re-run the same held step, not advance."""
+        prompt_base = self._setup_prompt_base()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_path = os.path.join(tmpdir, "default.yaml")
+            with open(wf_path, "w") as f:
+                f.write(self._default_workflow_yaml())
+
+            state_json = self._build_state_json(
+                workflow="default", step="implement", agent="dev",
+                dispatch_status="hold", complexity="high", reasoning="deep",
+            )
+            body = self._build_trigger_body_with_state("/workflow resume Yes, approved.", state_json)
+
+            result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
+
+            self.assertEqual(result["SKIP_AGENT"], "false")
+            self.assertEqual(result["TASK"], "dev")
+            self.assertEqual(result["WORKFLOW_STEP"], "implement")
+            self.assertEqual(result["COMPLEXITY"], "high")
+            self.assertEqual(result["HUMAN_RESUME_INPUT"], "Yes, approved.")
+
+    def test_resume_without_input(self):
+        """Bare resume command (no input text) should still work."""
+        prompt_base = self._setup_prompt_base()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_path = os.path.join(tmpdir, "default.yaml")
+            with open(wf_path, "w") as f:
+                f.write(self._default_workflow_yaml())
+
+            state_json = self._build_state_json(
+                workflow="default", step="implement", agent="dev",
+                dispatch_status="hold", complexity="medium",
+            )
+            body = self._build_trigger_body_with_state("/workflow resume", state_json)
+
+            result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
+
+            self.assertEqual(result["SKIP_AGENT"], "false")
+            self.assertEqual(result["TASK"], "dev")
+            self.assertEqual(result["HUMAN_RESUME_INPUT"], "")
+
+    def test_resume_rejects_non_hold_dispatch(self):
+        """Resume should be rejected when dispatch is not on hold."""
+        prompt_base = self._setup_prompt_base()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_path = os.path.join(tmpdir, "default.yaml")
+            with open(wf_path, "w") as f:
+                f.write(self._default_workflow_yaml())
+
+            state_json = self._build_state_json(
+                workflow="default", step="plan", agent="genius",
+                dispatch_status="advance",
+            )
+            body = self._build_trigger_body_with_state("/workflow resume", state_json)
+
+            result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
+
+            self.assertEqual(result["SKIP_AGENT"], "true")
+            self.assertIn("not on hold", result["REASON"])
+
+    def test_resume_terminal_step(self):
+        """Resuming a terminal step (next=null) should still re-run that step."""
+        prompt_base = self._setup_prompt_base()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_path = os.path.join(tmpdir, "default.yaml")
+            with open(wf_path, "w") as f:
+                f.write(self._default_workflow_yaml())
+
+            state_json = self._build_state_json(
+                workflow="default", step="review", agent="review",
+                dispatch_status="hold", complexity="low",
+            )
+            body = self._build_trigger_body_with_state(
+                "/workflow resume Looks good, let me double-check.", state_json
+            )
+
+            result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
+
+            self.assertEqual(result["SKIP_AGENT"], "false")
+            self.assertEqual(result["TASK"], "review")
+            self.assertEqual(result["HUMAN_RESUME_INPUT"], "Looks good, let me double-check.")
+
+    def test_resume_invalid_workflow_name(self):
+        """Resume with invalid workflow name should be rejected."""
+        prompt_base = self._setup_prompt_base()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_json = self._build_state_json(
+                workflow="../evil", step="plan", agent="genius",
+                dispatch_status="hold",
+            )
+            body = self._build_trigger_body_with_state("/workflow resume", state_json)
+
+            result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
+
+            self.assertEqual(result["SKIP_AGENT"], "true")
+            self.assertIn("invalid or missing workflow", result["REASON"])
+
+    def test_resume_preserves_dispatch_params(self):
+        """Resume should copy dispatch LLM params (model, temperature, etc.)."""
+        prompt_base = self._setup_prompt_base()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_path = os.path.join(tmpdir, "default.yaml")
+            with open(wf_path, "w") as f:
+                f.write(self._default_workflow_yaml())
+
+            import json
+            data = {
+                "version": 1,
+                "workflow": "default",
+                "step": "plan",
+                "agent": "genius",
+                "phase": "plan",
+                "history": [],
+                "dispatch": {
+                    "status": "hold",
+                    "complexity": "high",
+                    "reasoning": "deep",
+                    "model": "claude-sonnet-4-20250514",
+                    "temperature": 0.5,
+                    "top_p": 0.9,
+                },
+            }
+            state_json = json.dumps(data)
+            body = self._build_trigger_body_with_state("/workflow resume OK", state_json)
+
+            result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
+
+            self.assertEqual(result["SKIP_AGENT"], "false")
+            self.assertEqual(result["CONFIG_MODEL"], "claude-sonnet-4-20250514")
+            self.assertEqual(result["CONFIG_TEMPERATURE"], "0.5")
+            self.assertEqual(result["CONFIG_TOP_P"], "0.9")
+
+    def test_resume_no_workflow_state(self):
+        """Resume with no workflow state should not crash (falls through to human path)."""
+        prompt_base = self._setup_prompt_base()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_path = os.path.join(tmpdir, "default.yaml")
+            with open(wf_path, "w") as f:
+                f.write(self._default_workflow_yaml())
+
+            body = "/workflow resume"
+
+            result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
+
+            # Should not crash. Since extract_workflow_command("resume") matches as a
+            # workflow override, it falls through to human path which attempts to find
+            # resume.yaml. We just verify the result doesn't contain a crash-level error.
+            self.assertIsInstance(result, dict)
