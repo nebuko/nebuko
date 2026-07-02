@@ -34,12 +34,6 @@ on:
         type: string
         default: ''
     secrets:
-      OPENROUTER_API_KEY:
-        description: 'Default API key for the LLM provider (used as fallback)'
-        required: true
-      LOCAL_VLLM_API_TOKEN:
-        description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
-        required: false
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
@@ -91,7 +85,6 @@ jobs:
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
-            LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN || secrets.LOCAL_VLLM_API_TOKEN }}
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
@@ -559,7 +552,6 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
-                LLM_API_KEY: ${{ env.LLM_API_KEY || secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 LLM_REASONING: ${{ env.LLM_REASONING }}
                 COMPLEXITY: ${{ env.COMPLEXITY }}

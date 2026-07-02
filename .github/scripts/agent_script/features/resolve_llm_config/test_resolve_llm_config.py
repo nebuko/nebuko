@@ -156,6 +156,19 @@ agents:
         self.assertTrue(cfg["drop_params"])
         self.assertEqual(cfg["api_key"], "test-key")
 
+    def test_missing_api_key_error_references_provider_env(self):
+        os.environ.pop("TEST_LLM_API_KEY", None)
+        self._write_config("true")
+        with self.assertRaises(ValueError) as ctx:
+            resolve_llm_config(None, "prompt")
+        self.assertIn("TEST_LLM_API_KEY", str(ctx.exception))
+
+    def test_missing_api_key_without_config_uses_generic_hint(self):
+        os.environ.pop("TEST_LLM_API_KEY", None)
+        with self.assertRaises(ValueError) as ctx:
+            resolve_llm_config(None, "prompt")
+        self.assertIn("api_token_env", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

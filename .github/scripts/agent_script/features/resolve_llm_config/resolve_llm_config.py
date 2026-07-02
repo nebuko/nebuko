@@ -41,7 +41,12 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     Priority order (highest → lowest):
       1. Per-invocation overrides (CONFIG_MODEL, CONFIG_TEMPERATURE, etc.)
       2. Layered config file (agent-config.yaml)
-      3. Environment variables (LLM_API_KEY, LLM_MODEL, etc.)
+      3. Environment variables (LLM_MODEL, LLM_BASE_URL, etc.)
+
+    Provider API keys are resolved from ``provider.api_token_env`` in the
+    layered config. Callers must pass the corresponding secret through their
+    workflow's ``secrets`` mapping — no schema change in the reusable
+    workflow is required.
 
     Args:
         args: Parsed argparse namespace with prompt_location attribute.
@@ -90,9 +95,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
                 "falling back to env vars"
             )
 
-    # ── Backward-compatible env var fallback ─────────────────────
-    if api_key is None:
-        api_key = os.getenv("LLM_API_KEY")
+    # ── Env var fallbacks (model, base_url, temperature) ─────────
     if model is None:
         model = os.getenv("LLM_MODEL", "gpt-5.5")
     if base_url is None:
@@ -125,7 +128,15 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
 
     # ── Validation ───────────────────────────────────────────────
     if not api_key:
-        raise ValueError("LLM_API_KEY environment variable is not set.")
+        env_hint = (
+            agent_cfg.model_ref.provider_ref.api_token_env
+            if agent_cfg
+            else "the provider's api_token_env"
+        )
+        raise ValueError(
+            f"API key not found. Ensure environment variable '{env_hint}' "
+            f"is set and passed through your workflow secrets."
+        )
 
     # ── Build base LLM config dict ───────────────────────────────
     llm_config = {
