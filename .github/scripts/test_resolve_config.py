@@ -11,6 +11,7 @@ from resolve_config import (
     extract_mention_agent,
     extract_workflow_command,
     extract_force_next_command,
+    extract_resume_command,
     resolve_config,
     resolve_next_agent_from_workflow,
     count_consecutive_same_agent,
@@ -1415,3 +1416,157 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
         self.assertEqual(result["TASK"], "ctx",
             "dispatch.advance from 'analyze' step in default workflow should resolve to 'ctx' agent")
         self.assertEqual(result["SKIP_AGENT"], "false")
+
+
+class TestExtractResumeCommand(unittest.TestCase):
+    """Tests for extract_resume_command function."""
+
+    def test_valid_resume_command(self):
+        self.assertTrue(extract_resume_command("/workflow resume"))
+
+    def test_resume_with_input(self):
+        self.assertTrue(extract_resume_command("/workflow resume Yes, approved."))
+
+    def test_resume_not_on_first_line(self):
+        self.assertFalse(extract_resume_command("Some text\n/workflow resume"))
+
+    def test_similar_but_not_resume(self):
+        self.assertFalse(extract_resume_command("/workflow resuming"))
+
+    def test_empty_body(self):
+        self.assertFalse(extract_resume_command(""))
+
+    def test_workflow_default_not_resume(self):
+        self.assertFalse(extract_resume_command("/workflow default"))
+
+
+class TestResumeCommandIntegration(unittest.TestCase):
+    """Integration tests for /workflow resume command."""
+
+    @staticmethod
+    def _default_workflow_yaml():
+        return (
+            "name: default\n"
+            "description: Standard workflow\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: context\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: plan\n"
+            "  - name: plan\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    @staticmethod
+    def _build_hold_state(workflow="default", step="plan", agent="genius"):
+        import json as _json
+        state = {
+            "version": 2,
+            "workflow": workflow,
+            "step": step,
+            "agent": agent,
+            "phase": "planning",
+            "dispatch": {
+                "status": "hold",
+                "complexity": "medium",
+                "reasoning": "none",
+            },
+        }
+        return f"<!-- WORKFLOW_STATE_START -->\n{_json.dumps(state)}\n<!-- WORKFLOW_STATE_END -->"
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(self._default_workflow_yaml())
+        return prompt_base, workflows_dir
+
+    def test_resume_re_runs_held_step(self):
+        """Resuming a held step should re-run the same step/agent."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_hold_state(workflow="default", step="plan", agent="genius")
+        body = "/workflow resume\n\n" + state_json
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "genius")
+        self.assertEqual(result.get("WORKFLOW_STEP"), "plan")
+
+    def test_resume_cleared_hold_dispatch(self):
+        """Hold dispatch should not block when resume command is present."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_hold_state(workflow="default", step="implement", agent="dev")
+        body = "/workflow resume Go ahead, merge that.\n\n" + state_json
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "dev")
+
+    def test_resume_without_workflow_state_skips(self):
+        """Resume requires an active workflow state."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = "/workflow resume"
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        self.assertEqual(result["SKIP_AGENT"], "true")
+
+    def test_resume_copies_dispatch_params(self):
+        """Resume should preserve dispatch LLM params from previous state."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        import json as _json
+        state = {
+            "version": 2,
+            "workflow": "default",
+            "step": "plan",
+            "agent": "genius",
+            "dispatch": {
+                "status": "hold",
+                "complexity": "high",
+                "model": "claude-sonnet-4-0",
+            },
+        }
+        state_json = f"<!-- WORKFLOW_STATE_START -->\n{_json.dumps(state)}\n<!-- WORKFLOW_STATE_END -->"
+        body = "/workflow resume\n\n" + state_json
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "genius")
+        self.assertEqual(result.get("CONFIG_MODEL"), "claude-sonnet-4-0")
+
+    def test_resume_resumes_terminal_step(self):
+        """Resuming the terminal (review) step should still work — re-runs review agent."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        import json as _json
+        state = {
+            "version": 3,
+            "workflow": "default",
+            "step": "review",
+            "agent": "review",
+            "dispatch": {"status": "hold"},
+        }
+        state_json = f"<!-- WORKFLOW_STATE_START -->\n{_json.dumps(state)}\n<!-- WORKFLOW_STATE_END -->"
+        body = "/workflow resume Approved.\n\n" + state_json
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "review")
+        self.assertEqual(result.get("WORKFLOW_STEP"), "review")
