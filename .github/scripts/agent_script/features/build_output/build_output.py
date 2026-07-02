@@ -54,6 +54,10 @@ def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
     if not isinstance(data, dict):
         return None
 
+    # Auto-unwrap nested {"dispatch": {...}} structure (agents emit this shape)
+    if "dispatch" in data and isinstance(data["dispatch"], dict):
+        data.update(data["dispatch"])
+
     # Map 'task' -> 'task_hint', default status to 'advance'
     return Dispatch(
         status=data.get("status", "advance"),
