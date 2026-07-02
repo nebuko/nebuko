@@ -179,6 +179,17 @@ def _build_resolution() -> StepResolution:
     )
 
 
+AGENT_RUN_CONFIG_STRIP = re.compile(
+    r"\n?<agentRunConfig>.*?</agentRunConfig>\n?",
+    re.DOTALL,
+)
+
+
+def _strip_agent_run_configs(message: str) -> str:
+    """Remove all <agentRunConfig> XML blocks from agent message text."""
+    return AGENT_RUN_CONFIG_STRIP.sub("", message).strip()
+
+
 def _save_split_plan(json_str: str) -> None:
     """Save split plan JSON to file."""
     with open("split_plan.json", "w", encoding="utf-8") as f:
@@ -303,6 +314,10 @@ def build_output(
         configs = extract_agent_run_configs(final_message)
         if configs:
             dispatch = agent_run_config_to_dispatch(configs[-1])  # Use last config block
+        # Strip <agentRunConfig> XML blocks from final_message so they don't
+        # appear in the visible comment body — dispatch is now stored structurally
+        # in workflow_state.dispatch instead.
+        final_message = _strip_agent_run_configs(final_message)
 
     # ── Recovery log: capture execution trace on failure ──────────
     context_updates = {}

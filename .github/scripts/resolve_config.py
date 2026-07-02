@@ -127,7 +127,7 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
         Agent name string or None.
     """
     agents = re.findall(
-        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue)",
+        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)",
         trigger_body,
     )
     if agents:
