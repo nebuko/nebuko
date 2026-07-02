@@ -43,27 +43,6 @@ on:
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
-      GENIUS_API_KEY:
-        description: 'API key override for the Genius agent (backward compat)'
-        required: false
-      DEV_MODEL_LOW_API_KEY:
-        description: 'API key override for low-complexity dev tasks (backward compat)'
-        required: false
-      DEV_MODEL_MEDIUM_API_KEY:
-        description: 'API key override for medium-complexity dev tasks (backward compat)'
-        required: false
-      DEV_MODEL_HIGH_API_KEY:
-        description: 'API key override for high-complexity dev tasks (backward compat)'
-        required: false
-      CTX_API_KEY:
-        description: 'API key override for the Ctx agent (backward compat)'
-        required: false
-      REVIEW_API_KEY:
-        description: 'API key override for the Review agent (backward compat)'
-        required: false
-      ISSUE_API_KEY:
-        description: 'API key override for the Issue agent (backward compat)'
-        required: false
   issues:
     types: [opened, edited, assigned, closed]
   issue_comment:
