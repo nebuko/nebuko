@@ -164,3 +164,52 @@ class TestBuildState(unittest.TestCase):
         )
         self.assertFalse(next_state.history[0].inject_context)
         self.assertTrue(next_state.history[1].inject_context)
+
+    def test_commit_sha_in_history_entry(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="implement",
+            agent="dev",
+            summary="Implementation done",
+            commit_sha="abc123def456",
+        )
+        self.assertEqual(state.history[0].commit_sha, "abc123def456")
+
+    def test_commit_sha_defaults_to_none(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+        )
+        self.assertIsNone(state.history[0].commit_sha)
+
+    def test_commit_sha_persists_across_transitions(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="implement",
+            agent="dev",
+            commit_sha="abc123def456",
+        )
+        next_state = build_state(
+            prev,
+            workflow="default",
+            step="review",
+            agent="review",
+        )
+        self.assertEqual(next_state.history[0].commit_sha, "abc123def456")
+        self.assertIsNone(next_state.history[1].commit_sha)
+
+    def test_json_serialization_with_commit_sha(self):
+        import json
+        state = build_state(
+            None,
+            workflow="default",
+            step="implement",
+            agent="dev",
+            commit_sha="abc123def456",
+        )
+        data = json.loads(state.model_dump_json())
+        self.assertEqual(data["history"][0]["commit_sha"], "abc123def456")

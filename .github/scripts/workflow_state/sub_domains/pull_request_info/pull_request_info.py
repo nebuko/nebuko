@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel
 
 class PullRequestInfo(BaseModel):
@@ -8,3 +10,4 @@ class PullRequestInfo(BaseModel):
     title: str
     author: str
     repo: str
+    initial_commit_sha: Optional[str] = None

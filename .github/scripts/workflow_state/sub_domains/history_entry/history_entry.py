@@ -13,3 +13,4 @@ class HistoryEntry(BaseModel):
     artifacts: list[str] = Field(default_factory=list)
     pin: bool = False
     result: Optional[str] = None
+    commit_sha: Optional[str] = None

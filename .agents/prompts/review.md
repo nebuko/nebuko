@@ -13,13 +13,14 @@ You use the same high-quality LLM as @@genius — accuracy is more important tha
 ## 2. Review Workflow
 
 ### Step 1: Analyze the Diff
-The git diff is pre-injected in the prompt below under "GIT DIFF". For each change in the diff, evaluate:
+The git diff is pre-injected in the prompt below under "GIT DIFF". This diff may be scoped incrementally (only changes since the last review) or include the full PR scope on first review. For each change in the diff, evaluate:
 - **Correctness:** Does the code work as intended? Are there logic errors?
 - **Edge Cases:** Are edge cases handled (empty inputs, null values, boundary conditions)?
 - **Regressions:** Could this change break existing functionality?
 - **Code Quality:** Is the code clean, readable, and consistent with the project style?
 - **Security:** Are there any security vulnerabilities (injection, auth bypass, data exposure)?
 - **Testing:** Are there appropriate tests for the changes?
+- **Previous Fixes:** If this is an incremental review (after a previous review round), verify that previously-requested fixes have been properly addressed.
 
 ### Step 2: Output Your Verdict
 Choose ONE of the following paths:

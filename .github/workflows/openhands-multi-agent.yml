@@ -578,8 +578,41 @@ jobs:
                       echo "PR discovered via regex fallback: ${PR_NUMBER:-none}"
                     fi
 
-                    # 4. Inject diff or failure marker
-                    if [ -n "$PR_NUMBER" ]; then
+                    # 4. Determine diff baseline from workflow state for incremental review
+                    LAST_REVIEWED_SHA=""
+                    INITIAL_COMMIT_SHA=""
+                    WORKFLOW_STATE_FILE="${HOME}/workflow_state.json"
+                    if [ -f "$WORKFLOW_STATE_FILE" ]; then
+                        LAST_REVIEWED_SHA=$(python3 -c "
+import json, sys
+try:
+    with open('$WORKFLOW_STATE_FILE') as f:
+        state = json.load(f)
+    sha = state.get('current_context', {}).get('last_reviewed_commit_sha', '')
+    print(sha if sha else '')
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+                        INITIAL_COMMIT_SHA=$(python3 -c "
+import json, sys
+try:
+    with open('$WORKFLOW_STATE_FILE') as f:
+        state = json.load(f)
+    sha = state.get('pull_request', {}).get('initial_commit_sha', '')
+    print(sha if sha else '')
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+                    fi
+
+                    # 5. Inject diff using best available strategy
+                    if [ -n "$LAST_REVIEWED_SHA" ]; then
+                        echo "# Incremental diff since last review: $LAST_REVIEWED_SHA..HEAD" >> $FINAL_PROMPT_FILE
+                        git diff "$LAST_REVIEWED_SHA"..HEAD >> $FINAL_PROMPT_FILE 2>/dev/null || echo "(failed to compute incremental diff)" >> $FINAL_PROMPT_FILE
+                    elif [ -n "$INITIAL_COMMIT_SHA" ]; then
+                        echo "# Full PR diff from initial commit: $INITIAL_COMMIT_SHA..HEAD" >> $FINAL_PROMPT_FILE
+                        git diff "$INITIAL_COMMIT_SHA"..HEAD >> $FINAL_PROMPT_FILE 2>/dev/null || echo "(failed to compute PR diff)" >> $FINAL_PROMPT_FILE
+                    elif [ -n "$PR_NUMBER" ]; then
                         gh pr diff "$PR_NUMBER" --repo "${{ github.repository }}" >> $FINAL_PROMPT_FILE 2>/dev/null || echo "(no diff available for PR#$PR_NUMBER)" >> $FINAL_PROMPT_FILE
                     else
                         echo "(no PR found linked to issue#$ISSUE_NUMBER)" >> $FINAL_PROMPT_FILE

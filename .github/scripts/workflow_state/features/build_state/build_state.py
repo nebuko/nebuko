@@ -21,6 +21,7 @@ def build_state(
     pin: bool = False,
     inject_context: bool = True,
     result: Optional[str] = None,
+    commit_sha: Optional[str] = None,
     metrics_dict: Optional[dict[str, Any]] = None,
     context_updates: Optional[dict[str, Any]] = None,
     parent_workflow: Optional[str] = None,
@@ -47,6 +48,9 @@ def build_state(
         comment_id: GitHub comment ID for this step's output.
         artifacts: List of artifact names produced by this step.
         pin: If True, add this step's comment_id to pinned_comment_ids.
+        inject_context: Whether to inject this step's context for subsequent agents.
+        result: Final result text of this step.
+        commit_sha: SHA1 of the git commit produced in this step.
         metrics_dict: Full metrics dict from the current agent run.
         context_updates: Key-value pairs to merge into current_context.
         parent_workflow: Parent workflow name (if in a sub-workflow).
@@ -90,6 +94,7 @@ def build_state(
         pin=pin,
         inject_context=inject_context,
         result=result,
+        commit_sha=commit_sha,
     )
     new_history = base_history + [entry]
 
@@ -116,8 +121,8 @@ def build_state(
     # Preserve issue info across transitions (once set, it persists)
     new_issue = issue or base_issue
 
-    # Preserve PR info across transitions (once set, it persists)
-    new_pr = pull_request or base_pr
+    # Preserve PR info across transitions, merging initial_commit_sha
+    new_pr = _merge_pr_info(pull_request, base_pr)
 
     return WorkflowState(
         version=base_version + 1,
@@ -136,3 +141,17 @@ def build_state(
         resolution=resolution,
         dispatch=dispatch,
     )
+
+
+def _merge_pr_info(new_pr: Optional[PullRequestInfo], base_pr: Optional[PullRequestInfo]) -> Optional[PullRequestInfo]:
+    """Merge two PR info objects, preserving initial_commit_sha from the earlier one."""
+    if new_pr is None:
+        return base_pr
+    if base_pr is None:
+        return new_pr
+    # Keep existing PR fields but preserve initial_commit_sha if not yet set on new_pr
+    if not new_pr.initial_commit_sha and base_pr.initial_commit_sha:
+        new_pr_dict = new_pr.model_dump(exclude_defaults=True)
+        new_pr_dict["initial_commit_sha"] = base_pr.initial_commit_sha
+        return PullRequestInfo(**new_pr_dict)
+    return new_pr

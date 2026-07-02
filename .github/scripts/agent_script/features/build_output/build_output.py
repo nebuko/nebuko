@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import subprocess
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -107,6 +108,19 @@ def _derive_phase(workflow_step: str) -> str:
     if "review" in tokens:
         return "review"
     return ""
+
+
+def _get_head_sha() -> Optional[str]:
+    """Extract current HEAD commit SHA via git rev-parse."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        return result.stdout.strip()
+    except Exception as e:
+        logger.warning("Failed to extract commit SHA: %s", e)
+        return None
 
 
 def _build_issue_info() -> IssueInfo | None:
@@ -290,11 +304,23 @@ def build_output(
     workflow_step = os.environ.get("WORKFLOW_STEP", "")
     parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
     parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
-    phase = _derive_phase(workflow_step)
+    phase = _derive_phase(workflow_step or role_name)
+
+    # ── Extract current HEAD commit SHA ──────────────────────────
+    current_commit_sha = _get_head_sha()
 
     # ── Issue / PR info ──────────────────────────────────────────
     issue_info = _build_issue_info()
     pr_info = _build_pr_info()
+    if pr_info and not pr_info.initial_commit_sha and current_commit_sha:
+        # Set initial_commit_sha on first dev commit for this PR
+        if phase in ("execution", "review"):
+            pr_info.initial_commit_sha = current_commit_sha
+    # Preserve initial_commit_sha from previous state's PR info
+    if prev_state and prev_state.pull_request:
+        base_icsha = prev_state.pull_request.initial_commit_sha
+        if base_icsha and pr_info and not pr_info.initial_commit_sha:
+            pr_info.initial_commit_sha = base_icsha
     resolution = _build_resolution()
 
     # ── Extract dispatch from agent output ────────────────────────
@@ -317,6 +343,11 @@ def build_output(
         context_updates["recovery_log"] = ""
         logger.info("Cleared stale recovery log from previous failed run")
 
+    # ── Track last_reviewed_commit_sha after successful review ────
+    if phase == "review" and current_commit_sha and final_message:
+        context_updates["last_reviewed_commit_sha"] = current_commit_sha
+        logger.info(f"Updated last_reviewed_commit_sha to {current_commit_sha}")
+
     # ── Build workflow state ─────────────────────────────────────
     inject_context_str = os.environ.get("INJECT_CONTEXT", "true")
     inject_context = inject_context_str.lower() not in ("false", "0", "no")
@@ -328,6 +359,7 @@ def build_output(
         agent=role_name,
         phase=phase,
         summary=final_message[:300] if final_message else "",
+        commit_sha=current_commit_sha,
         metrics_dict=metrics.to_dict(),
         context_updates=context_updates or None,
         parent_workflow=parent_workflow,
