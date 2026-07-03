@@ -369,7 +369,7 @@ jobs:
                     fi
                   fi
 
-                  echo "SKIP_AGENT=false" >> $GITHUB_ENV
+                  echo "SKIP_AGENT=${SKIP_AGENT:-false}" >> $GITHUB_ENV
 
             - name: Check Circuit Breaker
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
