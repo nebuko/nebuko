@@ -870,9 +870,17 @@ def resolve_config(
             dispatch_obj = prev_state.dispatch
 
     # Route to appropriate handler based on what was found
-    if resume_cmd is not None and prev_state and prev_state.workflow:
-        # /workflow resume — re-run the held/current step with human input
+    if resume_cmd is not None and prev_state and prev_state.workflow and \
+       prev_state.dispatch and prev_state.dispatch.status == "hold":
+        # /workflow resume — re-run the held step with human input
         config = _resolve_resume_path(prev_state, trigger_body, workflows_dir)
+    elif resume_cmd is not None and prev_state and prev_state.workflow and \
+         (prev_state.dispatch is None):
+        # /workflow resume with no dispatch — advance to next step, carrying
+        # human input forward (issue #420: resolution-only state).
+        human_input = trigger_body.replace("/workflow resume", "").strip()
+        config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir)
+        config["config_human_resume_input"] = human_input
     elif prev_state and dispatch_obj:
         config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)
     elif force_next:

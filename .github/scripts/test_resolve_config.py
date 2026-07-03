@@ -1572,8 +1572,8 @@ class TestResumeIntegration(unittest.TestCase):
             self.assertEqual(result["TASK"], "dev")
             self.assertEqual(result["HUMAN_RESUME_INPUT"], "")
 
-    def test_resume_rejects_non_hold_dispatch(self):
-        """Resume should be rejected when dispatch is not on hold."""
+    def test_resume_with_advance_dispatch_advances_to_next_step(self):
+        """Resume with dispatch.status='advance' should advance, not skip."""
         prompt_base = self._setup_prompt_base()
         with tempfile.TemporaryDirectory() as tmpdir:
             wf_path = os.path.join(tmpdir, "default.yaml")
@@ -1588,8 +1588,10 @@ class TestResumeIntegration(unittest.TestCase):
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
-            self.assertEqual(result["SKIP_AGENT"], "true")
-            self.assertIn("not on hold", result["REASON"])
+            # dispatch=advance routes through _resolve_dispatch_path which
+            # auto-resolves the next agent from workflow (plan → implement/dev).
+            self.assertEqual(result["SKIP_AGENT"], "false")
+            self.assertEqual(result["TASK"], "dev")
 
     def test_resume_terminal_step(self):
         """Resuming a terminal step (next=null) should still re-run that step."""
@@ -1679,3 +1681,111 @@ class TestResumeIntegration(unittest.TestCase):
             # workflow override, it falls through to human path which attempts to find
             # resume.yaml. We just verify the result doesn't contain a crash-level error.
             self.assertIsInstance(result, dict)
+
+    def _spec_driven_workflow_yaml(self):
+        """Minimal spec-driven workflow YAML matching workflows/spec-driven.yaml."""
+        return (
+            "name: spec-driven\n"
+            "description: Spec-driven workflow\n"
+            "trigger:\n"
+            "  agents: [po]\n"
+            "steps:\n"
+            "  - name: spec\n"
+            "    agent: po\n"
+            "    next: spec_approval\n"
+            "  - name: spec_approval\n"
+            "    agent: genius\n"
+            "    next: architect\n"
+            "  - name: architect\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    def _build_state_json_no_dispatch(self, workflow, step, agent, **kwargs):
+        """Build workflow state JSON without a dispatch field (resolution-only).
+
+        Mirrors the WorkflowState produced by agents that post resolution.next_step
+        but do not include a dispatch object — the exact scenario from issue #420.
+        """
+        import json
+        data = {
+            "version": kwargs.get("version", 1),
+            "workflow": workflow,
+            "step": step,
+            "agent": agent,
+            "phase": step,
+            "history": kwargs.get("history", []),
+        }
+        if "resolution" in kwargs:
+            data["resolution"] = kwargs["resolution"]
+        return json.dumps(data)
+
+    def test_resume_with_no_dispatch_advances_to_next_step(self):
+        """Resume with no dispatch should advance to next step, not SKIP_AGENT.
+
+        Reproduces issue #420: when an agent posts WorkflowState with resolution
+        but no dispatch, issuing /workflow resume should advance to the next step
+        defined in the workflow YAML (not skip with 'step is not on hold').
+        """
+        prompt_base = self._setup_prompt_base()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_path = os.path.join(tmpdir, "default.yaml")
+            with open(wf_path, "w") as f:
+                f.write(self._default_workflow_yaml())
+
+            state_json = self._build_state_json_no_dispatch(
+                workflow="default", step="analyze", agent="genius",
+                resolution={"task": "genius", "next_step": "context"},
+            )
+            body = self._build_trigger_body_with_state(
+                "/workflow resume Here is my feedback.", state_json
+            )
+
+            result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
+
+            self.assertEqual(result["SKIP_AGENT"], "false")
+            self.assertEqual(result["TASK"], "ctx")
+            self.assertEqual(result["WORKFLOW_STEP"], "context")
+
+    def test_resume_no_dispatch_with_spec_driven_workflow(self):
+        """Resume with no dispatch using spec-driven workflow (exact issue #420 scenario).
+
+        PO agent completes spec step, posts resolution.next_step='spec_approval'
+        with no dispatch. User issues /workflow resume with answers. Expected:
+        advance to spec_approval step with genius agent.
+        """
+        prompt_base = self._setup_prompt_base()
+        os.makedirs(os.path.join(prompt_base, "po"), exist_ok=True)
+        with open(os.path.join(prompt_base, "po", "system.md"), "w") as f:
+            f.write("# po prompt")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_path = os.path.join(tmpdir, "spec-driven.yaml")
+            with open(wf_path, "w") as f:
+                f.write(self._spec_driven_workflow_yaml())
+
+            state_json = self._build_state_json_no_dispatch(
+                workflow="spec-driven", step="spec", agent="po",
+                resolution={
+                    "task": "po",
+                    "input_workflow": "spec-driven",
+                    "input_step": "spec",
+                    "next_step": "spec_approval",
+                    "reasoning": "none",
+                },
+            )
+            body = self._build_trigger_body_with_state(
+                "/workflow resume 1. Yes 2. No 3. Use REST API.", state_json
+            )
+
+            result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
+
+            self.assertEqual(result["SKIP_AGENT"], "false")
+            self.assertEqual(result["TASK"], "genius")
+            self.assertEqual(result["WORKFLOW_STEP"], "spec_approval")
