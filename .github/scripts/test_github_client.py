@@ -50,6 +50,22 @@ class TestGetIssueComments:
         result = get_issue_comments("owner/repo", 42)
         assert result == []
 
+    @patch("github_client.subprocess.run")
+    def test_default_does_not_paginate(self, mock_run):
+        """Default call (all_pages=False) must NOT include --paginate."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="[]")
+        get_issue_comments("owner/repo", 42)
+        args = mock_run.call_args[0][0]
+        assert "--paginate" not in args
+
+    @patch("github_client.subprocess.run")
+    def test_all_pages_includes_paginate_flag(self, mock_run):
+        """When all_pages=True, --paginate must be in the gh api command."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="[]")
+        get_issue_comments("owner/repo", 42, all_pages=True)
+        args = mock_run.call_args[0][0]
+        assert "--paginate" in args
+
 
 class TestGetCommentNodeId:
     """Test get_comment_node_id function."""

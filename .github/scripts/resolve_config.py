@@ -217,6 +217,9 @@ def _fetch_workflow_state_from_history(
 ) -> Optional["WorkflowState"]:
     """Fetch latest workflow state from issue comment history.
 
+    Fetches all comment pages to ensure state-containing comments pushed deep
+    into the history are not missed.
+
     Args:
         repo: Repository in owner/name format.
         issue_number: Issue/PR number.
@@ -227,7 +230,7 @@ def _fetch_workflow_state_from_history(
     if not repo or not issue_number:
         return None
     try:
-        comments = get_issue_comments(repo, issue_number)
+        comments = get_issue_comments(repo, issue_number, all_pages=True)
         return extract_latest_state_from_comments(comments)
     except Exception:
         return None

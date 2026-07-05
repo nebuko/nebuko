@@ -781,6 +781,194 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("no workflow state found", result["REASON"])
 
+    def test_fallback_uses_all_pages(self):
+        """The fallback must call get_issue_comments with all_pages=True."""
+        from unittest.mock import patch, call
+
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_block = self._build_state_block(workflow="default", step="analyze")
+        comments = self._comments_with_state(state_block)
+
+        with patch("resolve_config.get_issue_comments", return_value=comments) as mock_get:
+            resolve_config(
+                "/workflow force-next-step",
+                prompt_base,
+                workflows_dir,
+                is_bot=False,
+                repo="owner/repo",
+                issue_number=42,
+            )
+
+        # Verify all_pages=True was passed
+        mock_get.assert_called_once_with("owner/repo", 42, all_pages=True)
+
+
+class TestResumeFallbackFromComments(unittest.TestCase):
+    """Tests for /workflow resume fallback: fetching state from issue comments."""
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(self._default_workflow_yaml())
+        return prompt_base, workflows_dir
+
+    @staticmethod
+    def _default_workflow_yaml():
+        return (
+            "name: default\n"
+            "description: Standard workflow\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: context\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: plan\n"
+            "  - name: plan\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: review\n"
+            "  - name: review\n"
+            "    agent: review\n"
+            "    next: null\n"
+        )
+
+    @staticmethod
+    def _build_state_block(workflow="default", step="analyze", dispatch=None):
+        import json as _json
+        state = {
+            "version": 1,
+            "workflow": workflow,
+            "step": step,
+            "agent": "genius",
+        }
+        if dispatch:
+            state["dispatch"] = dispatch
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    @staticmethod
+    def _comments_with_state(state_block):
+        return [
+            {"body": "Some discussion comment", "id": 111},
+            {"body": state_block, "id": 222},
+        ]
+
+    def test_resume_fallback_fetches_state_from_comments(self):
+        """/workflow resume with no embedded state → fallback finds state → reruns held step."""
+        from unittest.mock import patch
+
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_block = self._build_state_block(
+            workflow="default", step="analyze",
+            dispatch={"status": "hold", "task_hint": "genius", "complexity": "medium"},
+        )
+        comments = self._comments_with_state(state_block)
+
+        with patch("resolve_config.get_issue_comments", return_value=comments):
+            result = resolve_config(
+                "/workflow resume please reconsider",
+                prompt_base,
+                workflows_dir,
+                is_bot=False,
+                repo="owner/repo",
+                issue_number=42,
+            )
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "genius")
+        self.assertEqual(result["HUMAN_RESUME_INPUT"], "please reconsider")
+
+    def test_resume_fallback_no_state_returns_error(self):
+        """/workflow resume when comments have no state → returns error."""
+        from unittest.mock import patch
+
+        prompt_base, workflows_dir = self._setup_dirs()
+        comments = [{"body": "No state here", "id": 111}]
+
+        with patch("resolve_config.get_issue_comments", return_value=comments):
+            result = resolve_config(
+                "/workflow resume something",
+                prompt_base,
+                workflows_dir,
+                is_bot=False,
+                repo="owner/repo",
+                issue_number=42,
+            )
+
+        self.assertEqual(result["SKIP_AGENT"], "true")
+
+    def test_resume_fallback_uses_all_pages(self):
+        """The resume fallback must call get_issue_comments with all_pages=True."""
+        from unittest.mock import patch
+
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_block = self._build_state_block(
+            workflow="default", step="analyze",
+            dispatch={"status": "hold", "task_hint": "genius", "complexity": "medium"},
+        )
+        comments = self._comments_with_state(state_block)
+
+        with patch("resolve_config.get_issue_comments", return_value=comments) as mock_get:
+            resolve_config(
+                "/workflow resume retry",
+                prompt_base,
+                workflows_dir,
+                is_bot=False,
+                repo="owner/repo",
+                issue_number=42,
+            )
+
+        mock_get.assert_called_once_with("owner/repo", 42, all_pages=True)
+
+    def test_resume_no_dispatch_advances_to_next_step(self):
+        """/workflow resume with state but no dispatch → advances to next step."""
+        from unittest.mock import patch
+
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_block = self._build_state_block(workflow="default", step="analyze")
+        comments = self._comments_with_state(state_block)
+
+        with patch("resolve_config.get_issue_comments", return_value=comments):
+            result = resolve_config(
+                "/workflow resume go ahead",
+                prompt_base,
+                workflows_dir,
+                is_bot=False,
+                repo="owner/repo",
+                issue_number=42,
+            )
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        # analyze.next = context → agent ctx
+        self.assertEqual(result["TASK"], "ctx")
+
+    def test_resume_no_fallback_without_repo_or_issue_number(self):
+        """Without repo/issue_number, resume without state returns skip."""
+        prompt_base, workflows_dir = self._setup_dirs()
+
+        result = resolve_config(
+            "/workflow resume test",
+            prompt_base,
+            workflows_dir,
+            is_bot=False,
+            repo=None,
+            issue_number=None,
+        )
+
+        self.assertEqual(result["SKIP_AGENT"], "true")
+
 
 class TestWorkflowDrivenResolution(unittest.TestCase):
     """Tests for workflow-driven resolution in resolve_config() agent_config branch."""

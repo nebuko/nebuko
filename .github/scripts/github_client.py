@@ -44,14 +44,16 @@ def get_issue_comments(
     issue_number: int,
     token: Optional[str] = None,
     dry_run: bool = False,
+    all_pages: bool = False,
 ) -> List[dict]:
-    """Fetch all comments from an issue via gh CLI.
+    """Fetch comments from an issue via gh CLI.
 
     Args:
         repo: Repository in format owner/repo.
         issue_number: Issue number.
         token: GitHub token (falls back to GH_TOKEN env var).
         dry_run: If True, return empty list without making API call.
+        all_pages: If True, fetch all pages of comments using --paginate.
 
     Returns:
         List of comment dicts with 'body', 'user', 'id', etc.
@@ -63,13 +65,16 @@ def get_issue_comments(
     if token:
         env["GH_TOKEN"] = token
 
+    cmd = [
+        "api",
+        f"/repos/{repo}/issues/{issue_number}/comments",
+    ]
+    if all_pages:
+        cmd.append("--paginate")
+    cmd.extend(["--jq", "."])
+
     result = _run(
-        [
-            "api",
-            f"/repos/{repo}/issues/{issue_number}/comments",
-            "--jq",
-            ".",
-        ],
+        cmd,
         dry_run=dry_run,
         env=env,
     )
