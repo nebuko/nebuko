@@ -194,6 +194,21 @@ def extract_resume_command(trigger_body: str) -> Optional[str]:
     return None
 
 
+def extract_debug_flag(trigger_body: str) -> bool:
+    """Extract DEBUG=true flag from trigger body.
+
+    Looks for 'DEBUG=true' (case-insensitive) anywhere in the comment body,
+    including as part of /workflow commands like '/workflow default DEBUG=true'.
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        True if DEBUG=true is found, False otherwise.
+    """
+    return bool(re.search(r"DEBUG\s*=\s*true", trigger_body, re.IGNORECASE))
+
+
 # ── Helper methods for resolve_config ──────────────────────────────────────
 
 
@@ -331,6 +346,7 @@ def _resolve_resume_path(
         "config_repetition_penalty": (
             str(dispatch.repetition_penalty) if dispatch.repetition_penalty is not None else ""
         ),
+        "config_debug": str(dispatch.debug).lower() if dispatch.debug else "",
         "config_workflow": wf_name,
         "config_step": current_step_in_wf,
         "config_branch": dispatch.branch or "",
@@ -374,6 +390,7 @@ def _resolve_dispatch_path(
         "config_top_p": str(dispatch_obj.top_p) if dispatch_obj.top_p is not None else "",
         "config_top_k": str(dispatch_obj.top_k) if dispatch_obj.top_k is not None else "",
         "config_repetition_penalty": str(dispatch_obj.repetition_penalty) if dispatch_obj.repetition_penalty is not None else "",
+        "config_debug": str(dispatch_obj.debug).lower() if dispatch_obj.debug else "",
         "config_workflow": dispatch_obj.workflow or "",
         "config_step": dispatch_obj.step or "",
         "config_branch": dispatch_obj.branch or "",
@@ -541,6 +558,7 @@ def _resolve_human_path(
             "config_top_p": "",
             "config_top_k": "",
             "config_repetition_penalty": "",
+            "config_debug": "",
             "config_branch": "",
             "config_parent_workflow": fs_state.parent_workflow or "",
             "config_parent_workflow_step": fs_state.parent_workflow_step or "",
@@ -589,6 +607,7 @@ def _resolve_human_path(
         "config_top_p": "",
         "config_top_k": "",
         "config_repetition_penalty": "",
+        "config_debug": extract_debug_flag(trigger_body),
         "config_branch": "",
         "config_parent_workflow": "",
         "config_parent_workflow_step": "",
@@ -627,6 +646,7 @@ def _resolve_bot_fallback_path(
         "config_repetition_penalty": (
             str(dispatch.repetition_penalty) if dispatch.repetition_penalty is not None else ""
         ),
+        "config_debug": str(dispatch.debug).lower() if dispatch.debug else "",
         "config_workflow": dispatch.workflow or "",
         "config_step": dispatch.step or "",
         "config_branch": dispatch.branch or "",
@@ -694,6 +714,7 @@ def _resolve_workflow_next_step(
         "config_top_p": "",
         "config_top_k": "",
         "config_repetition_penalty": "",
+        "config_debug": "",
         "config_workflow": wf_name,
         "config_step": current_step or "",
         "config_branch": "",
@@ -804,6 +825,7 @@ def _build_result(
         "CONFIG_TOP_P": config.get("config_top_p", ""),
         "CONFIG_TOP_K": config.get("config_top_k", ""),
         "CONFIG_REPETITION_PENALTY": config.get("config_repetition_penalty", ""),
+        "CONFIG_DEBUG": config.get("config_debug", ""),
         "WORKFLOW_NAME": wf_result.get("WORKFLOW_NAME", ""),
         "WORKFLOW_STEP": wf_result.get("WORKFLOW_STEP", ""),
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
