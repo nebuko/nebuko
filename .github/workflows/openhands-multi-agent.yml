@@ -203,14 +203,16 @@ jobs:
                     exit 1
                   fi
 
+                  set -o pipefail
                   PYTHONPATH="$SCRIPTS_DIR" python3 "$SCRIPTS_DIR/resolve_config.py" \
                     --trigger-body - \
                     --prompt-base "$PROMPT_BASE" \
                     --workflows-dir "$WFLOWS_DIR" \
                     --repo "$REPO_NAME" \
                     --issue-number "$TARGET_NUMBER" \
-                    <<< "$TRIGGER_BODY" > /tmp/resolve_config_output.txt 2>/tmp/resolve_config_stderr.txt
+                    <<< "$TRIGGER_BODY" 2>&1 | tee /tmp/resolve_config_output.txt
                   RESOLVE_EXIT_CODE=$?
+                  set +o pipefail
                   RESOLVE_OUTPUT=$(cat /tmp/resolve_config_output.txt)
 
                   if [ $RESOLVE_EXIT_CODE -ne 0 ]; then
