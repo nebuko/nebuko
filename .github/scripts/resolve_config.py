@@ -869,6 +869,9 @@ def resolve_config(
         if prev_state:
             dispatch_obj = prev_state.dispatch
 
+    if os.environ.get("DEBUG"):
+        print(f"DEBUG prev_state: {prev_state}", file=sys.stderr)
+
     # Route to appropriate handler based on what was found
     if resume_cmd is not None and prev_state and prev_state.workflow and \
        prev_state.dispatch and prev_state.dispatch.status == "hold":
@@ -905,7 +908,10 @@ def resolve_config(
     if config.get("SKIP_AGENT") == "true":
         return config
 
-    return _build_result(config, prompt_base, workflows_dir)
+    result = _build_result(config, prompt_base, workflows_dir)
+    if os.environ.get("DEBUG"):
+        print(f"DEBUG _build_result: {result}", file=sys.stderr)
+    return result
 
 
 def main():
