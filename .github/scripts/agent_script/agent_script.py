@@ -19,6 +19,13 @@ logger = get_logger(__name__)
 
 def main():
     """Run the task with the provided prompt."""
+    # Apply debug mode if requested — must happen before logger initialization
+    # for downstream logging (LITELLM_LOG, Python root logger).
+    config_debug = os.environ.get("CONFIG_DEBUG", "")
+    if config_debug.lower() == "true":
+        os.environ["LITELLM_LOG"] = "DEBUG"
+        os.environ["DEBUG"] = "1"
+
     # 1. Parse args
     parser = argparse.ArgumentParser(
         description="Run OpenHands agent for arbitrary tasks"

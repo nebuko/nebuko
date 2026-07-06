@@ -92,7 +92,6 @@ jobs:
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
             LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN || secrets.LOCAL_VLLM_API_TOKEN }}
-            LITELLM_LOG: DEBUG
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
@@ -244,6 +243,7 @@ jobs:
                   CONFIG_TOP_P=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TOP_P=' | cut -d= -f2-)
                   CONFIG_TOP_K=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TOP_K=' | cut -d= -f2-)
                   CONFIG_REPETITION_PENALTY=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_REPETITION_PENALTY=' | cut -d= -f2-)
+                  CONFIG_DEBUG=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_DEBUG=' | cut -d= -f2-)
                   WORKFLOW_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NAME=' | cut -d= -f2-)
                   WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_STEP=' | cut -d= -f2-)
                   WORKFLOW_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
@@ -336,6 +336,7 @@ jobs:
                   echo "CONFIG_TOP_P=${CONFIG_TOP_P}" >> $GITHUB_ENV
                   echo "CONFIG_TOP_K=${CONFIG_TOP_K}" >> $GITHUB_ENV
                   echo "CONFIG_REPETITION_PENALTY=${CONFIG_REPETITION_PENALTY}" >> $GITHUB_ENV
+                  echo "CONFIG_DEBUG=${CONFIG_DEBUG}" >> $GITHUB_ENV
                   echo "CONFIG_PR_NUMBER=${CONFIG_PR_NUMBER}" >> $GITHUB_ENV
 
                   echo "Resolved agent: ROLE_NAME=$ROLE_NAME MODEL=from-config COMPLEXITY=${COMPLEXITY}"

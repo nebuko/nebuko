@@ -46,6 +46,7 @@ class Dispatch(BaseModel):
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None
     skills: Optional[str] = None
+    debug: bool = False
     reason: Optional[str] = None
 
     @field_validator("status")
