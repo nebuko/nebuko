@@ -23,9 +23,24 @@ steps:
         next: architect
     next: architect
 
-  - name: architect
+  - name: architect_prepare_ctx
     agent: genius
     next: stub
+  
+  - name: ctx_architect
+    agent: ctx
+    next: architect_review_ctx
+
+  - name: architect_review_ctx
+    agent: genius
+    next: stub
+    conditions:
+      - on_result: approved
+        next: stub
+      - on_result: rejected
+        next: ctx_architect
+      - on_result: default
+        next: stub
 
   - name: stub
     agent: dev
@@ -35,6 +50,13 @@ steps:
   - name: stub_review
     agent: review
     next: stub_approval
+    conditions:
+      - on_result: approved
+        next: stub_approval
+      - on_result: rejected
+        next: stub
+      - on_rsult: default
+        next: stub_approval
 
   - name: stub_approval
     agent: genius
@@ -49,4 +71,15 @@ steps:
 
   - name: implement
     agent: dev
-    next: null  # terminal step — stub review is the quality gate
+    next: review
+  
+  - name: review
+    agent: review
+    next: null
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: implement
+      - on_result: default
+        next: null
