@@ -171,6 +171,8 @@ jobs:
                   uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/agent-sdk.git@main#subdirectory=openhands-tools"
 
             - name: Resolve Agent Configuration
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   echo "Debug: Checking trigger body..."
                   PROMPT_BASE=""

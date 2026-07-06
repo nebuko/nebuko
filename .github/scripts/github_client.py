@@ -39,6 +39,16 @@ def _run(
     return subprocess.run(_gh_cli() + args, capture_output=True, text=True, input=input_data, env=env)
 
 
+def _resolve_token(token: Optional[str]) -> Optional[str]:
+    """Resolve GitHub token from explicit param or environment variables.
+
+    Priority: explicit token > GH_TOKEN env var > GITHUB_TOKEN env var.
+    """
+    if token:
+        return token
+    return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+
+
 def get_issue_comments(
     repo: str,
     issue_number: int,
@@ -60,8 +70,9 @@ def get_issue_comments(
         return []
 
     env = os.environ.copy()
-    if token:
-        env["GH_TOKEN"] = token
+    resolved_token = _resolve_token(token)
+    if resolved_token:
+        env["GH_TOKEN"] = resolved_token
 
     result = _run(
         [
@@ -109,8 +120,9 @@ def get_comment_body(
         return None
 
     env = os.environ.copy()
-    if token:
-        env["GH_TOKEN"] = token
+    resolved_token = _resolve_token(token)
+    if resolved_token:
+        env["GH_TOKEN"] = resolved_token
 
     result = _run(
         [
@@ -152,8 +164,9 @@ def get_comment_node_id(
         return None
 
     env = os.environ.copy()
-    if token:
-        env["GH_TOKEN"] = token
+    resolved_token = _resolve_token(token)
+    if resolved_token:
+        env["GH_TOKEN"] = resolved_token
 
     result = _run(
         [
@@ -198,8 +211,9 @@ def post_comment(
         return None
 
     env = os.environ.copy()
-    if token:
-        env["GH_TOKEN"] = token
+    resolved_token = _resolve_token(token)
+    if resolved_token:
+        env["GH_TOKEN"] = resolved_token
 
     result = _run(
         [
@@ -243,8 +257,9 @@ def minimize_comment(
         return True
 
     env = os.environ.copy()
-    if token:
-        env["GH_TOKEN"] = token
+    resolved_token = _resolve_token(token)
+    if resolved_token:
+        env["GH_TOKEN"] = resolved_token
 
     query = """
 mutation($subjectId: ID!) {
