@@ -995,7 +995,7 @@ def main():
     elif args.is_bot_comment == "false":
         is_bot = False
     
-    debug = extract_debug_flag(trigger_body),
+    debug_flag = extract_debug_flag(trigger_body),
 
     result = resolve_config(
         trigger_body=trigger_body,
@@ -1004,6 +1004,7 @@ def main():
         is_bot=is_bot,
         repo=args.repo,
         issue_number=args.issue_number,
+        debug=debug_flag
     )
 
     # Output as KEY=value pairs
