@@ -13,19 +13,19 @@ steps:
     next: spec_approval
 
   - name: spec_approval
-    agent: genius
+    agent: po
     conditions:
       - on_result: approved
-        next: architect
+        next: architect_prepare_ctx
       - on_result: rejected
         next: spec
       - on_result: default
-        next: architect
-    next: architect
+        next: architect_prepare_ctx
+    next: architect_prepare_ctx
 
   - name: architect_prepare_ctx
     agent: genius
-    next: stub
+    next: ctx_architect
   
   - name: ctx_architect
     agent: ctx
