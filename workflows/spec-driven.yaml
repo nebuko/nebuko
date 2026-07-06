@@ -55,7 +55,7 @@ steps:
         next: stub_approval
       - on_result: rejected
         next: stub
-      - on_rsult: default
+      - on_result: default
         next: stub_approval
 
   - name: stub_approval
