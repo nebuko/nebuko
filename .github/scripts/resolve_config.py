@@ -846,6 +846,7 @@ def resolve_config(
     is_bot: Optional[bool] = None,
     repo: Optional[str] = None,
     issue_number: Optional[int] = None,
+    debug: bool = False
 ) -> dict:
     """Resolve complete agent configuration from trigger body.
 
@@ -891,7 +892,7 @@ def resolve_config(
         if prev_state:
             dispatch_obj = prev_state.dispatch
 
-    if os.environ.get("DEBUG"):
+    if os.environ.get("DEBUG") or debug:
         print(f"DEBUG prev_state: {prev_state}", file=sys.stderr)
 
     # Route to appropriate handler based on what was found
@@ -931,7 +932,7 @@ def resolve_config(
         return config
 
     result = _build_result(config, prompt_base, workflows_dir)
-    if os.environ.get("DEBUG"):
+    if os.environ.get("DEBUG") or debug:
         print(f"DEBUG _build_result: {result}", file=sys.stderr)
     return result
 
@@ -993,6 +994,8 @@ def main():
         is_bot = True
     elif args.is_bot_comment == "false":
         is_bot = False
+    
+    debug = extract_debug_flag(trigger_body),
 
     result = resolve_config(
         trigger_body=trigger_body,
