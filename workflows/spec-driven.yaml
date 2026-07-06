@@ -10,10 +10,7 @@ trigger:
 steps:
   - name: spec
     agent: po
-    next: spec_approval
-
-  - name: spec_approval
-    agent: po
+    next: architect_prepare_ctx
     conditions:
       - on_result: approved
         next: architect_prepare_ctx
@@ -21,7 +18,6 @@ steps:
         next: spec
       - on_result: default
         next: architect_prepare_ctx
-    next: architect_prepare_ctx
 
   - name: architect_prepare_ctx
     agent: genius
