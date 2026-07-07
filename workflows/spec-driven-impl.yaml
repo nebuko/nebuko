@@ -5,9 +5,24 @@ trigger:
   agents: [genius]  # which @@mentions can start this workflow
 
 steps:
-  - name: architect
+  - name: analyze
+    agent: genius
+    next: context
+
+  - name: context
+    agent: ctx
+    next: plan
+
+  - name: plan
     agent: genius
     next: stub
+    conditions:
+      - on_result: approved
+        next: stub
+      - on_result: rejected
+        next: context
+      - on_result: default
+        next: stub
 
   - name: stub
     agent: dev
