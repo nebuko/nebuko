@@ -410,6 +410,7 @@ def _resolve_dispatch_path(
         if wf_result:
             config["task"] = wf_result["task"]
             config["config_step"] = wf_result.get("step", config["config_step"])
+            config["config_workflow"] = prev_state.workflow
         else:
             dispatch_status = dispatch_obj.status or ""
             if dispatch_status == "hold":
