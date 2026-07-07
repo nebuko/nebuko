@@ -1217,6 +1217,10 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         # After "analyze" in default workflow, next step is "context" → agent "ctx"
         self.assertEqual(result["TASK"], "ctx")
         self.assertEqual(result["SKIP_AGENT"], "false")
+        # Regression #443: workflow metadata must be populated for state propagation
+        self.assertEqual(result["WORKFLOW_NAME"], "default")
+        self.assertEqual(result["WORKFLOW_STEP"], "context")
+        self.assertEqual(result["WORKFLOW_NEXT"], "plan")
 
     def test_dispatch_advance_context_resolves_to_genius(self):
         """dispatch.advance from context step → genius (plan step)."""
@@ -1228,9 +1232,13 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "genius")
         self.assertEqual(result["SKIP_AGENT"], "false")
+        # Regression #443: workflow metadata must be populated for state propagation
+        self.assertEqual(result["WORKFLOW_NAME"], "default")
+        self.assertEqual(result["WORKFLOW_STEP"], "plan")
+        self.assertEqual(result["WORKFLOW_NEXT"], "implement")
 
     def test_dispatch_advance_implement_resolves_to_dev(self):
-        """dispatch.advance from implement step → dev (implement step)."""
+        """dispatch.advance from plan step → dev (implement step)."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="default", step="plan", agent="genius",
@@ -1239,6 +1247,10 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
+        # Regression #443: workflow metadata must be populated for state propagation
+        self.assertEqual(result["WORKFLOW_NAME"], "default")
+        self.assertEqual(result["WORKFLOW_STEP"], "implement")
+        self.assertEqual(result["WORKFLOW_NEXT"], "review")
 
     def test_dispatch_advance_terminal_step_returns_skip(self):
         """dispatch.advance from terminal review step → SKIP_AGENT."""
