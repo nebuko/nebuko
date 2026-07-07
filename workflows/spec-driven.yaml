@@ -16,8 +16,6 @@ steps:
         next: architect_prepare_ctx
       - on_result: rejected
         next: spec
-      - on_result: default
-        next: architect_prepare_ctx
 
   - name: architect_prepare_ctx
     agent: genius
