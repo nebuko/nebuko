@@ -19,3 +19,10 @@ steps:
   - name: plan
     agent: genius
     next: null
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: context
+      - on_result: default
+        next: null
