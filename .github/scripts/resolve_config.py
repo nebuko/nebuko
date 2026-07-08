@@ -167,7 +167,7 @@ def extract_force_next_command(trigger_body: str) -> Optional[tuple]:
         Tuple of ('force-next-step', target_step) or None.
     """
     first_line = trigger_body.split("\n", 1)[0].strip()
-    match = re.match(r"^/workflow\s+force-next-step(?:\s+(\S+))?$", first_line)
+    match = re.match(r"^/workflow\s+force-next-step(?:\s+(\S+))?", first_line)
     if match:
         target_step = match.group(1)  # Optional explicit target step name
         return ("force-next-step", target_step)
@@ -897,6 +897,11 @@ def resolve_config(
         print(f"DEBUG prev_state: {prev_state}", file=sys.stderr)
 
     # Route to appropriate handler based on what was found
+    # Human commands (explicit intent) MUST be evaluated before auto-dispatch,
+    # otherwise an active workflow's dispatch object absorbs all commands.
+    # Check for human commands early (independent of is_bot) so they take
+    # priority even when prev_state+dispatch exist.
+    human_mention = not is_bot and extract_mention_agent(trigger_body)
     if resume_cmd is not None and prev_state and prev_state.workflow and \
        prev_state.dispatch and prev_state.dispatch.status == "hold":
         # /workflow resume — re-run the held step with human input
@@ -908,20 +913,27 @@ def resolve_config(
         human_input = trigger_body.replace("/workflow resume", "").strip()
         config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir)
         config["config_human_resume_input"] = human_input
-    elif prev_state and dispatch_obj:
-        config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)
     elif force_next:
-        # Force-next-step is a human command that must always go through
-        # _resolve_human_path so it can handle validation/error cases.
+        # Human explicit step jump — takes priority over auto-dispatch.
+        # Must go through _resolve_human_path for validation/error handling.
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir, prev_state
         )
-    elif prev_state and prev_state.workflow and not is_bot and wf_override:
-        # Human provided /workflow override — use human path to honor the command
-        # even though prev_state.workflow is available from history.
+    elif wf_override and not is_bot and resume_cmd is None:
+        # Human /workflow override — use human path to honor the command.
+        # Guard: /workflow resume sets both resume_cmd ("") and wf_override ("resume"),
+        # but should NOT go through the override path. Check is None since
+        # extract_resume_command returns "" (empty, not None) for bare resume.
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir, prev_state
         )
+    elif human_mention:
+        # Human @@mention (e.g. @@ctx) takes priority over auto-dispatch
+        # so standalone agent calls work even when a workflow is active.
+        config = _resolve_human_path(trigger_body, repo, issue_number, workflows_dir)
+    elif prev_state and dispatch_obj:
+        # Auto-dispatch: workflow state with dispatch object — follow the workflow.
+        config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)
     elif prev_state and prev_state.workflow:
         config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir)
     elif not is_bot:

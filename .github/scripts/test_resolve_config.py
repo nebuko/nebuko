@@ -486,8 +486,10 @@ class TestExtractForceNextCommand(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_extra_text_after_target(self):
+        # Trailing text is now allowed — regex no longer requires $ anchor.
+        # The command matches and captures the target step; extra text is ignored.
         result = extract_force_next_command("/workflow force-next-step implement some extra text")
-        self.assertIsNone(result)
+        self.assertEqual(result, ("force-next-step", "implement"))
 
     def test_force_next_step_with_underscore_target(self):
         result = extract_force_next_command("/workflow force-next-step code_review")
@@ -1801,3 +1803,109 @@ class TestResumeIntegration(unittest.TestCase):
             self.assertEqual(result["SKIP_AGENT"], "false")
             self.assertEqual(result["TASK"], "genius")
             self.assertEqual(result["WORKFLOW_STEP"], "spec_approval")
+
+
+class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
+    """Regression tests: human commands must take precedence over auto-dispatch
+    when an active workflow state contains a dispatch object.
+
+    Bug: line 911 (`prev_state and dispatch_obj`) was evaluated before
+    `force_next`, `wf_override`, and `not is_bot`, causing all human comments
+    to be absorbed by the dispatch path.
+    """
+
+    @staticmethod
+    def _setup_dirs():
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(
+                "name: default\n"
+                "description: Standard workflow\n"
+                "trigger:\n"
+                "  agents: [genius]\n"
+                "steps:\n"
+                "  - name: analyze\n"
+                "    agent: genius\n"
+                "    next: context\n"
+                "  - name: context\n"
+                "    agent: ctx\n"
+                "    next: plan\n"
+                "  - name: plan\n"
+                "    agent: genius\n"
+                "    next: implement\n"
+                "  - name: implement\n"
+                "    agent: dev\n"
+                "    next: review\n"
+                "  - name: review\n"
+                "    agent: review\n"
+                "    next: null\n"
+            )
+        return prompt_base, workflows_dir
+
+    @staticmethod
+    def _build_state_json_with_dispatch(workflow="default", step="analyze", agent="genius"):
+        import json as _json
+        state = {
+            "version": 3,
+            "workflow": workflow,
+            "step": step,
+            "agent": agent,
+            "dispatch": {"status": "advance", "complexity": "high"},
+        }
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def test_mention_with_dispatch_in_body_goes_to_human_path(self):
+        """@@ctx in body with embedded dispatch must resolve to ctx, not follow dispatch."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
+        # Bot comment with workflow state + dispatch, but human @@mention should win
+        body = "@@ctx gather context\n\n" + state_json
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        # With the fix, @@ctx resolves standalone via _resolve_human_path
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_force_next_step_with_dispatch_in_body(self):
+        """/workflow force-next-step with embedded dispatch must honor the command."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
+        body = "/workflow force-next-step implement\n\n" + state_json
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_workflow_override_with_dispatch_in_body(self):
+        """/workflow command with embedded dispatch must honor the override."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
+        body = "/workflow default\n\n" + state_json
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["ROLE_NAME"], "genius")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_bot_comment_with_dispatch_follows_dispatch_path(self):
+        """Bot comments (is_bot=True) with dispatch MUST still follow dispatch path."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
+        body = "<!-- bot-agent-genius -->\nGenius answer\n\n" + state_json
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=True)
+        # Bot comment → dispatch path → resolves to next step (context → ctx)
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+    def test_force_next_with_trailing_text_and_dispatch(self):
+        """/workflow force-next-step with trailing text and dispatch must still work."""
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
+        body = "/workflow force-next-step implement some extra description\n\n" + state_json
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["SKIP_AGENT"], "false")
