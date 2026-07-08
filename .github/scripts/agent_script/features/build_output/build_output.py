@@ -35,6 +35,34 @@ from agent_script.features.extract_recovery_trace.extract_recovery_trace import 
 logger = get_logger(__name__)
 
 
+# Tag patterns whose imbalance indicates a truncated tool-call block.
+_MALFORMED_TAG_PAIRS: list[tuple[str, str]] = [
+    ("<antThinking>", "</antThinking>"),
+    ("<thinking>", "</thinking>"),
+    ("<tool_call>", "</tool_call>"),
+    ("<tool_code>", "</tool_code>"),
+    ("<function_calls>", "</function_calls>"),
+]
+
+
+def is_malformed_final_message(message: str) -> bool:
+    """Return True if the message contains unbalanced tag pairs.
+
+    Checks for common XML-style delimiters used by agents during tool calls.
+    An unbalanced pair indicates the response was likely truncated mid-block.
+
+    Args:
+        message: The final message extracted from the agent response.
+
+    Returns:
+        True if any tag pair is unbalanced, False otherwise.
+    """
+    for open_tag, close_tag in _MALFORMED_TAG_PAIRS:
+        if message.count(open_tag) != message.count(close_tag):
+            return True
+    return False
+
+
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
     """Convert an agentRunConfig JSON string to a Dispatch object.
 
@@ -326,7 +354,7 @@ def build_output(
 
     # ── Recovery log: capture execution trace on failure ──────────
     context_updates = {}
-    if not final_message:
+    if not final_message or is_malformed_final_message(final_message):
         trace = extract_recovery_trace(conversation)
         if trace:
             recovery_md = recovery_trace_to_markdown(trace)
