@@ -27,6 +27,11 @@ class WorkflowStep(BaseModel):
     next: Optional[str] = None
     conditions: Optional[list[WorkflowCondition]] = None
     skill: Optional[list[str]] = None
+    # When True, this step is an explicit human validation gate.
+    # The workflow MUST pause (dispatch.status == "hold") until a human
+    # responds. The approval agent evaluates human feedback and sets
+    # dispatch.branch to "approved" or "rejected" accordingly.
+    human_gate: bool = False
 
     @model_validator(mode="after")
     def _validate_step_source(self) -> "WorkflowStep":
