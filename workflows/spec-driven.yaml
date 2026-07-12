@@ -54,6 +54,7 @@ steps:
 
   - name: stub_approval
     agent: genius
+    human_gate: true
     conditions:
       - on_result: approved
         next: implement

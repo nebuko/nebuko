@@ -69,3 +69,25 @@ class TestWorkflowStep:
     def test_step_without_skills_defaults_to_none(self):
         step = WorkflowStep(name="dev", agent="dev")
         assert step.skill is None
+
+    def test_human_gate_defaults_to_false(self):
+        step = WorkflowStep(name="dev", agent="dev")
+        assert step.human_gate is False
+
+    def test_human_gate_can_be_true(self):
+        step = WorkflowStep(name="spec_approval", agent="genius", human_gate=True)
+        assert step.human_gate is True
+
+    def test_human_gate_with_conditions(self):
+        conditions = [
+            WorkflowCondition(on_result="approved", next="implement"),
+            WorkflowCondition(on_result="rejected", next="spec"),
+        ]
+        step = WorkflowStep(
+            name="stub_approval",
+            agent="genius",
+            human_gate=True,
+            conditions=conditions,
+        )
+        assert step.human_gate is True
+        assert len(step.conditions) == 2
