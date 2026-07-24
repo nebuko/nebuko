@@ -60,7 +60,7 @@ llms:
     stop_sequences: []
 
   mimo-2-5:
-    model_path: "xiaomi/mimo-v2.5"
+    model_path: "openrouter/xiaomi/mimo-v2.5"
     provider: "${providers.openrouter}"
 
 # ── Agents: role → model + prompt + skills + tools ──
