@@ -259,6 +259,7 @@ jobs:
                     REASON=$(echo "$RESOLVE_OUTPUT" | grep '^REASON=' | cut -d= -f2-)
                     echo "Skipping agent: ${REASON:-no reason provided}"
                     echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                    echo "REASON=${REASON:-no reason provided}" >> $GITHUB_ENV
                     exit 0
                   fi
 
@@ -347,9 +348,14 @@ jobs:
 
             - name: Prevent all agent-trigger loops & human ping guard
               run: |
-                  # Guard 1: Block same-agent loops, allow cross-agent calls
+                  # Guard 1: Block same-agent loops, allow cross-agent calls.
+                  # Only applies when the resolver selected a task; when TASK is
+                  # empty (resolver requested a skip), never override SKIP_AGENT
+                  # (issue #458: empty TASK made the equality test compare against
+                  # "" and flipped SKIP_AGENT=true back to false, producing
+                  # empty-role ack comments and self-retriggering runs).
                   CALLER_AGENT=$(echo "$TRIGGER_BODY" | sed -n 's/.*<!-- bot-agent-\([a-z]*\) -->.*/\1/p')
-                  if [[ -n "$CALLER_AGENT" ]]; then
+                  if [[ -n "$CALLER_AGENT" && -n "$TASK" ]]; then
                       TARGET_AGENT="$TASK"
                       if [[ "$CALLER_AGENT" == "$TARGET_AGENT" ]]; then
                         echo "Same-agent loop detected ($CALLER_AGENT calling itself). Skipping."
@@ -360,8 +366,9 @@ jobs:
                         echo "SKIP_AGENT=false" >> $GITHUB_ENV
                         exit 0
                       fi
-                  else
-                    echo "Event type ${{ env.EVENT_TYPE }} - skipping same-agent loop check (no bot marker expected)"
+                  elif [[ -z "$CALLER_AGENT" && -n "$TASK" ]]; then
+                    # No bot marker, resolver selected a task.
+                    echo "No bot marker — performing human-ping guard check."
 
                     # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
                     # Only applies to human-triggered comments (no bot marker present)
@@ -372,9 +379,36 @@ jobs:
                       echo "SKIP_AGENT=true" >> $GITHUB_ENV
                       exit 0
                     fi
+                  else
+                    # Either no bot marker and resolver skipped, or a bot marker
+                    # is present but resolver produced no task — keep the resolver
+                    # decision unchanged.
+                    echo "No same-agent comparison applicable (caller='$CALLER_AGENT', task='$TASK'). Keeping resolver decision."
                   fi
 
                   echo "SKIP_AGENT=${SKIP_AGENT:-false}" >> $GITHUB_ENV
+
+            # Only posted when the resolver produced a skip REASON (terminal
+            # step / resolution failure). Routine guard skips (same-agent loop,
+            # human ping) do not export REASON and remain silent as before.
+            - name: Post Terminal Workflow Skip Comment
+              if: env.SKIP_AGENT == 'true' && env.REASON != '' && env.TARGET_NUMBER != '0'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ env.TARGET_NUMBER }}
+                token: ${{ secrets.GH_PAT }}
+                tag: "<!-- bot-workflow-terminal -->"
+                mode: create-or-update
+                body: |
+                  <!-- bot-workflow-terminal -->
+                  ⏹️ **Workflow stopped** — no agent was run for this trigger.
+
+                  **Reason:** ${{ env.REASON }}
+
+                  This comment intentionally carries no workflow state and does not trigger further agent runs.
+                  To continue, reply with an explicit trigger (e.g. `@@genius`).
+
+                  🔗 [View workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
             - name: Check Circuit Breaker
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'

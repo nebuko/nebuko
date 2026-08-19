@@ -140,6 +140,71 @@ class TestBuildState(unittest.TestCase):
         self.assertEqual(state.metrics.input_tokens, 5000)
 
 
+class TestBuildStateStepFallback(unittest.TestCase):
+    """Regression (issue #458): build_state must never drop the current step
+    when the explicit arg is empty but a previous value is recoverable."""
+
+    def test_build_state_falls_back_to_prev_step_when_empty(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+            summary="Analyzed request",
+        )
+        state = build_state(prev, step="")
+        self.assertEqual(state.step, "analyze")
+
+    def test_build_state_falls_back_to_last_history_entry(self):
+        """Exact #457 v2 shape: prev state with step='' whose history ends at
+        {step='context', agent='ctx'} — result must recover step and agent."""
+        prev = WorkflowState(
+            version=2,
+            workflow="spec-driven-impl",
+            step="",
+            agent="ctx",
+            history=[
+                HistoryEntry(step="analyze", agent="genius", summary="Analyzed"),
+                HistoryEntry(step="context", agent="ctx", summary="Collected"),
+            ],
+        )
+        state = build_state(prev, step="", agent="")
+        self.assertEqual(state.step, "context")
+        self.assertEqual(state.agent, "ctx")
+
+    def test_build_state_explicit_step_wins_over_fallback(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+            summary="Analyzed request",
+        )
+        state = build_state(prev, step="context", agent="ctx")
+        self.assertEqual(state.step, "context")
+        self.assertEqual(state.agent, "ctx")
+
+    def test_build_state_initial_state_unchanged(self):
+        """No prev state, empty args — do not fabricate a step at init."""
+        state = build_state(None, step="", agent="")
+        self.assertEqual(state.step, "")
+        self.assertEqual(state.agent, "")
+
+    def test_build_state_falls_back_when_prev_step_empty_but_history_set(self):
+        """prev.step empty but history non-empty → last history entry wins even
+        for the agent field (agent not in history order, use prev.agent)."""
+        prev = WorkflowState(
+            version=1,
+            workflow="default",
+            step="",
+            agent="",
+            history=[HistoryEntry(step="analyze", agent="genius", summary="A")],
+        )
+        state = build_state(prev, step="", agent="")
+        self.assertEqual(state.step, "analyze")
+        self.assertEqual(state.agent, "genius")
+
+
 class TestWrapCommentWithState(unittest.TestCase):
     """Test collapsed section formatting."""
 

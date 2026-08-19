@@ -8,6 +8,28 @@ from ...sub_domains.state_metrics.state_metrics import StateMetrics
 from ...sub_domains.step_resolution.step_resolution import StepResolution
 from ...sub_domains.dispatch.dispatch import Dispatch
 
+def _last_history_value(history: list[HistoryEntry], field: str) -> str:
+    """Return the last non-empty value of ``field`` across history entries."""
+    for entry in reversed(history):
+        value = getattr(entry, field, "")
+        if value:
+            return value
+    return ""
+
+
+def _fallback_field(explicit: str, prev_state: Optional[WorkflowState], base_history: list[HistoryEntry], field: str) -> str:
+    """Fallback chain for scalar state fields: explicit arg -> previous state
+    value -> last non-empty history entry -> '' (issue #458)."""
+    if explicit:
+        return explicit
+    if prev_state is None:
+        return ""
+    prev_value = getattr(prev_state, field, "") or ""
+    if prev_value:
+        return prev_value
+    return _last_history_value(base_history, field)
+
+
 def build_state(
     prev_state: Optional[WorkflowState],
     *,
@@ -119,11 +141,17 @@ def build_state(
     # Preserve PR info across transitions (once set, it persists)
     new_pr = pull_request or base_pr
 
+    # Invariant: step/agent must not be silently dropped when a previous value
+    # is recoverable (issue #458: empty WORKFLOW_STEP env produced states whose
+    # scalar step disagreed with their own history).
+    effective_step = _fallback_field(step, prev_state, base_history, "step")
+    effective_agent = _fallback_field(agent, prev_state, base_history, "agent")
+
     return WorkflowState(
         version=base_version + 1,
         workflow=workflow or base_workflow,
-        step=step,
-        agent=agent,
+        step=effective_step,
+        agent=effective_agent,
         phase=phase,
         history=new_history,
         pinned_comment_ids=new_pinned,
