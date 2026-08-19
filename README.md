@@ -133,7 +133,7 @@ Agents communicate using a single-line HTML-comment sentinel called `AGENT_RUN_C
 | `task` | string | **yes** | Agent role: `genius`, `ctx`, `dev`, `review`, `issue` | — |
 | `skills` | string[] | no | Skills to attach (reserved for future use) | `[]` |
 | `complexity` | string | no | Task complexity: `low`, `medium`, `high`. Auto-adjusts temperature. | `"medium"` |
-| `reasoning` | string | no | Reasoning effort: `none`, `low`, `medium`, `high` | `"none"` |
+| `reasoning` | string | no | Reasoning effort (Qwen3.x flexible thinking, delivered via `chat_template_kwargs.reasoning_effort`): `none`, `low`, `medium`, `xhigh`. `high` is accepted as an alias for `xhigh`. Independent of `complexity`; only applies while thinking is enabled (`thinking_enabled`) in the LLM config. `none` omits the parameter so the model default (`xhigh`) applies. | `"none"` |
 | `round` | int | no | Callback counter for dev↔review cycles | — |
 | `temperature` | float | no | Override default temperature | — |
 | `top_p` | float | no | Nucleus sampling (lower = more deterministic) | from LLM config |

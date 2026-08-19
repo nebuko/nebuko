@@ -6,6 +6,33 @@ from openhands.sdk import get_logger
 
 logger = get_logger(__name__)
 
+# Qwen3.8 flexible-thinking vocabulary, delivered via chat_template_kwargs.
+REASONING_EFFORT_VALUES = ("xhigh", "medium", "low")
+# Aliases mapped onto the model vocabulary (e.g. OpenAI-style "high").
+_REASONING_ALIASES = {"high": "xhigh"}
+
+
+def normalize_reasoning_effort(raw: str | None) -> str | None:
+    """Map a dispatch ``reasoning`` value onto the Qwen flexible-thinking set.
+
+    Returns a normalized value (``xhigh`` / ``medium`` / ``low``), or ``None``
+    when the parameter should be omitted (unset, ``none``, or unrecognized).
+    ``high`` is treated as an alias for ``xhigh``.
+    """
+    if not raw:
+        return None
+    value = raw.strip().lower()
+    if value == "none":
+        return None
+    value = _REASONING_ALIASES.get(value, value)
+    if value in REASONING_EFFORT_VALUES:
+        return value
+    logger.warning(
+        f"Unrecognized reasoning effort '{raw}'; "
+        f"expected one of {sorted(REASONING_EFFORT_VALUES)}; dropping"
+    )
+    return None
+
 
 def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     """
@@ -114,13 +141,9 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     if temperature is not None:
         llm_config["temperature"] = temperature
 
-    # ── Reasoning effort ─────────────────────────────────────────
-    llm_reasoning = os.getenv("LLM_REASONING", "none")
-    if llm_reasoning and llm_reasoning != "none":
-        llm_config["reasoning_effort"] = llm_reasoning
-        logger.info(f"Reasoning enabled: effort={llm_reasoning}")
-
     # ── Thinking parameters (litellm_extra_body) ─────────────────
+    # Qwen3.x flexible thinking rides chat_template_kwargs, not the
+    # top-level OpenAI-style reasoning_effort field.
     litellm_extra_body = {}
     chat_template_kwargs = {}
 
@@ -128,6 +151,15 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         chat_template_kwargs["enable_thinking"] = agent_cfg.model_ref.thinking_enabled
     if agent_cfg and agent_cfg.model_ref.preserve_thinking is not None:
         chat_template_kwargs["preserve_thinking"] = agent_cfg.model_ref.preserve_thinking
+
+    # Reasoning effort: ``none``/unset omits the param so the model default
+    # (xhigh) applies; only emitted while thinking is on.
+    llm_reasoning = os.getenv("LLM_REASONING", "none")
+    reasoning_effort = normalize_reasoning_effort(llm_reasoning)
+    thinking_on = chat_template_kwargs.get("enable_thinking", True)
+    if reasoning_effort and thinking_on:
+        chat_template_kwargs["reasoning_effort"] = reasoning_effort
+        logger.info(f"Reasoning effort: {reasoning_effort}")
 
     if chat_template_kwargs:
         litellm_extra_body["chat_template_kwargs"] = chat_template_kwargs
