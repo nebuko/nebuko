@@ -45,6 +45,24 @@ class TestExtractMetrics(unittest.TestCase):
 class TestCleanMessage(unittest.TestCase):
     """Test internal tag stripping."""
 
+    def test_strips_new_sentinel(self):
+        raw = (
+            "Here is my response.\n\n"
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "low"} -->'
+        )
+        result = clean_message(raw, "")
+        self.assertNotIn("AGENT_RUN_CONFIG", result)
+        self.assertIn("Here is my response", result)
+
+    def test_strips_truncated_new_sentinel(self):
+        raw = (
+            "Here is my response.\n\n"
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"statu'
+        )
+        result = clean_message(raw, "")
+        self.assertNotIn("AGENT_RUN_CONFIG", result)
+        self.assertIn("Here is my response", result)
+
     def test_strips_agent_run_config(self):
         raw = (
             "Here is my response.\n\n"

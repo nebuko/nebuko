@@ -2,7 +2,7 @@
 """
 Workflow-aware routing resolver for openhands-multi-agent.yml.
 
-Reads agentRunConfig JSON from stdin, resolves workflow routing, and outputs
+Reads AGENT_RUN_CONFIG JSON from stdin, resolves workflow routing, and outputs
 environment variables for the GitHub Actions workflow.
 
 Usage:
@@ -61,7 +61,7 @@ def resolve_workflow_routing(
     """Resolve agent routing based on workflow definition or fallback.
 
     Args:
-        agent_config: Parsed agentRunConfig JSON.
+        agent_config: Parsed AGENT_RUN_CONFIG JSON.
         workflows_dir: Path to workflows/ directory.
         prompt_base: Path to prompt files directory.
 
@@ -330,7 +330,7 @@ def resolve_workflow_step(
     Handles both normal agent steps and sub-workflow dispatch (entry and return).
 
     Args:
-        task: The agent role from agentRunConfig.
+        task: The agent role from AGENT_RUN_CONFIG.
         workflow_name: Name of the workflow (file in workflows/).
         step_name: Current step name within workflow.
         branch_key: Condition key for conditional routing.
@@ -566,18 +566,18 @@ def main():
     parser.add_argument(
         "--agent-config-json",
         default="",
-        help="agentRunConfig JSON string (if not reading from stdin)",
+        help="AGENT_RUN_CONFIG JSON string (if not reading from stdin)",
     )
     args = parser.parse_args()
 
-    # Read agentRunConfig JSON
+    # Read AGENT_RUN_CONFIG JSON
     if args.agent_config_json:
         agent_config_str = args.agent_config_json
     else:
         agent_config_str = sys.stdin.read().strip()
 
     if not agent_config_str:
-        print("Error: No agentRunConfig JSON provided", file=sys.stderr)
+        print("Error: No AGENT_RUN_CONFIG JSON provided", file=sys.stderr)
         sys.exit(1)
 
     try:

@@ -25,7 +25,7 @@ You are a summarizer agent. Your sole responsibility is to analyze the full comm
 - Only include files that were actually modified (not just read).
 - If no pending actions are clear, use an empty array.
 - `last_agent` should be the most recent bot agent (genius/dev/ctx/review/issue).
-- `last_round` is the highest `agentRunConfig.round` observed in the history.
+- `last_round` is the highest `round` observed in the AGENT_RUN_CONFIG sentinels in the history.
 - Output ONLY the ```json``` block. No preamble, no explanation outside the fences.
 
 --- USER REQUEST / GITHUB CONTEXT ---

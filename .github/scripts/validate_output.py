@@ -1,8 +1,16 @@
 """
 Output validation utilities for agent outputs.
 
-Validates agentRunConfig blocks and checks for forbidden sections
+Validates AGENT_RUN_CONFIG sentinels and checks for forbidden sections
 to improve instruction-following compliance.
+
+Agents emit a single-line HTML-comment sentinel carrying the dispatch JSON:
+
+    <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
+
+Single line + HTML comment = no multi-line boundary ambiguity and no leak
+into rendered GitHub comments. This module owns the one canonical pattern;
+all consumers (build_output, prepare_comment) import from here.
 """
 
 import json
@@ -11,11 +19,15 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
-# Pattern to extract agentRunConfig JSON blocks from text
-AGENT_RUN_CONFIG_PATTERN = re.compile(
-    r"<agentRunConfig>\s*(.*?)\s*</agentRunConfig>",
-    re.DOTALL,
-)
+# Canonical sentinel: single-line HTML comment, no DOTALL.
+# [ \t] (not \s) keeps the match strictly within one line: a sentinel split
+# across lines never matches. Payload is a compact JSON object; the non-greedy
+# match with the mandatory trailing "-->" handles nested braces via backtracking.
+AGENT_RUN_CONFIG_PATTERN = re.compile(r"<!--(?:[ \t])*AGENT_RUN_CONFIG[ \t]+(\{.*?\})(?:[ \t])*-->")
+
+# Start-marker locator for unterminated-sentinel (truncation) detection.
+# Must tolerate the same whitespace the canonical pattern allows after "<!--".
+_AGENT_RUN_CONFIG_START_RE = re.compile(r"<!--\s*AGENT_RUN_CONFIG")
 
 # Forbidden section headers that ctx agent must never include
 CTX_FORBIDDEN_SECTIONS = [
@@ -46,28 +58,101 @@ class ValidationResult:
 
 
 def extract_agent_run_configs(text: str) -> list[str]:
-    """Extract all agentRunConfig JSON strings from text."""
+    """Extract all AGENT_RUN_CONFIG sentinel JSON payloads from text.
+
+    Only the exact single-line sentinel form matches; a quoted example that
+    spans multiple lines (as in docs/prompts) is deliberately ignored.
+
+    Args:
+        text: Agent output text.
+
+    Returns:
+        List of raw JSON payload strings, in order of appearance.
+    """
     matches = AGENT_RUN_CONFIG_PATTERN.findall(text)
     return [match.strip() for match in matches if match.strip()]
 
 
+def extract_dispatch(text: str) -> Optional[str]:
+    """Return the raw JSON payload of the last valid-JSON sentinel.
+
+    Invalid JSON payloads are skipped (earlier valid blocks still win).
+
+    Args:
+        text: Agent output text.
+
+    Returns:
+        The last valid JSON payload string, or None if no valid block exists.
+    """
+    for payload in reversed(extract_agent_run_configs(text)):
+        try:
+            data = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(data, dict):
+            return payload
+    return None
+
+
+def has_unterminated_agent_run_config(text: str) -> bool:
+    """Detect a truncated sentinel (start marker present, no closing "-->").
+
+    A complete sentinel always contains its own "-->" after the start
+    marker, so the first occurrence whose tail lacks "-->" marks a
+    truncation of the final line of the message.
+    """
+    for match in _AGENT_RUN_CONFIG_START_RE.finditer(text):
+        if "-->" not in text[match.start():]:
+            return True
+    return False
+
+
+def strip_agent_run_config(text: str) -> str:
+    """Remove all AGENT_RUN_CONFIG sentinels from text.
+
+    A sentinel occupying a whole line drops that line; an inline sentinel is
+    removed in place. A trailing unterminated sentinel (truncated last line)
+    is cut off so no partial marker leaks into rendered comments.
+
+    Args:
+        text: Agent output text.
+
+    Returns:
+        Text without any AGENT_RUN_CONFIG sentinel, stripped of outer whitespace.
+    """
+    lines = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("<!--") and AGENT_RUN_CONFIG_PATTERN.fullmatch(stripped):
+            continue  # whole-line sentinel: drop the line
+        lines.append(AGENT_RUN_CONFIG_PATTERN.sub("", line))
+    cleaned = "\n".join(lines)
+
+    match = _AGENT_RUN_CONFIG_START_RE.search(cleaned)
+    if match and has_unterminated_agent_run_config(cleaned):
+        cleaned = cleaned[: match.start()]
+    # Collapse blank lines left behind by stripped whole-line sentinels.
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def validate_agent_run_config(json_str: str) -> ValidationResult:
-    """Validate a single agentRunConfig JSON block."""
+    """Validate a single AGENT_RUN_CONFIG JSON payload."""
     result = ValidationResult(is_valid=True)
 
     try:
         data = json.loads(json_str)
     except json.JSONDecodeError as e:
-        result.add_error(f"Invalid JSON in agentRunConfig: {e}")
+        result.add_error(f"Invalid JSON in AGENT_RUN_CONFIG: {e}")
         return result
 
     if not isinstance(data, dict):
-        result.add_error("agentRunConfig must be a JSON object")
+        result.add_error("AGENT_RUN_CONFIG must be a JSON object")
         return result
 
     # task is required
     if "task" not in data:
-        result.add_error("agentRunConfig missing required field: 'task'")
+        result.add_error("AGENT_RUN_CONFIG missing required field: 'task'")
 
     # Validate known fields' types
     valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer"}
@@ -142,7 +227,7 @@ def validate_dispatch(data: dict) -> ValidationResult:
             f"Invalid task_hint '{data['task_hint']}'. Must be one of: {valid_tasks}"
         )
 
-    # Reuse agentRunConfig validators for shared fields
+    # Reuse AGENT_RUN_CONFIG validators for shared fields
     config_result = validate_agent_run_config(json.dumps(data))
     # Filter out 'task' errors since dispatch uses 'task_hint' instead
     filtered = [e for e in config_result.errors if "missing required field: 'task'" not in e]
@@ -200,13 +285,13 @@ def validate_agent_output(
     """
     result = ValidationResult(is_valid=True)
 
-    # Validate all agentRunConfig blocks
+    # Validate all AGENT_RUN_CONFIG sentinel payloads
     configs = extract_agent_run_configs(text)
     if configs:
         for i, config_str in enumerate(configs):
             config_result = validate_agent_run_config(config_str)
             for error in config_result.errors:
-                result.add_error(f"agentRunConfig[{i}]: {error}")
+                result.add_error(f"AGENT_RUN_CONFIG[{i}]: {error}")
 
     # Role-specific validation
     if role == "ctx":

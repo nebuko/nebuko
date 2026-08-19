@@ -113,16 +113,12 @@ If you understand why something is broken or have a fix idea — DO NOT write it
   - If the trigger body contains `<!-- bot-agent-issue -->`, you were called by the @@issue agent.
     → End your message with:
       ```
-      <agentRunConfig>
-      {"dispatch": {"status": "advance"}}
-      </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
       ```
   - If the trigger body contains `<!-- bot-agent-genius -->` or no bot marker (default), you were called by the @@genius agent.
     → End your message with:
       ```
-      <agentRunConfig>
-      {"dispatch": {"status": "advance"}}
-      </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
       ```
 
 # Strict Output & Exit Rules
@@ -131,8 +127,6 @@ If you understand why something is broken or have a fix idea — DO NOT write it
 * **Rule B (Read-Only):** You must NEVER modify code, create commits, open PRs, or push to any branch. You are a read-only agent.
 * **Rule C (Hand-off Command):** Once your collection is complete, pass results back by ending your final message with:
   ```
-  <agentRunConfig>
-  {"dispatch": {"status": "advance"}}
-  </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
   ```
   **Note:** No explicit `task` field is needed. The workflow engine resolves the next step from YAML; agents signal completion via `dispatch` status.

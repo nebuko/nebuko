@@ -46,7 +46,7 @@ grep -oP '\*\*([a-z-]+)\*\* agent started -- \[View workflow run logs\]\(https:/
 
 ### 2c. Build the Timeline
 
-For each extracted entry, compose a 1–2 sentence summary based on the rest of the comment body (after the bot marker). Use information such as the agent role, any `agentRunConfig` hand-off, or the final message to characterize what that run did.
+For each extracted entry, compose a 1–2 sentence summary based on the rest of the comment body (after the bot marker). Use information such as the agent role, any `AGENT_RUN_CONFIG` hand-off sentinel, or the final message to characterize what that run did.
 
 ### 2d. Identify the Drift Boundary
 

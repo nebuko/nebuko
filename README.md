@@ -69,11 +69,11 @@ Each LLM (and optionally each agent) can define sampling parameters to control i
 | `presence_penalty` | float | Presence penalty — discourages repeating tokens based on presence | -2.0–2.0 |
 | `repetition_penalty` | float | Repetition penalty — values > 1.0 discourage repetition | 1.0–1.5 |
 
-These parameters cascade: per-invocation (`agentRunConfig`) > per-agent (YAML `agents.`) > per-LLM (YAML `llms.`). Lower `top_p` (0.1–0.5) combined with low temperature (0.0) dramatically improves instruction adherence.
+These parameters cascade: per-invocation (`AGENT_RUN_CONFIG` sentinel) > per-agent (YAML `agents.`) > per-LLM (YAML `llms.`). Lower `top_p` (0.1–0.5) combined with low temperature (0.0) dramatically improves instruction adherence.
 
 #### Dynamic Complexity-Based Temperature
 
-When `complexity` is set in `agentRunConfig` and no explicit `temperature` override is provided, temperature is auto-adjusted:
+When `complexity` is set in the `AGENT_RUN_CONFIG` sentinel and no explicit `temperature` override is provided, temperature is auto-adjusted:
 - `low` → 0.0 (most deterministic)
 - `medium` → 0.1
 - `high` → 0.3 (more creative)
@@ -115,20 +115,18 @@ Adding an agent is a 5-line stanza in `agent-config.yaml` — no workflow change
 
 1. An issue or comment is created on GitHub
 2. The GitHub Actions workflow (`openhands-multi-agent.yml`) triggers automatically
-3. The appropriate agent (@@genius, @@ctx, @@dev, @@review, or @@issue) is invoked based on the `agentRunConfig` JSON block or `@@mention` in the comment
+3. The appropriate agent (@@genius, @@ctx, @@dev, @@review, or @@issue) is invoked based on the `AGENT_RUN_CONFIG` sentinel or `@@mention` in the comment
 4. The agent processes the request using OpenHands SDK and posts results back to the issue
 
 ### Agent Invocation
 
-Agents communicate using a structured JSON format called `agentRunConfig`. This replaces the old `@@mention`-based handoff with a typed, extensible configuration:
+Agents communicate using a single-line HTML-comment sentinel called `AGENT_RUN_CONFIG`. This replaces the old `@@mention`-based handoff with a typed, extensible configuration:
 
 ```
-<agentRunConfig>
-{"task": "review", "complexity": "medium"}
-</agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "review", "complexity": "medium"} -->
 ```
 
-#### agentRunConfig Schema
+#### AGENT_RUN_CONFIG Schema
 
 | Parameter | Type | Required | Description | Default |
 |-----------|------|----------|-------------|---------|
@@ -240,7 +238,7 @@ steps:
 
 #### Human Invocation (Backward Compatible)
 
-Human users can still use `@@mention` shorthand (`@@genius`, `@@ctx`, `@@dev`, `@@review`, `@@issue`). The `agentRunConfig` format is primarily for agent→agent communication. The workflow supports both formats with the `@@mention` fallback reserved for human triggers only — bot agents cannot use `@@mention` to avoid self-triggering loops.
+Human users can still use `@@mention` shorthand (`@@genius`, `@@ctx`, `@@dev`, `@@review`, `@@issue`). The `AGENT_RUN_CONFIG` sentinel format is primarily for agent→agent communication. The workflow supports both formats with the `@@mention` fallback reserved for human triggers only — bot agents cannot use `@@mention` to avoid self-triggering loops.
 
 ### Agent Collaboration Flow
 
