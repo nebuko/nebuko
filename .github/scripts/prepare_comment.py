@@ -1,7 +1,8 @@
 """Prepare github_comment.md from final_message.txt.
 
 Reads the agent's final message, strips internal XML/HTML tags
-(agentRunConfig, splitPlan, agent-metrics), and writes the cleaned
+(AGENT_RUN_CONFIG sentinels + legacy <agentRunConfig>, splitPlan,
+agent-metrics), and writes the cleaned
 content to github_comment.md for the peter-evans/comment action.
 
 All regex operations use re.DOTALL for robust multi-line matching.
@@ -18,13 +19,18 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from validate_output import strip_agent_run_config
+
 # ── Regex patterns (all DOTALL for multi-line safety) ─────────────
 
 # agent-metrics HTML comment — may span multiple lines
 _METRICS_COMMENT = re.compile(r"<!--\s*agent-metrics:.*?-->", re.DOTALL)
 
-# <agentRunConfig> XML block — contains JSON, must use DOTALL
-_AGENT_RUN_CONFIG = re.compile(r"<agentRunConfig>.*?</agentRunConfig>", re.DOTALL)
+# Legacy <agentRunConfig> XML block — comment hygiene ONLY.
+# The legacy form is no longer a dispatch-parsing path (issue #450);
+# this strip prevents stale raw XML from leaking into rendered comments.
+_LEGACY_AGENT_RUN_CONFIG = re.compile(r"<agentRunConfig>.*?</agentRunConfig>", re.DOTALL)
 
 # <splitPlan> XML block — safety net (already replaced upstream)
 _SPLIT_PLAN = re.compile(r"<splitPlan>.*?</splitPlan>", re.DOTALL)
@@ -50,7 +56,8 @@ def extract_metrics(content: str) -> str:
 def clean_message(raw: str, metrics_comment: str) -> str:
     """Strip internal XML/HTML tags from an agent message.
 
-    Removes <agentRunConfig>, <splitPlan>, and <!-- agent-metrics --> blocks.
+    Removes AGENT_RUN_CONFIG sentinels (plus legacy <agentRunConfig> blocks),
+    <splitPlan>, and <!-- agent-metrics --> blocks.
     The metrics comment is passed separately so it can be re-appended
     at the end (preserving its position from the original workflow logic).
 
@@ -65,9 +72,11 @@ def clean_message(raw: str, metrics_comment: str) -> str:
     """
     content = raw.strip()
 
-    # Strip <agentRunConfig> blocks — these contain JSON with special
-    # characters (<, >, {, }, $) that caused truncation via bash echo.
-    content = _AGENT_RUN_CONFIG.sub("", content)
+    # Strip AGENT_RUN_CONFIG sentinels (canonical, single-line HTML comments)
+    # plus any legacy <agentRunConfig> blocks (hygiene only) — they contain
+    # JSON with special characters (<, >, {, }, $) that break bash echo.
+    content = _LEGACY_AGENT_RUN_CONFIG.sub("", content)
+    content = strip_agent_run_config(content)
 
     # Strip <splitPlan> blocks (already replaced with summary upstream).
     content = _SPLIT_PLAN.sub("", content)

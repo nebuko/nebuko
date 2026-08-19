@@ -5,8 +5,8 @@ import unittest
 from build_output import (
     agent_run_config_to_dispatch,
     is_malformed_final_message,
-    _strip_agent_run_configs,
 )
+from validate_output import strip_agent_run_config
 
 
 class TestAgentRunConfigToDispatch(unittest.TestCase):
@@ -134,50 +134,57 @@ class TestAgentRunConfigToDispatch(unittest.TestCase):
 
 
 class TestStripAgentRunConfigs(unittest.TestCase):
-    """Test the _strip_agent_run_configs() function."""
+    """Test the shared strip_agent_run_config() helper used by build_output."""
 
-    def test_removes_single_block(self):
-        msg = "Hello world\n<agentRunConfig>{\"dispatch\": {\"status\": \"advance\"}}</agentRunConfig>"
-        result = _strip_agent_run_configs(msg)
+    def test_removes_single_sentinel(self):
+        msg = 'Hello world\n<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->'
+        result = strip_agent_run_config(msg)
         self.assertEqual(result, "Hello world")
-        self.assertNotIn("agentRunConfig", result)
+        self.assertNotIn("AGENT_RUN_CONFIG", result)
 
-    def test_removes_multiple_blocks(self):
+    def test_removes_multiple_sentinels(self):
         msg = ("First part\n"
-                "<agentRunConfig>{\"task\": \"genius\"}</agentRunConfig>\n"
+                '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
                 "Middle part\n"
-                "<agentRunConfig>{\"task\": \"dev\"}</agentRunConfig>\n"
+                '<!-- AGENT_RUN_CONFIG {"task": "dev"} -->\n'
                 "Last part")
-        result = _strip_agent_run_configs(msg)
-        # Regex consumes surrounding newlines, collapsing adjacent paragraphs
-        self.assertEqual(result, "First partMiddle partLast part")
+        result = strip_agent_run_config(msg)
+        self.assertNotIn("AGENT_RUN_CONFIG", result)
+        self.assertIn("First part", result)
+        self.assertIn("Middle part", result)
+        self.assertIn("Last part", result)
+        self.assertNotIn("\n\n\n", result)
 
-    def test_noop_when_no_blocks(self):
-        msg = "Just regular text without any XML blocks"
-        result = _strip_agent_run_configs(msg)
+    def test_noop_when_no_sentinels(self):
+        msg = "Just regular text without any sentinels"
+        result = strip_agent_run_config(msg)
         self.assertEqual(result, msg)
 
-    def test_multiline_json_in_block(self):
-        msg = ("Response text\n"
-                "<agentRunConfig>\n"
-                "{\n"
-                "  \"dispatch\": {\n"
-                "    \"status\": \"advance\",\n"
-                "    \"complexity\": \"high\"\n"
-                "  }\n"
-                "}\n"
-                "</agentRunConfig>")
-        result = _strip_agent_run_configs(msg)
+    def test_legacy_xml_not_stripped_here(self):
+        """Legacy <agentRunConfig> handling lives in prepare_comment only."""
+        msg = ('Response text\n'
+                '<agentRunConfig>\n'
+                '{\n'
+                '  "dispatch": {"status": "advance"}\n'
+                '}\n'
+                '</agentRunConfig>')
+        result = strip_agent_run_config(msg)
+        self.assertEqual(result, msg)
+        self.assertIn("agentRunConfig", result)
+
+    def test_truncated_sentinel_stripped(self):
+        msg = 'Response text\n<!-- AGENT_RUN_CONFIG {"task": "dev", "comple'
+        result = strip_agent_run_config(msg)
         self.assertEqual(result, "Response text")
-        self.assertNotIn("agentRunConfig", result)
+        self.assertNotIn("AGENT_RUN_CONFIG", result)
 
     def test_preserves_agent_metrics(self):
         msg = ("Content\n"
                 "<!-- agent-metrics: {} -->\n"
-                "<agentRunConfig>{\"status\": \"advance\"}</agentRunConfig>")
-        result = _strip_agent_run_configs(msg)
+                '<!-- AGENT_RUN_CONFIG {"status": "advance"} -->')
+        result = strip_agent_run_config(msg)
         self.assertIn("agent-metrics", result)
-        self.assertNotIn("agentRunConfig", result)
+        self.assertNotIn("AGENT_RUN_CONFIG", result)
 
 
 class TestIsMalformedFinalMessage(unittest.TestCase):

@@ -85,9 +85,7 @@ Output your findings in this structure:
 - Present your full retrospective analysis as shown above.
 - End your message with:
   ```
-  <agentRunConfig>
-  {"task": "issue-reviewer"}
-  </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "issue-reviewer"} -->
   ```
 
 **If no significant issues found:**
@@ -95,9 +93,7 @@ Output your findings in this structure:
 - Highlight any positive patterns worth preserving.
 - End your message with:
   ```
-  <agentRunConfig>
-  {"task": "issue-reviewer"}
-  </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "issue-reviewer"} -->
   ```
 
 ## 4. Tool Usage
@@ -111,7 +107,5 @@ Output your findings in this structure:
 * **Rule B (Read-Only):** You must NEVER modify code, create commits, or open PRs. You are a read-only analyst with no tool access beyond think and finish.
 * **Rule C (Hand-off Command):** Always end with:
   ```
-  <agentRunConfig>
-  {"task": "issue-reviewer"}
-  </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "issue-reviewer"} -->
   ```

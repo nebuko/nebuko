@@ -14,7 +14,7 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 
 | Trigger | Condition |
 |---------|-----------|
-| `issues` | Issue opened, edited, assigned, or closed — body must contain an agent mention (`@@genius`, `@@dev`, etc.) or `/workflow` or `<agentRunConfig>` |
+| `issues` | Issue opened, edited, assigned, or closed — body must contain an agent mention (`@@genius`, `@@dev`, etc.) or `/workflow` or an `AGENT_RUN_CONFIG` sentinel |
 | `issue_comment` | New comment — body must contain an agent mention or trigger pattern |
 | `workflow_call` | Reusable workflow invoked by another workflow; uses `prompt_body` input |
 
@@ -120,7 +120,7 @@ Installs the two core OpenHands packages directly from the `agent-sdk` GitHub re
 **Output:** Environment variables: `TASK`, `ROLE_NAME`, `PROMPT_LOCATION`, `AGENT_SELECTED`, `COMPLEXITY`, `LLM_REASONING`, `AGENT_ROUND`, `AGENT_SKILLS`, `STEP_SKILLS`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `CONFIG_TOP_P`, `CONFIG_TOP_K`, `CONFIG_REPETITION_PENALTY`, `WORKFLOW_NAME`, `WORKFLOW_STEP`, `WORKFLOW_NEXT`, `PARENT_WORKFLOW`, `PARENT_WORKFLOW_STEP`, `SKILL_CONTEXT_FILE`, `CONFIG_PR_NUMBER`.
 
 Runs `resolve_config.py` which parses the trigger body to determine:
-1. Which agent role should handle the request (from `@@mention` or `<agentRunConfig>` JSON).
+1. Which agent role should handle the request (from `@@mention` or the `AGENT_RUN_CONFIG` sentinel JSON).
 2. The complexity level (`low`, `medium`, `high`).
 3. The prompt file location for the selected agent.
 4. Skill files to load and concatenate.
@@ -165,7 +165,7 @@ Checks if the issue has exceeded the comment threshold AND no existing summary c
 ### Step 12: Post Summarizer Trigger Comment
 
 **Input:** `SUMMARIZER_NEEDED` from Step 11.  
-**Output:** A new comment on the issue containing `<agentRunConfig>{"task": "summarize", "complexity": "low"}</agentRunConfig>`.
+**Output:** A new comment on the issue containing `<!-- AGENT_RUN_CONFIG {"task": "summarize", "complexity": "low"} -->`.
 
 Conditional on `SUMMARIZER_NEEDED=true`. Posts a comment tagged with `<!-- bot-agent-summary -->` that will itself trigger the workflow again with the summarizer agent.
 
@@ -227,7 +227,7 @@ Builds the final prompt by concatenating:
 Runs the agent via `stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE"` with output logged to `console.log`.
 
 **PR Discovery Priority (review agent only):**
-1. Explicit `CONFIG_PR_NUMBER` from `<agentRunConfig>` JSON.
+1. Explicit `CONFIG_PR_NUMBER` from the `AGENT_RUN_CONFIG` sentinel JSON.
 2. GitHub API query for open PRs referencing the issue.
 3. Regex scan of comment history for `PR #<digits>` pattern.
 

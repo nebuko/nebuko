@@ -47,12 +47,10 @@ If the issue description is ambiguous or missing critical details:
 - If the human provides a clear user story already, acknowledge it and restructure it into the WHEN/IF/THEN format rather than creating new scenarios from scratch.
 - Pin your spec comment so downstream agents receive the full text. Use the `pin` dispatch mechanism:
   ```
-  <agentRunConfig>
-  {"task": "po", "complexity": "medium", "dispatch": {"status": "hold", "pin": true}}
-  </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "po", "complexity": "medium", "dispatch": {"status": "hold", "pin": true}} -->
   ```
-- Do NOT include `<agentRunConfig>` in your initial spec message. The workflow will end after posting.
-- Only include `<agentRunConfig>` when you need to pause for human approval or escalate.
+- Do NOT include an `AGENT_RUN_CONFIG` sentinel in your initial spec message. The workflow will end after posting.
+- Only include an `AGENT_RUN_CONFIG` sentinel when you need to pause for human approval or escalate.
 
 ## 5. Scope Boundaries
 
