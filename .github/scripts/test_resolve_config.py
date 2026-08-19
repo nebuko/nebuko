@@ -976,6 +976,215 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "false")
 
 
+class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
+    """Regression (issue #458): states with step='' but populated history must
+    still resolve the next step instead of dead-ending with a generic failure."""
+
+    @staticmethod
+    def _spec_driven_impl_yaml():
+        return (
+            "name: spec-driven-impl\n"
+            "description: Spec-driven development\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: context\n"
+            "  - name: context\n"
+            "    agent: ctx\n"
+            "    next: plan\n"
+            "  - name: plan\n"
+            "    agent: genius\n"
+            "    next: implement\n"
+            "  - name: implement\n"
+            "    agent: dev\n"
+            "    next: null\n"
+        )
+
+    def _setup_spec_dirs(self):
+        import os as _os
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(_os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(_os.path.join(workflows_dir, "spec-driven-impl.yaml"), "w") as f:
+            f.write(self._spec_driven_impl_yaml())
+        return prompt_base, workflows_dir
+
+    def test_resolve_workflow_next_step_recovers_from_empty_step(self):
+        """Exact #457 v2 shape: workflow='spec-driven-impl', step='' (omitted),
+        history ending at 'context', no dispatch → must resolve to plan/genius."""
+        import json as _json
+        prompt_base, workflows_dir = self._setup_spec_dirs()
+        state = {
+            "version": 2,
+            "workflow": "spec-driven-impl",
+            "agent": "ctx",
+            "history": [
+                {"step": "analyze", "agent": "genius", "summary": "Analyzed"},
+                {"step": "context", "agent": "ctx", "summary": "Collected"},
+            ],
+        }
+        # No "step" key — excluded by exclude_defaults serialization
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result.get("TASK"), "genius")
+        self.assertEqual(result.get("ROLE_NAME"), "genius")
+        self.assertEqual(result.get("WORKFLOW_STEP"), "plan")
+        self.assertEqual(result.get("SKIP_AGENT"), "false")
+
+    def test_terminal_step_distinct_reason(self):
+        """Genuine terminal step (no next) with empty scalar step yields the
+        terminal-specific reason, not the generic failure reason."""
+        import json as _json
+        prompt_base, workflows_dir = self._setup_spec_dirs()
+        state = {
+            "version": 4,
+            "workflow": "spec-driven-impl",
+            "agent": "dev",
+            "history": [
+                {"step": "analyze", "agent": "genius", "summary": "A"},
+                {"step": "context", "agent": "ctx", "summary": "B"},
+                {"step": "plan", "agent": "genius", "summary": "C"},
+                {"step": "implement", "agent": "dev", "summary": "D"},
+            ],
+        }
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("Terminal step 'implement'", result["REASON"])
+
+    def test_undeterminable_current_step_distinct_reason(self):
+        """No step anywhere (empty scalar, empty history) → resolution-failed
+        reason, not the terminal reason."""
+        import json as _json
+        prompt_base, workflows_dir = self._setup_spec_dirs()
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps({"version": 2, "workflow": "spec-driven-impl", "agent": "ctx"})
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("could not determine current step", result["REASON"])
+
+    def _state_json(self, state: dict) -> str:
+        import json as _json
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def test_step_not_found_in_workflow_distinct_reason(self):
+        """Step known but absent from the workflow definition → not-found
+        reason, not terminal / undeterminable."""
+        prompt_base, workflows_dir = self._setup_spec_dirs()
+        state_json = self._state_json(
+            {
+                "version": 3,
+                "workflow": "spec-driven-impl",
+                "step": "nonexistent",
+                "history": [
+                    {"step": "analyze", "agent": "genius", "summary": "A"},
+                    {"step": "context", "agent": "ctx", "summary": "B"},
+                    {"step": "nonexistent", "agent": "dev", "summary": "C"},
+                ],
+            }
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("step 'nonexistent' not found in workflow", result["REASON"])
+
+    def test_unresolvable_next_reference_distinct_reason(self):
+        """Step exists with `next` pointing at a missing target → unresolvable
+        reference reason, not terminal."""
+        import os as _os
+        import tempfile as _tempfile
+        prompt_base = _tempfile.mkdtemp()
+        workflows_dir = _tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(_os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(_os.path.join(workflows_dir, "broken.yaml"), "w") as f:
+            f.write(
+                "name: broken\n"
+                "description: Dangling next reference\n"
+                "trigger:\n"
+                "  agents: [genius]\n"
+                "steps:\n"
+                "  - name: only\n"
+                "    agent: genius\n"
+                "    next: ghost\n"
+            )
+        state_json = self._state_json(
+            {
+                "version": 2,
+                "workflow": "broken",
+                "step": "only",
+                "history": [{"step": "only", "agent": "genius", "summary": "A"}],
+            }
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("does not resolve", result["REASON"])
+
+    def test_missing_workflow_file_distinct_reason(self):
+        """Workflow name set but file absent → missing-file reason."""
+        import os as _os
+        import tempfile as _tempfile
+        prompt_base = _tempfile.mkdtemp()
+        workflows_dir = _tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(_os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        state_json = self._state_json(
+            {
+                "version": 2,
+                "workflow": "does-not-exist",
+                "step": "analyze",
+                "history": [{"step": "analyze", "agent": "genius", "summary": "A"}],
+            }
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("workflow file 'does-not-exist.yaml' not found", result["REASON"])
+
+    def test_malformed_workflow_yaml_distinct_reason(self):
+        """Malformed workflow YAML (not a mapping) → load-failure reason
+        instead of an unhandled exception."""
+        import os as _os
+        import tempfile as _tempfile
+        prompt_base = _tempfile.mkdtemp()
+        workflows_dir = _tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(_os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(_os.path.join(workflows_dir, "malformed.yaml"), "w") as f:
+            f.write("- just\n- a\n- list\n")
+        state_json = self._state_json(
+            {
+                "version": 2,
+                "workflow": "malformed",
+                "step": "analyze",
+                "history": [{"step": "analyze", "agent": "genius", "summary": "A"}],
+            }
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("could not load workflow 'malformed'", result["REASON"])
+
+
 class TestE2EDispatchWorkflowResolution(unittest.TestCase):
     """End-to-end: agent finishes with dispatch → config resolver uses workflow YAML."""
 
