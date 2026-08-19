@@ -518,7 +518,7 @@ jobs:
             - name: Run OpenHands Agent
               if: env.SKIP_AGENT == 'false'
               id: openhands_agent
-              timeout-minutes: 60
+              timeout-minutes: 120
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
