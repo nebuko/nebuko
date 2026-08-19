@@ -1,7 +1,7 @@
 # DDD Package-by-Feature Architecture
 
 > **Status:** In progress — canonical implementation in PR #335 (open).  
-> **Scope:** `.github/scripts/workflow_state/` package.
+> **Scope:** `.github/scripts/workflow_state/` and `.github/scripts/resolve_config/` packages.
 
 ---
 
