@@ -68,7 +68,7 @@ Determines whether the repository already has git-flow-ai embedded. If the promp
 **Input:** `needed` from Step 2.  
 **Output:** git-flow-ai repository cloned at `.git-flow-ai-cache/` (conditional).
 
-Only runs when `needed=true`. Clones `olivier-norture/git-flow-ai` into `.git-flow-ai-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed git-flow-ai directly.
+Only runs when `needed=true`. Clones `olivier-norture/git-flow-ai` into `.git-flow-ai-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed git-flow-ai directly. The "Resolve Agent Configuration" step exports `GIT_FLOW_AI_SCRIPTS` as the single source of truth for script locations (cache-aware), consumed by all subsequent script invocations.
 
 ---
 

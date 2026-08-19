@@ -197,6 +197,9 @@ jobs:
                     WFLOWS_DIR="workflows"
                   fi
 
+                  # Single source of truth for script locations (issue #466)
+                  echo "GIT_FLOW_AI_SCRIPTS=$SCRIPTS_DIR" >> $GITHUB_ENV
+
                   # Step 1-5: Resolve agent configuration using Python resolver
                   # Handles: AGENT_RUN_CONFIG sentinel JSON, force-next-step, @@mention, dispatch, workflow routing
                   if [ ! -f "$SCRIPTS_DIR/resolve_config.py" ]; then
@@ -533,7 +536,7 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
               run: |
-                SCRIPT_PATH=".github/scripts/query_context.py"
+                SCRIPT_PATH="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}/query_context.py"
                 if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/query_context.py" ]; then
                   SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/query_context.py"
                 fi
@@ -637,7 +640,12 @@ jobs:
 
             - name: Clean and Prepare Comment
               if: always() && env.SKIP_AGENT == 'false'
-              run: python3 .github/scripts/prepare_comment.py
+              run: |
+                SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
+                if [ ! -f "$SCRIPTS/prepare_comment.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/prepare_comment.py" ]; then
+                  SCRIPTS=".git-flow-ai-cache/.github/scripts"
+                fi
+                python3 "$SCRIPTS/prepare_comment.py"
 
             - name: Add bot marker and workflow state to comment
               if: always() && env.SKIP_AGENT == 'false'
@@ -647,7 +655,10 @@ jobs:
                 import json
                 import sys
 
-                sys.path.insert(0, ".github/scripts")
+                scripts_dir = os.environ.get("GIT_FLOW_AI_SCRIPTS") or ".github/scripts"
+                if not os.path.isdir(scripts_dir) and os.path.isdir(".git-flow-ai-cache/.github/scripts"):
+                    scripts_dir = ".git-flow-ai-cache/.github/scripts"
+                sys.path.insert(0, scripts_dir)
 
                 role = os.environ.get("ROLE_NAME", "unknown")
                 marker = f"<!-- bot-agent-{role} -->"
@@ -657,6 +668,13 @@ jobs:
                     "issue-reviewer": "Issue Reviewer", "summarize": "Summarizer",
                 }
                 display_name = agent_display_names.get(role, role.capitalize())
+
+                # Graceful degradation (issue #466): if prepare_comment.py failed,
+                # there is nothing to publish. Exit 0 without setting HAS_COMMENT
+                # so downstream posting steps are cleanly skipped.
+                if not os.path.isfile("github_comment.md") or os.path.getsize("github_comment.md") == 0:
+                    print("Warning: github_comment.md missing or empty — skipping comment.", flush=True)
+                    sys.exit(0)
 
                 with open("github_comment.md", "r", encoding="utf-8") as f:
                     content = f.read()
@@ -733,7 +751,7 @@ jobs:
                 AUTO_TRIGGER=$(echo "$SPLIT_PLAN" | jq -r '.auto_trigger // true')
                 echo "Split plan contains $TASK_COUNT tasks, auto_trigger=$AUTO_TRIGGER"
 
-                SCRIPT_PATH=".github/scripts/issue_creation.py"
+                SCRIPT_PATH="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}/issue_creation.py"
                 if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/issue_creation.py" ]; then
                   SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/issue_creation.py"
                 fi
