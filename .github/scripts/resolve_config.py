@@ -684,10 +684,15 @@ def _resolve_bot_fallback_path(
 def _recover_current_step(prev_state: "WorkflowState") -> str:
     """Recover the current step from a state whose scalar step may be empty.
 
-    Fallback chain (issue #458): prev_state.step -> last non-empty history
-    entry's step -> resolution.selected_step. The stored resolution.next_step
-    is deliberately NOT used: it denotes the *next* step, so consulting it
-    would skip a step.
+    Fallback chain (issue #458), in priority order:
+    1. ``prev_state.step`` — authoritative when set;
+    2. last non-empty history entry's ``step`` — the most recently completed
+       step, the freshest truth for legacy/corrupt states;
+    3. ``resolution.selected_step`` — last resort only: it denotes the step
+       the *previous* run resolved to, so it can be stale relative to history.
+
+    The stored ``resolution.next_step`` is deliberately NOT used: it denotes
+    the *next* step, so consulting it would skip a step.
     """
     if prev_state.step:
         return prev_state.step
@@ -762,32 +767,47 @@ def _workflow_next_step_skip_reason(
     """Disambiguate SKIP reasons when no successor was found (issue #458).
 
     Distinguishes a genuine terminal step (the step exists in the workflow but
-    has no ``next``) from a resolution failure (the current step could not be
-    determined at all, e.g. empty step + empty history), so real failures are
-    diagnosable instead of hiding behind a generic message.
+    has no ``next``) from resolution failures (unknown step name, missing/
+    unreadable workflow file, or an undeterminable current step), so real
+    failures are diagnosable instead of hiding behind a generic message.
     """
-    if current_step:
-        try:
-            workflow = load_workflow(str(Path(workflows_dir) / f"{wf_name}.yaml"))
-        except (FileNotFoundError, ValueError):
-            workflow = None
-        if workflow is not None:
-            step_def = next(
-                (s for s in workflow.steps if s.name == current_step), None
-            )
-            if step_def is not None and _is_terminal_step(step_def):
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": f"Terminal step '{current_step}' has no next in workflow '{wf_name}'",
-                }
-            if step_def is None:
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": f"Resolution failed: step '{current_step}' not found in workflow '{wf_name}'",
-                }
+    if not current_step:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Resolution failed: could not determine current step (step='{current_step}')",
+        }
+
+    try:
+        workflow = load_workflow(str(Path(workflows_dir) / f"{wf_name}.yaml"))
+    except FileNotFoundError:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Resolution failed: workflow file '{wf_name}.yaml' not found",
+        }
+    except Exception as exc:  # malformed YAML / validation errors
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Resolution failed: could not load workflow '{wf_name}' ({exc.__class__.__name__})",
+        }
+
+    step_def = next(
+        (s for s in workflow.steps if s.name == current_step), None
+    )
+    if step_def is None:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Resolution failed: step '{current_step}' not found in workflow '{wf_name}'",
+        }
+    if _is_terminal_step(step_def):
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Terminal step '{current_step}' has no next in workflow '{wf_name}'",
+        }
+    # Step has a `next` (or conditions) but no successor resolved —
+    # e.g. target step missing from the workflow definition.
     return {
         "SKIP_AGENT": "true",
-        "REASON": f"Resolution failed: could not determine current step (step='{current_step}')",
+        "REASON": f"Resolution failed: step '{current_step}' in workflow '{wf_name}' has a next reference that does not resolve",
     }
 
 

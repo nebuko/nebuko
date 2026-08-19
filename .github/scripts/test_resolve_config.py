@@ -1078,6 +1078,112 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("could not determine current step", result["REASON"])
 
+    def _state_json(self, state: dict) -> str:
+        import json as _json
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def test_step_not_found_in_workflow_distinct_reason(self):
+        """Step known but absent from the workflow definition → not-found
+        reason, not terminal / undeterminable."""
+        prompt_base, workflows_dir = self._setup_spec_dirs()
+        state_json = self._state_json(
+            {
+                "version": 3,
+                "workflow": "spec-driven-impl",
+                "step": "nonexistent",
+                "history": [
+                    {"step": "analyze", "agent": "genius", "summary": "A"},
+                    {"step": "context", "agent": "ctx", "summary": "B"},
+                    {"step": "nonexistent", "agent": "dev", "summary": "C"},
+                ],
+            }
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("step 'nonexistent' not found in workflow", result["REASON"])
+
+    def test_unresolvable_next_reference_distinct_reason(self):
+        """Step exists with `next` pointing at a missing target → unresolvable
+        reference reason, not terminal."""
+        import os as _os
+        import tempfile as _tempfile
+        prompt_base = _tempfile.mkdtemp()
+        workflows_dir = _tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(_os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(_os.path.join(workflows_dir, "broken.yaml"), "w") as f:
+            f.write(
+                "name: broken\n"
+                "description: Dangling next reference\n"
+                "trigger:\n"
+                "  agents: [genius]\n"
+                "steps:\n"
+                "  - name: only\n"
+                "    agent: genius\n"
+                "    next: ghost\n"
+            )
+        state_json = self._state_json(
+            {
+                "version": 2,
+                "workflow": "broken",
+                "step": "only",
+                "history": [{"step": "only", "agent": "genius", "summary": "A"}],
+            }
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("does not resolve", result["REASON"])
+
+    def test_missing_workflow_file_distinct_reason(self):
+        """Workflow name set but file absent → missing-file reason."""
+        import os as _os
+        import tempfile as _tempfile
+        prompt_base = _tempfile.mkdtemp()
+        workflows_dir = _tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(_os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        state_json = self._state_json(
+            {
+                "version": 2,
+                "workflow": "does-not-exist",
+                "step": "analyze",
+                "history": [{"step": "analyze", "agent": "genius", "summary": "A"}],
+            }
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("workflow file 'does-not-exist.yaml' not found", result["REASON"])
+
+    def test_malformed_workflow_yaml_distinct_reason(self):
+        """Malformed workflow YAML (not a mapping) → load-failure reason
+        instead of an unhandled exception."""
+        import os as _os
+        import tempfile as _tempfile
+        prompt_base = _tempfile.mkdtemp()
+        workflows_dir = _tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(_os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(_os.path.join(workflows_dir, "malformed.yaml"), "w") as f:
+            f.write("- just\n- a\n- list\n")
+        state_json = self._state_json(
+            {
+                "version": 2,
+                "workflow": "malformed",
+                "step": "analyze",
+                "history": [{"step": "analyze", "agent": "genius", "summary": "A"}],
+            }
+        )
+        result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("could not load workflow 'malformed'", result["REASON"])
+
 
 class TestE2EDispatchWorkflowResolution(unittest.TestCase):
     """End-to-end: agent finishes with dispatch → config resolver uses workflow YAML."""
