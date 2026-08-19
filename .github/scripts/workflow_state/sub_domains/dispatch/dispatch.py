@@ -7,7 +7,8 @@ DISPATCH_STATUSES = {"advance", "loop", "hold", "terminate"}
 class Dispatch(BaseModel):
     """Agent outcome and runtime preferences, consumed by the workflow engine.
 
-    Replaces the external <agentRunConfig> XML block with a structured field
+    Replaces the external <!-- AGENT_RUN_CONFIG ... --> single-line HTML-comment
+    sentinel with a structured field
     inside WorkflowState. Instead of agents explicitly naming the next agent,
     they express their outcome (advance, loop, hold, terminate) and optionally
     provide a task hint. The workflow engine resolves routing from this field

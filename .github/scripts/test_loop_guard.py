@@ -75,7 +75,7 @@ class TestCheckLoopGuard:
 
     def test_cross_agent_allowed(self):
         result = check_loop_guard(
-            "<!-- bot-agent-genius -->\n<agentRunConfig>{\"task\":\"dev\"}</agentRunConfig>",
+            "<!-- bot-agent-genius -->\n<!-- AGENT_RUN_CONFIG {\"dispatch\": {\"task_hint\": \"dev\"}} -->",
             "dev",
         )
         assert result["SKIP_AGENT"] == "false"

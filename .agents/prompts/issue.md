@@ -89,11 +89,9 @@ Choose ONE of the following paths:
 - End the round
 
 **Path B: Call @@ctx for Context** (if you need more information)
-- When calling @@ctx, use the agentRunConfig format:
+- When calling @@ctx, use the AGENT_RUN_CONFIG sentinel format:
   ```
-  <agentRunConfig>
-  {"task": "ctx"}
-  </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "ctx"} -->
   ```
 - Include your specific context request in the message body (e.g., "Please search for: related authentication issues and PRs").
 - After ctx returns, it will route back to you via `{"task": "issue"}` based on the bot marker detection.
@@ -119,12 +117,10 @@ Choose ONE of the following paths:
 ## 3. When Calling @@ctx
 
 ### How to Call @@ctx
-Use the `agentRunConfig` JSON format:
+Use the `AGENT_RUN_CONFIG` sentinel format:
 
 ```
-<agentRunConfig>
-{"task": "ctx"}
-</agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "ctx"} -->
 ```
 
 Include your specific search request in the message body (e.g., "Please search for: related authentication issues and PRs").
@@ -227,22 +223,16 @@ When producing the final issue, structure it as:
 * **Rule C (Hand-off Command):** 
   - For intermediate rounds: End with:
     ```
-    <agentRunConfig>
-    {"task": "issue"}
-    </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "issue"} -->
     ```
   - For final issue: End with:
     ```
-    <agentRunConfig>
-    {"task": "issue"}
-    </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "issue"} -->
     ```
     And include the message: "The polished issue has been posted as a comment."
   - For ctx callback: End with:
     ```
-    <agentRunConfig>
-    {"task": "issue"}
-    </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "issue"} -->
     ```
     And include the message: "Context received. I'll incorporate this into the next round."
 

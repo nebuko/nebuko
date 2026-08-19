@@ -76,7 +76,8 @@ def build_state(
         issue: Issue metadata (once set, persists across transitions).
         pull_request: PR metadata (once set, persists across transitions).
         resolution: Step resolution context from resolve_config (replaced each transition).
-        dispatch: Agent dispatch outcome from agentRunConfig (replaced each transition).
+        dispatch: Agent dispatch outcome from the AGENT_RUN_CONFIG sentinel
+            (replaced each transition).
 
     Returns:
         A new WorkflowState instance.

@@ -3,8 +3,9 @@
 Resolve agent configuration from trigger body.
 
 Replaces the 223-line 'Resolve Agent Configuration' bash block.
-Extracts agentRunConfig JSON, parses fields, routes via resolve_workflow.py,
-and outputs environment variables.
+Extracts the AGENT_RUN_CONFIG dispatch (from WORKFLOW_STATE in bot comments,
+or the single-line <!-- AGENT_RUN_CONFIG ... --> sentinel), parses fields,
+routes via resolve_workflow.py, and outputs environment variables.
 
 Usage:
     python resolve_config.py \\
@@ -633,7 +634,7 @@ def _resolve_bot_fallback_path(
     """
     dispatch = extract_dispatch_from_state(trigger_body)
     if not dispatch:
-        return {"SKIP_AGENT": "true", "REASON": "Bot comment without agentRunConfig or dispatch"}
+        return {"SKIP_AGENT": "true", "REASON": "Bot comment without AGENT_RUN_CONFIG or dispatch"}
 
     config = {
         "task": dispatch.task_hint or "",

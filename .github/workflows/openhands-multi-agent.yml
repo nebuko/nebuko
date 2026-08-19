@@ -198,7 +198,7 @@ jobs:
                   fi
 
                   # Step 1-5: Resolve agent configuration using Python resolver
-                  # Handles: agentRunConfig JSON, force-next-step, @@mention, dispatch, workflow routing
+                  # Handles: AGENT_RUN_CONFIG sentinel JSON, force-next-step, @@mention, dispatch, workflow routing
                   if [ ! -f "$SCRIPTS_DIR/resolve_config.py" ]; then
                     echo "ERROR: resolve_config.py not found at $SCRIPTS_DIR/resolve_config.py"
                     echo "SKIP_AGENT=true" >> $GITHUB_ENV
@@ -596,7 +596,7 @@ jobs:
                     ISSUE_NUMBER="${{ env.TARGET_NUMBER }}"
                     PR_NUMBER=""
 
-                    # 1. HIGHEST PRIORITY: Explicit PR number from agentRunConfig JSON (dev agent hand-off)
+                    # 1. HIGHEST PRIORITY: Explicit PR number from AGENT_RUN_CONFIG sentinel JSON (dev agent hand-off)
                     #    or from human override syntax "@@review PR #NNN"
                     if [ -n "${{ env.CONFIG_PR_NUMBER }}" ] && [ "${{ env.CONFIG_PR_NUMBER }}" != "null" ]; then
                       PR_NUMBER="${{ env.CONFIG_PR_NUMBER }}"

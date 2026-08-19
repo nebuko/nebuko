@@ -3,6 +3,9 @@
 from validate_output import (
     ValidationResult,
     extract_agent_run_configs,
+    extract_dispatch,
+    has_unterminated_agent_run_config,
+    strip_agent_run_config,
     validate_agent_run_config,
     validate_forbidden_sections,
     validate_agent_output,
@@ -25,9 +28,7 @@ class TestValidationResult:
 class TestExtractAgentRunConfigs:
     def test_extract_single_config(self):
         text = """Some text before
-<agentRunConfig>
-{"task": "dev", "complexity": "high"}
-</agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "dev", "complexity": "high"} -->
 Some text after"""
         configs = extract_agent_run_configs(text)
         assert len(configs) == 1
@@ -35,13 +36,9 @@ Some text after"""
 
     def test_extract_multiple_configs(self):
         text = """
-<agentRunConfig>
-{"task": "genius"}
-</agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "genius"} -->
 Middle text.
-<agentRunConfig>
-{"task": "dev", "complexity": "low"}
-</agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "dev", "complexity": "low"} -->
 """
         configs = extract_agent_run_configs(text)
         assert len(configs) == 2
@@ -49,19 +46,134 @@ Middle text.
         assert configs[1] == '{"task": "dev", "complexity": "low"}'
 
     def test_extract_no_configs(self):
-        text = "No agentRunConfig blocks here."
+        text = "No AGENT_RUN_CONFIG sentinels here."
         configs = extract_agent_run_configs(text)
         assert len(configs) == 0
 
-    def test_extract_empty_block_ignored(self):
-        text = "<agentRunConfig>\n\n</agentRunConfig>"
+    def test_extract_empty_payload_ignored(self):
+        text = "<!-- AGENT_RUN_CONFIG -->"
         configs = extract_agent_run_configs(text)
         assert len(configs) == 0
 
-    def test_extract_compact_format(self):
-        text = "<agentRunConfig>{\"task\":\"review\",\"complexity\":\"medium\"}</agentRunConfig>"
+    def test_extract_whitespace_variants(self):
+        text = "<!--   AGENT_RUN_CONFIG   {\"task\":\"dev\"}   -->"
         configs = extract_agent_run_configs(text)
         assert len(configs) == 1
+        assert configs[0] == '{"task":"dev"}'
+
+    def test_legacy_xml_not_parsed(self):
+        """The legacy <agentRunConfig> XML block is no longer a parsing path."""
+        text = '<agentRunConfig>\n{"task": "dev"}\n</agentRunConfig>'
+        configs = extract_agent_run_configs(text)
+        assert len(configs) == 0
+
+    def test_multiline_sentinel_not_parsed(self):
+        """A quoted multi-line example is deliberately ignored (single-line only)."""
+        text = """```
+<!-- AGENT_RUN_CONFIG
+{"task": "dev"}
+-->
+```"""
+        configs = extract_agent_run_configs(text)
+        assert len(configs) == 0
+
+
+class TestExtractDispatch:
+    def test_last_valid_wins(self):
+        text = (
+            '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
+            "middle\n"
+            '<!-- AGENT_RUN_CONFIG {"task": "dev", "complexity": "low"} -->\n'
+        )
+        assert extract_dispatch(text) == '{"task": "dev", "complexity": "low"}'
+
+    def test_invalid_json_skipped(self):
+        text = (
+            '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
+            "<!-- AGENT_RUN_CONFIG {not valid json} -->\n"
+        )
+        assert extract_dispatch(text) == '{"task": "genius"}'
+
+    def test_non_dict_json_skipped(self):
+        text = (
+            '<!-- AGENT_RUN_CONFIG [1, 2, 3] -->\n'
+            '<!-- AGENT_RUN_CONFIG {"task": "ctx"} -->\n'
+        )
+        assert extract_dispatch(text) == '{"task": "ctx"}'
+
+    def test_no_sentinel_returns_none(self):
+        assert extract_dispatch("plain message, no sentinel") is None
+
+    def test_truncated_sentinel_returns_none(self):
+        text = 'done\n<!-- AGENT_RUN_CONFIG {"task": "dev", "comple'
+        assert extract_dispatch(text) is None
+
+
+class TestUnterminatedSentinel:
+    def test_detects_truncation(self):
+        text = 'done\n<!-- AGENT_RUN_CONFIG {"task": "dev", "comple'
+        assert has_unterminated_agent_run_config(text) is True
+
+    def test_complete_sentinel_not_truncated(self):
+        text = 'done\n<!-- AGENT_RUN_CONFIG {"task": "dev"} -->'
+        assert has_unterminated_agent_run_config(text) is False
+
+    def test_complete_then_truncated(self):
+        text = (
+            '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
+            'tail\n<!-- AGENT_RUN_CONFIG {"task": "dev"'
+        )
+        assert has_unterminated_agent_run_config(text) is True
+
+    def test_whitespace_variant_detected(self):
+        text = 'done\n<!--   AGENT_RUN_CONFIG {"task"'
+        assert has_unterminated_agent_run_config(text) is True
+
+    def test_no_marker(self):
+        assert has_unterminated_agent_run_config("just prose") is False
+
+
+class TestStripAgentRunConfig:
+    def test_removes_single_sentinel(self):
+        msg = 'Hello world\n<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->'
+        assert strip_agent_run_config(msg) == "Hello world"
+
+    def test_removes_multiple_sentinels(self):
+        msg = (
+            "First part\n"
+            '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
+            "Middle part\n"
+            '<!-- AGENT_RUN_CONFIG {"task": "dev"} -->\n'
+            "Last part"
+        )
+        result = strip_agent_run_config(msg)
+        assert "AGENT_RUN_CONFIG" not in result
+        assert "First part" in result and "Middle part" in result and "Last part" in result
+        assert "\n\n\n" not in result
+
+    def test_removes_inline_sentinel(self):
+        msg = "See config <!-- AGENT_RUN_CONFIG {\"task\": \"dev\"} --> here."
+        assert strip_agent_run_config(msg) == "See config  here."
+
+    def test_noop_when_no_sentinel(self):
+        msg = "Just regular text without any sentinels"
+        assert strip_agent_run_config(msg) == msg
+
+    def test_truncated_sentinel_stripped_message_preserved(self):
+        msg = 'Analysis complete with details.\n<!-- AGENT_RUN_CONFIG {"task": "dev", "comple'
+        result = strip_agent_run_config(msg)
+        assert result == "Analysis complete with details."
+        assert "AGENT_RUN_CONFIG" not in result
+
+    def test_preserves_agent_metrics(self):
+        msg = (
+            "Content\n"
+            "<!-- agent-metrics: {} -->\n"
+            '<!-- AGENT_RUN_CONFIG {"status": "advance"} -->'
+        )
+        result = strip_agent_run_config(msg)
+        assert "agent-metrics" in result
+        assert "AGENT_RUN_CONFIG" not in result
 
 
 class TestValidateAgentRunConfig:
@@ -223,9 +335,7 @@ class TestValidateAgentOutput:
     def test_dev_valid_output(self):
         text = """I've implemented the changes.
 
-<agentRunConfig>
-{"task": "review", "complexity": "medium"}
-</agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "review", "complexity": "medium"} -->
 """
         result = validate_agent_output(text, "dev")
         assert result.is_valid is True
@@ -261,9 +371,7 @@ class LLMConfig(BaseModel):
 
     def test_invalid_config_in_output(self):
         text = """Done.
-<agentRunConfig>
-{"task": "invalid_role"}
-</agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"task": "invalid_role"} -->
 """
         result = validate_agent_output(text, "genius")
         assert result.is_valid is False

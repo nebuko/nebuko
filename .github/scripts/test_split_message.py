@@ -80,7 +80,7 @@ class TestExtractSplitPlan(unittest.TestCase):
         # Simulate what genius produces - a long plan where splitPlan may end up in part 2+
         intro = "Implementation Plan\n\n" + ("Detailed analysis paragraph.\n\n") * 80
         json_block = '{"tasks": [{"title": "Task 1"}, {"title": "Task 2"}, {"title": "Task 3"}], "auto_trigger": true}'
-        closing = "\n\nHand-off instructions.\n\n<agentRunConfig>\n{\"task\": \"dev\", \"complexity\": \"high\"}\n</agentRunConfig>"
+        closing = "\n\nHand-off instructions.\n\n<!-- AGENT_RUN_CONFIG {\"dispatch\": {\"status\": \"advance\"}, \"complexity\": \"high\"} -->"
         message = f"{intro}<splitPlan>\n{json_block}\n</splitPlan>{closing}"
         result = extract_split_plan(message)
         self.assertIsNotNone(result)

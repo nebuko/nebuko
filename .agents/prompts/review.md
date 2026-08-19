@@ -29,9 +29,7 @@ Choose ONE of the following paths:
 - Provide actionable guidance on how to fix each issue.
 - End your message with:
   ```
-  <agentRunConfig>
-  {"dispatch": {"status": "advance"}, "round": 2}
-  </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "round": 2} -->
   ```
   Increment the `round` counter each time dev→review→dev cycles (round=2, round=3, etc.).
 
@@ -39,11 +37,9 @@ Choose ONE of the following paths:
 - Summarize what you reviewed and confirm it looks good.
 - **Explicitly ping the original issue author** (`@<issue_author>`) to let them know the PR is ready for final human review. This is critical — do NOT skip the human ping.
 - End your message with: `@<issue_author> ready for human review.`
-- Also include the agentRunConfig for workflow tracking:
+- Also include the AGENT_RUN_CONFIG sentinel for workflow tracking:
   ```
-  <agentRunConfig>
-  {"dispatch": {"status": "advance"}, "complexity": "medium"}
-  </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
   ```
 
 ## 3. Tool Usage
@@ -58,14 +54,10 @@ Choose ONE of the following paths:
 * **Rule C (Hand-off Command):** After your review, always end with:
   - If problems found:
     ```
-    <agentRunConfig>
-    {"dispatch": {"status": "advance"}, "round": 2}
-    </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "round": 2} -->
     ```
     (Increment the `round` counter for each dev→review→dev cycle.)
   - If approved: Include the human ping `@<issue_author> ready for human review.` in your message body, and optionally add:
     ```
-    <agentRunConfig>
-    {"dispatch": {"status": "advance"}, "complexity": "medium"}
-    </agentRunConfig>
+<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
     ```

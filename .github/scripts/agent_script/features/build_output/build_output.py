@@ -8,9 +8,14 @@ from typing import Optional
 
 from openhands.sdk import get_logger
 from openhands.sdk.conversation import get_agent_final_response
+from pydantic import ValidationError
 
 from metrics_schema import Metrics
-from validate_output import extract_agent_run_configs
+from validate_output import (
+    extract_dispatch,
+    has_unterminated_agent_run_config,
+    strip_agent_run_config,
+)
 from workflow_state import (
     Dispatch,
     IssueInfo,
@@ -64,16 +69,16 @@ def is_malformed_final_message(message: str) -> bool:
 
 
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
-    """Convert an agentRunConfig JSON string to a Dispatch object.
+    """Convert an AGENT_RUN_CONFIG JSON string to a Dispatch object.
 
-    Maps agentRunConfig fields (task, complexity, etc.) to Dispatch fields
+    Maps AGENT_RUN_CONFIG payload fields (task, complexity, etc.) to Dispatch
     (task_hint, complexity, etc.). Defaults status to 'advance'.
 
     Args:
-        json_str: Raw JSON string from an <agentRunConfig> block.
+        json_str: Raw JSON string from an AGENT_RUN_CONFIG sentinel.
 
     Returns:
-        Dispatch instance, or None if parsing fails.
+        Dispatch instance, or None if parsing or validation fails.
     """
     try:
         data = json.loads(json_str)
@@ -88,25 +93,29 @@ def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
         data.update(data["dispatch"])
 
     # Map 'task' -> 'task_hint', default status to 'advance'
-    return Dispatch(
-        status=data.get("status", "advance"),
-        task_hint=data.get("task"),
-        complexity=data.get("complexity", "medium"),
-        reasoning=data.get("reasoning", "none"),
-        model=data.get("model"),
-        temperature=data.get("temperature"),
-        top_p=data.get("top_p"),
-        top_k=data.get("top_k"),
-        min_p=data.get("min_p"),
-        presence_penalty=data.get("presence_penalty"),
-        repetition_penalty=data.get("repetition_penalty"),
-        workflow=data.get("workflow"),
-        step=data.get("step"),
-        branch=data.get("branch"),
-        parent_workflow=data.get("parent_workflow"),
-        parent_workflow_step=data.get("parent_workflow_step"),
-        skills=data.get("skills"),
-    )
+    try:
+        return Dispatch(
+            status=data.get("status", "advance"),
+            task_hint=data.get("task"),
+            complexity=data.get("complexity", "medium"),
+            reasoning=data.get("reasoning", "none"),
+            model=data.get("model"),
+            temperature=data.get("temperature"),
+            top_p=data.get("top_p"),
+            top_k=data.get("top_k"),
+            min_p=data.get("min_p"),
+            presence_penalty=data.get("presence_penalty"),
+            repetition_penalty=data.get("repetition_penalty"),
+            workflow=data.get("workflow"),
+            step=data.get("step"),
+            branch=data.get("branch"),
+            parent_workflow=data.get("parent_workflow"),
+            parent_workflow_step=data.get("parent_workflow_step"),
+            skills=data.get("skills"),
+        )
+    except ValidationError as e:
+        logger.warning(f"AGENT_RUN_CONFIG payload failed Dispatch validation: {e}")
+        return None
 
 
 def _load_prev_state() -> WorkflowState | None:
@@ -210,17 +219,6 @@ def _build_resolution() -> StepResolution:
         parent_workflow_step=os.environ.get("PARENT_WORKFLOW_STEP", ""),
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
-
-
-AGENT_RUN_CONFIG_STRIP = re.compile(
-    r"\n?<agentRunConfig>.*?</agentRunConfig>\n?",
-    re.DOTALL,
-)
-
-
-def _strip_agent_run_configs(message: str) -> str:
-    """Remove all <agentRunConfig> XML blocks from agent message text."""
-    return AGENT_RUN_CONFIG_STRIP.sub("", message).strip()
 
 
 def _save_split_plan(json_str: str) -> None:
@@ -344,13 +342,15 @@ def build_output(
     # ── Extract dispatch from agent output ────────────────────────
     dispatch: Optional[Dispatch] = None
     if final_message:
-        configs = extract_agent_run_configs(final_message)
-        if configs:
-            dispatch = agent_run_config_to_dispatch(configs[-1])  # Use last config block
-        # Strip <agentRunConfig> XML blocks from final_message so they don't
+        if has_unterminated_agent_run_config(final_message):
+            logger.warning("Unterminated AGENT_RUN_CONFIG sentinel detected (truncated output)")
+        payload = extract_dispatch(final_message)
+        if payload is not None:
+            dispatch = agent_run_config_to_dispatch(payload)
+        # Strip AGENT_RUN_CONFIG sentinels from final_message so they don't
         # appear in the visible comment body — dispatch is now stored structurally
         # in workflow_state.dispatch instead.
-        final_message = _strip_agent_run_configs(final_message)
+        final_message = strip_agent_run_config(final_message)
 
     # ── Recovery log: capture execution trace on failure ──────────
     context_updates = {}
