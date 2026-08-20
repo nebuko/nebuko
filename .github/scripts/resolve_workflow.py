@@ -32,7 +32,14 @@ from typing import Optional
 
 import yaml
 
-from config import WorkflowStep, WorkflowDefinition, load_workflow
+from config import (
+    WorkflowStep,
+    WorkflowDefinition,
+    load_workflow,
+    is_path_like_reference,
+    is_valid_workflow_reference,
+    resolve_workflow_reference,
+)
 
 try:
     from remote_workflow import fetch_remote_workflow
@@ -115,6 +122,44 @@ def _skills_to_string(skill_list: list[str] | None) -> str:
     return ",".join(skill_list)
 
 
+def _match_condition(
+    step: WorkflowStep,
+    branch_key: str,
+) -> Optional[str]:
+    """Pick a condition target step name for a branch key.
+
+    Exact-match on ``on_result`` first, then ``default``; None when the
+    branch is not covered by the step's conditions (or it has none).
+    """
+    if not branch_key or not step.conditions:
+        return None
+    for condition in step.conditions:
+        if condition.on_result == branch_key:
+            return condition.next
+    for condition in step.conditions:
+        if condition.on_result == "default":
+            return condition.next
+    return None
+
+
+def _branch_key_for(
+    step: WorkflowStep,
+    branch_key: str,
+) -> Optional[str]:
+    """Return the effective branch key for a conditional step.
+
+    Exact match wins; an unmatched key falls back to ``"default"`` only when
+    a default condition exists.
+    """
+    if not branch_key or not step.conditions:
+        return None
+    if _match_condition(step, branch_key) is not None:
+        return branch_key
+    if any(c.on_result == "default" for c in step.conditions):
+        return "default"
+    return None
+
+
 def _is_terminal_step(step: WorkflowStep) -> bool:
     """Check if a step is terminal (no next step, no conditions)."""
     if step.next is None and not step.conditions:
@@ -164,7 +209,10 @@ def _resolve_sub_workflow_entry(
     elif current_step.path:
         target_path = current_step.path
     elif current_step.workflow:
-        target_path = str(Path(workflows_dir) / f"{current_step.workflow}.yaml")
+        # ``workflow`` field may be a name OR a repo-root-relative path (#468)
+        target_path = str(
+            resolve_workflow_reference(current_step.workflow, workflows_dir)
+        )
     else:
         return None
 
@@ -220,8 +268,13 @@ def _resolve_return_to_parent(
     Loads the parent workflow, finds the step that was the sub-workflow entry point,
     and resolves the next step after it using conditional routing if available.
     """
-    parent_file = Path(workflows_dir) / f"{parent_workflow_name}.yaml"
-    if not parent_file.exists():
+    # Load parent workflow — supports names and repo-root-relative paths
+    # (issue #468): path-like references resolve outside workflows/.
+    if is_path_like_reference(parent_workflow_name):
+        resolved = resolve_workflow_reference(parent_workflow_name, workflows_dir)
+    else:
+        resolved = Path(workflows_dir) / f"{parent_workflow_name}.yaml"
+    if not Path(resolved).exists():
         print(f"Warning: Parent workflow '{parent_workflow_name}' not found",
               file=sys.stderr)
         return {
@@ -230,7 +283,7 @@ def _resolve_return_to_parent(
         }
 
     try:
-        parent_wf = load_workflow(str(parent_file))
+        parent_wf = load_workflow(str(resolved))
     except (FileNotFoundError, ValueError) as e:
         print(f"Warning: Failed to load parent workflow: {e}", file=sys.stderr)
         return {
@@ -342,9 +395,13 @@ def resolve_workflow_step(
     Returns:
         Dict with routing variables.
     """
-    # Load workflow definition
-    workflow_file = Path(workflows_dir) / f"{workflow_name}.yaml"
-    if not workflow_file.exists():
+    # Load workflow definition — supports names and repo-root-relative paths
+    # (issue #468): path-like references resolve outside workflows/.
+    if is_path_like_reference(workflow_name):
+        resolved = resolve_workflow_reference(workflow_name, workflows_dir)
+    else:
+        resolved = Path(workflows_dir) / f"{workflow_name}.yaml"
+    if not Path(resolved).exists():
         # Fall back to direct task mapping if workflow file not found
         prompt_file = TASK_TO_PROMPT.get(task)
         if not prompt_file:
@@ -362,7 +419,7 @@ def resolve_workflow_step(
         }
 
     try:
-        current_wf = load_workflow(str(workflow_file))
+        current_wf = load_workflow(str(resolved))
     except (FileNotFoundError, ValueError) as e:
         print(f"Warning: Failed to load workflow {workflow_name}: {e}", file=sys.stderr)
         prompt_file = TASK_TO_PROMPT.get(task)
@@ -413,19 +470,11 @@ def resolve_workflow_step(
         return _resolve_sub_workflow_entry(current_step, current_wf, workflows_dir, prompt_base)
 
     # Resolve next step
-    next_step = None
+    next_step: Optional[str] = None
     if branch_key and current_step.conditions:
-        branch_matched = False
-        for condition in current_step.conditions:
-            if condition.on_result == branch_key:
-                next_step = condition.next
-                branch_matched = True
-                break
-        if not branch_matched:
-            for condition in current_step.conditions:
-                if condition.on_result == "default":
-                    next_step = condition.next
-                    break
+        target = _match_condition(current_step, branch_key)
+        if target is not None:
+            next_step = target
     else:
         next_step = current_step.next
 
@@ -449,37 +498,171 @@ def resolve_workflow_step(
     }
 
 
+def _load_workflow_by_reference(
+    workflow_name: str,
+    workflows_dir: str,
+) -> Optional[WorkflowDefinition]:
+    """Load a workflow by name or repo-root-relative path reference."""
+    if not is_valid_workflow_reference(workflow_name):
+        return None
+    reference = resolve_workflow_reference(workflow_name, workflows_dir)
+    try:
+        return load_workflow(str(reference))
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def _resolve_sub_workflow_ref_target(
+    current_step: WorkflowStep,
+) -> Optional[str]:
+    """Resolve the target workflow reference for a sub-workflow entry step.
+
+    Returns the effective reference (child workflow name or path), or None
+    when the step references no local sub-workflow.
+    """
+    if current_step.path:
+        return current_step.path
+    if current_step.workflow:
+        return current_step.workflow
+    return None
+
+
+def _sub_workflow_entry_marker(
+    child_workflow: WorkflowDefinition,
+    child_reference: str,
+    parent_workflow: WorkflowDefinition,
+    parent_step: WorkflowStep,
+) -> dict:
+    """Build the 'enter sub-workflow' result structure.
+
+    Carries the sub-workflow's first step plus parent tracking so the caller
+    can record ``parent_workflow`` / ``parent_workflow_step``.
+    """
+    first_step = child_workflow.steps[0]
+    return {
+        "entered_sub_workflow": True,
+        "task": first_step.agent,
+        "step": first_step.name,
+        "workflow": child_reference,
+        "parent_workflow": parent_workflow.name,
+        "parent_workflow_step": parent_step.name,
+    }
+
+
+def _return_to_parent_marker(
+    parent_workflow: WorkflowDefinition,
+    parent_step_name: str,
+    branch_key: Optional[str],
+    parent_reference: str,
+) -> Optional[dict]:
+    """Build the 'exit sub-workflow' result structure.
+
+    Loads nothing; given the parent's sub-workflow reference step, resolves
+    the parent's next step after it, honoring that step's conditions against
+    the incoming branch key. ``parent_reference`` is the state's workflow
+    name/path used to restore ``config_workflow``. Returns None when the
+    parent step is missing or itself terminal (overall terminal).
+    """
+    parent_step = next(
+        (s for s in parent_workflow.steps if s.name == parent_step_name), None
+    )
+    if parent_step is None:
+        return None
+
+    target_name = _match_condition(parent_step, branch_key or "")
+    if target_name is None:
+        target_name = parent_step.next
+    if target_name is None:
+        return None
+
+    target_step = next(
+        (s for s in parent_workflow.steps if s.name == target_name), None
+    )
+    if target_step is None:
+        return None
+
+    marker: dict = {
+        "exited_sub_workflow": True,
+        "task": target_step.agent,
+        "step": target_step.name,
+        "workflow": parent_reference,
+    }
+    effective_branch = _branch_key_for(parent_step, branch_key or "")
+    if effective_branch:
+        marker["branch"] = effective_branch
+    return marker
+
+
+def _return_to_parent_on_terminal(
+    parent_workflow: str,
+    parent_workflow_step: str,
+    branch_result: Optional[str],
+    workflows_dir: str,
+    agent_hint: Optional[str],
+) -> Optional[dict]:
+    """Exit to the parent when a sub-workflow cannot advance internally.
+
+    Used when the current step is terminal (``next: null``) or its target
+    step is missing. Returns the parent's next step after the sub-workflow
+    reference, or falls back to ``agent_hint`` / ``None`` when no parent is
+    set (overall terminal).
+    """
+    if parent_workflow and parent_workflow_step:
+        parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir)
+        if parent_wf is not None:
+            marker = _return_to_parent_marker(
+                parent_wf, parent_workflow_step, branch_result, parent_workflow
+            )
+            if marker is not None:
+                return marker
+    if agent_hint:
+        return {"task": agent_hint}
+    return None
+
+
 def resolve_next_from_workflow(
     workflow_name: str,
     current_step_name: str,
     workflows_dir: str,
     agent_hint: Optional[str] = None,
     branch_result: Optional[str] = None,
+    parent_workflow: str = "",
+    parent_workflow_step: str = "",
 ) -> Optional[dict]:
     """Resolve the next step in a workflow given the current step.
 
-    Loads the workflow YAML, finds the current step, and determines the next
-    step based on the ``next`` field or conditional routing via ``conditions``.
+    ``workflow_name`` may be a workflow name (resolved from ``workflows_dir``)
+    or a repo-root-relative path (issue #468) — same resolution rules as
+    ``load_workflow``.
+
+    Handles the sub-workflow lifecycle:
+    - A current step that references a sub-workflow (``workflow``/``path``
+      field) yields an entry marker (``entered_sub_workflow``) with the
+      child's first step and the parent tracking fields.
+    - A terminal current step with ``parent_workflow`` set yields an exit
+      marker (``exited_sub_workflow``) pointing at the parent's next step
+      after the sub-workflow reference, or ``None`` when the parent step is
+      terminal too (overall terminal).
 
     Args:
-        workflow_name: Name of the workflow (stem of the .yaml file).
+        workflow_name: Workflow name or repo-root-relative path.
         current_step_name: Name of the current step.
         workflows_dir: Path to the workflows directory.
         agent_hint: Fallback agent name when no workflow resolution is found.
         branch_result: Condition key for conditional routing (e.g. "approved").
+        parent_workflow: Parent workflow name/ref when currently inside a
+            sub-workflow; enables return-to-parent on terminal steps.
+        parent_workflow_step: The parent's sub-workflow reference step name;
+            the parent resumes at the step after this one.
 
     Returns:
-        ``{"task": "<agent>", "step": "<name>"}`` for linear routing,
-        ``{"task": "<agent>", "step": "<name>", "branch": "<key>"}`` for
-        conditional branches, ``{"task": "<hint>"}`` for agent hint fallback,
-        or ``None`` for terminal/missing cases.
+        ``{"task", "step"}`` for linear routing, ``{"task", "step", "branch"}``
+        for conditional branches, ``{"task": "<hint>"}`` for agent hint
+        fallback, entry/exit markers for sub-workflow transitions, or
+        ``None`` for terminal/missing cases.
     """
-    workflow_file = Path(workflows_dir) / f"{workflow_name}.yaml"
-
-    # Load workflow
-    try:
-        workflow = load_workflow(str(workflow_file))
-    except (FileNotFoundError, ValueError):
+    workflow = _load_workflow_by_reference(workflow_name, workflows_dir)
+    if workflow is None:
         if agent_hint:
             return {"task": agent_hint}
         return None
@@ -496,8 +679,26 @@ def resolve_next_from_workflow(
             return {"task": agent_hint}
         return None
 
-    # Check for terminal step
+    # Sub-workflow entry step (local ref only; remote sources are out of
+    # scope for the trigger-side resolver)
+    child_ref = _resolve_sub_workflow_ref_target(current_step)
+    if child_ref:
+        child_workflow = _load_workflow_by_reference(child_ref, workflows_dir)
+        if child_workflow is not None and child_workflow.steps:
+            return _sub_workflow_entry_marker(
+                child_workflow, child_ref, workflow, current_step
+            )
+
+    # Terminal step: return to parent when inside a sub-workflow
     if _is_terminal_step(current_step):
+        if parent_workflow and parent_workflow_step:
+            parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir)
+            if parent_wf is not None:
+                marker = _return_to_parent_marker(
+                    parent_wf, parent_workflow_step, branch_result, parent_workflow
+                )
+                if marker is not None:
+                    return marker
         if agent_hint:
             return {"task": agent_hint}
         return None
@@ -507,14 +708,17 @@ def resolve_next_from_workflow(
     branch_key: Optional[str] = None
 
     if branch_result and current_step.conditions:
-        # Try to match a specific condition
+        # Try to match a specific condition; a match on ``next: null`` is
+        # terminal (sub-workflow exit) and must NOT fall through to default.
+        matched = False
         for condition in current_step.conditions:
             if condition.on_result == branch_result:
                 target_step_name = condition.next
                 branch_key = branch_result
+                matched = True
                 break
-        # Fall back to default condition if no exact match
-        if target_step_name is None:
+        # Fall back to default condition only when nothing matched
+        if not matched:
             for condition in current_step.conditions:
                 if condition.on_result == "default":
                     target_step_name = condition.next
@@ -525,7 +729,9 @@ def resolve_next_from_workflow(
         target_step_name = current_step.next
 
     if target_step_name is None:
-        return None
+        return _return_to_parent_on_terminal(
+            parent_workflow, parent_workflow_step, branch_result, workflows_dir, agent_hint
+        )
 
     # Look up target step to get its agent
     target_step = None
@@ -535,6 +741,8 @@ def resolve_next_from_workflow(
             break
 
     if target_step is None:
+        # Broken next reference: the workflow is not terminal, so no parent
+        # return and no hint fallback — resolution fails cleanly.
         return None
 
     result: dict = {

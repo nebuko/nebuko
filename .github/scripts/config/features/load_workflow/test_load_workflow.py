@@ -10,7 +10,12 @@ import yaml
 from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import load_workflow
+from config import (
+    is_path_like_reference,
+    is_valid_workflow_reference,
+    load_workflow,
+    resolve_workflow_reference,
+)
 
 
 class TestLoadWorkflow:
@@ -122,3 +127,57 @@ class TestLoadWorkflow:
         assert wf.name == "review-only"
         assert len(wf.steps) == 1
         assert wf.steps[0].agent == "review"
+
+
+class TestPathBasedLoading:
+    """Path-based workflow loading and reference resolution (issue #468)."""
+
+    RAW = {
+        "name": "path_wf",
+        "description": "Workflow at a non-standard path",
+        "trigger": {"agents": ["genius"]},
+        "steps": [{"name": "step", "agent": "dev", "next": None}],
+    }
+
+    def _write(self, root: Path, rel: str) -> Path:
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(yaml.dump(self.RAW))
+        return target
+
+    def test_load_workflow_non_standard_path(self, tmp_path: Path, monkeypatch):
+        """load_workflow works with a file at a non-workflows/ repo-root path."""
+        monkeypatch.chdir(tmp_path)
+        self._write(tmp_path, "tmp_impl/test_workflow.yaml")
+        wf = load_workflow("tmp_impl/test_workflow.yaml")
+        assert wf.name == "path_wf"
+        assert wf.steps[0].agent == "dev"
+
+    def test_missing_file_error_message(self, tmp_path: Path, monkeypatch):
+        """Missing file raises FileNotFoundError with a clear message."""
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(FileNotFoundError, match="Workflow file not found: nope/wf.yaml"):
+            load_workflow("nope/wf.yaml")
+
+    def test_is_path_like_reference(self):
+        assert is_path_like_reference("workflows/default.yaml")
+        assert is_path_like_reference("tmp_impl/test_workflow.yaml")
+        assert is_path_like_reference("sub/dir/wf.yml")
+        assert not is_path_like_reference("default")
+        assert not is_path_like_reference("my-default.yaml-bak")
+
+    def test_is_valid_workflow_reference(self):
+        assert is_valid_workflow_reference("default")
+        assert is_valid_workflow_reference("tmp_impl/wf.yaml")
+        assert not is_valid_workflow_reference("")
+        assert not is_valid_workflow_reference("/abs/path.yaml")
+        assert not is_valid_workflow_reference("a/../b.yaml")
+
+    def test_resolve_workflow_reference_name(self):
+        assert resolve_workflow_reference("default", "workflows") == Path("workflows/default.yaml")
+
+    def test_resolve_workflow_reference_workflows_prefix(self):
+        assert resolve_workflow_reference("workflows/nested/wf.yaml", "wf_dir") == Path("wf_dir/nested/wf.yaml")
+
+    def test_resolve_workflow_reference_repo_root_path(self):
+        assert resolve_workflow_reference("tmp_impl/wf.yaml", "workflows") == "tmp_impl/wf.yaml"
