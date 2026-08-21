@@ -289,8 +289,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Fail fast: validate the agent roster (prompt files, tools, skills, roles)
-    _fail_fast_validate_roster(args.prompt_base, skills_dir="skills")
+    # Fail fast: validate the agent roster (prompt files, tools, skills, roles).
+    # skills_dir=None anchors the skills lookup next to the resolved
+    # agent-config.yaml — the CWD is not reliable here.
+    _fail_fast_validate_roster(args.prompt_base)
 
     # Read trigger body
     if args.trigger_body == "-":

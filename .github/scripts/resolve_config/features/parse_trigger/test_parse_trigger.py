@@ -36,6 +36,20 @@ class TestExtractMentionAgent:
     def test_no_mention(self):
         assert extract_mention_agent("just some text") is None
 
+    def test_each_roster_agent_is_mentionable(self):
+        for name in (
+            "genius", "ctx", "dev", "review", "issue",
+            "issue-reviewer", "summarize", "debug", "po",
+        ):
+            assert extract_mention_agent(f"ping @@@{name} please") == name
+
+    def test_hyphenated_name_wins_over_prefix(self):
+        # A single "@@issue-reviewer" must not be misparsed as "@@issue".
+        assert extract_mention_agent("call @@@issue-reviewer") == "issue-reviewer"
+
+    def test_non_agent_mention_ignored(self):
+        assert extract_mention_agent("ping @@@unknown-agent only") is None
+
 
 class TestExtractWorkflowCommand:
     def test_matches_first_line(self):

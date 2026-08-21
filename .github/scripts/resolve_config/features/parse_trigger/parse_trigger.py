@@ -1,22 +1,52 @@
 """Trigger parsing feature.
 
-Pure string-parsing helpers that extract command flags and workflow state
-from the raw trigger body, with no I/O.
+String-parsing helpers that extract command flags and workflow state from
+the raw trigger body. The @@mention regex is built once from the live agent
+roster (one-time I/O) and cached thereafter.
 """
 
 import re
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Optional, Pattern, Tuple
 
 from workflow_state import extract_state_from_body
-from config import STATIC_TASK_TO_PROMPT, build_mention_regex
+from config import build_mention_regex, load_agent_roster
 
 from ...sub_domains.trigger_commands.trigger_commands import TriggerCommands
 
-# @@mention regex derived from the agent roster keys. Longest names first so
-# hyphenated keys like "issue-reviewer" win over shorter prefixes ("issue").
-# Uses the static roster so trigger parsing stays a pure function (no I/O);
-# this covers the full default agent set including debug/po.
-_MENTION_RE = build_mention_regex(STATIC_TASK_TO_PROMPT)
+# @@mention regex built from the LIVE agent roster (agent-config.yaml) so new
+# agents are @@mentionable without touching code. Built lazily once (with a
+# one-time I/O) and cached; falls back to the static roster if the config is
+# unreadable. Longest names first so hyphenated keys like "issue-reviewer"
+# win over shorter prefixes ("issue").
+_MENTION_RE: Optional[Pattern] = None
+
+
+def _find_agent_config_path() -> str:
+    """Locate agent-config.yaml by walking up from this file.
+
+    The resolver is invoked from various working directories, so a plain
+    CWD-relative lookup is not portable. Walk up to the nearest
+    ``agent-config.yaml``; fall back to the CWD name.
+    """
+    current = Path(__file__).resolve().parent
+    for _ in range(10):
+        candidate = current / "agent-config.yaml"
+        if candidate.is_file():
+            return str(candidate)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return "agent-config.yaml"
+
+
+def _get_mention_regex() -> Pattern:
+    """Return the cached mention regex, building it from the live roster."""
+    global _MENTION_RE
+    if _MENTION_RE is None:
+        _MENTION_RE = build_mention_regex(load_agent_roster(_find_agent_config_path()))
+    return _MENTION_RE
 
 __all__ = [
     "is_bot_comment",
@@ -50,7 +80,7 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
     Returns:
         Agent name string or None.
     """
-    agents = _MENTION_RE.findall(trigger_body)
+    agents = _get_mention_regex().findall(trigger_body)
     if agents:
         return agents[-1].replace("@@", "")
     return None
