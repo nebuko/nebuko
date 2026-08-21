@@ -27,6 +27,7 @@ from .features.parse_trigger.parse_trigger import (
 from .features.resolve_route.resolve_route import (
     _resolve_resume_path,
     _resolve_dispatch_path,
+    _resolve_function_call_path,
     _resolve_human_path,
     _resolve_bot_fallback_path,
     _resolve_workflow_next_step,
@@ -140,6 +141,12 @@ def resolve_config(
         # so standalone agent calls work even when a workflow is active.
         # ci_mention covers CI-posted plain mention triggers (see above).
         config = _resolve_human_path(trigger_body, repo, issue_number, workflows_dir)
+    elif prev_state and prev_state.function_call:
+        # Imperative agent-to-agent hand-off (call_agent): explicit pinning of
+        # the next agent, beats workflow continuation (same tier as human
+        # mention). Consumed once — the fresh state built for the called agent
+        # clears the field, so a re-trigger no-ops.
+        config = _resolve_function_call_path(prev_state.function_call, workflows_dir)
     elif prev_state and dispatch_obj:
         # Auto-dispatch: workflow state with dispatch object — follow the workflow.
         config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)

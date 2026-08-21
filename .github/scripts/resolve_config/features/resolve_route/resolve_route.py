@@ -15,6 +15,8 @@ from resolve_workflow import (
     _is_terminal_step,
 )
 from workflow_state import (
+    FunctionCall,
+    SUPPORTED_FUNCTIONS,
     extract_dispatch_from_state,
     extract_state_from_body,
 )
@@ -32,6 +34,7 @@ __all__ = [
     "MAX_LOOP_COUNT",
     "resolve_next_agent_from_workflow",
     "count_consecutive_same_agent",
+    "_resolve_function_call_path",
 ]
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
@@ -320,6 +323,53 @@ def _resolve_dispatch_path(
         config["task"] = agent_hint
 
     return config
+
+
+def _resolve_function_call_path(
+    function_call: FunctionCall,
+    workflows_dir: str,
+) -> dict:
+    """Resolve config for a stored imperative function call (call_agent).
+
+    An explicit agent-to-agent hand-off pins the target agent and beats
+    workflow continuation (same priority tier as a human mention). The
+    call is one-shot: the fresh state built downstream clears
+    ``function_call`` so a re-trigger no-ops.
+    """
+    if function_call.function not in SUPPORTED_FUNCTIONS:
+        # Registry already validated at parse time; guard against drift.
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Unsupported function_call: {function_call.function}",
+        }
+
+    task = function_call.agent_name or ""
+    if not task:
+        return {"SKIP_AGENT": "true", "REASON": "function_call call_agent has no agent_name"}
+
+    complexity = function_call.complexity or "medium"
+    print(
+        f"Function call: calling agent '{task}' (complexity={complexity})",
+        file=sys.stderr,
+    )
+    return {
+        "task": task,
+        "config_workflow": "",
+        "config_step": "",
+        "config_complexity": complexity,
+        "config_reasoning": "none",
+        "config_temperature": "",
+        "config_round": "",
+        "config_model": "",
+        "config_skills": "",
+        "config_top_p": "",
+        "config_top_k": "",
+        "config_repetition_penalty": "",
+        "config_debug": "",
+        "config_branch": "",
+        "config_parent_workflow": "",
+        "config_parent_workflow_step": "",
+    }
 
 
 def _resolve_human_path(
