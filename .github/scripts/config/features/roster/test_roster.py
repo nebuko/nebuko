@@ -126,6 +126,14 @@ class TestBuildMentionRegex:
         regex = build_mention_regex(roster)
         assert regex.findall("mention @@unknown-agent here") == []
 
+    def test_longer_word_after_name_not_matched(self):
+        roster = dict(STATIC_TASK_TO_PROMPT)
+        regex = build_mention_regex(roster)
+        # @@devops is not @@dev — word boundary must stop the match.
+        assert regex.findall("ask @@devops to help") == []
+        # Punctuation still counts as a boundary.
+        assert regex.findall("ask @@dev, thanks") == ["@@dev"]
+
 
 class TestExtractCallerAgent:
     def test_extracts_bot_marker(self):

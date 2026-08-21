@@ -211,7 +211,7 @@ def build_team_env(
     trigger_body: str,
     role_name: Optional[str] = None,
     config_path: Optional[str] = None,
-    shared_context_path: str = SHARED_CONTEXT_DEFAULT_PATH,
+    shared_context_path: Optional[str] = None,
 ) -> dict[str, str]:
     """Build the team-context environment values for one agent run.
 
@@ -224,12 +224,16 @@ def build_team_env(
         config_path: Path to the agent-config.yaml file. Defaults to the
             repo-root copy when it exists (see ``default_config_path``).
         shared_context_path: Where to write the generated section file.
+            Defaults to :data:`SHARED_CONTEXT_DEFAULT_PATH` (resolved at call
+            time so tests can override it).
 
     Returns:
         Dict with ``AGENT_ROLES`` (JSON or ""), ``AGENT_TOOLS`` (comma list
         or ""), ``CALLER_AGENT`` (marker value or "") and
         ``SHARED_CONTEXT_FILE`` (file path or "").
     """
+    if shared_context_path is None:
+        shared_context_path = SHARED_CONTEXT_DEFAULT_PATH
     roles, tools_by_agent = load_team_data(config_path)
     caller = extract_caller_agent(trigger_body) or ""
     section = build_shared_context(

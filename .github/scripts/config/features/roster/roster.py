@@ -113,7 +113,10 @@ def build_mention_regex(roster: dict[str, str]) -> re.Pattern:
         Compiled regex with one group capturing the mentioned agent name.
     """
     names = sorted(roster.keys(), key=len, reverse=True)
-    return re.compile(r"@@" + r"(?:" + "|".join(re.escape(n) for n in names) + r")")
+    # Trailing \b stops @@devops from matching @@dev.
+    return re.compile(
+        r"@@" + r"(?:" + "|".join(re.escape(n) for n in names) + r")\b"
+    )
 
 
 def extract_caller_agent(trigger_body: str) -> Optional[str]:

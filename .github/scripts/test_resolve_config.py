@@ -2118,3 +2118,96 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
+
+
+class TestTeamEnvSerialization:
+    """Team-context env keys surface in the resolve_config result (issue #476).
+
+    The workflow greps ``^KEY=`` lines from the resolver stdout, which
+    ``main()`` emits by iterating the full result dict. These tests pin the
+    contract that the new keys are present for non-skipped runs and absent
+    for skipped ones.
+    """
+
+    TEAM_ENV_KEYS = ("AGENT_ROLES", "AGENT_TOOLS", "CALLER_AGENT", "SHARED_CONTEXT_FILE")
+
+    def _write_agent_config(self, tmp_path):
+        """Write a minimal valid agent-config.yaml in the temp dir."""
+        config_path = os.path.join(str(tmp_path), "agent-config.yaml")
+        with open(config_path, "w") as f:
+            f.write(
+                "providers:\n"
+                '  local_vllm:\n'
+                '    api_url: "http://localhost:1/v1"\n'
+                '    api_token_env: "LOCAL_VLLM_API_TOKEN"\n'
+                "llms:\n"
+                "  test-model:\n"
+                '    model_path: "hosted_vllm/test-model"\n'
+                '    provider: "${providers.local_vllm}"\n'
+                "agents:\n"
+                "  dev:\n"
+                '    model: "${llms.test-model}"\n'
+                '    prompt_file: "dev.md"\n'
+                '    role: "Execution developer."\n'
+                "    tools: [terminal, think]\n"
+            )
+        return config_path
+
+    def test_non_skipped_result_includes_team_env_keys(self, tmp_path, monkeypatch):
+        import resolve_config as rc
+        from resolve_config.features.team_context import team_context
+
+        config_path = self._write_agent_config(tmp_path)
+        shared_path = str(tmp_path / "shared_context.md")
+        monkeypatch.setattr(team_context, "default_config_path", lambda: config_path)
+        monkeypatch.setattr(
+            team_context, "SHARED_CONTEXT_DEFAULT_PATH", shared_path, raising=False
+        )
+
+        prompt_base = str(tmp_path / "prompts")
+        os.makedirs(prompt_base)
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write("# Prompt")
+        workflows_dir = str(tmp_path / "workflows")
+        os.makedirs(workflows_dir)
+
+        body = "@@dev fix the bug"
+        result = rc.resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["SKIP_AGENT"] == "false"
+        assert result["ROLE_NAME"] == "dev"
+        # Contract: every key main() serializes as KEY=VALUE must be present
+        # so the workflow's `grep '^KEY='` picks them up.
+        for key in self.TEAM_ENV_KEYS:
+            assert key in result, f"missing {key} in serialized result"
+        assert result["AGENT_ROLES"]  # roles parsed from the roster
+        assert result["AGENT_TOOLS"] == "terminal,think"
+        assert os.path.isfile(result["SHARED_CONTEXT_FILE"])
+        with open(result["SHARED_CONTEXT_FILE"]) as f:
+            assert "# Your Team" in f.read()
+
+    def test_skipped_result_has_no_team_env_keys(self, tmp_path, monkeypatch):
+        import resolve_config as rc
+        from resolve_config.features.team_context import team_context
+
+        config_path = self._write_agent_config(tmp_path)
+        monkeypatch.setattr(team_context, "default_config_path", lambda: config_path)
+        monkeypatch.setattr(
+            team_context, "SHARED_CONTEXT_DEFAULT_PATH",
+            str(tmp_path / "shared_context.md"), raising=False,
+        )
+
+        prompt_base = str(tmp_path / "prompts")
+        os.makedirs(prompt_base)
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write("# Prompt")
+        workflows_dir = str(tmp_path / "workflows")
+        os.makedirs(workflows_dir)
+
+        result = rc.resolve_config("No valid task here", prompt_base, workflows_dir, is_bot=False)
+
+        assert result["SKIP_AGENT"] == "true"
+        for key in self.TEAM_ENV_KEYS:
+            assert key not in result, f"{key} leaked into skipped result"
