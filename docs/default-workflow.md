@@ -14,8 +14,8 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 
 | Trigger | Condition |
 |---------|-----------|
-| `issues` | Issue opened, edited, assigned, or closed — body must contain an agent mention (`@@genius`, `@@dev`, etc.) or `/workflow` or an `AGENT_RUN_CONFIG` sentinel |
-| `issue_comment` | New comment — body must contain an agent mention or trigger pattern |
+| `issues` | Issue opened, edited, assigned, or closed - body must contain an agent mention (`@@genius`, `@@dev`, etc.) or `/workflow`. Bot-tagged bodies (starting with `<!-- bot-agent-` or `<!-- bot-workflow-terminal -->`) never fire on `@@mentions` |
+| `issue_comment` | New comment - body must contain an agent mention, or a machine trigger token: `"function_call"` (in the posted state JSON), `<!-- workflow-continue -->`, `<!-- bot-summarizer-trigger -->`, `<!-- bot-subtask-complete: N -->`, `<!-- bot-trigger: agent -->`. `@@mention` firing is suppressed when the comment starts with a bot marker |
 | `workflow_call` | Reusable workflow invoked by another workflow; uses `prompt_body` input |
 
 ### Agent Roles
@@ -120,12 +120,14 @@ Installs the two core OpenHands packages directly from the `agent-sdk` GitHub re
 **Output:** Environment variables: `TASK`, `ROLE_NAME`, `PROMPT_LOCATION`, `AGENT_SELECTED`, `COMPLEXITY`, `LLM_REASONING`, `AGENT_ROUND`, `AGENT_SKILLS`, `STEP_SKILLS`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `CONFIG_TOP_P`, `CONFIG_TOP_K`, `CONFIG_REPETITION_PENALTY`, `WORKFLOW_NAME`, `WORKFLOW_STEP`, `WORKFLOW_NEXT`, `PARENT_WORKFLOW`, `PARENT_WORKFLOW_STEP`, `SKILL_CONTEXT_FILE`, `CONFIG_PR_NUMBER`.
 
 Runs `resolve_config.py` which parses the trigger body to determine:
-1. Which agent role should handle the request (from `@@mention` or the `AGENT_RUN_CONFIG` sentinel JSON).
+1. Which agent role should handle the request (from a human `@@mention`, a machine trigger token, the `AGENT_RUN_CONFIG` `function_call` section, or the workflow state's dispatch).
 2. The complexity level (`low`, `medium`, `high`).
 3. The prompt file location for the selected agent.
 4. Skill files to load and concatenate.
 5. Model/temperature overrides.
 6. Workflow routing metadata (for multi-step workflows).
+
+Routing priority: human `@@mention` > `AGENT_RUN_CONFIG` `function_call` (imperative one-shot hand-off) > machine trigger token > workflow-state dispatch > workflow next-step > bot fallback. Bot bodies never yield an `@@mention` (logged warning when mentions are dropped).
 
 If resolution fails or the trigger should be skipped, sets `SKIP_AGENT=true` and exits.
 
@@ -335,7 +337,9 @@ Always uploads logs for debugging purposes. Uses `actions/upload-artifact@v4`.
 ### Steps:
 1. Extract the 1-based index `N` from the title `[Sub-task N/M]`.
 2. Resolve the parent issue number from the `parent-{N}` label on the sub-task.
-3. Post a comment `@@genius <!-- subtask-complete: {zero-index} -->` on the parent issue.
+3. Post a comment `<!-- bot-subtask-complete: {zero-index} -->` on the parent issue.
+
+The resolver maps this token directly to the `genius` agent (no `@@genius` needed — the token is one of the machine trigger tokens the CI gate recognizes). Genius detects the marker in the comment and runs sub-task orchestration mode.
 
 **Input:** Issue title, issue labels.  
 **Output:** Comment on parent issue triggering genius agent to evaluate completion status.

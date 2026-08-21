@@ -399,10 +399,9 @@ def build_output(
         payload = extract_dispatch(final_message)
         if payload is not None:
             dispatch = agent_run_config_to_dispatch(payload)
-            try:
-                function_call = extract_function_call(json.loads(payload))
-            except (json.JSONDecodeError, TypeError):
-                function_call = None
+            # extract_dispatch only returns payloads it already json-parsed,
+            # so this re-parse cannot fail (valid-JSON guarantee).
+            function_call = extract_function_call(json.loads(payload))
         # Strip AGENT_RUN_CONFIG sentinels from final_message so they don't
         # appear in the visible comment body — dispatch is now stored structurally
         # in workflow_state.dispatch instead.

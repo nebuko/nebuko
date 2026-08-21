@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parents[3]))
 from resolve_config.features.resolve_route.resolve_route import (  # noqa: E402
     MAX_LOOP_COUNT,
@@ -56,11 +58,23 @@ class TestResolveFunctionCallPath:
         config = _resolve_function_call_path(FunctionCall(agent_name="dev"), "/tmp")
         assert config["config_complexity"] == "medium"
 
-    def test_missing_agent_name_skips(self):
+    def test_missing_agent_name_rejected_by_model(self):
+        from workflow_state import FunctionCall
+
+        # The model validator (added by issue #478 review) rejects blank
+        # agent names before they can reach the resolver.
+        with pytest.raises(ValueError, match="non-empty agent_name"):
+            FunctionCall(agent_name="")
+        with pytest.raises(ValueError, match="non-empty agent_name"):
+            FunctionCall(agent_name="   ")
+
+    def test_missing_agent_name_skips_via_model_construct(self):
         from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
         from workflow_state import FunctionCall
 
-        config = _resolve_function_call_path(FunctionCall(agent_name=""), "/tmp")
+        # Bypass model validation to exercise the resolver's own guard.
+        fc = FunctionCall.model_construct(agent_name="")
+        config = _resolve_function_call_path(fc, "/tmp")
         assert config["SKIP_AGENT"] == "true"
         assert "agent_name" in config["REASON"]
 

@@ -5,6 +5,7 @@ from the raw trigger body, with no I/O.
 """
 
 import re
+import sys
 from typing import Optional, Tuple
 
 from workflow_state import extract_state_from_body
@@ -17,6 +18,7 @@ __all__ = [
     "has_universal_bot_marker",
     "is_plain_mention_trigger",
     "extract_mention_agent",
+    "extract_machine_trigger",
     "extract_workflow_command",
     "extract_force_next_command",
     "extract_resume_command",
@@ -90,8 +92,16 @@ def is_plain_mention_trigger(trigger_body: str) -> bool:
     return not without_mentions.strip()
 
 
+_MENTION_RE = r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)"
+
+
 def extract_mention_agent(trigger_body: str) -> Optional[str]:
-    """Extract the last @@mention agent name from trigger body.
+    """Extract the last @@mention agent name from a *human* trigger body.
+
+    Bot comments (``<!-- bot-agent-... -->`` marker) NEVER yield a mention:
+    agents communicate via the AGENT_RUN_CONFIG ``function_call`` section,
+    and a stray ``@@`` in bot prose must not re-route execution (issue #478).
+    Ignored mentions are logged to stderr for diagnosability.
 
     Args:
         trigger_body: Raw trigger body text.
@@ -99,12 +109,52 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
     Returns:
         Agent name string or None.
     """
-    agents = re.findall(
-        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)",
-        trigger_body,
-    )
+    if is_bot_comment(trigger_body):
+        ignored = re.findall(_MENTION_RE, trigger_body)
+        if ignored:
+            print(
+                f"Warning: ignoring @@mention(s) {ignored} in bot comment "
+                f"(bots must use function_call; issue #478)",
+                file=sys.stderr,
+            )
+        return None
+    agents = re.findall(_MENTION_RE, trigger_body)
     if agents:
         return agents[-1].replace("@@", "")
+    return None
+
+
+# Machine trigger tokens posted by the CI pipeline itself (issue #478).
+# These replace the legacy machine-posted "@@genius" / "@@summarize" comments
+# now that @@mentions are blocked for bot-triggered runs.
+_SUBTASK_COMPLETE_RE = re.compile(r"<!--\s*bot-subtask-complete:\s*(\d+)\s*-->")
+_SUMMARIZER_TRIGGER_RE = re.compile(r"<!--\s*bot-summarizer-trigger\s*-->")
+_GENERIC_TRIGGER_RE = re.compile(r"<!--\s*bot-trigger:\s*([a-z][a-z-]*)\s*-->")
+
+
+def extract_machine_trigger(trigger_body: str) -> Optional[Tuple[str, Optional[str]]]:
+    """Extract a CI-posted machine trigger token from the trigger body.
+
+    Recognized tokens:
+      - ``<!-- bot-subtask-complete: N -->`` → ("genius", "N")
+      - ``<!-- bot-summarizer-trigger -->``  → ("summarize", None)
+      - ``<!-- bot-trigger: agent -->``      → ("agent", None) — generic form
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        Tuple of (agent_name, extra) or None when no machine token is present.
+        ``extra`` carries the sub-task index for the subtask-complete token.
+    """
+    match = _SUBTASK_COMPLETE_RE.search(trigger_body)
+    if match:
+        return ("genius", match.group(1))
+    if _SUMMARIZER_TRIGGER_RE.search(trigger_body):
+        return ("summarize", None)
+    match = _GENERIC_TRIGGER_RE.search(trigger_body)
+    if match:
+        return (match.group(1), None)
     return None
 
 

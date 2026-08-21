@@ -37,4 +37,6 @@ class FunctionCall(BaseModel):
             raise ValueError(
                 f"Unknown function '{self.function}'. Must be one of: {sorted(SUPPORTED_FUNCTIONS)}"
             )
+        if self.function == "call_agent" and not self.agent_name.strip():
+            raise ValueError("call_agent requires a non-empty agent_name")
         return self

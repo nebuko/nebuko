@@ -143,6 +143,10 @@ Agents communicate using a single-line HTML-comment sentinel called `AGENT_RUN_C
 | `workflow` | string | no | Workflow name (file in `workflows/`) | — |
 | `step` | string | no | Current step name within workflow | first step |
 | `branch` | string | no | Condition key for conditional routing | — |
+| `dispatch` | object | no | Workflow outcome: `{status: advance\|loop\|hold\|terminate, task?, complexity?}` — how this run ends inside a workflow; the engine resolves routing. | — |
+| `function_call` | object | no | Imperative one-shot hand-off: `{"function": "call_agent", "agent_name": "<roster agent>", "complexity"?}` — pins the next agent regardless of workflow continuation (overrides it). Validated against a function registry (`call_agent`) and the agent roster. Consumed once by the next run. | — |
+
+Decision rule: `dispatch` = how this run ends **inside** a workflow; `function_call` = imperative hand-off to a specific agent, overriding workflow continuation.
 
 #### Example Invocations
 
@@ -238,7 +242,7 @@ steps:
 
 #### Human Invocation (Backward Compatible)
 
-Human users can still use `@@mention` shorthand (`@@genius`, `@@ctx`, `@@dev`, `@@review`, `@@issue`). The `AGENT_RUN_CONFIG` sentinel format is primarily for agent→agent communication. The workflow supports both formats with the `@@mention` fallback reserved for human triggers only — bot agents cannot use `@@mention` to avoid self-triggering loops.
+Human users can still use `@@mention` shorthand (`@@genius`, `@@ctx`, `@@dev`, `@@review`, `@@issue`). The `AGENT_RUN_CONFIG` sentinel format is primarily for agent-to-agent communication. The workflow supports both formats, with the `@@mention` fallback reserved for human triggers only — bot agents **cannot** use `@@mention`: the CI gate ignores `@@mentions` in comments that start with a bot marker (`<!-- bot-agent-... -->` or `<!-- bot-workflow-terminal -->`), and the resolver additionally drops any mention found in a bot body with a logged warning. Bot-to-bot hand-off uses the `function_call` section (see the `call-agent` skill) instead.
 
 ### Agent Collaboration Flow
 

@@ -71,7 +71,7 @@ agents:
     model: "${llms.qwen-3-6-27b}"
     temperature: 1.0
     prompt_file: ".agents/prompts/genius.md"
-    skills: []
+    skills: ["call-agent"]
     tools: ["think", "finish"]
 
   dev:
@@ -83,7 +83,7 @@ agents:
   ctx:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/ctx.md"
-    skills: []
+    skills: ["call-agent"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   review:
@@ -95,7 +95,7 @@ agents:
   issue:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/issue.md"
-    skills: []
+    skills: ["call-agent"]
     tools: ["think", "finish"]
 
   issue-reviewer:

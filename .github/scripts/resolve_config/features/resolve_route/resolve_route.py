@@ -13,6 +13,7 @@ from config import load_workflow
 from resolve_workflow import (
     resolve_next_from_workflow,
     _is_terminal_step,
+    TASK_TO_PROMPT,
 )
 from workflow_state import (
     FunctionCall,
@@ -28,6 +29,7 @@ from ..parse_trigger.parse_trigger import (
     extract_resume_command,
     extract_workflow_command,
     extract_debug_flag,
+    extract_machine_trigger,
 )
 
 __all__ = [
@@ -35,6 +37,7 @@ __all__ = [
     "resolve_next_agent_from_workflow",
     "count_consecutive_same_agent",
     "_resolve_function_call_path",
+    "_resolve_machine_trigger_path",
 ]
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
@@ -335,6 +338,11 @@ def _resolve_function_call_path(
     workflow continuation (same priority tier as a human mention). The
     call is one-shot: the fresh state built downstream clears
     ``function_call`` so a re-trigger no-ops.
+
+    Note: consumption is by supersession (the posted state block shadows
+    older state-bearing comments). If this run's comment fails to post, the
+    stale state still carries the call and a re-trigger would re-fire it —
+    an accepted edge of the same idempotency model dispatch uses.
     """
     if function_call.function not in SUPPORTED_FUNCTIONS:
         # Registry already validated at parse time; guard against drift.
@@ -343,7 +351,7 @@ def _resolve_function_call_path(
             "REASON": f"Unsupported function_call: {function_call.function}",
         }
 
-    task = function_call.agent_name or ""
+    task = (function_call.agent_name or "").strip()
     if not task:
         return {"SKIP_AGENT": "true", "REASON": "function_call call_agent has no agent_name"}
 
@@ -357,6 +365,46 @@ def _resolve_function_call_path(
         "config_workflow": "",
         "config_step": "",
         "config_complexity": complexity,
+        "config_reasoning": "none",
+        "config_temperature": "",
+        "config_round": "",
+        "config_model": "",
+        "config_skills": "",
+        "config_top_p": "",
+        "config_top_k": "",
+        "config_repetition_penalty": "",
+        "config_debug": "",
+        "config_branch": "",
+        "config_parent_workflow": "",
+        "config_parent_workflow_step": "",
+    }
+
+
+def _resolve_machine_trigger_path(
+    trigger_body: str,
+    workflows_dir: str,
+) -> dict:
+    """Resolve config for a CI-posted machine trigger token (issue #478).
+
+    Machine tokens (``bot-subtask-complete``, ``bot-summarizer-trigger``,
+    generic ``bot-trigger: <agent>``) replace the legacy machine-posted
+    ``@@genius`` / ``@@summarize`` comments now that @@mentions are blocked
+    for bot-triggered runs. The target agent is pinned from the token;
+    unknown agents skip with a reason.
+    """
+    machine = extract_machine_trigger(trigger_body)
+    if not machine:
+        return {"SKIP_AGENT": "true", "REASON": "No machine trigger token found"}
+    task, extra = machine
+    if task not in TASK_TO_PROMPT:
+        return {"SKIP_AGENT": "true", "REASON": f"Unknown machine trigger agent: {task}"}
+    label = f"Machine trigger: invoking '{task}'" + (f" (subtask {extra})" if extra else "")
+    print(label, file=sys.stderr)
+    return {
+        "task": task,
+        "config_workflow": "",
+        "config_step": "",
+        "config_complexity": "medium",
         "config_reasoning": "none",
         "config_temperature": "",
         "config_round": "",

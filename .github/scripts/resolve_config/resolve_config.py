@@ -22,12 +22,14 @@ from .features.parse_trigger.parse_trigger import (
     extract_force_next_command,
     extract_resume_command,
     extract_debug_flag,
+    extract_machine_trigger,
     _parse_trigger_body,
 )
 from .features.resolve_route.resolve_route import (
     _resolve_resume_path,
     _resolve_dispatch_path,
     _resolve_function_call_path,
+    _resolve_machine_trigger_path,
     _resolve_human_path,
     _resolve_bot_fallback_path,
     _resolve_workflow_next_step,
@@ -147,6 +149,11 @@ def resolve_config(
         # mention). Consumed once — the fresh state built for the called agent
         # clears the field, so a re-trigger no-ops.
         config = _resolve_function_call_path(prev_state.function_call, workflows_dir)
+    elif extract_machine_trigger(trigger_body):
+        # CI-posted machine trigger token (bot-subtask-complete /
+        # bot-summarizer-trigger / bot-trigger) — replaces the legacy
+        # machine-posted @@genius / @@summarize comments (issue #478).
+        config = _resolve_machine_trigger_path(trigger_body, workflows_dir)
     elif prev_state and dispatch_obj:
         # Auto-dispatch: workflow state with dispatch object — follow the workflow.
         config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)

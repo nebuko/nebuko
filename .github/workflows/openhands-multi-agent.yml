@@ -65,6 +65,8 @@ jobs:
           (
             github.event_name == 'workflow_call' ||
             (github.event_name == 'issues' &&
+             !startsWith(github.event.issue.body, '<!-- bot-agent-') &&
+             !startsWith(github.event.issue.body, '<!-- bot-workflow-terminal -->') &&
              (contains(github.event.issue.body, '@@genius') ||
               contains(github.event.issue.body, '@@ctx') ||
               contains(github.event.issue.body, '@@dev') ||
@@ -75,15 +77,22 @@ jobs:
               contains(github.event.issue.body, '@@summarize') ||
               contains(github.event.issue.body, '/workflow'))) ||
             (github.event_name == 'issue_comment' &&
-             (contains(github.event.comment.body, '@@genius') ||
-              contains(github.event.comment.body, '@@ctx') ||
-              contains(github.event.comment.body, '@@dev') ||
-              contains(github.event.comment.body, '@@review') ||
-              contains(github.event.comment.body, '@@issue') ||
-              contains(github.event.comment.body, '@@issue-reviewer') ||
-              contains(github.event.issue.body, '@@debug') ||
-              contains(github.event.comment.body, '@@summarize') ||
-              contains(github.event.comment.body, '/workflow')))
+             ((!startsWith(github.event.comment.body, '<!-- bot-agent-') &&
+               !startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
+               (contains(github.event.comment.body, '@@genius') ||
+                contains(github.event.comment.body, '@@ctx') ||
+                contains(github.event.comment.body, '@@dev') ||
+                contains(github.event.comment.body, '@@review') ||
+                contains(github.event.comment.body, '@@issue') ||
+                contains(github.event.comment.body, '@@issue-reviewer') ||
+                contains(github.event.comment.body, '@@debug') ||
+                contains(github.event.comment.body, '@@summarize') ||
+                contains(github.event.comment.body, '/workflow'))) ||
+              contains(github.event.comment.body, '"function_call"') ||
+              contains(github.event.comment.body, '<!-- workflow-continue -->') ||
+              contains(github.event.comment.body, '<!-- bot-summarizer-trigger -->') ||
+              contains(github.event.comment.body, '<!-- bot-subtask-complete') ||
+              contains(github.event.comment.body, '<!-- bot-trigger:')))
           )
         env:
             BOT_MARKER: "<!-- bot-workflow-terminal -->"
@@ -317,6 +326,18 @@ jobs:
                   fi
 
                   # Step 8: Load skill files and concatenate content
+                  # Merge per-roster skills (agent-config.yaml) into AGENT_SKILLS so
+                  # every run of that agent carries them (issue #478).
+                  if [ -n "$ROLE_NAME" ] && [ -f "$AGENT_CONFIG_PATH" ]; then
+                    ROSTER_SKILLS=$(PYTHONPATH="$SCRIPTS_DIR" python3 -c "from config import load_config; agent = load_config('${AGENT_CONFIG_PATH}').agents.get('${ROLE_NAME}'); print(','.join(agent.skills) if agent else '')" 2>/dev/null || echo "")
+                    if [ -n "$ROSTER_SKILLS" ]; then
+                      if [ -n "$AGENT_SKILLS" ]; then
+                        AGENT_SKILLS="${AGENT_SKILLS},${ROSTER_SKILLS}"
+                      else
+                        AGENT_SKILLS="$ROSTER_SKILLS"
+                      fi
+                    fi
+                  fi
                   ALL_SKILLS="${AGENT_SKILLS}"
                   if [ -n "${STEP_SKILLS}" ]; then
                     if [ -n "$ALL_SKILLS" ]; then
@@ -525,7 +546,7 @@ jobs:
                 token: ${{ secrets.GH_PAT }}
                 body: |
                   ${{ env.BOT_MARKER }}
-                  @@summarize
+                  <!-- bot-summarizer-trigger -->
                 tag: "<!-- bot-agent-summary -->"
                 mode: replace
 
@@ -708,7 +729,10 @@ jobs:
                 # but the authoritative source is the state JSON section.
 
                 # Prepend collapsed workflow state section if available
+                # (issue #478: the bot marker MUST stay on line 1 so bot
+                # detection is exact; the state section follows it).
                 state_section = ""
+                add_continue_token = True
                 state_file = "workflow_state.json"
                 if os.path.isfile(state_file) and os.path.getsize(state_file) > 0:
                     try:
@@ -716,10 +740,19 @@ jobs:
                         with open(state_file, "r", encoding="utf-8") as sf:
                             state = WorkflowState.model_validate(json.load(sf))
                         state_section = format_collapsed_section(state)
+                        # Only emit the continue token when the resolved outcome
+                        # keeps the flow alive; hold/terminate end it (issue #478).
+                        dispatch_status = state.dispatch.status if state.dispatch else "advance"
+                        add_continue_token = dispatch_status in ("advance", "loop")
                     except Exception as e:
                         print(f"Warning: Failed to load workflow state: {e}", flush=True)
 
-                prefix = "${{ env.BOT_MARKER }}\n" + state_section + marker + "\n*" + display_name + " answer*\n\n"
+                # Deterministic continuation token (issue #478): the next CI run
+                # fires on this hidden marker instead of relying on stray @@ in
+                # the agent prose.
+                continue_token = "<!-- workflow-continue -->\n" if add_continue_token else ""
+                prefix = ("${{ env.BOT_MARKER }}\n" + marker + "\n" + continue_token +
+                          state_section + "\n*" + display_name + " answer*\n\n")
                 with open("github_comment.md", "w", encoding="utf-8") as f:
                     f.write(prefix + content)
 
@@ -810,9 +843,15 @@ jobs:
                   PART_FILE="final_message_part_${i}.txt"
                   if [ -f "$PART_FILE" ]; then
                     echo "Posting part $i..."
-                    printf '%s\n' "${{ env.BOT_MARKER }}" | cat - "$PART_FILE" > "${PART_FILE}.tagged"
-                    gh issue comment "${{ github.event.issue.number }}" \
-                      --body-file "${PART_FILE}.tagged" \
+                    # Fragments of a bot message must carry the universal bot
+                    # marker plus the agent marker on line 1 so stray @@ in
+                    # prose cannot re-fire the CI gate (issue #478).
+                    {
+                      echo "${{ env.BOT_MARKER }}"
+                      echo "<!-- bot-agent-${ROLE_NAME:-unknown} -->"
+                      cat "$PART_FILE"
+                    } | gh issue comment "${{ github.event.issue.number }}" \
+                      --body-file - \
                       --repo "${{ github.repository }}"
                   else
                     echo "Warning: $PART_FILE not found, skipping"
@@ -916,7 +955,7 @@ jobs:
                   -H "Authorization: Bearer $GITHUB_TOKEN" \
                   -H "Accept: application/vnd.github.v3+json" \
                   "https://api.github.com/repos/$REPOSITORY/issues/$PARENT_NUMBER/comments" \
-                  -d "{\"body\": \"@@genius <!-- bot-workflow-terminal --> <!-- subtask-complete: $ZERO_INDEX -->\"}")
+                  -d "{\"body\": \"<!-- bot-workflow-terminal --> <!-- bot-subtask-complete: $ZERO_INDEX -->\"}")
                 if [ "$HTTP_STATUS" != "201" ]; then
                   echo "ERROR: Failed to post comment to parent #$PARENT_NUMBER (HTTP $HTTP_STATUS)"
                   exit 1
