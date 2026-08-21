@@ -86,6 +86,7 @@ jobs:
               contains(github.event.comment.body, '/workflow')))
           )
         env:
+            BOT_MARKER: "<!-- bot-workflow-terminal -->"
             CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 25 }}
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
@@ -400,10 +401,10 @@ jobs:
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
                 token: ${{ secrets.GH_PAT }}
-                tag: "<!-- bot-workflow-terminal -->"
+                tag: "${{ env.BOT_MARKER }}"
                 mode: create-or-update
                 body: |
-                  <!-- bot-workflow-terminal -->
+                  ${{ env.BOT_MARKER }}
                   ⏹️ **Workflow stopped** — no agent was run for this trigger.
 
                   **Reason:** ${{ env.REASON }}
@@ -439,6 +440,7 @@ jobs:
                     
                     # Build circuit breaker comment line by line
                     {
+                      echo "${{ env.BOT_MARKER }}"
                       echo "<!-- bot-agent-genius -->"
                       echo ""
                       echo "🚨 **Circuit Breaker Tripped** — Agent Loop Threshold Reached"
@@ -502,6 +504,7 @@ jobs:
                 issue-number: ${{ env.TARGET_NUMBER }}
                 token: ${{ secrets.GH_PAT }}
                 body: |
+                  ${{ env.BOT_MARKER }}
                   @@summarize
                 tag: "<!-- bot-agent-summary -->"
                 mode: replace
@@ -516,6 +519,7 @@ jobs:
                 tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
                 mode: replace
                 body: |
+                  ${{ env.BOT_MARKER }}
                   <!-- bot-agent-${{ env.ROLE_NAME }} -->
                   🤖 **${{ env.ROLE_NAME }} agent started** — [View workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
@@ -695,7 +699,7 @@ jobs:
                     except Exception as e:
                         print(f"Warning: Failed to load workflow state: {e}", flush=True)
 
-                prefix = state_section + marker + "\n*" + display_name + " answer*\n\n"
+                prefix = "${{ env.BOT_MARKER }}\n" + state_section + marker + "\n*" + display_name + " answer*\n\n"
                 with open("github_comment.md", "w", encoding="utf-8") as f:
                     f.write(prefix + content)
 
@@ -786,8 +790,9 @@ jobs:
                   PART_FILE="final_message_part_${i}.txt"
                   if [ -f "$PART_FILE" ]; then
                     echo "Posting part $i..."
+                    printf '%s\n' "${{ env.BOT_MARKER }}" | cat - "$PART_FILE" > "${PART_FILE}.tagged"
                     gh issue comment "${{ github.event.issue.number }}" \
-                      --body-file "$PART_FILE" \
+                      --body-file "${PART_FILE}.tagged" \
                       --repo "${{ github.repository }}"
                   else
                     echo "Warning: $PART_FILE not found, skipping"
@@ -890,7 +895,7 @@ jobs:
                   -H "Authorization: Bearer $GITHUB_TOKEN" \
                   -H "Accept: application/vnd.github.v3+json" \
                   "https://api.github.com/repos/$REPOSITORY/issues/$PARENT_NUMBER/comments" \
-                  -d "{\"body\": \"@@genius <!-- subtask-complete: $ZERO_INDEX -->\"}")
+                  -d "{\"body\": \"@@genius <!-- bot-workflow-terminal --> <!-- subtask-complete: $ZERO_INDEX -->\"}")
                 if [ "$HTTP_STATUS" != "201" ]; then
                   echo "ERROR: Failed to post comment to parent #$PARENT_NUMBER (HTTP $HTTP_STATUS)"
                   exit 1

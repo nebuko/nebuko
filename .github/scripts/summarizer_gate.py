@@ -21,7 +21,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from github_client import get_issue_comments
+from github_client import BOT_MARKER, get_issue_comments
 
 
 def has_summary_comment(comments):
@@ -41,7 +41,11 @@ def has_summary_comment(comments):
 
 
 def count_non_bot_comments(comments):
-    """Count comments that are not bot-generated (no bot-agent marker).
+    """Count comments that are not bot-generated.
+
+    A comment is bot-generated if it carries either the universal bot
+    marker (<!-- bot-workflow-terminal -->) or the legacy agent marker
+    (<!-- bot-agent-...).
 
     Args:
         comments: List of comment dicts from GitHub API.
@@ -52,7 +56,7 @@ def count_non_bot_comments(comments):
     count = 0
     for comment in comments:
         body = comment.get("body", "")
-        if "<!-- bot-agent-" not in body:
+        if "<!-- bot-agent-" not in body and BOT_MARKER not in body:
             count += 1
     return count
 

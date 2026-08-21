@@ -465,3 +465,64 @@ GitHub Event
 | `HAS_COMMENT` | Step 18 | Whether a comment was generated |
 | `ACK_COMMENT_ID` | Step 13 | ID of acknowledgment comment |
 | `AGENT_QUERY_PATH` | Step 15 | Path to prepared query context |
+
+---
+
+## 11. Bot Marker Conventions
+
+Every comment posted by CI (any non-human sender) carries a **universal bot
+marker** on its first line:
+
+```
+<!-- bot-workflow-terminal -->
+```
+
+Agent identity is carried by a **second, role-specific marker** retained on
+comments where consumers need to know which agent wrote it:
+
+```
+<!-- bot-agent-{role} -->
+```
+
+### Emitter contract
+
+| Emitter | Universal marker | Role marker |
+|---------|------------------|-------------|
+| Agent answer comment (Step 20) | line 1 | after state section |
+| Acknowledgment comment (Step 13) | line 1 | line 2 |
+| Circuit-breaker comment (Step 10) | line 1 | line 2 (genius) |
+| Summarizer trigger (Step 12) | line 1 | line 2 (summary) |
+| Terminal skip comment | line 1 | - |
+| Multi-part message posts (Step 23) | every part, line 1 | - |
+| Sub-task completion notification | present | - |
+| Python emitters via `github_client.post_comment()` | injected by `ensure_bot_marker()` | - |
+
+`github_client.ensure_bot_marker(body)` is the single injection point for the
+Python side; it is idempotent (a body that already starts with the marker is
+returned unchanged). The workflow side references the top-level `env:`
+constant `BOT_MARKER`.
+
+### Classification (`resolve_config`)
+
+`parse_trigger.is_bot_comment()` classifies a trigger as bot-generated when
+the **first 5 lines** contain:
+
+1. the universal marker (primary), or
+2. a legacy `<!-- bot-agent-` marker (fallback, for pre-existing issues).
+
+Agent-identity consumers (`loop_guard.py`, the workflow's `CALLER_AGENT`
+extraction, circuit-breaker/summary counting, `query_context.py`) rely only on
+the role marker and are unaffected by the universal marker.
+
+CI plain-mention triggers — a universal-marker comment whose body is only an
+`@@mention` plus HTML-comment markers (e.g. the sub-task completion
+notification `@@genius <!-- subtask-complete: N -->`) — route to the mentioned
+agent even when an active workflow dispatch exists in the comment history,
+matching the pre-marker behavior of their untagged predecessors.
+
+### Follow-up (out of scope)
+
+Once the flat marker has rolled out across live issues, the universal marker
+should be renamed to a per-agent tag (`<!-- bot-workflow-{agent} -->`) — the
+agent name is available at every emitting site (`ROLE_NAME` /
+`workflow_state.agent`), making this a mechanical one-line-per-side change.

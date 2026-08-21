@@ -21,6 +21,7 @@ from collections import defaultdict
 
 # Import the Metrics schema
 sys.path.insert(0, os.path.dirname(__file__))
+from github_client import ensure_bot_marker
 from metrics_schema import Metrics
 
 METRICS_REGEX = re.compile(r"<!--\s*agent-metrics:\s*(.*?)\s*-->")
@@ -459,6 +460,7 @@ def generate_model_summary_table(aggregated):
 
 def post_comment(repo, issue_number, token, body):
     """Post a comment to a GitHub issue."""
+    body = ensure_bot_marker(body)
     url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
     payload = json.dumps({"body": body}).encode("utf-8")
 
