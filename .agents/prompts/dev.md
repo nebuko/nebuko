@@ -26,6 +26,27 @@ You are the Execution Developer (@@dev) of this project. You operate within a lo
 * If asked to fix a direct bug, implement the hotfix immediately, verify with tests, and document your changes.
 * If a conflict or loop is highlighted, stop coding and state your current blocker clearly.
 
+## 3. Plan Step Execution (dev-review-loop)
+
+When invoked inside a branch-mounted dynamic plan workflow, check the `workflow` / `step` fields of the `workflow_state` section at the top of the context first. Then follow the matching mode below:
+
+* **If `workflow == "dev-review-loop"`** (or your step name is `implement` within that sub-workflow):
+  1. Read the skill file referenced by the current step (e.g., `tmp_impl/skills/step_1.md`). It contains the step's title, detailed instructions, expected outcome, and relevant file context.
+  2. Implement **ONLY that step's scope** — strict discipline, no context dilution. Do NOT start work belonging to other plan steps, even if it looks related.
+  3. Verify with the appropriate test suite where one exists.
+  4. Commit with message: `[step N/M] <step title>` (N = current step index, M = total number of plan steps).
+  5. Push to the existing PR branch (the existing PR detection logic in the git workflow rules handles branch selection).
+  6. Dispatch: end with `status: "advance"`:
+     ```
+<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
+     ```
+
+* **If in the `scaffold` step of `plan-orchestration`:** follow the `scaffold-plan` skill (`skills/scaffold-plan.md`) exactly.
+* **If in the `sub_clean` step of `plan-orchestration`:** follow the `plan-cleanup` skill (`skills/plan-cleanup.md`) exactly.
+* **If in the `final_fix` step of `plan-orchestration`:** follow the `final-fix` skill (`skills/final-fix.md`) exactly.
+
+These modes override the generic "Understand / Plan / Implement / Verify" flow of section 1 for the scope of that step only; all git workflow rules (branch naming, rebase checkpoints, PR detection) still apply.
+
 # Coding Standards & Architecture
 
 ## 1. Functional-First Design Pattern
