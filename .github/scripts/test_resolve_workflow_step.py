@@ -211,17 +211,19 @@ class TestSubWorkflowEntry:
         return tmp_path
 
     def test_sub_workflow_entry_resolves_first_step(self, sub_wf_workflows_dir):
-        """resolve_next_from_workflow should not crash when current step is a sub-workflow ref."""
+        """A sub-workflow reference step yields an entry marker for the child's first step."""
         resolve = _import_resolver()
-        # Step "subtask" has no agent (workflow=child), so the function will still look it up
-        # The step exists but has no agent — this is fine for resolve_next_from_workflow
-        # which returns None when target_step.agent is None
         result = resolve(
             "parent", "subtask", str(sub_wf_workflows_dir),
         )
-        # "subtask" has next="finish", agent is None (it's a workflow ref)
-        # resolve_next_from_workflow looks up the next step "finish" which has agent="review"
-        assert result == {"task": "review", "step": "finish"}
+        assert result == {
+            "entered_sub_workflow": True,
+            "task": "dev",
+            "step": "child_start",
+            "workflow": "child",
+            "parent_workflow": "parent",
+            "parent_workflow_step": "subtask",
+        }
 
     def test_sub_workflow_first_step_resolution(self, sub_wf_workflows_dir):
         """Resolving from the first step of a child workflow works normally."""
@@ -230,6 +232,162 @@ class TestSubWorkflowEntry:
             "child", "child_start", str(sub_wf_workflows_dir),
         )
         assert result == {"task": "review", "step": "child_end"}
+
+
+class TestSubWorkflowTraversal:
+    """Integration tests for full sub-workflow entry/exit traversal."""
+
+    @pytest.fixture
+    def nested_dirs(self, tmp_path: Path) -> tuple[Path, Path]:
+        """Parent + child workflows used for end-to-end traversal."""
+        (tmp_path / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Parent with sub-workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "analyze", "agent": "genius", "next": "subtask"},
+                {
+                    "name": "subtask",
+                    "workflow": "child",
+                    "next": "finish",
+                },
+                {"name": "finish", "agent": "review", "next": None},
+            ],
+        }))
+        (tmp_path / "child.yaml").write_text(yaml.dump({
+            "name": "child",
+            "description": "Child sub-workflow",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "impl", "agent": "dev", "next": "verify"},
+                {"name": "verify", "agent": "review", "next": None},
+            ],
+        }))
+        return tmp_path, tmp_path / "workflows"
+
+    def test_full_traversal_entry_to_exit(self, nested_dirs):
+        """parent.analyze → enter sub → child.impl → child.verify (terminal)
+        → parent.finish (step after the sub reference)."""
+        wf_dir, _ = nested_dirs
+        resolve = _import_resolver()
+
+        # 1. Parent's first step advances to the sub-workflow reference
+        #    (a reference step carries no agent of its own)
+        assert resolve("parent", "analyze", str(wf_dir)) == {
+            "task": None, "step": "subtask",
+        }
+
+        # 2. Sub-workflow reference step yields an entry marker
+        entry = resolve("parent", "subtask", str(wf_dir))
+        assert entry == {
+            "entered_sub_workflow": True,
+            "task": "dev",
+            "step": "impl",
+            "workflow": "child",
+            "parent_workflow": "parent",
+            "parent_workflow_step": "subtask",
+        }
+
+        # 3. Inside the child: normal linear resolution
+        r = resolve(
+            "child", "impl", str(wf_dir),
+            parent_workflow="parent", parent_workflow_step="subtask",
+        )
+        assert r == {"task": "review", "step": "verify"}
+
+        # 4. Child terminal step exits back to the parent's next step
+        r = resolve(
+            "child", "verify", str(wf_dir),
+            parent_workflow="parent", parent_workflow_step="subtask",
+        )
+        assert r == {
+            "exited_sub_workflow": True,
+            "task": "review",
+            "step": "finish",
+            "workflow": "parent",
+        }
+
+        # 5. Parent terminal (no sub-workflow context): overall terminal
+        r = resolve("parent", "finish", str(wf_dir))
+        assert r is None
+
+    def test_child_loop_stays_within_sub_workflow(self, tmp_path: Path):
+        """A rejected-review loop inside the child never escapes the child."""
+        (tmp_path / "loop_parent.yaml").write_text(yaml.dump({
+            "name": "loop_parent",
+            "description": "Parent of looping child",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "start", "agent": "genius", "next": "run"},
+                {"name": "run", "workflow": "loop_child", "next": "done"},
+                {"name": "done", "agent": "review", "next": None},
+            ],
+        }))
+        (tmp_path / "loop_child.yaml").write_text(yaml.dump({
+            "name": "loop_child",
+            "description": "Child with a rejection loop",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "implement", "agent": "dev", "next": "review"},
+                {
+                    "name": "review",
+                    "agent": "review",
+                    "conditions": [
+                        {"on_result": "approved", "next": None},
+                        {"on_result": "rejected", "next": "implement"},
+                        {"on_result": "default", "next": "implement"},
+                    ],
+                },
+            ],
+        }))
+        resolve = _import_resolver()
+
+        parent_ctx = dict(parent_workflow="loop_parent", parent_workflow_step="run")
+
+        # implement → review
+        assert resolve("loop_child", "implement", str(tmp_path), **parent_ctx) == {
+            "task": "review", "step": "review",
+        }
+        # rejected → loops back inside the child (no parent escape)
+        assert resolve(
+            "loop_child", "review", str(tmp_path), branch_result="rejected", **parent_ctx,
+        ) == {"task": "dev", "step": "implement", "branch": "rejected"}
+        # approved → child terminal → exit to parent's step after the ref
+        exit_r = resolve(
+            "loop_child", "review", str(tmp_path), branch_result="approved", **parent_ctx,
+        )
+        assert exit_r == {
+            "exited_sub_workflow": True,
+            "task": "review",
+            "step": "done",
+            "workflow": "loop_parent",
+        }
+
+    def test_terminal_without_parent_returns_none(self, nested_dirs):
+        """Child terminal with no parent context is overall terminal."""
+        wf_dir, _ = nested_dirs
+        resolve = _import_resolver()
+        assert resolve("child", "verify", str(wf_dir)) is None
+
+    def test_path_based_workflow_reference(self, tmp_path: Path, monkeypatch):
+        """resolve_next_from_workflow accepts a repo-root-relative path."""
+        monkeypatch.chdir(tmp_path)
+        subdir = tmp_path / "tmp_impl"
+        subdir.mkdir()
+        (subdir / "flow.yaml").write_text(yaml.dump({
+            "name": "flow",
+            "description": "Path-resolved workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "one", "agent": "dev", "next": "two"},
+                {"name": "two", "agent": "review", "next": None},
+            ],
+        }))
+        resolve = _import_resolver()
+        assert resolve("tmp_impl/flow.yaml", "one", str(tmp_path)) == {
+            "task": "review",
+            "step": "two",
+        }
 
 
 class TestCircularReference:

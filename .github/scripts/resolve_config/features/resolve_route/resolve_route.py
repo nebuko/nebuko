@@ -212,6 +212,33 @@ def _resolve_resume_path(
     return config
 
 
+def _apply_wf_marker(
+    config: dict,
+    wf_result: dict,
+) -> None:
+    """Apply a sub-workflow transition marker to the resolved config.
+
+    Entry: switch ``config_workflow``/``config_step`` to the sub-workflow's
+    first step and record the parent reference for the return leg.
+    Exit: restore the parent workflow, resume at the step after the
+    sub-workflow reference, and clear the parent tracking fields.
+    """
+    if wf_result.get("entered_sub_workflow"):
+        config["config_workflow"] = wf_result["workflow"]
+        config["config_step"] = wf_result["step"]
+        config["config_parent_workflow"] = wf_result["parent_workflow"]
+        config["config_parent_workflow_step"] = wf_result["parent_workflow_step"]
+        return
+
+    if wf_result.get("exited_sub_workflow"):
+        config["config_workflow"] = wf_result["workflow"]
+        config["config_step"] = wf_result["step"]
+        config["config_parent_workflow"] = ""
+        config["config_parent_workflow_step"] = ""
+        if wf_result.get("branch"):
+            config["config_branch"] = wf_result["branch"]
+
+
 def _resolve_dispatch_path(
     prev_state: "WorkflowState",
     dispatch_obj: "Dispatch",
@@ -254,17 +281,26 @@ def _resolve_dispatch_path(
 
     # Workflow-driven resolution using previous workflow state
     if prev_state and prev_state.workflow and prev_state.step:
+        parent_wf = dispatch_obj.parent_workflow or prev_state.parent_workflow or ""
+        parent_wf_step = (
+            dispatch_obj.parent_workflow_step or prev_state.parent_workflow_step or ""
+        )
         wf_result = resolve_next_from_workflow(
             prev_state.workflow,
             prev_state.step,
             workflows_dir,
             agent_hint=None,
             branch_result=branch_result,
+            parent_workflow=parent_wf,
+            parent_workflow_step=parent_wf_step,
         )
         if wf_result:
             config["task"] = wf_result["task"]
             config["config_step"] = wf_result.get("step", config["config_step"])
-            config["config_workflow"] = prev_state.workflow
+            if wf_result.get("entered_sub_workflow") or wf_result.get("exited_sub_workflow"):
+                _apply_wf_marker(config, wf_result)
+            else:
+                config["config_workflow"] = prev_state.workflow
         else:
             dispatch_status = dispatch_obj.status or ""
             if dispatch_status == "hold":
@@ -602,12 +638,21 @@ def _resolve_workflow_next_step(
     }
 
     # Resolve next step from workflow YAML
-    wf_result = resolve_next_from_workflow(wf_name, current_step, workflows_dir)
+    wf_result = resolve_next_from_workflow(
+        wf_name,
+        current_step,
+        workflows_dir,
+        agent_hint=None,
+        branch_result=None,
+        parent_workflow=prev_state.parent_workflow or "",
+        parent_workflow_step=prev_state.parent_workflow_step or "",
+    )
     if wf_result:
         config["task"] = wf_result["task"]
         config["config_step"] = wf_result.get("step", config["config_step"])
         if wf_result.get("branch"):
             config["config_branch"] = wf_result["branch"]
+        _apply_wf_marker(config, wf_result)
     else:
         return _workflow_next_step_skip_reason(wf_name, current_step, workflows_dir)
 

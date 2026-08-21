@@ -15,7 +15,12 @@ from .sub_domains.workflow_definition.workflow_definition import WorkflowDefinit
 # Features
 from .features.resolve_refs.resolve_refs import resolve_refs, REF_PATTERN
 from .features.load_config.load_config import load_config
-from .features.load_workflow.load_workflow import load_workflow
+from .features.load_workflow.load_workflow import (
+    is_path_like_reference,
+    is_valid_workflow_reference,
+    load_workflow,
+    resolve_workflow_reference,
+)
 
 # Facade module constants
 from .config import CONFIG_DEFAULT_PATH
@@ -36,6 +41,9 @@ __all__ = [
     "REF_PATTERN",
     "load_config",
     "load_workflow",
+    "is_path_like_reference",
+    "is_valid_workflow_reference",
+    "resolve_workflow_reference",
     # Constants
     "CONFIG_DEFAULT_PATH",
 ]
