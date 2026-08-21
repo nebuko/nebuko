@@ -256,6 +256,10 @@ jobs:
                   WORKFLOW_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
                   PARENT_WORKFLOW=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
                   PARENT_WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
+                  AGENT_ROLES=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_ROLES=' | cut -d= -f2-)
+                  AGENT_TOOLS=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_TOOLS=' | cut -d= -f2-)
+                  CALLER_AGENT=$(echo "$RESOLVE_OUTPUT" | grep '^CALLER_AGENT=' | cut -d= -f2-)
+                  SHARED_CONTEXT_FILE=$(echo "$RESOLVE_OUTPUT" | grep '^SHARED_CONTEXT_FILE=' | cut -d= -f2-)
 
                   # Handle skip
                   if [ "$SKIP_AGENT" = "true" ]; then
@@ -284,6 +288,12 @@ jobs:
                   echo "PARENT_WORKFLOW=$PARENT_WORKFLOW" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
                   echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
+
+                  # Export team context for agent_script.py (shared "Your Team" + exit rules section)
+                  echo "AGENT_ROLES=${AGENT_ROLES}" >> $GITHUB_ENV
+                  echo "AGENT_TOOLS=${AGENT_TOOLS}" >> $GITHUB_ENV
+                  echo "CALLER_AGENT=${CALLER_AGENT}" >> $GITHUB_ENV
+                  echo "SHARED_CONTEXT_FILE=${SHARED_CONTEXT_FILE}" >> $GITHUB_ENV
 
                   # Step 6: Export reasoning level for agent_script.py
                   echo "LLM_REASONING=${LLM_REASONING}" >> $GITHUB_ENV
@@ -565,6 +575,7 @@ jobs:
                 COMPLEXITY: ${{ env.COMPLEXITY }}
                 CONFIG_MODEL: ${{ env.CONFIG_MODEL }}
                 CONFIG_TEMPERATURE: ${{ env.CONFIG_TEMPERATURE }}
+                SHARED_CONTEXT_FILE: ${{ env.SHARED_CONTEXT_FILE }}
               run: |
                 echo "Running agent as [@$ROLE_NAME] using prompt: $PROMPT_LOCATION"
                 if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then

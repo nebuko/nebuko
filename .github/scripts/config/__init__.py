@@ -21,6 +21,15 @@ from .features.load_workflow.load_workflow import (
     load_workflow,
     resolve_workflow_reference,
 )
+from .features.roster.roster import (
+    KNOWN_TOOLS,
+    STATIC_TASK_TO_PROMPT,
+    build_agent_roster,
+    validate_roster,
+    build_mention_regex,
+    extract_caller_agent,
+    load_agent_roster,
+)
 
 # Facade module constants
 from .config import CONFIG_DEFAULT_PATH
@@ -44,6 +53,14 @@ __all__ = [
     "is_path_like_reference",
     "is_valid_workflow_reference",
     "resolve_workflow_reference",
+    # Roster feature
+    "KNOWN_TOOLS",
+    "STATIC_TASK_TO_PROMPT",
+    "build_agent_roster",
+    "validate_roster",
+    "build_mention_regex",
+    "extract_caller_agent",
+    "load_agent_roster",
     # Constants
     "CONFIG_DEFAULT_PATH",
 ]

@@ -8,8 +8,15 @@ import re
 from typing import Optional, Tuple
 
 from workflow_state import extract_state_from_body
+from config import STATIC_TASK_TO_PROMPT, build_mention_regex
 
 from ...sub_domains.trigger_commands.trigger_commands import TriggerCommands
+
+# @@mention regex derived from the agent roster keys. Longest names first so
+# hyphenated keys like "issue-reviewer" win over shorter prefixes ("issue").
+# Uses the static roster so trigger parsing stays a pure function (no I/O);
+# this covers the full default agent set including debug/po.
+_MENTION_RE = build_mention_regex(STATIC_TASK_TO_PROMPT)
 
 __all__ = [
     "is_bot_comment",
@@ -43,10 +50,7 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
     Returns:
         Agent name string or None.
     """
-    agents = re.findall(
-        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)",
-        trigger_body,
-    )
+    agents = _MENTION_RE.findall(trigger_body)
     if agents:
         return agents[-1].replace("@@", "")
     return None

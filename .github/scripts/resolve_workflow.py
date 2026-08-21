@@ -46,18 +46,12 @@ try:
 except ImportError:
     fetch_remote_workflow = None  # type: ignore
 
-# Default task-to-prompt mapping (backward compatibility fallback)
-TASK_TO_PROMPT = {
-    "genius": "genius.md",
-    "ctx": "ctx.md",
-    "dev": "dev.md",
-    "review": "review.md",
-    "issue": "issue.md",
-    "issue-reviewer": "issue-reviewer.md",
-    "summarize": "summarize.md",
-    "debug": "debug.md",
-    "po": "po.md",
-}
+# Agent roster — derived from agent-config.yaml (single source of truth).
+# TASK_TO_PROMPT is the resolved {agent_name: prompt_file} routing table; it
+# falls back to the static mapping when the config file is unavailable.
+from config import load_agent_roster  # noqa: E402
+
+TASK_TO_PROMPT = load_agent_roster()
 
 
 def resolve_workflow_routing(

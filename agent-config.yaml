@@ -71,53 +71,62 @@ agents:
     model: "${llms.qwen-3-6-27b}"
     temperature: 1.0
     prompt_file: ".agents/prompts/genius.md"
-    skills: []
+    role: "Principal software engineer — logical analysis, architectural design, planning, and code review strategy."
+    skills: ["planning"]
     tools: ["think", "finish"]
 
   dev:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/dev.md"
-    skills: []
+    role: "Execution developer — implements technical plans, writes clean code, and validates work via automated tests."
+    skills: ["git-pr-workflow"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   ctx:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/ctx.md"
-    skills: []
+    role: "Read-only context collector — searches the codebase and compiles structured reports for other agents."
+    skills: ["context-research"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   review:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/review.md"
+    role: "Code reviewer — examines diffs for correctness, regressions, and quality; approves or requests changes."
     skills: []
     tools: ["think", "finish"]
 
   issue:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/issue.md"
-    skills: []
+    role: "Issue analyst — clarifies ambiguous issues with targeted questions and tracks triage state."
+    skills: ["issue-triage"]
     tools: ["think", "finish"]
 
   issue-reviewer:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/issue-reviewer.md"
+    role: "Issue quality reviewer — read-only evaluation of whether an issue is ready for planning or needs follow-up."
     skills: []
     tools: ["think", "finish"]
 
   summarize:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/summarize.md"
+    role: "Summarizer — produces concise summaries of conversations and work completed."
     skills: []
     tools: ["think", "finish"]
 
   debug:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/debug.md"
-    skills: []
+    role: "Debugger — reproduces failures, isolates root causes, and applies minimal fixes."
+    skills: ["debugging"]
     tools: ["terminal", "file_editor", "think", "finish"]
 
   po:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/po.md"
+    role: "Product owner — defines product vision, prioritizes work, and makes scope decisions."
     skills: []
     tools: ["think", "finish"]

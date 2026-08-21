@@ -13,6 +13,7 @@ class AgentConfig(BaseModel):
     model_ref: LLMConfig = Field(alias="model")
     temperature: float = 0.0
     prompt_file: str
+    role: Optional[str] = None
     skills: list[str] = Field(default_factory=list)
     tools: list[str] = Field(
         default=[

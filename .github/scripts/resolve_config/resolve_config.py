@@ -11,6 +11,7 @@ import os
 import sys
 from typing import Optional
 
+from .features.team_context.team_context import build_team_env, load_agent_skills
 from .features.build_result.build_result import _build_result
 from .features.fetch_state.fetch_state import _fetch_workflow_state_from_history
 from .features.parse_trigger.parse_trigger import (
@@ -29,6 +30,95 @@ from .features.resolve_route.resolve_route import (
     _resolve_bot_fallback_path,
     _resolve_workflow_next_step,
 )
+
+
+def _find_agent_config() -> Optional[str]:
+    """Locate agent-config.yaml from the resolver's own location.
+
+    The resolver is invoked from a variety of working directories
+    (``.github/scripts``, the repo root, caches), so a plain CWD-relative
+    lookup is not portable. Walk up from this file to the nearest
+    ``agent-config.yaml``; fall back to the CWD name.
+
+    Returns:
+        Resolved path string, or None when no config file is found.
+    """
+    from pathlib import Path
+
+    current = Path(__file__).resolve().parent
+    for _ in range(10):
+        candidate = current / "agent-config.yaml"
+        if candidate.is_file():
+            return str(candidate)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    fallback = Path("agent-config.yaml")
+    return str(fallback) if fallback.is_file() else None
+
+
+def _fail_fast_validate_roster(prompt_base: str, skills_dir: Optional[str] = None) -> None:
+    """Validate the agent roster at resolve time and exit non-zero on errors.
+
+    Checks every agent's prompt_file exists, tools are known, skill files
+    exist, and each agent has a role. Fail fast so a bad config never runs.
+
+    Args:
+        prompt_base: Directory containing the prompt files.
+        skills_dir: Directory containing ``<skill>.md`` files. Defaults to the
+            ``skills`` directory next to the resolved agent-config.yaml
+            (the CWD is not reliable — the resolver runs from various places).
+    """
+    try:
+        from pathlib import Path
+        from config import (
+            load_config,
+            build_agent_roster,
+            validate_roster,
+        )
+    except ImportError as e:
+        print(f"Warning: roster validation skipped (import failed: {e})", file=sys.stderr)
+        return
+
+    # Only validate when the config file is present; otherwise the resolver
+    # already falls back to the static roster, so hard-failing here would
+    # wrongly skip a legitimate run in stripped-down/check-less environments.
+    config_path = _find_agent_config()
+    if config_path is None:
+        print("Warning: agent-config.yaml not found; skipping roster validation",
+              file=sys.stderr)
+        return
+
+    # Anchor the skills directory to the config file's location (repo root)
+    # instead of the CWD.
+    if skills_dir is None:
+        skills_dir = str(Path(config_path).resolve().parent / "skills")
+
+    try:
+        config = load_config(config_path)
+    except Exception as e:  # noqa: BLE001
+        print(f"ERROR: could not parse agent-config.yaml for validation: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    agents = config.agents or {}
+    roster = build_agent_roster(config)
+    roles = {name: getattr(agent, "role", None) for name, agent in agents.items()}
+    tools_by_agent = {name: list(getattr(agent, "tools", []) or []) for name, agent in agents.items()}
+    skills_by_agent = {name: list(getattr(agent, "skills", []) or []) for name, agent in agents.items()}
+
+    problems = validate_roster(
+        roster,
+        roles=roles,
+        tools_by_agent=tools_by_agent,
+        skills_by_agent=skills_by_agent,
+        prompt_base=prompt_base,
+        skills_dir=skills_dir,
+    )
+    if problems:
+        for problem in problems:
+            print(f"ERROR: {problem}", file=sys.stderr)
+        sys.exit(1)
 
 def resolve_config(
     trigger_body: str,
@@ -135,6 +225,20 @@ def resolve_config(
         return config
 
     result = _build_result(config, prompt_base, workflows_dir)
+
+    # Export team context (roster roles, tool whitelist, caller marker) so the
+    # workflow can inject the shared "Your Team" + exit-rules section into the
+    # agent prompt (issue #476). Degrades to empty values when the roster is
+    # unavailable; no-op when the run is skipped.
+    if result.get("SKIP_AGENT") != "true" and "ROLE_NAME" in result:
+        result.update(build_team_env(trigger_body, role_name=result["ROLE_NAME"]))
+        # Flow the agent's default skills (agent-config.yaml) into AGENT_SKILLS
+        # so the workflow's skill-file plumbing loads them by default (issue
+        # #476). An explicit per-run/step skill list (from the dispatch
+        # payload) takes precedence.
+        if not result.get("AGENT_SKILLS"):
+            result["AGENT_SKILLS"] = load_agent_skills(result["ROLE_NAME"])
+
     if os.environ.get("DEBUG") or debug:
         print(f"DEBUG _build_result: {result}", file=sys.stderr)
     return result
@@ -184,6 +288,9 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Fail fast: validate the agent roster (prompt files, tools, skills, roles)
+    _fail_fast_validate_roster(args.prompt_base, skills_dir="skills")
 
     # Read trigger body
     if args.trigger_body == "-":
