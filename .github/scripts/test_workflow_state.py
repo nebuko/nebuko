@@ -28,6 +28,7 @@ from workflow_state import (
     extract_latest_state_from_comments as extract_state,
     extract_state_from_body,
     extract_dispatch_from_state,
+    to_git_comment,
 )
 from workflow_state.features.comment.to_git_comment import (
     strip_state_section,
@@ -333,6 +334,27 @@ class TestStateRoundtrip(unittest.TestCase):
         self.assertEqual(restored.current_context["approved"], True)
         self.assertIsNotNone(restored.metrics)
         self.assertEqual(restored.metrics.input_tokens, 3000)
+
+    def test_roundtrip_preserves_parent_workflow_fields(self):
+        """parent_workflow / parent_workflow_step survive serialize → deserialize."""
+        original = WorkflowState(
+            workflow="child",
+            step="impl",
+            agent="dev",
+            version=2,
+            phase="execution",
+            parent_workflow="parent",
+            parent_workflow_step="subtask",
+        )
+
+        comment = to_git_comment(original)
+        restored = extract_state_from_body(comment)
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored.parent_workflow, "parent")
+        self.assertEqual(restored.parent_workflow_step, "subtask")
+        self.assertEqual(restored.workflow, "child")
+        self.assertEqual(restored.step, "impl")
 
 
 class TestExtractState(unittest.TestCase):
