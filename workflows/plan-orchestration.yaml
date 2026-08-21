@@ -1,0 +1,55 @@
+# Plan Orchestration Workflow
+# Full lifecycle for a multi-step plan sharing a single PR:
+# genius (architect) → ctx → genius (plan, human approval gate) → dev (scaffold)
+# → dynamically mounted per-step sub-workflow (tmp_impl/workflow.yaml)
+# → dev (cleanup) → review (final PR review, loops on rejection).
+
+name: plan-orchestration
+description: "Full lifecycle — architect, context, plan, scaffold, execute, cleanup, final review"
+
+trigger:
+  agents: [genius]
+
+steps:
+  - name: architect
+    agent: genius
+    next: context
+
+  - name: context
+    agent: ctx
+    next: plan
+
+  - name: plan
+    agent: genius
+    conditions:
+      - on_result: approved
+        next: scaffold
+      - on_result: rejected
+        next: plan
+
+  - name: scaffold
+    agent: dev
+    skill: [scaffold-plan]
+    next: sub_impl
+
+  - name: sub_impl
+    workflow: tmp_impl/workflow.yaml
+    next: sub_clean
+
+  - name: sub_clean
+    agent: dev
+    skill: [plan-cleanup]
+    next: final_review
+
+  - name: final_review
+    agent: review
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: final_fix
+
+  - name: final_fix
+    agent: dev
+    skill: [final-fix]
+    next: final_review

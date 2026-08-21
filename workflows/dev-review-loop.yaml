@@ -1,0 +1,23 @@
+# Dev-Review Loop Workflow
+# Reusable sub-workflow: execute a single plan step with review; loops on rejection.
+# Intended to be referenced per-step from a dynamically generated tmp_impl/workflow.yaml
+# (branch-mounted plan orchestration, issue #462).
+
+name: dev-review-loop
+description: "Execute a single plan step with review; loops on rejection"
+
+trigger:
+  agents: [dev]
+
+steps:
+  - name: implement
+    agent: dev
+    next: review
+
+  - name: review
+    agent: review
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: implement
