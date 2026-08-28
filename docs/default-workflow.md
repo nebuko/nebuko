@@ -226,6 +226,9 @@ Builds the final prompt by concatenating:
 
 Runs the agent via `stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE"` with output logged to `console.log`.
 
+**Graceful Interruption on Timeout:**
+The step `timeout-minutes: 120` remains as a hard backstop only. In-process, the agent runs under a *soft* time budget (`AGENT_SOFT_TIMEOUT_MINUTES`, default `110`). When the budget expires, the in-flight LLM call is interrupted (`conversation.interrupt()`), a bounded wind-down prompt is injected (budget: `WIND_DOWN_TIMEOUT_MINUTES`, default `8`) asking the agent to summarize completed work, the blocking point, and remaining work, then commit and open/update a PR. A deterministic fallback (`ensure_pr`) commits the working tree and opens/updates the PR if the agent did not. A gracefully timed-out run feeds the standard recovery-log pipeline, so the next run resumes from the saved PR instead of starting over. Both knobs are optional env overrides resolved in `run_agent/timeout_budget.py`.
+
 **PR Discovery Priority (review agent only):**
 1. Explicit `CONFIG_PR_NUMBER` from the `AGENT_RUN_CONFIG` sentinel JSON.
 2. GitHub API query for open PRs referencing the issue.

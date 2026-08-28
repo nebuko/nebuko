@@ -36,6 +36,11 @@ from agent_script.features.extract_recovery_trace.extract_recovery_trace import 
     extract_recovery_trace,
     recovery_trace_to_markdown,
 )
+from agent_script.features.run_agent.run_outcome import OutcomeStatus
+from agent_script.features.ensure_pr.ensure_pr import (
+    EnsurePrResult,
+    ensure_pr,
+)
 
 logger = get_logger(__name__)
 
@@ -66,6 +71,30 @@ def is_malformed_final_message(message: str) -> bool:
         if message.count(open_tag) != message.count(close_tag):
             return True
     return False
+
+
+def _get_run_outcome(conversation):
+    """Read the RunOutcome attached to the conversation by run_agent (or None)."""
+    return getattr(conversation, "run_outcome", None)
+
+
+def _build_timeout_summary(pr_result: EnsurePrResult | None) -> str:
+    """Synthesize a final message for a graceful timeout that produced none."""
+    lines = [
+        "_⏱ The agent reached its soft time budget and execution was "
+        "gracefully interrupted (issue #489). It was asked to conclude its "
+        "work but did not produce a closing summary._",
+        "",
+        "**Checkpoint:** pending changes were committed and pushed, and a PR "
+        "was opened or updated with the current content. The next run will "
+        "resume from the recovery log instead of starting over.",
+    ]
+    if pr_result is not None:
+        if pr_result.pr_url:
+            lines.append(f"- Checkpoint PR: {pr_result.pr_url}")
+        if pr_result.error:
+            lines.append(f"- PR fallback issue: {pr_result.message}")
+    return "\n".join(lines)
 
 
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
@@ -318,6 +347,24 @@ def build_output(
     # ── Final response ───────────────────────────────────────────
     final_message = get_agent_final_response(conversation.state.events)
 
+    # ── Graceful timeout handling (issue #489) ────────────────────
+    run_outcome = _get_run_outcome(conversation)
+    is_graceful_timeout = (
+        run_outcome is not None
+        and run_outcome.status is OutcomeStatus.GRACEFULLY_TIMED_OUT
+    )
+    pr_result: EnsurePrResult | None = None
+    context_updates: dict[str, str] = {}
+    if run_outcome is not None:
+        context_updates["last_run_status"] = run_outcome.status.value
+    if is_graceful_timeout:
+        logger.info("Graceful timeout detected — running deterministic PR fallback")
+        pr_result = ensure_pr()
+        if not final_message:
+            # The wind-down did not finish its work — synthesize a clear
+            # summary so downstream doesn't treat this as a crashed run.
+            final_message = _build_timeout_summary(pr_result)
+
     # ── Review fix request counting ──────────────────────────────
     review_fix_requests = final_message.count("@@dev fix this") if final_message else 0
     metrics.review_fix_requests = review_fix_requests
@@ -353,8 +400,7 @@ def build_output(
         final_message = strip_agent_run_config(final_message)
 
     # ── Recovery log: capture execution trace on failure ──────────
-    context_updates = {}
-    if not final_message or is_malformed_final_message(final_message):
+    if is_graceful_timeout or not final_message or is_malformed_final_message(final_message):
         trace = extract_recovery_trace(conversation)
         if trace:
             recovery_md = recovery_trace_to_markdown(trace)
