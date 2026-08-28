@@ -17,6 +17,7 @@ from openhands.sdk.tool.spec import Tool
 from agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
+    _STATUS_FINISHED,
     classify_run,
     status_value,
 )
@@ -34,13 +35,16 @@ def _run_supervised(
     conversation: Conversation,
     budget_s: float,
     label: str,
-) -> RunWatchdog:
+) -> tuple[RunWatchdog, Exception | None]:
     """Run one bounded pass of ``arun()`` under a watchdog.
 
     The watchdog interrupts the conversation when ``budget_s`` elapses.
-    Returns the watchdog so the caller can check whether it fired.
+    Returns the watchdog (so the caller can check whether it fired) and the
+    exception raised by ``arun()`` — if any — so the caller can tell a hard
+    failure apart from a natural completion or a watchdog interrupt.
     """
     watchdog = RunWatchdog(budget_s, conversation.interrupt).arm()
+    error: Exception | None = None
     try:
         loop = asyncio.new_event_loop()
         try:
@@ -49,9 +53,10 @@ def _run_supervised(
             loop.close()
     except Exception as e:
         logger.error(f"{label} raised: {e}")
+        error = e
     finally:
         watchdog.cancel()
-    return watchdog
+    return watchdog, error
 
 
 def _perform_wind_down(
@@ -69,7 +74,7 @@ def _perform_wind_down(
     """
     logger.info("Soft timeout reached — starting graceful wind-down phase")
     conversation.send_message(WIND_DOWN_PROMPT)
-    wind_down_watchdog = _run_supervised(
+    wind_down_watchdog, _ = _run_supervised(
         conversation, budget.wind_down_timeout_s, "Wind-down run"
     )
     completed = not wind_down_watchdog.fired
@@ -156,13 +161,15 @@ def run_agent(
     )
 
     conversation.send_message(prompt)
-    first_watchdog = _run_supervised(conversation, budget.soft_timeout_s, "Main run")
+    first_watchdog, main_error = _run_supervised(
+        conversation, budget.soft_timeout_s, "Main run"
+    )
 
     soft_timeout_fired = first_watchdog.fired
     main_status = status_value(conversation)
 
     wind_down_completed = False
-    if soft_timeout_fired and main_status != "finished":
+    if soft_timeout_fired and main_status != _STATUS_FINISHED:
         # Our watchdog interrupted the run mid-flight: ask the agent to
         # conclude its work while the conversation history is still live.
         # The overall outcome stays "gracefully_timed_out" whether or not
@@ -170,6 +177,12 @@ def run_agent(
         # (see ensure_pr) covers the uncooperative case.
         wind_down_completed = _perform_wind_down(conversation, budget)
         outcome = OutcomeStatus.GRACEFULLY_TIMED_OUT
+    elif main_error is not None:
+        # A non-cancellation crash escaped arun(): whatever status the
+        # conversation reports, this is a hard failure — never classify
+        # it as success.
+        logger.error("Main run crashed — classifying as failure")
+        outcome = OutcomeStatus.FAILURE
     else:
         outcome = classify_run(main_status, False)
 

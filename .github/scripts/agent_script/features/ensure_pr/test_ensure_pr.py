@@ -10,8 +10,9 @@ from unittest.mock import patch
 
 from agent_script.features.ensure_pr.ensure_pr import (
     EnsurePrResult,
+    _default_base,
     _find_pr_for_branch,
-    _parse_int_env,
+    _issue_number_from_env,
     ensure_pr,
 )
 
@@ -44,22 +45,69 @@ def _default_gh_response(args, **kwargs):
 
 
 class TestHelpers(unittest.TestCase):
-    def test_parse_int_env_valid(self):
+    def test_issue_number_valid(self):
         with patch.dict("os.environ", {"TARGET_NUMBER": "489"}):
-            self.assertEqual(_parse_int_env("TARGET_NUMBER"), 489)
+            self.assertEqual(_issue_number_from_env(), 489)
 
-    def test_parse_int_env_unset(self):
-        import os
-        saved = os.environ.pop("TARGET_NEVER_SET_XYZ", None)
+    def test_issue_number_unset(self):
+        saved = os.environ.pop("TARGET_NUMBER", None)
         try:
-            self.assertIsNone(_parse_int_env("TARGET_NEVER_SET_XYZ"))
+            self.assertIsNone(_issue_number_from_env())
         finally:
             if saved is not None:
-                os.environ["TARGET_NEVER_SET_XYZ"] = saved
+                os.environ["TARGET_NUMBER"] = saved
 
-    def test_parse_int_env_invalid(self):
+    def test_issue_number_zero_is_treated_as_absent(self):
+        # TARGET_NUMBER is normalized to "0" when no target issue exists —
+        # a "Closes #0" would be a dangling reference, so treat it as None.
+        with patch.dict("os.environ", {"TARGET_NUMBER": "0"}):
+            self.assertIsNone(_issue_number_from_env())
+
+    def test_issue_number_invalid(self):
         with patch.dict("os.environ", {"TARGET_NUMBER": "not-an-int"}):
-            self.assertIsNone(_parse_int_env("TARGET_NUMBER"))
+            self.assertIsNone(_issue_number_from_env())
+
+    def test_default_base_prefers_github_base_ref(self):
+        with patch.dict("os.environ", {"GITHUB_BASE_REF": "develop"}):
+            self.assertEqual(_default_base(), "develop")
+
+    def test_default_base_queries_api_when_base_ref_empty(self):
+        # On issues/issue_comment/workflow_call triggers GITHUB_BASE_REF is
+        # unset — the repo's default branch must come from the API. ``gh``
+        # resolves the repo from the ambient git context, so the call uses
+        # the {owner}/{repo} template.
+        saved = os.environ.pop("GITHUB_BASE_REF", None)
+
+        def gh_out(args, **k):
+            if args[0] == "api":
+                return '"develop"'
+            return ""
+
+        with patch("agent_script.features.ensure_pr.ensure_pr._run_gh",
+                   side_effect=gh_out) as gh_mock:
+            try:
+                self.assertEqual(_default_base(), "develop")
+            finally:
+                if saved is not None:
+                    os.environ["GITHUB_BASE_REF"] = saved
+        api_calls = [
+            c for c in gh_mock.call_args_list
+            if c.args and c.args[0][0] == "api"
+        ]
+        self.assertEqual(len(api_calls), 1)
+        self.assertIn("repos/{owner}/{repo}", " ".join(api_calls[0].args[0]))
+
+    def test_default_base_falls_back_to_main_on_api_failure(self):
+        saved = os.environ.pop("GITHUB_BASE_REF", None)
+        with patch(
+            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            side_effect=RuntimeError("gh api failed"),
+        ):
+            try:
+                self.assertEqual(_default_base(), "main")
+            finally:
+                if saved is not None:
+                    os.environ["GITHUB_BASE_REF"] = saved
 
     def test_find_pr_for_branch_returns_url(self):
         with patch(

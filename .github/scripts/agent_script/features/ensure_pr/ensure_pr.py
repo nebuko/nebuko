@@ -74,8 +74,18 @@ def _has_uncommitted_changes() -> bool:
 
 
 def _commit_pending_changes() -> str:
-    """Stage and commit all working-tree changes. Returns the new commit hash."""
-    _run_git(["add", "-A"])
+    """Stage and commit untracked/modified tracked files. Returns the hash."""
+    # Scope staging to untracked + modified tracked files only; deletions,
+    # type changes and renames are left for the next run to handle in
+    # context (keeps the automatic checkpoint conservative).
+    out = _run_git(["status", "--porcelain"]).strip()
+    paths = []
+    for line in out.splitlines():
+        code = line[:2]
+        if code == "??" or " M" in code or "M " in code:
+            paths.append(line[3:])
+    if paths:
+        _run_git(["add", "--"] + paths)
     _run_git(
         [
             "-c",
@@ -147,12 +157,37 @@ def _open_pr(
     return _run_gh(args).strip()
 
 
-def _parse_int_env(name: str) -> Optional[int]:
-    raw = os.environ.get(name, "").strip()
+def _issue_number_from_env() -> Optional[int]:
+    """TARGET_NUMBER is the triggering issue number, or 0 when absent."""
+    raw = os.environ.get("TARGET_NUMBER", "").strip()
     try:
-        return int(raw) if raw else None
+        value = int(raw) if raw else 0
     except ValueError:
         return None
+    return value if value > 0 else None
+
+
+def _default_base() -> str:
+    """Resolve the PR base branch for the current repository.
+
+    GITHUB_BASE_REF is only set on pull_request triggers; on the
+    issues/issue_comment/workflow_call triggers this repo uses it is empty,
+    so the repository's default branch must be queried explicitly. ``gh``
+    resolves the target repo from the ambient git context (remote origin /
+    GITHUB_REPOSITORY), so no URL parsing is needed.
+    """
+    base = os.environ.get("GITHUB_BASE_REF", "").strip()
+    if base:
+        return base
+    try:
+        out = _run_gh(
+            ["api", "repos/{owner}/{repo}", "--jq", ".default_branch"]
+        ).strip().strip('"')
+        if out:
+            return out
+    except RuntimeError:
+        logger.warning("_default_base: gh api failed, using 'main'")
+    return "main"
 
 
 def ensure_pr(dry_run: bool = False) -> EnsurePrResult:
@@ -178,6 +213,7 @@ def ensure_pr(dry_run: bool = False) -> EnsurePrResult:
             logger.info("ensure_pr: detached HEAD — skipping")
             return EnsurePrResult(skipped=True, message="detached HEAD")
 
+        head_hash = _run_git(["rev-parse", "HEAD"])
         commit_hash = ""
         if _has_uncommitted_changes():
             if dry_run:
@@ -187,8 +223,8 @@ def ensure_pr(dry_run: bool = False) -> EnsurePrResult:
                 logger.info(
                     f"ensure_pr: committed pending changes at {commit_hash[:12]}"
                 )
-        else:
-            commit_hash = _run_git(["rev-parse", "HEAD"])
+        # Dry run performs no commit, so report the current HEAD.
+        commit_hash = commit_hash or head_hash
 
         pushed = False
         if not dry_run:
@@ -215,8 +251,8 @@ def ensure_pr(dry_run: bool = False) -> EnsurePrResult:
             )
 
         repo = _run_git(["remote", "get-url", remote])
-        base = os.environ.get("GITHUB_BASE_REF") or "main"
-        issue_number = _parse_int_env("TARGET_NUMBER")
+        base = _default_base()
+        issue_number = _issue_number_from_env()
         title = (
             "WIP checkpoint: in-flight work from interrupted agent run "
             f"(#{issue_number or 'n/a'})"

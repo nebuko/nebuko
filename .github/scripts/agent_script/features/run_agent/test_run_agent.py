@@ -37,19 +37,22 @@ def _make_conversation(status_after="finished"):
 class TestRunSupervised(unittest.TestCase):
     def test_completes_and_returns_watchdog(self):
         convo = _make_conversation("finished")
-        watchdog = _run_supervised(convo, 60.0, "Main run")
+        watchdog, error = _run_supervised(convo, 60.0, "Main run")
         self.assertFalse(watchdog.fired)
+        self.assertIsNone(error)
         self.assertFalse(convo.interrupt.called)
 
-    def test_exception_in_arun_does_not_escape(self):
+    def test_exception_in_arun_is_captured_not_raised(self):
         convo = MagicMock()
 
         async def _boom():
             raise RuntimeError("llm exploded")
 
         convo.arun = _boom
-        watchdog = _run_supervised(convo, 60.0, "Main run")
+        watchdog, error = _run_supervised(convo, 60.0, "Main run")
         self.assertFalse(watchdog.fired)
+        self.assertIsInstance(error, RuntimeError)
+        self.assertEqual(str(error), "llm exploded")
 
 
 class TestPerformWindDown(unittest.TestCase):
@@ -74,7 +77,7 @@ class TestPerformWindDown(unittest.TestCase):
                 50.0, lambda: None
             )
             wd.fired = True
-            return wd
+            return wd, None
 
         with patch(
             "agent_script.features.run_agent.run_agent._run_supervised",
@@ -134,9 +137,9 @@ class TestRunAgentIntegration(unittest.TestCase):
                 # Main pass: simulate the watchdog tripping mid-flight.
                 wd = RunWatchdog(50.0, lambda: None)
                 wd.fired = True
-                return wd
+                return wd, None
             # Wind-down pass: completes within its budget.
-            return RunWatchdog(50.0, lambda: None)
+            return RunWatchdog(50.0, lambda: None), None
 
         with patch(
             "agent_script.features.run_agent.run_agent._run_supervised",
@@ -159,6 +162,40 @@ class TestRunAgentIntegration(unittest.TestCase):
         )
         # Exactly two supervised passes — no recursion.
         self.assertEqual(calls["n"], 2)
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_main_run_crash_is_failure_not_success(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        # A non-cancellation exception escaping arun() must be classified
+        # as FAILURE even if the conversation status looks benign.
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        convo = _make_conversation("finished")
+        mock_conversation_cls.return_value = convo
+
+        def fake_supervised(c, budget_s, label):
+            wd = __import__(
+                "agent_script.features.run_agent.run_watchdog", fromlist=["x"]
+            ).RunWatchdog(50.0, lambda: None)
+            return wd, RuntimeError("llm exploded")
+
+        with patch(
+            "agent_script.features.run_agent.run_agent._run_supervised",
+            side_effect=fake_supervised,
+        ), patch(
+            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            return_value=None,
+        ):
+            result = run_agent(llm_config={}, prompt="do the thing")
+        self.assertIs(result, convo)
+        self.assertIs(convo.run_outcome.status, OutcomeStatus.FAILURE)
+        # No wind-down on a crash — only the original prompt is sent.
+        self.assertEqual(convo.send_message.call_count, 1)
 
 
 if __name__ == "__main__":

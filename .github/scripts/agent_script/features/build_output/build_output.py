@@ -94,6 +94,8 @@ def _build_timeout_summary(pr_result: EnsurePrResult | None) -> str:
             lines.append(f"- Checkpoint PR: {pr_result.pr_url}")
         if pr_result.error:
             lines.append(f"- PR fallback issue: {pr_result.message}")
+        elif pr_result.skipped:
+            lines.append(f"- PR fallback skipped: {pr_result.message}")
     return "\n".join(lines)
 
 
