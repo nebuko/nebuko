@@ -109,6 +109,22 @@ class TestHelpers(unittest.TestCase):
                 if saved is not None:
                     os.environ["GITHUB_BASE_REF"] = saved
 
+    def test_default_base_falls_back_to_main_on_api_timeout(self):
+        # A hung gh api query must also degrade to "main" (never escape
+        # into the ensure_pr error path), per issue #489 review feedback.
+        from subprocess import TimeoutExpired
+
+        saved = os.environ.pop("GITHUB_BASE_REF", None)
+        with patch(
+            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            side_effect=TimeoutExpired(cmd=["gh", "api"], timeout=120),
+        ):
+            try:
+                self.assertEqual(_default_base(), "main")
+            finally:
+                if saved is not None:
+                    os.environ["GITHUB_BASE_REF"] = saved
+
     def test_find_pr_for_branch_returns_url(self):
         with patch(
             "agent_script.features.ensure_pr.ensure_pr._run_gh",

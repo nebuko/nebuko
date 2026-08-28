@@ -14,6 +14,7 @@ and the ``gh`` CLI helpers in ``github_client.py``.
 import os
 import subprocess
 from dataclasses import dataclass
+from subprocess import TimeoutExpired
 from typing import Optional
 
 from openhands.sdk import get_logger
@@ -185,7 +186,9 @@ def _default_base() -> str:
         ).strip().strip('"')
         if out:
             return out
-    except RuntimeError:
+    except (RuntimeError, TimeoutExpired):
+        # A failing/timing-out network query must degrade to a logged
+        # fallback ("main"), never escalate into the whole ensure_pr result.
         logger.warning("_default_base: gh api failed, using 'main'")
     return "main"
 
