@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Date** | 2026-08-28 |
-| **Périmètre** | Produit *git-flow-ai* (dépot [olivier-norture/git-flow-ai](https://github.com/olivier-norture/git-flow-ai)) : positionnement, marché, concurrence, modèle économique, maturité |
-| **Méthode de collecte** | Analyse du dépôt (README, `landscape.md`, `agent-config.yaml`, métadonnées API GitHub), de l'issue interne #475 et de la PR #481 ; recherche web (SearXNG) du 2026-08-28 sur la concurrence, le pricing et les données de marché |
-| **Lisibilité** | Document unique, ~20 min de lecture. Tout fait chiffré porte une référence `[n]` résolue dans l'index des sources (section 10). Trois niveaux d'épistémicité sont explicitement distingués : **fait vérifié** (source primaire), **signal secondaire** (blog/press citant une source primaire — marqué « à recouper »), **hypothèse**. |
+| **Date** | 2026-08-28 (édition du 2026-08-28 : extension à la section 4.4 — outils de workflow agentique) |
+| **Périmètre** | Produit *git-flow-ai* (dépot [olivier-norture/git-flow-ai](https://github.com/olivier-norture/git-flow-ai)) : positionnement, marché, concurrence (revue de code + outils de workflow agentique), modèle économique, maturité |
+| **Méthode de collecte** | Analyse du dépôt (README, `landscape.md`, `agent-config.yaml`, métadonnées API GitHub), de l'issue interne #475 et de la PR #481 ; recherche web (SearXNG) du 2026-08-28 sur la concurrence, le pricing et les données de marché. Pour la section 4.4 : consolidation des analyses internes existantes (issues #227, #291, #318, #319, PR #485) complétée par le recoupement direct avec les sources officielles des éditeurs (vérifiées le 2026-08-28) et les métadonnées API GitHub des dépôts concernés |
+| **Lisibilité** | Document unique, ~30 min de lecture. Tout fait chiffré porte une référence `[n]` résolue dans l'index des sources (section 10). Trois niveaux d'épistémicité sont explicitement distingués : **fait vérifié** (source primaire), **signal secondaire** (blog/press citant une source primaire — marqué « à recouper »), **hypothèse**. |
 
 ---
 
@@ -125,6 +125,100 @@ Trois constats ressortent du tableau :
 ### 4.3 Concurrents open-source : absence notable
 
 Les recherches menées du 2026-08-28 n'ont retourné **aucun concurrent open-source direct identifiable** sur le segment « orchestration multi-agents du processus d'équipe dans GitHub Actions » [55]. Des outils OSS de voisinage existent (clients Git, automatisations CI), mais aucun n'occupe le croisement *workflows-as-code* × *délégation inter-agents* × *GitHub-native*. **Caveat** : ce constat tient à la qualité des résultats de recherche obtenus (moteur de qualité variable, requêtes françaises dominées par du bruit) et doit être confirmé par un audit ciblé des dépôts GitHub (section 9, point g). L'absence apparente est néanmoins un signal : soit le segment est vierge, soit il n'a pas encore été formulé comme tel.
+
+### 4.4 Outils de workflow agentique : concurrence de niveau framework
+
+Le tableau 4.1 couvre les acteurs du segment « revue de code ». *git-flow-ai* étant aussi un outil d'orchestration de workflows multi-agents, une extension de l'étude au périmètre « workflow agentique » était due : frameworks d'orchestration d'agents (LangGraph, CrewAI, AutoGen), plateforme d'orchestration déclarative (Kestra) et solution native GitHub (GitHub Agentic Workflows / gh-aw). Ce sous-domaine a déjà fait l'objet d'analyses internes approfondies (issues #227, #291, #318, #319, PR #485) ; cette section les consolide au gabarit du document principal et complète les lacunes de recherche initiale par recoupement direct avec les sources officielles des éditeurs, vérifiées le 2026-08-28. Les métadonnées des dépôts (stars, forks, licence, date de création) proviennent de l'API GitHub relevée le 2026-08-28 [56].
+
+**Note de périmètre.** Le terme « GitHub Agent » de la demande initiale désigne, à la date de cette étude, **GitHub Agentic Workflows (gh-aw)** : le projet GitHub Next « write agentic workflows in natural-language Markdown, run them in GitHub Actions » [57][58]. S'agissant éventuellement du *Copilot coding agent*, voir la distinction en 4.4.5 : c'est un acteur différent, déjà couvert en revue de code dans le tableau 4.1. De même, « kaesra » (sic) désigne **Kestra** (cf. issue interne #319).
+
+#### 4.4.1 Tableau comparatif (données vérifiées le 2026-08-28)
+
+| Outil | Nature | Paradigme d'orchestration | Contrôle & déterminisme | Human-in-the-loop | Intégrations & observabilité | Licence | Adhésion (⭐ / forks) | Cas d'usage dominant |
+|---|---|---|---|---|---|---|---|---|
+| **LangGraph** [59] | Runtime/SDK code-first (Python/JS), partie de l'écosystème LangChain | Graphe de machine à états Pregel : `StateGraph`, nœuds/arêtes codés, sous-graphes | Fort — contrôle programmatique fin ; parallélisme, conditions, retries par branchement d'état | ⚠️ manuel (`interrupt()` + `Command(resume=…)`) ; un nœud d'approbation first-class reste une demande ouverte ([langgraph #8026](https://github.com/langchain-ai/langgraph/issues/8026)) [59] | ✅ LangSmith : tracing, evals, déploiement managé [59] | MIT [56] | 40 606 / 6 839 (créé 2023-08) [56] | Agents résilients de production, longs, avec état durable |
+| **CrewAI** [60] | Bibliothèque Python multi-agents | Équipes de « rôles » : Agents (rôle/objectif/outils) + Tasks + Crew, processes séquentiels / hiérarchiques / consensuels | Moyen — abstractions de haut niveau ; le pattern manager-worker est critiqué pour sa fiabilité (signal secondaire, à recouper) [61] | Via `wait_for_input()` (entrées utilisateur explicites) [60] | Traçage de base ; observabilité poussée via outils tiers (Langfuse etc.) [61] | MIT [56] | 57 723 / 8 269 (créé 2023-10) [56] | Prototypage rapide d'agents en jeu de rôles ; applications métier multi-agents |
+| **AutoGen** [62] | Framework Microsoft de conversations multi-agents | Agents conversables + group chat coordonné par un gestionnaire (sélection de l'orateur) | Faible/modéré — dynamique conversationnelle, difficile à déboguer pour des pipelines déterministes [61] | Natif — l'humain peut participer au group chat [61] | Logging de base ; héritage Semantic Kernel côté enterprise [62] | CC-BY-4.0 (répertoire) [56] | 60 668 / 9 160 (créé 2023-08) [56] | Recherche/exploration de patterns multi-agents ; **fusion en cours dans le Microsoft Agent Framework** [62] |
+| **Kestra** [63] | Plateforme d'orchestration & scheduling event-driven (Java/Rust + workers + BDD) | Pipelines déclaratifs YAML : tasks, dépendances, `ForEach`/`Switch`/`Parallel`, langage d'expressions complet | Très fort — déterministe : cron, retries avec backoff, timeouts, checkpointing, idempotence [63][64] | Task `Pause` explicite (pause jusqu'à reprise manuelle/webhook), SLA configurables [64] | ✅ UI web (DAG temps réel, logs, métriques) ; 1 600+ plugins (Kafka, S3, HTTP, Slack, dbt…) [63] | Apache-2.0 [56] | 27 944 / 2 952 (créé 2019-08) [56] | Orchestration data/infrastructure : ETL, ML pipelines, automatisation infra critique |
+| **GitHub Agentic Workflows (gh-aw)** [57] | Projet GitHub Next : workflows agentiques en Markdown exécutés dans GitHub Actions | Agent unique par workflow + sub-agents inline (`## agent: name`), compilés vers `.lock.yml` | Fort par conception sécurité : lecture seule par défaut, écritures via allowlist `safe-outputs`, contrainte single-job | Native GitHub (actions) ; gates par structure du workflow plutôt que nœud dédié | Native GitHub (CLI `gh aw` : compile/logs/audit) ; multi-moteur : Copilot, Claude, Codex, Gemini [57][58] | Non documentée lors de la collecte (projet expérimental) [57] | Non documentée (projet expérimental) [57] | Triage/classification à haute volumétrie, automatisations simples, pré-fetch de données |
+
+> **Note épistémique** : les lignes LangGraph, CrewAI, Kestra reposent sur sources primaires (sources officielles des éditeurs [59][60][63]) recoupées avec les métadonnées API GitHub [56] et les analyses internes #227/#319. La ligne **Kestra** avait échoué lors de la recherche initiale (SearXNG) : elle a été comblée par consultation directe des sources officielles — les points restant non vérifiés (pricing détaillé, statuts de versions) sont simplement marqués « non documenté ». La ligne **gh-aw** provient des documents officiels du projet (repo `github/gh-aw`, docs github.github.com, page GitHub Next) [57][58] ; son statut *expérimental* et l'absence de données d'adhésion publiées sont assumés. La fusion AutoGen → Microsoft Agent Framework est rapportée par la documentation du dépôt [62] (source primaire).
+>
+> **AutoGen en ligne secondaire** : conformément au compromis de profondeur uniforme, AutoGen ne reçoit pas de fiche dédiée (fiches en 4.4.2–4.4.5) — sa dynamique principale (consolidation Microsoft, incertitude de roadmap) est portée par la ligne du tableau ci-dessus [62].
+
+#### 4.4.2 Fiche — LangGraph
+
+**Ce que c'est.** Runtime code-first d'agents : machine à états de type Pregel où l'on construit une `StateGraph` en Python/JS — nœuds, arêtes et partage d'état définis dans le code, avec persistance durable via checkpointers (Postgres, etc.) [59]. La stack commerciale est LangGraph OSS + LangSmith Deployment + LangSmith observability [59]. C'est un **SDK applicatif** : il s'emballe dans une application déployée sur votre infrastructure, il n'existe pas en mode « fichier déposé dans un dépôt ».
+
+**Points forts.** Expressivité maximale du contrôle d'agent (parallélisme DAG, sous-graphes conditionnels, retries par branchement d'état) [59] ; état durable, interrogable, replayable (time-travel) [59] ; observabilité/déploiement managé de grade production via LangSmith [59] ; agnosticisme de modèle via les intégrations LangChain [59] ; gravité d'écosystème (40 k stars, éditeur actif) [56].
+
+**Points faibles / limites.** Courbe d'apprentissage machine à états ; sur-engineeré pour des workflows simples [61] ; le workflow n'est **pas un artefact portable** — c'est du code : aucune couche déclarative partagable en amont (aucune demande de format YAML/declaratif sur leur tracker, vérifié 2026-08-25 dans la PR #485) [59] ; human-in-the-loop manuel tant que [langgraph #8026](https://github.com/langchain-ai/langgraph/issues/8026) n'est pas livré [59] ; dépendance à l'écosystème LangChain ; s'exécute uniquement sur les environnements qu'on lui fournit — pas de transport GitHub natif, donc pas non plus de déclenchement par issue/comment ni de gate humain sous forme de commentaire [59].
+
+**Verdict.** Complément solide, pas challenger : LangGraph gagne sur l'expressivité de la logique intra-agent et la gravité d'écosystème ; il ne peut structurellement pas offrir de workflow GitHub-native zéro-infrastructure, de roles multi-agents déclenchés par mention avec gates humains, ni l'adoption « copiez un seul YAML dans n'importe quel dépôt ». L'état cible raisonnable est hybride : coquille GitHub-native + un graphe LangGraph *à l'intérieur* d'une étape quand la logique intra-agent devient riche [59].
+
+#### 4.4.3 Fiche — CrewAI
+
+**Ce que c'est.** Bibliothèque Python de « crews » multi-agents : on définit des agents avec rôle/objectif/tools, des tâches assignées, et une *Crew* qui orchestre selon des processus **séquentiel, hiérarchique ou consensuel** [60]. Positionnement prototype→production d'applications agentiques métier, avec forte communauté.
+
+**Points forts.** Abstractions intuitives de jeu de rôles, prototypage très rapide [60][61] ; flexibilité des modes de processus (séquentiel/hiérarchique/consensuel) [60] ; agnosticisme de LLM (via LiteLLM) [61] ; plus grosse communauté du périmètre (57,7 k stars) [56] ; entrée utilisateur native (`wait_for_input()`) [60].
+
+**Points faibles / limites.** Pattern manager-worker critiqué pour sa fiabilité en production (signal secondaire, à recouper) [61] ; orchestration centrée sur la conversation/rôles, moins sur le contrôle de flux déterministe fin [61] ; observabilité limitée nativement [61] ; aucune intégration plateforme (GitHub ou autre) : le runtime et l'infrastructure restent à provisionner [60] ; état persisté principalement en mémoire [61].
+
+**Verdict.** Concurrent au sens large sur « faire collaborer des agents », mais dans le segment « construire son application agentique » — pas dans celui du processus d'équipe versionné. Sa force (rapidité de prototypage en Python) est précisément ce qui l'éloigne de l'argument *git-flow-ai* (processus comme artefact diffable, transport GitHub, adoption zero-copy) [50]. À surveiller pour sa dynamique communautaire plus que pour une menace directe sur le quadrant revendiqué.
+
+#### 4.4.4 Fiche — Kestra
+
+**Ce que c'est.** Plateforme d'orchestration & scheduling event-driven open source (Apache-2.0) : flows YAML déclaratifs orientés data/infrastructure, exécutés par des workers dédiés avec une base de données (PostgreSQL/MySQL) [63][64]. Créé en 2019, bien antérieur à la vague « agents IA » — c'est un outil *d'avant* l'agentique, réutilisable pour y faire tourner des tâches appelant des agents.
+
+**Points forts.** Déterminisme et garanties d'exécution d'entreprise : cron/scheduling, retries avec backoff, timeouts, checkpointing, idempotence [64] ; DSL riche (langage d'expressions, `ForEach`/`Switch`/`Parallel`, typage des inputs/outputs) [64] ; écosystème massif — 1 600+ plugins couvrant l'outillage data/infra (Kafka, S3, HTTP, Slack, dbt, import Airflow…) [63] ; UI web avec DAG en temps réel et gestion des exécutions [63] ; self-hosting complet (Docker/Kubernetes) [64].
+
+**Points faibles / limites (relativement au périmètre agentique).** Zéro sémantique agentique native : les tasks exécutent des programmes déterministes, elles ne « raisonnent » pas — orchestrer des agents LLM exige de construire un plugin custom [64] ; human-in-the-loop par task `Pause` générique (pause/reprise), pas de gate d'approbation de niveau conception ancré dans un fil de discussion [64] ; lourd à opérer (service Java/Rust + workers + BDD) là où *git-flow-ai* tourne dans GitHub Actions [64] ; domaine cible différent (data engineers/DevOps, scope multi-tenant entreprise vs contexte d'une issue) [64].
+
+**Note de limitation.** La recherche web initiale (SearXNG) sur Kestra ayant échoué (bruit moteur), cette fiche est établie sur recoupement direct des sources officielles [63][64] (vérifiées le 2026-08-28) et de l'analyse interne #319 ; les points non vérifiables (pricing, versions) ne sont pas affirmés.
+
+**Verdict.** Ils résolvent des problèmes différents : Kestra est un orchestrateur de *tâches* pour data/infra, *git-flow-ai* un coordinateur d'*agents* encastré dans le workflow de développement. Pas de chevauchement de capacités cœur ; l'usage complémentaire naturel serait de lancer des flows Kestra (ETL, pipelines) depuis une étape d'un workflow agentique.
+
+#### 4.4.5 Fiche — GitHub Agentic Workflows (gh-aw)
+
+**Ce que c'est.** Projet **GitHub Next** : « write agentic workflows in natural-language Markdown, and run them in GitHub Actions » [57][58]. Un workflow est un fichier Markdown (frontmatter YAML : `strict`, `bots`, `engine`, `tools`, `safe-outputs`, `imports`, `network`) compilé vers `.lock.yml` avant exécution ; les sub-agents sont définis inline et héritent du contexte/moteur du parent [57]. Multi-moteur par design : GitHub Copilot, Claude, Codex, Gemini [57][58].
+
+**Points forts.** Posture sécurité première : lecture seule par défaut, écritures uniquement via allowlists `safe-outputs` [57] ; validation au moment de la compilation (`gh aw compile`), outillage CLI natif (`new`/`logs`/`audit`) [57] ; neutralité de moteur (indépendance vis-à-vis d'un SDK unique) [58] ; intégration GitHub native évidente pour les équipes déjà sur Actions [57].
+
+**Points faibles / limites.** Statut **expérimental** (GitHub Next) sans engagement de roadmap formel documenté lors de la collecte [58] ; contrainte **single-job** par conception : pas de fan-out/fan-in multi-jobs, pas de chaînage de workflows à travers des jobs, pas de gates humains entre jobs [57] ; un seul agent par workflow (les sub-agents partagent le contexte du parent : ce sont des « fonctions », pas des services isolés) [57] ; pas de grappe de rôles spécialisés avec délégation inter-agents ; la sécurité-by-default est une force en dépôt non fiable mais un verrou pour des pipelines agentiques autonomes à écritures multiples.
+
+**Distinction demandée.** Ne pas confondre gh-aw avec les agents produit de la plateforme Copilot : le **Copilot coding agent** (agent qui implémente des issues et ouvre des PRs) et le **Copilot code review** (revue IA intégrée, couverte en 4.1 [17][18]). Ce sont des entités distinctes de gh-aw, outil de *définition* de workflows agentiques. Les trois convergent dans la même plateforme — ce qui renforce la menace de « descension de la plateforme native » (section 8), pas le segment framework.
+
+**Note de limitation.** Les documents officiels du projet ont été consultés directement (repo `github/gh-aw`, docs `github.github.com/gh-aw`, page GitHub Next) car la recherche web initiale était bruitée [57][58] ; statut expérimental, licence et adhésion non documentées à la date de la collecte.
+
+**Verdict.** Complémentaire sur les automatisations simples et à haute volumétrie (triage, classification), concurrent potentiel uniquement si GitHub y ajoute le chaînage multi-jobs et l'orchestration multi-agents — ce que la contrainte single-job de leur modèle sécurité active rend peu probable à court terme [57]. Le risque réel est le positionnement marketing : « agentique dans GitHub Actions » est une accroche que *git-flow-ai* doit clarifier face à gh-aw (« workflows YAML multi-agents vs Markdown single-agent »).
+
+#### 4.4.6 Carte de positionnement — workflow agentique
+
+Deux axes structurent cet espace : **la place du workflow dans le système** (bibliothèque à embarquer ↔ plateforme encastrée/adoption par dépôt) et **la détermination du contrôle** (conversation/rôles ↔ graphe/pipeline déterministe).
+
+```
+                       Pipeline/graphe déterministe
+                                   ▲
+                                   │
+                    ◼ Kestra       │
+                      (tâches,    │        ◼ git-flow-ai
+                       infra)     │          (workflows YAML
+                    ◼ LangGraph   │           multi-agents,
+                                   │          transport GitHub)
+   Bibliothèque/SDK  ◄─────────────┼────────────►  Plateforme encastrée
+   à embarquer              │
+                            │   ◼ CrewAI        ◼ gh-aw (expérimental)
+                            │   ◼ AutoGen         (single-agent MD)
+                                   ▼
+                        Conversation / rôles
+```
+
+Constats :
+
+1. **Le croisement « plateforme encastrée × graphe déterministe × sémantique agentique » reste non occupé.** Kestra occupe la case déterministe mais sans sémantic agentique ni ancrage GitHub-native ; gh-aw occupe l'ancrage GitHub mais reste single-agent et conversationnel [57][64]. La position *git-flow-ai* demeure distinctive — cohérente avec la carte du segment revue de code (§5.2).
+2. **Les frameworks OSS (LangGraph, CrewAI, AutoGen) ne sont pas des challengers directs mais des fournisseurs potentiels** : tous trois peuvent servir de moteur *à l'intérieur* d'une étape d'un workflow *git-flow-ai* ; aucun ne propose le transport GitHub-native + le processus versionné [50][59][60].
+3. **La vraie descension possible est la plateforme native** : gh-aw + Copilot dans la plateforme dominante [57][17] — même scénario de menace que la section 8 (« à quelle vitesse », pas « si »).
+4. **L'homogénéité du gabarit** : aucune de ces fiches ne remet en cause les six pain points traités en 5.1 — les réponses *git-flow-ai* (processus versionné, délégation, gates) restent valides sur le périmètre élargi [50].
 
 ---
 
@@ -294,6 +388,7 @@ Actions concrètes, classées par effort croissant. Les points (a)–(e) visent 
 7. **(g) Études de cas dès les Gates 1–2.** Intégrer 3 à 5 équipes externes en conditions réelles sur délégation `@@` ; instrumenter les signaux de la section 2.4 (interactions humaines par issue, tokens par issue, temps de merge, re-travail) et publier les résultats — ce qui transforme la promesse de *measurability* [50] en preuve, et fournit les premiers artefacts partageables de la future marketplace [48].
 8. **(h) Veille concurrentielle trimestrialisée.** Suivi systématique : financements et pivots des acteurs de la section 4.1 (en particulier le pivot « Agentic Change Management » de CodeRabbit [2]), changelogs Copilot [19], publications OpenHands [46]. Livrable mensuel léger : « qui est entré dans notre quadrant ».
 9. **(i) Audit d'absence de concurrent OSS.** Confirmer ou infirmer le constat de la section 4.3 par requêtes ciblées GitHub (topics : `multi-agent`, `github-actions`, `agentic-workflow`) et inspection des stars croissantes sur 6 mois.
+10. **(j) Veille renforcée du segment workflow agentique.** Trois événements à surveiller mensuellement, car chacun redessinerait la carte de la section 4.4.6 : (1) le passage de **gh-aw** du statut expérimental GitHub Next à un produit stable — en particulier l'éventuelle levée de la contrainte single-job (le seul vrai chemin de concurrence directe) [57][58] ; (2) l'issue [langgraph #8026](https://github.com/langchain-ai/langgraph/issues/8026) « approbation first-class » — sa livraison rapprocherait LangGraph du pattern gate humain revendiqué par *git-flow-ai* [59] ; (3) la consolidation **AutoGen → Microsoft Agent Framework** et son positionnement éventuel sur l'orchestration multi-agents [62]. En outre, refermer les limitations documentées en 4.4.4/4.4.5 : pricing détaillé de Kestra et licence/adhésion de gh-aw, non documentés au moment de la collecte.
 
 ---
 
@@ -370,6 +465,20 @@ Toutes les sources web ont été collectées et vérifiées le **2026-08-28** vi
 - **[53]** `agent-config.yaml` (dépot racine) — providers, modèles, prix d'inférence par modèle
 - **[54]** Métadonnées du dépôt via API GitHub, relevées le 2026-08-28 — https://github.com/olivier-norture/git-flow-ai (création 2026-05-29 ; 0 star / 0 fork / 0 watcher ; 79 issues ouvertes ; licence Apache-2.0)
 - **[55]** Recherche web « multi-agent GitHub workflow automation open source » (2026-08-28, SearXNG) : aucun concurrent OSS direct exploitable identifié (signal faible, moteur de qualité variable) — cf. caveat de la section 4.3
+
+### 10.6 Outils de workflow agentique (section 4.4)
+
+Analyse interne consolidée (issues #227, #291, #318, #319 ; PR #485 — cf. https://github.com/olivier-norture/git-flow-ai), complétée par le recoupement direct des sources primaires ci-dessous, vérifiées le 2026-08-28.
+
+- **[56]** P — API GitHub : métadonnées des dépôts concernés, relevées le 2026-08-28 (stars / forks / licence / date de création) — langchain-ai/langgraph (40 606 ⭐ / 6 839 forks, MIT, créé 2023-08) — crewAIInc/crewAI (57 723 ⭐ / 8 269 forks, MIT, créé 2023-10) — microsoft/autogen (60 668 ⭐ / 9 160 forks, CC-BY-4.0, créé 2023-08) — kestra-io/kestra (27 944 ⭐ / 2 952 forks, Apache-2.0, créé 2019-08)
+- **[57]** P — GitHub Agentic Workflows (gh-aw) : documentation officielle du projet — home https://github.github.com/gh-aw/ ; README du dépôt github/gh-aw (multi-moteur Copilot/Claude/Codex/Gemini, read-only par défaut, `safe-outputs`, compilation `.lock.yml`) ; references workflow-format/subagents/workflow-patterns (contrainte single-job, sub-agents inline héritant du contexte parent) ; CLI `gh aw` (new/compile/logs/audit)
+- **[58]** P — GitHub Next : page projet « Agentic Workflows » — https://githubnext.com/projects/agentic-workflows/ (statut expérimental, « multi-engine by design »)
+- **[59]** P — LangGraph : documentation officielle — https://langchain-ai.github.io/langgraph/ (runtime stateful agents, graphe de machine à états Pregel, checkpointers, `interrupt()`/`Command(resume=…)` pour human-in-the-loop, LangSmith observability & deployment) ; tracker du dépôt — issue [langgraph #8026](https://github.com/langchain-ai/langgraph/issues/8026) (demande d'approbation first-class, ouverte)
+- **[60]** P — CrewAI : documentation officielle — https://docs.crewai.com/en/introduction (Agents rólés, Tasks, Crews, processes séquentiel/hiérarchique/consensuel, `wait_for_input()`)
+- **[61]** S — Comparatifs et retours de terrain 2025–2026 sur CrewAI vs LangGraph vs AutoGen (fiabilité du pattern manager-worker, limites d'observabilité, courbes d'apprentissage) — consolidation des analyses internes issues #227/#318 recoupées avec blogs techniques cités dans ces issues (à recouper point par point avant citation externe)
+- **[62]** P — Microsoft AutoGen : dépôt officiel — https://github.com/microsoft/autogen (framework de conversations multi-agents ; annonces de consolidation vers le Microsoft Agent Framework ; licence du dépôt CC-BY-4.0)
+- **[63]** P — Kestra : site et documentation officiels — https://kestra.io/ et https://kestra.io/docs/ (plateforme event-driven d'orchestration & scheduling, flows YAML déclaratifs, 1 600+ plugins, UI web DAG temps réel, Apache-2.0, dépôt https://github.com/kestra-io/kestra)
+- **[64]** P — Kestra : documentation des composants de workflow — flows/tasks (langage d'expressions `${inputs.*}`/`${outputs.*}`, `ForEach`/`Switch`/`Parallel`), retries avec backoff, timeouts, checkpointing/idempotence, task `Pause` (human-in-the-loop), self-hosting Docker/Kubernetes — https://kestra.io/docs/workflow-components/flow ; analyse comparative interne issue #319 (DSL, exécution, état, plugins, déploiement)
 
 ---
 
