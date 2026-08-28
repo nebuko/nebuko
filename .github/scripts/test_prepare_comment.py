@@ -8,6 +8,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 from prepare_comment import (
     clean_message,
+    escape_agent_triggers,
     extract_metrics,
     _truncate_at_boundary,
     prepare_comment,
@@ -153,6 +154,44 @@ class TestCleanMessage(unittest.TestCase):
         self.assertNotIn("</agentRunConfig>", result)
         self.assertIn("Start", result)
         self.assertIn("End", result)
+
+
+class TestEscapeAgentTriggers(unittest.TestCase):
+    """Test @@agent trigger escaping (issue #482)."""
+
+    def test_escapes_single_trigger(self):
+        result = escape_agent_triggers("Hello @@genius thanks")
+        self.assertIn("@@\u200bgenius", result)
+        self.assertNotIn("hello @@genius".replace("h", "H"), result)
+
+    def test_no_raw_trigger_after_escape(self):
+        result = escape_agent_triggers("Ping @@genius and @@dev now")
+        self.assertNotIn("@@genius", result)
+        self.assertNotIn("@@dev", result)
+        self.assertIn("@@\u200bgenius", result)
+        self.assertIn("@@\u200bdev", result)
+
+    def test_escapes_multiple_tokens(self):
+        result = escape_agent_triggers("@@ctx then @@dev then @@review")
+        self.assertNotIn("@@ctx", result)
+        self.assertNotIn("@@dev", result)
+        self.assertNotIn("@@review", result)
+
+    def test_escapes_at_start_of_string(self):
+        result = escape_agent_triggers("@@genius start")
+        self.assertEqual(result, "@@\u200bgenius start")
+
+    def test_does_not_escape_mid_word(self):
+        # Only escape when @@ is preceded by start/whitespace (lookbehind rule)
+        result = escape_agent_triggers("x@@genius is a mid-word occurrence")
+        self.assertEqual(result, "x@@genius is a mid-word occurrence")
+
+    def test_no_tokens_unchanged(self):
+        text = "No triggers here, just plain @mentions and @@ without name."
+        self.assertEqual(escape_agent_triggers(text), text)
+
+    def test_empty_input(self):
+        self.assertEqual(escape_agent_triggers(""), "")
 
 
 class TestTruncateAtBoundary(unittest.TestCase):
@@ -314,6 +353,24 @@ class TestPrepareCommentIntegration(unittest.TestCase):
         self.assertIn("$ENV_VAR", result)
         self.assertIn("`date`", result)
         self.assertIn("<https://example.com>", result)
+
+    def test_path_a_escapes_agent_triggers(self):
+        """Raw @@ triggers in the final message must arrive escaped (issue #482)."""
+        self._write("final_message.txt", "Done. Handing off to @@dev next.")
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn("@@\u200bdev", result)
+        self.assertNotIn("handing off to @@dev", result)
+        self.assertNotIn("to @@dev", result)
+
+    def test_path_d_crash_fallback_sets_has_comment(self):
+        """Empty/no final message + empty console.log still sets HAS_COMMENT=true."""
+        os.environ["GITHUB_ENV"] = os.path.join(self.tmpdir, "env.txt")
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn("did not produce a final message", result)
+        self.assertTrue(os.path.isfile("env.txt"))
+        self.assertIn("HAS_COMMENT=true", self._read("env.txt"))
 
 
 if __name__ == "__main__":

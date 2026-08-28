@@ -38,6 +38,9 @@ _SPLIT_PLAN = re.compile(r"<splitPlan>.*?</splitPlan>", re.DOTALL)
 # Console.log "Message from Agent" separator
 _CONSOLE_MARKER = "Message from Agent " + "\u2500" * 63
 
+# @@agent trigger tokens (e.g. @@genius, @@dev)
+_AGENT_TRIGGER = re.compile(r"(?<![\w])@@([A-Za-z0-9_-]+)")
+
 MAX_COMMENT_LENGTH = 60000
 
 
@@ -166,12 +169,28 @@ def _truncate_at_boundary(text: str) -> str:
     return text + "\n\n...*(comment truncated due to size limit)*"
 
 
+def escape_agent_triggers(content: str) -> str:
+    """Neutralize @@agent trigger tokens so a posted comment can't re-trigger
+    the issue_comment workflow gate (issue #482).
+
+    Inserts a zero-width space (U+200B) between @@ and the agent name
+    (e.g. "@@genius" -> "@@\u200bgenius"). This is invisible when rendered but
+    breaks the contains(body, '@@genius') substring match in the workflow
+    trigger condition.
+    """
+    return _AGENT_TRIGGER.sub(lambda m: m.group(0).replace("@@", "@@\u200b", 1), content)
+
+
 def _write_output(content: str) -> None:
     """Write content to github_comment.md and set HAS_COMMENT env var.
+
+    Content is passed through escape_agent_triggers() so no comment posted
+    from any code path can contain a raw @@ trigger token.
 
     Args:
         content: The comment body text to write.
     """
+    content = escape_agent_triggers(content)
     with open("github_comment.md", "w", encoding="utf-8") as f:
         f.write(content)
 
