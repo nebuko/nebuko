@@ -215,7 +215,7 @@ Updates the git remote URL to embed the PAT, allowing the agent to push branches
 
 ### Step 17: Run OpenHands Agent
 
-**Input:** `PROMPT_LOCATION`, `AGENT_QUERY_PATH`, `ROLE_NAME`, `COMPLEXITY`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `AGENT_CONFIG_PATH`, `LLM_API_KEY`, `LLM_BASE_URL`, `PR_NUMBER` (optional for review agent).  
+**Input:** `PROMPT_LOCATION`, `AGENT_QUERY_PATH`, `ROLE_NAME`, `COMPLEXITY`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `AGENT_CONFIG_PATH`, `PROVIDER_API_KEY`, `LLM_BASE_URL`, `PR_NUMBER` (optional for review agent).  
 **Output:** Agent execution results written to stdout → `console.log`, structured final message to `final_message.txt`, optional `split_plan.json`, `workflow_state.json`, and optional `final_message_part_{N}.txt` files.
 
 Builds the final prompt by concatenating:
@@ -444,7 +444,7 @@ GitHub Event
 | `SUMMARIZER_THRESHOLD` | `inputs.summarizer_threshold` | `100` | Comment count before summarizer triggers |
 | `PYTHON_VERSION` | `inputs.python_version` | `3.13` | Python runtime version |
 | `ENABLE_UV_CACHE` | `inputs.enable_uv_cache` | `true` | Enable uv dependency caching |
-| `OPENROUTER_API_KEY` | `secrets.OPENROUTER_API_KEY` | (required) | Default LLM API key |
+| `PROVIDER_API_KEY` | `secrets.PROVIDER_API_KEY` (falls back to `secrets.OPENROUTER_API_KEY`) | (required) | LLM provider API key — callers map their provider secret here |
 | `GH_PAT` | `secrets.GH_PAT` | (required) | GitHub token for API access |
 
 ### Output Variables (set during execution)

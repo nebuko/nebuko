@@ -37,6 +37,9 @@ on:
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
+      PROVIDER_API_KEY:
+        description: 'LLM provider API key — map your provider secret here (e.g. OPENROUTER_API_KEY). No per-provider schema change needed.'
+        required: false
   issues:
     types: [opened, edited, assigned, closed]
   issue_comment:
@@ -552,6 +555,7 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
+                PROVIDER_API_KEY: ${{ secrets.PROVIDER_API_KEY || secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 LLM_REASONING: ${{ env.LLM_REASONING }}
                 COMPLEXITY: ${{ env.COMPLEXITY }}

@@ -44,9 +44,10 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
       3. Environment variables (LLM_MODEL, LLM_BASE_URL, etc.)
 
     Provider API keys are resolved from ``provider.api_token_env`` in the
-    layered config. Callers must pass the corresponding secret through their
-    workflow's ``secrets`` mapping — no schema change in the reusable
-    workflow is required.
+    layered config, falling back to the generic ``PROVIDER_API_KEY`` secret.
+    Callers map their provider secret to ``PROVIDER_API_KEY`` in the
+    reusable workflow's ``secrets`` mapping — no per-provider schema change
+    is required.
 
     Args:
         args: Parsed argparse namespace with prompt_location attribute.
@@ -126,16 +127,20 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
                 f"Complexity-based temperature: complexity={config_complexity} -> {temperature}"
             )
 
+    # ── Generic secret fallback ─────────────────────────────────
+    # Single-slot delivery: callers map their provider secret to
+    # PROVIDER_API_KEY in the reusable workflow (no per-provider schema).
+    if api_key is None:
+        api_key = os.getenv("PROVIDER_API_KEY")
+
     # ── Validation ───────────────────────────────────────────────
     if not api_key:
-        env_hint = (
-            agent_cfg.model_ref.provider_ref.api_token_env
-            if agent_cfg
-            else "the provider's api_token_env"
-        )
+        model_ref = getattr(agent_cfg, "model_ref", None) if agent_cfg else None
+        provider = getattr(model_ref, "provider_ref", None)
+        env_hint = getattr(provider, "api_token_env", None) or "the provider's api_token_env"
         raise ValueError(
-            f"API key not found. Ensure environment variable '{env_hint}' "
-            f"is set and passed through your workflow secrets."
+            f"API key not found. Ensure environment variable '{env_hint}' is set, "
+            "or map your provider secret to the PROVIDER_API_KEY workflow secret."
         )
 
     # ── Build base LLM config dict ───────────────────────────────

@@ -62,6 +62,7 @@ agents:
         self._env_keys = [
             "LLM_REASONING",
             "TEST_LLM_API_KEY",
+            "PROVIDER_API_KEY",
             "LLM_MODEL",
             "CONFIG_COMPLEXITY",
             "CONFIG_TEMPERATURE",
@@ -88,6 +89,7 @@ agents:
             "CONFIG_MIN_P",
             "CONFIG_PRESENCE_PENALTY",
             "CONFIG_REPETITION_PENALTY",
+            "PROVIDER_API_KEY",
         ):
             os.environ.pop(k, None)
 
@@ -168,6 +170,26 @@ agents:
         with self.assertRaises(ValueError) as ctx:
             resolve_llm_config(None, "prompt")
         self.assertIn("api_token_env", str(ctx.exception))
+
+    def test_provider_api_key_secret_fallback(self):
+        # No provider-specific key, but the generic slot is set → used.
+        os.environ.pop("TEST_LLM_API_KEY", None)
+        os.environ["PROVIDER_API_KEY"] = "generic-key"
+        cfg = self._resolve(reasoning="none")
+        self.assertEqual(cfg["api_key"], "generic-key")
+
+    def test_provider_specific_key_wins_over_generic_slot(self):
+        os.environ["PROVIDER_API_KEY"] = "generic-key"
+        cfg = self._resolve(reasoning="none")
+        self.assertEqual(cfg["api_key"], "test-key")
+
+    def test_missing_api_key_error_mentions_generic_slot(self):
+        os.environ.pop("TEST_LLM_API_KEY", None)
+        os.environ.pop("PROVIDER_API_KEY", None)
+        self._write_config("true")
+        with self.assertRaises(ValueError) as ctx:
+            resolve_llm_config(None, "prompt")
+        self.assertIn("PROVIDER_API_KEY", str(ctx.exception))
 
 
 if __name__ == "__main__":

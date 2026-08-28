@@ -31,15 +31,17 @@ Use this workflow in any GitHub project by copying the workflow and configuratio
        with:
          agent_config_path: "agent-config.yaml"
        secrets:
-         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+         PROVIDER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
          GH_PAT: ${{ secrets.GH_PAT }}
    ```
 
 2. **Add `agent-config.yaml`** — Copy or create an `agent-config.yaml` file at your repo root. This file defines providers, LLMs, and agent configurations. See [this repo's config](./agent-config.yaml) for a reference.
 
 3. **Add required secrets** to your repository:
-   - `OPENROUTER_API_KEY` — your LLM API key (e.g., OpenRouter)
+   - `OPENROUTER_API_KEY` — your LLM API key (e.g., OpenRouter), mapped to the `PROVIDER_API_KEY` input above
    - `GH_PAT` — a GitHub Personal Access Token with `repo` and `workflow` scopes
+
+> 💡 **Adding a new provider requires no workflow changes.** Just define the provider in `agent-config.yaml` (with its `api_token_env`) and map your secret to the single `PROVIDER_API_KEY` input in your calling workflow.
 
 4. **Start using** by commenting `/workflow default` on an issue to start the full dev cycle (genius → ctx → genius → dev → review), or mentioning `@@genius`, `@@ctx`, `@@dev`, or `@@review` directly.
 
@@ -93,11 +95,11 @@ jobs:
     with:
       agent_config_path: "agent-config.yaml"
     secrets:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      PROVIDER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GH_PAT: ${{ secrets.GH_PAT }}
 ```
 
-Adding an agent is a 5-line stanza in `agent-config.yaml` — no workflow changes needed.
+Adding an agent is a 5-line stanza in `agent-config.yaml` — no workflow changes needed. Likewise, adding a provider only requires a new stanza in `agent-config.yaml` plus mapping your secret to `PROVIDER_API_KEY` in the calling workflow — the reusable workflow's schema never changes.
 
 **Backward compatibility**: If `agent-config.yaml` is absent, the workflow falls back to the old env-var-based approach. Existing downstream projects continue to work without modification.
 
@@ -107,7 +109,7 @@ Adding an agent is a 5-line stanza in `agent-config.yaml` — no workflow change
 
 **Custom workflows** — If you want to define custom workflows beyond the default, add a `workflows/` directory at your repo root. Local workflows take precedence over the auto-fetched ones.
 
-**Local vLLM provider** — Add the `LOCAL_VLLM_API_TOKEN` secret if using a local vLLM provider.
+**Local vLLM provider** — Define the provider in `agent-config.yaml` and map the token to the `PROVIDER_API_KEY` input (e.g. `PROVIDER_API_KEY: ${{ secrets.LOCAL_VLLM_API_TOKEN }}`).
 
 **Circuit breaker** — Set `circuit_breaker_threshold` to limit the maximum number of agent iterations before the workflow stops (default: 15).
 
