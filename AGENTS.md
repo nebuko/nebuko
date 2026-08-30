@@ -42,3 +42,43 @@ State values:
 ### Tool Restrictions
 
 The issue agent has access only to `think` and `finish` tools — no terminal or file editing capabilities. All information gathering must be delegated to @@ctx.
+
+## IN PROGRESS — Issue #470 (sub-task 3/3: GHA wiring + E2E + hardening)
+
+> TEMPORARY NOTE: replace this section with the permanent `tmp_impl/` convention
+> doc when the work is complete (step 6 of the plan below).
+
+Exploration complete (verified on origin/main @ 543863e):
+- #468/#469 merged and working: `load_workflow`/`resolve_workflow_reference`
+  are path-aware; `resolve_next_from_workflow` + `_apply_wf_marker` handle
+  sub-workflow entry/exit; 34 routing tests pass.
+- `resolve_config/features/resolve_route.py` is NOT yet path-aware in three
+  spots (they assume `<workflows_dir>/<name>.yaml`): `_resolve_resume_path`,
+  `_resolve_human_path` (force-next-step + `/workflow`), and
+  `_workflow_next_step_skip_reason`. Also `_SAFE_WF_NAME_RE` rejects
+  path-like refs (contains `/`).
+- GHA workflow (`.github/workflows/openhands-multi-agent.yml`, 898 lines):
+  - Skill loading loop (~L300-313) resolves `${SKILLS_DIR}/${skill_name}.md`
+    only — cannot load `tmp_impl/skills/step_N`. Needs repo-root-relative
+    fallback (`$GITHUB_WORKSPACE/${skill_name}.md`).
+  - Concurrency: `group: workflow-{run_id}`, `cancel-in-progress: false` —
+    prevents double-execution; fine for plan rounds.
+  - No pre-check for dynamic sub-workflow files (`tmp_impl/workflow.yaml`)
+    exists yet.
+  - PR-branch checkout happens inside the agent run (dev prompt handles git);
+    the GHA-side checkout uses default ref.
+
+Remaining work (ordered):
+1. Path-awareness in `resolve_route.py` (the 3 spots above + regex relax for
+   path-like refs via `is_valid_workflow_reference`).
+2. Clear error: "Plan workflow file not found at tmp_impl/workflow.yaml. Was
+   the scaffold step executed successfully?" for missing dynamic sub-workflow.
+3. GHA pre-check step: validate dynamic sub-workflow file before agent run;
+   post helpful comment + halt if missing/malformed.
+4. Skill-loading fix for `tmp_impl/skills/step_N` paths.
+5. E2E tests (happy path, rejection loop, resume, malformed YAML, missing
+   tmp_impl/) in `.github/scripts/`.
+6. Docs: `docs/default-workflow.md` + replace this temporary note with the
+   permanent `tmp_impl/` convention doc.
+Branch: `feature/issue-470-plan-orchestration-integration` (pushed, no PR yet
+— gh requires a commit ahead of main).
