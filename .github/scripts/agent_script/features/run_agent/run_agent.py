@@ -1,12 +1,88 @@
-"""Run agent feature — Agent/Conversation creation and execution."""
+"""Run agent feature — Agent/Conversation creation and supervised execution.
 
+The conversation runs via the async ``arun()`` API so that the soft-timeout
+watchdog can call ``conversation.interrupt()``, which cancels the in-flight
+task mid-LLM-call. When the soft budget elapses the agent is asked (via a
+wind-down prompt) to conclude its work instead of being hard-killed by the
+GitHub Actions timeout (issue #489).
+"""
+
+import asyncio
 import os
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.tools.preset.default import get_default_condenser
 from openhands.sdk.tool.spec import Tool
 
+from agent_script.features.run_agent.run_outcome import (
+    OutcomeStatus,
+    RunOutcome,
+    _STATUS_FINISHED,
+    classify_run,
+    status_value,
+)
+from agent_script.features.run_agent.run_watchdog import RunWatchdog
+from agent_script.features.run_agent.timeout_budget import (
+    TimeoutBudget,
+    resolve_timeout_budget,
+)
+from agent_script.features.run_agent.wind_down_prompt import WIND_DOWN_PROMPT
+
 logger = get_logger(__name__)
+
+
+def _run_supervised(
+    conversation: Conversation,
+    budget_s: float,
+    label: str,
+) -> tuple[RunWatchdog, Exception | None]:
+    """Run one bounded pass of ``arun()`` under a watchdog.
+
+    The watchdog interrupts the conversation when ``budget_s`` elapses.
+    Returns the watchdog (so the caller can check whether it fired) and the
+    exception raised by ``arun()`` — if any — so the caller can tell a hard
+    failure apart from a natural completion or a watchdog interrupt.
+    """
+    watchdog = RunWatchdog(budget_s, conversation.interrupt).arm()
+    error: Exception | None = None
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(conversation.arun())
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"{label} raised: {e}")
+        error = e
+    finally:
+        watchdog.cancel()
+    return watchdog, error
+
+
+def _perform_wind_down(
+    conversation: Conversation,
+    budget: TimeoutBudget,
+) -> bool:
+    """Inject the wind-down prompt and run one bounded second pass.
+
+    A short watchdog still guards this pass (so a hung LLM call cannot
+    consume the GitHub Actions hard timeout), but there is no recursion —
+    if it trips we rely on the deterministic PR fallback instead.
+
+    Returns:
+        True if the wind-down completed without tripping its own budget.
+    """
+    logger.info("Soft timeout reached — starting graceful wind-down phase")
+    conversation.send_message(WIND_DOWN_PROMPT)
+    wind_down_watchdog, _ = _run_supervised(
+        conversation, budget.wind_down_timeout_s, "Wind-down run"
+    )
+    completed = not wind_down_watchdog.fired
+    if not completed:
+        logger.warning(
+            "Wind-down budget also exhausted — relying on deterministic PR fallback"
+        )
+    return completed
 
 
 def run_agent(
@@ -70,16 +146,59 @@ def run_agent(
         condenser=get_default_condenser(llm=llm),
     )
 
-    # ── Conversation setup & execution ───────────────────────────
+    # ── Conversation setup & supervised execution ────────────────
     conversation = Conversation(
         agent=agent,
         workspace=cwd,
     )
 
+    budget = resolve_timeout_budget()
     logger.info("Starting task execution...")
     logger.info(f"Prompt: {prompt[:200]}...")
+    logger.info(
+        f"Soft timeout budget: {budget.soft_timeout_s:.0f}s "
+        f"(wind-down: {budget.wind_down_timeout_s:.0f}s)"
+    )
 
     conversation.send_message(prompt)
-    conversation.run()
+    first_watchdog, main_error = _run_supervised(
+        conversation, budget.soft_timeout_s, "Main run"
+    )
+
+    soft_timeout_fired = first_watchdog.fired
+    main_status = status_value(conversation)
+
+    wind_down_completed = False
+    if soft_timeout_fired and main_status != _STATUS_FINISHED:
+        # Our watchdog interrupted the run mid-flight: ask the agent to
+        # conclude its work while the conversation history is still live.
+        # The overall outcome stays "gracefully_timed_out" whether or not
+        # the wind-down itself completed; the deterministic PR fallback
+        # (see ensure_pr) covers the uncooperative case.
+        wind_down_completed = _perform_wind_down(conversation, budget)
+        outcome = OutcomeStatus.GRACEFULLY_TIMED_OUT
+    elif main_error is not None:
+        # A non-cancellation crash escaped arun(): whatever status the
+        # conversation reports, this is a hard failure — never classify
+        # it as success.
+        logger.error("Main run crashed — classifying as failure")
+        outcome = OutcomeStatus.FAILURE
+    else:
+        outcome = classify_run(main_status, False)
+
+    run_outcome = RunOutcome(
+        status=outcome,
+        soft_timeout_fired=soft_timeout_fired,
+        wind_down_completed=wind_down_completed,
+    )
+    # Attach to the conversation so build_output can consume it without a
+    # signature change.
+    conversation.run_outcome = run_outcome  # type: ignore[attr-defined]
+
+    logger.info(
+        f"Run outcome: {outcome.value} "
+        f"(soft_timeout_fired={run_outcome.soft_timeout_fired}, "
+        f"wind_down_completed={run_outcome.wind_down_completed})"
+    )
 
     return conversation
