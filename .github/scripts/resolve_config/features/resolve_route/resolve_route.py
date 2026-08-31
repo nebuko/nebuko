@@ -9,7 +9,12 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from config import load_workflow
+from config import (
+    is_path_like_reference,
+    is_valid_workflow_reference,
+    load_workflow,
+    resolve_workflow_reference,
+)
 from resolve_workflow import (
     resolve_next_from_workflow,
     _is_terminal_step,
@@ -36,6 +41,38 @@ __all__ = [
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
 _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+# Same, plus repo-root-relative path references (e.g. "tmp_impl/workflow.yaml")
+# for dynamically mounted sub-workflows (issue #470). Traversal and absolute
+# paths are still rejected by is_valid_workflow_reference().
+_SAFE_WF_REF_RE = re.compile(r"^[\w.-]+(/[\w.-]+)*$")
+
+
+def _workflow_file_for(
+    wf_ref: str,
+    workflows_dir: str,
+) -> Optional[Path]:
+    """Resolve a workflow name or path reference to a file path.
+
+    Names resolve under ``workflows_dir``; path-like references go through
+    ``resolve_workflow_reference`` (issue #468). Returns None for empty refs.
+    """
+    if not wf_ref:
+        return None
+    return Path(resolve_workflow_reference(wf_ref, workflows_dir))
+
+
+def _safe_workflow_ref(
+    wf_ref: str,
+) -> bool:
+    """Gate for workflow names AND path-like refs (issue #470)."""
+    if not wf_ref:
+        return False
+    return bool(
+        _SAFE_WF_NAME_RE.match(wf_ref)
+        or (_SAFE_WF_REF_RE.match(wf_ref) and is_valid_workflow_reference(wf_ref))
+    )
+
 
 # Maximum consecutive same-agent loops before blocking (loop safeguard)
 MAX_LOOP_COUNT = 5
@@ -67,7 +104,7 @@ def resolve_next_agent_from_workflow(
     if not workflow_name or not step_name:
         return None
 
-    wf_file = Path(workflows_dir) / f"{workflow_name}.yaml"
+    wf_file = _workflow_file_for(workflow_name, workflows_dir)
     try:
         wf_def = load_workflow(str(wf_file))
     except (FileNotFoundError, ValueError):
@@ -133,13 +170,13 @@ def _resolve_resume_path(
         }
 
     wf_name = prev_state.workflow
-    if not wf_name or not _SAFE_WF_NAME_RE.match(wf_name):
+    if not _safe_workflow_ref(wf_name):
         return {
             "SKIP_AGENT": "true",
             "REASON": f"resume: invalid or missing workflow name '{wf_name}'",
         }
 
-    wf_file = Path(workflows_dir) / f"{wf_name}.yaml"
+    wf_file = _workflow_file_for(wf_name, workflows_dir)
     try:
         wf_def = load_workflow(str(wf_file))
     except (FileNotFoundError, ValueError) as e:
@@ -361,13 +398,13 @@ def _resolve_human_path(
                 "REASON": "force-next-step requires an active workflow (no workflow state found)",
             }
         config_workflow = fs_state.workflow
-        if not _SAFE_WF_NAME_RE.match(config_workflow):
+        if not _safe_workflow_ref(config_workflow or ""):
             return {
                 "SKIP_AGENT": "true",
                 "REASON": f"force-next-step: invalid workflow name '{config_workflow}'",
             }
         current_step_in_wf = fs_state.step
-        wf_file_force = Path(workflows_dir) / f"{config_workflow}.yaml"
+        wf_file_force = _workflow_file_for(config_workflow, workflows_dir)
         try:
             wf_def = load_workflow(str(wf_file_force))
         except (FileNotFoundError, ValueError) as e:
@@ -460,8 +497,8 @@ def _resolve_human_path(
     wf_resolved = False
     task = ""
 
-    if wf_name and _SAFE_WF_NAME_RE.match(wf_name):
-        wf_file = Path(workflows_dir) / f"{wf_name}.yaml"
+    if wf_name and _safe_workflow_ref(wf_name):
+        wf_file = _workflow_file_for(wf_name, workflows_dir)
         try:
             wf_def = load_workflow(str(wf_file))
             task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
@@ -615,7 +652,7 @@ def _resolve_workflow_next_step(
     wf_name = prev_state.workflow
     current_step = _recover_current_step(prev_state)
 
-    if not _SAFE_WF_NAME_RE.match(wf_name):
+    if not _safe_workflow_ref(wf_name or ""):
         return {"SKIP_AGENT": "true", "REASON": f"Invalid workflow name '{wf_name}'"}
 
     config = {
@@ -676,11 +713,13 @@ def _workflow_next_step_skip_reason(
         }
 
     try:
-        workflow = load_workflow(str(Path(workflows_dir) / f"{wf_name}.yaml"))
+        workflow = load_workflow(str(_workflow_file_for(wf_name, workflows_dir)))
     except FileNotFoundError:
+        # Plain names resolve to <name>.yaml; path-like refs are echoed as-is.
+        display = wf_name if is_path_like_reference(wf_name) else f"{wf_name}.yaml"
         return {
             "SKIP_AGENT": "true",
-            "REASON": f"Resolution failed: workflow file '{wf_name}.yaml' not found",
+            "REASON": f"Resolution failed: workflow file '{display}' not found",
         }
     except Exception as exc:  # malformed YAML / validation errors
         return {

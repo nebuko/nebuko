@@ -68,14 +68,25 @@ def load_workflow(path: str) -> WorkflowDefinition:
         A validated WorkflowDefinition instance.
 
     Raises:
-        FileNotFoundError: If the workflow file does not exist.
+        FileNotFoundError: If the workflow file does not exist. For
+            dynamically mounted plan workflows under ``tmp_impl/`` the
+            message includes a scaffold hint (issue #470).
         ValueError: If the config fails validation or cannot be parsed.
+            YAML parse errors are wrapped with file name and line number.
     """
     if not os.path.isfile(path):
-        raise FileNotFoundError(f"Workflow file not found: {path}")
+        raise FileNotFoundError(_file_not_found_message(path))
 
-    with open(path) as f:
-        raw = yaml.safe_load(f)
+    try:
+        with open(path) as f:
+            raw = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        line = getattr(e.problem_mark, "line", None)
+        location = f" at line {line + 1}" if line is not None else ""
+        problem = e.problem or "invalid YAML syntax"
+        raise ValueError(
+            f"Invalid YAML in workflow file '{path}'{location}: {problem}"
+        ) from e
 
     if not isinstance(raw, dict):
         raise ValueError(
@@ -83,3 +94,23 @@ def load_workflow(path: str) -> WorkflowDefinition:
         )
 
     return WorkflowDefinition.model_validate(raw)
+
+
+def _file_not_found_message(path: str) -> str:
+    """Build a FileNotFoundError message for a missing workflow file.
+
+    Adds an actionable scaffold hint when the missing file lives under the
+    dynamically mounted ``tmp_impl/`` plan directory (issue #470).
+    """
+    normalized = str(path).replace(os.sep, "/")
+    if normalized == "tmp_impl/workflow.yaml":
+        return (
+            "Plan workflow file not found at tmp_impl/workflow.yaml. "
+            "Was the scaffold step executed successfully?"
+        )
+    if normalized.startswith("tmp_impl/"):
+        return (
+            f"Workflow file not found: {path}. "
+            "Was the scaffold step executed successfully?"
+        )
+    return f"Workflow file not found: {path}"

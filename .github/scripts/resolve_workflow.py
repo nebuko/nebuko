@@ -221,6 +221,14 @@ def _resolve_sub_workflow_entry(
     except (FileNotFoundError, ValueError) as e:
         print(f"Warning: Failed to load sub-workflow at '{target_path}': {e}",
               file=sys.stderr)
+        # For dynamically mounted plan workflows (issue #470), propagate the
+        # actionable message from load_workflow (e.g. the scaffold hint).
+        normalized = str(target_path).replace(os.sep, "/")
+        if normalized.startswith("tmp_impl/"):
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": str(e),
+            }
         return {
             "SKIP_AGENT": "true",
             "REASON": f"Sub-workflow not found: {target_path}",
