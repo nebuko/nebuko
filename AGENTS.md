@@ -46,39 +46,90 @@ The issue agent has access only to `think` and `finish` tools — no terminal or
 ## IN PROGRESS — Issue #470 (sub-task 3/3: GHA wiring + E2E + hardening)
 
 > TEMPORARY NOTE: replace this section with the permanent `tmp_impl/` convention
-> doc when the work is complete (step 6 of the plan below).
+> doc when the work is complete. Branch `feature/issue-470-plan-orchestration-integration`,
+> **PR #494 open** (do NOT open a second branch/PR). HEAD is even with origin/main.
 
-Exploration complete (verified on origin/main @ 543863e):
-- #468/#469 merged and working: `load_workflow`/`resolve_workflow_reference`
-  are path-aware; `resolve_next_from_workflow` + `_apply_wf_marker` handle
-  sub-workflow entry/exit; 34 routing tests pass.
-- `resolve_config/features/resolve_route.py` is NOT yet path-aware in three
-  spots (they assume `<workflows_dir>/<name>.yaml`): `_resolve_resume_path`,
-  `_resolve_human_path` (force-next-step + `/workflow`), and
-  `_workflow_next_step_skip_reason`. Also `_SAFE_WF_NAME_RE` rejects
-  path-like refs (contains `/`).
-- GHA workflow (`.github/workflows/openhands-multi-agent.yml`, 898 lines):
-  - Skill loading loop (~L300-313) resolves `${SKILLS_DIR}/${skill_name}.md`
-    only — cannot load `tmp_impl/skills/step_N`. Needs repo-root-relative
-    fallback (`$GITHUB_WORKSPACE/${skill_name}.md`).
-  - Concurrency: `group: workflow-{run_id}`, `cancel-in-progress: false` —
-    prevents double-execution; fine for plan rounds.
-  - No pre-check for dynamic sub-workflow files (`tmp_impl/workflow.yaml`)
-    exists yet.
-  - PR-branch checkout happens inside the agent run (dev prompt handles git);
-    the GHA-side checkout uses default ref.
+### Landed (commit 8bbc839 — verified, 46 routing/load tests green)
+1. Path-awareness in `resolve_route.py`: `_safe_workflow_ref` gate accepts
+   path-like refs (`is_valid_workflow_reference`); `_resolve_resume_path`,
+   `_resolve_human_path`, `_workflow_next_step_skip_reason` are path-aware.
+2. Clear error for missing `tmp_impl/workflow.yaml`: *"Plan workflow file not
+   found at tmp_impl/workflow.yaml. Was the scaffold step executed successfully?"*
+   Malformed YAML → readable filename+line error (never silent crash).
+3. GHA pre-check steps (post dedup'd validation comment + halt) for
+   missing/malformed dynamic sub-workflow.
+4. Skill-loading resolves repo-root-relative paths `tmp_impl/skills/step_N`
+   (fallback `$GITHUB_WORKSPACE/${skill}.md`).
 
-Remaining work (ordered):
-1. Path-awareness in `resolve_route.py` (the 3 spots above + regex relax for
-   path-like refs via `is_valid_workflow_reference`).
-2. Clear error: "Plan workflow file not found at tmp_impl/workflow.yaml. Was
-   the scaffold step executed successfully?" for missing dynamic sub-workflow.
-3. GHA pre-check step: validate dynamic sub-workflow file before agent run;
-   post helpful comment + halt if missing/malformed.
-4. Skill-loading fix for `tmp_impl/skills/step_N` paths.
-5. E2E tests (happy path, rejection loop, resume, malformed YAML, missing
-   tmp_impl/) in `.github/scripts/`.
-6. Docs: `docs/default-workflow.md` + replace this temporary note with the
-   permanent `tmp_impl/` convention doc.
-Branch: `feature/issue-470-plan-orchestration-integration` (pushed, no PR yet
-— gh requires a commit ahead of main).
+### ROOT CAUSE of "No valid task found" stall — CONFIRMED (multi-tier nesting)
+The engine tracks sub-workflow depth with **single-level** `parent_workflow` /
+`parent_workflow_step` only. Real plan-orchestration is **3 tiers deep**:
+`plan-orchestration → tmp_impl/workflow.yaml → dev-review-loop`. Three compounding
+bugs (reproduced by lifecycle probe `/tmp/probe_life.py` against the real scaffold):
+
+- **Bug B** — `.github/scripts/resolve_workflow.py` `_sub_workflow_entry_marker`
+  (L~538) records `"parent_workflow": parent_workflow.name` (the loaded def's
+  `name:` field, e.g. `tmp-impl`), NOT the reloadable **reference**
+  (`tmp_impl/workflow.yaml`). On the return leg `_return_to_parent_on_terminal`
+  calls `_load_workflow_by_reference(parent_workflow)` with that name → fails for
+  a path-mounted parent → `task=None` → GHA "No valid task found".
+- **Bug C** — each nested entry **overwrites** `parent_workflow`, discarding the
+  grandparent (`plan-orchestration`). Bubbling from `dev-review-loop` can only
+  reach tier 1, never back to `plan-orchestration`'s `sub_clean`/`final_review`.
+- **Bug D** — same as B at persistence: state stores the def name, not the ref, so
+  resume re-resolution breaks for path-mounted parents.
+
+Probe trace (happy path): `[2] scaffold→sub_impl {task:None}` ← BUG B; entry
+`[3]` sets `parent_workflow="plan-orchestration"` correctly (tier 1), but entering
+`dev-review-loop` would overwrite it → exit can't bubble to `plan-orchestration`.
+
+### FIX DESIGN (implement next — minimal surface, backward compatible)
+Core idea: persist an ordered **ancestor chain** of *reloadable references*
+(newest-first) instead of a single `parent_workflow`.
+
+1. **`WorkflowState`** (`.github/scripts/workflow_state/workflow_state.py`),
+   **`Dispatch`** (`sub_domains/dispatch/dispatch.py`), **`StepResolution`
+   (`sub_domains/step_resolution/step_resolution.py`)**: add optional
+   `parent_chain: Optional[list[str]] = None` (refs, newest-first, e.g.
+   `["tmp_impl/workflow.yaml","plan-orchestration"]`). Pydantic auto-parses JSON.
+   Also thread through **`go_next`** + **`build_state`** (`features/build_state/
+   build_state.py`): `new_chain = parent_chain if not None else base_chain`.
+2. **`resolve_workflow.py`**:
+   - `_sub_workflow_entry_marker`: set `"parent_workflow"` = the reloadable parent
+     **reference** (pass the ref string in, not `parent_workflow.name`); add
+     `"parent_chain"` = `[parent_ref, *prev_chain]`.
+   - `_return_to_parent_marker` / `_return_to_parent_on_terminal`: after popping
+     the nearest parent (index 0 of chain), if the resolved parent target step is
+     **itself** a sub-workflow ref (`_resolve_sub_workflow_ref_target` non-None),
+     chain into it (recursive entry) — otherwise return marker. Keep
+     `PARENT_WORKFLOW`/`PARENT_WORKFLOW_STEP` for the *immediate* parent.
+   - `resolve_next_from_workflow`: accept `parent_chain` param; thread through both
+     terminal-return and mid-step-return paths.
+3. **`resolve_route.py`**: at all three `resolve_next_from_workflow(...)` call
+   sites pass `parent_chain=prev_state.parent_chain` / dispatch-derived;
+   `_apply_wf_marker`: on `entered_sub_workflow` set `config_parent_chain` from the
+   marker; on `exited_sub_workflow` clear it (mirror existing parent handling).
+   Add `config["config_parent_chain"]` to the config dicts.
+4. **`build_result.py`**: emit `PARENT_CHAIN` (compact JSON array string, e.g.
+   `["a/b.yaml","c"]` or empty) so GHA can export it as env.
+5. **GHA** (`openhands-multi-agent.yml`): parse `PARENT_CHAIN` from RESOLVE_OUTPUT,
+   `echo "PARENT_CHAIN=$PARENT_CHAIN" >> $GITHUB_ENV` (next to PARENT_WORKFLOW).
+   **`build_output.py`**: read `PARENT_CHAIN` env (JSON) → pass `parent_chain`
+   into `build_state` when posting state (so the chain persists across resumes).
+   Single-level flows keep working: empty/absent `parent_chain` ⇒ old behavior.
+
+### REMAINING WORK (ordered)
+1. Implement the fix design above (chain threading + Bug B/C/D fixes).
+2. Regression tests in `.github/scripts/test_resolve_workflow_step.py`:
+   entry records reloadable ref; 2-level exit bubbles to grandparent; resume with
+   `parent_chain`; single-level unchanged (existing tests must stay green).
+3. E2E integration tests (5 scenarios from issue spec): happy path
+   (assert `history` per step + `parent_chain`/`parent_workflow` set & cleared at
+   each boundary), rejection loop (stays in sub-scope), resume-after-interruption
+   at `step_2.review`, malformed `tmp_impl/workflow.yaml`, missing `tmp_impl/`.
+   Use real code paths + `tmp_path` fixtures only (no other mocks).
+4. Full suite green + non-plan-orchestration regression check.
+5. Docs: `docs/default-workflow.md` (plan-orchestration + when used) + permanent
+   `tmp_impl/` note replacing this temporary section.
+6. Rebase on origin/main (Checkpoint 2), push scoped commits to PR #494.
+
