@@ -82,6 +82,7 @@ def resolve_workflow_routing(
     branch_key = agent_config.get("branch", "")
     parent_workflow = agent_config.get("parent_workflow", "")
     parent_workflow_step = agent_config.get("parent_workflow_step", "")
+    parent_chain = _parse_chain(agent_config.get("parent_chain"))
 
     # Validate task
     if not task:
@@ -97,7 +98,7 @@ def resolve_workflow_routing(
     if workflow_name:
         return resolve_workflow_step(
             task, workflow_name, step_name, branch_key, workflows_dir, prompt_base,
-            parent_workflow, parent_workflow_step,
+            parent_workflow, parent_workflow_step, parent_chain,
         )
 
     # Fallback: direct task-to-agent mapping (backward compatible)
@@ -110,6 +111,7 @@ def resolve_workflow_routing(
         "WORKFLOW_NEXT": "",
         "PARENT_WORKFLOW": "",
         "PARENT_WORKFLOW_STEP": "",
+        "PARENT_CHAIN": _chain_json(parent_chain),
         "STEP_SKILLS": "",
         "SKIP_AGENT": "false",
     }
@@ -120,6 +122,26 @@ def _skills_to_string(skill_list: list[str] | None) -> str:
     if not skill_list:
         return ""
     return ",".join(skill_list)
+
+
+def _parse_chain(value: object) -> list[str]:
+    """Parse a parent-chain value (JSON array string, list, or missing) safely."""
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    if isinstance(parsed, list):
+        return [str(v) for v in parsed]
+    return []
+
+
+def _chain_json(chain: list[str]) -> str:
+    """Serialize a parent chain to compact JSON ('[]' when empty)."""
+    return json.dumps(list(chain), separators=(",", ":"))
 
 
 def _match_condition(
@@ -385,6 +407,7 @@ def resolve_workflow_step(
     prompt_base: str,
     parent_workflow: str = "",
     parent_workflow_step: str = "",
+    parent_chain: Optional[list[str]] = None,
 ) -> dict:
     """Resolve a specific step within a workflow.
 
@@ -399,6 +422,8 @@ def resolve_workflow_step(
         prompt_base: Path to prompt files directory.
         parent_workflow: Name of parent workflow (if currently in a sub-workflow).
         parent_workflow_step: Step name in parent that triggered the sub-workflow.
+        parent_chain: Ordered ancestor chain of reloadable workflow references
+            (newest-first) carried across nested sub-workflows (issue #470).
 
     Returns:
         Dict with routing variables.
@@ -535,16 +560,49 @@ def _resolve_sub_workflow_ref_target(
     return None
 
 
+def _child_entry_resolution(
+    child_workflow: WorkflowDefinition,
+    child_reference: str,
+    prompt_base: str,
+) -> Optional[dict]:
+    """Resolve a step's agent+prompt for entering ``child_workflow``.
+
+    Returns None when the child has no steps or its first agent is unknown.
+    """
+    if not child_workflow.steps:
+        return None
+    first_step = child_workflow.steps[0]
+    second_step = child_workflow.steps[1].name if len(child_workflow.steps) > 1 else ""
+    prompt_file = TASK_TO_PROMPT.get(first_step.agent)
+    if not prompt_file:
+        return None
+    return {
+        "ROLE_NAME": first_step.agent,
+        "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
+        "WORKFLOW_NAME": child_workflow.name,
+        "WORKFLOW_STEP": first_step.name,
+        "WORKFLOW_NEXT": second_step,
+        "STEP_SKILLS": _skills_to_string(first_step.skill),
+        "SKIP_AGENT": "false",
+    }
+
+
 def _sub_workflow_entry_marker(
     child_workflow: WorkflowDefinition,
     child_reference: str,
-    parent_workflow: WorkflowDefinition,
+    parent_reference: str,
     parent_step: WorkflowStep,
+    prev_chain: list[str],
 ) -> dict:
     """Build the 'enter sub-workflow' result structure.
 
     Carries the sub-workflow's first step plus parent tracking so the caller
     can record ``parent_workflow`` / ``parent_workflow_step``.
+
+    ``parent_reference`` MUST be the reloadable reference of the parent
+    (name or repo-root-relative path, issue #470 Bug B/D), never the loaded
+    definition's ``name:`` field — the return leg reloads it via
+    ``_load_workflow_by_reference``.
     """
     first_step = child_workflow.steps[0]
     return {
@@ -552,8 +610,9 @@ def _sub_workflow_entry_marker(
         "task": first_step.agent,
         "step": first_step.name,
         "workflow": child_reference,
-        "parent_workflow": parent_workflow.name,
+        "parent_workflow": parent_reference,
         "parent_workflow_step": parent_step.name,
+        "parent_chain": [parent_reference, *prev_chain],
     }
 
 
@@ -562,14 +621,23 @@ def _return_to_parent_marker(
     parent_step_name: str,
     branch_key: Optional[str],
     parent_reference: str,
+    parent_workflows_dir: str = "",
+    parent_chain: Optional[list[str]] = None,
 ) -> Optional[dict]:
     """Build the 'exit sub-workflow' result structure.
 
-    Loads nothing; given the parent's sub-workflow reference step, resolves
-    the parent's next step after it, honoring that step's conditions against
-    the incoming branch key. ``parent_reference`` is the state's workflow
-    name/path used to restore ``config_workflow``. Returns None when the
-    parent step is missing or itself terminal (overall terminal).
+    Loads nothing for the immediate parent; given the parent's sub-workflow
+    reference step, resolves the parent's next step after it, honoring that
+    step's conditions against the incoming branch key. ``parent_reference``
+    is the reloadable parent reference (name or path) restored as
+    ``config_workflow``.
+
+    Bug C (issue #470): if the resolved target step is ITSELF a sub-workflow
+    reference, chain into it (recursive entry) so a nested exit can bubble
+    more than one tier. The returned marker carries ``parent_chain`` — the
+    NEW chain after the transition (popped parent, re-prepended child when
+    chaining deeper). Returns None when the parent step is missing or
+    itself terminal (overall terminal).
     """
     parent_step = next(
         (s for s in parent_workflow.steps if s.name == parent_step_name), None
@@ -589,11 +657,33 @@ def _return_to_parent_marker(
     if target_step is None:
         return None
 
+    # Chain into a nested sub-workflow target (Bug C multi-tier bubbling)
+    child_ref = _resolve_sub_workflow_ref_target(target_step)
+    if child_ref:
+        child_workflow = _load_workflow_by_reference(child_ref, parent_workflows_dir)
+        if child_workflow is not None and child_workflow.steps:
+            first = child_workflow.steps[0]
+            second = (
+                child_workflow.steps[1].name
+                if len(child_workflow.steps) > 1 else ""
+            )
+            return {
+                "entered_sub_workflow": True,
+                "task": first.agent,
+                "step": first.name,
+                "workflow": child_ref,
+                "next_step": second,
+                "parent_workflow": parent_reference,
+                "parent_workflow_step": parent_step.name,
+                "parent_chain": [child_ref, parent_reference, *(parent_chain or [])],
+            }
+
     marker: dict = {
         "exited_sub_workflow": True,
         "task": target_step.agent,
         "step": target_step.name,
         "workflow": parent_reference,
+        "parent_chain": list((parent_chain or [])[1:]),
     }
     effective_branch = _branch_key_for(parent_step, branch_key or "")
     if effective_branch:
@@ -607,19 +697,26 @@ def _return_to_parent_on_terminal(
     branch_result: Optional[str],
     workflows_dir: str,
     agent_hint: Optional[str],
+    parent_chain: Optional[list[str]] = None,
 ) -> Optional[dict]:
     """Exit to the parent when a sub-workflow cannot advance internally.
 
     Used when the current step is terminal (``next: null``) or its target
     step is missing. Returns the parent's next step after the sub-workflow
-    reference, or falls back to ``agent_hint`` / ``None`` when no parent is
-    set (overall terminal).
+    reference (chaining into a further-nested target when it is itself a
+    sub-workflow ref — Bug C), or falls back to ``agent_hint`` / ``None``
+    when no parent is set (overall terminal).
     """
     if parent_workflow and parent_workflow_step:
         parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir)
         if parent_wf is not None:
             marker = _return_to_parent_marker(
-                parent_wf, parent_workflow_step, branch_result, parent_workflow
+                parent_wf,
+                parent_workflow_step,
+                branch_result,
+                parent_workflow,
+                workflows_dir,
+                parent_chain,
             )
             if marker is not None:
                 return marker
@@ -636,6 +733,7 @@ def resolve_next_from_workflow(
     branch_result: Optional[str] = None,
     parent_workflow: str = "",
     parent_workflow_step: str = "",
+    parent_chain: Optional[list[str]] = None,
 ) -> Optional[dict]:
     """Resolve the next step in a workflow given the current step.
 
@@ -688,25 +786,31 @@ def resolve_next_from_workflow(
         return None
 
     # Sub-workflow entry step (local ref only; remote sources are out of
-    # scope for the trigger-side resolver)
+    # scope for the trigger-side resolver). ``workflow_name`` is the
+    # reloadable reference of the current workflow — record IT (Bug B/D),
+    # not the loaded definition's name.
     child_ref = _resolve_sub_workflow_ref_target(current_step)
     if child_ref:
         child_workflow = _load_workflow_by_reference(child_ref, workflows_dir)
         if child_workflow is not None and child_workflow.steps:
             return _sub_workflow_entry_marker(
-                child_workflow, child_ref, workflow, current_step
+                child_workflow, child_ref, workflow_name, current_step,
+                parent_chain or [],
             )
 
     # Terminal step: return to parent when inside a sub-workflow
     if _is_terminal_step(current_step):
         if parent_workflow and parent_workflow_step:
-            parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir)
-            if parent_wf is not None:
-                marker = _return_to_parent_marker(
-                    parent_wf, parent_workflow_step, branch_result, parent_workflow
-                )
-                if marker is not None:
-                    return marker
+            marker = _return_to_parent_on_terminal(
+                parent_workflow,
+                parent_workflow_step,
+                branch_result,
+                workflows_dir,
+                agent_hint,
+                parent_chain,
+            )
+            if marker is not None:
+                return marker
         if agent_hint:
             return {"task": agent_hint}
         return None
@@ -749,13 +853,34 @@ def resolve_next_from_workflow(
             break
 
     if target_step is None:
-        # Broken next reference: the workflow is not terminal, so no parent
-        # return and no hint fallback — resolution fails cleanly.
+        # Broken next reference: fall back to the parent return leg (when
+        # inside a sub-workflow) so a dangling ref can't strand the run;
+        # otherwise resolution fails cleanly (no silent hint fallback).
+        marker = _return_to_parent_on_terminal(
+            parent_workflow, parent_workflow_step, branch_key,
+            workflows_dir, agent_hint, parent_chain,
+        )
+        if marker is not None:
+            return marker
         return None
+
+    # Next round is a sub-workflow entry (chain, Bug C): record the
+    # reloadable reference of the current workflow as the new parent and
+    # grow the ancestor chain.
+    child_ref = _resolve_sub_workflow_ref_target(target_step)
+    if child_ref:
+        child_workflow = _load_workflow_by_reference(child_ref, workflows_dir)
+        if child_workflow is not None and child_workflow.steps:
+            return _sub_workflow_entry_marker(
+                child_workflow, child_ref, workflow_name, target_step,
+                parent_chain or [],
+            )
 
     result: dict = {
         "task": target_step.agent,
         "step": target_step.name,
+        "workflow": workflow_name,
+        "parent_chain": list(parent_chain or []),
     }
     if branch_key:
         result["branch"] = branch_key

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class StepResolution(BaseModel):
@@ -43,6 +43,8 @@ class StepResolution(BaseModel):
         matched_rule: Which workflow rule/config matched (e.g., "workflow:default/step:analyze").
         parent_workflow: Parent workflow name if in a sub-workflow.
         parent_workflow_step: Parent step name if in a sub-workflow.
+        parent_chain: Ancestor chain of reloadable workflow references
+            (newest-first) if in nested sub-workflows (issue #470).
         timestamp: ISO-8601 timestamp of when resolution occurred.
     """
 
@@ -76,4 +78,5 @@ class StepResolution(BaseModel):
     matched_rule: str = ""
     parent_workflow: str = ""
     parent_workflow_step: str = ""
+    parent_chain: list[str] = Field(default_factory=list)
     timestamp: str = ""

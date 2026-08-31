@@ -47,6 +47,7 @@ def build_state(
     context_updates: Optional[dict[str, Any]] = None,
     parent_workflow: Optional[str] = None,
     parent_workflow_step: Optional[str] = None,
+    parent_chain: Optional[list[str]] = None,
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
@@ -73,6 +74,10 @@ def build_state(
         context_updates: Key-value pairs to merge into current_context.
         parent_workflow: Parent workflow name (if in a sub-workflow).
         parent_workflow_step: Parent step name (if in a sub-workflow).
+        parent_chain: Ordered ancestor chain of reloadable workflow references
+            (newest-first) for nested sub-workflows. None = inherit from the
+            previous state (same semantics as the other parent_* args); a list
+            (possibly empty) = explicit value to set.
         issue: Issue metadata (once set, persists across transitions).
         pull_request: PR metadata (once set, persists across transitions).
         resolution: Step resolution context from resolve_config (replaced each transition).
@@ -90,6 +95,7 @@ def build_state(
         base_workflow = ""
         base_parent_wf = None
         base_parent_step = None
+        base_parent_chain = None
         base_issue = None
         base_pr = None
     else:
@@ -100,6 +106,7 @@ def build_state(
         base_workflow = prev_state.workflow
         base_parent_wf = prev_state.parent_workflow
         base_parent_step = prev_state.parent_workflow_step
+        base_parent_chain = prev_state.parent_chain
         base_issue = prev_state.issue
         base_pr = prev_state.pull_request
 
@@ -135,6 +142,10 @@ def build_state(
     # Determine parent workflow tracking
     new_parent_wf = parent_workflow if parent_workflow is not None else base_parent_wf
     new_parent_step = parent_workflow_step if parent_workflow_step is not None else base_parent_step
+    # Parent chain carries nested sub-workflow ancestors (newest-first); None
+    # means "unchanged" so it inherits from the previous state like the
+    # other parent_* fields.
+    new_parent_chain = parent_chain if parent_chain is not None else base_parent_chain
 
     # Preserve issue info across transitions (once set, it persists)
     new_issue = issue or base_issue
@@ -160,6 +171,7 @@ def build_state(
         current_context=new_context,
         parent_workflow=new_parent_wf,
         parent_workflow_step=new_parent_step,
+        parent_chain=new_parent_chain,
         issue=new_issue,
         pull_request=new_pr,
         resolution=resolution,

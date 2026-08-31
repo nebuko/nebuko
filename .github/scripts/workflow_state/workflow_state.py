@@ -34,6 +34,11 @@ class WorkflowState(BaseModel):
             (pending tasks, constraints, decisions, etc.).
         parent_workflow: Parent workflow name if currently in a sub-workflow.
         parent_workflow_step: Step in parent that triggered the sub-workflow.
+        parent_chain: Ordered ancestor chain of reloadable workflow references,
+            newest-first (issue #470 multi-tier sub-workflow nesting). Enables
+            bubbling out of nested path-mounted sub-workflows (e.g.
+            ["tmp_impl/workflow.yaml", "plan-orchestration"]). None for
+            single-level flows (legacy behavior preserved).
         issue: Static issue metadata (number, URL, title, author, repo).
         pull_request: Static PR metadata (number, URL, title, author, repo).
     """
@@ -50,6 +55,7 @@ class WorkflowState(BaseModel):
     current_context: dict[str, Any] = Field(default_factory=dict)
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None
+    parent_chain: Optional[list[str]] = None
     issue: Optional[IssueInfo] = None
     pull_request: Optional[PullRequestInfo] = None
     dispatch: Optional[Dispatch] = None
@@ -83,6 +89,7 @@ def go_next(
     context_updates: Optional[dict[str, Any]] = None,
     parent_workflow: Optional[str] = None,
     parent_workflow_step: Optional[str] = None,
+    parent_chain: Optional[list[str]] = None,
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
@@ -104,6 +111,7 @@ def go_next(
         context_updates=context_updates,
         parent_workflow=parent_workflow,
         parent_workflow_step=parent_workflow_step,
+        parent_chain=parent_chain,
         issue=issue,
         pull_request=pull_request,
         resolution=resolution,

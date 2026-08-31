@@ -26,6 +26,8 @@ class Dispatch(BaseModel):
         step: Optional step name override.
         branch: Optional branch name.
         parent_workflow, parent_workflow_step: Sub-workflow tracking.
+        parent_chain: Ordered ancestor chain of reloadable workflow references
+            (newest-first) carried across nested sub-workflows (issue #470).
         skills: Optional skills string for downstream agent.
         reason: Optional free-text explanation for the dispatch decision.
     """
@@ -46,6 +48,7 @@ class Dispatch(BaseModel):
     branch: Optional[str] = None
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None
+    parent_chain: Optional[list[str]] = None
     skills: Optional[str] = None
     debug: bool = False
     reason: Optional[str] = None
