@@ -586,6 +586,53 @@ def _resolve_sub_workflow_ref_target(
     return None
 
 
+def _ref_step_targeting(
+    workflow: WorkflowDefinition,
+    target_reference: str,
+) -> Optional[WorkflowStep]:
+    """Find the sub-workflow reference step in ``workflow`` that mounts
+    ``target_reference`` (its ``path`` or ``workflow`` field). Used to locate
+    an ancestor's resume point during multi-tier bubble-out (issue #470),
+    since the persisted chain holds reloadable refs, not step names.
+    """
+    for step in workflow.steps:
+        ref = _resolve_sub_workflow_ref_target(step)
+        if ref == target_reference:
+            return step
+    return None
+
+
+def _effective_entry_step(
+    child_workflow: WorkflowDefinition,
+    workflows_dir: str,
+    max_depth: int = 5,
+) -> Optional[WorkflowStep]:
+    """Descend nested sub-workflow references to the effective entry step.
+
+    A dynamically mounted plan workflow (issue #470) may have steps that are
+    themselves ``workflow:``/``path:`` references (e.g. a scaffold-generated
+    ``tmp_impl/workflow.yaml`` whose steps reference ``dev-review-loop``) and
+    carry no ``agent``. Walks from ``steps[0]`` through such references until
+    reaching a step with a real agent; returns the deepest step reached when
+    a chain cannot be followed (load failure or depth cap).
+
+    Remote (``repo``) sources are out of scope for the trigger-side resolver
+    and stop the descent. Returns None when the workflow has no steps.
+    """
+    if not child_workflow.steps:
+        return None
+    step = child_workflow.steps[0]
+    for _ in range(max_depth):
+        ref = _resolve_sub_workflow_ref_target(step)
+        if not ref:
+            return step
+        child = _load_workflow_by_reference(ref, workflows_dir)
+        if child is None or not child.steps:
+            return step
+        step = child.steps[0]
+    return step
+
+
 def _child_entry_resolution(
     child_workflow: WorkflowDefinition,
     child_reference: str,
@@ -619,6 +666,7 @@ def _sub_workflow_entry_marker(
     parent_reference: str,
     parent_step: WorkflowStep,
     prev_chain: list[str],
+    workflows_dir: str,
 ) -> dict:
     """Build the 'enter sub-workflow' result structure.
 
@@ -629,11 +677,19 @@ def _sub_workflow_entry_marker(
     (name or repo-root-relative path, issue #470 Bug B/D), never the loaded
     definition's ``name:`` field — the return leg reloads it via
     ``_load_workflow_by_reference``.
+
+    ``task`` is the agent of the EFFECTIVE entry step: ``steps[0]`` may itself
+    be a nested ``workflow:`` reference with no agent (issue #470, e.g.
+    scaffold-generated ``tmp_impl/workflow.yaml`` → ``dev-review-loop``).
+    ``step``/``workflow`` stay at the immediate child so the env path
+    (``resolve_workflow_step``) re-descends from a step name that matches the
+    child file; single-level entries are unchanged (descent returns ``steps[0]``).
     """
     first_step = child_workflow.steps[0]
+    entry_step = _effective_entry_step(child_workflow, workflows_dir) or first_step
     return {
         "entered_sub_workflow": True,
-        "task": first_step.agent,
+        "task": entry_step.agent,
         "step": first_step.name,
         "workflow": child_reference,
         "parent_workflow": parent_reference,
@@ -683,25 +739,33 @@ def _return_to_parent_marker(
     if target_step is None:
         return None
 
-    # Chain into a nested sub-workflow target (Bug C multi-tier bubbling)
+    # Chain into a nested sub-workflow target (Bug C multi-tier bubbling).
+    # The resume point in the parent is the TARGET step (the sub-workflow
+    # ref just entered), not the incoming ref step. Ancestor chain keeps
+    # the direct parent innermost (chain holds ancestors only).
     child_ref = _resolve_sub_workflow_ref_target(target_step)
     if child_ref:
         child_workflow = _load_workflow_by_reference(child_ref, parent_workflows_dir)
         if child_workflow is not None and child_workflow.steps:
-            first = child_workflow.steps[0]
+            entry = _effective_entry_step(child_workflow, parent_workflows_dir) or child_workflow.steps[0]
             second = (
                 child_workflow.steps[1].name
                 if len(child_workflow.steps) > 1 else ""
             )
+            grandparent_refs = (
+                list(parent_chain[1:])
+                if parent_chain and parent_chain[0] == parent_reference
+                else list(parent_chain or [])
+            )
             return {
                 "entered_sub_workflow": True,
-                "task": first.agent,
-                "step": first.name,
+                "task": entry.agent,
+                "step": entry.name,
                 "workflow": child_ref,
                 "next_step": second,
                 "parent_workflow": parent_reference,
-                "parent_workflow_step": parent_step.name,
-                "parent_chain": [child_ref, parent_reference, *(parent_chain or [])],
+                "parent_workflow_step": target_step.name,
+                "parent_chain": [parent_reference, *grandparent_refs],
             }
 
     marker: dict = {
@@ -732,17 +796,42 @@ def _return_to_parent_on_terminal(
     reference (chaining into a further-nested target when it is itself a
     sub-workflow ref — Bug C), or falls back to ``agent_hint`` / ``None``
     when no parent is set (overall terminal).
+
+    Multi-tier bubbling: when the resolved parent step is itself terminal
+    (e.g. the last per-step ref in a dynamically mounted plan workflow),
+    the chain pops and the bubble continues to the next ancestor.
     """
     if parent_workflow and parent_workflow_step:
-        parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir)
-        if parent_wf is not None:
+        refs = list(parent_chain or [])
+        # Innermost ancestors first; the immediate parent (index 0) is
+        # already passed in as parent_workflow/parent_workflow_step. Deeper
+        # ancestors only persist their reloadable ref — locate their resume
+        # step by finding the ref step that mounts the tier just exited.
+        order = [(parent_workflow, parent_workflow_step)] + [
+            (ref, None) for ref in refs[1:]
+        ]
+        for i, (ref, step_name) in enumerate(order):
+            if not ref:
+                continue
+            if step_name is None and i > 0:
+                inner_ref = order[i - 1][0]
+                loaded = _load_workflow_by_reference(ref, workflows_dir)
+                if loaded is None:
+                    continue
+                mounting = _ref_step_targeting(loaded, inner_ref)
+                if mounting is None:
+                    continue
+                step_name = mounting.name
+            parent_wf = _load_workflow_by_reference(ref, workflows_dir)
+            if parent_wf is None:
+                continue
             marker = _return_to_parent_marker(
                 parent_wf,
-                parent_workflow_step,
+                step_name,
                 branch_result,
-                parent_workflow,
+                ref,
                 workflows_dir,
-                parent_chain,
+                refs[i:],
             )
             if marker is not None:
                 return marker
@@ -821,7 +910,7 @@ def resolve_next_from_workflow(
         if child_workflow is not None and child_workflow.steps:
             return _sub_workflow_entry_marker(
                 child_workflow, child_ref, workflow_name, current_step,
-                parent_chain or [],
+                parent_chain or [], workflows_dir,
             )
 
     # Terminal step: return to parent when inside a sub-workflow
@@ -868,7 +957,8 @@ def resolve_next_from_workflow(
 
     if target_step_name is None:
         return _return_to_parent_on_terminal(
-            parent_workflow, parent_workflow_step, branch_result, workflows_dir, agent_hint
+            parent_workflow, parent_workflow_step, branch_result,
+            workflows_dir, agent_hint, parent_chain,
         )
 
     # Look up target step to get its agent
@@ -899,7 +989,7 @@ def resolve_next_from_workflow(
         if child_workflow is not None and child_workflow.steps:
             return _sub_workflow_entry_marker(
                 child_workflow, child_ref, workflow_name, target_step,
-                parent_chain or [],
+                parent_chain or [], workflows_dir,
             )
 
     result: dict = {

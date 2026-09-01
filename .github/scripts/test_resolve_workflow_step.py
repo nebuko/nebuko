@@ -669,3 +669,152 @@ class TestDefaultWorkflowWithRealFile:
 
         result = resolve(state.workflow, state.step, str(_real_workflows_dir()))
         assert result == {"task": "ctx", "step": "context", "workflow": "default", "parent_chain": []}
+
+
+class TestThreeTierPlanOrchestration:
+    """Regression tests for 3-tier sub-workflow nesting (issue #470).
+
+    Topology mirrors the real plan-orchestration lifecycle against the real
+    ``workflows/`` directory:
+
+        plan-orchestration.scaffold
+          → tmp_impl/workflow.yaml (path-mounted, steps are pure workflow refs)
+            → dev-review-loop (implement ↔ review loop, terminal on approved)
+
+    Bug B: entry marker records the reloadable ref (``tmp_impl/workflow.yaml``),
+    not the definition name, so the return leg can re-load the parent.
+    Bug C: nested entry overwrites the single-level parent tracking with an
+    ordered ``parent_chain``, and terminal exit bubbles past a terminal
+    intermediate tier back to the grandparent.
+    """
+
+    @pytest.fixture
+    def plan_orch_root(self, tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+        """Repo-root-like dir with the real workflows/ and a scaffold-shaped
+        ``tmp_impl/workflow.yaml`` whose steps are pure sub-workflow refs."""
+        import shutil
+        root = tmp_path / "root"
+        wf_src = _real_workflows_dir()
+        wf_dst = root / "workflows"
+        shutil.copytree(wf_src, wf_dst)
+        tmp_impl = root / "tmp_impl"
+        tmp_impl.mkdir()
+        (tmp_impl / "workflow.yaml").write_text(yaml.dump({
+            "name": "tmp-impl",
+            "description": "Scaffold-generated per-step plan workflow",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {
+                    "name": "step_1",
+                    "workflow": "dev-review-loop",
+                    "skill": ["tmp_impl/skills/step_1"],
+                    "next": "step_2",
+                },
+                {
+                    "name": "step_2",
+                    "workflow": "dev-review-loop",
+                    "skill": ["tmp_impl/skills/step_2"],
+                    "next": None,
+                },
+            ],
+        }))
+        (tmp_impl / "skills").mkdir()
+        (tmp_impl / "skills" / "step_1.md").write_text("# Step 1\n")
+        (tmp_impl / "skills" / "step_2.md").write_text("# Step 2\n")
+        monkeypatch.chdir(root)
+        return root, wf_dst
+
+    def test_entry_marker_records_reloadable_ref(self, plan_orch_root):
+        """Bug B/D: advancing into the path-mounted sub-workflow emits an
+        entry marker whose parent fields are the reloadable reference and a
+        non-None effective task (nested ref descends to dev-review-loop's
+        implement step)."""
+        root, wf_dst = plan_orch_root
+        resolve = _import_resolver()
+        entry = resolve("plan-orchestration", "scaffold", str(wf_dst))
+        assert entry == {
+            "entered_sub_workflow": True,
+            "task": "dev",
+            "step": "step_1",
+            "workflow": "tmp_impl/workflow.yaml",
+            "parent_workflow": "plan-orchestration",
+            "parent_workflow_step": "sub_impl",
+            "parent_chain": ["plan-orchestration"],
+        }
+
+    def test_nested_entry_grows_chain_and_terminal_exit_bubbles_two_tiers(
+        self, plan_orch_root,
+    ):
+        """Full 3-tier traversal: nested entry grows the chain to two tiers;
+        a rejection loop stays inside dev-review-loop; approval on the last
+        per-step ref (terminal ``step_2``) bubbles PAST the intermediate tier
+        back to plan-orchestration.sub_clean with the chain fully cleared."""
+        root, wf_dst = plan_orch_root
+        resolve = _import_resolver()
+
+        nested = resolve(
+            "tmp_impl/workflow.yaml", "step_1", str(wf_dst),
+            parent_workflow="plan-orchestration",
+            parent_workflow_step="sub_impl",
+            parent_chain=["plan-orchestration"],
+        )
+        assert nested == {
+            "entered_sub_workflow": True,
+            "task": "dev",
+            "step": "implement",
+            "workflow": "dev-review-loop",
+            "parent_workflow": "tmp_impl/workflow.yaml",
+            "parent_workflow_step": "step_1",
+            "parent_chain": ["tmp_impl/workflow.yaml", "plan-orchestration"],
+        }
+
+        inner = dict(
+            parent_workflow="tmp_impl/workflow.yaml",
+            parent_workflow_step="step_1",
+            parent_chain=nested["parent_chain"],
+        )
+        assert (
+            resolve("dev-review-loop", "implement", str(wf_dst), **inner)["step"]
+            == "review"
+        )
+        rejected = resolve(
+            "dev-review-loop", "review", str(wf_dst),
+            branch_result="rejected", **inner,
+        )
+        assert rejected["task"] == "dev" and rejected["step"] == "implement"
+        assert rejected["workflow"] == "dev-review-loop"
+
+        # step_1 approved → next per-step ref (still inside tmp_impl)
+        to_step2 = resolve(
+            "dev-review-loop", "review", str(wf_dst),
+            branch_result="approved", **inner,
+        )
+        assert to_step2["entered_sub_workflow"] is True
+        assert (to_step2["task"], to_step2["step"]) == ("dev", "implement")
+        assert to_step2["parent_workflow"] == "tmp_impl/workflow.yaml"
+        assert to_step2["parent_workflow_step"] == "step_2"
+        assert to_step2["parent_chain"] == [
+            "tmp_impl/workflow.yaml", "plan-orchestration",
+        ]
+
+        # step_2 approved → terminal in tmp_impl → bubbles two tiers up
+        inner2 = dict(
+            parent_workflow="tmp_impl/workflow.yaml",
+            parent_workflow_step="step_2",
+            parent_chain=to_step2["parent_chain"],
+        )
+        assert (
+            resolve("dev-review-loop", "implement", str(wf_dst), **inner2)["step"]
+            == "review"
+        )
+        exited = resolve(
+            "dev-review-loop", "review", str(wf_dst),
+            branch_result="approved", **inner2,
+        )
+        assert exited == {
+            "exited_sub_workflow": True,
+            "task": "dev",
+            "step": "sub_clean",
+            "workflow": "plan-orchestration",
+            "parent_chain": [],
+        }
