@@ -118,18 +118,48 @@ Core idea: persist an ordered **ancestor chain** of *reloadable references*
    into `build_state` when posting state (so the chain persists across resumes).
    Single-level flows keep working: empty/absent `parent_chain` ⇒ old behavior.
 
-### REMAINING WORK (ordered)
-1. Implement the fix design above (chain threading + Bug B/C/D fixes).
-2. Regression tests in `.github/scripts/test_resolve_workflow_step.py`:
-   entry records reloadable ref; 2-level exit bubbles to grandparent; resume with
-   `parent_chain`; single-level unchanged (existing tests must stay green).
-3. E2E integration tests (5 scenarios from issue spec): happy path
-   (assert `history` per step + `parent_chain`/`parent_workflow` set & cleared at
-   each boundary), rejection loop (stays in sub-scope), resume-after-interruption
-   at `step_2.review`, malformed `tmp_impl/workflow.yaml`, missing `tmp_impl/`.
-   Use real code paths + `tmp_path` fixtures only (no other mocks).
-4. Full suite green + non-plan-orchestration regression check.
-5. Docs: `docs/default-workflow.md` (plan-orchestration + when used) + permanent
-   `tmp_impl/` note replacing this temporary section.
-6. Rebase on origin/main (Checkpoint 2), push scoped commits to PR #494.
+### STATUS CHECKPOINT (run of 2026-08-31, HEAD 799c371, tests 181 green)
+
+**DONE (do NOT redo):** parent_chain threading (Bugs B/C/D) — `b947006` — and
+PARENT_CHAIN end-to-end wiring build_result → GHA env → build_output state —
+`799c371`. Routing/state suites pass (181). Branch rebased clean on origin/main.
+
+**CONFIRMED NEW ROOT CAUSE (the "No valid task found" stall), distinct from B/C/D:**
+- Marker path: `resolve_route` dispatch → `resolve_next_from_workflow` →
+  `_sub_workflow_entry_marker` reads `child_workflow.steps[0].agent`. For a
+  scaffold-generated `tmp_impl/workflow.yaml`, `steps[0]` (step_1) is itself a
+  `workflow: dev-review-loop` ref **with no agent** → `task=None` →
+  `build_result.py` bails with `{"SKIP_AGENT": "true", "REASON": "No valid task found"}`
+  BEFORE the env path (`resolve_workflow_routing`) ever runs.
+- The env path `_resolve_sub_workflow_entry` ALREADY descends correctly: given
+  `(task, workflow="tmp_impl/workflow.yaml", step="step_1")` it re-derives
+  `ROLE_NAME=dev, WORKFLOW_NAME=dev-review-loop, WORKFLOW_STEP=implement` and builds
+  `PARENT_CHAIN=["tmp_impl/workflow.yaml","plan-orchestration"]`. Exit-side bubbling
+  and chain popping also already work. So the ONLY blocker is the entry marker.
+
+**FIX (minimal, single file: `.github/scripts/resolve_workflow.py`):**
+1. Add helper `_effective_entry_step(child_wf, workflows_dir, max_depth=5)`:
+   walk `steps[0]`; while it has `workflow`/`path` (no `repo`/agent leaf), load the
+   child via `load_workflow`/`resolve_workflow_reference` and repeat; return the first
+   step that has a real agent (or the deepest step reached on error/depth cap).
+2. In `_sub_workflow_entry_marker`: set `"task"` to
+   `_effective_entry_step(...).agent` (fall back to current behavior if None).
+   **Keep `step`/`workflow` at the immediate child** (e.g. `"step_1"` /
+   `"tmp_impl/workflow.yaml"`) — the env path re-descends from there and needs
+   `step_name` to match a step in the child file. Do NOT point them at the leaf.
+   Single-level case is unchanged (descent returns `steps[0]` immediately).
+3. Regression tests in `test_resolve_workflow_step.py`: 3-tier fixture
+   (plan-orchestration-like parent → `tmp_impl/workflow.yaml` whose steps are
+   `workflow: dev-review-loop` refs → dev-review-loop). Assert R1 entry marker:
+   `task="dev"` (non-None), `step="step_1"`, `workflow="tmp_impl/workflow.yaml"`,
+   `parent_chain=["tmp_impl/workflow.yaml","plan-orchestration"]`-shape; then inner
+   linear step; then terminal exit bubbling TWO levels to grandparent; single-level
+   entry assertion unchanged.
+4. NOTE: prior run's `/tmp/smoke_parent_chain.py` assertions were wrong (expected
+   R1.WORKFLOW_STEP=="step_1"; the env path correctly yields "implement"). Discard it;
+   add correct tests to the real suite instead.
+
+**THEN:** full scripts suite green → E2E docs (`docs/default-workflow.md`,
+permanent `tmp_impl/` note replacing this temp section) → push scoped commits to
+PR #494 (OPEN; branch `feature/issue-470-plan-orchestration-integration`).
 
