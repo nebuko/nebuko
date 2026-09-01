@@ -68,3 +68,11 @@ Key behaviors:
 - **Cleanup:** `tmp_impl/` is removed by the `sub_clean` step before final review.
 
 Detailed lifecycle documentation lives in `docs/default-workflow.md`.
+- **Entry/exit:** on entry the engine descends nested `workflow:` refs so the
+  first dispatched task is a real agent (`_effective_entry_step`); on terminal
+  exit it bubbles through the full `parent_chain` back to `plan-orchestration.sub_clean`.
+
+E2E coverage: `.github/scripts/test_plan_orchestration_e2e.py` (full lifecycle,
+rejection loop, resume, malformed/missing-file error paths).
+
+>>>>>> b52aa2c (test+docs(#470): plan-orchestration E2E scenarios, docs, tmp_impl convention)
