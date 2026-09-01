@@ -344,6 +344,18 @@ def _resolve_dispatch_path(
             else:
                 config["config_workflow"] = prev_state.workflow
         else:
+            # A resolution failure on a dynamically mounted plan file (path-
+            # like ref such as tmp_impl/workflow.yaml) must surface its
+            # specific reason instead of the generic "No valid task found"
+            # (issue #470 S3/S4). Plain-name workflows keep the legacy generic
+            # message so non-plan-orchestration behavior is unchanged.
+            wf_ref = prev_state.workflow or ""
+            if is_path_like_reference(wf_ref) or is_valid_workflow_reference(wf_ref):
+                skip = _workflow_next_step_skip_reason(
+                    wf_ref, prev_state.step or "", workflows_dir
+                )
+                if "Resolution failed" in skip.get("REASON", ""):
+                    return skip
             dispatch_status = dispatch_obj.status or ""
             if dispatch_status == "hold":
                 return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}

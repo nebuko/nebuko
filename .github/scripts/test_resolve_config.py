@@ -1352,6 +1352,104 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
 
 
+class TestPlanOrchestrationResumeE2E(unittest.TestCase):
+    """E2E resume scenarios for plan-orchestration (issue #470, sub-task 3).
+
+    The dynamically-mounted plan workflow lives at the repo-root-relative
+    ``tmp_impl/workflow.yaml`` (a path-like reference, resolved per issue #468
+    rules relative to the current working directory), so each test chdirs into
+    an isolated temp dir.
+    """
+
+    @staticmethod
+    def _state(workflow, step, agent, parent_chain=None):
+        import json as _json
+        d = {
+            "version": 1,
+            "workflow": workflow,
+            "step": step,
+            "agent": agent,
+            "dispatch": {"status": "advance"},
+        }
+        if parent_chain:
+            d["parent_chain"] = parent_chain
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(d)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    @staticmethod
+    def _valid_plan_yaml():
+        return (
+            "name: plan\ndescription: d\ntrigger:\n  agents: [dev]\nsteps:\n"
+            "- name: step_1\n  agent: dev\n  next: step_2\n"
+            "- name: step_2\n  agent: ctx\n  next: sub_clean\n"
+            "- name: sub_clean\n  agent: dev\n  next: null\n"
+        )
+
+    def _setup(self):
+        self.prompt_base = tempfile.mkdtemp()
+        self.workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(self.prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        self.cwd = tempfile.mkdtemp()
+        self._old_cwd = os.getcwd()
+        os.chdir(self.cwd)
+        self.addCleanup(os.chdir, self._old_cwd)
+
+    def _write_plan(self, content):
+        plan_dir = os.path.join(self.cwd, "tmp_impl")
+        os.makedirs(plan_dir, exist_ok=True)
+        with open(os.path.join(plan_dir, "workflow.yaml"), "w") as f:
+            f.write(content)
+
+    def test_resume_mid_plan_advances_and_preserves_parent_chain(self):
+        """Resuming inside a mounted plan resumes within the sub-workflow
+        (next step's agent) and keeps the parent chain intact."""
+        self._setup()
+        self._write_plan(self._valid_plan_yaml())
+        result = resolve_config(
+            self._state("tmp_impl/workflow.yaml", "step_1", "dev",
+                        parent_chain=["plan-orchestration"]),
+            self.prompt_base, self.workflows_dir, is_bot=False,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertIn("plan-orchestration", result["PARENT_CHAIN"])
+
+    def test_resume_missing_plan_file_bubbles_specific_error(self):
+        """S3: plan file absent → specific 'not found' reason (not a generic
+        'No valid task found' stall)."""
+        self._setup()
+        # Deliberately do NOT create tmp_impl/workflow.yaml.
+        result = resolve_config(
+            self._state("tmp_impl/workflow.yaml", "step_2", "dev",
+                        parent_chain=["plan-orchestration"]),
+            self.prompt_base, self.workflows_dir, is_bot=False,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("Resolution failed", result["REASON"])
+        self.assertIn("tmp_impl/workflow.yaml", result["REASON"])
+        self.assertIn("not found", result["REASON"])
+
+    def test_resume_malformed_plan_file_bubbles_parse_error(self):
+        """S4: malformed plan YAML → specific parse-error reason, no crash,
+        and not masked by the generic 'No valid task found' message."""
+        self._setup()
+        self._write_plan("name: 'oops\nsteps: []\n")
+        result = resolve_config(
+            self._state("tmp_impl/workflow.yaml", "step_2", "dev",
+                        parent_chain=["plan-orchestration"]),
+            self.prompt_base, self.workflows_dir, is_bot=False,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("Resolution failed", result["REASON"])
+        self.assertIn("could not load workflow", result["REASON"])
+        self.assertNotIn("No valid task found", result["REASON"])
+
+
 class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
     """E2E: dispatch.advance with default workflow resolves next agent from workflow YAML.
 
