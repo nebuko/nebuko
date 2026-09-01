@@ -159,6 +159,30 @@ class TestPathBasedLoading:
         with pytest.raises(FileNotFoundError, match="Workflow file not found: nope/wf.yaml"):
             load_workflow("nope/wf.yaml")
 
+    def test_missing_tmp_impl_plan_message(self, tmp_path: Path, monkeypatch):
+        """Missing tmp_impl/workflow.yaml gives the exact actionable scaffold hint.
+
+        Regression for issue #470 — the engine must surface a clear, actionable
+        message rather than a generic "Workflow file not found" or a silent stall.
+        """
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(
+            FileNotFoundError,
+            match=r"Plan workflow file not found at tmp_impl/workflow\.yaml\. "
+            r"Was the scaffold step executed successfully\?",
+        ):
+            load_workflow("tmp_impl/workflow.yaml")
+
+    def test_missing_other_tmp_impl_file_message(self, tmp_path: Path, monkeypatch):
+        """Any other missing tmp_impl/ file still carries the scaffold hint."""
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(
+            FileNotFoundError,
+            match=r"Workflow file not found: tmp_impl/skills/step_1\. "
+            r"Was the scaffold step executed successfully\?",
+        ):
+            load_workflow("tmp_impl/skills/step_1")
+
     def test_is_path_like_reference(self):
         assert is_path_like_reference("workflows/default.yaml")
         assert is_path_like_reference("tmp_impl/test_workflow.yaml")
