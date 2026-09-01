@@ -200,6 +200,8 @@ def _resolve_sub_workflow_entry(
     workflow: WorkflowDefinition,
     workflows_dir: str,
     prompt_base: str,
+    prev_chain: list[str] = (),
+    parent_ref: str = "",
 ) -> Optional[dict]:
     """Resolve entry into a sub-workflow from a step that references another workflow.
 
@@ -273,14 +275,20 @@ def _resolve_sub_workflow_entry(
             "REASON": f"Unknown agent '{first_step.agent}' in sub-workflow '{child_wf.name}'",
         }
 
+    # Reloadable reference of the parent for the return leg (issue #470
+    # Bug B/D): the ``workflow:``/``path:`` field as written, never the
+    # loaded definition's ``name:`` — path-mounted parents (e.g.
+    # tmp_impl/workflow.yaml) cannot be reloaded by their def name.
+    effective_parent_ref = parent_ref or workflow.name
     return {
         "ROLE_NAME": first_step.agent,
         "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
         "WORKFLOW_NAME": child_wf.name,
         "WORKFLOW_STEP": first_step.name,
         "WORKFLOW_NEXT": second_step,
-        "PARENT_WORKFLOW": workflow.name,
+        "PARENT_WORKFLOW": effective_parent_ref,
         "PARENT_WORKFLOW_STEP": current_step.name,
+        "PARENT_CHAIN": _chain_json([effective_parent_ref, *prev_chain]),
         "STEP_SKILLS": _skills_to_string(first_step.skill),
         "SKIP_AGENT": "false",
     }
@@ -292,11 +300,17 @@ def _resolve_return_to_parent(
     branch_key: str,
     workflows_dir: str,
     prompt_base: str,
+    prev_chain: list[str] = (),
 ) -> Optional[dict]:
     """Resolve returning to parent workflow after sub-workflow completion.
 
     Loads the parent workflow, finds the step that was the sub-workflow entry point,
     and resolves the next step after it using conditional routing if available.
+
+    ``prev_chain`` is the ancestor chain recorded while inside the finished
+    sub-workflow; the returned ``PARENT_CHAIN`` pops its first element (the
+    finished child's parent) so the resumed state carries the remaining
+    ancestors (issue #470 multi-tier nesting).
     """
     # Load parent workflow — supports names and repo-root-relative paths
     # (issue #468): path-like references resolve outside workflows/.
@@ -361,6 +375,7 @@ def _resolve_return_to_parent(
             "WORKFLOW_NEXT": "",
             "PARENT_WORKFLOW": "",
             "PARENT_WORKFLOW_STEP": "",
+            "PARENT_CHAIN": _chain_json(list(prev_chain)[1:]),
             "SKIP_AGENT": "true",
             "REASON": "Workflow completed",
         }
@@ -393,6 +408,7 @@ def _resolve_return_to_parent(
         "WORKFLOW_NEXT": next_step.next or "",
         "PARENT_WORKFLOW": "",
         "PARENT_WORKFLOW_STEP": "",
+        "PARENT_CHAIN": _chain_json(list(prev_chain)[1:]),
         "STEP_SKILLS": _skills_to_string(next_step.skill),
         "SKIP_AGENT": "false",
     }
@@ -447,6 +463,7 @@ def resolve_workflow_step(
             "WORKFLOW_NEXT": "",
             "PARENT_WORKFLOW": parent_workflow,
             "PARENT_WORKFLOW_STEP": parent_workflow_step,
+            "PARENT_CHAIN": _chain_json(list(parent_chain or [])),
             "STEP_SKILLS": "",
             "SKIP_AGENT": "false",
         }
@@ -466,6 +483,7 @@ def resolve_workflow_step(
             "WORKFLOW_NEXT": "",
             "PARENT_WORKFLOW": parent_workflow,
             "PARENT_WORKFLOW_STEP": parent_workflow_step,
+            "PARENT_CHAIN": _chain_json(list(parent_chain or [])),
             "STEP_SKILLS": "",
             "SKIP_AGENT": "false",
         }
@@ -495,12 +513,19 @@ def resolve_workflow_step(
     # Check for sub-workflow completion: terminal step and we're in a sub-workflow
     if parent_workflow and _is_terminal_step(current_step):
         return _resolve_return_to_parent(
-            parent_workflow, parent_workflow_step, branch_key, workflows_dir, prompt_base
+            parent_workflow, parent_workflow_step, branch_key, workflows_dir, prompt_base,
+            prev_chain=list(parent_chain or []),
         )
 
     # Check if this is a sub-workflow entry step (local or remote)
     if current_step.workflow or current_step.repo:
-        return _resolve_sub_workflow_entry(current_step, current_wf, workflows_dir, prompt_base)
+        # ``workflow_name`` is the reloadable parent reference (name or
+        # repo-root-relative path, issue #470 Bug B/D) for the return leg.
+        return _resolve_sub_workflow_entry(
+            current_step, current_wf, workflows_dir, prompt_base,
+            prev_chain=list(parent_chain or []),
+            parent_ref=workflow_name,
+        )
 
     # Resolve next step
     next_step: Optional[str] = None
@@ -526,6 +551,7 @@ def resolve_workflow_step(
         "WORKFLOW_NEXT": next_step or "",
         "PARENT_WORKFLOW": parent_workflow,
         "PARENT_WORKFLOW_STEP": parent_workflow_step,
+        "PARENT_CHAIN": _chain_json(list(parent_chain or [])),
         "STEP_SKILLS": _skills_to_string(current_step.skill),
         "SKIP_AGENT": "false",
     }

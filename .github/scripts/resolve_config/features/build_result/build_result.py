@@ -5,6 +5,7 @@ constructs the final KEY=value environment variable dict.
 """
 
 from resolve_workflow import (
+    _chain_json,
     resolve_workflow_routing,
     TASK_TO_PROMPT,
 )
@@ -56,6 +57,7 @@ def _build_result(
             "branch": config.get("config_branch", ""),
             "parent_workflow": config.get("config_parent_workflow", ""),
             "parent_workflow_step": config.get("config_parent_workflow_step", ""),
+            "parent_chain": _chain_json(config.get("config_parent_chain") or []),
         },
         workflows_dir,
         prompt_base,
@@ -105,6 +107,7 @@ def _build_result(
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
         "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
         "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
+        "PARENT_CHAIN": wf_result.get("PARENT_CHAIN", _chain_json([])),
         "MATCHED_RULE": matched_rule,
         "HUMAN_RESUME_INPUT": config.get("config_human_resume_input", ""),
         "SKIP_AGENT": "false",

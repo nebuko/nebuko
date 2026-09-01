@@ -243,6 +243,7 @@ def _resolve_resume_path(
         "config_branch": dispatch.branch or "",
         "config_parent_workflow": dispatch.parent_workflow or "",
         "config_parent_workflow_step": dispatch.parent_workflow_step or "",
+        "config_parent_chain": prev_state.parent_chain or [],
         "config_human_resume_input": human_input,
     }
 
@@ -265,6 +266,7 @@ def _apply_wf_marker(
         config["config_step"] = wf_result["step"]
         config["config_parent_workflow"] = wf_result["parent_workflow"]
         config["config_parent_workflow_step"] = wf_result["parent_workflow_step"]
+        config["config_parent_chain"] = wf_result.get("parent_chain", [])
         return
 
     if wf_result.get("exited_sub_workflow"):
@@ -272,6 +274,7 @@ def _apply_wf_marker(
         config["config_step"] = wf_result["step"]
         config["config_parent_workflow"] = ""
         config["config_parent_workflow_step"] = ""
+        config["config_parent_chain"] = wf_result.get("parent_chain", [])
         if wf_result.get("branch"):
             config["config_branch"] = wf_result["branch"]
 
@@ -314,6 +317,7 @@ def _resolve_dispatch_path(
         "config_branch": dispatch_obj.branch or "",
         "config_parent_workflow": dispatch_obj.parent_workflow or "",
         "config_parent_workflow_step": dispatch_obj.parent_workflow_step or "",
+        "config_parent_chain": (dispatch_obj.parent_chain or prev_state.parent_chain) or [],
     }
 
     # Workflow-driven resolution using previous workflow state
@@ -330,6 +334,7 @@ def _resolve_dispatch_path(
             branch_result=branch_result,
             parent_workflow=parent_wf,
             parent_workflow_step=parent_wf_step,
+            parent_chain=prev_state.parent_chain or [],
         )
         if wf_result:
             config["task"] = wf_result["task"]
@@ -490,6 +495,7 @@ def _resolve_human_path(
             "config_branch": "",
             "config_parent_workflow": fs_state.parent_workflow or "",
             "config_parent_workflow_step": fs_state.parent_workflow_step or "",
+            "config_parent_chain": fs_state.parent_chain or [],
         }
 
     # Normal /workflow command normalization (human only)
@@ -539,6 +545,7 @@ def _resolve_human_path(
         "config_branch": "",
         "config_parent_workflow": "",
         "config_parent_workflow_step": "",
+        "config_parent_chain": [],
     }
 
 
@@ -580,6 +587,7 @@ def _resolve_bot_fallback_path(
         "config_branch": dispatch.branch or "",
         "config_parent_workflow": dispatch.parent_workflow or "",
         "config_parent_workflow_step": dispatch.parent_workflow_step or "",
+        "config_parent_chain": dispatch.parent_chain or [],
     }
 
     # Resolve next agent based on dispatch status
@@ -587,11 +595,14 @@ def _resolve_bot_fallback_path(
         if not config["task"]:
             # Auto-resolve next agent from workflow YAML
             wf_result = resolve_next_from_workflow(
-                config["config_workflow"], config["config_step"], workflows_dir
+                config["config_workflow"], config["config_step"], workflows_dir,
+                parent_chain=config.get("config_parent_chain", []),
             )
             if wf_result:
                 config["task"] = wf_result["task"]
                 config["config_step"] = wf_result.get("step", config["config_step"])
+                if wf_result.get("entered_sub_workflow") or wf_result.get("exited_sub_workflow"):
+                    _apply_wf_marker(config, wf_result)
     elif dispatch.status == "loop":
         # Loop: re-dispatch current agent — use task_hint or resolve from state
         config["task"] = dispatch.task_hint or ""
@@ -672,6 +683,7 @@ def _resolve_workflow_next_step(
         "config_branch": "",
         "config_parent_workflow": "",
         "config_parent_workflow_step": "",
+        "config_parent_chain": prev_state.parent_chain or [],
     }
 
     # Resolve next step from workflow YAML
@@ -683,6 +695,7 @@ def _resolve_workflow_next_step(
         branch_result=None,
         parent_workflow=prev_state.parent_workflow or "",
         parent_workflow_step=prev_state.parent_workflow_step or "",
+        parent_chain=prev_state.parent_chain or [],
     )
     if wf_result:
         config["task"] = wf_result["task"]

@@ -276,6 +276,7 @@ jobs:
                   WORKFLOW_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
                   PARENT_WORKFLOW=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
                   PARENT_WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
+                  PARENT_CHAIN=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_CHAIN=' | cut -d= -f2-)
 
                   # Handle skip
                   if [ "$SKIP_AGENT" = "true" ]; then
@@ -303,6 +304,7 @@ jobs:
                   echo "WORKFLOW_NEXT=$WORKFLOW_NEXT" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW=$PARENT_WORKFLOW" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
+                  echo "PARENT_CHAIN=${PARENT_CHAIN:-[]}" >> $GITHUB_ENV
                   echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
 
                   # Step 6: Export reasoning level for agent_script.py

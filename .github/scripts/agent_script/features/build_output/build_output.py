@@ -142,6 +142,7 @@ def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
             branch=data.get("branch"),
             parent_workflow=data.get("parent_workflow"),
             parent_workflow_step=data.get("parent_workflow_step"),
+            parent_chain=data.get("parent_chain"),
             skills=data.get("skills"),
         )
     except ValidationError as e:
@@ -222,6 +223,20 @@ def _build_pr_info() -> PullRequestInfo | None:
     )
 
 
+def _parse_parent_chain_env() -> list[str]:
+    """Parse the PARENT_CHAIN env var (JSON array) into a string list."""
+    raw = os.environ.get("PARENT_CHAIN", "")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if isinstance(parsed, list):
+        return [str(v) for v in parsed]
+    return []
+
+
 def _build_resolution() -> StepResolution:
     """Build StepResolution from resolve_config environment variables."""
     return StepResolution(
@@ -248,6 +263,7 @@ def _build_resolution() -> StepResolution:
         matched_rule=os.environ.get("MATCHED_RULE", ""),
         parent_workflow=os.environ.get("PARENT_WORKFLOW", ""),
         parent_workflow_step=os.environ.get("PARENT_WORKFLOW_STEP", ""),
+        parent_chain=_parse_parent_chain_env(),
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -381,6 +397,7 @@ def build_output(
     workflow_step = os.environ.get("WORKFLOW_STEP", "")
     parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
     parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
+    parent_chain = _parse_parent_chain_env()
     phase = _derive_phase(workflow_step)
 
     # ── Issue / PR info ──────────────────────────────────────────
@@ -428,6 +445,7 @@ def build_output(
         context_updates=context_updates or None,
         parent_workflow=parent_workflow,
         parent_workflow_step=parent_workflow_step,
+        parent_chain=parent_chain,
         issue=issue_info,
         pull_request=pr_info,
         resolution=resolution,
