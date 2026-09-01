@@ -513,4 +513,3 @@ Routing and resolution honor path-like refs (`tmp_impl/workflow.yaml`, `tmp_impl
 ### `tmp_impl/` convention
 
 `tmp_impl/` is **transient plan scaffolding** owned by `plan-orchestration`: created by the scaffold step and deleted by `sub_clean` before final review. Never commit it — treat it as scratch space.
->>>>>> b52aa2c (test+docs(#470): plan-orchestration E2E scenarios, docs, tmp_impl convention)
