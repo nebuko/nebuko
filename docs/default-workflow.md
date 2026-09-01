@@ -468,3 +468,56 @@ GitHub Event
 | `HAS_COMMENT` | Step 18 | Whether a comment was generated |
 | `ACK_COMMENT_ID` | Step 13 | ID of acknowledgment comment |
 | `AGENT_QUERY_PATH` | Step 15 | Path to prepared query context |
+
+---
+
+## 11. Plan-Orchestration Workflow — the `tmp_impl/` Convention
+
+### When It's Used
+
+For **multi-step issues**, a human pings `@@genius`, which plans the work and
+dispatches with `workflow: "plan-orchestration"`. The engine then drives a
+dynamically mounted plan — as opposed to the static workflows in the
+repo's `workflows/` directory. This is the only flow that produces `tmp_impl/`
+files; all other flows (and their behavior) are unchanged.
+
+### Lifecycle (3-tier nesting)
+
+1. **Scaffold** — the `scaffold` step generates, in the checked-out PR branch,
+   a repo-root-relative `tmp_impl/workflow.yaml` (the per-step plan) plus
+   `tmp_impl/skills/step_N` skill files, and commits them to the PR branch.
+2. **Load & dispatch** — the engine loads `tmp_impl/workflow.yaml` as a
+   **path-like workflow reference** (resolved relative to the working
+   directory, not as a plain name from `workflows/`). Each plan step is itself
+   a reference to `dev-review-loop`, giving three tiers:
+   `plan-orchestration` → `tmp_impl/workflow.yaml` → `dev-review-loop`.
+3. **Per-step dev-review-loop** — every plan step runs its own implement/review
+   cycle. An ordered `parent_chain` of *reloadable references* (newest first,
+   e.g. `["tmp_impl/workflow.yaml", "plan-orchestration"]`) is persisted in the
+   workflow state so that, after any interruption/resume, the engine can
+   re-load each ancestor and bubble back through **every** tier — a rejection
+   loop stays confined to the current sub-workflow and does not disturb the parent.
+4. **sub_clean** — removes `tmp_impl/` from the branch before final review.
+5. **final_review** — reviews the entire PR diff, then the flow reaches its
+   terminal step.
+
+### Path-Like References
+
+Routing and resolution honor path-like refs (`tmp_impl/workflow.yaml`,
+`tmp_impl/skills/step_N`) exactly like plain-name workflows — gated by
+`is_path_like_reference` / `is_valid_workflow_reference` (traversal-safe).
+Skill loading resolves these paths relative to the repo root. Single-level,
+non-plan-orchestration flows are unaffected.
+
+### Error Handling & Validation
+
+- **Missing `tmp_impl/workflow.yaml`** (e.g. the scaffold step failed): a clear,
+  actionable error is posted to the issue and the run halts —
+  *"Plan workflow file not found at tmp_impl/workflow.yaml. Was the scaffold
+  step executed successfully?"* — instead of a silent crash or the generic
+  "No valid task found" stall.
+- **Malformed YAML** in `tmp_impl/`: the parse error (filename/line) is posted
+  to the issue and the run halts; the GHA run does not fail silently.
+- The GHA workflow adds pre-check steps that validate the dynamic
+  sub-workflow file exists and parses before attempting to run the
+  sub-implementation, posting a deduplicated validation comment before halting.
