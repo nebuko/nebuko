@@ -166,9 +166,17 @@ jobs:
 
             - name: Install OpenHands dependencies
               run: |
-                  # Install OpenHands SDK and tools from git repository
-                  ENCODED=$(echo -n "x-access-token:${MY_GITHUB_TOKEN}" | base64 -w 0)
+                  # Nettoie l'en-tête global potentiellement corrompu
+                  git config --global --unset-all http.https://github.com/.extraheader || true
+
+                  # Génère le header d'authentification avec la BONNE variable (GH_TOKEN)
+                  ENCODED=$(echo -n "x-access-token:${GH_TOKEN}" | base64 -w 0)
                   git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $ENCODED"
+
+                  # Nettoie le cache de uv pour forcer une réinitialisation propre
+                  uv cache clean
+
+                  # Installation des packages
                   uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
                   uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
               env:
