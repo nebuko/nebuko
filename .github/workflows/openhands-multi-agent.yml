@@ -168,8 +168,9 @@ jobs:
               run: |
                   # Install OpenHands SDK and tools from git repository
                   git config --global credential.helper ""
-                  uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
-                  uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
+                  rm -rf /root/.cache/uv/git-v0/
+                  uv pip install --system --no-cache "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
+                  uv pip install --system -no-cache "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
               env:
                 GIT_TERMINAL_PROMPT: "0"
 
