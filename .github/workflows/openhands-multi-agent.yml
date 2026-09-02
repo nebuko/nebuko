@@ -167,6 +167,7 @@ jobs:
             - name: Install OpenHands dependencies
               run: |
                   # Install OpenHands SDK and tools from git repository
+                  git config --global credential.helper ""
                   uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
                   uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
               env:
