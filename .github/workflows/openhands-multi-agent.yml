@@ -166,38 +166,12 @@ jobs:
 
             - name: Install OpenHands dependencies
               run: |
-                  echo "=== git version ==="
-                  git --version
-
-                  echo "=== ALL git config ==="
-                  git config --list --show-origin
-
-                  echo "=== Proxy env vars ==="
-                  env | grep -i proxy || echo "(none)"
-
-                  curl -i -H "$(git config http.https://github.com/.extraheader)" https://github.com/olivier-norture/git-flow-ai/info/refs?service=git-upload-pack
-
-                  git config --unset-all http.https://github.com/.extraheader
-
-                  curl -i -H "$(git config http.https://github.com/.extraheader)" https://github.com/olivier-norture/git-flow-ai/info/refs?service=git-upload-pack
-
-                  echo "=== Test ls-remote ==="
-                  git ls-remote https://github.com/OpenHands/software-agent-sdk.git main
-
-                  echo "=== Test clone protocol v0 ==="
-                  git -c protocol.version=0 clone --depth 1 --branch main \
-                    https://github.com/OpenHands/software-agent-sdk.git /tmp/test-clone \
-                    && echo "CLONE V0 OK" || echo "CLONE V0 FAIL"
-
-                  echo "=== Test clone protocol v2 ==="
-                  git -c protocol.version=2 clone --depth 1 --branch main \
-                    https://github.com/OpenHands/software-agent-sdk.git /tmp/test-clone-2 \
-                    && echo "CLONE V2 OK" || echo "CLONE V2 FAIL"
-
-                  rm -rf /tmp/test-clone /tmp/test-clone-2                  
-                  
-              env:
-                GIT_TERMINAL_PROMPT: "0"
+                  # Install OpenHands SDK and tools from git repository
+                  ENCODED=$(echo -n "x-access-token:${MY_GITHUB_TOKEN}" | base64 -w 0)
+                  git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $ENCODED"
+                  uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
+                  uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
+              
 
             - name: Resolve Agent Configuration
               env:
