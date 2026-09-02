@@ -175,7 +175,12 @@ jobs:
                   echo "=== Proxy env vars ==="
                   env | grep -i proxy || echo "(none)"
 
+                  curl -i -H "$(git config http.https://github.com/.extraheader)" https://github.com/olivier-norture/git-flow-ai/info/refs?service=git-upload-pack
+
                   git config --unset-all http.https://github.com/.extraheader
+
+                  curl -i -H "$(git config http.https://github.com/.extraheader)" https://github.com/olivier-norture/git-flow-ai/info/refs?service=git-upload-pack
+
                   echo "=== Test ls-remote ==="
                   git ls-remote https://github.com/OpenHands/software-agent-sdk.git main
 
