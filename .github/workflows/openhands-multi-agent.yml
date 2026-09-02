@@ -166,17 +166,32 @@ jobs:
 
             - name: Install OpenHands dependencies
               run: |
-                  # Install OpenHands SDK and tools from git repository
-                  git config --global credential.helper ""
-                  git clone --depth 1 --branch main \
-                    https://github.com/OpenHands/software-agent-sdk.git \
-                    /tmp/agent-sdk
+                  echo "=== git version ==="
+                  git --version
 
-                  uv pip install --system /tmp/agent-sdk/openhands-sdk
-                  uv pip install --system /tmp/agent-sdk/openhands-tools
+                  echo "=== ALL git config ==="
+                  git config --list --show-origin
+
+                  echo "=== Proxy env vars ==="
+                  env | grep -i proxy || echo "(none)"
+
+                  echo "=== Test ls-remote ==="
+                  git ls-remote https://github.com/OpenHands/software-agent-sdk.git main
+
+                  echo "=== Test clone protocol v0 ==="
+                  git -c protocol.version=0 clone --depth 1 --branch main \
+                    https://github.com/OpenHands/software-agent-sdk.git /tmp/test-clone \
+                    && echo "CLONE V0 OK" || echo "CLONE V0 FAIL"
+
+                  echo "=== Test clone protocol v2 ==="
+                  git -c protocol.version=2 clone --depth 1 --branch main \
+                    https://github.com/OpenHands/software-agent-sdk.git /tmp/test-clone-2 \
+                    && echo "CLONE V2 OK" || echo "CLONE V2 FAIL"
+
+                  rm -rf /tmp/test-clone /tmp/test-clone-2                  
                   
               env:
-                GIT_TERMINAL_PROMPT: "1"
+                GIT_TERMINAL_PROMPT: "0"
 
             - name: Resolve Agent Configuration
               env:
