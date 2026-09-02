@@ -171,6 +171,8 @@ jobs:
                   git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $ENCODED"
                   uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
                   uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               
 
             - name: Resolve Agent Configuration
