@@ -175,6 +175,7 @@ jobs:
                   echo "=== Proxy env vars ==="
                   env | grep -i proxy || echo "(none)"
 
+                  git config --unset-all http.https://github.com/.extraheader
                   echo "=== Test ls-remote ==="
                   git ls-remote https://github.com/OpenHands/software-agent-sdk.git main
 
