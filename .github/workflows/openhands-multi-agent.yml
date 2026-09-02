@@ -176,7 +176,7 @@ jobs:
                   uv pip install --system /tmp/agent-sdk/openhands-tools
                   
               env:
-                GIT_TERMINAL_PROMPT: "0"
+                GIT_TERMINAL_PROMPT: "1"
 
             - name: Resolve Agent Configuration
               env:
