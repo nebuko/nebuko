@@ -276,7 +276,6 @@ jobs:
                   WORKFLOW_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
                   PARENT_WORKFLOW=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
                   PARENT_WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
-                  PARENT_CHAIN=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_CHAIN=' | cut -d= -f2-)
 
                   # Handle skip
                   if [ "$SKIP_AGENT" = "true" ]; then
@@ -304,7 +303,6 @@ jobs:
                   echo "WORKFLOW_NEXT=$WORKFLOW_NEXT" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW=$PARENT_WORKFLOW" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
-                  echo "PARENT_CHAIN=${PARENT_CHAIN:-[]}" >> $GITHUB_ENV
                   echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
 
                   # Step 6: Export reasoning level for agent_script.py
@@ -341,17 +339,7 @@ jobs:
                       > /tmp/skill_context.md
                       IFS=',' read -ra SKILL_NAMES <<< "$(echo "$ALL_SKILLS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')"
                       for skill_name in "${SKILL_NAMES[@]}"; do
-                        # Path-style skill refs (e.g. tmp_impl/skills/step_1) resolve
-                        # against the workspace (issue #470); plain names resolve
-                        # under SKILLS_DIR as before.
-                        case "$skill_name" in
-                          */*)
-                            skill_file="${GITHUB_WORKSPACE}/${skill_name}"
-                            ;;
-                          *)
-                            skill_file="${SKILLS_DIR}/${skill_name}.md"
-                            ;;
-                        esac
+                        skill_file="${SKILLS_DIR}/${skill_name}.md"
                         if [ -f "$skill_file" ]; then
                           printf -- "--- Skill: %s ---\n%s\n" "$skill_name" "$(cat "$skill_file")" >> /tmp/skill_context.md
                         else
@@ -422,49 +410,6 @@ jobs:
                   fi
 
                   echo "SKIP_AGENT=${SKIP_AGENT:-false}" >> $GITHUB_ENV
-
-            # Pre-check (issue #470): when the resolver skipped because a dynamically
-            # mounted plan file (tmp_impl/workflow.yaml) is missing or
-            # unparseable, detect the failure mode and post a helpful,
-            # deduplicated comment on the issue. The halt itself already happens
-            # via SKIP_AGENT; this makes the actionable reason visible up front.
-            - name: Detect plan workflow file failure (tmp_impl/workflow.yaml)
-              if: env.SKIP_AGENT == 'true' && env.REASON != '' && env.TARGET_NUMBER != '0'
-              shell: bash
-              run: |
-                  case "${REASON}" in
-                      *tmp_impl/*) ;;
-                      *) exit 0 ;;
-                  esac
-                  SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
-                  if [ ! -f "$SCRIPTS/resolve_config.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/resolve_config.py" ]; then
-                    SCRIPTS=".git-flow-ai-cache/.github/scripts"
-                  fi
-                  if [ ! -f "tmp_impl/workflow.yaml" ]; then
-                    DETAIL="Plan workflow file not found at \`tmp_impl/workflow.yaml\`. Was the scaffold step executed successfully?"
-                  elif ! PYTHONPATH="$SCRIPTS" python3 -c "import sys; sys.path.insert(0, sys.argv[1]); from config import load_workflow; load_workflow('tmp_impl/workflow.yaml')" "$SCRIPTS" >/dev/null 2>&1; then
-                    DETAIL="\`tmp_impl/workflow.yaml\` could not be parsed. See the workflow logs for the YAML error."
-                  else
-                    exit 0
-                  fi
-                  echo "PLAN_WF_PRECHECK=true" >> $GITHUB_ENV
-                  echo "PLAN_WF_DETAIL=$DETAIL" >> $GITHUB_ENV
-
-            - name: Post plan workflow validation comment
-              if: env.PLAN_WF_PRECHECK == 'true'
-              uses: peter-evans/create-or-update-comment@v4
-              with:
-                issue-number: ${{ env.TARGET_NUMBER }}
-                token: ${{ secrets.GH_PAT }}
-                tag: "<!-- bot-plan-wf-precheck -->"
-                mode: create-or-update
-                body: |
-                  <!-- bot-plan-wf-precheck -->
-                  🛑 **Plan workflow validation failed**
-
-                  ${{ env.PLAN_WF_DETAIL }}
-
-                  To continue, re-run the scaffold step or fix the plan files, then reply with an explicit trigger (e.g. `@@genius resume`).
 
             # Only posted when the resolver produced a skip REASON (terminal
             # step / resolution failure). Routine guard skips (same-agent loop,
