@@ -58,12 +58,17 @@ class TestBuildOutputGracefulTimeout(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._cwd = os.getcwd()
         os.chdir(self._tmp.name)
+        # Point RUNNER_TEMP at the isolated temp dir so _load_prev_state()
+        # never picks up a stale $RUNNER_TEMP/prev_workflow_state.json left by
+        # the surrounding GHA pipeline steps (it would leak current_context,
+        # e.g. last_run_status, into states built with prev_state=None).
         env_patch = patch.dict(
             "os.environ",
             {
                 "ROLE_NAME": "dev",
                 "WORKFLOW_NAME": "default",
                 "WORKFLOW_STEP": "implement",
+                "RUNNER_TEMP": self._tmp.name,
             },
             clear=False,
         )
