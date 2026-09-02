@@ -169,6 +169,7 @@ jobs:
                   # Install OpenHands SDK and tools from git repository
                   git config --global credential.helper ""
                   rm -rf /root/.cache/uv/git-v0/
+                  git ls-remote https://github.com/OpenHands/software-agent-sdk.git main
                   uv pip install --system --no-cache "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
                   uv pip install --system -no-cache "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
               env:
