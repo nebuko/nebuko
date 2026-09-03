@@ -1,0 +1,5 @@
+# temporary permission probe
+name: api-perm-probe
+on: workflow_dispatch
+jobs:
+  d: {runs-on: ubuntu-latest, steps: [{run: echo ok}]}
