@@ -16,6 +16,8 @@ from .sub_domains.trigger_commands.trigger_commands import TriggerCommands
 # Public extraction helpers (backward compat for the old flat module surface)
 from .features.parse_trigger.parse_trigger import (
     is_bot_comment,
+    has_universal_bot_marker,
+    is_plain_mention_trigger,
     extract_mention_agent,
     extract_workflow_command,
     extract_force_next_command,
@@ -44,6 +46,8 @@ __all__ = [
     "main",
     "TriggerCommands",
     "is_bot_comment",
+    "has_universal_bot_marker",
+    "is_plain_mention_trigger",
     "extract_mention_agent",
     "extract_workflow_command",
     "extract_force_next_command",

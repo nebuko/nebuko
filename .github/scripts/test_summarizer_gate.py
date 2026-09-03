@@ -80,3 +80,10 @@ class TestCountNonBotComments:
         body = "Some text <!-- bot-agent-dev --> more text"
         comments = [{"body": body}]
         assert count_non_bot_comments(comments) == 0
+
+    def test_universal_marker_counts_as_bot(self):
+        comments = [
+            {"body": "<!-- bot-workflow-terminal -->\nResponse"},
+            {"body": "Human comment"},
+        ]
+        assert count_non_bot_comments(comments) == 1

@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
+from github_client import ensure_bot_marker
+
 
 @dataclass
 class TaskDefinition:
@@ -176,7 +178,7 @@ class GitHubClient:
             The comment ID.
         """
         path = f"/repos/{self.repo}/issues/{issue_number}/comments"
-        result = self._request("POST", path, {"body": body})
+        result = self._request("POST", path, {"body": ensure_bot_marker(body)})
         return result.get("id")
 
 
