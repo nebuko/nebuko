@@ -15,6 +15,8 @@ from .features.build_result.build_result import _build_result
 from .features.fetch_state.fetch_state import _fetch_workflow_state_from_history
 from .features.parse_trigger.parse_trigger import (
     is_bot_comment,
+    has_universal_bot_marker,
+    is_plain_mention_trigger,
     extract_mention_agent,
     extract_workflow_command,
     extract_force_next_command,
@@ -46,9 +48,14 @@ def resolve_config(
     2. Bot detection (if not pre-determined).
     3. If no state in body, fetch from issue comment history.
     4. Route based on what was found (human commands take precedence):
-       - State + dispatch → _resolve_dispatch_path.
+       - /workflow resume → _resolve_resume_path / next step.
        - /workflow force-next-step → _resolve_human_path (regardless of state).
        - /workflow command by human → _resolve_human_path.
+       - Human @@mention, or CI plain-mention trigger (universal bot marker
+         + mention-only body, e.g. sub-task completion notification) →
+         _resolve_human_path (parity between the two: the mention wins over
+         an active dispatch).
+       - State + dispatch → _resolve_dispatch_path.
        - State without dispatch → _resolve_workflow_next_step.
        - Human trigger without state → _resolve_human_path.
        - Bot fallback → _resolve_bot_fallback_path.
@@ -92,6 +99,17 @@ def resolve_config(
     # Check for human commands early (independent of is_bot) so they take
     # priority even when prev_state+dispatch exist.
     human_mention = not is_bot and extract_mention_agent(trigger_body)
+    # CI-posted command triggers (sub-issue bootstrap "@@genius", sub-task
+    # completion notification) now carry the universal bot marker and so
+    # classify as bot. They are plain mention-only triggers (no prose after
+    # the mention) that must still route to the mentioned agent, even when
+    # an active workflow dispatch exists in the comment history — matching
+    # the pre-marker behavior where their bare mention set human_mention.
+    # Only the universal marker qualifies: legacy bot-agent- comments keep
+    # their historical routing (skip unless they embed state/dispatch).
+    ci_mention = has_universal_bot_marker(trigger_body) and is_plain_mention_trigger(
+        trigger_body
+    )
     if resume_cmd is not None and prev_state and prev_state.workflow and \
        prev_state.dispatch and prev_state.dispatch.status == "hold":
         # /workflow resume — re-run the held step with human input
@@ -117,9 +135,10 @@ def resolve_config(
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir, prev_state
         )
-    elif human_mention:
+    elif human_mention or ci_mention:
         # Human @@mention (e.g. @@ctx) takes priority over auto-dispatch
         # so standalone agent calls work even when a workflow is active.
+        # ci_mention covers CI-posted plain mention triggers (see above).
         config = _resolve_human_path(trigger_body, repo, issue_number, workflows_dir)
     elif prev_state and dispatch_obj:
         # Auto-dispatch: workflow state with dispatch object — follow the workflow.

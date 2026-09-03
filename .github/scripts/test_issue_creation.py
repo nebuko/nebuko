@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
@@ -404,6 +405,17 @@ class TestTriggerWorkflows:
 # ── store_split_plan_state Tests (mocked) ────────────────────────────
 
 
+def _split_plan_state_roundtrip(body: str) -> dict:
+    """Simulate the machine-parsed retrieval of split-plan-state.
+
+    The reader searches by substring/regex (never anchored on line 1), so
+    a bot marker on line 1 must not break the state round-trip.
+    """
+    match = re.search(r"<!-- split-plan-state: (.*?) -->", body, flags=re.DOTALL)
+    assert match is not None, f"state comment not found in: {body!r}"
+    return json.loads(match.group(1))
+
+
 class TestStoreSplitPlanState:
     def test_posts_hidden_comment_with_state(self):
         mock_client = MagicMock()
@@ -414,11 +426,9 @@ class TestStoreSplitPlanState:
         store_split_plan_state(mock_client, parent_number=50, tasks_with_numbers=tasks)
         mock_client.create_comment.assert_called_once()
         body = mock_client.create_comment.call_args[0][1]
-        assert body.startswith("<!-- split-plan-state: ")
-        assert body.endswith(" -->")
+        assert "<!-- split-plan-state: " in body
         # Extract and parse the JSON state
-        json_str = body[len("<!-- split-plan-state: "):-len(" -->")]
-        state = json.loads(json_str)
+        state = _split_plan_state_roundtrip(body)
         assert len(state["tasks"]) == 2
         assert state["tasks"][0]["index"] == 1
         assert state["tasks"][0]["issue_number"] == 101
@@ -427,6 +437,23 @@ class TestStoreSplitPlanState:
         assert state["tasks"][1]["issue_number"] == 102
         assert state["tasks"][1]["dependencies"] == [1]
         assert state["completed"] == []
+
+    def test_state_roundtrips_with_bot_marker_prefix(self):
+        # GitHubClient.create_comment prepends the universal bot marker
+        # (ensure_bot_marker) before posting. The hidden state comment must
+        # still be retrievable with the marker on line 1.
+        from github_client import ensure_bot_marker
+
+        state = {
+            "tasks": [
+                {"index": 1, "issue_number": 101, "dependencies": []},
+                {"index": 2, "issue_number": 102, "dependencies": [1]},
+            ],
+            "completed": [],
+        }
+        posted_body = ensure_bot_marker(f"<!-- split-plan-state: {json.dumps(state)} -->")
+        assert posted_body.startswith("<!-- bot-workflow-terminal -->\n")
+        assert _split_plan_state_roundtrip(posted_body) == state
 
     def test_error_is_handled_gracefully(self, capsys):
         mock_client = MagicMock()

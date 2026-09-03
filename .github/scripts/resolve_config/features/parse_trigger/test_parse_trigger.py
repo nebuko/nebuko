@@ -12,6 +12,7 @@ from resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
     extract_resume_command,
     extract_workflow_command,
     is_bot_comment,
+    is_plain_mention_trigger,
 )
 from resolve_config.sub_domains.trigger_commands.trigger_commands import (  # noqa: E402
     TriggerCommands,
@@ -22,8 +23,66 @@ class TestIsBotComment:
     def test_bot_marker_in_first_lines(self):
         assert is_bot_comment("<!-- bot-agent-dev -->\nbody") is True
 
+    def test_universal_marker_in_first_line(self):
+        assert is_bot_comment("<!-- bot-workflow-terminal -->\nbody") is True
+
+    def test_universal_marker_on_line_four(self):
+        assert is_bot_comment("a\nb\nc\n<!-- bot-workflow-terminal -->") is True
+
+    def test_universal_marker_beyond_five_lines(self):
+        assert is_bot_comment("a\nb\nc\nd\ne\n<!-- bot-workflow-terminal -->") is False
+
     def test_bot_marker_beyond_five_lines(self):
         assert is_bot_comment("a\nb\nc\nd\ne\n<!-- bot-agent-dev -->") is False
+
+
+class TestIsPlainMentionTrigger:
+    """Test is_plain_mention_trigger function."""
+
+    def test_bootstrap_genius_with_universal_marker(self):
+        body = "<!-- bot-workflow-terminal -->\n@@genius"
+        assert is_plain_mention_trigger(body) is True
+
+    def test_subtask_completion_notification(self):
+        body = "@@genius <!-- bot-workflow-terminal --> <!-- subtask-complete: 2 -->"
+        assert is_plain_mention_trigger(body) is True
+
+    def test_summarize_trigger(self):
+        body = "<!-- bot-workflow-terminal -->\n@@summarize"
+        assert is_plain_mention_trigger(body) is True
+
+    def test_bare_human_mention_is_plain(self):
+        # Human comments route via human_mention, but shape detection still
+        # matches a bare mention.
+        assert is_plain_mention_trigger("@@ctx") is True
+
+    def test_prose_after_mention_not_plain(self):
+        body = "<!-- bot-agent-dev -->\n@@genius please analyze this"
+        assert is_plain_mention_trigger(body) is False
+
+    def test_agent_answer_with_mention_in_text_not_plain(self):
+        body = (
+            "<!-- bot-workflow-terminal -->\n"
+            "<!-- bot-agent-genius -->\n"
+            "*Genius answer*\n\nHanding off to @@dev for implementation."
+        )
+        assert is_plain_mention_trigger(body) is False
+
+    def test_no_mention_not_plain(self):
+        assert is_plain_mention_trigger("just some text") is False
+
+    def test_empty_body_not_plain(self):
+        assert is_plain_mention_trigger("") is False
+
+    def test_multi_line_markers_only(self):
+        body = "\n".join(
+            [
+                "<!-- bot-workflow-terminal -->",
+                "<!-- bot-agent-ctx -->",
+                "@@genius",
+            ]
+        )
+        assert is_plain_mention_trigger(body) is True
 
     def test_plain_body(self):
         assert is_bot_comment("hello world") is False

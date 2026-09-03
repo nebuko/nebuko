@@ -20,6 +20,29 @@ import subprocess
 import sys
 from typing import List, Optional
 
+# Universal bot marker prepended to every CI-posted comment so that
+# human-vs-bot classification is deterministic (see is_bot_comment).
+BOT_MARKER = "<!-- bot-workflow-terminal -->"
+
+
+def ensure_bot_marker(body: str) -> str:
+    """Return body with the universal bot marker guaranteed on line 1.
+
+    The marker is injected idempotently: if the body (ignoring leading
+    whitespace) already starts with BOT_MARKER it is returned unchanged,
+    otherwise the marker is prepended as its own leading line. The rest of
+    the body is unchanged.
+
+    Args:
+        body: Raw comment body text.
+
+    Returns:
+        Comment body whose first line is BOT_MARKER (never duplicated).
+    """
+    if body.lstrip().startswith(BOT_MARKER):
+        return body
+    return BOT_MARKER + "\n" + body
+
 
 def _gh_cli() -> List[str]:
     """Return gh CLI path."""
@@ -196,6 +219,9 @@ def post_comment(
 ) -> Optional[dict]:
     """Post a comment to a GitHub issue.
 
+    The universal bot marker (BOT_MARKER) is prepended to the body before
+    posting so every CI-emitted comment is identifiable as bot-generated.
+
     Args:
         repo: Repository in format owner/repo.
         issue_number: Issue number.
@@ -206,6 +232,8 @@ def post_comment(
     Returns:
         Comment response dict, or None on failure.
     """
+    body = ensure_bot_marker(body)
+
     if dry_run:
         print(f"[DRY RUN] Would post comment to {repo}#{issue_number}", file=sys.stderr)
         return None

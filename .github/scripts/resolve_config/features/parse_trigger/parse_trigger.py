@@ -12,7 +12,10 @@ from workflow_state import extract_state_from_body
 from ...sub_domains.trigger_commands.trigger_commands import TriggerCommands
 
 __all__ = [
+    "UNIVERSAL_BOT_MARKER",
     "is_bot_comment",
+    "has_universal_bot_marker",
+    "is_plain_mention_trigger",
     "extract_mention_agent",
     "extract_workflow_command",
     "extract_force_next_command",
@@ -21,17 +24,70 @@ __all__ = [
     "_parse_trigger_body",
     "build_trigger_commands",
 ]
-def is_bot_comment(trigger_body: str) -> bool:
-    """Check if trigger body starts with a bot-agent marker.
+
+#: Universal bot marker prefixed to every CI-posted comment (issue #474).
+UNIVERSAL_BOT_MARKER = "<!-- bot-workflow-terminal -->"
+
+
+def has_universal_bot_marker(trigger_body: str) -> bool:
+    """Check the first 5 lines for the universal bot marker.
 
     Args:
         trigger_body: Raw trigger body text.
 
     Returns:
-        True if first 5 lines contain <!-- bot-agent-.
+        True if the universal marker is within the first 5 lines.
     """
     first_lines = "\n".join(trigger_body.split("\n")[:5])
-    return "<!-- bot-agent-" in first_lines
+    return UNIVERSAL_BOT_MARKER in first_lines
+
+
+def is_bot_comment(trigger_body: str) -> bool:
+    """Check if trigger body carries a bot marker.
+
+    Primary check: the universal bot marker (<!-- bot-workflow-terminal -->)
+    on any of the first 5 lines. Fallback (legacy): the agent marker
+    (<!-- bot-agent-...) within the same window, for pre-existing issues
+    posted before the universal marker was introduced.
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        True if the body is identifiable as bot-generated.
+    """
+    first_lines = "\n".join(trigger_body.split("\n")[:5])
+    return has_universal_bot_marker(trigger_body) or (
+        "<!-- bot-agent-" in first_lines
+    )
+
+
+def is_plain_mention_trigger(trigger_body: str) -> bool:
+    """Check if trigger body is a plain CI command trigger.
+
+    A plain trigger consists solely of an @@mention plus optional
+    HTML-comment markers (bot marker, subtask-complete, ...), with no
+    other prose. This identifies CI-posted command triggers (e.g. the
+    "@@genius" sub-issue bootstrap and the sub-task completion
+    notification) that carry the universal bot marker but must still be
+    routed to the mentioned agent — as opposed to agent answer comments,
+    whose prose body disqualifies them here.
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        True if the body is a mention plus markers only.
+    """
+    if extract_mention_agent(trigger_body) is None:
+        return False
+    without_markers = re.sub(r"<!--.*?-->", " ", trigger_body, flags=re.DOTALL)
+    without_mentions = re.sub(
+        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)",
+        " ",
+        without_markers,
+    )
+    return not without_mentions.strip()
 
 
 def extract_mention_agent(trigger_body: str) -> Optional[str]:

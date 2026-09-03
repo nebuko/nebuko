@@ -6,12 +6,67 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from github_client import (
+    BOT_MARKER,
     get_comment_body,
     get_issue_comments,
     get_comment_node_id,
     post_comment,
     minimize_comment,
+    ensure_bot_marker,
 )
+
+
+class TestEnsureBotMarker:
+    """Test ensure_bot_marker function."""
+
+    def test_prepends_marker_on_plain_body(self):
+        result = ensure_bot_marker("Hello\nworld")
+        assert result == f"{BOT_MARKER}\nHello\nworld"
+
+    def test_marker_is_first_line(self):
+        result = ensure_bot_marker("text")
+        assert result.split("\n")[0] == BOT_MARKER
+
+    def test_idempotent_when_marker_already_first_line(self):
+        body = f"{BOT_MARKER}\nHello"
+        assert ensure_bot_marker(body) == body
+
+    def test_idempotent_no_duplicate(self):
+        body = "text"
+        assert ensure_bot_marker(ensure_bot_marker(body)) == ensure_bot_marker(body)
+
+    def test_preserves_blank_leading_lines(self):
+        result = ensure_bot_marker("\n\nHello")
+        assert result.startswith(BOT_MARKER)
+        assert result.count(BOT_MARKER) == 1
+
+    def test_empty_body(self):
+        result = ensure_bot_marker("")
+        assert result.count(BOT_MARKER) == 1
+
+
+class TestPostCommentMarker:
+    """Test that post_comment tags bodies with the universal bot marker."""
+
+    @patch("github_client.subprocess.run")
+    def test_posts_comment_with_bot_marker(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps({"id": "1"}))
+
+        post_comment("owner/repo", 42, "Hello")
+
+        args = mock_run.call_args[0][0]
+        body_arg = next(a for a in args if a.startswith("body="))
+        assert body_arg.split("=", 1)[1].split("\n")[0] == BOT_MARKER
+
+    @patch("github_client.subprocess.run")
+    def test_does_not_duplicate_existing_marker(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps({"id": "1"}))
+
+        post_comment("owner/repo", 42, f"{BOT_MARKER}\nHello")
+
+        args = mock_run.call_args[0][0]
+        body_arg = next(a for a in args if a.startswith("body="))
+        assert body_arg.split("=", 1)[1].count(BOT_MARKER) == 1
 
 
 class TestGetIssueComments:
