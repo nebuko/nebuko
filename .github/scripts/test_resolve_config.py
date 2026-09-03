@@ -179,6 +179,99 @@ class TestResolveConfig:
         assert result["SKIP_AGENT"] == "true"
 
 
+class TestCIBotMentionRouting:
+    """Regression: CI-posted plain mention triggers keep routing to the agent.
+
+    Sub-issue bootstrap ("@@genius") and sub-task completion notifications
+    now carry the universal bot marker (issue #474) and classify as bot.
+    They must still resolve to the mentioned agent, not SKIP_AGENT.
+    """
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        return prompt_base, workflows_dir
+
+    def test_bootstrap_genius_with_universal_marker_routes_to_genius(self):
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = "<!-- bot-workflow-terminal -->\n@@genius"
+
+        result = resolve_config(body, prompt_base, workflows_dir)
+
+        assert result["SKIP_AGENT"] == "false"
+        assert result["TASK"] == "genius"
+        assert result["ROLE_NAME"] == "genius"
+
+    def test_subtask_completion_routes_to_genius(self):
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = "@@genius <!-- bot-workflow-terminal --> <!-- subtask-complete: 2 -->"
+
+        result = resolve_config(body, prompt_base, workflows_dir)
+
+        assert result["SKIP_AGENT"] == "false"
+        assert result["TASK"] == "genius"
+
+    def test_legacy_bot_mention_with_prose_still_skips(self):
+        # Legacy bot comment (bot-agent- marker) with prose after the
+        # mention must keep old behavior: SKIP_AGENT.
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = "<!-- bot-agent-dev -->\n@@genius please analyze this"
+
+        result = resolve_config(body, prompt_base, workflows_dir)
+
+        assert result["SKIP_AGENT"] == "true"
+
+    def test_bot_answer_with_mention_and_no_state_still_skips(self):
+        # Agent answer comment without WORKFLOW_STATE whose text mentions
+        # another agent must NOT trigger that agent.
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = (
+            "<!-- bot-workflow-terminal -->\n"
+            "<!-- bot-agent-genius -->\n"
+            "*Genius answer*\n\nHanding off to @@dev for implementation."
+        )
+
+        result = resolve_config(body, prompt_base, workflows_dir)
+
+        assert result["SKIP_AGENT"] == "true"
+
+    def test_legacy_bot_plain_mention_without_universal_marker_still_skips(self):
+        # Legacy bot comment (bot-agent- marker only, no universal marker)
+        # with a plain mention must keep its historical routing: SKIP_AGENT.
+        # The ci_mention gate requires the universal marker, so legacy
+        # histories are unaffected.
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = "<!-- bot-agent-dev -->\n@@genius"
+
+        result = resolve_config(body, prompt_base, workflows_dir)
+
+        assert result["SKIP_AGENT"] == "true"
+
+    def test_in_body_state_is_not_plain_mention(self):
+        # A body embedding a full WORKFLOW_STATE is not a plain mention
+        # trigger (the state JSON counts as non-mention content), so it is
+        # resolved via the dispatch path instead of the ci_mention shortcut.
+        # Real CI triggers (sub-task completion, bootstrap) never embed a
+        # state in the trigger body — they arrive as mention-only comments.
+        prompt_base, workflows_dir = self._setup_dirs()
+        body = (
+            "<!-- bot-workflow-terminal -->\n"
+            "@@genius\n"
+            "<!-- WORKFLOW_STATE_START -->\n"
+            '{"version": 1, "workflow": "default", "step": "analyze", '
+            '"dispatch": {"status": "advance", "task_hint": "dev", '
+            '"complexity": "medium"}}\n'
+            "<!-- WORKFLOW_STATE_END -->"
+        )
+
+        result = resolve_config(body, prompt_base, workflows_dir)
+
+        assert result["ROLE_NAME"] == "dev"
+
+
 class TestExtractWorkflowCommand:
     """Test /workflow command extraction from trigger body."""
 
