@@ -430,7 +430,7 @@ jobs:
                   **Reason:** ${{ env.REASON }}
 
                   This comment intentionally carries no workflow state and does not trigger further agent runs.
-                  To continue, reply with an explicit trigger (e.g. `@@genius`).
+                  To continue, reply with an explicit trigger (e.g. `@@ genius`).
 
                   🔗 [View workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
@@ -470,7 +470,7 @@ jobs:
                       echo ""
                       echo "👉 **Action Required:** @$ISSUE_AUTHOR please review the conversation and decide next steps:"
                       echo "- If the task is complete, close this issue."
-                      echo "- If more work is needed, reset the conversation by posting \`@@genius reset\` (or manually close/reopen)."
+                      echo "- If more work is needed, reset the conversation by posting \`@@ genius reset\` (or manually close/reopen)."
                       echo ""
                       echo "🔗 [View workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
                     } > /tmp/circuit_breaker_comment.md
