@@ -1,0 +1,223 @@
+# Configuration
+
+The system is configured by a single layered YAML file (`agent-config.yaml`):
+**providers → llms → agents**. Cross-layer `${ref}` resolution lets each layer
+reference the one below it, so adding an agent is a short stanza with no other
+file changes.
+
+For the machine-readable dispatch overrides applied at invocation time, see
+[reference.md — AGENT_RUN_CONFIG](./reference.md#agent_runconfig).
+
+---
+
+## The 3-Layer Model
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ agents        genius / dev / ctx / review / issue / ...     │
+│               model: "${llms.qwen-3-6-27b}"                 │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ ${ref}
+┌──────────────────────────────▼──────────────────────────────┐
+│ llms          qwen-3-6-27b / deepseek-v4-pro / ...          │
+│               provider: "${providers.openrouter}"           │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ ${ref}
+┌──────────────────────────────▼──────────────────────────────┐
+│ providers     openrouter / local_vllm                       │
+│               api_url + api_token_env                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+References resolve bottom-up: a provider has no dependencies; an LLM points at
+a provider; an agent points at an LLM. A ref that does not resolve is an error
+at load time (fail-fast, before any agent runs).
+
+The config is loaded and validated by the `config/` package
+(`load_config`, `load_workflow`, `resolve_refs` — see
+[architecture_code.md](./architecture_code.md)). If `agent-config.yaml` is
+absent, the workflow falls back to the legacy env-var-based approach for
+backward compatibility.
+
+---
+
+## Provider Schema
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `api_url` | string | yes | Chat-completions endpoint URL. |
+| `api_token_env` | string | yes | Name of the environment variable holding the API token. |
+
+```yaml
+providers:
+  openrouter:
+    api_url: "https://openrouter.ai/api/v1/chat/completions"
+    api_token_env: "OPENROUTER_API_KEY"
+  local_vllm:
+    api_url: "http://192.168.1.64:31728/v1"
+    api_token_env: "LOCAL_VLLM_API_TOKEN"
+```
+
+---
+
+## LLM Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model_path` | string | Model identifier on the provider (e.g., `openrouter/anthropic/claude-sonnet-5`). |
+| `provider` | `${ref}` | Provider entry from the `providers:` layer. |
+| `default_temperature` | float | Base temperature for the model. |
+| `input_price` / `output_price` | float | Cost per token (USD) — used for metrics/cost accounting. |
+| `thinking_enabled` | bool | Enables the model's thinking mode (e.g., Qwen flexible thinking). |
+| `preserve_thinking` | bool | Keeps thinking content across turns. |
+| `max_output_tokens` | int | Max output tokens per completion. |
+| `top_p` / `top_k` / `min_p` | float/int | Sampling parameters (see table below). |
+| `presence_penalty` / `repetition_penalty` | float | Repetition control (see table below). |
+| `stop_sequences` | string[] | Tokens that stop generation. |
+
+Sampling parameters and their typical ranges:
+
+| Parameter | Type | Description | Typical range |
+|-----------|------|-------------|---------------|
+| `top_p` | float | Nucleus sampling — lower = more deterministic | 0.1–1.0 |
+| `top_k` | int | Limits the candidate token pool | 10–100 |
+| `min_p` | float | Filters tokens below an absolute probability threshold | 0.0–1.0 |
+| `presence_penalty` | float | Discourages repeating tokens based on presence | -2.0–2.0 |
+| `repetition_penalty` | float | > 1.0 discourages repetition | 1.0–1.5 |
+
+Example:
+
+```yaml
+llms:
+  claude-sonnet-5:
+    model_path: "openrouter/anthropic/claude-sonnet-5"
+    provider: "${providers.openrouter}"
+```
+
+---
+
+## Agent Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model` | `${ref}` | LLM entry from the `llms:` layer. |
+| `temperature` | float | Per-agent temperature override (floor for complexity adjustment). |
+| `prompt_file` | string | Path to the agent's system prompt (convention: `.agents/prompts/{agent}.md`). |
+| `skills` | string[] | Skills attached to the agent by default. |
+| `tools` | string[] | Tool whitelist: `terminal`, `file_editor`, `task_tracker` (SDK tools) plus `think`, `finish` (built-in defaults). See [agents-and-skills.md](./agents-and-skills.md). |
+
+Example:
+
+```yaml
+agents:
+  dev:
+    model: "${llms.qwen-3-6-27b}"
+    prompt_file: ".agents/prompts/dev.md"
+    skills: []
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
+```
+
+---
+
+## `${ref}` Cross-Layer Resolution
+
+Syntax: `${layer.key}` where `layer` is `providers` or `llms`.
+
+Rules:
+- Refs are resolved left-to-right at load time; a value that is a ref is
+  replaced by the full referenced dict.
+- An undefined ref is a hard error at load time.
+- Refs can only point at a *lower* layer (`agents → llms → providers`).
+
+Chain example (as found in this repo's `agent-config.yaml`):
+
+```yaml
+agents:
+  genius:
+    model: "${llms.qwen-3-6-27b}"      # → resolves to the qwen-3-6-27b LLM dict
+    temperature: 1.0
+    prompt_file: ".agents/prompts/genius.md"
+    tools: ["think", "finish"]
+
+llms:
+  qwen-3-6-27b:
+    model_path: "hosted_vllm/qwen-3-6-27b"
+    provider: "${providers.local_vllm}"   # → resolves to the local_vllm provider dict
+    default_temperature: 0.7
+
+providers:
+  local_vllm:
+    api_url: "http://192.168.1.64:31728/v1"
+    api_token_env: "LOCAL_VLLM_API_TOKEN"
+```
+
+---
+
+## Full Annotated Example (Abbreviated)
+
+```yaml
+# ── Layer 1: Providers — API endpoints + auth env var name ──
+providers:
+  openrouter:
+    api_url: "https://openrouter.ai/api/v1/chat/completions"
+    api_token_env: "OPENROUTER_API_KEY"
+
+# ── Layer 2: LLMs — models referencing providers, with sampling params ──
+llms:
+  qwen-3-6-30b:
+    model_path: "hosted_vllm/qwen-3-6-30b-a3b"
+    provider: "${providers.local_vllm}"
+    default_temperature: 1.0
+    thinking_enabled: true
+    max_output_tokens: 32768
+    top_p: 0.95
+    top_k: 20
+
+# ── Layer 3: Agents — role → model + prompt + tools ──
+agents:
+  genius:
+    model: "${llms.qwen-3-6-30b}"
+    temperature: 1.0
+    prompt_file: ".agents/prompts/genius.md"
+    skills: []
+    tools: ["think", "finish"]   # planners never touch files
+
+  dev:
+    model: "${llms.qwen-3-6-30b}"
+    prompt_file: ".agents/prompts/dev.md"
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
+```
+
+See this repo's [`agent-config.yaml`](../agent-config.yaml) for the full
+9-agent configuration.
+
+---
+
+## Runtime Override
+
+Per-invocation dispatch fields override the YAML cascade. Precedence
+(highest first):
+
+1. **Per-invocation** — dispatch fields in the `AGENT_RUN_CONFIG` sentinel
+   (`model`, `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`,
+   `repetition_penalty`, `complexity`).
+2. **Per-agent** — `agents.<name>` stanza in `agent-config.yaml`.
+3. **Per-LLM** — `llms.<name>` stanza in `agent-config.yaml`.
+
+### Dynamic Complexity-Based Temperature
+
+When `complexity` is set in the dispatch and no explicit `temperature` override
+is provided, temperature is auto-adjusted:
+
+| Complexity | Temperature |
+|------------|-------------|
+| `low` | 0.0 (most deterministic) |
+| `medium` | 0.1 |
+| `high` | 0.3 (more creative) |
+
+The agent's base temperature from `agent-config.yaml` serves as a **floor** —
+complexity only increases temperature, never decreases it.
+
+**Reasoning effort** is independent of `complexity`: the `reasoning` dispatch
+field (`none`/`low`/`medium`/`xhigh`) maps to the provider's thinking-mode
+parameter and only applies while `thinking_enabled` is true for the LLM.
