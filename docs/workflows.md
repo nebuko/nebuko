@@ -1,0 +1,246 @@
+# Workflows
+
+Declarative multi-step agent chains. A workflow is a YAML file in `workflows/`
+that names an ordered set of steps; each step runs one agent (or mounts a
+sub-workflow), and routing between steps is driven by `next` and `conditions`.
+The full key-by-key grammar lives in
+[reference.md — Workflow YAML Grammar](./reference.md#workflow_yaml_grammar).
+
+---
+
+## How Declarative Workflows Work
+
+A workflow defines **who runs, in what order, and what can make the chain
+branch or stop**:
+
+```yaml
+name: my-workflow
+trigger:
+  agents: [genius]            # @@genius in an issue body can start it
+steps:
+  - name: analyze
+    agent: genius
+    next: plan
+  - name: plan
+    agent: genius
+    conditions:               # evaluated in order
+      - on_result: approved
+        next: implement
+      - on_result: rejected
+        next: analyze         # loop back
+  - name: implement
+    agent: dev
+    next: null                # terminal
+```
+
+- Steps execute sequentially; `next: null` ends the workflow.
+- `conditions[]` give the agent a choice of where to go, based on the result
+  it reports in its dispatch (`status` / `task_hint`). Always include a
+  catch-all (e.g., `default`) so routing stays deterministic.
+- `skill: [...]` attaches extra prompt context from `skills/` to that step.
+- `human_gate: true` marks a step that waits for human approval before the
+  workflow advances.
+- Workflows can be started by an `@@mention` (matching `trigger.agents`), a
+  `/workflow <name>` command, or a `dispatch` field pointing at them. Human
+  commands override state-based routing — see the routing cascade in
+  [architecture.md](./architecture.md#routing-cascade).
+
+---
+
+## Built-in Workflows
+
+| Workflow | File | One-line description |
+|----------|------|---------------------|
+| `default` | [`default.yaml`](../workflows/default.yaml) | Standard dev chain: analyze → context → plan → implement → review |
+| `think` | [`think.yaml`](../workflows/think.yaml) | Thinking only — analyze + context + plan, no implementation |
+| `review-only` | [`review-only.yaml`](../workflows/review-only.yaml) | Standalone single-shot code review |
+| `dev-review-loop` | [`dev-review-loop.yaml`](../workflows/dev-review-loop.yaml) | Reusable sub-workflow: one plan step with review, loops on rejection |
+| `plan-orchestration` | [`plan-orchestration.yaml`](../workflows/plan-orchestration.yaml) | Full multi-step plan lifecycle sharing one PR |
+| `spec-driven` | [`spec-driven.yaml`](../workflows/spec-driven.yaml) | Spec → stub (human-gated) → implement |
+| `spec-driven-impl` | [`spec-driven-impl.yaml`](../workflows/spec-driven-impl.yaml) | Plan → stub (human-gated) → implement |
+| `debug` | [`debug.yaml`](../workflows/debug.yaml) | Direct single-agent debug call |
+| `demo-composition` | [`demo-composition.yaml`](../workflows/demo-composition.yaml) | Demo of sub-workflow composition |
+
+### default
+
+```
+analyze (genius) → context (ctx) → plan (genius) ──approved──► implement (dev) → review (review) ◆
+                                                    │rejected
+                                                    └────────► context (loop)
+```
+
+Trigger: `@@genius`. The standard development cycle used when a human hands a
+problem to the system. The `plan` step can loop back to `context` when the
+plan is rejected (insufficient context).
+
+Example trigger:
+
+```
+@@genius implement retry logic in the circuit breaker
+```
+
+### think
+
+```
+analyze (genius) → context (ctx) → plan (genius) ◆
+                                └─ rejected ─► context (loop)
+```
+
+Trigger: `@@genius`. Pure analysis — ends after the plan/answer is produced;
+nothing is implemented. Use for "help me understand / define X" requests.
+
+### review-only
+
+```
+review (review) ◆
+```
+
+Trigger: `@@review`. Standalone review of code without a prior implementation
+step in the same workflow — used for ad-hoc review requests and nightly review
+(issue #161).
+
+### dev-review-loop
+
+```
+implement (dev) → review (review) ──approved──► ◆
+                              └─rejected─► implement (loop)
+```
+
+Trigger: `@@dev`. A **reusable sub-workflow**: it executes a *single* plan
+step with review and loops until the reviewer approves. It is not typically
+started directly — it is referenced per-step from a dynamically generated
+`tmp_impl/workflow.yaml` (see `plan-orchestration`).
+
+### plan-orchestration
+
+```
+architect (genius) → context (ctx) → plan (genius) ──approved──► scaffold (dev, skill: scaffold-plan)
+                                                   │rejected                │
+                                                   └────► plan (loop)       ▼
+                                                            sub_impl (workflow: tmp_impl/workflow.yaml)
+                                                                         │
+                                                                         ▼
+                                                       sub_clean (dev, skill: plan-cleanup)
+                                                                         │
+                                                    ┌────────────────────▼────────────────────┐
+                                                    ▼                                         │
+                                             final_review (review) ──rejected──► final_fix (dev, skill: final-fix)
+                                                                    │approved          │
+                                                                    └►◆◄────────────────┘
+```
+
+Trigger: `@@genius`. The full lifecycle for a **multi-step plan that shares a
+single PR** (issue #462):
+
+1. `architect` / `context` / `plan` — genius produces a structured plan; a
+   human approves it (reject → re-plan loop).
+2. `scaffold` — dev converts the approved `<planWorkflow>` JSON into
+   `tmp_impl/workflow.yaml`, a per-step sub-workflow (skill: `scaffold-plan`).
+3. `sub_impl` — **mounts** the generated sub-workflow as one step. Each plan
+   step runs through `dev-review-loop` (implement → review, loop on
+   rejection).
+4. `sub_clean` — dev removes the `tmp_impl/` scaffolding (skill:
+   `plan-cleanup`).
+5. `final_review` ↔ `final_fix` — one whole-PR review; rejections are
+   addressed across all plan steps (skill: `final-fix`) and re-reviewed.
+
+This is the main demonstration of **sub-workflow composition** — a step
+declaring `workflow:` instead of `agent:`, with a runtime-generated path.
+
+### spec-driven
+
+```
+spec (po) ──rejected──► spec
+     │approved
+     ▼
+architect_prepare_ctx (genius) → ctx_architect (ctx) → architect_review_ctx (genius)
+                                                        │rejected
+                                                        └► ctx_architect (loop)
+     │approved/default
+     ▼
+stub (dev, skill: stub-only) ◄──rejected── stub_review (review)
+     │                                       │approved/default
+     ▼                                       ▼
+                          stub_approval (genius, human_gate) ◄──rejected
+     │approved/default                            │
+     ▼                                            ▼
+implement (dev) ──rejected── review (review) → ◆
+                ▲______________________________│
+```
+
+Trigger: `@@po`. Two **human gates**: the spec must be approved before any
+architecture work, and the stubs must be approved before real implementation.
+The `stub` step is constrained by the `stub-only` skill (stubs/tests only, no
+logic). Review rejects send the dev back to fixing stubs or implementation.
+
+### spec-driven-impl
+
+```
+analyze (genius) → context (ctx) → plan (genius) ──approved──► stub (dev, stub-only)
+                                                   │rejected          │
+                                                   └► context         ▼
+                                                            stub_review (review)
+                                                                     │
+                                                     stub_approval (genius, human_gate)
+                                                                     │approved
+                                                                     ▼
+                                                          implement (dev) ◆
+```
+
+Trigger: `@@genius`. Same gate structure as `spec-driven`, but starts from the
+standard analyze/context/plan chain instead of a PO spec. The stub review +
+human approval is the quality gate before implementation.
+
+### debug
+
+```
+debug (debug) ◆
+```
+
+Trigger: `@@debug`. Single-agent call — the debug agent investigates unusual
+agent behavior from past run logs and artifacts.
+
+### demo-composition
+
+```
+analyze (genius) → subtask (workflow: review-only) → finalize (genius) ◆
+```
+
+Trigger: `@@genius`. Minimal example of **sub-workflow composition**: the
+`subtask` step mounts the entire `review-only` workflow as one step of the
+parent.
+
+---
+
+## Writing a Custom Workflow
+
+Create `workflows/<name>.yaml`:
+
+```yaml
+name: my-workflow
+description: "What this workflow does"
+trigger:
+  agents: [genius]
+steps:
+  - name: step_one
+    agent: genius
+    next: step_two
+  - name: step_two
+    agent: dev
+    skill: [python]
+    next: null
+```
+
+Rules:
+
+- `name` must match the filename (without `.yaml`).
+- Start by typing `@@<trigger agent>` in an issue, or use
+  `/workflow my-workflow` to force it on an existing issue.
+- Local files take precedence over remotely fetched workflows of the same name
+  (zero-copy fetch — see [features.md](./features.md#remote-workflows-zero-copy)).
+
+**Reusable sub-workflows** are just workflows referenced by `workflow:` in a
+step — `dev-review-loop` and `review-only` are the built-in examples. The
+referenced path may be a workflow name (resolved against `workflows/`) or a
+relative file path (e.g., `tmp_impl/workflow.yaml`), which enables
+runtime-generated workflows.
