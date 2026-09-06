@@ -7,6 +7,7 @@ from ...sub_domains.history_entry.history_entry import HistoryEntry
 from ...sub_domains.state_metrics.state_metrics import StateMetrics
 from ...sub_domains.step_resolution.step_resolution import StepResolution
 from ...sub_domains.dispatch.dispatch import Dispatch
+from ...sub_domains.function_call import FunctionCall
 
 def _last_history_value(history: list[HistoryEntry], field: str) -> str:
     """Return the last non-empty value of ``field`` across history entries."""
@@ -51,6 +52,7 @@ def build_state(
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
     dispatch: Optional[Dispatch] = None,
+    function_call: Optional[FunctionCall] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -78,6 +80,9 @@ def build_state(
         resolution: Step resolution context from resolve_config (replaced each transition).
         dispatch: Agent dispatch outcome from the AGENT_RUN_CONFIG sentinel
             (replaced each transition).
+        function_call: Imperative agent-to-agent hand-off from the
+            AGENT_RUN_CONFIG function_call section (replaced each transition;
+            None clears any pending call).
 
     Returns:
         A new WorkflowState instance.
@@ -164,4 +169,5 @@ def build_state(
         pull_request=new_pr,
         resolution=resolution,
         dispatch=dispatch,
+        function_call=function_call,
     )

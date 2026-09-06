@@ -203,7 +203,7 @@ This mode applies when the approved plan consists of **2+ sequential steps that 
 
 ## 6. Sub-Task Orchestration Mode
 
-When you detect a `<!-- subtask-complete: {index} -->` marker in the current comment, you are in orchestration mode. Do NOT treat this as a regular issue request. Instead:
+When you detect a `<!-- bot-subtask-complete: {index} -->` marker in the current comment, you are in orchestration mode. Do NOT treat this as a regular issue request. Instead:
 
 1. Request @@ctx to fetch the `<!-- split-plan-state: ... -->` comment on this issue containing the JSON state with `tasks` and `completed` arrays.
 2. Once @@ctx returns the state, parse it and append `{index}` to the `completed` array.
@@ -211,7 +211,7 @@ When you detect a `<!-- subtask-complete: {index} -->` marker in the current com
    - Check if ALL its `dependencies` are now contained in `completed`.
    - If YES, the task is ready to be triggered.
 4. Delegate all external actions to @@ctx via the `AGENT_RUN_CONFIG` sentinel:
-   - Ask @@ctx to post a comment `@@genius` on each ready task's issue (`tasks[i].issue_number`) to trigger it.
+   - Ask @@ctx to post a comment `<!-- bot-trigger: genius -->` on each ready task's issue (`tasks[i].issue_number`) to trigger it. Never post `@@genius` from a bot — the CI gate ignores `@@mentions` in bot messages (use the `function_call` or machine-trigger token instead).
    - Ask @@ctx to update the `split-plan-state` comment with the new `completed` array.
 5. If all tasks are now completed, include a summary message: "All sub-tasks complete."
 6. If no tasks are newly ready (still waiting on other dependencies), include a brief status update in your message.

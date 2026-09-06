@@ -13,8 +13,11 @@ from config import load_workflow
 from resolve_workflow import (
     resolve_next_from_workflow,
     _is_terminal_step,
+    TASK_TO_PROMPT,
 )
 from workflow_state import (
+    FunctionCall,
+    SUPPORTED_FUNCTIONS,
     extract_dispatch_from_state,
     extract_state_from_body,
 )
@@ -26,12 +29,15 @@ from ..parse_trigger.parse_trigger import (
     extract_resume_command,
     extract_workflow_command,
     extract_debug_flag,
+    extract_machine_trigger,
 )
 
 __all__ = [
     "MAX_LOOP_COUNT",
     "resolve_next_agent_from_workflow",
     "count_consecutive_same_agent",
+    "_resolve_function_call_path",
+    "_resolve_machine_trigger_path",
 ]
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
@@ -322,12 +328,105 @@ def _resolve_dispatch_path(
     return config
 
 
+def _resolve_function_call_path(
+    function_call: FunctionCall,
+    workflows_dir: str,
+) -> dict:
+    """Resolve config for a stored imperative function call (call_agent).
+
+    An explicit agent-to-agent hand-off pins the target agent and beats
+    workflow continuation (same priority tier as a human mention). The
+    call is one-shot: the fresh state built downstream clears
+    ``function_call`` so a re-trigger no-ops.
+
+    Note: consumption is by supersession (the posted state block shadows
+    older state-bearing comments). If this run's comment fails to post, the
+    stale state still carries the call and a re-trigger would re-fire it —
+    an accepted edge of the same idempotency model dispatch uses.
+    """
+    if function_call.function not in SUPPORTED_FUNCTIONS:
+        # Registry already validated at parse time; guard against drift.
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Unsupported function_call: {function_call.function}",
+        }
+
+    task = (function_call.agent_name or "").strip()
+    if not task:
+        return {"SKIP_AGENT": "true", "REASON": "function_call call_agent has no agent_name"}
+
+    complexity = function_call.complexity or "medium"
+    print(
+        f"Function call: calling agent '{task}' (complexity={complexity})",
+        file=sys.stderr,
+    )
+    return {
+        "task": task,
+        "config_workflow": "",
+        "config_step": "",
+        "config_complexity": complexity,
+        "config_reasoning": "none",
+        "config_temperature": "",
+        "config_round": "",
+        "config_model": "",
+        "config_skills": "",
+        "config_top_p": "",
+        "config_top_k": "",
+        "config_repetition_penalty": "",
+        "config_debug": "",
+        "config_branch": "",
+        "config_parent_workflow": "",
+        "config_parent_workflow_step": "",
+    }
+
+
+def _resolve_machine_trigger_path(
+    trigger_body: str,
+    workflows_dir: str,
+) -> dict:
+    """Resolve config for a CI-posted machine trigger token (issue #478).
+
+    Machine tokens (``bot-subtask-complete``, ``bot-summarizer-trigger``,
+    generic ``bot-trigger: <agent>``) replace the legacy machine-posted
+    ``@@genius`` / ``@@summarize`` comments now that @@mentions are blocked
+    for bot-triggered runs. The target agent is pinned from the token;
+    unknown agents skip with a reason.
+    """
+    machine = extract_machine_trigger(trigger_body)
+    if not machine:
+        return {"SKIP_AGENT": "true", "REASON": "No machine trigger token found"}
+    task, extra = machine
+    if task not in TASK_TO_PROMPT:
+        return {"SKIP_AGENT": "true", "REASON": f"Unknown machine trigger agent: {task}"}
+    label = f"Machine trigger: invoking '{task}'" + (f" (subtask {extra})" if extra else "")
+    print(label, file=sys.stderr)
+    return {
+        "task": task,
+        "config_workflow": "",
+        "config_step": "",
+        "config_complexity": "medium",
+        "config_reasoning": "none",
+        "config_temperature": "",
+        "config_round": "",
+        "config_model": "",
+        "config_skills": "",
+        "config_top_p": "",
+        "config_top_k": "",
+        "config_repetition_penalty": "",
+        "config_debug": "",
+        "config_branch": "",
+        "config_parent_workflow": "",
+        "config_parent_workflow_step": "",
+    }
+
+
 def _resolve_human_path(
     trigger_body: str,
     repo: Optional[str],
     issue_number: Optional[int],
     workflows_dir: str,
     prev_state: Optional["WorkflowState"] = None,
+    pinned_task: Optional[str] = None,
 ) -> dict:
     """Resolve config for a human-triggered comment.
 
@@ -341,6 +440,10 @@ def _resolve_human_path(
         workflows_dir: Path to workflows directory.
         prev_state: Pre-fetched workflow state (from comment history).
             If None or without workflow, will attempt to fetch from history.
+        pinned_task: Agent name pinned by the caller for CI plain-mention
+            triggers (ci_mention). These bodies carry a bot marker, so
+            ``extract_mention_agent`` refuses to yield one for them (issue
+            #478); the caller supplies the mention explicitly instead.
 
     Returns:
         Config dict with task and config_* variables, or SKIP_AGENT dict.
@@ -481,8 +584,10 @@ def _resolve_human_path(
             )
 
     if not wf_resolved:
-        # Fall through to @@mention if /workflow was invalid/unresolvable
-        task = extract_mention_agent(trigger_body) or ""
+        # Fall through to @@mention if /workflow was invalid/unresolvable.
+        # pinned_task covers CI plain-mention triggers whose bot marker would
+        # otherwise make extract_mention_agent return None (issue #478).
+        task = pinned_task or extract_mention_agent(trigger_body) or ""
         wf_name = None
 
     return {
