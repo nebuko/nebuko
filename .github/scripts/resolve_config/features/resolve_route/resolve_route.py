@@ -426,6 +426,7 @@ def _resolve_human_path(
     issue_number: Optional[int],
     workflows_dir: str,
     prev_state: Optional["WorkflowState"] = None,
+    pinned_task: Optional[str] = None,
 ) -> dict:
     """Resolve config for a human-triggered comment.
 
@@ -439,6 +440,10 @@ def _resolve_human_path(
         workflows_dir: Path to workflows directory.
         prev_state: Pre-fetched workflow state (from comment history).
             If None or without workflow, will attempt to fetch from history.
+        pinned_task: Agent name pinned by the caller for CI plain-mention
+            triggers (ci_mention). These bodies carry a bot marker, so
+            ``extract_mention_agent`` refuses to yield one for them (issue
+            #478); the caller supplies the mention explicitly instead.
 
     Returns:
         Config dict with task and config_* variables, or SKIP_AGENT dict.
@@ -579,8 +584,10 @@ def _resolve_human_path(
             )
 
     if not wf_resolved:
-        # Fall through to @@mention if /workflow was invalid/unresolvable
-        task = extract_mention_agent(trigger_body) or ""
+        # Fall through to @@mention if /workflow was invalid/unresolvable.
+        # pinned_task covers CI plain-mention triggers whose bot marker would
+        # otherwise make extract_mention_agent return None (issue #478).
+        task = pinned_task or extract_mention_agent(trigger_body) or ""
         wf_name = None
 
     return {

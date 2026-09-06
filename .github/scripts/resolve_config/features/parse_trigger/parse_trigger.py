@@ -17,6 +17,7 @@ __all__ = [
     "is_bot_comment",
     "has_universal_bot_marker",
     "is_plain_mention_trigger",
+    "extract_plain_mention_agent",
     "extract_mention_agent",
     "extract_machine_trigger",
     "extract_workflow_command",
@@ -80,16 +81,37 @@ def is_plain_mention_trigger(trigger_body: str) -> bool:
 
     Returns:
         True if the body is a mention plus markers only.
+
+    Shape detection only: deliberately checks the raw body (not
+    ``extract_mention_agent``), so CI machine triggers carrying the universal
+    bot marker are recognized even though bot bodies never yield a routed
+    mention (issue #478). Routing for those bodies still goes through the
+    dedicated machine-token / ci_mention branches.
     """
-    if extract_mention_agent(trigger_body) is None:
+    if extract_plain_mention_agent(trigger_body) is None:
         return False
     without_markers = re.sub(r"<!--.*?-->", " ", trigger_body, flags=re.DOTALL)
-    without_mentions = re.sub(
-        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)",
-        " ",
-        without_markers,
-    )
+    without_mentions = re.sub(_MENTION_RE, " ", without_markers)
     return not without_mentions.strip()
+
+
+def extract_plain_mention_agent(trigger_body: str) -> Optional[str]:
+    """Extract the last @@mention from a trigger body without bot gating.
+
+    Unlike :func:`extract_mention_agent`, this never refuses on bot markers;
+    it is a shape helper used to pin the agent for CI plain-mention triggers
+    that the ci_mention routing branch has already validated (issue #478).
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        Last mentioned agent name, or None when no mention is present.
+    """
+    agents = re.findall(_MENTION_RE, trigger_body)
+    if agents:
+        return agents[-1].replace("@@", "")
+    return None
 
 
 _MENTION_RE = r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)"
