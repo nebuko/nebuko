@@ -91,7 +91,7 @@ Each trigger runs the following sequence inside the `run-task` job:
 
 State lives in issue comments as collapsed JSON between
 `<!-- WORKFLOW_STATE_START -->` / `<!-- WORKFLOW_STATE_END -->` markers (schema:
-[reference.md — WORKFLOW_STATE v1](./reference.md#workflow_state_v1)).
+[reference.md — WORKFLOW_STATE v1](./reference.md#workflow_state-v1)).
 
 Key properties:
 - **Full snapshots** — every step posts a complete state (with accumulated

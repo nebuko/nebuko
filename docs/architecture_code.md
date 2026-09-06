@@ -221,7 +221,7 @@ DDD package-by-feature layout for the layered YAML configuration (`agent-config.
   - Inline partial ref (`"prefix_${llms.x.model_path}"`) → string-only substitution.
   - Recurses through dicts and lists; an undefined ref raises at load time.
 
-**Note:** the workflow grammar documented in [reference.md](./reference.md#workflow_yaml_grammar) is enforced here by the `workflow_*` sub-domain entities.
+**Note:** the workflow grammar documented in [reference.md](./reference.md#workflow-yaml-grammar) is enforced here by the `workflow_*` sub-domain entities.
 
 ---
 

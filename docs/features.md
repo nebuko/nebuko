@@ -34,7 +34,7 @@ routing > next-step > bot fallback. This guarantee exists so explicit human
 intent is never absorbed by an active workflow's `dispatch` object.
 
 Note: **bot agents cannot use `@@mention`** (only humans may); bots hand off via
-the `AGENT_RUN_CONFIG` sentinel ([reference.md](./reference.md#agent_runconfig)).
+the `AGENT_RUN_CONFIG` sentinel ([reference.md](./reference.md#agent_run_config)).
 The loop guard additionally skips a run when a human is pinged *alongside* an
 agent, so the human gets to orchestrate.
 
@@ -131,7 +131,7 @@ Every agent run self-reports metrics in an HTML comment appended to its output:
 - **Schema** — the canonical `Metrics` dataclass lives in
   `.github/scripts/metrics_schema.py` (single source of truth; both writers and
   readers import from it). The compact subset embedded in workflow state is
-  `StateMetrics` (see [reference.md — WORKFLOW_STATE v1](./reference.md#workflow_state_v1)).
+  `StateMetrics` (see [reference.md — WORKFLOW_STATE v1](./reference.md#workflow_state-v1)).
 - **Collection** — the `collect_metrics` feature of `agent_script` extracts
   token counts, latencies, tool-call statistics, and error rates from the
   OpenHands conversation after each run.

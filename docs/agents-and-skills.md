@@ -65,7 +65,7 @@ Iteratively refines issue drafts with the human: rephrases first, asks
 1–5 grouped questions per round with proposed answers, and may delegate context
 collection to `@@ctx` (max one call per round). Tracks progress across stateless
 runs via `<!-- issue-agent-state -->` markers (see
-[reference.md — Bot Marker Conventions](./reference.md#bot_marker_conventions)).
+[reference.md — Bot Marker Conventions](./reference.md#bot-marker-conventions)).
 
 ### issue-reviewer
 Analyzes *completed* issues and their resolution trajectories — agent metrics,

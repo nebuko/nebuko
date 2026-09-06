@@ -118,7 +118,7 @@ Place one Markdown system prompt per agent under `.agents/prompts/`:
 
 Each file describes the agent's role, responsibilities, output contract (how it
 must emit its `AGENT_RUN_CONFIG` dispatch — see
-[reference.md](./reference.md#agent_runconfig)), and constraints. You can start
+[reference.md](./reference.md#agent_run_config)), and constraints. You can start
 with minimal prompts and refine them iteratively; the prompts in this repo's
 [`.agents/prompts/`](../.agents/prompts/) are good starting templates.
 

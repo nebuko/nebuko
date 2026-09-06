@@ -6,7 +6,7 @@ reference the one below it, so adding an agent is a short stanza with no other
 file changes.
 
 For the machine-readable dispatch overrides applied at invocation time, see
-[reference.md — AGENT_RUN_CONFIG](./reference.md#agent_runconfig).
+[reference.md — AGENT_RUN_CONFIG](./reference.md#agent_run_config).
 
 ---
 
@@ -124,10 +124,25 @@ agents:
 Syntax: `${layer.key}` where `layer` is `providers` or `llms`.
 
 Rules:
-- Refs are resolved left-to-right at load time; a value that is a ref is
-  replaced by the full referenced dict.
-- An undefined ref is a hard error at load time.
+- A value that is exactly a single ref (e.g., `"${llms.qwen-3-6-27b}"`) is
+  replaced by the full referenced object (dict).
+- Inline partial refs also work (e.g., `"prefix_${llms.x.model_path}_suffix"`):
+  the ref path may descend into a field (`layer.key.subkey`), and its scalar
+  value is substituted in place of the ref expression.
+- Resolution is recursive and runs at load time; an undefined ref is a hard
+  error at load time.
 - Refs can only point at a *lower* layer (`agents → llms → providers`).
+
+Inline partial example:
+
+```yaml
+agents:
+  dev:
+    model: "${llms.qwen-3-6-27b}"       # full-string ref → the whole LLM dict
+    # A hypothetical inline form would be written as:
+    # model_tag: "gfa-${llms.qwen-3-6-27b.model_path}"
+    # → resolves to "gfa-hosted_vllm/qwen-3-6-27b"
+```
 
 Chain example (as found in this repo's `agent-config.yaml`):
 

@@ -4,7 +4,7 @@ Declarative multi-step agent chains. A workflow is a YAML file in `workflows/`
 that names an ordered set of steps; each step runs one agent (or mounts a
 sub-workflow), and routing between steps is driven by `next` and `conditions`.
 The full key-by-key grammar lives in
-[reference.md — Workflow YAML Grammar](./reference.md#workflow_yaml_grammar).
+[reference.md — Workflow YAML Grammar](./reference.md#workflow-yaml-grammar).
 
 ---
 

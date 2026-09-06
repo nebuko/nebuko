@@ -9,9 +9,9 @@ environment-variable catalog, and the bot marker conventions.
 ## AGENT_RUN_CONFIG
 
 Agents communicate hand-offs using a single-line HTML-comment sentinel that
-carries a compact JSON payload. This module's canonical pattern is owned by
+carries a compact JSON payload. The canonical matching pattern is defined in
 `.github/scripts/validate_output.py`; all consumers (output building, comment
-preparation) import it from there.
+preparation) reuse it from there.
 
 ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
@@ -237,7 +237,7 @@ writes to `GITHUB_ENV` the same way.
 | `<!-- bot-workflow-terminal -->` | Universal bot marker prepended (line 1) to every CI-posted comment. Makes human-vs-bot classification deterministic. Defined as `BOT_MARKER` in `github_client.py`. |
 | `<!-- bot-agent-{name} -->` | Per-agent marker identifying which agent posted a comment (e.g., `<!-- bot-agent-genius -->`). Used by circuit breaker and metrics extraction. |
 | `<!-- bot-agent-summary -->` | Marks a summarizer output; the summarizer gate checks for it before triggering again. |
-| `<!-- AGENT_RUN_CONFIG ... -->` | Dispatch sentinel — see [AGENT_RUN_CONFIG](#agent_runconfig). Canonical regex in `validate_output.py`: `<!--(?:[ \t])*AGENT_RUN_CONFIG[ \t]+(\{.*?\})(?:[ \t])*-->` (single-line, no DOTALL). |
-| `<!-- WORKFLOW_STATE_START -->` ... `<!-- WORKFLOW_STATE_END -->` | Collapsed JSON workflow-state section — see [WORKFLOW_STATE v1](#workflow_state_v1). |
+| `<!-- AGENT_RUN_CONFIG ... -->` | Dispatch sentinel — see [AGENT_RUN_CONFIG](#agent_run_config). Canonical regex in `validate_output.py`: `<!--(?:[ \t])*AGENT_RUN_CONFIG[ \t]+(\{.*?\})(?:[ \t])*-->` (single-line, no DOTALL). |
+| `<!-- WORKFLOW_STATE_START -->` ... `<!-- WORKFLOW_STATE_END -->` | Collapsed JSON workflow-state section — see [WORKFLOW_STATE v1](#workflow_state-v1). |
 | `<!-- agent-metrics: {...} -->` | Per-run metrics (full `Metrics` schema JSON), extracted and aggregated by `summarize_metrics.py` on issue close. May span multiple lines. |
 | `<!-- issue-agent-state: round=N,status=S -->` | Issue-refinement agent state markers (see `AGENTS.md`). |
