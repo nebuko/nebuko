@@ -13,6 +13,7 @@ from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.state_metrics.state_metrics import StateMetrics
 from .sub_domains.step_resolution.step_resolution import StepResolution
+from .sub_domains.function_call import FunctionCall, SUPPORTED_FUNCTIONS
 
 # Features
 from .features.build_state.build_state import build_state
@@ -26,6 +27,11 @@ from .features.get_last_state.get_last_state import (
 # Dispatch feature
 from .sub_domains.dispatch.features.get_dispatch_from_state.get_dispatch_from_state import (
     extract_dispatch_from_state,
+)
+
+# FunctionCall feature
+from .sub_domains.function_call.features.extract_function_call.extract_function_call import (
+    extract_function_call,
 )
 
 # Facade — import from the module directly to avoid circular import with this package
@@ -47,6 +53,8 @@ __all__ = [
     "PullRequestInfo",
     "StateMetrics",
     "StepResolution",
+    "FunctionCall",
+    "SUPPORTED_FUNCTIONS",
     # Features
     "build_state",
     "state_to_json",
@@ -54,6 +62,7 @@ __all__ = [
     "extract_latest_state_from_comments",
     "extract_state_from_body",
     "extract_dispatch_from_state",
+    "extract_function_call",
     # Facade
     "WorkflowState",
     "STATE_MARKER_START",

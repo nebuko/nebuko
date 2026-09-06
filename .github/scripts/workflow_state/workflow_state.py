@@ -7,6 +7,7 @@ from .sub_domains.state_metrics.state_metrics import StateMetrics
 from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.dispatch.dispatch import Dispatch
+from .sub_domains.function_call import FunctionCall
 from .sub_domains.step_resolution.step_resolution import StepResolution
 
 STATE_MARKER_START = "<!-- WORKFLOW_STATE_START -->"
@@ -54,6 +55,10 @@ class WorkflowState(BaseModel):
     pull_request: Optional[PullRequestInfo] = None
     dispatch: Optional[Dispatch] = None
     resolution: Optional[StepResolution] = None
+    # Imperative one-shot hand-off (AGENT_RUN_CONFIG function_call section).
+    # Consumed by the next run's resolver, which emits a fresh state with it
+    # cleared so it cannot re-fire (consumption by supersession).
+    function_call: Optional[FunctionCall] = None
 
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json
@@ -87,6 +92,7 @@ def go_next(
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
     dispatch: Optional[Dispatch] = None,
+    function_call: Optional[FunctionCall] = None,
 ) -> WorkflowState:
     from .features.build_state.build_state import build_state
     return build_state(
@@ -108,4 +114,5 @@ def go_next(
         pull_request=pull_request,
         resolution=resolution,
         dispatch=dispatch,
+        function_call=function_call,
     )

@@ -17,16 +17,20 @@ from .features.parse_trigger.parse_trigger import (
     is_bot_comment,
     has_universal_bot_marker,
     is_plain_mention_trigger,
+    extract_plain_mention_agent,
     extract_mention_agent,
     extract_workflow_command,
     extract_force_next_command,
     extract_resume_command,
     extract_debug_flag,
+    extract_machine_trigger,
     _parse_trigger_body,
 )
 from .features.resolve_route.resolve_route import (
     _resolve_resume_path,
     _resolve_dispatch_path,
+    _resolve_function_call_path,
+    _resolve_machine_trigger_path,
     _resolve_human_path,
     _resolve_bot_fallback_path,
     _resolve_workflow_next_step,
@@ -138,8 +142,29 @@ def resolve_config(
     elif human_mention or ci_mention:
         # Human @@mention (e.g. @@ctx) takes priority over auto-dispatch
         # so standalone agent calls work even when a workflow is active.
-        # ci_mention covers CI-posted plain mention triggers (see above).
-        config = _resolve_human_path(trigger_body, repo, issue_number, workflows_dir)
+        # ci_mention covers CI-posted plain mention triggers (see above):
+        # their universal marker makes them bot bodies, so extract_mention
+        # agent returns None — pin the agent from the raw shape instead.
+        ci_agent = (
+            extract_plain_mention_agent(trigger_body)
+            if ci_mention and not human_mention
+            else None
+        )
+        config = _resolve_human_path(
+            trigger_body, repo, issue_number, workflows_dir,
+            pinned_task=ci_agent,
+        )
+    elif prev_state and prev_state.function_call:
+        # Imperative agent-to-agent hand-off (call_agent): explicit pinning of
+        # the next agent, beats workflow continuation (same tier as human
+        # mention). Consumed once — the fresh state built for the called agent
+        # clears the field, so a re-trigger no-ops.
+        config = _resolve_function_call_path(prev_state.function_call, workflows_dir)
+    elif extract_machine_trigger(trigger_body):
+        # CI-posted machine trigger token (bot-subtask-complete /
+        # bot-summarizer-trigger / bot-trigger) — replaces the legacy
+        # machine-posted @@genius / @@summarize comments (issue #478).
+        config = _resolve_machine_trigger_path(trigger_body, workflows_dir)
     elif prev_state and dispatch_obj:
         # Auto-dispatch: workflow state with dispatch object — follow the workflow.
         config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)

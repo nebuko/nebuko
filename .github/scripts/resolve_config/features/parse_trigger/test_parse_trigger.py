@@ -8,6 +8,7 @@ from resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
     build_trigger_commands,
     extract_debug_flag,
     extract_force_next_command,
+    extract_machine_trigger,
     extract_mention_agent,
     extract_resume_command,
     extract_workflow_command,
@@ -95,6 +96,45 @@ class TestExtractMentionAgent:
     def test_no_mention(self):
         assert extract_mention_agent("just some text") is None
 
+    def test_bot_body_never_yields_mention(self):
+        # Bots cannot @@mention — stray tokens in bot prose must not re-route
+        # execution (issue #478).
+        assert (
+            extract_mention_agent("<!-- bot-agent-genius -->\nask @@ctx please")
+            is None
+        )
+
+    def test_bot_body_warning_logs_ignored_mentions(self, capsys):
+        extract_mention_agent(
+            "<!-- bot-agent-dev -->\nsee @@genius and @@ctx above"
+        )
+        err = capsys.readouterr().err
+        assert "@@genius" in err and "@@ctx" in err
+
+
+class TestExtractMachineTrigger:
+    def test_subtask_complete_maps_to_genius_with_index(self):
+        assert extract_machine_trigger(
+            "<!-- bot-subtask-complete: 3 -->"
+        ) == ("genius", "3")
+
+    def test_summarizer_trigger(self):
+        assert extract_machine_trigger(
+            "<!-- bot-summarizer-trigger -->"
+        ) == ("summarize", None)
+
+    def test_generic_trigger(self):
+        assert extract_machine_trigger(
+            "<!-- bot-trigger: review -->"
+        ) == ("review", None)
+
+    def test_no_token(self):
+        assert extract_machine_trigger("plain human comment @@dev") is None
+
+    def test_subtask_complete_beats_generic(self):
+        body = "<!-- bot-subtask-complete: 1 -->\n<!-- bot-trigger: dev -->"
+        assert extract_machine_trigger(body) == ("genius", "1")
+
 
 class TestExtractWorkflowCommand:
     def test_matches_first_line(self):
@@ -153,7 +193,8 @@ class TestBuildTriggerCommands:
         assert tc.is_bot is True
         assert tc.workflow_cmd == "default"
         assert tc.debug is True
-        assert tc.mention_agent == "dev"
+        # Bot bodies never yield a mention (issue #478).
+        assert tc.mention_agent is None
         assert tc.force_next is None
         assert tc.resume is None
 

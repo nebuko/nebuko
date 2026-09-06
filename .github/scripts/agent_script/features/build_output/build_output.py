@@ -18,11 +18,13 @@ from validate_output import (
 )
 from workflow_state import (
     Dispatch,
+    FunctionCall,
     IssueInfo,
     PullRequestInfo,
     StepResolution,
     WorkflowState,
 )
+from workflow_state import extract_function_call
 from workflow_state.features.build_state.build_state import build_state
 from workflow_state.features.to_json.to_json import state_to_json
 
@@ -388,14 +390,18 @@ def build_output(
     pr_info = _build_pr_info()
     resolution = _build_resolution()
 
-    # ── Extract dispatch from agent output ────────────────────────
+    # ── Extract dispatch + function_call from agent output ─────────
     dispatch: Optional[Dispatch] = None
+    function_call: Optional[FunctionCall] = None
     if final_message:
         if has_unterminated_agent_run_config(final_message):
             logger.warning("Unterminated AGENT_RUN_CONFIG sentinel detected (truncated output)")
         payload = extract_dispatch(final_message)
         if payload is not None:
             dispatch = agent_run_config_to_dispatch(payload)
+            # extract_dispatch only returns payloads it already json-parsed,
+            # so this re-parse cannot fail (valid-JSON guarantee).
+            function_call = extract_function_call(json.loads(payload))
         # Strip AGENT_RUN_CONFIG sentinels from final_message so they don't
         # appear in the visible comment body — dispatch is now stored structurally
         # in workflow_state.dispatch instead.
@@ -432,6 +438,7 @@ def build_output(
         pull_request=pr_info,
         resolution=resolution,
         dispatch=dispatch,
+        function_call=function_call,
         inject_context=inject_context,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
