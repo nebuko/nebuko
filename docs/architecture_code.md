@@ -1,7 +1,7 @@
 # DDD Package-by-Feature Architecture
 
 > **Status:** In progress — canonical implementation in PR #335 (open).  
-> **Scope:** `.github/scripts/workflow_state/` and `.github/scripts/resolve_config/` packages.
+> **Scope:** `.github/scripts/workflow_state/`, `.github/scripts/resolve_config/`, `.github/scripts/config/`, and `.github/scripts/agent_script/` packages.
 
 ---
 
@@ -186,3 +186,87 @@ Functions like `build_state()` follow a functional pattern: given a previous sta
 - Predictable behavior (same inputs → same outputs).
 - Easy testing (pure I/O contracts).
 - Rollback safety (previous states remain intact).
+
+---
+
+## 7. `config/` package
+
+DDD package-by-feature layout for the layered YAML configuration (`agent-config.yaml`) and workflow definitions. Like the other packages, `__init__.py` re-exports the public surface so consumers can import from the package root.
+
+```
+.github/scripts/config/
+├── __init__.py                                # Package facade: re-exports all public symbols
+├── config.py                                  # Facade constants (CONFIG_DEFAULT_PATH)
+├── features/
+│   ├── load_config/load_config.py             # load_config() — parse + validate agent-config.yaml
+│   ├── load_workflow/load_workflow.py         # load_workflow(), resolve_workflow_reference()
+│   └── resolve_refs/resolve_refs.py           # resolve_refs(), REF_PATTERN
+└── sub_domains/                               # Bounded contexts (Pydantic entities)
+    ├── provider_config/                       # ProviderConfig: api_url + api_token_env
+    ├── llm_config/                            # LLMConfig: model_path, provider ref, sampling params
+    ├── agent_config/                          # AgentConfig: model ref, prompt_file, skills, tools
+    ├── app_config/                            # AppConfig: the full providers/llms/agents tree
+    ├── workflow_definition/                   # WorkflowDefinition: name, steps, trigger
+    ├── workflow_step/                         # WorkflowStep: agent/workflow, next, conditions, skill
+    ├── workflow_trigger/                      # WorkflowTrigger: trigger.agents
+    └── workflow_condition/                    # WorkflowCondition: on_result → next
+```
+
+**Key behaviors:**
+
+- `load_config(path)` — parses and validates the layered config into `AppConfig`; fails fast on schema violations.
+- `load_workflow(path)` — loads a `workflows/*.yaml` file into a `WorkflowDefinition`. Also handles workflow *references* (`resolve_workflow_reference`), where a step's `workflow:` value may be a workflow name or a path like `tmp_impl/workflow.yaml`.
+- `resolve_refs(config)` — resolves `${layer.key.subkey}` references (see [configuration.md](./configuration.md#ref-cross-layer-resolution)):
+  - Full-string ref (`"${providers.openrouter}"`) → replaced by the referenced object itself.
+  - Inline partial ref (`"prefix_${llms.x.model_path}"`) → string-only substitution.
+  - Recurses through dicts and lists; an undefined ref raises at load time.
+
+**Note:** the workflow grammar documented in [reference.md](./reference.md#workflow-yaml-grammar) is enforced here by the `workflow_*` sub-domain entities.
+
+---
+
+## 8. `agent_script/` package
+
+The OpenHands execution layer. Entry point `agent_script.py` is a slim orchestrator that chains the features below; all heavy lifting lives in `features/`.
+
+```
+.github/scripts/agent_script/
+├── agent_script.py                            # Slim entry point (orchestrates the features)
+├── features/
+│   ├── load_prompt/                           # Load system prompt from the agent's prompt_file
+│   ├── resolve_llm_config/                    # Resolve provider/LLM config + dispatch overrides
+│   ├── run_agent/                             # Agent/Conversation creation + supervised execution
+│   │   ├── run_agent.py                       #   async arun() under a watchdog
+│   │   ├── run_watchdog.py                    #   soft-timeout watchdog (interrupt())
+│   │   ├── timeout_budget.py                  #   AGENT_SOFT_TIMEOUT_MINUTES / WIND_DOWN_TIMEOUT_MINUTES
+│   │   ├── wind_down_prompt.py                #   conclusion prompt sent when budget elapses
+│   │   └── run_outcome.py                     #   RunOutcome classification (finished/interrupted/...)
+│   ├── build_output/                          # Build final_message.txt + fresh WorkflowState snapshot
+│   ├── collect_metrics/                       # Extract the agent-metrics payload from the run
+│   ├── ensure_pr/                             # Deterministic PR fallback (commit/push/open PR)
+│   ├── extract_recovery_trace/                # Capture the tail of interrupted runs
+│   └── extract_split_plan/                    # Pull <splitPlan> blocks out of the final message
+└── sub_domains/                               # Pure-function bounded contexts
+    ├── message_splitter/                      # split_message() — paragraph/line/sentence-boundary splits
+    ├── metrics/metrics_collector.py           # Metrics collection helpers
+    ├── prompt/                                # Prompt assembly helpers
+    └── split_plan/                            # extract_split_plan()/strip_split_plan() pure functions
+```
+
+**Soft-timeout escalation chain** (issue #489):
+
+```
+arun() under watchdog ──budget elapsed──► conversation.interrupt()
+        │                                        │
+     completes                              wind-down run (own budget)
+        │                                        │ uncooperative / budget over
+        ▼                                        ▼
+   build_output + metrics                ensure_pr (git commit → push → open PR, no LLM)
+                                            + extract_recovery_trace
+```
+
+**Design notes:**
+
+- `sub_domains/` here are *pure function modules* (e.g., `split_message`, `extract_split_plan`) rather than Pydantic entities — the "entity vs behavior" split of §2 still applies, the entities simply have shape.
+- All external side effects (LLM calls, git, gh CLI) are confined to the feature layer; sub-domain functions are pure I/O and unit-tested in isolation.
+- Feature details for users are in [features.md — Execution Layer](./features.md#execution-layer).
