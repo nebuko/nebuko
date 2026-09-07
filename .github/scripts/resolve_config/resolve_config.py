@@ -22,6 +22,7 @@ from .features.parse_trigger.parse_trigger import (
     extract_workflow_command,
     extract_force_next_command,
     extract_resume_command,
+    normalize_resume_input,
     extract_debug_flag,
     extract_machine_trigger,
     _parse_trigger_body,
@@ -121,8 +122,10 @@ def resolve_config(
     elif resume_cmd is not None and prev_state and prev_state.workflow and \
          (prev_state.dispatch is None):
         # /workflow resume with no dispatch — advance to next step, carrying
-        # human input forward (issue #420: resolution-only state).
-        human_input = trigger_body.replace("/workflow resume", "").strip()
+        # human input forward (issue #420: resolution-only state). A bare
+        # resume maps to the BARE_RESUME_INPUT sentinel so the human_gate
+        # interceptor (issue #506) treats this run as human-triggered.
+        human_input = normalize_resume_input(resume_cmd)
         config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir)
         config["config_human_resume_input"] = human_input
     elif force_next:

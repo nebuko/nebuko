@@ -38,12 +38,38 @@ steps:
   it reports in its dispatch (`status` / `task_hint`). Always include a
   catch-all (e.g., `default`) so routing stays deterministic.
 - `skill: [...]` attaches extra prompt context from `skills/` to that step.
-- `human_gate: true` marks a step that waits for human approval before the
-  workflow advances.
+- `human_gate: true` marks a step as a **security boundary**: the workflow is
+  held after that step until a human releases it (see [Human Gates](#human-gates)).
 - Workflows can be started by an `@@mention` (matching `trigger.agents`), a
   `/workflow <name>` command, or a `dispatch` field pointing at them. Human
   commands override state-based routing — see the routing cascade in
   [architecture.md](./architecture.md#routing-cascade).
+
+---
+
+## Human Gates
+
+`human_gate: true` is a security boundary enforced by the engine — not a
+routing choice made by the agent. It guarantees that **no LLM can advance the
+workflow past a gated step on its own**; only a human action releases it.
+
+Mechanics:
+
+1. The gated step's agent finishes and emits `advance`. The engine intercepts
+   the dispatch and records `hold` (reason `human_gate:<step>`). The workflow
+   stops; the step's output stays posted on the issue for human review.
+2. A human reviews the output and runs `/workflow resume [optional feedback]`.
+   This re-runs the gated step with the human's text injected into the agent's
+   context.
+3. On that re-run the gate does **not** fire again — the human's resume is the
+   authorization. If the agent approves immediately it advances to the next
+   step; if it must rework based on the feedback, the result still advances
+   once it emits `advance`.
+4. If the agent `loop`s after a resume, the flow is auto-triggered again, and
+   the final `advance` re-triggers the gate: fresh human validation is required.
+
+The gate intercepts only `advance` (and an absent dispatch). `terminate` is
+never intercepted, and `loop` retries within a step are not intercepted.
 
 ---
 

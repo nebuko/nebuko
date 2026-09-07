@@ -91,3 +91,22 @@ class TestWorkflowStep:
         )
         assert step.human_gate is True
         assert len(step.conditions) == 2
+
+    def test_human_gate_step_with_next_and_conditions_is_valid(self):
+        # Guard: a gated step may define both `next` and `conditions`.
+        # `next` acts as fallback routing when the agent reports a branch no
+        # condition matches (issue #506 review dispute over this combo).
+        conditions = [
+            WorkflowCondition(on_result="approved", next="implement"),
+            WorkflowCondition(on_result="rejected", next="stub"),
+        ]
+        step = WorkflowStep(
+            name="stub_approval",
+            agent="genius",
+            human_gate=True,
+            conditions=conditions,
+            next="implement",
+        )
+        assert step.human_gate is True
+        assert step.next == "implement"
+        assert len(step.conditions) == 2

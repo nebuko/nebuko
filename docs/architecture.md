@@ -134,6 +134,18 @@ active workflow's `dispatch` object. If no state is found in the current body,
 the router fetches the last state from the issue comment history first.
 `DEBUG=true` in a body routes to the debug/recovery path instead.
 
+### The `human_gate` intercept
+
+A security boundary applies **before** the workflow state is posted: when the
+*completing* step is defined with `human_gate: true`, the engine (in
+`build_output.py`) overrides the agent's `advance` dispatch to `hold`
+(reason `human_gate:<step>`), so every subsequent trigger sees a held
+workflow and the chain stops. The override is skipped when the completing run
+was itself triggered by `/workflow resume` — the human's resume is the
+authorization that releases the gate. `terminate` is never intercepted, and
+`loop` retries are not intercepted (the gate fires on step transitions). See
+[workflows.md — Human Gates](./workflows.md#human-gates).
+
 ---
 
 ## Sub-Workflow Composition

@@ -31,6 +31,7 @@ from ..parse_trigger.parse_trigger import (
     extract_workflow_command,
     extract_debug_flag,
     extract_machine_trigger,
+    normalize_resume_input,
 )
 
 __all__ = [
@@ -181,10 +182,11 @@ def _resolve_resume_path(
             "REASON": f"resume: step '{current_step_in_wf}' has no agent defined",
         }
 
-    # Extract human input text from the resume command
-    human_input = extract_resume_command(trigger_body)
-    if human_input is None:
-        human_input = ""
+    # Extract human input text from the resume command. A bare resume
+    # (no feedback text) maps to the BARE_RESUME_INPUT sentinel so the
+    # human_gate interceptor (issue #506) recognizes this run as
+    # human-triggered and lets the re-run's advance pass the gate.
+    human_input = normalize_resume_input(extract_resume_command(trigger_body))
 
     # Copy dispatch parameters from previous state so the step re-runs
     # with the same LLM settings (model, temperature, etc.)
