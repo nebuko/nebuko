@@ -13,6 +13,7 @@ from config import load_workflow
 from resolve_workflow import (
     resolve_next_from_workflow,
     _is_terminal_step,
+    _load_workflow_by_reference,
     TASK_TO_PROMPT,
 )
 from workflow_state import (
@@ -328,9 +329,37 @@ def _resolve_dispatch_path(
     return config
 
 
+def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str) -> str:
+    """Resolve the workflow step that ``callee`` should run (issue #507).
+
+    When a caller hands off via ``function_call`` while a workflow is active,
+    the callee's actual workflow step must be established — otherwise the
+    callee's posted state inherits the *caller's* stale step and the next
+    re-trigger mis-resolves the next task to the callee itself, which the
+    same-agent loop guard then skips (issue #506 repro).
+
+    Chain: the linear successor of ``current_step`` whose ``agent == callee``
+    (matches in-workflow hand-offs such as genius(analyze) -> ctx(context));
+    failing that, the first workflow step owned by ``callee``. Empty string
+    when the workflow cannot be loaded or owns no step for the callee.
+    """
+    try:
+        result = resolve_next_from_workflow(wf_name, current_step, workflows_dir)
+    except Exception:
+        return ""
+    if result and result.get("task") == callee and result.get("step"):
+        return result["step"]
+    workflow = _load_workflow_by_reference(wf_name, workflows_dir)
+    for step in getattr(workflow, "steps", None) or []:
+        if getattr(step, "agent", None) == callee and getattr(step, "name", ""):
+            return step.name
+    return ""
+
+
 def _resolve_function_call_path(
     function_call: FunctionCall,
     workflows_dir: str,
+    prev_state: Optional["WorkflowState"] = None,
 ) -> dict:
     """Resolve config for a stored imperative function call (call_agent).
 
@@ -338,6 +367,13 @@ def _resolve_function_call_path(
     workflow continuation (same priority tier as a human mention). The
     call is one-shot: the fresh state built downstream clears
     ``function_call`` so a re-trigger no-ops.
+
+    When a workflow is active (``prev_state.workflow`` set), the workflow
+    context is carried through — ``config_workflow`` is the active workflow
+    and ``config_step`` is the callee's step resolved from it (issue #507:
+    returning empty severed the step context, so the callee posted a stale
+    step and the following re-trigger dead-ended on the loop guard).
+    Non-workflow calls keep the legacy empty behavior.
 
     Note: consumption is by supersession (the posted state block shadows
     older state-bearing comments). If this run's comment fails to post, the
@@ -356,14 +392,19 @@ def _resolve_function_call_path(
         return {"SKIP_AGENT": "true", "REASON": "function_call call_agent has no agent_name"}
 
     complexity = function_call.complexity or "medium"
+    wf_name = (getattr(prev_state, "workflow", "") or "") if prev_state is not None else ""
+    # Establish the callee's step from the active workflow so the callee's
+    # posted state records the step it actually ran (issue #507).
+    wf_step = _resolve_callee_step(wf_name, getattr(prev_state, "step", "") or "", task, workflows_dir) if wf_name else ""
     print(
-        f"Function call: calling agent '{task}' (complexity={complexity})",
+        f"Function call: calling agent '{task}' (complexity={complexity}, "
+        f"workflow='{wf_name}', step='{wf_step}')",
         file=sys.stderr,
     )
     return {
         "task": task,
-        "config_workflow": "",
-        "config_step": "",
+        "config_workflow": wf_name,
+        "config_step": wf_step,
         "config_complexity": complexity,
         "config_reasoning": "none",
         "config_temperature": "",
