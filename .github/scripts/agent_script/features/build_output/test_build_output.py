@@ -1,12 +1,17 @@
 """Tests for build_output module."""
 
 import json
+import os
+import tempfile
 import unittest
+from unittest import mock
 from build_output import (
     agent_run_config_to_dispatch,
+    apply_human_gate_intercept,
     is_malformed_final_message,
 )
 from validate_output import strip_agent_run_config
+from workflow_state import Dispatch
 
 
 class TestAgentRunConfigToDispatch(unittest.TestCase):
@@ -252,6 +257,193 @@ class TestIsMalformedFinalMessage(unittest.TestCase):
         """Unclosed tool_code tag is malformed."""
         msg = "<tool_code>code here"
         self.assertTrue(is_malformed_final_message(msg))
+
+
+class TestHumanGateIntercept(unittest.TestCase):
+    """Test apply_human_gate_intercept() — issue #506 human gate boundary."""
+
+    def _write_workflow(self, tmpdir, name, steps_yaml):
+        path = os.path.join(tmpdir, f"{name}.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                f"name: {name}\n"
+                f'description: "test workflow"\n'
+                f"trigger:\n  agents: [genius]\n"
+                f"steps:\n{steps_yaml}"
+            )
+        return path
+
+    def test_gate_step_advance_non_resume_becomes_hold(self):
+        """advance on a human_gate step (not a resume) is overridden to hold."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir}
+            dispatch = Dispatch(status="advance")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "wf", "implement", False)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "hold")
+        self.assertEqual(result.reason, "human_gate:implement")
+
+    def test_gate_step_advance_resume_bypasses(self):
+        """A /workflow resume run bypasses the gate and passes advance through."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir}
+            dispatch = Dispatch(status="advance")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "wf", "implement", True)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "advance")
+
+    def test_non_gate_step_advance_unchanged(self):
+        """A step without human_gate advances normally."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: genius\n    next: implement\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir}
+            dispatch = Dispatch(status="advance")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "wf", "plan", False)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "advance")
+
+    def test_loop_not_intercepted(self):
+        """loop outcomes are never intercepted by the gate."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir}
+            dispatch = Dispatch(status="loop")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "wf", "implement", False)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "loop")
+
+    def test_terminate_bypasses_gate(self):
+        """terminate outcomes are never intercepted by the gate."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir}
+            dispatch = Dispatch(status="terminate")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "wf", "implement", False)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "terminate")
+
+    def test_missing_dispatch_on_gate_step_becomes_hold(self):
+        """No dispatch resolves to advance downstream; gate intercepts it as hold."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir}
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(None, "wf", "implement", False)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "hold")
+        self.assertEqual(result.reason, "human_gate:implement")
+
+    def test_missing_workflow_name_never_crashes(self):
+        """Missing workflow name degrades to no-op (no crash, dispatch unchanged)."""
+        dispatch = Dispatch(status="advance")
+        result = apply_human_gate_intercept(dispatch, "", "implement", False)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "advance")
+
+    def test_missing_workflow_file_degrades_to_no_op(self):
+        """A missing/invalid workflow file must not crash and leaves advance intact."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = {"WORKFLOWS_DIR": tmpdir}
+            dispatch = Dispatch(status="advance")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "does-not-exist", "implement", False)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "advance")
+
+
+class TestHumanGateRealWorkflowYaml(unittest.TestCase):
+    """Regression against the real workflows/spec-driven-impl.yaml (issue #506).
+
+    Ensures the shipped YAML still parses (no validator conflict on the
+    next+conditions combo), stub_approval is gated, implement is not, and
+    that the load-bearing 'next: implement' fallback keeps routing alive.
+    """
+
+    @staticmethod
+    def _real_workflows_dir():
+        from pathlib import Path
+        return str(Path(__file__).resolve().parents[5] / "workflows")
+
+    def setUp(self):
+        self.env = {"WORKFLOWS_DIR": self._real_workflows_dir()}
+
+    def test_real_yaml_gated_step_intercepts_advance(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            result = apply_human_gate_intercept(
+                Dispatch(status="advance"), "spec-driven-impl", "stub_approval", False
+            )
+        self.assertEqual(result.status, "hold")
+        self.assertEqual(result.reason, "human_gate:stub_approval")
+
+    def test_real_yaml_gated_step_resume_bypasses(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            result = apply_human_gate_intercept(
+                Dispatch(status="advance"), "spec-driven-impl", "stub_approval", True
+            )
+        self.assertEqual(result.status, "advance")
+
+    def test_real_yaml_non_gated_step_unchanged(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            result = apply_human_gate_intercept(
+                Dispatch(status="advance"), "spec-driven-impl", "implement", False
+            )
+        self.assertEqual(result.status, "advance")
+
+    def test_real_yaml_plain_advance_from_gated_step_routes_on(self):
+        """A plain (non-resume) advance run from stub_approval is intercepted to
+        hold, but resolving its downstream routing lands on the implement step's
+        agent — proving 'next: implement' is load-bearing for the plain-advance path."""
+        from resolve_config import resolve_config
+        import json
+        prompt_base = tempfile.mkdtemp()
+        for role in ("dev", "genius", "ctx", "review"):
+            os.makedirs(os.path.join(prompt_base, role), exist_ok=True)
+            with open(os.path.join(prompt_base, role, "system.md"), "w") as f:
+                f.write(f"# {role}")
+        state = {
+            "version": 1, "workflow": "spec-driven-impl", "step": "stub_approval",
+            "agent": "genius", "phase": "stub_approval", "history": [],
+            "dispatch": {"status": "advance", "complexity": "medium"},
+        }
+        body = "<!-- bot-agent-genius -->\n*Genius answer*\n\n```json\n" \
+               "<!-- WORKFLOW_STATE_START -->\n" + json.dumps(state) + \
+               "\n<!-- WORKFLOW_STATE_END -->\n```"
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            result = resolve_config(body, prompt_base, self._real_workflows_dir(), is_bot=True)
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["WORKFLOW_STEP"], "implement")
+        self.assertEqual(result["SKIP_AGENT"], "false")
 
 
 if __name__ == "__main__":

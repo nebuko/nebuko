@@ -91,7 +91,7 @@ from the git-flow-ai repo (zero-copy). See [workflows.md](./workflows.md).
 | `steps[].conditions[].on_result` | condition | string | yes | Result key reported by the agent (e.g., `approved`, `rejected`, `default`). |
 | `steps[].conditions[].next` | condition | string/null | yes | Target step for that result. |
 | `steps[].skill` | step | string[] | no | Skills attached to the step prompt (files in `skills/`). |
-| `steps[].human_gate` | step | bool | no | Marks the step as requiring human approval before advancing. |
+| `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts the agent's `advance` and holds the workflow until a human releases it with `/workflow resume` (see [workflows.md](./workflows.md#human-gates)). |
 
 Minimal valid workflow:
 
