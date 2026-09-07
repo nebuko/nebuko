@@ -58,17 +58,8 @@ def main():
         logger.error(str(e))
         sys.exit(1)
 
-    # 3. Inject skill context
-    skill_context_file = os.environ.get("SKILL_CONTEXT_FILE", "")
-    if skill_context_file and os.path.isfile(skill_context_file):
-        try:
-            with open(skill_context_file, "r") as f:
-                skill_content = f.read()
-            if skill_content:
-                prompt = f"{prompt}\n\n## Skills\n\n{skill_content}"
-                logger.info(f"Injected skill context ({len(skill_content)} characters)")
-        except (IOError, OSError) as e:
-            logger.warning(f"Failed to load skill context: {e}")
+    # 3. Skill context is injected at the Agent level via the system channel
+    #    (security_policy_filename in run_agent) — no user-prompt append here.
 
     # 4. Resolve LLM config
     llm_config, prompt, agent_cfg = resolve_llm_config(args, prompt)

@@ -30,6 +30,24 @@ from agent_script.features.run_agent.wind_down_prompt import WIND_DOWN_PROMPT
 
 logger = get_logger(__name__)
 
+# SDK sentinel for the built-in security policy (agent/base.py).
+_DEFAULT_SECURITY_POLICY = "security_policy.j2"
+
+
+def _resolve_security_policy() -> str:
+    """Route skills through the system channel; fall back to the SDK default.
+
+    ``SKILL_CONTEXT_FILE`` (populated by CI) points at the concatenated skill
+    content. When present and non-empty it is passed as
+    ``security_policy_filename`` so the SDK inserts the skills verbatim into
+    the system prompt — higher authority than the old user-prompt appendix.
+    """
+    skill_file = os.environ.get("SKILL_CONTEXT_FILE", "")
+    if skill_file and os.path.isfile(skill_file) and os.path.getsize(skill_file) > 0:
+        logger.info(f"Injecting skills via system channel: {skill_file}")
+        return skill_file
+    return _DEFAULT_SECURITY_POLICY
+
 
 def _run_supervised(
     conversation: Conversation,
@@ -143,6 +161,7 @@ def run_agent(
         tools=sdk_tools,
         include_default_tools=include_default_tools,
         system_prompt_kwargs=system_prompt_kwargs,
+        security_policy_filename=_resolve_security_policy(),
         condenser=get_default_condenser(llm=llm),
     )
 
