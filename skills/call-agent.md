@@ -24,6 +24,7 @@ Rules:
 - `agent_name` must be a known agent roster name: `genius`, `ctx`, `dev`, `review`, `issue`, `issue-reviewer`, `summarize`, `debug`, `po`.
 - `complexity` (optional, default `"medium"`): `low`, `medium`, or `high`.
 - The call is **one-shot**: it is consumed by the next run and cleared from the workflow state, so it can never re-fire.
+- **Keep the sentinel on a single line, inside the code fence shown above only.** Do not break the JSON across lines or wrap it in extra markdown fences — extraction is resilient to drift (issue #512), but a clean single-line sentinel is the safest form.
 
 ## Notes
 
