@@ -159,7 +159,7 @@ is authoritative.
 | `step` | string | Step name. |
 | `agent` | string | Agent role. |
 | `summary` | string | One-line summary of what happened. |
-| `comment_id` | int \| null | GitHub comment ID of the step output. |
+| `comment_ids` | int[] | GitHub comment IDs of the step output (multi-part agent messages are posted as several comments; legacy snapshots storing a scalar `comment_id` are coerced to a list on load). |
 | `inject_context` | bool | Whether the comment should be included in the next agent's context. |
 | `artifacts` | string[] | Paths to artifacts produced by the step. |
 | `pin` | bool | Whether the comment is pinned for re-fetch. |
@@ -175,7 +175,7 @@ is authoritative.
   "agent": "ctx",
   "phase": "analysis",
   "history": [
-    {"step": "analyze", "agent": "genius", "summary": "Issue analyzed, plan requested", "comment_id": 1029384, "result": "advance"}
+    {"step": "analyze", "agent": "genius", "summary": "Issue analyzed, plan requested", "comment_ids": [1029384], "result": "advance"}
   ],
   "pinned_comment_ids": [],
   "metrics": {

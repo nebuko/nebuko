@@ -39,7 +39,7 @@ def build_state(
     agent: str = "",
     phase: str = "",
     summary: str = "",
-    comment_id: Optional[int] = None,
+    comment_ids: Optional[list[int]] = None,
     artifacts: Optional[list[str]] = None,
     pin: bool = False,
     inject_context: bool = True,
@@ -68,9 +68,10 @@ def build_state(
         agent: Current agent role.
         phase: Current phase name.
         summary: 1-2 sentence summary of this step's output.
-        comment_id: GitHub comment ID for this step's output.
+        comment_ids: GitHub comment IDs for this step's output (multi-part
+            messages are posted as several comments, issue #504).
         artifacts: List of artifact names produced by this step.
-        pin: If True, add this step's comment_id to pinned_comment_ids.
+        pin: If True, add all of this step's comment_ids to pinned_comment_ids.
         metrics_dict: Full metrics dict from the current agent run.
         context_updates: Key-value pairs to merge into current_context.
         parent_workflow: Parent workflow name (if in a sub-workflow).
@@ -113,7 +114,7 @@ def build_state(
         step=step,
         agent=agent,
         summary=summary,
-        comment_id=comment_id,
+        comment_ids=comment_ids or [],
         artifacts=artifacts or [],
         pin=pin,
         inject_context=inject_context,
@@ -121,11 +122,11 @@ def build_state(
     )
     new_history = base_history + [entry]
 
-    # Handle pinned comments
+    # Handle pinned comments — a pinned multi-part entry pins all of its IDs
     new_pinned = list(base_pinned)
-    if pin and comment_id:
-        if comment_id not in new_pinned:
-            new_pinned.append(comment_id)
+    for cid in comment_ids or []:
+        if pin and cid not in new_pinned:
+            new_pinned.append(cid)
 
     # Build metrics
     new_metrics = None
