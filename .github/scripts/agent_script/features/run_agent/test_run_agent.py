@@ -5,12 +5,14 @@ arming, arun invocation, wind-down trigger, outcome attachment) is exercised.
 """
 
 import asyncio
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from agent_script.features.run_agent.run_agent import (
     _perform_wind_down,
+    _resolve_security_policy,
     _run_supervised,
     run_agent,
 )
@@ -196,6 +198,99 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertIs(convo.run_outcome.status, OutcomeStatus.FAILURE)
         # No wind-down on a crash — only the original prompt is sent.
         self.assertEqual(convo.send_message.call_count, 1)
+
+
+class TestResolveSecurityPolicy(unittest.TestCase):
+    """Skills route through the system channel; SDK default as fallback (#510)."""
+
+    def test_skill_file_routed_to_system_channel(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md") as f:
+            f.write("# Stub-Only Mode\nsentinel skill text\n")
+            f.flush()
+            with patch("agent_script.features.run_agent.run_agent.os.environ", {
+                "SKILL_CONTEXT_FILE": f.name
+            }):
+                self.assertEqual(_resolve_security_policy(), f.name)
+
+    def test_env_var_unset_falls_back_to_default(self):
+        with patch(
+            "agent_script.features.run_agent.run_agent.os.environ", {}
+        ):
+            self.assertEqual(_resolve_security_policy(), "security_policy.j2")
+
+    def test_nonexistent_path_falls_back_to_default(self):
+        with patch(
+            "agent_script.features.run_agent.run_agent.os.environ", {
+                "SKILL_CONTEXT_FILE": "/tmp/definitely-missing-skill-context.md"
+            }
+        ):
+            self.assertEqual(_resolve_security_policy(), "security_policy.j2")
+
+    def test_empty_file_falls_back_to_default(self):
+        with tempfile.NamedTemporaryFile(mode="w") as f:
+            f.flush()
+            with patch("agent_script.features.run_agent.run_agent.os.environ", {
+                "SKILL_CONTEXT_FILE": f.name
+            }):
+                self.assertEqual(_resolve_security_policy(), "security_policy.j2")
+
+
+class TestRunAgentSystemChannelIntegration(unittest.TestCase):
+    """run_agent passes the resolved policy to the Agent constructor."""
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_agent_receives_skill_file_as_security_policy(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        convo = _make_conversation("finished")
+        mock_conversation_cls.return_value = convo
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md") as f:
+            f.write("skill content\n")
+            f.flush()
+            with patch(
+                "agent_script.features.run_agent.run_agent.os.environ", {
+                    "SKILL_CONTEXT_FILE": f.name,
+                    "ROLE_NAME": "dev",
+                }
+            ), patch(
+                "agent_script.features.run_agent.run_agent.get_default_condenser",
+                return_value=None,
+            ):
+                run_agent(llm_config={}, prompt="do the thing")
+        self.assertEqual(
+            mock_agent.call_args.kwargs["security_policy_filename"], f.name
+        )
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_agent_keeps_default_policy_without_skills(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        convo = _make_conversation("finished")
+        mock_conversation_cls.return_value = convo
+        with patch(
+            "agent_script.features.run_agent.run_agent.os.environ",
+            {"ROLE_NAME": "dev"},
+        ), patch(
+            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            return_value=None,
+        ):
+            run_agent(llm_config={}, prompt="do the thing")
+        self.assertEqual(
+            mock_agent.call_args.kwargs["security_policy_filename"],
+            "security_policy.j2",
+        )
 
 
 if __name__ == "__main__":

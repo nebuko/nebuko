@@ -1,5 +1,7 @@
 # Stub-Only Mode
 
+> These constraints are absolute. Violation = failed execution.
+
 You are in stub-implementation mode. Follow these constraints strictly.
 
 ## What You MAY Do
