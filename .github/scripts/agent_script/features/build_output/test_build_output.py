@@ -382,5 +382,69 @@ class TestHumanGateIntercept(unittest.TestCase):
         self.assertEqual(result.status, "advance")
 
 
+class TestHumanGateRealWorkflowYaml(unittest.TestCase):
+    """Regression against the real workflows/spec-driven-impl.yaml (issue #506).
+
+    Ensures the shipped YAML still parses (no validator conflict on the
+    next+conditions combo), stub_approval is gated, implement is not, and
+    that the load-bearing 'next: implement' fallback keeps routing alive.
+    """
+
+    @staticmethod
+    def _real_workflows_dir():
+        from pathlib import Path
+        return str(Path(__file__).resolve().parents[5] / "workflows")
+
+    def setUp(self):
+        self.env = {"WORKFLOWS_DIR": self._real_workflows_dir()}
+
+    def test_real_yaml_gated_step_intercepts_advance(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            result = apply_human_gate_intercept(
+                Dispatch(status="advance"), "spec-driven-impl", "stub_approval", False
+            )
+        self.assertEqual(result.status, "hold")
+        self.assertEqual(result.reason, "human_gate:stub_approval")
+
+    def test_real_yaml_gated_step_resume_bypasses(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            result = apply_human_gate_intercept(
+                Dispatch(status="advance"), "spec-driven-impl", "stub_approval", True
+            )
+        self.assertEqual(result.status, "advance")
+
+    def test_real_yaml_non_gated_step_unchanged(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            result = apply_human_gate_intercept(
+                Dispatch(status="advance"), "spec-driven-impl", "implement", False
+            )
+        self.assertEqual(result.status, "advance")
+
+    def test_real_yaml_plain_advance_from_gated_step_routes_on(self):
+        """A plain (non-resume) advance run from stub_approval is intercepted to
+        hold, but resolving its downstream routing lands on the implement step's
+        agent — proving 'next: implement' is load-bearing for the plain-advance path."""
+        from resolve_config import resolve_config
+        import json
+        prompt_base = tempfile.mkdtemp()
+        for role in ("dev", "genius", "ctx", "review"):
+            os.makedirs(os.path.join(prompt_base, role), exist_ok=True)
+            with open(os.path.join(prompt_base, role, "system.md"), "w") as f:
+                f.write(f"# {role}")
+        state = {
+            "version": 1, "workflow": "spec-driven-impl", "step": "stub_approval",
+            "agent": "genius", "phase": "stub_approval", "history": [],
+            "dispatch": {"status": "advance", "complexity": "medium"},
+        }
+        body = "<!-- bot-agent-genius -->\n*Genius answer*\n\n```json\n" \
+               "<!-- WORKFLOW_STATE_START -->\n" + json.dumps(state) + \
+               "\n<!-- WORKFLOW_STATE_END -->\n```"
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            result = resolve_config(body, prompt_base, self._real_workflows_dir(), is_bot=True)
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["WORKFLOW_STEP"], "implement")
+        self.assertEqual(result["SKIP_AGENT"], "false")
+
+
 if __name__ == "__main__":
     unittest.main()

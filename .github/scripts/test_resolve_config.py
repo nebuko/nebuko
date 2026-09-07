@@ -12,6 +12,8 @@ from resolve_config import (
     extract_workflow_command,
     extract_force_next_command,
     extract_resume_command,
+    normalize_resume_input,
+    BARE_RESUME_INPUT,
     resolve_config,
     resolve_next_agent_from_workflow,
     count_consecutive_same_agent,
@@ -1869,7 +1871,9 @@ class TestResumeIntegration(unittest.TestCase):
             self.assertEqual(result["HUMAN_RESUME_INPUT"], "Yes, approved.")
 
     def test_resume_without_input(self):
-        """Bare resume command (no input text) should still work."""
+        """Bare resume command (no input text) still works and carries the
+        BARE_RESUME_INPUT sentinel so human_gate steps recognize the run as
+        human-triggered (issue #506)."""
         prompt_base = self._setup_prompt_base()
         with tempfile.TemporaryDirectory() as tmpdir:
             wf_path = os.path.join(tmpdir, "default.yaml")
@@ -1886,7 +1890,7 @@ class TestResumeIntegration(unittest.TestCase):
 
             self.assertEqual(result["SKIP_AGENT"], "false")
             self.assertEqual(result["TASK"], "dev")
-            self.assertEqual(result["HUMAN_RESUME_INPUT"], "")
+            self.assertEqual(result["HUMAN_RESUME_INPUT"], BARE_RESUME_INPUT)
 
     def test_resume_with_advance_dispatch_advances_to_next_step(self):
         """Resume with dispatch.status='advance' should advance, not skip."""

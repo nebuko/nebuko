@@ -14,6 +14,8 @@ from resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
     extract_workflow_command,
     is_bot_comment,
     is_plain_mention_trigger,
+    normalize_resume_input,
+    BARE_RESUME_INPUT,
 )
 from resolve_config.sub_domains.trigger_commands.trigger_commands import (  # noqa: E402
     TriggerCommands,
@@ -170,6 +172,23 @@ class TestExtractResumeCommand:
 
     def test_not_a_command(self):
         assert extract_resume_command("/workflow default") is None
+
+
+class TestNormalizeResumeInput:
+    def test_nonempty_text_preserved(self):
+        assert normalize_resume_input("approved") == "approved"
+
+    def test_whitespace_only_becomes_sentinel(self):
+        assert normalize_resume_input("   ") == BARE_RESUME_INPUT
+
+    def test_empty_string_becomes_sentinel(self):
+        assert normalize_resume_input("") == BARE_RESUME_INPUT
+
+    def test_none_returns_empty(self):
+        assert normalize_resume_input(None) == ""
+
+    def test_surrounding_whitespace_stripped(self):
+        assert normalize_resume_input("  lgtm  ") == "lgtm"
 
 
 class TestExtractDebugFlag:

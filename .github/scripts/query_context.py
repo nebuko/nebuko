@@ -426,8 +426,15 @@ def main():
         print("Injected recovery log into agent query context", file=sys.stderr)
 
     # Append human resume input if present (workflow was paused, human provided input)
+    # The BARE_RESUME_INPUT sentinel marks a bare /workflow resume (no feedback
+    # text); it is an authorization signal for human_gate steps only (issue
+    # #506) and must not leak into the prompt as human feedback.
+    try:
+        from resolve_config.features.parse_trigger.parse_trigger import BARE_RESUME_INPUT
+    except ImportError:
+        BARE_RESUME_INPUT = "__resumed__"
     human_resume_input = os.environ.get("HUMAN_RESUME_INPUT", "").strip()
-    if human_resume_input:
+    if human_resume_input and human_resume_input != BARE_RESUME_INPUT:
         history_marker = "\n## History\n"
         resume_section = f"\n## Human Resume Input\n\n{human_resume_input}\n\n"
         if history_marker in query:

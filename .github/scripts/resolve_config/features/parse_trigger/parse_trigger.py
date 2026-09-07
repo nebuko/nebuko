@@ -23,6 +23,8 @@ __all__ = [
     "extract_workflow_command",
     "extract_force_next_command",
     "extract_resume_command",
+    "normalize_resume_input",
+    "BARE_RESUME_INPUT",
     "extract_debug_flag",
     "_parse_trigger_body",
     "build_trigger_commands",
@@ -237,6 +239,32 @@ def extract_resume_command(trigger_body: str) -> Optional[str]:
     if match:
         return match.group(1) if match.group(1) is not None else ""
     return None
+
+
+#: Sentinel value for a bare `/workflow resume` (no feedback text). A bare
+#: resume still carries the authorization signal for human_gate steps
+#: (issue #506) — HUMAN_RESUME_INPUT must be non-empty so the gate
+#: interceptor recognizes the run as human-triggered.
+BARE_RESUME_INPUT = "__resumed__"
+
+
+def normalize_resume_input(resume_text: Optional[str]) -> str:
+    """Map raw /workflow resume text to the HUMAN_RESUME_INPUT value.
+
+    A bare resume (None or blank text) yields the BARE_RESUME_INPUT sentinel;
+    otherwise the stripped human text is returned unchanged.
+
+    Args:
+        resume_text: Result of extract_resume_command (may be None when the
+            trigger is not a resume command).
+
+    Returns:
+        Human feedback text, or the sentinel for a bare resume.
+    """
+    if resume_text is None:
+        return ""
+    text = resume_text.strip()
+    return text if text else BARE_RESUME_INPUT
 
 
 def extract_debug_flag(trigger_body: str) -> bool:
