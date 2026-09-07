@@ -10,6 +10,7 @@ from openhands.sdk import get_logger
 from openhands.sdk.conversation import get_agent_final_response
 from pydantic import ValidationError
 
+from config import load_workflow, resolve_workflow_reference
 from metrics_schema import Metrics
 from validate_output import (
     extract_dispatch,
@@ -149,6 +150,72 @@ def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
     except ValidationError as e:
         logger.warning(f"AGENT_RUN_CONFIG payload failed Dispatch validation: {e}")
         return None
+
+
+def _load_gated_step_def(
+    workflow_name: str,
+    workflow_step: str,
+) -> bool:
+    """Return True if the given step is defined with human_gate: true.
+
+    Loads the workflow YAML via the config package. Any missing/invalid
+    reference (no workflow name, missing file, parse error) degrades to
+    False — the gate must never crash the run, and a broken YAML should
+    fall back to legacy auto-advance rather than fail the whole post-step.
+    """
+    if not workflow_name or not workflow_step:
+        return False
+    try:
+        workflows_dir = os.environ.get("WORKFLOWS_DIR", "workflows")
+        ref = resolve_workflow_reference(workflow_name, workflows_dir)
+        wf_def = load_workflow(str(ref))
+    except Exception as e:
+        logger.warning(f"Human gate check: could not load workflow '{workflow_name}': {e}")
+        return False
+    for step in wf_def.steps:
+        if step.name == workflow_step:
+            return bool(step.human_gate)
+    return False
+
+
+def apply_human_gate_intercept(
+    dispatch: Optional[Dispatch],
+    workflow_name: str,
+    workflow_step: str,
+    is_human_resume: bool,
+) -> Optional[Dispatch]:
+    """Enforce the human_gate security boundary (issue #506).
+
+    A step marked ``human_gate: true`` in the workflow YAML may never advance
+    on its own: an ``advance`` dispatch (or missing dispatch, which resolves
+    to advance downstream) is overridden to ``hold`` unless the run was
+    triggered by a human ``/workflow resume`` (``is_human_resume``). Loop,
+    hold, and terminate outcomes are never intercepted.
+
+    Args:
+        dispatch: Dispatch extracted from the agent output (may be None).
+        workflow_name: Active workflow name (WORKFLOW_NAME env).
+        workflow_step: Step just executed (WORKFLOW_STEP env).
+        is_human_resume: True when the run was triggered by /workflow resume.
+
+    Returns:
+        The (possibly overridden) Dispatch.
+    """
+    if dispatch is not None and dispatch.status != "advance":
+        return dispatch
+    if is_human_resume:
+        return dispatch
+    if not _load_gated_step_def(workflow_name, workflow_step):
+        return dispatch
+    logger.info(
+        f"Human gate: step '{workflow_step}' requires approval — "
+        f"intercepting advance as hold"
+    )
+    if dispatch is None:
+        dispatch = Dispatch()
+    return dispatch.model_copy(
+        update={"status": "hold", "reason": f"human_gate:{workflow_step}"}
+    )
 
 
 def _load_prev_state() -> WorkflowState | None:
@@ -406,6 +473,18 @@ def build_output(
         # appear in the visible comment body — dispatch is now stored structurally
         # in workflow_state.dispatch instead.
         final_message = strip_agent_run_config(final_message)
+
+    # ── Human gate intercept (issue #506) ────────────────────────
+    # The trigger source is the sole authorization: a resume-triggered run
+    # (HUMAN_RESUME_INPUT present) passes; anything else on a gated step is
+    # held for human review.
+    is_human_resume = bool(os.environ.get("HUMAN_RESUME_INPUT", "").strip())
+    dispatch = apply_human_gate_intercept(
+        dispatch,
+        workflow_name=workflow_name,
+        workflow_step=workflow_step,
+        is_human_resume=is_human_resume,
+    )
 
     # ── Recovery log: capture execution trace on failure ──────────
     if is_graceful_timeout or not final_message or is_malformed_final_message(final_message):
