@@ -73,6 +73,165 @@ def extract_agent_run_configs(text: str) -> list[str]:
     return [match.strip() for match in matches if match.strip()]
 
 
+# Markdown fence lines (``` / ```) sometimes wrap a sentinel. They are
+# syntactic noise for JSON parsing and are dropped before the payload is read.
+_FENCE_RE = re.compile(r"^[\t ]*`{3,}.*$")
+
+
+@dataclass
+class ExtractResult:
+    """Outcome of resilient AGENT_RUN_CONFIG extraction.
+
+    ``payload`` is the raw JSON payload of the last valid block (canonical or
+    lenient path), or None. ``parse_error`` carries a diagnostic when a
+    sentinel block was located but could not be parsed as a JSON object, so
+    callers can distinguish "agent ended without any sentinel" from
+    "sentinel present but unparseable" (issue #512).
+    """
+
+    payload: Optional[str]
+    parse_error: Optional[str] = None
+
+
+def _block_payload(raw_block: str) -> str:
+    """Extract the top-level balanced ``{...}``/``[...]`` span of a block.
+
+    Balances the outermost object or array while respecting JSON strings, so
+    braces inside string values cannot end the span early. Returns the empty
+    string when no balanced object/array is present (e.g. a truncated final
+    line).
+    """
+    start = raw_block.find("{")
+    array_start = raw_block.find("[")
+    if array_start >= 0 and (start < 0 or array_start < start):
+        start = array_start
+    if start < 0:
+        return ""
+    open_ch, close_ch = raw_block[start], "}"
+    if open_ch == "[":
+        close_ch = "]"
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(raw_block)):
+        ch = raw_block[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return raw_block[start : i + 1]
+    return ""
+
+
+def _clean_raw_block(raw_block: str) -> str:
+    """Normalize a raw sentinel block before JSON parsing.
+
+    Drops markdown fence lines and folds line breaks (the #511 failure shape:
+    the model split the single-line sentinel and wrapped it in stray fences).
+    """
+    kept = [line for line in raw_block.split("\n") if not _FENCE_RE.match(line)]
+    return "\n".join(kept)
+
+
+def _lenient_parse(payload: str) -> tuple[Optional[str], Optional[str]]:
+    """Parse one raw object payload leniently.
+
+    Tries the payload as-is first; on failure retries with markdown fence
+    lines removed (the #511 failure shape: the model wrapped the sentinel in
+    stray ``` fences). Returns (payload, None) on success, (None, reason)
+    when no parse succeeds.
+    """
+    def _loads(candidate: str):
+        try:
+            data = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return candidate if isinstance(data, dict) else None
+
+    result = _loads(payload)
+    if result is not None:
+        return result, None
+
+    cleaned = _clean_raw_block(payload)
+    if cleaned != payload:
+        result = _loads(cleaned)
+        if result is not None:
+            return result, None
+        payload = cleaned
+
+    try:
+        json.loads(payload)
+        reason = "JSON is not an object"
+    except json.JSONDecodeError as e:
+        reason = f"unparseable JSON ({e.msg} at line {e.lineno} column {e.colno})"
+    return None, reason
+
+
+def _extract_lenient_blocks(text: str) -> list[str]:
+    """Locate sentinel blocks the canonical single-line pattern misses.
+
+    For every start marker, balances braces from its first ``{`` to the
+    matching close (respecting JSON strings) so a line-broken, optionally
+    fence-wrapped payload still resolves to its exact object span. Each block
+    is bounded by the next start marker so a later sentinel cannot bleed into
+    it. Returns the raw object spans in order of appearance.
+    """
+    markers = list(_AGENT_RUN_CONFIG_START_RE.finditer(text))
+    results: list[str] = []
+    for i, m in enumerate(markers):
+        bound = markers[i + 1].start() if i + 1 < len(markers) else len(text)
+        payload = _block_payload(text[m.start() :bound])
+        if payload:
+            results.append(payload)
+    return results
+
+
+def extract_dispatch_resilient(text: str) -> ExtractResult:
+    """Extract the last valid AGENT_RUN_CONFIG payload, resilient to drift.
+
+    Every start marker is located in document order (single-line or not) and
+    its balanced ``{...}`` span parsed leniently, so a line-broken or
+    fence-wrapped payload (issue #511) still resolves. "Last valid one wins"
+    is preserved uniformly across both shapes; invalid payloads are skipped.
+
+    Args:
+        text: Agent output text.
+
+    Returns:
+        ExtractResult with the payload and a parse diagnostic when a
+        sentinel marker was present but no payload could be parsed.
+    """
+    if not text or not _AGENT_RUN_CONFIG_START_RE.search(text):
+        return ExtractResult(payload=None)
+
+    candidates = _extract_lenient_blocks(text)
+    if not candidates:
+        # Marker present but no balanced object: truncated final line.
+        return ExtractResult(payload=None, parse_error="truncated JSON object")
+
+    last_valid: Optional[str] = None
+    last_error: Optional[str] = None
+    for payload in candidates:
+        parsed, error = _lenient_parse(payload)
+        if parsed is not None:
+            last_valid = parsed
+            last_error = None
+        elif error is not None:
+            last_error = error
+    return ExtractResult(payload=last_valid, parse_error=last_error)
+
+
 def extract_dispatch(text: str) -> Optional[str]:
     """Return the raw JSON payload of the last valid-JSON sentinel.
 
@@ -107,12 +266,45 @@ def has_unterminated_agent_run_config(text: str) -> bool:
     return False
 
 
+def _remove_lenient_sentinels(text: str) -> str:
+    """Drop line-broken / fence-wrapped sentinel spans (lenient path).
+
+    For each remaining start marker, cut from the marker to the end of its
+    balanced object plus the closing ``-->`` when one follows shortly after.
+    """
+    result = text
+    for m in reversed(list(_AGENT_RUN_CONFIG_START_RE.finditer(result))):
+        span = result[m.start() :]
+        payload = _block_payload(span)
+        if not payload:
+            continue
+        start = m.start() + span.find(payload[0])
+        end = start + len(payload)
+        tail = result[end :].lstrip()
+        if tail.startswith("-->"):
+            end += len(result[end :]) - len(tail) + 3
+        result = result[:m.start()] + result[end:]
+    return result
+
+
+def has_agent_run_config_marker(text: str) -> bool:
+    """True when an AGENT_RUN_CONFIG start marker is present in text.
+
+    Public accessor for the start-marker locator, used by the resolver to
+    tell apart "agent ended without any sentinel" from "sentinel present
+    but no usable dispatch stored" (issue #512).
+    """
+    return _AGENT_RUN_CONFIG_START_RE.search(text) is not None
+
+
 def strip_agent_run_config(text: str) -> str:
     """Remove all AGENT_RUN_CONFIG sentinels from text.
 
     A sentinel occupying a whole line drops that line; an inline sentinel is
-    removed in place. A trailing unterminated sentinel (truncated last line)
-    is cut off so no partial marker leaks into rendered comments.
+    removed in place. Line-broken or fence-wrapped sentinels (issue #511) are
+    removed via the lenient locator so a recovered payload does not leak into
+    the visible comment. A trailing unterminated sentinel (truncated last
+    line) is cut off so no partial marker leaks into rendered comments.
 
     Args:
         text: Agent output text.
@@ -127,6 +319,8 @@ def strip_agent_run_config(text: str) -> str:
             continue  # whole-line sentinel: drop the line
         lines.append(AGENT_RUN_CONFIG_PATTERN.sub("", line))
     cleaned = "\n".join(lines)
+
+    cleaned = _remove_lenient_sentinels(cleaned)
 
     match = _AGENT_RUN_CONFIG_START_RE.search(cleaned)
     if match and has_unterminated_agent_run_config(cleaned):

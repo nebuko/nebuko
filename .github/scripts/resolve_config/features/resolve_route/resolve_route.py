@@ -16,6 +16,7 @@ from resolve_workflow import (
     _load_workflow_by_reference,
     TASK_TO_PROMPT,
 )
+from validate_output import has_agent_run_config_marker
 from workflow_state import (
     FunctionCall,
     SUPPORTED_FUNCTIONS,
@@ -670,7 +671,17 @@ def _resolve_bot_fallback_path(
     """
     dispatch = extract_dispatch_from_state(trigger_body)
     if not dispatch:
-        return {"SKIP_AGENT": "true", "REASON": "Bot comment without AGENT_RUN_CONFIG or dispatch"}
+        # Distinguish "agent ended without any sentinel" from "a sentinel
+        # marker was present but no usable dispatch was stored" (issue #512)
+        # so the skip reason is diagnosable rather than generic.
+        if has_agent_run_config_marker(trigger_body):
+            reason = (
+                "Bot comment contains an AGENT_RUN_CONFIG sentinel but no "
+                "usable dispatch was stored (unparseable or invalid sentinel)"
+            )
+        else:
+            reason = "Bot comment without AGENT_RUN_CONFIG or dispatch"
+        return {"SKIP_AGENT": "true", "REASON": reason}
 
     config = {
         "task": dispatch.task_hint or "",
