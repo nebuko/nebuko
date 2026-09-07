@@ -915,7 +915,7 @@ class TestInjectContextFiltering:
 
         state = WorkflowState(
             history=[
-                HistoryEntry(step="analyze", agent="genius", comment_id=1, inject_context=True),
+                HistoryEntry(step="analyze", agent="genius", comment_ids=[1], inject_context=True),
             ]
         )
         comments = [
@@ -934,8 +934,8 @@ class TestInjectContextFiltering:
 
         state = WorkflowState(
             history=[
-                HistoryEntry(step="analyze", agent="genius", comment_id=1, inject_context=True),
-                HistoryEntry(step="context", agent="ctx", comment_id=2, inject_context=False),
+                HistoryEntry(step="analyze", agent="genius", comment_ids=[1], inject_context=True),
+                HistoryEntry(step="context", agent="ctx", comment_ids=[2], inject_context=False),
             ]
         )
         comments = [
@@ -946,16 +946,16 @@ class TestInjectContextFiltering:
         assert len(result) == 1
         assert result[0]["id"] == 1
 
-    def test_entry_without_comment_id_ignored(self):
-        """History entries without comment_id don't filter any comments."""
+    def test_entry_without_comment_ids_ignored(self):
+        """History entries without comment_ids don't filter any comments."""
         from query_context import _filter_comments_by_inject_context
         from workflow_state import WorkflowState
         from workflow_state import HistoryEntry
 
         state = WorkflowState(
             history=[
-                HistoryEntry(step="analyze", agent="genius", comment_id=None, inject_context=True),
-                HistoryEntry(step="context", agent="ctx", comment_id=2, inject_context=True),
+                HistoryEntry(step="analyze", agent="genius", comment_ids=[], inject_context=True),
+                HistoryEntry(step="context", agent="ctx", comment_ids=[2], inject_context=True),
             ]
         )
         comments = [
@@ -989,7 +989,7 @@ class TestInjectContextFiltering:
 
         state = WorkflowState(
             history=[
-                HistoryEntry(step="analyze", agent="genius", comment_id=1, inject_context=True),
+                HistoryEntry(step="analyze", agent="genius", comment_ids=[1], inject_context=True),
             ]
         )
         comments = [
@@ -1004,19 +1004,34 @@ class TestInjectContextFiltering:
         """HistoryEntry defaults inject_context to True for backward compatibility."""
         from workflow_state import HistoryEntry
 
-        entry = HistoryEntry(step="analyze", agent="genius", comment_id=5)
+        entry = HistoryEntry(step="analyze", agent="genius", comment_ids=[5])
         assert entry.inject_context is True
 
-    def test_duplicate_comment_ids_deduplicated(self):
-        """Multiple entries referencing same comment_id works correctly."""
+    def test_multi_part_entry_contributes_all_ids(self):
+        """A multi-part entry contributes every comment id to the injectable set."""
         from query_context import _get_injectable_comment_ids
         from workflow_state import WorkflowState
         from workflow_state import HistoryEntry
 
         state = WorkflowState(
             history=[
-                HistoryEntry(step="analyze", agent="genius", comment_id=1, inject_context=True),
-                HistoryEntry(step="plan", agent="genius", comment_id=1, inject_context=True),
+                HistoryEntry(step="context", agent="ctx", comment_ids=[10, 11, 12], inject_context=True),
+                HistoryEntry(step="plan", agent="genius", comment_ids=[13], inject_context=False),
+            ]
+        )
+        ids = _get_injectable_comment_ids(state)
+        assert ids == {10, 11, 12}
+
+    def test_duplicate_comment_ids_deduplicated(self):
+        """Multiple entries referencing same comment_ids work correctly."""
+        from query_context import _get_injectable_comment_ids
+        from workflow_state import WorkflowState
+        from workflow_state import HistoryEntry
+
+        state = WorkflowState(
+            history=[
+                HistoryEntry(step="analyze", agent="genius", comment_ids=[1], inject_context=True),
+                HistoryEntry(step="plan", agent="genius", comment_ids=[1], inject_context=True),
             ]
         )
         ids = _get_injectable_comment_ids(state)
