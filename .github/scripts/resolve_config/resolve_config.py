@@ -159,7 +159,7 @@ def resolve_config(
         # the next agent, beats workflow continuation (same tier as human
         # mention). Consumed once — the fresh state built for the called agent
         # clears the field, so a re-trigger no-ops.
-        config = _resolve_function_call_path(prev_state.function_call, workflows_dir)
+        config = _resolve_function_call_path(prev_state.function_call, workflows_dir, prev_state)
     elif extract_machine_trigger(trigger_body):
         # CI-posted machine trigger token (bot-subtask-complete /
         # bot-summarizer-trigger / bot-trigger) — replaces the legacy

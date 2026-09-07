@@ -403,9 +403,40 @@ jobs:
                   if [[ -n "$CALLER_AGENT" && -n "$TASK" ]]; then
                       TARGET_AGENT="$TASK"
                       if [[ "$CALLER_AGENT" == "$TARGET_AGENT" ]]; then
-                        echo "Same-agent loop detected ($CALLER_AGENT calling itself). Skipping."
-                        echo "SKIP_AGENT=true" >> $GITHUB_ENV
-                        exit 0
+                        # Same-agent trigger: distinguish a genuine no-forward-progress
+                        # re-trigger from a legitimate advance to a different step
+                        # (consecutive same-agent steps) — issue #507. The trigger
+                        # comment carries the caller's posted state block; its (step)
+                        # is compared with WORKFLOW_STEP (the resolved next step).
+                        TRIGGER_STEP="$(printf '%s' "$TRIGGER_BODY" | python3 -c '
+                  import json, sys
+                  body = sys.stdin.read()
+                  start, end = "<!-- WORKFLOW_STATE_START -->", "<!-- WORKFLOW_STATE_END -->"
+                  pos = body.find(start)
+                  result = ""
+                  while pos != -1:
+                      stop = body.find(end, pos + len(start))
+                      if stop == -1:
+                          break
+                      try:
+                          result = (json.loads(body[pos + len(start):stop].strip()) or {}).get("step") or result
+                      except Exception:
+                          pass
+                      pos = body.find(start, stop + len(end))
+                  print(result)
+                  ' 2>/dev/null)"
+                        # Same step (or no state/step info available) -> genuine self
+                        # re-trigger: skip. Different step -> legitimate advance:
+                        # allow. Missing state keeps the legacy skip (defensive).
+                        if [[ -n "$TRIGGER_STEP" && "$TRIGGER_STEP" != "$WORKFLOW_STEP" ]]; then
+                          echo "Same-agent advance to new step ('$TRIGGER_STEP' -> '$WORKFLOW_STEP'). Allowing."
+                          echo "SKIP_AGENT=false" >> $GITHUB_ENV
+                          exit 0
+                        else
+                          echo "Same-agent loop detected ($CALLER_AGENT calling itself on step '${TRIGGER_STEP:-$WORKFLOW_STEP}'). Skipping."
+                          echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                          exit 0
+                        fi
                       else
                         echo "Cross-agent call ($CALLER_AGENT -> $TARGET_AGENT). Allowing."
                         echo "SKIP_AGENT=false" >> $GITHUB_ENV
