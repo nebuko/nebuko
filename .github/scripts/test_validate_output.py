@@ -1,15 +1,137 @@
 """Tests for the output validation utility (validate_output.py)."""
 
+import json
+
 from validate_output import (
+    ExtractResult,
     ValidationResult,
     extract_agent_run_configs,
     extract_dispatch,
+    extract_dispatch_resilient,
+    has_agent_run_config_marker,
     has_unterminated_agent_run_config,
     strip_agent_run_config,
     validate_agent_run_config,
     validate_forbidden_sections,
     validate_agent_output,
 )
+
+
+# The exact #511 payload shape: sentinel line-broken across two lines and
+# wrapped in stray markdown fences.
+ISSUE_511_SHAPE = (
+    'Done here.\n'
+    "```\n"
+    '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"},\n'
+    '  "function_call": {"function": "call_agent", "agent_name": "ctx"}} -->\n'
+    "```"
+)
+
+
+class TestExtractDispatchResilient:
+    def test_line_broken_fence_wrapped_sentinel(self):
+        result = extract_dispatch_resilient(ISSUE_511_SHAPE)
+        assert result.parse_error is None
+        data = json.loads(result.payload)
+        assert data["dispatch"]["status"] == "advance"
+        assert data["function_call"]["agent_name"] == "ctx"
+
+    def test_single_line_multiline_json_sentinel(self):
+        text = '<!-- AGENT_RUN_CONFIG {\n  "dispatch": {"status": "advance"}\n} -->'
+        result = extract_dispatch_resilient(text)
+        assert result.parse_error is None
+        assert '"status": "advance"' in result.payload
+
+    def test_no_sentinel_returns_none_without_error(self):
+        result = extract_dispatch_resilient("Plain final message, no sentinel.")
+        assert result.payload is None
+        assert result.parse_error is None
+
+    def test_truncated_sentinel_reports_diagnostic(self):
+        result = extract_dispatch_resilient('Partial output <!-- AGENT_RUN_CONFIG {"dispatch": {"stat')
+        assert result.payload is None
+        assert result.parse_error == "truncated JSON object"
+
+    def test_wellformed_single_line_unchanged(self):
+        text = (
+            'All good.\n'
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, '
+            '"function_call": {"function": "call_agent", "agent_name": "dev"}} -->'
+        )
+        result = extract_dispatch_resilient(text)
+        assert result.parse_error is None
+        assert result.payload == (
+            '{"dispatch": {"status": "advance"}, '
+            '"function_call": {"function": "call_agent", "agent_name": "dev"}}'
+        )
+
+    def test_last_valid_wins_across_both_sources(self):
+        text = (
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "hold"}} -->\n'
+            "```\n"
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}}\n'
+            "-->\n```\n"
+        )
+        result = extract_dispatch_resilient(text)
+        assert result.parse_error is None
+        assert result.payload == '{"dispatch": {"status": "advance"}}'
+
+    def test_malformed_json_reports_reason(self):
+        text = '<!-- AGENT_RUN_CONFIG {not valid json at all} -->'
+        result = extract_dispatch_resilient(text)
+        assert result.payload is None
+        assert result.parse_error is not None
+        assert "unparseable JSON" in result.parse_error
+
+    def test_non_object_json_reports_reason(self):
+        text = '<!-- AGENT_RUN_CONFIG [1, 2, 3] -->'
+        result = extract_dispatch_resilient(text)
+        assert result.payload is None
+        assert result.parse_error == "JSON is not an object"
+
+    def test_return_type_is_extract_result(self):
+        assert isinstance(extract_dispatch_resilient(""), ExtractResult)
+
+
+class TestHasAgentRunConfigMarker:
+    def test_detects_marker(self):
+        assert has_agent_run_config_marker(ISSUE_511_SHAPE) is True
+
+    def test_detects_truncated_marker(self):
+        assert has_agent_run_config_marker("<!-- AGENT_RUN_CONFIG {\"dispat") is True
+
+    def test_whitespace_variant(self):
+        assert has_agent_run_config_marker("<!--   AGENT_RUN_CONFIG   {} -->") is True
+
+    def test_no_marker(self):
+        assert has_agent_run_config_marker("Just a plain answer.") is False
+
+    def test_empty_text(self):
+        assert has_agent_run_config_marker("") is False
+
+
+class TestStripLenientSentinels:
+    def test_strips_line_broken_fence_wrapped_sentinel(self):
+        stripped = strip_agent_run_config(ISSUE_511_SHAPE)
+        assert "AGENT_RUN_CONFIG" not in stripped
+        assert "call_agent" not in stripped
+        assert "Done here." in stripped
+
+    def test_strips_truncated_sentinel_preserves_prose(self):
+        stripped = strip_agent_run_config('Partial output <!-- AGENT_RUN_CONFIG {"dispatch": {"stat')
+        assert "AGENT_RUN_CONFIG" not in stripped
+        assert "Partial output" in stripped
+
+    def test_nop_when_no_sentinel(self):
+        text = "Clean final message."
+        assert strip_agent_run_config(text) == text
+
+    def test_preserves_agent_metrics(self):
+        text = (
+            "Answer\n"
+            "<!-- agent-metrics: {\"run_id\": \"abc\"} -->"
+        )
+        assert strip_agent_run_config(text) == text
 
 
 class TestValidationResult:

@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from config import load_workflow, resolve_workflow_reference
 from metrics_schema import Metrics
 from validate_output import (
-    extract_dispatch,
+    extract_dispatch_resilient,
     has_unterminated_agent_run_config,
     strip_agent_run_config,
 )
@@ -463,12 +463,20 @@ def build_output(
     if final_message:
         if has_unterminated_agent_run_config(final_message):
             logger.warning("Unterminated AGENT_RUN_CONFIG sentinel detected (truncated output)")
-        payload = extract_dispatch(final_message)
-        if payload is not None:
-            dispatch = agent_run_config_to_dispatch(payload)
-            # extract_dispatch only returns payloads it already json-parsed,
+        extract_result = extract_dispatch_resilient(final_message)
+        if extract_result.payload is not None:
+            dispatch = agent_run_config_to_dispatch(extract_result.payload)
+            # The extractor only returns payloads it already json-parsed,
             # so this re-parse cannot fail (valid-JSON guarantee).
-            function_call = extract_function_call(json.loads(payload))
+            function_call = extract_function_call(json.loads(extract_result.payload))
+        elif extract_result.parse_error is not None:
+            # A sentinel marker was present but no payload could be parsed
+            # (issue #512): log an explicit diagnostic instead of failing
+            # silently with dispatch=function_call=None.
+            logger.warning(
+                f"AGENT_RUN_CONFIG sentinel found but could not be parsed: "
+                f"{extract_result.parse_error}"
+            )
         # Strip AGENT_RUN_CONFIG sentinels from final_message so they don't
         # appear in the visible comment body — dispatch is now stored structurally
         # in workflow_state.dispatch instead.
