@@ -168,8 +168,8 @@ def _get_injectable_comment_ids(state) -> set[int] | None:
 
     ids: set[int] = set()
     for entry in state.history:
-        if entry.comment_id and entry.inject_context:
-            ids.add(entry.comment_id)
+        if entry.inject_context:
+            ids.update(cid for cid in entry.comment_ids if cid is not None)
     return ids
 
 
