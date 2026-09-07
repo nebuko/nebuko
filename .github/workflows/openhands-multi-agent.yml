@@ -286,6 +286,7 @@ jobs:
                   WORKFLOW_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
                   PARENT_WORKFLOW=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
                   PARENT_WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
+                  HUMAN_RESUME_INPUT=$(echo "$RESOLVE_OUTPUT" | grep '^HUMAN_RESUME_INPUT=' | cut -d= -f2-)
 
                   # Handle skip
                   if [ "$SKIP_AGENT" = "true" ]; then
@@ -314,6 +315,10 @@ jobs:
                   echo "PARENT_WORKFLOW=$PARENT_WORKFLOW" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
                   echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
+                  echo "HUMAN_RESUME_INPUT=${HUMAN_RESUME_INPUT:-}" >> $GITHUB_ENV
+                  # Human gate (issue #506): reuse the exact workflows dir the
+                  # resolver used (may be the .git-flow-ai-cache copy).
+                  echo "WORKFLOWS_DIR=$WFLOWS_DIR" >> $GITHUB_ENV
 
                   # Step 6: Export reasoning level for agent_script.py
                   echo "LLM_REASONING=${LLM_REASONING}" >> $GITHUB_ENV
