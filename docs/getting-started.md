@@ -9,10 +9,10 @@ read [architecture.md](./architecture.md) and
 
 ## Prerequisites
 
-1. **Self-hosted GitHub Actions runner** — the orchestrator runs with
-   `runs-on: self-hosted` (agents need a shell with `git`, `uv`, Python, and
-   network access to the LLM providers). Setup guide:
-   [GitHub's self-hosted runner docs](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners).
+1. **A GitHub Actions runner** — the orchestrator runs on GitHub-hosted
+   runners by default (`runs-on: ubuntu-latest`), so no setup is required.
+   To run on your own infrastructure instead, pass `runs_on: "self-hosted"`
+   to the reusable workflow and [set up a self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners).
 2. **Python 3.13** and the **`uv`** package manager on the runner.
 3. **GitHub secrets** configured at repo or organization level:
 
@@ -59,7 +59,8 @@ jobs:
 This thin wrapper calls the reusable orchestrator from this repository — you
 never vendor the 900-line workflow file itself (zero-copy, see
 [features.md — Remote Workflows](./features.md#remote-workflows-zero-copy)).
-Optional inputs: `summarizer_threshold` (default 100), `python_version`
+Optional inputs: `runs_on` (default `ubuntu-latest`; e.g. `self-hosted` to use
+your own runners), `summarizer_threshold` (default 100), `python_version`
 (default `3.13`), `enable_uv_cache` (default `true`), `prompt_body`.
 
 ---
@@ -167,7 +168,7 @@ Where to look when something goes wrong:
 
 | Symptom | Checklist |
 |---------|-----------|
-| No response at all | Is the self-hosted runner online? Are the secrets set? Does the issue body contain a recognized trigger (`@@agent` or `/workflow`)? Check the run's `if:` condition result in the GHA run. |
+| No response at all | If using a self-hosted runner (`runs_on: "self-hosted"`), is it online? Are the secrets set? Does the issue body contain a recognized trigger (`@@agent` or `/workflow`)? Check the run's `if:` condition result in the GHA run. |
 | Wrong agent ran | Check the routing cascade ([architecture.md](./architecture.md#routing-cascade)) and the `WORKFLOW_STATE` section of the triggering comment. Use `/workflow <name>` or `/workflow force-next-step <step>` to correct course. |
 | Stuck in a loop | The circuit breaker (default 15 bot markers) should have stopped it and posted a warning. Review the last few comments, then use `/workflow resume` with instructions. See [features.md — Safety Mechanisms](./features.md#safety-mechanisms). |
 | Agent ran but did nothing useful | Your prompts are too thin — give the agent an explicit role and output contract (step 3). |

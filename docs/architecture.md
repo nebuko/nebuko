@@ -31,7 +31,9 @@ The orchestrator is `.github/workflows/openhands-multi-agent.yml` — a reusable
 workflow (consumer file: [`workflow.yaml`](../workflow.yaml)) with three jobs:
 `run-task` (the agent pipeline, ~24 steps), `summarize-metrics` (runs on issue
 close), and `subtask-completion-notifier` (notifies a parent issue when a
-sub-issue's split plan completes). It runs on a **self-hosted runner**.
+sub-issue's split plan completes). It runs on GitHub-hosted runners by default;
+callers can select the runner via the `runs_on` workflow input (e.g.
+`runs_on: "self-hosted"` for their own runners).
 
 ---
 

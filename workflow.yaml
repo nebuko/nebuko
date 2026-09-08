@@ -17,6 +17,7 @@ jobs:
     with:
       agent_config_path: "agent-config.yaml"
       circuit_breaker_threshold: 15
+      runs_on: "self-hosted"
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GH_PAT: ${{ secrets.GH_PAT }}

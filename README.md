@@ -18,7 +18,9 @@ Use this workflow in any GitHub project by copying the workflow and configuratio
 
 ### Prerequisites
 
-> ⚠️ **Self-Hosted Runner Required**: This workflow runs on a self-hosted GitHub Actions runner (`runs-on: self-hosted`). You must [set up a self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners) on your repository before using this tool.
+> ℹ️ **Runner Configuration**: This workflow runs on GitHub-hosted runners by default (`runs-on: ubuntu-latest`) — no setup required.
+> To run on your own infrastructure instead, pass `runs_on: "self-hosted"` to the reusable workflow (you must then
+> [set up a self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners) on your repository).
 
 ### Quick Start
 
@@ -34,6 +36,10 @@ Use this workflow in any GitHub project by copying the workflow and configuratio
          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
          GH_PAT: ${{ secrets.GH_PAT }}
    ```
+
+   The jobs run on GitHub-hosted runners by default. To use your own runners,
+   add `runs_on: "self-hosted"` to the `with:` block (requires a self-hosted
+   runner on your repository).
 
 2. **Add `agent-config.yaml`** — Copy or create an `agent-config.yaml` file at your repo root. This file defines providers, LLMs, and agent configurations. See [this repo's config](./agent-config.yaml) for a reference.
 
