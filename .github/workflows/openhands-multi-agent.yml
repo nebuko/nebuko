@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: ''
+      runs_on:
+        description: 'Runner label for workflow jobs (default: ubuntu-latest; e.g. "self-hosted" to use your own runners)'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
     secrets:
       OPENROUTER_API_KEY:
         description: 'Default API key for the LLM provider (used as fallback)'
@@ -59,7 +64,7 @@ concurrency:
 
 jobs:
     run-task:
-        runs-on: self-hosted
+        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
         if: |
           github.event.action != 'closed' &&
           (
@@ -907,7 +912,7 @@ jobs:
                   retention-days: 7
 
     summarize-metrics:
-        runs-on: self-hosted
+        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
         if: |
           github.event_name == 'issues' &&
           github.event.action == 'closed' &&
@@ -951,7 +956,7 @@ jobs:
                 python "$SCRIPT_PATH"
 
     subtask-completion-notifier:
-        runs-on: ubuntu-latest
+        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
         if: |
           github.event_name == 'issues' &&
           github.event.action == 'closed' &&
