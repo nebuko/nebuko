@@ -48,10 +48,6 @@ on:
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
-  issues:
-    types: [opened, edited, assigned, closed]
-  issue_comment:
-    types: [created]
 
 permissions:
     contents: write
