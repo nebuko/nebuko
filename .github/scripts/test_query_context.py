@@ -561,7 +561,11 @@ class TestMain:
         assert "AGENT_QUERY_PATH=/tmp/test_output.md" in captured.out
         assert "ISSUE_TITLE=Test issue" in captured.out
         assert "ISSUE_AUTHOR=alice" in captured.out
-        assert "ISSUE_BODY=Test body" in captured.out
+        assert "ISSUE_BODY_PATH=/tmp/agent_query/issue_body.md" in captured.out
+        assert "COMMENT_HISTORY_PATH=/tmp/agent_query/comment_history.md" in captured.out
+
+        with open("/tmp/agent_query/issue_body.md") as f:
+            assert f.read() == "Test body"
 
         with open("/tmp/test_output.md", "r") as f:
             content = f.read()
@@ -570,8 +574,8 @@ class TestMain:
         assert "alice" in content
         os.unlink(event_path)
 
-    def test_heredoc_for_multiline_values(self, capsys):
-        """main() uses heredoc format for multi-line body and history values."""
+    def test_multiline_values_written_to_files(self, capsys):
+        """main() writes multi-line body and history to files, emitting only paths."""
         event_path = self._write_event({
             "issue": {
                 "title": "Title",
@@ -592,9 +596,13 @@ class TestMain:
             main()
 
         captured = capsys.readouterr()
-        assert "ISSUE_BODY<<BODY_HEREDOC" in captured.out
-        assert "Line one\nLine two" in captured.out
-        assert "COMMENT_HISTORY<<HISTORY_HEREDOC" in captured.out
+        assert "ISSUE_BODY_PATH=/tmp/agent_query/issue_body.md" in captured.out
+        assert "COMMENT_HISTORY_PATH=/tmp/agent_query/comment_history.md" in captured.out
+        # Large payloads must NOT be emitted into the environment (issue #520)
+        assert "ISSUE_BODY=" not in captured.out
+        assert "COMMENT_HISTORY=" not in captured.out
+        with open("/tmp/agent_query/issue_body.md") as f:
+            assert f.read() == "Line one\nLine two"
         os.unlink(event_path)
 
     def test_writes_to_github_env_when_set(self, capsys, monkeypatch):
@@ -764,7 +772,9 @@ class TestMain:
             main()
 
         captured = capsys.readouterr()
-        assert "No previous comments" in captured.out or "COMMENT_HISTORY=No previous comments" in captured.out
+        assert "COMMENT_HISTORY_PATH=/tmp/agent_query/comment_history.md" in captured.out
+        with open("/tmp/agent_query/comment_history.md") as f:
+            assert "No previous comments" in f.read()
         os.unlink(event_path)
 
     def test_special_characters_in_title(self, capsys):
@@ -786,7 +796,7 @@ class TestMain:
         os.unlink(event_path)
 
     def test_large_body_content(self, capsys):
-        """main() handles large body content via heredoc."""
+        """main() writes large body content to a file and emits only its path."""
         large_body = "Line of text.\n" * 500
         event_path = self._write_event({
             "issue": {"title": "Large", "body": large_body, "user": {"login": "big"}}
@@ -801,8 +811,9 @@ class TestMain:
             main()
 
         captured = capsys.readouterr()
-        assert "ISSUE_BODY<<BODY_HEREDOC" in captured.out
-        assert "BODY_HEREDOC" in captured.out
+        assert "ISSUE_BODY_PATH=/tmp/agent_query/issue_body.md" in captured.out
+        with open("/tmp/agent_query/issue_body.md") as f:
+            assert f.read() == large_body.strip()
         os.unlink(event_path)
 
     def test_custom_issue_template_env_var(self, capsys, monkeypatch):
@@ -845,6 +856,51 @@ class TestMain:
         captured = capsys.readouterr()
         assert "Wrote agent query context to /tmp/test_stderr.md" in captured.err
         os.unlink(event_path)
+
+
+class TestEnvValueGuard:
+    """Test _check_env_value_size and _write_context_file helpers (issue #520)."""
+
+    def test_small_value_passes_guard(self):
+        """Values under the threshold are accepted."""
+        from query_context import _check_env_value_size, MAX_GITHUB_ENV_VALUE_BYTES
+
+        _check_env_value_size("SMALL_KEY", "x" * MAX_GITHUB_ENV_VALUE_BYTES)
+
+    def test_oversized_value_raises(self):
+        """A single value over the threshold raises RuntimeError with the key name."""
+        from query_context import _check_env_value_size, MAX_GITHUB_ENV_VALUE_BYTES
+
+        with pytest.raises(RuntimeError, match="HUGE_KEY"):
+            _check_env_value_size("HUGE_KEY", "y" * (MAX_GITHUB_ENV_VALUE_BYTES + 1))
+
+    def test_multibyte_characters_counted_as_bytes(self):
+        """Size is measured in UTF-8 bytes, not characters."""
+        from query_context import _check_env_value_size, MAX_GITHUB_ENV_VALUE_BYTES
+
+        # 'é' is 2 bytes in UTF-8
+        with pytest.raises(RuntimeError):
+            _check_env_value_size("MB_KEY", "é" * (MAX_GITHUB_ENV_VALUE_BYTES // 2 + 1))
+
+    def test_write_context_file_writes_content_and_returns_path(self, capsys):
+        """_write_context_file writes UTF-8 content and returns the path string."""
+        from query_context import _write_context_file, CONTEXT_FILES_DIR
+
+        path = _write_context_file("unit_test_payload.md", "Line A\nLine B\n")
+        assert path == str(CONTEXT_FILES_DIR / "unit_test_payload.md")
+        with open(path, encoding="utf-8") as f:
+            assert f.read() == "Line A\nLine B\n"
+        os.unlink(path)
+
+    def test_write_context_file_logs_to_stderr(self, capsys):
+        """_write_context_file logs the payload size to stderr only."""
+        from query_context import _write_context_file, CONTEXT_FILES_DIR
+
+        path = _write_context_file("unit_test_log.md", "abc")
+        captured = capsys.readouterr()
+        assert f"Wrote 3 chars to {path}" in captured.err
+        assert path not in captured.out
+        os.unlink(path)
 
 
 class TestIsBotComment:

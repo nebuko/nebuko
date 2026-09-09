@@ -14,8 +14,9 @@ Usage:
         [--event-path <path>]
 
 Output:
-    KEY=value pairs to stdout (for GITHUB_ENV consumption).
-    Multi-line values use heredoc format (KEY<<EOF ... EOF).
+    KEY=value pairs to stdout (for GITHUB_ENV consumption). Only small scalar
+    values are emitted; large payloads (issue body, comment history) are
+    written to files under /tmp/agent_query and exposed via *_PATH variables.
 """
 
 import argparse
@@ -24,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from github_client import get_comment_body, get_issue_comments
@@ -46,6 +48,40 @@ DEFAULT_TEMPLATE = (
     "## History\n\n"
     "{history}"
 )
+
+# Max UTF-8 byte size for a single value emitted into $GITHUB_ENV.
+# OpenHands mirrors os.environ into tmux via one `tmux set-environment <k> <v>`
+# subprocess per variable; a single oversized value makes the kernel reject the
+# execve (E2BIG -> "command too long"). Oversized values must go to files
+# instead (issue #520).
+MAX_GITHUB_ENV_VALUE_BYTES = 64 * 1024
+
+# Directory where oversized/large context payloads are written as files.
+CONTEXT_FILES_DIR = Path("/tmp/agent_query")
+
+
+def _check_env_value_size(key: str, value: str) -> None:
+    """Refuse to emit a $GITHUB_ENV value larger than MAX_GITHUB_ENV_VALUE_BYTES."""
+    size = len(value.encode("utf-8"))
+    if size > MAX_GITHUB_ENV_VALUE_BYTES:
+        raise RuntimeError(
+            f"Refusing to emit {key} into $GITHUB_ENV: {size} bytes exceeds "
+            f"{MAX_GITHUB_ENV_VALUE_BYTES} (would break tmux set-environment). "
+            f"Write the payload to a file under {CONTEXT_FILES_DIR} and emit its path instead."
+        )
+
+
+def _write_context_file(filename: str, content: str) -> str:
+    """Write a context payload to CONTEXT_FILES_DIR and return the file path.
+
+    Used for large payloads (issue body, comment history) that must stay out
+    of job-level environment variables.
+    """
+    CONTEXT_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    path = CONTEXT_FILES_DIR / filename
+    path.write_text(content, encoding="utf-8")
+    print(f"Wrote {len(content)} chars to {path}", file=sys.stderr)
+    return str(path)
 
 
 def load_event_data(event_path: str) -> dict:
@@ -449,27 +485,26 @@ def main():
 
     # ─────────────────────────────────────────────────────────────
     # Output to stdout for >> $GITHUB_ENV consumption
+    #
+    # Only small scalar values may be emitted into the environment: OpenHands
+    # mirrors os.environ into tmux (one `set-environment <k> <v>` per variable)
+    # and a single value > ~128 KiB makes the kernel reject the execve with
+    # E2BIG ("command too long") — issue #520. Large payloads (issue body,
+    # comment history) are written to files and exposed via *_PATH variables.
     # ─────────────────────────────────────────────────────────────
+    body_val = event_data["body"].strip()
+    history_val = history.strip()
+
     print(f"AGENT_QUERY_PATH={args.output_file}")
+    _check_env_value_size("ISSUE_TITLE", event_data["title"])
     print(f"ISSUE_TITLE={event_data['title']}")
+    _check_env_value_size("ISSUE_AUTHOR", event_data["author"])
     print(f"ISSUE_AUTHOR={event_data['author']}")
 
-    # Strip trailing whitespace/newlines to prevent parser confusion
-    body_val = event_data["body"].strip()
-    if "\n" in body_val:
-        print("ISSUE_BODY<<BODY_HEREDOC")
-        print(body_val)
-        print("BODY_HEREDOC")
-    else:
-        print(f"ISSUE_BODY={body_val}")
-
-    history_val = history.strip()
-    if "\n" in history_val:
-        print("COMMENT_HISTORY<<HISTORY_HEREDOC")
-        print(history_val)
-        print("HISTORY_HEREDOC")
-    else:
-        print(f"COMMENT_HISTORY={history_val}")
+    body_path = _write_context_file("issue_body.md", body_val)
+    history_path = _write_context_file("comment_history.md", history_val)
+    print(f"ISSUE_BODY_PATH={body_path}")
+    print(f"COMMENT_HISTORY_PATH={history_path}")
 
     # Log to stderr only (won't interfere with GITHUB_ENV)
     print(f"Wrote agent query context to {args.output_file}", file=sys.stderr)
