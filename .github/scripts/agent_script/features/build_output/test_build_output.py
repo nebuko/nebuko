@@ -465,6 +465,28 @@ def _user_event(text: str) -> "object":
     return MessageEvent(llm_message=Message(role="user", content=text), source="user")
 
 
+def _finish_action_event(text: str) -> "object":
+    """Build the finish-turn ActionEvent the SDK emits when answer + finish share a turn.
+
+    The SDK stores the turn's text in ``ActionEvent.thought`` and does NOT emit
+    a standalone ``MessageEvent`` (the issue #553 regression path).
+    """
+    from openhands.sdk.event import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall, TextContent
+
+    tool_call = MessageToolCall(
+        id="tc-finish", name="finish", arguments="{}", origin="completion"
+    )
+    return ActionEvent(
+        source="agent",
+        tool_name="finish",
+        thought=[TextContent(text=text)],
+        tool_call_id="tc-finish",
+        tool_call=tool_call,
+        llm_response_id="r1",
+    )
+
+
 class TestExtractLatestAnswer(unittest.TestCase):
     """Capture layer: latest-wins selection of the agent's last text answer (issue #522)."""
 
@@ -491,6 +513,41 @@ class TestExtractLatestAnswer(unittest.TestCase):
     def test_user_messages_are_ignored(self):
         events = [_msg_event("agent answer"), _user_event("user interjection")]
         self.assertEqual(extract_latest_answer(events), "agent answer")
+
+    # --- issue #553 regression: finish-turn text lives in ActionEvent.thought ---
+
+    def test_finish_turn_thought_captured_when_no_message_event(self):
+        """Full answer + finish sharing one turn is captured from thought."""
+        events = [_finish_action_event("  Full research report  ")]
+        self.assertEqual(extract_latest_answer(events), "Full research report")
+
+    def test_finish_turn_replaces_earlier_message(self):
+        events = [_msg_event("earlier answer"), _finish_action_event("finish report")]
+        self.assertEqual(extract_latest_answer(events), "finish report")
+
+    def test_newer_message_after_finish_turn_wins(self):
+        events = [_finish_action_event("finish report"), _msg_event("newer answer")]
+        self.assertEqual(extract_latest_answer(events), "newer answer")
+
+    def test_non_finish_action_event_is_ignored(self):
+        """Mid-run commentary on other tool calls must not be captured."""
+        from openhands.sdk.event import ActionEvent
+        from openhands.sdk.llm.message import MessageToolCall, TextContent
+
+        tc = MessageToolCall(id="tc-1", name="terminal", arguments="{}", origin="completion")
+        event = ActionEvent(
+            source="agent",
+            tool_name="terminal",
+            thought=[TextContent(text="mid-run commentary")],
+            tool_call_id="tc-1",
+            tool_call=tc,
+            llm_response_id="r2",
+        )
+        self.assertEqual(extract_latest_answer([event]), "")
+
+    def test_blank_finish_turn_thought_returns_empty(self):
+        events = [_finish_action_event("   \n  ")]
+        self.assertEqual(extract_latest_answer(events), "")
 
 
 class TestWriteLatestAnswerFile(unittest.TestCase):

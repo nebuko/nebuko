@@ -8,8 +8,9 @@ from typing import Optional
 
 from openhands.sdk import get_logger
 from openhands.sdk.conversation import get_agent_final_response
-from openhands.sdk.event import MessageEvent
+from openhands.sdk.event import ActionEvent, MessageEvent
 from openhands.sdk.llm.message import content_to_str
+from openhands.sdk.tool.builtins.finish import FinishTool
 from pydantic import ValidationError
 
 from config import load_workflow, resolve_workflow_reference
@@ -53,6 +54,10 @@ logger = get_logger(__name__)
 # Written by the capture layer in build_output(); consumed by the ETL layer
 # in prepare_comment.py as the preferred posted-comment body.
 LATEST_ANSWER_FILE = "latest_answer.md"
+
+# Tool name of the finish action (issue #553): its turn's text is carried in
+# ``ActionEvent.thought``, not in a standalone ``MessageEvent``.
+FINISH_TOOL_NAME = FinishTool.name
 
 
 # Tag patterns whose imbalance indicates a truncated tool-call block.
@@ -398,19 +403,40 @@ def _write_output_files(final_message: str, message_parts: list[str], metrics: M
         logger.info(f"Final agent message saved ({len(message_parts[0])} characters, no splitting needed)")
 
 
+def _finish_turn_answer(event) -> str:
+    """Return the answer text of a ``finish``-turn action event, if any.
+
+    When the LLM emits the full answer and the ``finish`` tool call in the
+    same turn (the issue #553 regression path), the SDK stores the text in
+    ``ActionEvent.thought`` and emits no standalone ``MessageEvent``. The
+    finish action's own ``message`` argument is never consulted: under the
+    posting-contract skill it is a short status note, while the turn's text
+    carries the full deliverable. Non-finish action events return ``""`` so
+    mid-run commentary attached to other tool calls is never mistaken for
+    the answer.
+    """
+    if not isinstance(event, ActionEvent) or event.tool_name != FINISH_TOOL_NAME:
+        return ""
+    return "".join(content_to_str(event.thought)).strip()
+
+
 def extract_latest_answer(events: list) -> str:
     # @stub-protected: signature defined by architect — do not modify
     """Extract the agent's latest full text answer from conversation events.
 
-    Contract (capture layer, issue #522):
+    Contract (capture layer, issue #522; regression fix for issue #553):
       * Return the text of the LAST assistant ``MessageEvent`` whose text
         content is non-empty after stripping (latest-wins: each newer
         answer replaces the previous one).
-      * ``finish`` tool actions are ignored — under the posting-contract
-        skill the finish message is a short status note, while the last
-        text answer carries the full deliverable. Agents may call finish
-        mid-flow or emit a final status text after it; only assistant
-        text answers are considered, in order.
+      * Additionally consider the text of the agent's ``finish`` turn
+        (carried in ``ActionEvent.thought``): when the full answer and the
+        ``finish`` tool call share a turn, the SDK emits no standalone
+        ``MessageEvent`` for it — previously such answers were lost and
+        posting fell back to the short finish message.
+      * All other tool actions are ignored — their accompanying text is
+        mid-run commentary, not a deliverable. Agents may call finish
+        mid-flow or emit a final status text after it; answers are
+        considered in order.
       * Return ``""`` when no agent text answer exists; callers then fall
         back to the finish message (byte-identical legacy behavior).
 
@@ -420,19 +446,23 @@ def extract_latest_answer(events: list) -> str:
     Returns:
         The latest agent text answer, or ``""`` if none.
     """
-    # Scan forward with latest-wins: every newer assistant text answer
-    # replaces the previous one, so the last non-empty text answer is kept.
-    # Finish actions are skipped, never treated as a stop boundary — under
-    # the posting-contract skill agents may post the deliverable before
-    # calling finish, and the report must still be captured then.
+    # Scan forward with latest-wins: every newer agent answer replaces the
+    # previous one, so the last non-empty answer is kept. The finish turn
+    # is a candidate like any other answer — under the posting-contract
+    # skill agents may post the deliverable before calling finish, and the
+    # report must still be captured then.
     latest = ""
     for event in events or []:
-        if isinstance(event, MessageEvent) and event.source == "agent":
-            text = "".join(
-                content_to_str(event.llm_message.content)
-            ).strip()
-            if text:
-                latest = text
+        if not isinstance(event, (MessageEvent, ActionEvent)):
+            continue
+        if isinstance(event, MessageEvent):
+            if event.source != "agent":
+                continue
+            text = "".join(content_to_str(event.llm_message.content)).strip()
+        else:
+            text = _finish_turn_answer(event)
+        if text:
+            latest = text
     return latest
 
 
