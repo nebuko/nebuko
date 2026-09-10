@@ -181,3 +181,75 @@ class TestPathBasedLoading:
 
     def test_resolve_workflow_reference_repo_root_path(self):
         assert resolve_workflow_reference("tmp_impl/wf.yaml", "workflows") == "tmp_impl/wf.yaml"
+
+
+class TestLoadWorkflowWithDirs:
+    """Test ordered multi-directory resolution (issue #529)."""
+
+    @pytest.fixture
+    def tmp_dirs(self, tmp_path):
+        base = tmp_path / "base"
+        local = tmp_path / "local"
+        for d in (base, local):
+            d.mkdir()
+        return base, local
+
+    def _write(self, path: Path, raw) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.safe_dump(raw))
+        return path
+
+    def _wf(self, name="foo", agent="genius"):
+        return {
+            "name": name,
+            "description": "test workflow",
+            "trigger": {"agents": [agent]},
+            "steps": [{"name": "only", "agent": agent, "next": None}],
+        }
+
+    def test_local_wins_over_base(self, tmp_dirs):
+        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+
+        base, local = tmp_dirs
+        self._write(base / "foo.yaml", self._wf(agent="dev"))
+        self._write(local / "foo.yaml", self._wf(agent="ctx"))
+        winner = load_workflow_with_dirs("foo", str(base), str(local))
+        assert winner == local / "foo.yaml"
+
+    def test_base_used_when_local_absent(self, tmp_dirs):
+        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+
+        base, local = tmp_dirs
+        self._write(base / "foo.yaml", self._wf())
+        winner = load_workflow_with_dirs("foo", str(base), str(local))
+        assert winner == base / "foo.yaml"
+
+    def test_invalid_local_override_fails_loudly(self, tmp_dirs):
+        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+
+        base, local = tmp_dirs
+        self._write(base / "foo.yaml", self._wf())
+        self._write(local / "foo.yaml", {"name": "foo"})  # missing required fields
+        with pytest.raises(ValidationError):
+            load_workflow_with_dirs("foo", str(base), str(local))
+
+    def test_missing_everywhere_lists_all_searched(self, tmp_dirs):
+        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+
+        base, local = tmp_dirs
+        with pytest.raises(FileNotFoundError) as excinfo:
+            load_workflow_with_dirs("nope", str(base), str(local))
+        msg = str(excinfo.value)
+        assert str(base / "nope.yaml") in msg
+        assert str(local / "nope.yaml") in msg
+
+    def test_duplicate_dirs_scanned_once(self, tmp_dirs):
+        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+
+        base, local = tmp_dirs
+        with pytest.raises(FileNotFoundError) as excinfo:
+            load_workflow_with_dirs("nope", str(local), str(local))
+        # Same path given twice must appear only once in the searched list.
+        assert str(local / "nope.yaml") in str(excinfo.value)
+        searched = str(excinfo.value).split("searched:", 1)[1]
+        assert searched.count(str(local / "nope.yaml")) == 1
