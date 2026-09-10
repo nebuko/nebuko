@@ -192,3 +192,84 @@ class TestResolveFunctionCallPathWorkflowContext:
         )
         assert config["config_workflow"] == ""
         assert config["config_step"] == ""
+
+
+class TestWorkflowCommandPrecedence:
+    """Tests for /workflow <name> multi-directory resolution (issue #529)."""
+
+    def _wf_yaml(self, agent):
+        return (
+            "name: foo\n"
+            'description: "test"\n'
+            "trigger:\n"
+            f"  agents: [{agent}]\n"
+            "steps:\n"
+            f"  - name: only\n    agent: {agent}\n    next: null\n"
+        )
+
+    def _dir(self, tmp_path: Path, subdir: str, contents: dict) -> Path:
+        d = tmp_path / subdir
+        d.mkdir()
+        for fname, content in contents.items():
+            (d / fname).write_text(content)
+        return d
+
+    def test_local_override_wins_over_builtin(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+
+        base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
+        local = self._dir(tmp_path, "local", {"foo.yaml": self._wf_yaml("ctx")})
+        config = _resolve_human_path(
+            "/workflow foo", None, None, str(base), local_workflows_dir=str(local)
+        )
+        assert config["task"] == "ctx"
+        assert config["config_workflow"] == "foo"
+        assert "SKIP_AGENT" not in config
+
+    def test_builtin_used_when_local_absent(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+
+        base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("genius")})
+        local = self._dir(tmp_path, "local", {})
+        config = _resolve_human_path(
+            "/workflow foo", None, None, str(base), local_workflows_dir=str(local)
+        )
+        assert config["task"] == "genius"
+        assert config["config_workflow"] == "foo"
+
+    def test_missing_everywhere_falls_back_to_mention_with_skip_reason(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+
+        base = self._dir(tmp_path, "base", {})
+        local = self._dir(tmp_path, "local", {})
+        config = _resolve_human_path(
+            "/workflow nope", None, None, str(base), local_workflows_dir=str(local)
+        )
+        assert config["task"] == ""
+        assert config["config_workflow"] == ""
+        # Enriched diagnostic carried for the terminal skip comment
+        reason = config["config_skip_reason"]
+        assert "nope" in reason
+        assert str(base / "nope.yaml") in reason
+        assert str(local / "nope.yaml") in reason
+
+    def test_schema_invalid_local_override_fails_loudly(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+
+        base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
+        local = self._dir(tmp_path, "local", {"foo.yaml": "name: foo\n"})
+        config = _resolve_human_path(
+            "/workflow foo", None, None, str(base), local_workflows_dir=str(local)
+        )
+        # No silent fallthrough to the built-in of the same name
+        assert config["task"] == ""
+        assert config["config_workflow"] == ""
+        assert "schema-invalid" in config["config_skip_reason"]
+
+    def test_valid_resolution_has_no_skip_reason(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+
+        base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
+        config = _resolve_human_path("/workflow foo", None, None, str(base))
+        assert config["task"] == "dev"
+        assert "config_skip_reason" not in config

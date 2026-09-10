@@ -4,6 +4,8 @@ Validates the resolved task, routes via resolve_workflow_routing, and
 constructs the final KEY=value environment variable dict.
 """
 
+from typing import Optional
+
 from resolve_workflow import (
     resolve_workflow_routing,
     TASK_TO_PROMPT,
@@ -16,6 +18,7 @@ def _build_result(
     config: dict,
     prompt_base: str,
     workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Build the final result dict from resolved config values.
 
@@ -26,13 +29,18 @@ def _build_result(
         config: Config dict with task and config_* variables.
         prompt_base: Path to prompt files directory.
         workflows_dir: Path to workflows directory.
+        local_workflows_dir: Optional consumer-local workflows dir that takes
+            precedence over ``workflows_dir`` (issue #529).
 
     Returns:
         Dict with all environment variables to set.
     """
     task = config.get("task", "")
     if not task:
-        return {"SKIP_AGENT": "true", "REASON": "No valid task found"}
+        # Enriched reason: carries /workflow failure detail (name + searched
+        # directories) when available (issue #529).
+        skip_reason = config.get("config_skip_reason") or "No valid task found"
+        return {"SKIP_AGENT": "true", "REASON": skip_reason}
 
     # Validate task
     if task not in TASK_TO_PROMPT:
@@ -59,6 +67,7 @@ def _build_result(
         },
         workflows_dir,
         prompt_base,
+        local_workflows_dir,
     )
 
     if wf_result.get("SKIP_AGENT") == "true":

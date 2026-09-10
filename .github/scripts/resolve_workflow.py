@@ -36,6 +36,7 @@ from config import (
     WorkflowStep,
     WorkflowDefinition,
     load_workflow,
+    load_workflow_with_dirs,
     is_path_like_reference,
     is_valid_workflow_reference,
     resolve_workflow_reference,
@@ -64,6 +65,7 @@ def resolve_workflow_routing(
     agent_config: dict,
     workflows_dir: str,
     prompt_base: str,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve agent routing based on workflow definition or fallback.
 
@@ -98,6 +100,7 @@ def resolve_workflow_routing(
         return resolve_workflow_step(
             task, workflow_name, step_name, branch_key, workflows_dir, prompt_base,
             parent_workflow, parent_workflow_step,
+            local_workflows_dir=local_workflows_dir,
         )
 
     # Fallback: direct task-to-agent mapping (backward compatible)
@@ -377,6 +380,7 @@ def resolve_workflow_step(
     prompt_base: str,
     parent_workflow: str = "",
     parent_workflow_step: str = "",
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve a specific step within a workflow.
 
@@ -391,16 +395,22 @@ def resolve_workflow_step(
         prompt_base: Path to prompt files directory.
         parent_workflow: Name of parent workflow (if currently in a sub-workflow).
         parent_workflow_step: Step name in parent that triggered the sub-workflow.
+        local_workflows_dir: Optional consumer-local workflows dir with
+            precedence over ``workflows_dir`` for plain-name lookups (issue #529).
 
     Returns:
         Dict with routing variables.
     """
     # Load workflow definition — supports names and repo-root-relative paths
     # (issue #468): path-like references resolve outside workflows/.
+    # Plain names scan local dir first (issue #529).
     if is_path_like_reference(workflow_name):
         resolved = resolve_workflow_reference(workflow_name, workflows_dir)
     else:
-        resolved = Path(workflows_dir) / f"{workflow_name}.yaml"
+        try:
+            resolved = load_workflow_with_dirs(workflow_name, workflows_dir, local_workflows_dir or "")
+        except FileNotFoundError:
+            resolved = Path(workflows_dir) / f"{workflow_name}.yaml"
     if not Path(resolved).exists():
         # Fall back to direct task mapping if workflow file not found
         prompt_file = TASK_TO_PROMPT.get(task)
@@ -501,13 +511,21 @@ def resolve_workflow_step(
 def _load_workflow_by_reference(
     workflow_name: str,
     workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
 ) -> Optional[WorkflowDefinition]:
-    """Load a workflow by name or repo-root-relative path reference."""
+    """Load a workflow by name or repo-root-relative path reference.
+
+    Plain names are scanned with the consumer-local directory taking
+    precedence (issue #529); path-like references resolve as before.
+    """
     if not is_valid_workflow_reference(workflow_name):
         return None
-    reference = resolve_workflow_reference(workflow_name, workflows_dir)
     try:
-        return load_workflow(str(reference))
+        if is_path_like_reference(workflow_name):
+            reference = resolve_workflow_reference(workflow_name, workflows_dir)
+            return load_workflow(str(reference))
+        candidate = load_workflow_with_dirs(workflow_name, workflows_dir, local_workflows_dir or "")
+        return load_workflow(str(candidate))
     except (FileNotFoundError, ValueError):
         return None
 
@@ -599,6 +617,7 @@ def _return_to_parent_on_terminal(
     branch_result: Optional[str],
     workflows_dir: str,
     agent_hint: Optional[str],
+    local_workflows_dir: Optional[str] = None,
 ) -> Optional[dict]:
     """Exit to the parent when a sub-workflow cannot advance internally.
 
@@ -608,7 +627,7 @@ def _return_to_parent_on_terminal(
     set (overall terminal).
     """
     if parent_workflow and parent_workflow_step:
-        parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir)
+        parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir, local_workflows_dir)
         if parent_wf is not None:
             marker = _return_to_parent_marker(
                 parent_wf, parent_workflow_step, branch_result, parent_workflow
@@ -628,6 +647,7 @@ def resolve_next_from_workflow(
     branch_result: Optional[str] = None,
     parent_workflow: str = "",
     parent_workflow_step: str = "",
+    local_workflows_dir: Optional[str] = None,
 ) -> Optional[dict]:
     """Resolve the next step in a workflow given the current step.
 
@@ -661,7 +681,7 @@ def resolve_next_from_workflow(
         fallback, entry/exit markers for sub-workflow transitions, or
         ``None`` for terminal/missing cases.
     """
-    workflow = _load_workflow_by_reference(workflow_name, workflows_dir)
+    workflow = _load_workflow_by_reference(workflow_name, workflows_dir, local_workflows_dir)
     if workflow is None:
         if agent_hint:
             return {"task": agent_hint}
@@ -683,7 +703,7 @@ def resolve_next_from_workflow(
     # scope for the trigger-side resolver)
     child_ref = _resolve_sub_workflow_ref_target(current_step)
     if child_ref:
-        child_workflow = _load_workflow_by_reference(child_ref, workflows_dir)
+        child_workflow = _load_workflow_by_reference(child_ref, workflows_dir, local_workflows_dir)
         if child_workflow is not None and child_workflow.steps:
             return _sub_workflow_entry_marker(
                 child_workflow, child_ref, workflow, current_step
@@ -692,7 +712,7 @@ def resolve_next_from_workflow(
     # Terminal step: return to parent when inside a sub-workflow
     if _is_terminal_step(current_step):
         if parent_workflow and parent_workflow_step:
-            parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir)
+            parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir, local_workflows_dir)
             if parent_wf is not None:
                 marker = _return_to_parent_marker(
                     parent_wf, parent_workflow_step, branch_result, parent_workflow
@@ -730,7 +750,8 @@ def resolve_next_from_workflow(
 
     if target_step_name is None:
         return _return_to_parent_on_terminal(
-            parent_workflow, parent_workflow_step, branch_result, workflows_dir, agent_hint
+            parent_workflow, parent_workflow_step, branch_result, workflows_dir, agent_hint,
+            local_workflows_dir,
         )
 
     # Look up target step to get its agent

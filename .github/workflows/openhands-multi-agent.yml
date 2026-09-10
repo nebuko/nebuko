@@ -220,12 +220,21 @@ jobs:
                   # Determine script and workflow paths
                   SCRIPTS_DIR=""
                   WFLOWS_DIR=""
+                  LOCAL_WFLOWS_DIR="$GITHUB_WORKSPACE/workflows"
                   if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows" ]; then
                     SCRIPTS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts"
                     WFLOWS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows"
                   else
-                    SCRIPTS_DIR=".github/scripts"
-                    WFLOWS_DIR="workflows"
+                    SCRIPTS_DIR="$GITHUB_WORKSPACE/.github/scripts"
+                    WFLOWS_DIR="$LOCAL_WFLOWS_DIR"
+                  fi
+                  # Consumer-local workflows dir (issue #529): takes precedence
+                  # over the built-in dir when both contain the same name.
+                  # Only passed when it differs from the base dir (a no-op
+                  # otherwise).
+                  LOCAL_WFLOWS_ARG=""
+                  if [ -d "$LOCAL_WFLOWS_DIR" ] && [ "$LOCAL_WFLOWS_DIR" != "$WFLOWS_DIR" ]; then
+                    LOCAL_WFLOWS_ARG="--local-workflows-dir $LOCAL_WFLOWS_DIR"
                   fi
 
                   # Single source of truth for script locations (issue #466)
@@ -244,6 +253,7 @@ jobs:
                     --trigger-body - \
                     --prompt-base "$PROMPT_BASE" \
                     --workflows-dir "$WFLOWS_DIR" \
+                    $LOCAL_WFLOWS_ARG \
                     --repo "$REPO_NAME" \
                     --issue-number "$TARGET_NUMBER" \
                     <<< "$TRIGGER_BODY" 2>&1 | tee /tmp/resolve_config_output.txt
