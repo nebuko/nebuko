@@ -31,11 +31,20 @@ class RunOutcome:
 
     Attached to the conversation instance as ``conversation.run_outcome``
     so downstream features (build_output) can classify the run.
+
+    Fields:
+        status: High-level outcome of the run.
+        soft_timeout_fired: Whether the soft-timeout watchdog tripped.
+        wind_down_completed: Whether the wind-down pass finished (only
+            meaningful when soft_timeout_fired is True).
+        dispatch_recall_count: Number of recall turns injected because the
+            run ended without a dispatch_next call (issue #524).
     """
 
     status: OutcomeStatus
     soft_timeout_fired: bool = False
     wind_down_completed: bool = False
+    dispatch_recall_count: int = 0
 
 
 def classify_run(status_value: str, soft_timeout_fired: bool) -> OutcomeStatus:
