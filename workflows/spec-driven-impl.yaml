@@ -15,6 +15,7 @@ steps:
 
   - name: plan
     agent: genius
+    human_gate: true
     next: stub
     conditions:
       - on_result: approved
