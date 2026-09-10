@@ -27,8 +27,9 @@ For the high-level pitch and quick overview, see the root
 | [github-api-limits.md](./github-api-limits.md) | Operators | GitHub REST rate limits relevant to the comment-based state machine. |
 
 Business documents (not user documentation): `etude-de-marche.md` (market
-study, in French), and the root `landscape.md` / `landscape_commercial.md`
-(product positioning). Agent behavior contract: root [`AGENTS.md`](../AGENTS.md).
+study, in French), and the root `landscape.md` (product positioning — "what
+is the product" + "how does it work"). Agent behavior contract: root
+[`AGENTS.md`](../AGENTS.md).
 
 ---
 

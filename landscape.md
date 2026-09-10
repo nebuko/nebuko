@@ -1,202 +1,104 @@
 # git-flow-ai — Landscape
 
-**Vision:** agents that delegate to each other (`@@`) become workflows that encode how a team actually works — workflows that, because they are code, can be set, updated, rolled back, measured, and shared — which becomes a library of shared, reusable processes. Capability, then product, then platform.
-
-git-flow-ai is a GitHub-native multi-agent development tool. Agents with defined roles
-collaborate on real issues and pull requests, coordinate through the issue thread itself,
-and follow declarative workflows that reflect your team's engineering process — including
-points where a human must approve before the machine continues.
+**What it is, in one line:** AI multi-agent workflow as code — a schema and an engine — that lives where *you* are: in GitHub issues and runners. Today, GitHub is the only supported platform; GitLab, Codeberg, BitBucket, Gitea and friends are the stated direction, not a claim.
 
 ---
 
-## The pain points
+## Q1 · What is the product?
 
-### 1. New AI tools fail at integration
+### Built for iterative dev, not one-prompt apps
 
-A new AI tool arrives every day. Almost all of them fail in the same place: fitting
-into an existing tech stack. Every arrival forces a manual audit — what does it
-replace, where does it sit, how does it combine with what is already there? That
-"where does this go?" question is answered by hand, for every tool, and the answer
-lives in a few people's heads rather than anywhere inspectable.
+git-flow-ai is focused on **iterative software development**: small iterations, fast delivery, clean code, TDD — the practices that make senior developers shine. It is deliberately not the "one big prompt builds an entire app" flow you see all over the internet. That waterfall style loses the best of how humans actually build software: review at design level, short feedback loops, work that lands in small reviewed slices.
 
-### 2. AI-generated code shifts the bottleneck to review
+### Anti-"AI slop": no forced new tool
 
-LLMs produce large pull requests quickly. Merging them requires a human to diff line by
-line, which makes *review time*, not generation time, the limiting factor of the pipeline.
-The cost is paid on every merge, by the person who already has too many open PRs.
+A lot of AI products are a good idea packaged in a SaaS that forces you to use *another* tool. But GitHub already has what a developer needs: a place to store code, a place to plan work, and a place to follow the discussion around an issue.
 
-### 3. Rigid automation cannot adapt
+A second drawback of those products: when you want to try a new, cool behaviour, you have to update your whole stack to integrate it. git-flow-ai focuses on **Layer 2**, which changes that:
 
-CI/CD pipelines are deterministic. When step 3 needs information that step 2 did not
-produce, the pipeline either fails or moves forward blind. There is no way for a stage
-to say "I'm missing something — ask the specialist who knows" without rewriting the
-pipeline as a whole.
+| Layer | What it is | In this project |
+|-------|-----------|-----------------|
+| **Layer 3** — AI workflow | A new way of doing something with AI: code, review, analyze… | the workflows in `workflows/` (spec-driven, dev-review-loop, …) |
+| **Layer 2** — workflow engine | The runner that executes Layer 3; today in GitHub CI/CD, a dedicated SaaS later | git-flow-ai itself |
+| **Layer 1** — AI agent runner | The engine that runs an individual agent | OpenHands SDK |
 
-### 4. Team process lives in people's heads
+The payoff: when a new cool tool appears at Layer 3 — a new workflow, an MCP, a websearch or context7 skill — you **copy the flow into your repo**, give it a try on Layer 2, and adopt it or delete it. No stack update, no migration, no new infrastructure. The same story holds for any external capability: it plugs in as a skill or a workflow step, so adoption stays a copy-paste decision.
 
-How a good team works — spec, design review, stub review, implementation, verification —
-is tribal knowledge carried by meetings and senior engineers. It is not versioned, not
-shareable, not reproducible by a new team. When the people leave, the process leaves too.
+### Agents as coworkers, not a black box
 
-### 5. Agent tools are disconnected
-
-Today's AI coding assistants are single agents. They have no roles, no awareness of a
-roster of specialists, and no mechanism to hand work to another agent when the task
-exceeds what they are good at. Delegation — the core skill of any engineering team —
-is missing.
-
-### 6. Setup friction and credential risk
-
-Wiring multi-agent automation into a repository today typically means long-lived personal
-access tokens with broad scopes, pasted into configs, hard to scope, hard to revoke, and
-unsafe to share. Onboarding a teammate or a new repository is disproportionately painful.
+Agents are introduced as **coworkers**: they talk to you and to the other agents in plain comments on the issue, the same way a human teammate would. You read *what* they did, *what* they found, and *why*. It is no longer a black box — they are real teammates.
 
 ---
 
-## The solution
+## Q2 · How does it work?
 
-Each pain point maps to a concrete mechanism in git-flow-ai.
+### Agents with a role and a personality
 
-### Agents with personas and `@@` delegation
+Every agent is defined **as code** in `agent-config.yaml`: provider, LLM model and sampling parameters, a prompt file carrying its role/personality, the skills it may use, and the tools it may call. Nine agents ship today — among them `genius` (principal engineer), `ctx` (context collector), `dev` (execution developer), `review` (senior code reviewer), `issue` (issue refinement).
 
-Every agent is defined declaratively: role, personality, capabilities, model, and skills.
-Each agent knows the roster — who else exists and what they are responsible for. During
-any step, an agent can **delegate with a simple `@@mention`**: "I need context on X",
-"@@dev, implement this stub", "@@review, check this diff". The result propagates back
-into the same issue thread, where the calling agent picks up where it left off.
+### Skills, granted to agents
 
-This answers pain points 1, 3, and 5 at once: a mid-step gap is filled by pinging the
-right specialist instead of failing the pipeline, and humans watch the delegation happen
-in the issue thread rather than an opaque dashboard.
+A skill is a markdown file that tells an agent how to perform a specific procedure (calling another agent, scaffolding a plan, working in stub-only mode, …). Skills are granted per agent from the same config — granting a capability is a one-line diff.
 
-### Workflows as the core product
+### Workflows as code
 
-A workflow is a versioned, declarative YAML document that encodes how work actually gets
-done: ordered steps, each bound to an agent role, with context passed between steps and
-**human approval gates** where required.
+A workflow is a declarative YAML document that **forces the AI onto a dedicated path** to do something:
 
 ```yaml
-name: spec-driven
+name: spec-driven-impl
 steps:
-  - name: spec
-    agent: genius          # drafts architecture spec
-  - name: spec_approval
+  - name: analyze
     agent: genius
-    human_gate: true       # a human must approve before anything is built
-  - name: stubs
-    agent: dev             # method stubs: injection points, call sites, test cases
-  - name: stub_approval
+    next: context
+  - name: plan
     agent: genius
-    human_gate: true       # review the design decisions, not the implementation
-  - name: implement
-    agent: dev             # fills implementations against approved stubs
-  - name: verify
-    agent: review          # runs tests, opens the PR
+    human_gate: true        # a human must approve before anything is built
+    conditions:
+      - on_result: approved
+        next: stub
+      - on_result: rejected
+        next: context       # conditional routing based on agent output
+  - name: stub
+    agent: dev
+    skill: [stub-only]      # per-step skill grant
 ```
 
-Human attention is spent where it is worth paying: on the architecture spec, the stubs
-(injection points, call sites, test cases), and the verdict — not on full implementations.
-That is the direct answer to pain point 2: the review burden drops from "every line of a
-large AI PR" to "two design-level gates", which measurably reduces the time needed to
-merge AI-generated code.
+`human_gate` keeps design decisions human-owned; conditional output routes the next step from what the agent concluded.
 
-Workflows solve pain point 4 by making team process a **first-class artifact**: checked
-into the repository, diffable, versioned, forkable, and shareable. A team's way of working
-stops living in meetings and starts living next to the code it produces.
+### Divide and conquer
 
-### Workflows as code: set, update, roll back, share
+Long context is a known issue: it leads agents to drift out of their rules and lose focus. Small, dedicated agents bound that problem — each one owns a narrow task with a narrow context.
 
-Because a workflow is declarative YAML versioned in git, it carries every property of a
-CI artifact for free. This is the direct answer to pain point 1: each AI tool stops
-being an isolated "where does this go?" audit and becomes a step in a defined process.
+When an agent is done, it posts a comment in the GitHub issue saying what it did, what it found, and what the next step is. It can then call another agent to complete a dedicated task. The result is **auditability**: you know what happened and *why* — every action is a comment you can read, question, and redirect.
 
-- **Set** a process once, declaratively — the workflow states which agent does what,
-  in which order, with which gates.
-- **Update** it with a plain diff that a colleague can review before it takes effect.
-- **Roll back** a bad process change the same way you roll back a commit.
-- **Share** it via the repo — a workflow adopted elsewhere is a file, not a migration.
+### Workflow state: the machine-readable twin of the conversation
 
-Process becomes code: reviewable, diffable, reversible. That sentence is the core of
-what makes a stream of daily new AI tools manageable instead of overwhelming.
+Because LLMs are stateless, every agent comment embeds a JSON **workflow state**: where we are in the workflow (which step), the history, whether there is a PR, the dispatch that ends the run, and metrics. That knowledge is what the engine uses to identify the next action and to improve the next run — right-size the context, pick what is important to ingest, detect loops. It is visible in plain comments, so you understand how it works under the hood.
 
-### Measurability: ship what the numbers show works
+### Choose your LLM
 
-A workflow is a unit in version control, which makes it possible to answer the question
-no tribal automation can answer: *does this process actually improve quality?* You can
-compare the periods before and after a workflow lands — or run variants side by side —
-on concrete signals rather than gut feeling.
+You can use **different models for different purposes** — planning versus coding — and per-agent parameters. Shipped today: complexity-based temperature and a per-invocation model override (an agent can request a specific model for the next run). Direction: automatically escalate to a stronger model when a task is detected to be looping and failing.
 
-Initial candidate signals (definitions still in progress):
+### Split the task
 
-| Signal | What it captures |
-|--------|------------------|
-| Human interactions per issue | How much a human has to intervene |
-| Tokens spent per issue | Cost of running the process |
-| Defect / rework rate | Quality of what gets merged |
-| Merge time | How fast work actually lands |
+Small is beautiful: an agent facing a huge task can decompose it into **sub-issues** (the `splitPlan` mechanism) and have each smaller task completed by its own dedicated run, instead of one oversized agent session.
 
-The loop closes with shipping: if the numbers show a workflow improves overall quality,
-adopting it across the team is just merging the YAML — a CI change, nothing more. No
-new deployment surface, no platform migration.
+---
 
-### Workflow-as-artifact: sharing without a registry
+## Shipped vs. planned — the honest bar
 
-Because a workflow is just a versioned YAML file in a git repository, sharing works on day
-one with zero infrastructure: point at a file in a public repo, copy it into yours, adapt
-it. The project ships a small set of dogfooded workflows — flagship being
-**spec-driven** (spec → human gate → stubs → human gate → implement → verify) — built from
-real usage rather than imagined use cases. If those workflows prove their value, the
-format is ready to carry a community library and, later, a managed marketplace on top.
-The format is the open contract; distribution is a layer above it.
+| Shipped today | Direction / roadmap |
+|---------------|---------------------|
+| Agents, skills, workflows as code | Managed SaaS on top of the open core |
+| `human_gate` + conditional routing | Multi-platform: GitLab, Codeberg, BitBucket, Gitea |
+| JSON workflow state in comments | Auto-escalation to a stronger model on loop failure |
+| Split-task sub-issues (`splitPlan`) | GitHub App installation as primary setup |
+| Complexity-based temperature, model override | Managed workflow marketplace |
 
-### GitHub-native by design
-
-No new infrastructure: **GitHub Issues and Comments are the transport layer**. Agents
-post progress, questions, and results as comments; humans approve gates and redirect work
-by commenting — the same way they already work. The repo is the system.
-
-For credentials (pain point 6), the direction is a **GitHub App installation** as the
-primary setup — per-repo install, fine-grained permissions, scoped and revocable
-installation tokens — with a PAT fallback retained for local and contributor dev mode.
-Setup becomes "install the app on this repo" instead of "paste a long-lived token".
-
-### Open core: self-hosted core, managed service on top
-
-- **Open-source core:** the engine, agent definitions, `@@` delegation, workflow format
-  and executor, and GitHub transport. Self-hosted, runnable with your own LLM key (the
-  LLM adapter is pluggable — OpenRouter, local models, any provider), zero cloud
-  dependency.
-- **Managed SaaS (later):** hosted operation of the core — managed LLM routing and cost
-  controls, observability, cross-repo agent visibility, and a workflow marketplace with
-  discovery and curation. A distribution and convenience layer wrapping the open core,
-  never forking it.
-
-The core will be released under a copyleft-style license (AGPL v3 is currently the leading
-candidate; final decision pending), chosen to keep the engine freely usable while
-preventing closed re-service of unmodified copies.
-
-### Shipped early and staged
-
-The release philosophy is thin, end-to-end slices, each genuinely working:
-
-| Stage | What lands |
-|-------|-----------|
-| **Alpha** | One true round-trip: two agents, one `@@` delegation on a real issue, result posted back. |
-| **Beta** | Flagship spec-driven workflow end-to-end with both human gates; workflow format v1 freezes. |
-| **0.1** | Stable tag, format documented as a public contract, workflows robust enough to fork. |
-
-The project is built in public — progress, changes, and lessons are visible in the repo
-as they happen. Contributors meet a project in motion, not a big reveal.
+The core is open source (AGPL v3), self-hosted, and runnable with your own LLM key. The release philosophy is thin, end-to-end slices, each genuinely working, built in public.
 
 ---
 
 ## In one paragraph
 
-git-flow-ai turns engineering process into executable, shareable artifacts. Agents with
-defined roles collaborate on GitHub issues, delegating to specialists with `@@` when a
-step needs help. Declarative YAML workflows encode how a team works — including the human
-approval gates that keep design decisions human-owned — and because they are code, a
-process can be updated with a reviewed diff, rolled back with a commit, and measured
-against signals like merge time or rework rate before being shipped. The result: less
-line-by-line review of AI code, process that survives personnel change, and a path from
-your private workflow to a shared library others can fork.
+git-flow-ai is AI multi-agent workflow as code that lives where you already are: in GitHub issues and runners. Agents with real roles collaborate as coworkers — commenting, delegating, and gating work with human approval exactly where it matters — while declarative workflows keep the AI on a defined path. Because the process is code, you copy it, update it with a diff, roll it back with a commit, and measure it; because every step leaves a human-readable comment and a machine-readable state, you always know what happened and why. New AI capabilities are a copy-paste at Layer 3, adopted or deleted without touching your stack.

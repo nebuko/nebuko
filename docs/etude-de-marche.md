@@ -460,7 +460,7 @@ Toutes les sources web ont été collectées et vérifiées le **2026-08-28** vi
 - **[48]** Issue interne **#475** (plan de lancement v4, 2026-08-21 : gates, GTM, modèle économique, moat) — https://github.com/olivier-norture/git-flow-ai/issues/475
 - **[49]** PR interne **#481** (documents *landscape*, Gate 0) — https://github.com/olivier-norture/git-flow-ai/pull/481
 - **[50]** `landscape.md` (dépot racine, ajouté par la PR #481) — vision, 6 pain points, solution
-- **[51]** `landscape_commercial.md` (dépot racine, branche de la PR #481) — version narrative commerciale du même constat
+- **[51]** `landscape_commercial.md` (dépot racine, branche de la PR #481) — version narrative commerciale du même constat *(supprimé depuis : le contenu a été consolidé dans `landscape.md`)*
 - **[52]** `README.md` (dépot racine) — architecture 5 agents, usage, distribution zero-copy, configuration 3 couches
 - **[53]** `agent-config.yaml` (dépot racine) — providers, modèles, prix d'inférence par modèle
 - **[54]** Métadonnées du dépôt via API GitHub, relevées le 2026-08-28 — https://github.com/olivier-norture/git-flow-ai (création 2026-05-29 ; 0 star / 0 fork / 0 watcher ; 79 issues ouvertes ; licence Apache-2.0)
