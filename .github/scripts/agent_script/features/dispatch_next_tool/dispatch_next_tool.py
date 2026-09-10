@@ -77,7 +77,12 @@ Parameters:
 - complexity: 'low' | 'medium' | 'high' for the next agent.
 - reason: one-sentence justification.
 
-Do NOT encode the dispatch decision in prose or HTML comments instead of calling this tool."""  # noqa: E501
+Do NOT encode the dispatch decision in prose or HTML comments instead of calling this tool.
+Deliverable note: the free-form text you write alongside this call (the turn's text)
+is captured by the posting pipeline as the agent's answer and posted to the issue —
+so include the full run report there if you have not already posted it as a text
+answer. The parameters above are routing metadata only; never stuff the report into
+`reason`."""  # noqa: E501
 
 
 # ── Run-scoped dispatch registry ──────────────────────────────────────────
