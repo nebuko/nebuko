@@ -224,6 +224,49 @@ class TestWorkflowStepScript:
         step = WorkflowStep(name="ok", kind="script", script="scripts/ci/test.sh")
         assert step.script == "scripts/ci/test.sh"
 
+    def test_script_timeout_zero_rejected(self):
+        # 0 would mean "no timeout" at runtime; only positive minutes are valid.
+        with pytest.raises(ValueError, match="positive"):
+            WorkflowStep(
+                name="bad", kind="script", script="scripts/test.sh", timeout_minutes=0
+            )
+
+    def test_script_timeout_negative_rejected(self):
+        with pytest.raises(ValueError, match="positive"):
+            WorkflowStep(
+                name="bad",
+                kind="script",
+                script="scripts/test.sh",
+                timeout_minutes=-5,
+            )
+
+    def test_script_path_field_rejected(self):
+        # `path` belongs to workflow/repo steps, not script steps.
+        with pytest.raises(ValueError, match="cannot declare 'path'"):
+            WorkflowStep(
+                name="bad",
+                kind="script",
+                script="scripts/test.sh",
+                path="some/path",
+            )
+
+    def test_agent_step_with_stray_args_rejected(self):
+        with pytest.raises(ValueError, match="kind: script"):
+            WorkflowStep(name="bad", agent="dev", args=["--unit"])
+
+    def test_agent_step_with_stray_timeout_rejected(self):
+        with pytest.raises(ValueError, match="kind: script"):
+            WorkflowStep(name="bad", agent="dev", timeout_minutes=10)
+
+    def test_workflow_step_with_stray_script_fields_rejected(self):
+        with pytest.raises(ValueError, match="kind: script"):
+            WorkflowStep(
+                name="bad",
+                workflow="review-only",
+                args=["--unit"],
+                timeout_minutes=10,
+            )
+
     def test_existing_agent_step_unaffected(self):
         # Backward compatibility: plain agent steps parse exactly as before.
         step = WorkflowStep(name="analyze", agent="genius", next="context")

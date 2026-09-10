@@ -54,6 +54,12 @@ class WorkflowStep(BaseModel):
                 raise ValueError(
                     "A 'script' step cannot also declare 'agent', 'workflow', or 'repo'"
                 )
+            if self.path is not None:
+                raise ValueError("A 'script' step cannot declare 'path'")
+            if self.timeout_minutes is not None and self.timeout_minutes < 1:
+                raise ValueError(
+                    "'timeout_minutes' must be a positive integer (minutes)"
+                )
             if self.script.startswith("/") or ".." in self.script.split("/"):
                 raise ValueError(
                     "'script' path must be repo-relative (no leading '/' or '..')"
@@ -62,6 +68,10 @@ class WorkflowStep(BaseModel):
 
         if self.script is not None:
             raise ValueError("'script' requires 'kind: script'")
+        if self.args is not None:
+            raise ValueError("'args' requires 'kind: script'")
+        if self.timeout_minutes is not None:
+            raise ValueError("'timeout_minutes' requires 'kind: script'")
 
         # Note: `path` is an optional companion to `workflow`, not a standalone source.
         # `repo` is mutually exclusive with `agent`, `workflow`, and `path`.
