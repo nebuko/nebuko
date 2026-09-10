@@ -46,6 +46,10 @@ from agent_script.features.ensure_pr.ensure_pr import (
     EnsurePrResult,
     ensure_pr,
 )
+from agent_script.features.dispatch_next_tool import (
+    clear_run,
+    get_recorded_dispatch,
+)
 
 logger = get_logger(__name__)
 
@@ -447,6 +451,78 @@ def _write_latest_answer_file(text: str) -> None:
         f.write(text)
     logger.info("Wrote latest answer artifact (%d chars)", len(text))
 
+def _resolve_dispatch(
+    conversation, final_message: str
+) -> tuple[Optional[Dispatch], Optional[FunctionCall], str]:
+    """Resolve the run's dispatch decision from the structured signal first.
+
+    Resolution priority (issue #524):
+      1. ``dispatch_next`` tool call — a boolean check on structured data,
+         immune to long-context format drops (the failure mode of the
+         free-text sentinel).
+      2. Legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel — silent compat
+         fallback during the dual-mode migration window.
+      3. Nothing — dispatch/function_call stay None.
+
+    When the tool call names an explicit ``agent`` target, a matching
+    ``FunctionCall(call_agent)`` is also populated so the state's
+    ``function_call`` field stays filled for every downstream routing path.
+
+    Sentinels are always stripped from ``final_message`` so they never leak
+    into the visible comment body.
+    """
+    dispatch: Optional[Dispatch] = None
+    function_call: Optional[FunctionCall] = None
+
+    conv_id = getattr(conversation, "id", None)
+    tool_dispatch = get_recorded_dispatch(conv_id) if conv_id is not None else None
+
+    if tool_dispatch is not None:
+        dispatch = tool_dispatch
+        # Explicit cross-agent targeting flows through function_call in the
+        # routing chain; keep that field populated when the tool names a target.
+        # The shared helper validates the name against the agent roster and
+        # logs a warning on typos (issue #524).
+        if dispatch.task_hint:
+            # Lazy import: dispatch_check imports from this module at top
+            # level, so a module-level import here would be circular.
+            from agent_script.features.dispatch_check import (
+                agent_to_function_call,
+            )
+
+            function_call = FunctionCall(**agent_to_function_call(dispatch.task_hint))
+        logger.info(
+            f"Dispatch resolved via dispatch_next tool: status={dispatch.status}, "
+            f"agent={dispatch.task_hint or '-'}"
+        )
+    elif final_message:
+        if has_unterminated_agent_run_config(final_message):
+            logger.warning("Unterminated AGENT_RUN_CONFIG sentinel detected (truncated output)")
+        extract_result = extract_dispatch_resilient(final_message)
+        if extract_result.payload is not None:
+            dispatch = agent_run_config_to_dispatch(extract_result.payload)
+            # The extractor only returns payloads it already json-parsed,
+            # so this re-parse cannot fail (valid-JSON guarantee).
+            function_call = extract_function_call(json.loads(extract_result.payload))
+            if dispatch is not None:
+                logger.info(
+                    "Dispatch resolved via legacy AGENT_RUN_CONFIG sentinel "
+                    "(dispatch_next tool not called)"
+                )
+        elif extract_result.parse_error is not None:
+            # A sentinel marker was present but no payload could be parsed
+            # (issue #512): log an explicit diagnostic instead of failing
+            # silently with dispatch=function_call=None.
+            logger.warning(
+                f"AGENT_RUN_CONFIG sentinel found but could not be parsed: "
+                f"{extract_result.parse_error}"
+            )
+
+    # Strip AGENT_RUN_CONFIG sentinels so they don't appear in the visible
+    # comment body — dispatch is stored structurally in workflow_state.dispatch.
+    final_message = strip_agent_run_config(final_message)
+    return dispatch, function_call, final_message
+
 
 def build_output(
     conversation,
@@ -521,29 +597,14 @@ def build_output(
     resolution = _build_resolution()
 
     # ── Extract dispatch + function_call from agent output ─────────
-    dispatch: Optional[Dispatch] = None
-    function_call: Optional[FunctionCall] = None
-    if final_message:
-        if has_unterminated_agent_run_config(final_message):
-            logger.warning("Unterminated AGENT_RUN_CONFIG sentinel detected (truncated output)")
-        extract_result = extract_dispatch_resilient(final_message)
-        if extract_result.payload is not None:
-            dispatch = agent_run_config_to_dispatch(extract_result.payload)
-            # The extractor only returns payloads it already json-parsed,
-            # so this re-parse cannot fail (valid-JSON guarantee).
-            function_call = extract_function_call(json.loads(extract_result.payload))
-        elif extract_result.parse_error is not None:
-            # A sentinel marker was present but no payload could be parsed
-            # (issue #512): log an explicit diagnostic instead of failing
-            # silently with dispatch=function_call=None.
-            logger.warning(
-                f"AGENT_RUN_CONFIG sentinel found but could not be parsed: "
-                f"{extract_result.parse_error}"
-            )
-        # Strip AGENT_RUN_CONFIG sentinels from final_message so they don't
-        # appear in the visible comment body — dispatch is now stored structurally
-        # in workflow_state.dispatch instead.
-        final_message = strip_agent_run_config(final_message)
+    dispatch, function_call, final_message = _resolve_dispatch(
+        conversation, final_message
+    )
+
+    # Clear the run-scoped dispatch registry on every exit path (issue #524):
+    # build_output runs exactly once per agent run, so this must not leak into
+    # the next run in a long-lived process.
+    clear_run(getattr(conversation, "id", None))
 
     # ── Human gate intercept (issue #506) ────────────────────────
     # The trigger source is the sole authorization: a resume-triggered run

@@ -8,12 +8,21 @@ GitHub Actions timeout (issue #489).
 """
 
 import asyncio
+import dataclasses
 import os
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
+from openhands.sdk.conversation import get_agent_final_response
 from openhands.tools.preset.default import get_default_condenser
 from openhands.sdk.tool.spec import Tool
+from openhands.sdk.tool.registry import register_tool
 
+from agent_script.features.dispatch_check import has_dispatch_decision
+from agent_script.features.run_agent.dispatch_recall import (
+    MAX_DISPATCH_RECALLS,
+    RECALL_PASS_BUDGET_S,
+    perform_dispatch_recalls,
+)
 from agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
@@ -32,6 +41,26 @@ logger = get_logger(__name__)
 
 # SDK sentinel for the built-in security policy (agent/base.py).
 _DEFAULT_SECURITY_POLICY = "security_policy.j2"
+
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
+_dispatch_tool_registered = False
+
+
+def _ensure_dispatch_tool_registered() -> None:
+    """Register the ``dispatch_next`` ToolDefinition with the SDK registry.
+
+    Idempotent — safe to call on every agent run.
+    """
+    global _dispatch_tool_registered
+    if _dispatch_tool_registered:
+        return
+    from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+        DispatchNextTool,
+    )
+
+    register_tool("DispatchNextTool", DispatchNextTool)
+    _dispatch_tool_registered = True
 
 
 def _resolve_security_policy() -> str:
@@ -137,12 +166,17 @@ def run_agent(
 
     sdk_tools = []
     include_default_tools = []
+    dispatch_tool_enabled = False
 
     for tool_name in agent_tools:
         if tool_name in sdk_tool_names:
             sdk_tools.append(Tool(name=tool_name))
         elif tool_name in builtin_tool_map:
             include_default_tools.append(builtin_tool_map[tool_name])
+        elif tool_name == "dispatch_next":
+            _ensure_dispatch_tool_registered()
+            sdk_tools.append(Tool(name="DispatchNextTool"))
+            dispatch_tool_enabled = True
         else:
             logger.warning(f"Unknown tool '{tool_name}' for agent '{role_name}' — skipping")
 
@@ -210,6 +244,45 @@ def run_agent(
         soft_timeout_fired=soft_timeout_fired,
         wind_down_completed=wind_down_completed,
     )
+
+    # ── Bounded dispatch recall (issue #524) ────────────────────
+    # The exact failure mode this fixes: the agent finished its turn but
+    # never made a next-step decision (no dispatch_next call, no sentinel).
+    # Since that is now programmatically detectable, ask the model for the
+    # cognitive decision — a short focused turn, max MAX_DISPATCH_RECALLS.
+    dispatch_recall_count = 0
+    if dispatch_tool_enabled and outcome is not OutcomeStatus.FAILURE:
+        # Shared with build_output._resolve_dispatch so the two can't drift:
+        # a parseable legacy sentinel counts as a decision (dual-mode window),
+        # not just a recorded dispatch_next call.
+        def _has_dispatch() -> bool:
+            return has_dispatch_decision(
+                conversation,
+                get_agent_final_response(conversation.state.events),
+            )
+
+        def _run_recall_pass(n: int) -> bool:
+            logger.warning(
+                f"Run ended without a dispatch_next call — recall "
+                f"{n}/{MAX_DISPATCH_RECALLS}"
+            )
+            watchdog, _ = _run_supervised(
+                conversation, RECALL_PASS_BUDGET_S, f"Dispatch recall {n}"
+            )
+            if watchdog.fired:
+                logger.warning(
+                    f"Dispatch recall {n} exhausted its budget — giving up"
+                )
+            return not watchdog.fired
+
+        dispatch_recall_count = perform_dispatch_recalls(
+            conversation, _has_dispatch, _run_recall_pass
+        )
+    if dispatch_recall_count:
+        run_outcome = dataclasses.replace(
+            run_outcome, dispatch_recall_count=dispatch_recall_count
+        )
+
     # Attach to the conversation so build_output can consume it without a
     # signature change.
     conversation.run_outcome = run_outcome  # type: ignore[attr-defined]

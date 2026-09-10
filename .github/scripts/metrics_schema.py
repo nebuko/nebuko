@@ -38,6 +38,8 @@ class Metrics:
         errors_per_tool: Mapping of tool name to error count.
         tokens_per_tool: Mapping of tool name to token usage breakdown.
         review_fix_requests: Number of times review asked dev to fix something.
+        dispatch_recall_count: Number of recall turns injected because the agent
+            ended without calling dispatch_next (issue #524).
         error: Optional error message if metrics collection failed.
     """
 
@@ -59,6 +61,7 @@ class Metrics:
     errors_per_tool: Dict[str, int] = field(default_factory=dict)
     tokens_per_tool: Dict[str, Dict[str, int]] = field(default_factory=dict)
     review_fix_requests: int = 0
+    dispatch_recall_count: int = 0
     error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
