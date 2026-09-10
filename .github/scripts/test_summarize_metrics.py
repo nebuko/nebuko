@@ -236,7 +236,7 @@ class TestMetricsSchema(unittest.TestCase):
             "max_context_window", "complexity", "tool_call_latency_ms", "agent_runtime_ms",
             "agent_runtimes_per_call_ms", "nb_tool_calls", "tool_call_error_rate",
             "start_time", "end_time", "tool_calls_per_tool", "errors_per_tool",
-            "tokens_per_tool", "review_fix_requests",
+            "tokens_per_tool", "review_fix_requests", "dispatch_recall_count",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
