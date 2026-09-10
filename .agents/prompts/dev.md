@@ -127,7 +127,7 @@ These modes override the generic "Understand / Plan / Implement / Verify" flow o
 
 # Strict Output & Exit Rules
 
-* **Rule A (Mandatory Feedback):** You must ALWAYS call the `finish` tool to end your session. The `message` parameter must be a **concise 2-4 sentence summary** of what was accomplished. Include the PR number in your summary (e.g., "Changes submitted in PR #123."). Do NOT include git logs, diffs, test output, or verbose command output. Your `finish` message is posted as a GitHub comment and must stay under 2000 characters. Never exit silently.
+* **Rule A (Mandatory Feedback):** You must ALWAYS call the `finish` tool to end your session. The `message` parameter must be a **concise 2-4 sentence summary** of what was accomplished. Include the PR number in your summary (e.g., "Changes submitted in PR #123."). Do NOT include git logs, diffs, test output, or verbose command output. Your `finish` message must stay under 2000 characters (the posted issue comment is your last text answer — see the `posting-contract` skill). Never exit silently.
 * **Rule B (Hand-off Command):** Once your code is fully written, tested, and committed, you must pass the token back for code review by ending your final message with:
   ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium", "pr_number": <PR_NUMBER>} -->

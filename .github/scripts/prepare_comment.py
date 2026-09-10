@@ -20,7 +20,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from validate_output import strip_agent_run_config
+from validate_output import AGENT_RUN_CONFIG_PATTERN, strip_agent_run_config
 
 # ── Regex patterns (all DOTALL for multi-line safety) ─────────────
 
@@ -42,6 +42,75 @@ _CONSOLE_MARKER = "Message from Agent " + "\u2500" * 63
 _AGENT_TRIGGER = re.compile(r"(?<![\w])@@([A-Za-z0-9_-]+)")
 
 MAX_COMMENT_LENGTH = 60000
+
+# Artifact written by the capture layer in build_output.py (issue #522):
+# the agent's latest full answer, preferred over the finish message as the
+# posted-comment body.
+LATEST_ANSWER_FILE = "latest_answer.md"
+
+
+# ── Latest-answer ETL (issue #522) ───────────────────────────────
+
+
+def select_posted_body(latest_answer: str, final_message: str) -> str:
+    # @stub-protected: signature defined by architect — do not modify
+    """Select the posted-comment body from the two candidate sources.
+
+    Contract (ETL layer, uniform for every agent):
+      * ``latest_answer`` non-empty after stripping → it is the body
+        (the full deliverable).
+      * Otherwise → ``final_message`` (the finish message; identical to
+        the pre-#522 behavior).
+
+    Args:
+        latest_answer: Raw content of latest_answer.md (may be "").
+        final_message: Raw final_message.txt content (may be "").
+
+    Returns:
+        The raw body text to clean and post.
+    """
+    stripped = latest_answer.strip()
+    return stripped if stripped else final_message
+
+
+def merge_handoff_sentinels(*sources: str) -> str:
+    # @stub-protected: signature defined by architect — do not modify
+    """Merge AGENT_RUN_CONFIG hand-off sentinels from the candidate sources.
+
+    Contract (ETL invariant — dispatch/branching must always reach the
+    comment):
+      * Scan sources left to right; the LAST sentinel payload found wins
+        (mirrors extract_dispatch_resilient's last-valid-payload rule).
+      * The winning sentinel block is returned exactly once — deduped no
+        matter how many times / in how many sources it appears.
+      * Return "" when no source contains a sentinel.
+
+    Args:
+        *sources: Raw text sources, e.g. (latest_answer, final_message).
+
+    Returns:
+        A single "<!-- AGENT_RUN_CONFIG ... -->" block, or "".
+    """
+    last_payload = ""
+    for source in sources:
+        if not source:
+            continue
+        for match in AGENT_RUN_CONFIG_PATTERN.finditer(source):
+            last_payload = match.group(1)
+    if not last_payload:
+        return ""
+    return f"<!-- AGENT_RUN_CONFIG {last_payload} -->"
+
+
+def _read_latest_answer(path: str = LATEST_ANSWER_FILE) -> str:
+    """Read the latest-answer artifact; return "" if missing/unreadable."""
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
 
 
 # ── Core cleaning functions ───────────────────────────────────────
@@ -241,6 +310,28 @@ def prepare_comment() -> bool:
                 error_msg += "\n\n" + metrics_comment
             _write_output(error_msg)
             return True
+
+        # ── Latest-answer ETL (issue #522) ───────────────────────
+        # The agent's latest full answer is the preferred posted body;
+        # the finish message (raw) is fallback only. Both sources feed
+        # the hand-off sentinel merge so dispatch/branching always
+        # reach the comment.
+        latest_raw = _read_latest_answer()
+        if latest_raw.strip():
+            body_raw = select_posted_body(latest_raw, raw)
+            if body_raw.strip():
+                body_metrics = extract_metrics(body_raw) or extract_metrics(raw)
+                cleaned = clean_message(body_raw, "")
+                if cleaned:
+                    merged_sentinel = merge_handoff_sentinels(latest_raw, raw)
+                    if merged_sentinel:
+                        cleaned += "\n\n" + merged_sentinel
+                    if body_metrics:
+                        cleaned += "\n\n" + body_metrics
+                    print(f"Using latest answer ({len(cleaned)} characters)", flush=True)
+                    cleaned = _truncate_at_boundary(cleaned)
+                    _write_output(cleaned)
+                    return True
 
         # Normal path: extract metrics, clean, write
         metrics_comment = extract_metrics(raw)

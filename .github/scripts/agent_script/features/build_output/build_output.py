@@ -8,6 +8,8 @@ from typing import Optional
 
 from openhands.sdk import get_logger
 from openhands.sdk.conversation import get_agent_final_response
+from openhands.sdk.event import MessageEvent
+from openhands.sdk.llm.message import content_to_str
 from pydantic import ValidationError
 
 from config import load_workflow, resolve_workflow_reference
@@ -46,6 +48,11 @@ from agent_script.features.ensure_pr.ensure_pr import (
 )
 
 logger = get_logger(__name__)
+
+# Artifact file holding the agent's latest full answer (issue #522).
+# Written by the capture layer in build_output(); consumed by the ETL layer
+# in prepare_comment.py as the preferred posted-comment body.
+LATEST_ANSWER_FILE = "latest_answer.md"
 
 
 # Tag patterns whose imbalance indicates a truncated tool-call block.
@@ -391,6 +398,56 @@ def _write_output_files(final_message: str, message_parts: list[str], metrics: M
         logger.info(f"Final agent message saved ({len(message_parts[0])} characters, no splitting needed)")
 
 
+def extract_latest_answer(events: list) -> str:
+    # @stub-protected: signature defined by architect — do not modify
+    """Extract the agent's latest full text answer from conversation events.
+
+    Contract (capture layer, issue #522):
+      * Return the text of the LAST assistant ``MessageEvent`` whose text
+        content is non-empty after stripping (latest-wins: each newer
+        answer replaces the previous one).
+      * ``finish`` tool actions are ignored — under the posting-contract
+        skill the finish message is a short status note, while the last
+        text answer carries the full deliverable. Agents may call finish
+        mid-flow or emit a final status text after it; only assistant
+        text answers are considered, in order.
+      * Return ``""`` when no agent text answer exists; callers then fall
+        back to the finish message (byte-identical legacy behavior).
+
+    Args:
+        events: Conversation event list (``conversation.state.events``).
+
+    Returns:
+        The latest agent text answer, or ``""`` if none.
+    """
+    # Scan forward with latest-wins: every newer assistant text answer
+    # replaces the previous one, so the last non-empty text answer is kept.
+    # Finish actions are skipped, never treated as a stop boundary — under
+    # the posting-contract skill agents may post the deliverable before
+    # calling finish, and the report must still be captured then.
+    latest = ""
+    for event in events or []:
+        if isinstance(event, MessageEvent) and event.source == "agent":
+            text = "".join(
+                content_to_str(event.llm_message.content)
+            ).strip()
+            if text:
+                latest = text
+    return latest
+
+
+def _write_latest_answer_file(text: str) -> None:
+    """Persist the latest-answer artifact consumed by prepare_comment.py.
+
+    Writes ``text`` to ``LATEST_ANSWER_FILE`` in the current working
+    directory. An empty string still writes the (empty) file so the ETL
+    layer distinguishes "no answer captured" via content, not presence.
+    """
+    with open(LATEST_ANSWER_FILE, "w", encoding="utf-8") as f:
+        f.write(text)
+    logger.info("Wrote latest answer artifact (%d chars)", len(text))
+
+
 def build_output(
     conversation,
     metrics: Metrics,
@@ -417,6 +474,12 @@ def build_output(
     """
     # ── Final response ───────────────────────────────────────────
     final_message = get_agent_final_response(conversation.state.events)
+
+    # ── Latest-answer capture (issue #522) ────────────────────────
+    # The full deliverable is the agent's last text answer; the finish
+    # message remains the status note used for dispatch/summary below.
+    latest_answer = extract_latest_answer(conversation.state.events)
+    _write_latest_answer_file(latest_answer)
 
     # ── Graceful timeout handling (issue #489) ────────────────────
     run_outcome = _get_run_outcome(conversation)
