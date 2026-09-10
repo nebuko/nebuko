@@ -148,3 +148,85 @@ class TestWorkflowStep:
         assert step.human_gate is True
         assert step.next == "implement"
         assert len(step.conditions) == 2
+
+
+class TestWorkflowStepScript:
+    """Test WorkflowStep with the deterministic script variant (issue #541)."""
+
+    def test_minimal_script_step(self):
+        step = WorkflowStep(name="run-tests", kind="script", script="scripts/test.sh")
+        assert step.kind == "script"
+        assert step.script == "scripts/test.sh"
+        assert step.args is None
+        assert step.timeout_minutes is None
+        assert step.agent is None
+
+    def test_script_step_with_args_and_timeout(self):
+        step = WorkflowStep(
+            name="run-tests",
+            kind="script",
+            script="scripts/test.py",
+            args=["--unit"],
+            timeout_minutes=15,
+        )
+        assert step.args == ["--unit"]
+        assert step.timeout_minutes == 15
+
+    def test_script_step_with_next_routing(self):
+        step = WorkflowStep(
+            name="run-tests", kind="script", script="scripts/test.sh", next="review"
+        )
+        assert step.next == "review"
+
+    def test_script_path_requires_kind(self):
+        # `script` without `kind: script` is not a valid step source.
+        with pytest.raises(ValueError, match="kind: script"):
+            WorkflowStep(name="broken", script="scripts/test.sh")
+
+    def test_script_kind_requires_path(self):
+        with pytest.raises(ValueError, match="requires the 'script' field"):
+            WorkflowStep(name="broken", kind="script")
+
+    def test_script_exclusive_of_agent(self):
+        with pytest.raises(ValueError, match="cannot also declare"):
+            WorkflowStep(
+                name="bad", kind="script", script="scripts/test.sh", agent="dev"
+            )
+
+    def test_script_exclusive_of_workflow(self):
+        with pytest.raises(ValueError, match="cannot also declare"):
+            WorkflowStep(
+                name="bad",
+                kind="script",
+                script="scripts/test.sh",
+                workflow="review-only",
+            )
+
+    def test_script_exclusive_of_repo(self):
+        with pytest.raises(ValueError, match="cannot also declare"):
+            WorkflowStep(
+                name="bad",
+                kind="script",
+                script="scripts/test.sh",
+                repo="https://example.com/repo.git",
+                ref="main",
+            )
+
+    def test_script_absolute_path_rejected(self):
+        with pytest.raises(ValueError, match="repo-relative"):
+            WorkflowStep(name="bad", kind="script", script="/etc/passwd")
+
+    def test_script_traversal_path_rejected(self):
+        with pytest.raises(ValueError, match="repo-relative"):
+            WorkflowStep(name="bad", kind="script", script="../outside.sh")
+
+    def test_script_nested_relative_path_allowed(self):
+        step = WorkflowStep(name="ok", kind="script", script="scripts/ci/test.sh")
+        assert step.script == "scripts/ci/test.sh"
+
+    def test_existing_agent_step_unaffected(self):
+        # Backward compatibility: plain agent steps parse exactly as before.
+        step = WorkflowStep(name="analyze", agent="genius", next="context")
+        assert step.kind is None
+        assert step.script is None
+        assert step.agent == "genius"

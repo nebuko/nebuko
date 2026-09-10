@@ -1,6 +1,6 @@
 """Workflow step entity."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, model_validator
 
@@ -24,6 +24,13 @@ class WorkflowStep(BaseModel):
     repo: Optional[str] = None
     ref: Optional[str] = None
     workflow_name: Optional[str] = None
+    # Script step (issue #541): deterministic, non-agent step that runs a
+    # repo-local script directly and posts its output as an issue comment.
+    # @stub-protected: script-variant fields defined by architect — do not modify
+    kind: Optional[Literal["script"]] = None
+    script: Optional[str] = None
+    args: Optional[list[str]] = None
+    timeout_minutes: Optional[int] = None
     next: Optional[str] = None
     conditions: Optional[list[WorkflowCondition]] = None
     skill: Optional[list[str]] = None
@@ -37,6 +44,25 @@ class WorkflowStep(BaseModel):
 
     @model_validator(mode="after")
     def _validate_step_source(self) -> "WorkflowStep":
+        # Script step (issue #541): a distinct, deterministic, non-agent source
+        # keyed by ``kind: script``. It must be the sole source, carry a
+        # repo-relative script path, and combine with no other source.
+        if self.kind == "script":
+            if not self.script:
+                raise ValueError("A 'script' step requires the 'script' field")
+            if self.agent or self.workflow or self.repo:
+                raise ValueError(
+                    "A 'script' step cannot also declare 'agent', 'workflow', or 'repo'"
+                )
+            if self.script.startswith("/") or ".." in self.script.split("/"):
+                raise ValueError(
+                    "'script' path must be repo-relative (no leading '/' or '..')"
+                )
+            return self
+
+        if self.script is not None:
+            raise ValueError("'script' requires 'kind: script'")
+
         # Note: `path` is an optional companion to `workflow`, not a standalone source.
         # `repo` is mutually exclusive with `agent`, `workflow`, and `path`.
         if not self.agent and not self.workflow and not self.repo:
