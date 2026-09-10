@@ -70,7 +70,7 @@ class DispatchNextObservation(Observation):
         return Text("Dispatch recorded.", style="bold green")
 
 
-DISPATCH_NEXT_DESCRIPTION = """Record the workflow's next-step decision. You MUST call this tool exactly once, as one of your FINAL actions, before finishing.
+DISPATCH_NEXT_DESCRIPTION = """Record the workflow's next-step decision. You MUST call this tool as one of your FINAL actions, before finishing. If you call it more than once, the last call wins.
 
 Parameters:
 - status: 'advance' (route to the next step/agent), 'loop' (repeat the current step), 'hold' (wait for human input), or 'terminate' (end the workflow).
@@ -186,8 +186,10 @@ class DispatchNextTool(ToolDefinition[DispatchNextAction, DispatchNextObservatio
         if params:
             raise ValueError("DispatchNextTool doesn't accept parameters")
         if conv_state is not None:
+            # ConversationState exposes its id as ``id`` (ConversationID);
+            # no ``conversation_id`` attribute exists on it.
             try:
-                conversation_id = str(conv_state.conversation_id)
+                conversation_id = str(conv_state.id)
             except Exception:
                 pass
         return [

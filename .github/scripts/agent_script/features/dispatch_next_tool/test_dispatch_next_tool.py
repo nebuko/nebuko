@@ -78,11 +78,31 @@ class TestDispatchNextTool(unittest.TestCase):
         tool = DispatchNextTool.create(conversation_id="run-3")[0]
         tool.executor(DispatchNextAction(status="advance", agent="dev"))
         tool.executor(DispatchNextAction(status="loop", agent=None))
-        self.assertEqual(get_recorded_dispatch("run-3").status, "loop")
+        d = get_recorded_dispatch("run-3")
+        self.assertIsNotNone(d)
+        # Guard the dereference above: a missing dispatch would raise AttributeError.
+        self.assertIsInstance(d, Dispatch)
+        self.assertEqual(d.status, "loop")
+        clear_run("run-3")
 
     def test_create_rejects_unknown_params(self):
         with self.assertRaises(ValueError):
             DispatchNextTool.create(foo=1)
+
+    def test_create_binds_conversation_state_id(self):
+        """SDK resolves tools with the ConversationState; its id (a UUID)
+        is what must key the registry — not a non-existent attribute."""
+
+        class _FakeState:
+            id = "state-uuid-1"
+
+        tool = DispatchNextTool.create(conv_state=_FakeState())[0]
+        tool.executor(DispatchNextAction(status="advance"))
+        d = get_recorded_dispatch("state-uuid-1")
+        self.assertIsNotNone(d)
+        # Must NOT have leaked into the default key.
+        self.assertIsNone(get_recorded_dispatch("default"))
+        clear_run("state-uuid-1")
 
 
 if __name__ == "__main__":
