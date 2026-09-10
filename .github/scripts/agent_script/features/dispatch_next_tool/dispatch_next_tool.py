@@ -40,8 +40,7 @@ class DispatchNextAction(Action):
     status: str = Field(
         description=(
             "Workflow outcome: 'advance' (proceed to next step/agent), "
-            "'loop' (re-run the current step), 'hold' (wait for a human), "
-            "or 'terminate' (stop the workflow)."
+            "'loop' (re-run the current step), or 'hold' (wait for a human)."
         )
     )
     agent: Optional[str] = Field(
@@ -70,10 +69,10 @@ class DispatchNextObservation(Observation):
         return Text("Dispatch recorded.", style="bold green")
 
 
-DISPATCH_NEXT_DESCRIPTION = """Record the workflow's next-step decision. You MUST call this tool as one of your FINAL actions, before finishing. If you call it more than once, the last call wins.
+DISPATCH_NEXT_DESCRIPTION = """Record the workflow's next-step decision. You MUST call this tool as one of your FINAL actions, before finishing.
 
 Parameters:
-- status: 'advance' (route to the next step/agent), 'loop' (repeat the current step), 'hold' (wait for human input), or 'terminate' (end the workflow).
+- status: 'advance' (route to the next step/agent), 'loop' (repeat the current step), or 'hold' (wait for human input).
 - agent: optional explicit target agent name; omit to let the workflow engine decide from the workflow definition.
 - complexity: 'low' | 'medium' | 'high' for the next agent.
 - reason: one-sentence justification.
@@ -150,7 +149,7 @@ class DispatchNextExecutor(ToolExecutor):
             return DispatchNextObservation.from_text(
                 text=(
                     "Dispatch rejected: invalid parameters. Re-call dispatch_next "
-                    "with a valid status (advance|loop|hold|terminate)."
+                    "with a valid status (advance|loop|hold)."
                 ),
                 is_error=True,
             )

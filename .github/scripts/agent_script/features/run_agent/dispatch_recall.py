@@ -7,6 +7,10 @@ prompt is injected as a short, focused follow-up turn (max
 — a cognitive question, so the answer comes from the model, not a heuristic.
 """
 
+from openhands.sdk import get_logger
+
+logger = get_logger(__name__)
+
 # Hard cap on recall turns: each one costs one model turn, and an unbounded
 # retry loop would defeat the bounded-cost property of the fix.
 MAX_DISPATCH_RECALLS = 2
@@ -26,7 +30,7 @@ Do NOT start any new task. Do NOT restate your previous answer.
 
 Call the `dispatch_next` tool NOW with exactly these parameters:
 - status: 'advance' (proceed to the next step/agent), 'loop' (re-run the
-  current step), 'hold' (wait for a human), or 'terminate' (stop the workflow)
+  current step), or 'hold' (wait for a human)
 - agent: explicit target agent name if you are handing off (e.g. 'ctx',
   'dev'), otherwise omit it — the workflow definition resolves the next agent
 - complexity: 'low', 'medium', or 'high'
@@ -60,7 +64,18 @@ def perform_dispatch_recalls(
     count = 0
     while count < MAX_DISPATCH_RECALLS and not has_dispatch():
         count += 1
-        conversation.send_message(DISPATCH_RECALL_PROMPT)
+        try:
+            conversation.send_message(DISPATCH_RECALL_PROMPT)
+        except Exception as exc:  # noqa: BLE001 - must not escape the termination path
+            # A dead/closed conversation (or condenser failure after a
+            # timeout run) cannot answer the recall — log and stop recalling
+            # instead of letting the exception escape and losing the run
+            # outcome entirely.
+            logger.warning(
+                f"Dispatch recall {count}: send_message failed — stopping recalls "
+                f"(count={count}): {exc}"
+            )
+            break
         if not run_pass(count):
             break
     return count

@@ -481,8 +481,16 @@ def _resolve_dispatch(
         dispatch = tool_dispatch
         # Explicit cross-agent targeting flows through function_call in the
         # routing chain; keep that field populated when the tool names a target.
+        # The shared helper validates the name against the agent roster and
+        # logs a warning on typos (issue #524).
         if dispatch.task_hint:
-            function_call = FunctionCall(function="call_agent", agent_name=dispatch.task_hint)
+            # Lazy import: dispatch_check imports from this module at top
+            # level, so a module-level import here would be circular.
+            from agent_script.features.dispatch_check import (
+                agent_to_function_call,
+            )
+
+            function_call = FunctionCall(**agent_to_function_call(dispatch.task_hint))
         logger.info(
             f"Dispatch resolved via dispatch_next tool: status={dispatch.status}, "
             f"agent={dispatch.task_hint or '-'}"

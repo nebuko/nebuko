@@ -104,6 +104,38 @@ class TestDispatchNextTool(unittest.TestCase):
         self.assertIsNone(get_recorded_dispatch("default"))
         clear_run("state-uuid-1")
 
+    def test_real_sdk_resolution_keys_registry_by_state_id(self):
+        """End-to-end key consistency (round-2 non-blocking item 6).
+
+        Exercises the REAL SDK path — ``resolve_tool(Tool("DispatchNextTool"),
+        conv_state)`` — exactly as the agent loop does it. The registry is
+        keyed on ``str(conv_state.id)`` at write time; the recall gate and
+        ``_resolve_dispatch`` read under ``str(conversation.id)``. Because
+        ``Conversation.id`` returns ``state.id`` (verified in the SDK source),
+        both sides use the same key. This test proves the write side: a tool
+        resolved from a real (unvalidated) ConversationState records under a
+        key retrievable via the same str() coercion.
+        """
+        import uuid
+
+        from openhands.sdk.conversation.state import ConversationState
+        from openhands.sdk.tool import Tool
+        from openhands.sdk.tool.registry import register_tool, resolve_tool
+
+        register_tool("DispatchNextTool", DispatchNextTool)
+        state = ConversationState.model_construct(
+            id=uuid.uuid4(), agent=None, workspace=None
+        )
+        tools = resolve_tool(Tool(name="DispatchNextTool"), state)
+        tools[0].executor(DispatchNextAction(status="advance", agent="ctx"))
+
+        # Read side keys under str(conversation.id) == str(state.id).
+        retrieved = get_recorded_dispatch(str(state.id))
+        self.assertIsNotNone(retrieved)
+        self.assertEqual(retrieved.status, "advance")
+        self.assertEqual(retrieved.task_hint, "ctx")
+        clear_run(str(state.id))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,12 +12,13 @@ import dataclasses
 import os
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
+from openhands.sdk.conversation import get_agent_final_response
 from openhands.tools.preset.default import get_default_condenser
 from openhands.sdk.tool.spec import Tool
 from openhands.sdk.tool.registry import register_tool
 
+from agent_script.features.dispatch_check import has_dispatch_decision
 from agent_script.features.run_agent.dispatch_recall import (
-    DISPATCH_RECALL_PROMPT,
     MAX_DISPATCH_RECALLS,
     RECALL_PASS_BUDGET_S,
     perform_dispatch_recalls,
@@ -251,14 +252,14 @@ def run_agent(
     # cognitive decision — a short focused turn, max MAX_DISPATCH_RECALLS.
     dispatch_recall_count = 0
     if dispatch_tool_enabled and outcome is not OutcomeStatus.FAILURE:
-        from agent_script.features.dispatch_next_tool import (
-            get_recorded_dispatch,
-        )
-
-        conv_id = str(conversation.id)
-
+        # Shared with build_output._resolve_dispatch so the two can't drift:
+        # a parseable legacy sentinel counts as a decision (dual-mode window),
+        # not just a recorded dispatch_next call.
         def _has_dispatch() -> bool:
-            return get_recorded_dispatch(conv_id) is not None
+            return has_dispatch_decision(
+                conversation,
+                get_agent_final_response(conversation.state.events),
+            )
 
         def _run_recall_pass(n: int) -> bool:
             logger.warning(
