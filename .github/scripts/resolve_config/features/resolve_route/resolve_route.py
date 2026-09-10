@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from config import load_workflow
+from config import load_workflow, load_workflow_with_dirs
 from resolve_workflow import (
     resolve_next_from_workflow,
     _is_terminal_step,
@@ -55,6 +55,7 @@ def resolve_next_agent_from_workflow(
     workflow_name: str,
     step_name: str,
     workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
 ) -> Optional[str]:
     """Resolve next agent from workflow YAML definition.
 
@@ -66,6 +67,8 @@ def resolve_next_agent_from_workflow(
         workflow_name: Name of the active workflow.
         step_name: Current step name.
         workflows_dir: Path to workflows directory.
+        local_workflows_dir: Optional consumer-local workflows dir that takes
+            precedence over ``workflows_dir`` when it holds the file.
 
     Returns:
         Next agent name or None if unresolvable.
@@ -76,11 +79,11 @@ def resolve_next_agent_from_workflow(
     if not workflow_name or not step_name:
         return None
 
-    wf_file = Path(workflows_dir) / f"{workflow_name}.yaml"
     try:
-        wf_def = load_workflow(str(wf_file))
+        wf_file = load_workflow_with_dirs(workflow_name, workflows_dir, local_workflows_dir)
     except (FileNotFoundError, ValueError):
         return None
+    wf_def = load_workflow(str(wf_file))
 
     for step in wf_def.steps:
         if step.name == step_name and step.next:
@@ -115,6 +118,7 @@ def _resolve_resume_path(
     prev_state: "WorkflowState",
     trigger_body: str,
     workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve config to re-run the currently held step after /workflow resume.
 
@@ -128,6 +132,8 @@ def _resolve_resume_path(
         prev_state: WorkflowState containing the held workflow/step/agent.
         trigger_body: Raw trigger body containing the /workflow resume command.
         workflows_dir: Path to workflows directory.
+        local_workflows_dir: Optional consumer-local dir with precedence
+            over ``workflows_dir`` (issue #529).
 
     Returns:
         Config dict for re-running the held step, or SKIP_AGENT dict.
@@ -148,8 +154,8 @@ def _resolve_resume_path(
             "REASON": f"resume: invalid or missing workflow name '{wf_name}'",
         }
 
-    wf_file = Path(workflows_dir) / f"{wf_name}.yaml"
     try:
+        wf_file = load_workflow_with_dirs(wf_name, workflows_dir, local_workflows_dir)
         wf_def = load_workflow(str(wf_file))
     except (FileNotFoundError, ValueError) as e:
         return {
@@ -253,6 +259,7 @@ def _resolve_dispatch_path(
     prev_state: "WorkflowState",
     dispatch_obj: "Dispatch",
     workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve config when a dispatch object is present in the trigger body.
 
@@ -263,6 +270,8 @@ def _resolve_dispatch_path(
         prev_state: WorkflowState from the trigger body.
         dispatch_obj: Dispatch object extracted from prev_state.
         workflows_dir: Path to workflows directory.
+        local_workflows_dir: Optional consumer-local workflows dir that takes
+            precedence over ``workflows_dir`` (issue #529).
 
     Returns:
         Config dict with task and all config_* variables, or SKIP_AGENT dict.
@@ -303,6 +312,7 @@ def _resolve_dispatch_path(
             branch_result=branch_result,
             parent_workflow=parent_wf,
             parent_workflow_step=parent_wf_step,
+            local_workflows_dir=local_workflows_dir,
         )
         if wf_result:
             config["task"] = wf_result["task"]
@@ -332,7 +342,7 @@ def _resolve_dispatch_path(
     return config
 
 
-def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str) -> str:
+def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None) -> str:
     """Resolve the workflow step that ``callee`` should run (issue #507).
 
     When a caller hands off via ``function_call`` while a workflow is active,
@@ -347,12 +357,12 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
     when the workflow cannot be loaded or owns no step for the callee.
     """
     try:
-        result = resolve_next_from_workflow(wf_name, current_step, workflows_dir)
+        result = resolve_next_from_workflow(wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir)
     except Exception:
         return ""
     if result and result.get("task") == callee and result.get("step"):
         return result["step"]
-    workflow = _load_workflow_by_reference(wf_name, workflows_dir)
+    workflow = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)
     for step in getattr(workflow, "steps", None) or []:
         if getattr(step, "agent", None) == callee and getattr(step, "name", ""):
             return step.name
@@ -363,6 +373,7 @@ def _resolve_function_call_path(
     function_call: FunctionCall,
     workflows_dir: str,
     prev_state: Optional["WorkflowState"] = None,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve config for a stored imperative function call (call_agent).
 
@@ -398,7 +409,7 @@ def _resolve_function_call_path(
     wf_name = (getattr(prev_state, "workflow", "") or "") if prev_state is not None else ""
     # Establish the callee's step from the active workflow so the callee's
     # posted state records the step it actually ran (issue #507).
-    wf_step = _resolve_callee_step(wf_name, getattr(prev_state, "step", "") or "", task, workflows_dir) if wf_name else ""
+    wf_step = _resolve_callee_step(wf_name, getattr(prev_state, "step", "") or "", task, workflows_dir, local_workflows_dir) if wf_name else ""
     print(
         f"Function call: calling agent '{task}' (complexity={complexity}, "
         f"workflow='{wf_name}', step='{wf_step}')",
@@ -471,6 +482,7 @@ def _resolve_human_path(
     workflows_dir: str,
     prev_state: Optional["WorkflowState"] = None,
     pinned_task: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve config for a human-triggered comment.
 
@@ -488,6 +500,8 @@ def _resolve_human_path(
             triggers (ci_mention). These bodies carry a bot marker, so
             ``extract_mention_agent`` refuses to yield one for them (issue
             #478); the caller supplies the mention explicitly instead.
+        local_workflows_dir: Optional consumer-local workflows dir that takes
+            precedence over ``workflows_dir`` (issue #529).
 
     Returns:
         Config dict with task and config_* variables, or SKIP_AGENT dict.
@@ -516,6 +530,9 @@ def _resolve_human_path(
         current_step_in_wf = fs_state.step
         wf_file_force = Path(workflows_dir) / f"{config_workflow}.yaml"
         try:
+            wf_file_force = load_workflow_with_dirs(
+                config_workflow, workflows_dir, local_workflows_dir
+            )
             wf_def = load_workflow(str(wf_file_force))
         except (FileNotFoundError, ValueError) as e:
             return {
@@ -606,26 +623,32 @@ def _resolve_human_path(
     wf_name = extract_workflow_command(trigger_body)
     wf_resolved = False
     task = ""
+    wf_fail_reason = ""
 
     if wf_name and _SAFE_WF_NAME_RE.match(wf_name):
-        wf_file = Path(workflows_dir) / f"{wf_name}.yaml"
         try:
+            wf_file = load_workflow_with_dirs(
+                wf_name, workflows_dir, local_workflows_dir
+            )
             wf_def = load_workflow(str(wf_file))
             task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
             if task:
                 wf_resolved = True
-        except FileNotFoundError:
-            print(
-                f"Warning: workflow '{wf_name}' not found at {wf_file}, "
-                f"falling back to @@mention",
-                file=sys.stderr,
-            )
+        except FileNotFoundError as e:
+            # Multi-dir miss: the exception message enumerates every path
+            # searched (issue #529).
+            print(f"Warning: {e}, falling back to @@mention", file=sys.stderr)
+            wf_fail_reason = f"/workflow '{wf_name}': {e}"
         except ValueError as e:
+            # A schema-invalid file (local override or built-in) still wins —
+            # fail loudly instead of silently falling back to another file of
+            # the same name (issue #529).
             print(
-                f"Warning: workflow '{wf_name}' invalid ({e}), "
-                f"falling back to @@mention",
+                f"Warning: workflow '{wf_name}' is schema-invalid ({e}); "
+                f"no silent fallback to another directory",
                 file=sys.stderr,
             )
+            wf_fail_reason = f"/workflow '{wf_name}': schema-invalid ({e})"
 
     if not wf_resolved:
         # Fall through to @@mention if /workflow was invalid/unresolvable.
@@ -634,7 +657,7 @@ def _resolve_human_path(
         task = pinned_task or extract_mention_agent(trigger_body) or ""
         wf_name = None
 
-    return {
+    result = {
         "task": task,
         "config_workflow": wf_name if wf_name and wf_resolved else "",
         "config_step": "",
@@ -652,11 +675,17 @@ def _resolve_human_path(
         "config_parent_workflow": "",
         "config_parent_workflow_step": "",
     }
+    # Diagnostic for the terminal skip comment when /workflow failed and no
+    # mention fallback produced a task (issue #529).
+    if wf_fail_reason and not task:
+        result["config_skip_reason"] = wf_fail_reason
+    return result
 
 
 def _resolve_bot_fallback_path(
     trigger_body: str,
     workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve config for a bot comment without a dispatch object.
 
@@ -709,7 +738,8 @@ def _resolve_bot_fallback_path(
         if not config["task"]:
             # Auto-resolve next agent from workflow YAML
             wf_result = resolve_next_from_workflow(
-                config["config_workflow"], config["config_step"], workflows_dir
+                config["config_workflow"], config["config_step"], workflows_dir,
+                local_workflows_dir=local_workflows_dir,
             )
             if wf_result:
                 config["task"] = wf_result["task"]
@@ -756,6 +786,7 @@ def _resolve_workflow_next_step(
     prev_state: "WorkflowState",
     dispatch_obj: Optional[Any],
     workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve next step from workflow YAML when state exists but no dispatch.
 
@@ -805,6 +836,7 @@ def _resolve_workflow_next_step(
         branch_result=None,
         parent_workflow=prev_state.parent_workflow or "",
         parent_workflow_step=prev_state.parent_workflow_step or "",
+        local_workflows_dir=local_workflows_dir,
     )
     if wf_result:
         config["task"] = wf_result["task"]

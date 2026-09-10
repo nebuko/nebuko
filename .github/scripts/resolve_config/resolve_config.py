@@ -44,7 +44,8 @@ def resolve_config(
     is_bot: Optional[bool] = None,
     repo: Optional[str] = None,
     issue_number: Optional[int] = None,
-    debug: bool = False
+    debug: bool = False,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve complete agent configuration from trigger body.
 
@@ -73,6 +74,9 @@ def resolve_config(
         is_bot: Pre-determined bot status (None = auto-detect).
         repo: Repository in owner/name format (for fetching comments).
         issue_number: Issue/PR number (for fetching comments).
+        local_workflows_dir: Optional consumer-local workflows dir that takes
+            precedence over ``workflows_dir`` for workflow lookups (issue
+            #529).
 
     Returns:
         Dict with all environment variables to set.
@@ -118,7 +122,9 @@ def resolve_config(
     if resume_cmd is not None and prev_state and prev_state.workflow and \
        prev_state.dispatch and prev_state.dispatch.status == "hold":
         # /workflow resume — re-run the held step with human input
-        config = _resolve_resume_path(prev_state, trigger_body, workflows_dir)
+        config = _resolve_resume_path(
+            prev_state, trigger_body, workflows_dir, local_workflows_dir=local_workflows_dir
+        )
     elif resume_cmd is not None and prev_state and prev_state.workflow and \
          (prev_state.dispatch is None):
         # /workflow resume with no dispatch — advance to next step, carrying
@@ -126,13 +132,14 @@ def resolve_config(
         # resume maps to the BARE_RESUME_INPUT sentinel so the human_gate
         # interceptor (issue #506) treats this run as human-triggered.
         human_input = normalize_resume_input(resume_cmd)
-        config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir)
+        config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir)
         config["config_human_resume_input"] = human_input
     elif force_next:
         # Human explicit step jump — takes priority over auto-dispatch.
         # Must go through _resolve_human_path for validation/error handling.
         config = _resolve_human_path(
-            trigger_body, repo, issue_number, workflows_dir, prev_state
+            trigger_body, repo, issue_number, workflows_dir, prev_state,
+            local_workflows_dir=local_workflows_dir,
         )
     elif wf_override and not is_bot and resume_cmd is None:
         # Human /workflow override — use human path to honor the command.
@@ -140,7 +147,8 @@ def resolve_config(
         # but should NOT go through the override path. Check is None since
         # extract_resume_command returns "" (empty, not None) for bare resume.
         config = _resolve_human_path(
-            trigger_body, repo, issue_number, workflows_dir, prev_state
+            trigger_body, repo, issue_number, workflows_dir, prev_state,
+            local_workflows_dir=local_workflows_dir,
         )
     elif human_mention or ci_mention:
         # Human @@mention (e.g. @@ctx) takes priority over auto-dispatch
@@ -156,13 +164,14 @@ def resolve_config(
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir,
             pinned_task=ci_agent,
+            local_workflows_dir=local_workflows_dir,
         )
     elif prev_state and prev_state.function_call:
         # Imperative agent-to-agent hand-off (call_agent): explicit pinning of
         # the next agent, beats workflow continuation (same tier as human
         # mention). Consumed once — the fresh state built for the called agent
         # clears the field, so a re-trigger no-ops.
-        config = _resolve_function_call_path(prev_state.function_call, workflows_dir, prev_state)
+        config = _resolve_function_call_path(prev_state.function_call, workflows_dir, prev_state, local_workflows_dir=local_workflows_dir)
     elif extract_machine_trigger(trigger_body):
         # CI-posted machine trigger token (bot-subtask-complete /
         # bot-summarizer-trigger / bot-trigger) — replaces the legacy
@@ -170,18 +179,21 @@ def resolve_config(
         config = _resolve_machine_trigger_path(trigger_body, workflows_dir)
     elif prev_state and dispatch_obj:
         # Auto-dispatch: workflow state with dispatch object — follow the workflow.
-        config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir)
+        config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir)
     elif prev_state and prev_state.workflow:
-        config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir)
+        config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir)
     elif not is_bot:
-        config = _resolve_human_path(trigger_body, repo, issue_number, workflows_dir)
+        config = _resolve_human_path(
+            trigger_body, repo, issue_number, workflows_dir,
+            local_workflows_dir=local_workflows_dir,
+        )
     else:
-        config = _resolve_bot_fallback_path(trigger_body, workflows_dir)
+        config = _resolve_bot_fallback_path(trigger_body, workflows_dir, local_workflows_dir=local_workflows_dir)
 
     if config.get("SKIP_AGENT") == "true":
         return config
 
-    result = _build_result(config, prompt_base, workflows_dir)
+    result = _build_result(config, prompt_base, workflows_dir, local_workflows_dir=local_workflows_dir)
     if os.environ.get("DEBUG") or debug:
         print(f"DEBUG _build_result: {result}", file=sys.stderr)
     return result
@@ -205,6 +217,12 @@ def main():
         "--workflows-dir",
         default="workflows",
         help="Path to workflows directory",
+    )
+    parser.add_argument(
+        "--local-workflows-dir",
+        default=None,
+        help="Consumer-local workflows dir taking precedence over "
+        "--workflows-dir (issue #529)",
     )
     parser.add_argument(
         "--is-bot-comment",
@@ -254,7 +272,8 @@ def main():
         is_bot=is_bot,
         repo=args.repo,
         issue_number=args.issue_number,
-        debug=debug_flag
+        debug=debug_flag,
+        local_workflows_dir=args.local_workflows_dir,
     )
 
     # Output as KEY=value pairs

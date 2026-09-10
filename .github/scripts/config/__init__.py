@@ -19,6 +19,7 @@ from .features.load_workflow.load_workflow import (
     is_path_like_reference,
     is_valid_workflow_reference,
     load_workflow,
+    load_workflow_with_dirs,
     resolve_workflow_reference,
 )
 
@@ -41,6 +42,7 @@ __all__ = [
     "REF_PATTERN",
     "load_config",
     "load_workflow",
+    "load_workflow_with_dirs",
     "is_path_like_reference",
     "is_valid_workflow_reference",
     "resolve_workflow_reference",

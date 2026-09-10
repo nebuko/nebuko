@@ -83,3 +83,56 @@ def load_workflow(path: str) -> WorkflowDefinition:
         )
 
     return WorkflowDefinition.model_validate(raw)
+
+
+def load_workflow_with_dirs(
+    wf_name: str,
+    workflows_dir: str,
+    local_workflows_dir: str = "",
+) -> Path:
+    """Resolve a workflow by name via an ordered multi-directory scan.
+
+    The consumer-local workflows directory (``local_workflows_dir``) takes
+    precedence over the base ``workflows_dir`` (issue #529: "local workflows
+    take precedence over the auto-fetched ones"). The FIRST directory that
+    actually contains ``<wf_name>.yaml`` wins; identical paths are scanned
+    only once.
+
+    Schema validation happens eagerly on the winning file, so a
+    schema-invalid local override still wins — the ``ValueError`` propagates
+    to the caller, which must fail loudly instead of silently falling back
+    to a built-in of the same name.
+
+    Args:
+        wf_name: Workflow name (without ``.yaml`` suffix).
+        workflows_dir: Base/built-in workflows directory.
+        local_workflows_dir: Optional consumer-local workflows directory.
+
+    Returns:
+        Path to the winning workflow YAML file.
+
+    Raises:
+        FileNotFoundError: When no candidate directory holds the file; the
+            message enumerates every searched path.
+        ValueError: When the winning file fails schema validation.
+    """
+    dirs: list[str] = []
+    seen: set[str] = set()
+    for d in (local_workflows_dir, workflows_dir):
+        if not d:
+            continue
+        norm = str(Path(d).resolve())
+        if norm not in seen:
+            seen.add(norm)
+            dirs.append(d)
+
+    searched: list[str] = []
+    for d in dirs:
+        candidate = Path(d) / f"{wf_name}.yaml"
+        searched.append(str(candidate))
+        if candidate.is_file():
+            load_workflow(str(candidate))
+            return candidate
+    raise FileNotFoundError(
+        f"Workflow file not found: '{wf_name}.yaml' (searched: {searched})"
+    )
