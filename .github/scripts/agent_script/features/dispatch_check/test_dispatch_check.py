@@ -6,7 +6,6 @@ sentinel-only legacy runs never trigger needless recall turns.
 """
 
 import unittest
-from unittest import mock
 
 from agent_script.features.dispatch_check import (
     agent_to_function_call,
