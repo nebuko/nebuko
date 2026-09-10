@@ -6,8 +6,11 @@ import tempfile
 import unittest
 from unittest import mock
 from build_output import (
+    LATEST_ANSWER_FILE,
+    _write_latest_answer_file,
     agent_run_config_to_dispatch,
     apply_human_gate_intercept,
+    extract_latest_answer,
     is_malformed_final_message,
 )
 from validate_output import strip_agent_run_config
@@ -444,6 +447,73 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["WORKFLOW_STEP"], "implement")
         self.assertEqual(result["SKIP_AGENT"], "false")
+
+
+def _msg_event(text: str) -> "object":
+    """Build a minimal assistant MessageEvent for capture-layer tests."""
+    from openhands.sdk.event import MessageEvent
+    from openhands.sdk.llm import Message
+
+    return MessageEvent(llm_message=Message(role="assistant", content=text), source="agent")
+
+
+def _user_event(text: str) -> "object":
+    """Build a user MessageEvent (must never be captured as an answer)."""
+    from openhands.sdk.event import MessageEvent
+    from openhands.sdk.llm import Message
+
+    return MessageEvent(llm_message=Message(role="user", content=text), source="user")
+
+
+class TestExtractLatestAnswer(unittest.TestCase):
+    """Capture layer: latest-wins selection of the agent's last text answer (issue #522)."""
+
+    def test_empty_events_returns_empty(self):
+        self.assertEqual(extract_latest_answer([]), "")
+        self.assertEqual(extract_latest_answer(None), "")
+
+    def test_no_text_answers_returns_empty(self):
+        events = [_user_event("human text only")]
+        self.assertEqual(extract_latest_answer(events), "")
+
+    def test_single_answer_captured(self):
+        events = [_msg_event("  Full research report  ")]
+        self.assertEqual(extract_latest_answer(events), "Full research report")
+
+    def test_multiple_answers_last_wins(self):
+        events = [_msg_event("earlier answer"), _msg_event("latest answer")]
+        self.assertEqual(extract_latest_answer(events), "latest answer")
+
+    def test_blank_answer_does_not_replace_previous(self):
+        events = [_msg_event("kept answer"), _msg_event("   \n  ")]
+        self.assertEqual(extract_latest_answer(events), "kept answer")
+
+    def test_user_messages_are_ignored(self):
+        events = [_msg_event("agent answer"), _user_event("user interjection")]
+        self.assertEqual(extract_latest_answer(events), "agent answer")
+
+
+class TestWriteLatestAnswerFile(unittest.TestCase):
+    """Artifact persistence used by the prepare_comment ETL layer."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._cwd = os.getcwd()
+        os.chdir(self._tmp.name)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def test_writes_exact_content(self):
+        _write_latest_answer_file("# Deliverable\n\nbody")
+        with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "# Deliverable\n\nbody")
+
+    def test_empty_string_writes_empty_file(self):
+        _write_latest_answer_file("")
+        self.assertTrue(os.path.isfile(LATEST_ANSWER_FILE))
+        self.assertEqual(os.path.getsize(LATEST_ANSWER_FILE), 0)
 
 
 if __name__ == "__main__":
