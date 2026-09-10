@@ -7,11 +7,15 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
 from prepare_comment import (
+    LATEST_ANSWER_FILE,
+    _truncate_at_boundary,
+    _write_output,
     clean_message,
     escape_agent_triggers,
     extract_metrics,
-    _truncate_at_boundary,
+    merge_handoff_sentinels,
     prepare_comment,
+    select_posted_body,
 )
 
 
@@ -371,6 +375,98 @@ class TestPrepareCommentIntegration(unittest.TestCase):
         self.assertIn("did not produce a final message", result)
         self.assertTrue(os.path.isfile("env.txt"))
         self.assertIn("HAS_COMMENT=true", self._read("env.txt"))
+
+
+class TestSelectPostedBody(unittest.TestCase):
+    """ETL layer: answer-first selection with finish-message fallback (issue #522)."""
+
+    def test_latest_answer_wins(self):
+        body = select_posted_body("# Full report\nbody", "short status")
+        self.assertEqual(body, "# Full report\nbody")
+
+    def test_missing_answer_falls_back_to_finish(self):
+        body = select_posted_body("", "short status")
+        self.assertEqual(body, "short status")
+
+    def test_blank_answer_falls_back_to_finish(self):
+        body = select_posted_body("   \n\t ", "short status")
+        self.assertEqual(body, "short status")
+
+    def test_both_empty_returns_empty(self):
+        self.assertEqual(select_posted_body("", ""), "")
+
+
+class TestMergeHandoffSentinels(unittest.TestCase):
+    """ETL layer: AGENT_RUN_CONFIG preserved exactly once, last one wins."""
+
+    SENTINEL = '{"dispatch": {"status": "advance"}}'
+
+    def _block(self, payload):
+        return f"<!-- AGENT_RUN_CONFIG {payload} -->"
+
+    def test_no_sources_returns_empty(self):
+        self.assertEqual(merge_handoff_sentinels(), "")
+        self.assertEqual(merge_handoff_sentinels("", "", None), "")
+
+    def test_sentinel_in_answer_only(self):
+        answer = "report\n\n" + self._block(self.SENTINEL)
+        result = merge_handoff_sentinels(answer, "status without sentinel")
+        self.assertEqual(result, self._block(self.SENTINEL))
+        self.assertEqual(result.count("AGENT_RUN_CONFIG"), 1)
+
+    def test_sentinel_in_finish_only(self):
+        result = merge_handoff_sentinels("plain answer", "status\n" + self._block(self.SENTINEL))
+        self.assertEqual(result, self._block(self.SENTINEL))
+
+    def test_last_wins_when_in_both(self):
+        first = self._block('{"dispatch": {"status": "loop"}}')
+        last = self._block(self.SENTINEL)
+        result = merge_handoff_sentinels("answer " + first, "finish " + last)
+        self.assertEqual(result, last)
+        self.assertNotIn("loop", result)
+
+
+class TestPrepareCommentLatestAnswerETL(TestPrepareCommentIntegration):
+    """Integration: prepare_comment() consumes latest_answer.md (issue #522)."""
+
+    def test_latest_answer_used_as_posted_body(self):
+        self._write(LATEST_ANSWER_FILE, "# Deliverable report\nfull content here")
+        self._write("final_message.txt", "Short finish status only")
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn("# Deliverable report", result)
+        self.assertIn("full content here", result)
+        self.assertNotIn("Short finish status only", result)
+
+    def test_empty_latest_answer_falls_back_to_finish(self):
+        self._write(LATEST_ANSWER_FILE, "   ")
+        self._write("final_message.txt", "Legacy finish body")
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn("Legacy finish body", result)
+
+    def test_missing_latest_answer_falls_back_to_finish(self):
+        self._write("final_message.txt", "Legacy finish body")
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn("Legacy finish body", result)
+
+    def test_sentinel_appended_exactly_once_when_in_both(self):
+        block = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->'
+        self._write(LATEST_ANSWER_FILE, "Full report\n\n" + block)
+        self._write("final_message.txt", "Status note\n\n" + block)
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertEqual(result.count(block), 1)
+
+    def test_sentinel_from_finish_preserved_when_answer_lacks_it(self):
+        block = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->'
+        self._write(LATEST_ANSWER_FILE, "Full report without sentinel")
+        self._write("final_message.txt", "Status note\n\n" + block)
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn(block, result)
+        self.assertEqual(result.count(block), 1)
 
 
 if __name__ == "__main__":

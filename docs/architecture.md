@@ -110,6 +110,43 @@ Key properties:
 
 ---
 
+## Agent Answer & Posting Pipeline (issue #522)
+
+A single uniform mechanism decides what gets posted to the issue, identical
+for every agent (no per-agent code paths):
+
+1. **Capture layer** (`build_output.py`) — after the run, the agent's **last
+   substantive text answer** (latest assistant `MessageEvent`, latest-wins) is
+   written to `latest_answer.md`. `finish` tool actions are excluded: under the
+   shared `posting-contract` skill, the finish message is a short status note.
+2. **ETL layer** (`prepare_comment.py`) — one parser for all agents:
+
+   | Input | Posted body |
+   |---|---|
+   | `latest_answer.md` non-empty | The latest answer (the deliverable) |
+   | missing/empty | The finish message → byte-identical legacy behavior |
+
+   Invariants enforced regardless of agent:
+   - **Hand-off sentinel preservation** — `AGENT_RUN_CONFIG` sentinels are
+     merged from the answer and the finish message into the posted body exactly
+     once (last payload wins), so dispatch/branching always reach the comment.
+   - **Small state snapshots** — `WorkflowState.summary` stays derived from the
+     concise finish message (`[:300]`), keeping snapshots compact.
+
+   Size handling is unchanged: 10k-char split → part files → 60k truncate →
+   multi-part posting.
+
+**Shared contract** — the rule "last text answer = full deliverable; `finish`
+message = 2–3 sentence status + hand-off sentinel" lives in a single skill
+file, [`skills/posting-contract.md`](../skills/posting-contract.md), attached to
+every agent via the `skills:` list in `agent-config.yaml` — no per-prompt edits.
+
+> **TODO (follow-up):** a global `core_skills` key in `agent-config.yaml` that
+> applies to every agent automatically, so new agents don't have to remember
+> the list (tracked separately from #522).
+
+---
+
 ## Routing Cascade
 
 `resolve_config.py` decides which agent runs, in priority order

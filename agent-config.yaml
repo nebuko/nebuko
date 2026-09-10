@@ -71,53 +71,53 @@ agents:
     model: "${llms.qwen-3-6-27b}"
     temperature: 1.0
     prompt_file: ".agents/prompts/genius.md"
-    skills: ["call-agent"]
+    skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish"]
 
   dev:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/dev.md"
-    skills: []
+    skills: ["posting-contract"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   ctx:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/ctx.md"
-    skills: ["call-agent"]
+    skills: ["call-agent", "posting-contract"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   review:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/review.md"
-    skills: []
+    skills: ["posting-contract"]
     tools: ["think", "finish"]
 
   issue:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/issue.md"
-    skills: ["call-agent"]
+    skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish"]
 
   issue-reviewer:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/issue-reviewer.md"
-    skills: []
+    skills: ["posting-contract"]
     tools: ["think", "finish"]
 
   summarize:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/summarize.md"
-    skills: []
+    skills: ["posting-contract"]
     tools: ["think", "finish"]
 
   debug:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/debug.md"
-    skills: []
+    skills: ["posting-contract"]
     tools: ["terminal", "file_editor", "think", "finish"]
 
   po:
     model: "${llms.qwen-3-6-27b}"
     prompt_file: ".agents/prompts/po.md"
-    skills: []
+    skills: ["posting-contract"]
     tools: ["think", "finish"]
