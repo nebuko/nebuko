@@ -15,7 +15,6 @@ steps:
 
   - name: plan
     agent: genius
-    human_gate: true
     next: stub
     conditions:
       - on_result: approved
@@ -41,11 +40,17 @@ steps:
       - on_result: approved
         next: implement
       - on_result: rejected
-        next: stub
-      - on_result: default
-        next: implement
+        next: plan
     next: implement
 
   - name: implement
     agent: dev
-    next: null  # terminal step — stub review is the quality gate
+    next: review
+    
+  - name: review
+    agent: review
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: implement
+        next: plan
