@@ -27,6 +27,8 @@ class WorkflowStep(BaseModel):
     next: Optional[str] = None
     conditions: Optional[list[WorkflowCondition]] = None
     skill: Optional[list[str]] = None
+    # Standing instruction injected into this step's agent context (issue #551).
+    prompt: Optional[str] = None
     # When True, this step is an explicit human validation gate.
     # The workflow MUST pause (dispatch.status == "hold") until a human
     # responds. The approval agent evaluates human feedback and sets

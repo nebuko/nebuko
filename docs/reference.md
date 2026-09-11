@@ -91,6 +91,7 @@ from the git-flow-ai repo (zero-copy). See [workflows.md](./workflows.md).
 | `steps[].conditions[].on_result` | condition | string | yes | Result key reported by the agent (e.g., `approved`, `rejected`, `default`). |
 | `steps[].conditions[].next` | condition | string/null | yes | Target step for that result. |
 | `steps[].skill` | step | string[] | no | Skills attached to the step prompt (files in `skills/`). |
+| `steps[].prompt` | step | string | no | Standing instruction injected into this step's agent context (multi-line YAML blocks supported). See [workflows.md](./workflows.md#step-instructions-prompt). |
 | `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts the agent's `advance` and holds the workflow until a human releases it with `/workflow resume` (see [workflows.md](./workflows.md#human-gates)). |
 
 Minimal valid workflow:
@@ -218,6 +219,7 @@ Variables the orchestrator sets/consumes per run:
 | `WORKFLOW_NAME` | `resolve_config` / `resolve_workflow` | Resolved workflow name. |
 | `WORKFLOW_STEP` | `resolve_config` / `resolve_workflow` | Resolved current step name. |
 | `WORKFLOW_NEXT` | `resolve_config` / `resolve_workflow` | Next step name after the current one. |
+| `STEP_PROMPT_FILE` | `resolve_config` / `resolve_workflow` | Path to the step's standing instruction file (`steps[].prompt`). Empty when the step has no prompt. |
 | `PARENT_WORKFLOW_STEP` | `resolve_config` | Step in the parent workflow that mounted a sub-workflow. |
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables debug-mode routing (recover) and verbose logs. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |

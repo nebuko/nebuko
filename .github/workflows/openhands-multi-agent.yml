@@ -286,6 +286,7 @@ jobs:
                   AGENT_ROUND=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_ROUND=' | cut -d= -f2-)
                   AGENT_SKILLS=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_SKILLS=' | cut -d= -f2-)
                   STEP_SKILLS=$(echo "$RESOLVE_OUTPUT" | grep '^STEP_SKILLS=' | cut -d= -f2-)
+                  STEP_PROMPT_FILE=$(echo "$RESOLVE_OUTPUT" | grep '^STEP_PROMPT_FILE=' | cut -d= -f2-)
                   CONFIG_MODEL=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_MODEL=' | cut -d= -f2-)
                   CONFIG_TEMPERATURE=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TEMPERATURE=' | cut -d= -f2-)
                   CONFIG_TOP_P=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TOP_P=' | cut -d= -f2-)
@@ -326,6 +327,7 @@ jobs:
                   echo "PARENT_WORKFLOW=$PARENT_WORKFLOW" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
                   echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
+                  echo "STEP_PROMPT_FILE=${STEP_PROMPT_FILE:-}" >> $GITHUB_ENV
                   echo "HUMAN_RESUME_INPUT=${HUMAN_RESUME_INPUT:-}" >> $GITHUB_ENV
                   # Human gate (issue #506): reuse the exact workflows dir the
                   # resolver used (may be the .git-flow-ai-cache copy).
@@ -677,6 +679,11 @@ jobs:
                     if [ -n "$DEV_DIRECTIVE" ]; then
                         echo -e "\n\n### 🔴 DIRECTIVE FOR @@DEV\n${DEV_DIRECTIVE}\n" >> $FINAL_PROMPT_FILE
                     fi
+                fi
+
+                # Inject the standing step instruction from workflow.yaml (issue #551).
+                if [ -n "$STEP_PROMPT_FILE" ] && [ -s "$STEP_PROMPT_FILE" ]; then
+                    echo -e "\n\n### 🔴 STEP INSTRUCTION (from workflow.yaml)\n$(cat "$STEP_PROMPT_FILE")\n" >> $FINAL_PROMPT_FILE
                 fi
 
                 echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE

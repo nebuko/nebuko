@@ -38,12 +38,53 @@ steps:
   it reports in its dispatch (`status` / `task_hint`). Always include a
   catch-all (e.g., `default`) so routing stays deterministic.
 - `skill: [...]` attaches extra prompt context from `skills/` to that step.
+- `prompt:` injects a standing instruction into that step's agent context
+  (see [Step Instructions](#step-instructions-prompt)).
 - `human_gate: true` marks a step as a **security boundary**: the workflow is
   held after that step until a human releases it (see [Human Gates](#human-gates)).
 - Workflows can be started by an `@@mention` (matching `trigger.agents`), a
   `/workflow <name>` command, or a `dispatch` field pointing at them. Human
   commands override state-based routing — see the routing cascade in
   [architecture.md](./architecture.md#routing-cascade).
+
+---
+
+## Step Instructions (`prompt`)
+
+A step can carry a `prompt:` field with a standing instruction that is
+injected into that step's agent context every time the step runs — useful for
+repetitive per-workflow directives such as output-format contracts or analysis
+requirements.
+
+```yaml
+steps:
+  - name: analyze
+    agent: genius
+    prompt: |
+      Analyze the transcription and provide me:
+      a short summary (~5-10 sentences)
+      5 Key points
+      A possible link/impact/benefits to the https://github.com/your/repo project
+    next: context
+```
+
+**Semantics & precedence.** The step prompt is a *standing instruction* for
+that step — it governs the format and behavior of that step. The issue body
+remains the *task-specific* content and wins on task specifics; the role prompt
+stays the base identity. Injection order in the agent context:
+**role identity → step instruction → issue body/history** (section header:
+`### 🔴 STEP INSTRUCTION (from workflow.yaml)`).
+
+**Mechanics.** The resolver writes the prompt verbatim to
+`/tmp/step_prompt.md` and emits `STEP_PROMPT_FILE` (path only — the prompt may
+contain newlines). When the step has no `prompt`, the variable is empty and any
+stale file is removed, so existing workflows are unaffected. Multi-line YAML
+block scalars (`|` / `>`) are supported.
+
+**`prompt:` vs `skill:`.** Use `prompt:` for short, self-contained,
+per-step directives that should live inline in the workflow. Use
+`skill: [...]` for richer, multi-file, or reusable knowledge files in
+`skills/`. They compose: a step may have both.
 
 ---
 
