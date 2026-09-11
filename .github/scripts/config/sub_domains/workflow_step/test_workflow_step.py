@@ -70,6 +70,44 @@ class TestWorkflowStep:
         step = WorkflowStep(name="dev", agent="dev")
         assert step.skill is None
 
+    def test_prompt_parses_plain_string(self):
+        step = WorkflowStep(name="analyze", agent="genius", prompt="Be concise.")
+        assert step.prompt == "Be concise."
+
+    def test_prompt_parses_multiline_block_verbatim(self):
+        step = WorkflowStep(
+            name="analyze",
+            agent="genius",
+            prompt=(
+                "Analyze the transcription and provide me:\n"
+                "a short summary (~5-10 sentences)\n"
+                "5 Key points\n"
+            ),
+        )
+        assert step.prompt == (
+            "Analyze the transcription and provide me:\n"
+            "a short summary (~5-10 sentences)\n"
+            "5 Key points\n"
+        )
+
+    def test_prompt_defaults_to_none(self):
+        step = WorkflowStep(name="dev", agent="dev")
+        assert step.prompt is None
+
+    def test_prompt_coexists_with_existing_fields(self):
+        step = WorkflowStep(
+            name="stub",
+            agent="dev",
+            skill=["stub-only"],
+            human_gate=True,
+            next="stub_review",
+            prompt="Fill in the stubs only.",
+        )
+        assert step.prompt == "Fill in the stubs only."
+        assert step.skill == ["stub-only"]
+        assert step.human_gate is True
+        assert step.next == "stub_review"
+
     def test_human_gate_defaults_to_false(self):
         step = WorkflowStep(name="dev", agent="dev")
         assert step.human_gate is False

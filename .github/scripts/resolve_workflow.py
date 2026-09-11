@@ -114,6 +114,7 @@ def resolve_workflow_routing(
         "PARENT_WORKFLOW": "",
         "PARENT_WORKFLOW_STEP": "",
         "STEP_SKILLS": "",
+        "STEP_PROMPT_FILE": "",
         "SKIP_AGENT": "false",
     }
 
@@ -123,6 +124,25 @@ def _skills_to_string(skill_list: list[str] | None) -> str:
     if not skill_list:
         return ""
     return ",".join(skill_list)
+
+
+def _write_step_prompt_file(prompt: str | None) -> str:
+    """Write a non-empty step prompt to a temp file; return the path or ''.
+
+    Prompts contain newlines, which would corrupt the line-based KEY=value
+    RESOLVE_OUTPUT protocol, so the content is written to a file and only
+    the path is emitted (issue #551, same pattern as PROMPT_LOCATION).
+    """
+    if not prompt or not prompt.strip():
+        # Remove any stale file from a previous resolution on this runner.
+        path = "/tmp/step_prompt.md"
+        if os.path.exists(path):
+            os.remove(path)
+        return ""
+    path = "/tmp/step_prompt.md"
+    with open(path, "w") as f:
+        f.write(prompt)
+    return path
 
 
 def _match_condition(
@@ -255,6 +275,7 @@ def _resolve_sub_workflow_entry(
         "PARENT_WORKFLOW": workflow.name,
         "PARENT_WORKFLOW_STEP": current_step.name,
         "STEP_SKILLS": _skills_to_string(first_step.skill),
+        "STEP_PROMPT_FILE": _write_step_prompt_file(first_step.prompt),
         "SKIP_AGENT": "false",
     }
 
@@ -367,6 +388,7 @@ def _resolve_return_to_parent(
         "PARENT_WORKFLOW": "",
         "PARENT_WORKFLOW_STEP": "",
         "STEP_SKILLS": _skills_to_string(next_step.skill),
+        "STEP_PROMPT_FILE": _write_step_prompt_file(next_step.prompt),
         "SKIP_AGENT": "false",
     }
 
@@ -425,6 +447,7 @@ def resolve_workflow_step(
             "PARENT_WORKFLOW": parent_workflow,
             "PARENT_WORKFLOW_STEP": parent_workflow_step,
             "STEP_SKILLS": "",
+            "STEP_PROMPT_FILE": "",
             "SKIP_AGENT": "false",
         }
 
@@ -444,6 +467,7 @@ def resolve_workflow_step(
             "PARENT_WORKFLOW": parent_workflow,
             "PARENT_WORKFLOW_STEP": parent_workflow_step,
             "STEP_SKILLS": "",
+            "STEP_PROMPT_FILE": "",
             "SKIP_AGENT": "false",
         }
 
@@ -504,6 +528,7 @@ def resolve_workflow_step(
         "PARENT_WORKFLOW": parent_workflow,
         "PARENT_WORKFLOW_STEP": parent_workflow_step,
         "STEP_SKILLS": _skills_to_string(current_step.skill),
+        "STEP_PROMPT_FILE": _write_step_prompt_file(current_step.prompt),
         "SKIP_AGENT": "false",
     }
 
