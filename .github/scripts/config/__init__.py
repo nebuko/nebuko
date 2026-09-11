@@ -8,6 +8,7 @@ from .sub_domains.app_config.app_config import AppConfig
 
 # Workflow Config sub-domains
 from .sub_domains.workflow_condition.workflow_condition import WorkflowCondition
+from .sub_domains.workflow_step.script_step_spec import ScriptStepSpec
 from .sub_domains.workflow_step.workflow_step import WorkflowStep
 from .sub_domains.workflow_trigger.workflow_trigger import WorkflowTrigger
 from .sub_domains.workflow_definition.workflow_definition import WorkflowDefinition
@@ -34,6 +35,7 @@ __all__ = [
     "AppConfig",
     # Workflow Config entities
     "WorkflowCondition",
+    "ScriptStepSpec",
     "WorkflowStep",
     "WorkflowTrigger",
     "WorkflowDefinition",

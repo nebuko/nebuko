@@ -154,51 +154,42 @@ class TestWorkflowStepScript:
     """Test WorkflowStep with the deterministic script variant (issue #541)."""
 
     def test_minimal_script_step(self):
-        step = WorkflowStep(name="run-tests", kind="script", script="scripts/test.sh")
-        assert step.kind == "script"
-        assert step.script == "scripts/test.sh"
-        assert step.args is None
-        assert step.timeout_minutes is None
+        step = WorkflowStep(name="run-tests", script={"path": "scripts/test.sh"})
+        assert step.script.path == "scripts/test.sh"
+        assert step.script.args is None
+        assert step.script.timeout_minutes is None
         assert step.agent is None
 
     def test_script_step_with_args_and_timeout(self):
         step = WorkflowStep(
             name="run-tests",
-            kind="script",
-            script="scripts/test.py",
-            args=["--unit"],
-            timeout_minutes=15,
+            script={"path": "scripts/test.py", "args": ["--unit"], "timeout_minutes": 15},
         )
-        assert step.args == ["--unit"]
-        assert step.timeout_minutes == 15
+        assert step.script.args == ["--unit"]
+        assert step.script.timeout_minutes == 15
 
     def test_script_step_with_next_routing(self):
         step = WorkflowStep(
-            name="run-tests", kind="script", script="scripts/test.sh", next="review"
+            name="run-tests", script={"path": "scripts/test.sh"}, next="review"
         )
         assert step.next == "review"
 
-    def test_script_path_requires_kind(self):
-        # `script` without `kind: script` is not a valid step source.
-        with pytest.raises(ValueError, match="kind: script"):
-            WorkflowStep(name="broken", script="scripts/test.sh")
-
-    def test_script_kind_requires_path(self):
-        with pytest.raises(ValueError, match="requires the 'script' field"):
-            WorkflowStep(name="broken", kind="script")
+    def test_script_requires_path(self):
+        # A ``script`` source object must carry a repo-relative ``path``.
+        with pytest.raises(ValueError, match="path"):
+            WorkflowStep(name="broken", script={})
 
     def test_script_exclusive_of_agent(self):
         with pytest.raises(ValueError, match="cannot also declare"):
             WorkflowStep(
-                name="bad", kind="script", script="scripts/test.sh", agent="dev"
+                name="bad", script={"path": "scripts/test.sh"}, agent="dev"
             )
 
     def test_script_exclusive_of_workflow(self):
         with pytest.raises(ValueError, match="cannot also declare"):
             WorkflowStep(
                 name="bad",
-                kind="script",
-                script="scripts/test.sh",
+                script={"path": "scripts/test.sh"},
                 workflow="review-only",
             )
 
@@ -206,70 +197,67 @@ class TestWorkflowStepScript:
         with pytest.raises(ValueError, match="cannot also declare"):
             WorkflowStep(
                 name="bad",
-                kind="script",
-                script="scripts/test.sh",
+                script={"path": "scripts/test.sh"},
                 repo="https://example.com/repo.git",
                 ref="main",
             )
 
     def test_script_absolute_path_rejected(self):
         with pytest.raises(ValueError, match="repo-relative"):
-            WorkflowStep(name="bad", kind="script", script="/etc/passwd")
+            WorkflowStep(name="bad", script={"path": "/etc/passwd"})
 
     def test_script_traversal_path_rejected(self):
         with pytest.raises(ValueError, match="repo-relative"):
-            WorkflowStep(name="bad", kind="script", script="../outside.sh")
+            WorkflowStep(name="bad", script={"path": "../outside.sh"})
+
+    def test_script_nested_traversal_path_rejected(self):
+        with pytest.raises(ValueError, match="repo-relative"):
+            WorkflowStep(name="bad", script={"path": "scripts/../secrets/x.sh"})
 
     def test_script_nested_relative_path_allowed(self):
-        step = WorkflowStep(name="ok", kind="script", script="scripts/ci/test.sh")
-        assert step.script == "scripts/ci/test.sh"
+        step = WorkflowStep(name="ok", script={"path": "scripts/ci/test.sh"})
+        assert step.script.path == "scripts/ci/test.sh"
+
+    def test_script_dotdot_prefixed_filename_allowed(self):
+        # '..' as a substring is fine; only '..' as a path segment is rejected.
+        step = WorkflowStep(name="ok", script={"path": "scripts/..bar.sh"})
+        assert step.script.path == "scripts/..bar.sh"
 
     def test_script_timeout_zero_rejected(self):
         # 0 would mean "no timeout" at runtime; only positive minutes are valid.
         with pytest.raises(ValueError, match="positive"):
             WorkflowStep(
-                name="bad", kind="script", script="scripts/test.sh", timeout_minutes=0
+                name="bad",
+                script={"path": "scripts/test.sh", "timeout_minutes": 0},
             )
 
     def test_script_timeout_negative_rejected(self):
         with pytest.raises(ValueError, match="positive"):
             WorkflowStep(
                 name="bad",
-                kind="script",
-                script="scripts/test.sh",
-                timeout_minutes=-5,
+                script={"path": "scripts/test.sh", "timeout_minutes": -5},
             )
 
     def test_script_path_field_rejected(self):
-        # `path` belongs to workflow/repo steps, not script steps.
+        # Root-level `path` belongs to workflow/repo steps, not script steps.
         with pytest.raises(ValueError, match="cannot declare 'path'"):
             WorkflowStep(
                 name="bad",
-                kind="script",
-                script="scripts/test.sh",
+                script={"path": "scripts/test.sh"},
                 path="some/path",
             )
 
-    def test_agent_step_with_stray_args_rejected(self):
-        with pytest.raises(ValueError, match="kind: script"):
-            WorkflowStep(name="bad", agent="dev", args=["--unit"])
-
-    def test_agent_step_with_stray_timeout_rejected(self):
-        with pytest.raises(ValueError, match="kind: script"):
-            WorkflowStep(name="bad", agent="dev", timeout_minutes=10)
-
-    def test_workflow_step_with_stray_script_fields_rejected(self):
-        with pytest.raises(ValueError, match="kind: script"):
+    def test_agent_step_with_script_source_rejected(self):
+        # ``script`` is a competing source; it cannot coexist with ``agent``.
+        with pytest.raises(ValueError, match="cannot also declare"):
             WorkflowStep(
                 name="bad",
-                workflow="review-only",
-                args=["--unit"],
-                timeout_minutes=10,
+                agent="dev",
+                script={"path": "scripts/test.sh"},
             )
 
     def test_existing_agent_step_unaffected(self):
         # Backward compatibility: plain agent steps parse exactly as before.
         step = WorkflowStep(name="analyze", agent="genius", next="context")
-        assert step.kind is None
         assert step.script is None
         assert step.agent == "genius"
