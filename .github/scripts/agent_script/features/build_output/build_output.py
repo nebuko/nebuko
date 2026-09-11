@@ -479,6 +479,32 @@ def extract_latest_answer(events: list) -> str:
     return latest
 
 
+def _recall_aware_events(events: list, run_outcome) -> list:
+    """Exclude engine-injected recall-turn events from answer selection (#558).
+
+    When ``run_agent`` recorded a pre-recall event offset, everything from
+    that index onward belongs to the recall pass — its short routing/status
+    text must not overwrite the agent's real deliverable. Without a recall
+    the full list is returned unchanged (byte-identical legacy behavior,
+    keeping the #553/#555 regression suite green).
+
+    Dispatch resolution intentionally does NOT use this: the recall turn is
+    exactly where the missing dispatch decision is supplied.
+    """
+    offset = (
+        run_outcome.dispatch_recall_event_offset
+        if run_outcome is not None
+        else None
+    )
+    if offset is None:
+        return events
+    logger.info(
+        f"Recall-aware capture: excluding {len(events) - offset} "
+        f"post-recall events (offset={offset})"
+    )
+    return events[:offset]
+
+
 def _write_latest_answer_file(text: str) -> None:
     """Persist the latest-answer artifact consumed by prepare_comment.py.
 
@@ -593,11 +619,20 @@ def build_output(
     # ── Latest-answer capture (issue #522) ────────────────────────
     # The full deliverable is the agent's last text answer; the finish
     # message remains the status note used for dispatch/summary below.
-    latest_answer = extract_latest_answer(conversation.state.events)
+    # Recall-aware capture (issue #558): events after the recorded
+    # pre-recall offset belong to the engine-injected recall turns and are
+    # excluded so their short routing/status text cannot clobber the
+    # pre-recall deliverable. Dispatch resolution below intentionally
+    # keeps the FULL event stream: the recall turn is exactly where the
+    # missing dispatch decision is supplied, and hiding it would
+    # re-introduce the stall.
+    run_outcome = _get_run_outcome(conversation)
+    latest_answer = extract_latest_answer(
+        _recall_aware_events(conversation.state.events, run_outcome)
+    )
     _write_latest_answer_file(latest_answer)
 
     # ── Graceful timeout handling (issue #489) ────────────────────
-    run_outcome = _get_run_outcome(conversation)
     is_graceful_timeout = (
         run_outcome is not None
         and run_outcome.status is OutcomeStatus.GRACEFULLY_TIMED_OUT

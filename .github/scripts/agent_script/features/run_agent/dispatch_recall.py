@@ -37,6 +37,9 @@ Call the `dispatch_next` tool NOW with exactly these parameters:
 - reason: one short sentence justifying the decision
 
 Base the decision on the work you just completed. Call the tool, then finish.
+
+Your previous answer already stands as the posted deliverable — you are only
+being asked to supply the missing routing decision; do not restate or rework it.
 """
 
 

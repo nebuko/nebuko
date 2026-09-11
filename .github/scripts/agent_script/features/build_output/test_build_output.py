@@ -4,9 +4,11 @@ import json
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 from build_output import (
     LATEST_ANSWER_FILE,
+    _recall_aware_events,
     _write_latest_answer_file,
     agent_run_config_to_dispatch,
     apply_human_gate_intercept,
@@ -597,6 +599,138 @@ class TestExtractLatestAnswer(unittest.TestCase):
     def test_blank_dispatch_next_turn_thought_returns_empty(self):
         events = [_dispatch_action_event("   \n  ")]
         self.assertEqual(extract_latest_answer(events), "")
+
+
+def _outcome_with_offset(offset) -> "object":
+    """Fake RunOutcome carrying the fields build_output reads."""
+    from agent_script.features.run_agent.run_outcome import OutcomeStatus
+
+    return SimpleNamespace(
+        status=OutcomeStatus.SUCCESS, dispatch_recall_event_offset=offset
+    )
+
+
+class TestExtractLatestAnswerRecallOffset(unittest.TestCase):
+    """Recall-aware capture: pre-recall deliverable survives the recall pass (issue #558).
+
+    Mirrors the exact #551 ordering: the agent posts its full proposal, ends
+    without a dispatch decision, the engine injects a recall turn whose short
+    routing/status note would otherwise win as the "latest answer" and be
+    posted in place of the proposal.
+    """
+
+    def test_pre_recall_message_wins_with_offset(self):
+        """[proposal, recall user msg, finish status note] with the offset
+        recorded after the proposal → the full proposal is captured."""
+        events = [
+            _msg_event("Full architecture proposal"),
+            _user_event("DISPATCH_RECALL_PROMPT injected"),
+            _finish_action_event("Holding workflow pending review"),
+        ]
+        # Offset captured just before the first recall pass (after index 0).
+        selected = _recall_aware_events(events, _outcome_with_offset(1))
+        self.assertEqual(
+            extract_latest_answer(selected), "Full architecture proposal"
+        )
+
+    def test_dispatch_next_thought_after_offset_ignored(self):
+        """A dispatch_next turn thought emitted during the recall pass must
+        not replace the pre-recall deliverable."""
+        events = [
+            _msg_event("Full architecture proposal"),
+            _dispatch_action_event("short routing note"),
+        ]
+        selected = _recall_aware_events(events, _outcome_with_offset(1))
+        self.assertEqual(
+            extract_latest_answer(selected), "Full architecture proposal"
+        )
+
+    def test_no_offset_keeps_latest_wins(self):
+        """offset=None (no recall happened) → byte-identical legacy
+        latest-wins behavior, so the #553/#555 suites stay green."""
+        events = [
+            _msg_event("Full architecture proposal"),
+            _dispatch_action_event("short routing note"),
+        ]
+        self.assertIs(_recall_aware_events(events, _outcome_with_offset(None)), events)
+        self.assertEqual(
+            extract_latest_answer(_recall_aware_events(events, _outcome_with_offset(None))),
+            "short routing note",
+        )
+
+    def test_none_run_outcome_returns_full_list(self):
+        """Conversations with no attached RunOutcome (pre-#524 compat) keep
+        the full event stream untouched."""
+        events = [_msg_event("answer")]
+        self.assertIs(_recall_aware_events(events, None), events)
+
+    def test_offset_zero_excludes_everything(self):
+        """A degenerate offset of 0 yields the empty fallback ("")."""
+        events = [_msg_event("proposal"), _finish_action_event("note")]
+        selected = _recall_aware_events(events, _outcome_with_offset(0))
+        self.assertEqual(extract_latest_answer(selected), "")
+
+    def test_offset_beyond_length_is_safe(self):
+        """An offset past the end of the stream degrades to the full list
+        (slicing clamps) — latest-wins over everything."""
+        events = [_msg_event("earlier answer"), _msg_event("latest answer")]
+        selected = _recall_aware_events(events, _outcome_with_offset(99))
+        self.assertEqual(extract_latest_answer(selected), "latest answer")
+
+    def test_build_output_writes_pre_recall_deliverable(self):
+        """End-to-end at the call site: with a recall offset, the
+        latest-answer artifact holds the proposal, NOT the recall-turn
+        status note (the #551 failure mode)."""
+        from types import SimpleNamespace as NS
+
+        import build_output as bo
+
+        events = [
+            _msg_event("Full architecture proposal"),
+            _user_event("DISPATCH_RECALL_PROMPT injected"),
+            _finish_action_event("Holding workflow pending review"),
+        ]
+        conversation = NS(
+            state=NS(events=events),
+            id="conv-test-558",
+            run_outcome=_outcome_with_offset(1),
+        )
+        metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+
+        def _fake_write(files, parts, m, state):
+            _fake_write.final_message = files
+
+        with mock.patch.object(bo, "get_agent_final_response", return_value="finish summary"), \
+             mock.patch.object(bo, "_load_prev_state", return_value=None), \
+             mock.patch.object(bo, "_build_issue_info", return_value=None), \
+             mock.patch.object(bo, "_build_pr_info", return_value=None), \
+             mock.patch.object(bo, "_build_resolution", return_value=None), \
+             mock.patch.object(
+                 bo, "_resolve_dispatch",
+                 return_value=(None, None, "finish summary"),
+             ), \
+             mock.patch.object(bo, "clear_run"), \
+             mock.patch.object(
+                 bo, "apply_human_gate_intercept",
+                 side_effect=lambda dispatch, **kw: dispatch,
+             ), \
+             mock.patch.object(bo, "build_state", return_value=NS(version=1)), \
+             mock.patch.object(bo, "split_message", return_value=[]), \
+             mock.patch.object(bo, "_write_output_files", side_effect=_fake_write):
+            with tempfile.TemporaryDirectory() as tmp:
+                cwd = os.getcwd()
+                os.chdir(tmp)
+                try:
+                    bo.build_output(conversation, metrics)
+                    with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
+                        captured = f.read()
+                finally:
+                    os.chdir(cwd)
+
+        self.assertEqual(captured, "Full architecture proposal")
+        # The finish message (status note) still flows through untouched —
+        # only the answer capture was recall-sliced.
+        self.assertEqual(_fake_write.final_message, "finish summary")
 
 
 class TestWriteLatestAnswerFile(unittest.TestCase):

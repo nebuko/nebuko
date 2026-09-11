@@ -54,6 +54,25 @@ class TestRunOutcome(unittest.TestCase):
         self.assertFalse(outcome.soft_timeout_fired)
         self.assertFalse(outcome.wind_down_completed)
 
+    def test_dispatch_recall_fields_default(self):
+        """No recall → count 0 and offset None (legacy no-recall path, #558)."""
+        outcome = RunOutcome(status=OutcomeStatus.SUCCESS)
+        self.assertEqual(outcome.dispatch_recall_count, 0)
+        self.assertIsNone(outcome.dispatch_recall_event_offset)
+
+    def test_recall_fields_set_together_via_replace(self):
+        """When a recall fires, run_agent records count AND offset in one
+        replace(); both survive on the frozen dataclass (issue #558)."""
+        import dataclasses
+
+        outcome = dataclasses.replace(
+            RunOutcome(status=OutcomeStatus.SUCCESS),
+            dispatch_recall_count=1,
+            dispatch_recall_event_offset=42,
+        )
+        self.assertEqual(outcome.dispatch_recall_count, 1)
+        self.assertEqual(outcome.dispatch_recall_event_offset, 42)
+
     def test_frozen_rejects_mutation(self):
         outcome = RunOutcome(status=OutcomeStatus.SUCCESS)
         with self.assertRaises(Exception):
