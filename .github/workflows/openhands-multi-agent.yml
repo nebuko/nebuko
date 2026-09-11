@@ -45,14 +45,21 @@ on:
       LOCAL_VLLM_API_TOKEN:
         description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
         required: false
-      GH_PAT:
-        description: 'GitHub Personal Access Token for API access'
+      GH_APP_ID:
+        description: 'git-flow-ai GitHub App ID'
+        required: true
+      GH_APP_PRIVATE_KEY:
+        description: 'git-flow-ai GitHub App PEM private key (one-time download from the app settings page)'
+        required: true
+      GH_APP_INSTALLATION_ID:
+        description: 'git-flow-ai GitHub App installation ID for this repository/organization'
         required: true
 
 permissions:
     contents: write
     pull-requests: write
     issues: write
+    metadata: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'issues' && format('-issue-{0}', github.event.issue.number) || format('-run-{0}', github.run_id) }}
@@ -104,6 +111,14 @@ jobs:
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
             LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN || secrets.LOCAL_VLLM_API_TOKEN }}
         steps:
+            - name: Generate git-flow-ai app installation token
+              id: gfa_app_token
+              uses: actions/create-github-app-token@v3.2.0
+              with:
+                  app-id: ${{ secrets.GH_APP_ID }}
+                  private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+                  installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+
             - name: Clean global git config
               run:
                 git config --global --unset-all http.https://github.com/.extraheader || true
@@ -130,7 +145,7 @@ jobs:
               with:
                 repository: olivier-norture/git-flow-ai
                 path: .git-flow-ai-cache
-                token: ${{ secrets.GH_PAT }}
+                token: ${{ steps.gfa_app_token.outputs.token }}
 
             - name: Normalize GitHub Event Data
               run: |
@@ -490,7 +505,7 @@ jobs:
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
-                token: ${{ secrets.GH_PAT }}
+                token: ${{ steps.gfa_app_token.outputs.token }}
                 tag: "${{ env.BOT_MARKER }}"
                 mode: create-or-update
                 body: |
@@ -592,7 +607,7 @@ jobs:
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
-                token: ${{ secrets.GH_PAT }}
+                token: ${{ steps.gfa_app_token.outputs.token }}
                 body: |
                   ${{ env.BOT_MARKER }}
                   <!-- bot-summarizer-trigger -->
@@ -605,7 +620,7 @@ jobs:
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
-                token: ${{ secrets.GH_PAT }}
+                token: ${{ steps.gfa_app_token.outputs.token }}
                 tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
                 mode: replace
                 body: |
@@ -623,12 +638,12 @@ jobs:
                 NODE_ID=$(gh api "/repos/${{ github.repository }}/issues/comments/${{ env.ACK_COMMENT_ID }}" --jq '.node_id')
                 echo "ACK_COMMENT_NODE_ID=$NODE_ID" >> $GITHUB_ENV
               env:
-                GH_TOKEN: ${{ secrets.GH_PAT }}
+                GH_TOKEN: ${{ steps.gfa_app_token.outputs.token }}
 
             - name: Prepare Agent Query Context
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               env:
-                GH_TOKEN: ${{ secrets.GH_PAT }}
+                GH_TOKEN: ${{ steps.gfa_app_token.outputs.token }}
               run: |
                 SCRIPT_PATH="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}/query_context.py"
                 if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/query_context.py" ]; then
@@ -640,18 +655,18 @@ jobs:
                   --output-file /tmp/ready_prompt.md \
                   --event-path ${{ github.event_path }} >> $GITHUB_ENV
 
-            - name: Configure git to use GH_PAT for workflow file access
+            - name: Configure git remote to use the app token
               if: env.SKIP_AGENT == 'false'
               run: |
                 git config --local --unset http.https://github.com/.extraheader || true
-                git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git
+                git remote set-url origin https://x-access-token:${{ steps.gfa_app_token.outputs.token }}@github.com/${{ github.repository }}.git
 
             - name: Run OpenHands Agent
               if: env.SKIP_AGENT == 'false'
               id: openhands_agent
               timeout-minutes: 120
               env:
-                GH_TOKEN: ${{ secrets.GH_PAT }}
+                GH_TOKEN: ${{ steps.gfa_app_token.outputs.token }}
                 AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
                 LLM_API_KEY: ${{ env.LLM_API_KEY || secrets.OPENROUTER_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
@@ -816,7 +831,7 @@ jobs:
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
                 body-path: ./github_comment.md
-                token: ${{ secrets.GH_PAT }}
+                token: ${{ steps.gfa_app_token.outputs.token }}
                 tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
                 mode: create
 
@@ -831,7 +846,7 @@ jobs:
                     }
                   }' -f subjectId="$ACK_COMMENT_NODE_ID"
               env:
-                GH_TOKEN: ${{ secrets.GH_PAT }}
+                GH_TOKEN: ${{ steps.gfa_app_token.outputs.token }}
 
             - name: Process Split Plan (Issue Decomposition)
               if: always() && !cancelled() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME == 'genius'
@@ -886,7 +901,7 @@ jobs:
 
                 echo "Sub-issues created successfully."
               env:
-                GH_TOKEN: ${{ secrets.GH_PAT }}
+                GH_TOKEN: ${{ steps.gfa_app_token.outputs.token }}
 
             - name: Post Additional Message Parts
               if: always() && !cancelled() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && hashFiles('final_message_parts_count.txt') != ''
@@ -912,7 +927,7 @@ jobs:
                   fi
                 done
               env:
-                GH_TOKEN: ${{ secrets.GH_PAT }}
+                GH_TOKEN: ${{ steps.gfa_app_token.outputs.token }}
 
             - name: Upload logs as artifact
               uses: actions/upload-artifact@v4
@@ -931,6 +946,14 @@ jobs:
           github.event.action == 'closed' &&
           github.event.issue.pull_request == null
         steps:
+            - name: Generate git-flow-ai app installation token
+              id: gfa_app_token
+              uses: actions/create-github-app-token@v3.2.0
+              with:
+                  app-id: ${{ secrets.GH_APP_ID }}
+                  private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+                  installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+
             - name: Clean global git config
               run:
                 git config --global --unset-all http.https://github.com/.extraheader || true
@@ -954,7 +977,7 @@ jobs:
               with:
                 repository: olivier-norture/git-flow-ai
                 path: .git-flow-ai-cache
-                token: ${{ secrets.GH_PAT }}
+                token: ${{ steps.gfa_app_token.outputs.token }}
                 persist-credentials: false
 
             - name: Setup Python
@@ -964,7 +987,7 @@ jobs:
 
             - name: Summarize agent metrics
               env:
-                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+                  GITHUB_TOKEN: ${{ steps.gfa_app_token.outputs.token }}
                   GITHUB_REPOSITORY: ${{ github.repository }}
                   ISSUE_NUMBER: ${{ github.event.issue.number }}
               run: |
@@ -982,9 +1005,17 @@ jobs:
           github.event.action == 'closed' &&
           startsWith(github.event.issue.title, '[Sub-task')
         steps:
+            - name: Generate git-flow-ai app installation token
+              id: gfa_app_token
+              uses: actions/create-github-app-token@v3.2.0
+              with:
+                  app-id: ${{ secrets.GH_APP_ID }}
+                  private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+                  installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+
             - name: Notify parent issue of sub-task completion
               env:
-                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+                  GITHUB_TOKEN: ${{ steps.gfa_app_token.outputs.token }}
                   REPOSITORY: ${{ github.repository }}
                   ISSUE_NUMBER: ${{ github.event.issue.number }}
                   ISSUE_TITLE: ${{ github.event.issue.title }}

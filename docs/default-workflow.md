@@ -68,7 +68,7 @@ Determines whether the repository already has git-flow-ai embedded. If the promp
 **Input:** `needed` from Step 2.  
 **Output:** git-flow-ai repository cloned at `.git-flow-ai-cache/` (conditional).
 
-Only runs when `needed=true`. Clones `olivier-norture/git-flow-ai` into `.git-flow-ai-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed git-flow-ai directly. The "Resolve Agent Configuration" step exports `GIT_FLOW_AI_SCRIPTS` as the single source of truth for script locations (cache-aware), consumed by all subsequent script invocations.
+Only runs when `needed=true`. Clones `olivier-norture/git-flow-ai` into `.git-flow-ai-cache/` using the git-flow-ai GitHub App installation token. Provides scripts and prompts for repositories that don't embed git-flow-ai directly. The "Resolve Agent Configuration" step exports `GIT_FLOW_AI_SCRIPTS` as the single source of truth for script locations (cache-aware), consumed by all subsequent script invocations.
 
 ---
 
@@ -206,12 +206,12 @@ Produces a consolidated markdown prompt file.
 
 ---
 
-### Step 16: Configure git to Use GH_PAT
+### Step 16: Configure git to Use the App Token
 
-**Input:** `GH_PAT` secret.  
-**Output:** Git remote configured with PAT authentication.
+**Input:** App installation token (`gfa_app_token.outputs.token`, derived from the `GH_APP_*` secrets).  
+**Output:** Git remote configured with app-token authentication.
 
-Updates the git remote URL to embed the PAT, allowing the agent to push branches and create PRs.
+Updates the git remote URL to embed the short-lived installation token, allowing the agent to push branches and create PRs.
 
 ---
 
@@ -452,7 +452,7 @@ GitHub Event
 | `PYTHON_VERSION` | `inputs.python_version` | `3.13` | Python runtime version |
 | `ENABLE_UV_CACHE` | `inputs.enable_uv_cache` | `true` | Enable uv dependency caching |
 | `OPENROUTER_API_KEY` | `secrets.OPENROUTER_API_KEY` | (required) | Default LLM API key |
-| `GH_PAT` | `secrets.GH_PAT` | (required) | GitHub token for API access |
+| `GH_APP_ID` / `GH_APP_PRIVATE_KEY` / `GH_APP_INSTALLATION_ID` | `secrets.GH_APP_*` | (required) | `git-flow-ai` GitHub App credentials; an installation token is generated per job via `actions/create-github-app-token` |
 
 ### Output Variables (set during execution)
 

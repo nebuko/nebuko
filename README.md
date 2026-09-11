@@ -57,12 +57,21 @@ Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use y
          agent_config_path: "agent-config.yaml"
        secrets:
          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-         GH_PAT: ${{ secrets.GH_PAT }}
+         GH_APP_ID: ${{ secrets.GH_APP_ID }}
+         GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+         GH_APP_INSTALLATION_ID: ${{ secrets.GH_APP_INSTALLATION_ID }}
    ```
 
 2. **Add `agent-config.yaml`** at your repo root — see [this repo's config](./agent-config.yaml) for the reference.
 
-3. **Add secrets**: `OPENROUTER_API_KEY` (your LLM key) and `GH_PAT` (a PAT with `repo` and `workflow` scopes).
+3. **Create the `git-flow-ai` GitHub App** and add its secrets: run the guided setup
+   (`python .github/scripts/setup_app.py manifest-url`) to open a pre-filled app
+   creation form, then add `OPENROUTER_API_KEY` (your LLM key) plus the three app
+   secrets — `GH_APP_ID`, `GH_APP_PRIVATE_KEY`, `GH_APP_INSTALLATION_ID`
+   (`python .github/scripts/setup_app.py print-secrets --app-id <id> --installation-id <id>`
+   prints them in copy-paste form). The app gets its own identity: every comment,
+   push, and PR appears as `git-flow-ai[bot]`, and tokens are short-lived
+   installation tokens instead of a long-lived PAT.
 
 4. **Start using**: comment `/workflow default` on an issue, or mention `@@genius`, `@@ctx`, `@@dev` or `@@review` directly.
 

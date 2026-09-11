@@ -224,7 +224,9 @@ Variables the orchestrator sets/consumes per run:
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables debug-mode routing (recover) and verbose logs. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |
-| `GH_PAT` | repo secret | GitHub PAT used for git push and API calls. |
+| `GH_APP_ID` | repo/org secret | `git-flow-ai` GitHub App ID (see [getting-started — App setup](./getting-started.md#app-setup-git-flow-ai-github-app)). |
+| `GH_APP_PRIVATE_KEY` | repo/org secret | PEM private key of the GitHub App. |
+| `GH_APP_INSTALLATION_ID` | repo/org secret | App installation ID on the repo/org. |
 
 `event_normalizer.py` emits `KEY=value` pairs (multi-line values use HEREDOC
 form `KEY<<EOF ... EOF`) for `eval $(...)` consumption; `query_context.py`

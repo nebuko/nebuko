@@ -19,7 +19,9 @@ read [architecture.md](./architecture.md) and
    | Secret | Required | Purpose |
    |--------|----------|---------|
    | `OPENROUTER_API_KEY` | yes | LLM provider token (OpenRouter). |
-   | `GH_PAT` | yes | GitHub PAT with `repo` scope — used for git push, issue/PR API calls, and posting comments. |
+   | `GH_APP_ID` | yes | `git-flow-ai` GitHub App ID — see [App setup](#app-setup-git-flow-ai-github-app) below. |
+   | `GH_APP_PRIVATE_KEY` | yes | PEM private key of the GitHub App (one-time download in the browser). |
+   | `GH_APP_INSTALLATION_ID` | yes | Installation ID of the app on your repo/org. |
    | `LOCAL_VLLM_API_TOKEN` | optional | Only if you use a local vLLM provider. |
 
 4. **A configuration file** — `agent-config.yaml` (see step 2 below) and agent
@@ -53,7 +55,9 @@ jobs:
       circuit_breaker_threshold: 15
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      GH_PAT: ${{ secrets.GH_PAT }}
+      GH_APP_ID: ${{ secrets.GH_APP_ID }}
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      GH_APP_INSTALLATION_ID: ${{ secrets.GH_APP_INSTALLATION_ID }}
 ```
 
 This thin wrapper calls the reusable orchestrator from this repository — you
@@ -62,6 +66,43 @@ never vendor the 900-line workflow file itself (zero-copy, see
 Optional inputs: `runs_on` (default `ubuntu-latest`; e.g. `self-hosted` to use
 your own runners), `summarizer_threshold` (default 100), `python_version`
 (default `3.13`), `enable_uv_cache` (default `true`), `prompt_body`.
+
+### App setup (`git-flow-ai` GitHub App)
+
+The workflow authenticates with a dedicated **GitHub App** (not a PAT): every
+comment, push, and PR appears as `git-flow-ai[bot]`, and the installation tokens
+it generates are short-lived (1h). Create the app once per repo/org with the
+guided helper script:
+
+1. **Generate a pre-filled creation URL** (permissions and events already
+   configured for this project):
+
+   ```bash
+   python .github/scripts/setup_app.py manifest-url
+   ```
+
+   Open the printed URL in your browser (authenticated as a user with admin
+   rights on the target repo/org), review the pre-filled form, and click
+   **Create GitHub App**.
+
+2. **Install the app** on your repository or organization
+   (Settings → Installed apps → `git-flow-ai` → Add to this repository).
+
+3. **Download the private key** (App settings → Private keys →
+   *Generate a private key). It is only offered once — store it immediately;
+   it never passes through the script and can't be re-downloaded later.
+
+4. **Resolve the IDs** — either note the App ID from the app's settings page and
+   the Installation ID from the installed-apps page, then format the secrets:
+
+   ```bash
+   python .github/scripts/setup_app.py print-secrets --app-id <APP_ID> --installation-id <INSTALLATION_ID>
+   ```
+
+   or let the script look them up via the API (`setup_app.py lookup`).
+
+5. **Add the three secrets** (`GH_APP_ID`, `GH_APP_PRIVATE_KEY`,
+   `GH_APP_INSTALLATION_ID`) at repo or org level alongside `OPENROUTER_API_KEY`.
 
 ---
 
