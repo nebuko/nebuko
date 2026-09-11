@@ -117,6 +117,7 @@ def _build_result(
         "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
         "MATCHED_RULE": matched_rule,
         "HUMAN_RESUME_INPUT": config.get("config_human_resume_input", ""),
+        "WORKFLOW_BACKSTOP_REASON": config.get("config_backstop_reason", ""),
         "SKIP_AGENT": "false",
     }
 

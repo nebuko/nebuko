@@ -751,24 +751,50 @@ def resolve_next_from_workflow(
     # Resolve target step name
     target_step_name: Optional[str] = None
     branch_key: Optional[str] = None
+    backstop_reason: Optional[str] = None
 
-    if branch_result and current_step.conditions:
-        # Try to match a specific condition; a match on ``next: null`` is
-        # terminal (sub-workflow exit) and must NOT fall through to default.
+    if current_step.conditions:
         matched = False
-        for condition in current_step.conditions:
-            if condition.on_result == branch_result:
-                target_step_name = condition.next
-                branch_key = branch_result
-                matched = True
-                break
-        # Fall back to default condition only when nothing matched
-        if not matched:
+        if branch_result:
+            # Try to match a specific condition; a match on ``next: null`` is
+            # terminal (sub-workflow exit) and must NOT fall through to default.
             for condition in current_step.conditions:
-                if condition.on_result == "default":
+                if condition.on_result == branch_result:
                     target_step_name = condition.next
-                    branch_key = "default"
+                    branch_key = branch_result
+                    matched = True
                     break
+            # Fall back to default condition only when nothing matched
+            if not matched:
+                for condition in current_step.conditions:
+                    if condition.on_result == "default":
+                        target_step_name = condition.next
+                        branch_key = "default"
+                        break
+        else:
+            # No branch provided: follow the linear ``next`` field (the
+            # pre-existing behavior for absent branches).
+            target_step_name = current_step.next
+            # Backstop (issue #569): conditions exist, the dispatch emitted no
+            # branch, there is no linear ``next`` (would go silent terminal),
+            # and no ``default`` covers the gap. Loop back to this step with a
+            # diagnostic instead of resolving silently to terminal.
+            if (
+                target_step_name is None
+                and not any(
+                    c.on_result == "default" for c in current_step.conditions
+                )
+                and not (parent_workflow and parent_workflow_step)
+            ):
+                target_step_name = current_step.name
+                valid_values = [c.on_result for c in current_step.conditions]
+                backstop_reason = (
+                    f"Step '{current_step.name}' declares conditions but the "
+                    "dispatch carried no branch. Valid values are "
+                    f"{valid_values} and no default condition exists. Retry "
+                    "with dispatch_next(branch=...) set to one of the valid "
+                    "values."
+                )
     else:
         # Follow linear next field
         target_step_name = current_step.next
@@ -797,6 +823,8 @@ def resolve_next_from_workflow(
     }
     if branch_key:
         result["branch"] = branch_key
+    if backstop_reason:
+        result["reason"] = backstop_reason
     return result
 
 

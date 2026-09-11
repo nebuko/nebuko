@@ -60,6 +60,18 @@ class TestBuildResult:
         assert result["AGENT_SKILLS"] == ""
         assert result["CONFIG_MODEL"] == ""
         assert result["HUMAN_RESUME_INPUT"] == ""
+        assert result["WORKFLOW_BACKSTOP_REASON"] == ""
+
+    def test_backstop_reason_passes_through(self):
+        # Issue #569: engine backstop diagnostic must reach the agent as an
+        # env var so the loop-back run knows which branch values to emit.
+        prompt_base, workflows_dir = _make_dirs()
+        config = {
+            "task": "genius",
+            "config_backstop_reason": "Step 'refine' needs a branch",
+        }
+        result = _build_result(config, prompt_base, workflows_dir)
+        assert result["WORKFLOW_BACKSTOP_REASON"] == "Step 'refine' needs a branch"
 
     def test_step_prompt_file_passes_through(self):
         # Issue #551: STEP_PROMPT_FILE from resolve_workflow_routing must

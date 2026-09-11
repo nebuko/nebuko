@@ -59,6 +59,15 @@ class DispatchNextAction(Action):
         default=None,
         description="Free-text justification of the dispatch decision.",
     )
+    branch: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional condition key for conditional routing (e.g. 'approved', "
+            "'rejected'). Required when the current workflow step declares "
+            "`conditions`; must match one of the `on_result` values shown in "
+            "your Step Conditions block. Omit when the step has no conditions."
+        ),
+    )
 
 
 class DispatchNextObservation(Observation):
@@ -76,6 +85,7 @@ Parameters:
 - agent: optional explicit target agent name; omit to let the workflow engine decide from the workflow definition.
 - complexity: 'low' | 'medium' | 'high' for the next agent.
 - reason: one-sentence justification.
+- branch: optional condition key for conditional routing (e.g. 'approved', 'rejected'). Set it when the current workflow step declares `conditions` — it must match one of the `on_result` values shown in your Step Conditions block. Omit it when the step has no conditions.
 
 Do NOT encode the dispatch decision in prose or HTML comments instead of calling this tool.
 Deliverable note: the free-form text you write alongside this call (the turn's text)
@@ -134,6 +144,7 @@ def action_to_dispatch(action: DispatchNextAction) -> Optional[Dispatch]:
             task_hint=action.agent,
             complexity=action.complexity,
             reason=action.reason,
+            branch=action.branch,
         )
     except Exception as e:  # pydantic ValidationError or similar
         logger.warning(f"dispatch_next payload failed Dispatch validation: {e}")
@@ -163,8 +174,9 @@ class DispatchNextExecutor(ToolExecutor):
             text=(
                 f"Dispatch recorded: status={dispatch.status}, "
                 f"task_hint={dispatch.task_hint}, "
-                f"complexity={dispatch.complexity}. "
-                "You may now finish."
+                f"complexity={dispatch.complexity}"
+                + (f", branch={dispatch.branch}" if dispatch.branch else "")
+                + ". You may now finish."
             )
         )
 

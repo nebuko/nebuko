@@ -499,13 +499,18 @@ class TestConditionsOnlyWorkflow:
         assert result == {"task": "dev", "step": "proceed", "branch": "approved"}
 
     def test_conditions_only_no_branch_uses_linear_next(self, conditions_only_workflows_dir):
-        """Without branch_result, use the linear 'next' field (which is None here)."""
+        """Without branch_result and a null 'next', the engine backstops to a
+        retry of the same step with a diagnostic (issue #569) instead of
+        resolving silently to terminal."""
         resolve = _import_resolver()
         result = resolve(
             "conditions_only", "decision", str(conditions_only_workflows_dir),
         )
-        # No branch_result, so follow step.next which is None → return None
-        assert result is None
+        assert result is not None
+        assert result["task"] == "review"
+        assert result["step"] == "decision"
+        assert "carried no branch" in result["reason"]
+        assert "'approved'" in result["reason"] and "'rejected'" in result["reason"]
 
     def test_conditions_only_no_default_fallback(self, conditions_only_workflows_dir):
         """Unmatched branch with no default condition returns None."""
@@ -515,6 +520,87 @@ class TestConditionsOnlyWorkflow:
             branch_result="unknown",
         )
         # No matching condition, no "default" condition → None
+        assert result is None
+
+
+class TestConditionBackstop:
+    """Backstop routing when conditions exist but no branch is emitted (issue #569)."""
+
+    def test_backstop_not_applied_when_default_exists(self, tmp_path: Path):
+        """With no branch and a null linear 'next', resolution falls through
+        to terminal even when a 'default' condition exists — matching the
+        pre-existing pinned behavior (default fallback only applies to a
+        present-but-unmatched branch)."""
+        (tmp_path / "wf.yaml").write_text(yaml.dump({
+            "name": "wf",
+            "description": "Workflow with default condition",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {
+                    "name": "decision",
+                    "agent": "genius",
+                    "next": None,
+                    "conditions": [
+                        {"on_result": "approved", "next": "done"},
+                        {"on_result": "default", "next": "done"},
+                    ],
+                },
+                {"name": "done", "agent": "dev", "next": None},
+            ],
+        }))
+        resolve = _import_resolver()
+        # No branch, no linear next → terminal (no backstop: a default exists)
+        assert resolve("wf", "decision", str(tmp_path)) is None
+        # A present-but-unmatched branch still routes via the default condition
+        assert resolve(
+            "wf", "decision", str(tmp_path), branch_result="bogus"
+        ) == {"task": "dev", "step": "done", "branch": "default"}
+
+    def test_backstop_not_applied_when_linear_next_exists(self, tmp_path: Path):
+        """A non-null linear 'next' field resolves normally — no backstop."""
+        (tmp_path / "wf.yaml").write_text(yaml.dump({
+            "name": "wf",
+            "description": "Workflow with conditions and linear next",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {
+                    "name": "decision",
+                    "agent": "genius",
+                    "next": "fallback",
+                    "conditions": [
+                        {"on_result": "approved", "next": "done"},
+                    ],
+                },
+                {"name": "fallback", "agent": "dev", "next": None},
+                {"name": "done", "agent": "dev", "next": None},
+            ],
+        }))
+        resolve = _import_resolver()
+        result = resolve("wf", "decision", str(tmp_path))
+        assert result == {"task": "dev", "step": "fallback"}
+
+    def test_unmatched_branch_without_default_is_terminal(self, tmp_path: Path):
+        """A present-but-unmatched branch keeps the legacy fall-through
+        (linear next null → terminal); the backstop only applies when the
+        dispatch carried no branch at all."""
+        (tmp_path / "wf.yaml").write_text(yaml.dump({
+            "name": "wf",
+            "description": "Workflow with conditions, no default, no next",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {
+                    "name": "decision",
+                    "agent": "genius",
+                    "next": None,
+                    "conditions": [
+                        {"on_result": "approved", "next": "done"},
+                    ],
+                },
+                {"name": "done", "agent": "dev", "next": None},
+            ],
+        }))
+        resolve = _import_resolver()
+        result = resolve("wf", "decision", str(tmp_path), branch_result="bogus")
         assert result is None
 
 

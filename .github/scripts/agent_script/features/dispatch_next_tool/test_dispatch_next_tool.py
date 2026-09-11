@@ -38,6 +38,17 @@ class TestDispatchNextActionToDispatch(unittest.TestCase):
         self.assertIsNone(d.task_hint)
         self.assertEqual(d.complexity, "medium")
         self.assertIsNone(d.reason)
+        self.assertIsNone(d.branch)
+
+    def test_branch_round_trip(self):
+        """The canonical channel must carry branch to Dispatch (issue #569)."""
+        act = DispatchNextAction(status="advance", branch="approved")
+        d = action_to_dispatch(act)
+        self.assertIsInstance(d, Dispatch)
+        self.assertEqual(d.branch, "approved")
+
+        act = DispatchNextAction(status="advance", branch="rejected")
+        self.assertEqual(action_to_dispatch(act).branch, "rejected")
 
     def test_invalid_status_returns_none(self):
         act = DispatchNextAction(status="bogus")
@@ -67,6 +78,16 @@ class TestDispatchNextTool(unittest.TestCase):
         self.assertEqual(d.task_hint, None)
         clear_run("run-1")
         self.assertIsNone(get_recorded_dispatch("run-1"))
+
+    def test_executor_records_branch(self):
+        """Branch flows through the executor into the recorded dispatch."""
+        tool = DispatchNextTool.create(conversation_id="run-branch")[0]
+        obs = tool.executor(DispatchNextAction(status="advance", branch="approved"))
+        self.assertFalse(obs.is_error)
+        d = get_recorded_dispatch("run-branch")
+        self.assertIsNotNone(d)
+        self.assertEqual(d.branch, "approved")
+        clear_run("run-branch")
 
     def test_executor_rejects_invalid_payload(self):
         tool = DispatchNextTool.create(conversation_id="run-2")[0]

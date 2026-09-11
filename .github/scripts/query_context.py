@@ -363,6 +363,73 @@ def _build_state_context(comments, repo: str) -> str:
     return ""
 
 
+def _find_step_conditions(workflow_name: str, step_name: str):
+    """Locate the active step's conditions in its workflow YAML.
+
+    Resolves the workflow file against ``$WORKFLOWS_DIR`` (set by the runner,
+    may point at the .git-flow-ai-cache copy) and returns the step's
+    ``conditions`` list — or None when anything is missing or fails. Routing
+    context injection must never break the run.
+    """
+    if not workflow_name or not step_name:
+        return None
+    try:
+        from config import load_workflow, resolve_workflow_reference
+
+        workflows_dir = os.environ.get("WORKFLOWS_DIR") or "workflows"
+        path = resolve_workflow_reference(workflow_name, workflows_dir)
+        wf = load_workflow(path)
+        for step in wf.steps:
+            if step.name == step_name:
+                return step.conditions
+        return None
+    except Exception as e:
+        print(
+            f"Warning: could not load conditions for {workflow_name}/{step_name}: {e}",
+            file=sys.stderr,
+        )
+        return None
+
+
+def _build_conditions_context(workflow_name: str, step_name: str) -> str:
+    """Render the Step Conditions block for the agent's task context.
+
+    Injected only when the active step declares ``conditions`` (issue #569):
+    the agent must classify its own result by setting ``branch`` in its final
+    ``dispatch_next`` call to one of the ``on_result`` values.
+    """
+    conditions = _find_step_conditions(workflow_name, step_name)
+    if not conditions:
+        return ""
+    lines = [
+        "## Step Conditions (route via dispatch branch)",
+        "",
+        f"Step '{step_name}' declares conditions. You MUST call dispatch_next "
+        "with `branch` set to exactly one of:",
+    ]
+    for cond in conditions:
+        target = cond.next if cond.next else "(workflow terminal)"
+        lines.append(f'  - "{cond.on_result}" → {target}')
+    lines.append(
+        "Emit no `branch` (or an unknown value) and you will be routed back to "
+        "this step to self-correct."
+    )
+    return "\n".join(lines) + "\n\n---\n\n"
+
+
+def _build_backstop_notice(backstop_reason: str) -> str:
+    """Render the Routing Retry Notice for the agent's task context.
+
+    Injected only when the engine looped the step back because the dispatch
+    carried no usable ``branch`` for a conditional step with no ``default``
+    (issue #569). The diagnostic tells the agent exactly which values to emit.
+    """
+    reason = (backstop_reason or "").strip()
+    if not reason:
+        return ""
+    return f"\n## Routing Retry Notice\n\n{reason}\n\n"
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Prepare agent query context from GitHub issue data"
@@ -416,6 +483,32 @@ def main():
     # to locate the latest workflow state JSON (which may reside in a comment excluded from
     # history display by inject_context=False). Filtering applies only to history display.
     state_context = _build_state_context(comments, repo_name)
+
+    # Inject per-step routing conditions so the agent knows which `branch`
+    # values its final dispatch_next must emit (issue #569). The env vars are
+    # the resolved route for THIS run; fall back to the previous state.
+    wf_name = os.environ.get("WORKFLOW_NAME", "") or (
+        prev_state.workflow if prev_state else ""
+    )
+    step_name = os.environ.get("WORKFLOW_STEP", "") or (
+        prev_state.step if prev_state else ""
+    )
+    conditions_context = _build_conditions_context(wf_name, step_name)
+    if conditions_context:
+        print(
+            f"Injected Step Conditions block for {wf_name}/{step_name}",
+            file=sys.stderr,
+        )
+        state_context += conditions_context
+
+    # Surface the engine backstop diagnostic (issue #569) when this run is a
+    # loop-back caused by a missing dispatch branch on a conditional step.
+    backstop_notice = _build_backstop_notice(
+        os.environ.get("WORKFLOW_BACKSTOP_REASON", "")
+    )
+    if backstop_notice:
+        state_context += backstop_notice
+        print("Injected workflow backstop diagnostic into agent context", file=sys.stderr)
 
     # Save extracted workflow state as JSON for the next agent step
     # Use RUNNER_TEMP for per-run isolation (avoids cross-contamination on self-hosted runners)

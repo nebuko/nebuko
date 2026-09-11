@@ -141,15 +141,10 @@ When invoked in the `spec_approval` or `stub_approval` step of the spec-driven w
   - **Approved**: Keywords like "approved", "looks good", "let's go", "proceed", "sound's good" — or any clear affirmative response
   - **Rejected**: Keywords like "rejected", "no", "not good", "changes needed" — or any clear negative response
 * Emit a dispatch with the `branch` field set to your classification:
-  - **On approval:**
-    ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "approved"}} -->
-    ```
-  - **On rejection:**
-    ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "rejected"}} -->
-    ```
-  - **If unclear** (no human response yet or ambiguous): Use `branch: "approved"` as the default (the workflow's `on_result: default` also routes forward).
+  - **On approval:** `dispatch_next(status='advance', branch='approved')`
+  - **On rejection:** `dispatch_next(status='advance', branch='rejected')`
+  - **If unclear** (no human response yet or ambiguous): Use `branch="approved"` as the default (the workflow's `on_result: default` also routes forward).
+  - *(Compat note: the legacy sentinel form `<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "approved"}} -->` still parses, but the `dispatch_next` tool is the canonical channel.)*
 
 ### The `human_gate` security boundary (engine-enforced)
 
@@ -242,6 +237,7 @@ Note: Your `dependencies` arrays control both initial task triggering (tasks wit
   - NEVER assume "task complete" just because you don't understand the request
   - NEVER skip delegating to @@dev unless Rule B is unequivocally satisfied
 * **Rule C (Hand-off Command):** Use the appropriate hand-off based on your current phase. No explicit `task` field is needed — the workflow engine resolves the next step from YAML:
+  - **Conditional steps:** If your context contains a `## Step Conditions` block, you MUST pass `branch` in your dispatch set to exactly one of the listed `on_result` values (e.g. `dispatch_next(status='advance', branch='approved')`). Omitting it (or emitting an unknown value) on a step with no `default` condition routes you back to the same step to self-correct.
   - **Phase A** (architecture proposal): End the turn with `dispatch_next(status='hold')` alongside your full proposal text (no `AGENT_RUN_CONFIG` sentinel). The workflow posts your proposal and stops. The human reviews it and must ping `@@genius` to continue.
   - **Phase B approved** (implementation plan): End with:
     ```

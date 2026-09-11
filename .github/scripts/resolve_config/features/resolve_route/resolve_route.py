@@ -321,6 +321,8 @@ def _resolve_dispatch_path(
                 _apply_wf_marker(config, wf_result)
             else:
                 config["config_workflow"] = prev_state.workflow
+            if wf_result.get("reason"):
+                config["config_backstop_reason"] = wf_result["reason"]
         else:
             dispatch_status = dispatch_obj.status or ""
             if dispatch_status == "hold":

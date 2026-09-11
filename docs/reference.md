@@ -40,7 +40,7 @@ The current dispatch contract (see
 | `repetition_penalty` | float | Repetition penalty override. |
 | `workflow` | string | Optional workflow name override (file in `workflows/`). |
 | `step` | string | Optional step name override within the workflow. |
-| `branch` | string | Optional condition key for conditional routing. |
+| `branch` | string | Optional condition key for conditional routing. Emitted by `dispatch_next(branch='approved')` when the current step declares `conditions`; must match one of the `on_result` values. |
 | `parent_workflow` | string | Parent workflow name when entering a sub-workflow. |
 | `parent_workflow_step` | string | Parent step that triggered the sub-workflow. |
 | `skills` | string | Optional skill(s) for the downstream agent. |

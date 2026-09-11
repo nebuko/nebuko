@@ -34,9 +34,13 @@ steps:
 ```
 
 - Steps execute sequentially; `next: null` ends the workflow.
-- `conditions[]` give the agent a choice of where to go, based on the result
-  it reports in its dispatch (`status` / `task_hint`). Always include a
-  catch-all (e.g., `default`) so routing stays deterministic.
+- `conditions[]` give the agent a choice of where to go, based on the `branch`
+  value the agent reports in its final dispatch
+  (e.g. `dispatch_next(status='advance', branch='approved')`), matched against
+  each condition's `on_result`. Always include a
+  catch-all (e.g., `default`) so routing stays deterministic — without a
+  `default`, a missing or unknown `branch` loops the step back to itself with a
+  diagnostic so the agent can self-correct.
 - `skill: [...]` attaches extra prompt context from `skills/` to that step.
 - `prompt:` injects a standing instruction into that step's agent context
   (see [Step Instructions](#step-instructions-prompt)).

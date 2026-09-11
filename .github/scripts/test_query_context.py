@@ -7,11 +7,15 @@ import os
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from query_context import (
-    load_event_data,
+    _build_backstop_notice,
+    _build_conditions_context,
+    _find_step_conditions,
     extract_summary_from_comment,
     format_query_template,
+    load_event_data,
 )
 
 
@@ -1092,3 +1096,141 @@ class TestInjectContextFiltering:
         )
         ids = _get_injectable_comment_ids(state)
         assert ids == {1}
+
+
+class TestFindStepConditions:
+    """Tests for _find_step_conditions (issue #569)."""
+
+    def test_returns_conditions_for_matching_step(self, tmp_path, monkeypatch):
+        (tmp_path / "digest.yaml").write_text(yaml.dump({
+            "name": "digest",
+            "description": "Digest workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "analyze", "agent": "genius", "next": "refine"},
+                {
+                    "name": "refine",
+                    "agent": "genius",
+                    "conditions": [
+                        {"on_result": "approved", "next": "distill"},
+                        {"on_result": "rejected", "next": "context"},
+                    ],
+                },
+                {"name": "distill", "agent": "dev", "next": None},
+            ],
+        }))
+        monkeypatch.setenv("WORKFLOWS_DIR", str(tmp_path))
+        conditions = _find_step_conditions("digest", "refine")
+        assert conditions is not None
+        assert [c.on_result for c in conditions] == ["approved", "rejected"]
+        assert conditions[0].next == "distill"
+
+    def test_no_conditions_on_step(self, tmp_path, monkeypatch):
+        (tmp_path / "digest.yaml").write_text(yaml.dump({
+            "name": "digest",
+            "description": "Digest workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "analyze", "agent": "genius", "next": None},
+            ],
+        }))
+        monkeypatch.setenv("WORKFLOWS_DIR", str(tmp_path))
+        assert _find_step_conditions("digest", "analyze") is None
+
+    def test_unknown_step_returns_none(self, tmp_path, monkeypatch):
+        (tmp_path / "digest.yaml").write_text(yaml.dump({
+            "name": "digest",
+            "description": "Digest workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "analyze", "agent": "genius", "next": None},
+            ],
+        }))
+        monkeypatch.setenv("WORKFLOWS_DIR", str(tmp_path))
+        assert _find_step_conditions("digest", "ghost") is None
+
+    def test_missing_name_args_return_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WORKFLOWS_DIR", str(tmp_path))
+        assert _find_step_conditions("", "step") is None
+        assert _find_step_conditions("digest", "") is None
+
+    def test_missing_workflow_file_returns_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WORKFLOWS_DIR", str(tmp_path))
+        assert _find_step_conditions("nope", "step") is None
+
+
+class TestBuildConditionsContext:
+    """Tests for _build_conditions_context (issue #569)."""
+
+    def test_renders_block_with_all_conditions(self, tmp_path, monkeypatch):
+        (tmp_path / "digest.yaml").write_text(yaml.dump({
+            "name": "digest",
+            "description": "Digest workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {
+                    "name": "refine",
+                    "agent": "genius",
+                    "conditions": [
+                        {"on_result": "approved", "next": "distill"},
+                        {"on_result": "rejected", "next": "context"},
+                    ],
+                },
+            ],
+        }))
+        monkeypatch.setenv("WORKFLOWS_DIR", str(tmp_path))
+        block = _build_conditions_context("digest", "refine")
+        assert "## Step Conditions (route via dispatch branch)" in block
+        assert "Step 'refine' declares conditions" in block
+        assert '"approved" → distill' in block
+        assert '"rejected" → context' in block
+        assert "dispatch_next" in block
+
+    def test_null_next_rendered_as_terminal(self, tmp_path, monkeypatch):
+        (tmp_path / "wf.yaml").write_text(yaml.dump({
+            "name": "wf",
+            "description": "Workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {
+                    "name": "decide",
+                    "agent": "genius",
+                    "conditions": [
+                        {"on_result": "done", "next": None},
+                    ],
+                },
+            ],
+        }))
+        monkeypatch.setenv("WORKFLOWS_DIR", str(tmp_path))
+        block = _build_conditions_context("wf", "decide")
+        assert "(workflow terminal)" in block
+
+    def test_empty_when_no_conditions(self, tmp_path, monkeypatch):
+        (tmp_path / "wf.yaml").write_text(yaml.dump({
+            "name": "wf",
+            "description": "Workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "s1", "agent": "genius", "next": None},
+            ],
+        }))
+        monkeypatch.setenv("WORKFLOWS_DIR", str(tmp_path))
+        assert _build_conditions_context("wf", "s1") == ""
+
+    def test_empty_when_no_args(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WORKFLOWS_DIR", str(tmp_path))
+        assert _build_conditions_context("", "") == ""
+
+
+class TestBuildBackstopNotice:
+    """Tests for _build_backstop_notice (issue #569)."""
+
+    def test_renders_notice_with_reason(self):
+        notice = _build_backstop_notice("Step 'refine' needs a branch: approved")
+        assert "## Routing Retry Notice" in notice
+        assert "Step 'refine' needs a branch: approved" in notice
+
+    def test_empty_when_no_reason(self):
+        assert _build_backstop_notice("") == ""
+        assert _build_backstop_notice(None) == ""
+        assert _build_backstop_notice("   \n  ") == ""

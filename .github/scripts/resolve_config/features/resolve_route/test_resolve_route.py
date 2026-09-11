@@ -273,3 +273,63 @@ class TestWorkflowCommandPrecedence:
         config = _resolve_human_path("/workflow foo", None, None, str(base))
         assert config["task"] == "dev"
         assert "config_skip_reason" not in config
+
+
+class TestDispatchPathBackstopReason:
+    """Issue #569: engine backstop diagnostic propagates to config."""
+
+    CONDITIONS_YAML = (
+        "name: digest\n"
+        'description: "conditions"\n'
+        "trigger:\n"
+        "  agents: [genius]\n"
+        "steps:\n"
+        "  - name: refine\n"
+        "    agent: genius\n"
+        "    conditions:\n"
+        '      - on_result: approved\n'
+        "        next: distill\n"
+        '      - on_result: rejected\n'
+        "        next: context\n"
+        "  - name: distill\n"
+        "    agent: dev\n"
+        "    next: null\n"
+        "  - name: context\n"
+        "    agent: ctx\n"
+        "    next: refine\n"
+    )
+
+    def _dir(self, tmp_path: Path) -> str:
+        d = tmp_path / "workflows"
+        d.mkdir()
+        (d / "digest.yaml").write_text(self.CONDITIONS_YAML)
+        return str(d)
+
+    def test_missing_branch_loops_back_with_reason(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import (
+            _resolve_dispatch_path,
+        )
+        from workflow_state import Dispatch, WorkflowState
+
+        prev = WorkflowState(workflow="digest", step="refine", agent="genius")
+        config = _resolve_dispatch_path(
+            prev, Dispatch(status="advance"), self._dir(tmp_path)
+        )
+        # Backstop loops back to the same step...
+        assert config["config_step"] == "refine"
+        # ...and carries the diagnostic for the agent prompt
+        assert "refine" in config["config_backstop_reason"]
+        assert "approved" in config["config_backstop_reason"]
+
+    def test_matched_branch_has_no_backstop_reason(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import (
+            _resolve_dispatch_path,
+        )
+        from workflow_state import Dispatch, WorkflowState
+
+        prev = WorkflowState(workflow="digest", step="refine", agent="genius")
+        config = _resolve_dispatch_path(
+            prev, Dispatch(status="advance", branch="approved"), self._dir(tmp_path)
+        )
+        assert config["config_step"] == "distill"
+        assert "config_backstop_reason" not in config
