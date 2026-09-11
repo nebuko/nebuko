@@ -183,6 +183,68 @@ def _branch_key_for(
     return None
 
 
+# Maximum backstop loop-backs for a conditional step with no usable branch
+# (issue #569): after this many consecutive runs of the same step, resolution
+# falls through to terminal instead of retrying forever.
+MAX_BACKSTOP_RETRIES = 3
+
+
+def _backstop_budget_exhausted(step_history_count: int) -> bool:
+    """True when the step has already been looped back too often."""
+    return step_history_count > MAX_BACKSTOP_RETRIES
+
+
+def _count_step_runs(step_history: Optional[list], step_name: str) -> int:
+    """Count prior runs of ``step_name`` in the summarized history.
+
+    ``None`` (history unavailable, e.g. legacy snapshots) counts as 0 — the
+    backstop then always allows at least one retry before considering the
+    budget.
+    """
+    if step_history is None:
+        return 0
+    return sum(
+        1 for h in step_history if getattr(h, "step", None) == step_name
+    )
+
+
+def _build_condition_backstop(
+    step: WorkflowStep,
+    step_history_count: int,
+    branch_result: Optional[str],
+):
+    """Build the backstop loop-back for an unusable dispatch branch (issue #569).
+
+    Applied when the step declares ``conditions``, the dispatched branch is
+    missing or matches no ``on_result``, no ``default`` condition covers the
+    gap, and there is no linear ``next`` to fall back on — instead of
+    resolving silently to terminal. The loop-back is bounded: once the step
+    has run more than ``MAX_BACKSTOP_RETRIES`` consecutive times, resolution
+    falls through to terminal with the diagnostic attached.
+
+    Returns ``(target_step_name, backstop_reason)``; target is the same step
+    name for a retry, or ``None`` when the budget is exhausted.
+    """
+    valid_values = [c.on_result for c in step.conditions]
+    if branch_result is None:
+        situation = "the dispatch carried no branch"
+    else:
+        situation = f'branch "{branch_result}" matches no on_result'
+    base_reason = (
+        f"Step '{step.name}' declares conditions but {situation}. Valid "
+        f"values are {valid_values} and no default condition exists. Retry "
+        "with dispatch_next(branch=...) set to one of the valid values."
+    )
+    if _backstop_budget_exhausted(step_history_count):
+        return None, (
+            f"{base_reason} Retry budget exhausted "
+            f"({step_history_count} consecutive runs of this step); the "
+            "workflow is terminating. Add a 'default' condition to the "
+            "workflow or emit a valid branch to recover."
+        )
+    return step.name, base_reason
+
+
 def _is_terminal_step(step: WorkflowStep) -> bool:
     """Check if a step is terminal (no next step, no conditions)."""
     if step.next is None and not step.conditions:
@@ -673,6 +735,8 @@ def resolve_next_from_workflow(
     parent_workflow: str = "",
     parent_workflow_step: str = "",
     local_workflows_dir: Optional[str] = None,
+    step_history: Optional[list] = None,
+    backstop_reasons_out: Optional[list] = None,
 ) -> Optional[dict]:
     """Resolve the next step in a workflow given the current step.
 
@@ -699,12 +763,25 @@ def resolve_next_from_workflow(
             sub-workflow; enables return-to-parent on terminal steps.
         parent_workflow_step: The parent's sub-workflow reference step name;
             the parent resumes at the step after this one.
+        local_workflows_dir: Optional consumer-local workflows dir that takes
+            precedence over ``workflows_dir`` (issue #529).
+        step_history: Summarized history entries of the current workflow run
+            (``HistoryEntry`` objects); used to bound backstop loop-backs so
+            a step that keeps failing to emit a usable branch terminates
+            instead of retrying forever (issue #569).
+        backstop_reasons_out: Optional list; when provided, condition-backstop
+            diagnostics (retry or budget-exhausted) are appended to it so the
+            caller can surface the reason without changing the terminal
+            contract of the return value.
 
     Returns:
         ``{"task", "step"}`` for linear routing, ``{"task", "step", "branch"}``
         for conditional branches, ``{"task": "<hint>"}`` for agent hint
         fallback, entry/exit markers for sub-workflow transitions, or
-        ``None`` for terminal/missing cases.
+        ``None`` for terminal/missing cases. A resolved ``"reason"`` key
+        carries a condition-backstop diagnostic for the agent; when the
+        backstop budget is exhausted the result is ``None`` (terminal) and
+        the diagnostic is appended to ``backstop_reasons_out`` instead.
     """
     workflow = _load_workflow_by_reference(workflow_name, workflows_dir, local_workflows_dir)
     if workflow is None:
@@ -775,26 +852,29 @@ def resolve_next_from_workflow(
             # No branch provided: follow the linear ``next`` field (the
             # pre-existing behavior for absent branches).
             target_step_name = current_step.next
-            # Backstop (issue #569): conditions exist, the dispatch emitted no
-            # branch, there is no linear ``next`` (would go silent terminal),
-            # and no ``default`` covers the gap. Loop back to this step with a
-            # diagnostic instead of resolving silently to terminal.
-            if (
-                target_step_name is None
-                and not any(
-                    c.on_result == "default" for c in current_step.conditions
-                )
-                and not (parent_workflow and parent_workflow_step)
-            ):
-                target_step_name = current_step.name
-                valid_values = [c.on_result for c in current_step.conditions]
-                backstop_reason = (
-                    f"Step '{current_step.name}' declares conditions but the "
-                    "dispatch carried no branch. Valid values are "
-                    f"{valid_values} and no default condition exists. Retry "
-                    "with dispatch_next(branch=...) set to one of the valid "
-                    "values."
-                )
+
+        # Backstop (issue #569): conditions exist, the dispatched branch is
+        # missing or matches no ``on_result``, nothing covers the gap
+        # (no linear ``next``, no ``default`` condition) — and we are not
+        # inside a sub-workflow where terminal means return-to-parent. Loop
+        # back to this step with a bounded diagnostic instead of resolving
+        # silently to terminal (the digest #17 failure mode). A branch that
+        # *matched* a condition with ``next: null`` is an intentional
+        # terminal exit and must not be re-routed.
+        if (
+            not matched
+            and target_step_name is None
+            and not any(
+                c.on_result == "default" for c in current_step.conditions
+            )
+            and not (parent_workflow and parent_workflow_step)
+        ):
+            step_history_count = _count_step_runs(step_history, current_step.name)
+            target_step_name, backstop_reason = _build_condition_backstop(
+                current_step, step_history_count, branch_result
+            )
+            if backstop_reason and backstop_reasons_out is not None:
+                backstop_reasons_out.append(backstop_reason)
     else:
         # Follow linear next field
         target_step_name = current_step.next

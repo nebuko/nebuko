@@ -333,3 +333,45 @@ class TestDispatchPathBackstopReason:
         )
         assert config["config_step"] == "distill"
         assert "config_backstop_reason" not in config
+
+    def test_exhausted_backstop_budget_terminates_with_reason(self, tmp_path):
+        """Once the backstop retry budget is exhausted (step ran more than
+        MAX_BACKSTOP_RETRIES times), routing terminates with SKIP_AGENT and
+        the budget-exhausted diagnostic instead of looping forever."""
+        from resolve_config.features.resolve_route.resolve_route import (
+            _resolve_dispatch_path,
+        )
+        from workflow_state import Dispatch, WorkflowState
+        from resolve_workflow import MAX_BACKSTOP_RETRIES
+        from workflow_state.sub_domains.history_entry.history_entry import (
+            HistoryEntry,
+        )
+
+        history = [
+            HistoryEntry(step="refine", agent="genius")
+            for _ in range(MAX_BACKSTOP_RETRIES + 1)
+        ]
+        prev = WorkflowState(
+            workflow="digest", step="refine", agent="genius", history=history
+        )
+        result = _resolve_dispatch_path(
+            prev, Dispatch(status="advance"), self._dir(tmp_path)
+        )
+        assert result.get("SKIP_AGENT") == "true"
+        assert "Retry budget exhausted" in result["REASON"]
+        assert "refine" in result["REASON"]
+
+    def test_unknown_branch_within_budget_loops_back(self, tmp_path):
+        """An unknown branch value also triggers the bounded loop-back while
+        the retry budget remains (issue #569 review, round 2)."""
+        from resolve_config.features.resolve_route.resolve_route import (
+            _resolve_dispatch_path,
+        )
+        from workflow_state import Dispatch, WorkflowState
+
+        prev = WorkflowState(workflow="digest", step="refine", agent="genius")
+        config = _resolve_dispatch_path(
+            prev, Dispatch(status="advance", branch="looks_good"), self._dir(tmp_path)
+        )
+        assert config["config_step"] == "refine"
+        assert 'branch "looks_good" matches no on_result' in config["config_backstop_reason"]

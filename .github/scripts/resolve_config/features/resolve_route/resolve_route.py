@@ -304,6 +304,7 @@ def _resolve_dispatch_path(
         parent_wf_step = (
             dispatch_obj.parent_workflow_step or prev_state.parent_workflow_step or ""
         )
+        backstop_reasons: list = []
         wf_result = resolve_next_from_workflow(
             prev_state.workflow,
             prev_state.step,
@@ -313,6 +314,8 @@ def _resolve_dispatch_path(
             parent_workflow=parent_wf,
             parent_workflow_step=parent_wf_step,
             local_workflows_dir=local_workflows_dir,
+            step_history=list(prev_state.history),
+            backstop_reasons_out=backstop_reasons,
         )
         if wf_result:
             config["task"] = wf_result["task"]
@@ -324,6 +327,13 @@ def _resolve_dispatch_path(
             if wf_result.get("reason"):
                 config["config_backstop_reason"] = wf_result["reason"]
         else:
+            # Budget-exhausted condition backstop: surface why routing
+            # terminated before status-based handling (issue #569).
+            if backstop_reasons:
+                return {
+                    "SKIP_AGENT": "true",
+                    "REASON": backstop_reasons[-1],
+                }
             dispatch_status = dispatch_obj.status or ""
             if dispatch_status == "hold":
                 return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}

@@ -513,18 +513,49 @@ class TestConditionsOnlyWorkflow:
         assert "'approved'" in result["reason"] and "'rejected'" in result["reason"]
 
     def test_conditions_only_no_default_fallback(self, conditions_only_workflows_dir):
-        """Unmatched branch with no default condition returns None."""
+        """Unmatched branch with no default condition backstops to a retry of
+        the same step with a diagnostic (issue #569) — the digest #17
+        failure mode is the *missing*-branch case; an *unknown* value is
+        the same gap since real branch labels are free-text."""
         resolve = _import_resolver()
         result = resolve(
             "conditions_only", "decision", str(conditions_only_workflows_dir),
             branch_result="unknown",
         )
-        # No matching condition, no "default" condition → None
-        assert result is None
+        assert result is not None
+        assert result["task"] == "review"
+        assert result["step"] == "decision"
+        assert 'branch "unknown" matches no on_result' in result["reason"]
 
 
 class TestConditionBackstop:
-    """Backstop routing when conditions exist but no branch is emitted (issue #569)."""
+    """Backstop routing when conditions exist but no usable branch is emitted
+    (issue #569)."""
+
+    def _decision_workflow(self, tmp_path: Path, **decision_overrides) -> Path:
+        decision = {
+            "name": "decision",
+            "agent": "genius",
+            "next": None,
+            "conditions": [
+                {"on_result": "approved", "next": "done"},
+            ],
+        }
+        decision.update(decision_overrides)
+        (tmp_path / "wf.yaml").write_text(yaml.dump({
+            "name": "wf",
+            "description": "Workflow with conditions, no default, no next",
+            "trigger": {"agents": ["genius"]},
+            "steps": [decision, {"name": "done", "agent": "dev", "next": None}],
+        }))
+        return tmp_path
+
+    @staticmethod
+    def _history(step_name: str, count: int):
+        class _Entry:
+            def __init__(self, step):
+                self.step = step
+        return [_Entry(step_name) for _ in range(count)]
 
     def test_backstop_not_applied_when_default_exists(self, tmp_path: Path):
         """With no branch and a null linear 'next', resolution falls through
@@ -557,7 +588,13 @@ class TestConditionBackstop:
         ) == {"task": "dev", "step": "done", "branch": "default"}
 
     def test_backstop_not_applied_when_linear_next_exists(self, tmp_path: Path):
-        """A non-null linear 'next' field resolves normally — no backstop."""
+        """A non-null linear 'next' field resolves normally — no backstop.
+
+        Pins the round-2 review item: when a step declares both ``conditions``
+        and a linear ``next``, an absent branch now *honors* the declared
+        ``next``. Before issue #569's restructure this case resolved to
+        terminal even though ``next`` was declared — the new behavior is the
+        sensible one and is pinned here so a future regression is caught."""
         (tmp_path / "wf.yaml").write_text(yaml.dump({
             "name": "wf",
             "description": "Workflow with conditions and linear next",
@@ -579,10 +616,90 @@ class TestConditionBackstop:
         result = resolve("wf", "decision", str(tmp_path))
         assert result == {"task": "dev", "step": "fallback"}
 
-    def test_unmatched_branch_without_default_is_terminal(self, tmp_path: Path):
-        """A present-but-unmatched branch keeps the legacy fall-through
-        (linear next null → terminal); the backstop only applies when the
-        dispatch carried no branch at all."""
+    def test_matched_branch_with_null_next_is_terminal_not_backstop(
+        self, tmp_path: Path
+    ):
+        """A branch matching a condition with ``next: null`` is an intentional
+        terminal exit — the backstop must not re-route it (issue #569)."""
+        (tmp_path / "wf.yaml").write_text(yaml.dump({
+            "name": "wf",
+            "description": "Workflow with a condition targeting null",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {
+                    "name": "decision",
+                    "agent": "genius",
+                    "next": None,
+                    "conditions": [
+                        {"on_result": "done", "next": None},
+                    ],
+                },
+            ],
+        }))
+        resolve = _import_resolver()
+        reasons: list = []
+        result = resolve(
+            "wf", "decision", str(tmp_path),
+            branch_result="done", backstop_reasons_out=reasons,
+        )
+        assert result is None
+        assert reasons == []
+
+    def test_backstop_budget_exhausted_terminates_with_reason(self, tmp_path: Path):
+        """After more than MAX_BACKSTOP_RETRIES runs of the same step, the
+        backstop stops looping and resolution terminates; the diagnostic is
+        delivered via the ``backstop_reasons_out`` list (issue #569)."""
+        from resolve_workflow import MAX_BACKSTOP_RETRIES
+
+        wdir = self._decision_workflow(tmp_path)
+        resolve = _import_resolver()
+        # One retry over budget (count > MAX) → terminal + reason collected.
+        reasons: list = []
+        result = resolve(
+            "wf", "decision", str(wdir),
+            step_history=self._history("decision", MAX_BACKSTOP_RETRIES + 1),
+            backstop_reasons_out=reasons,
+        )
+        assert result is None
+        assert len(reasons) == 1
+        assert "Retry budget exhausted" in reasons[0]
+        assert "default" in reasons[0]
+
+        # Still within budget (count <= MAX) → loop back with retry diagnostic.
+        reasons_retry: list = []
+        result_retry = resolve(
+            "wf", "decision", str(wdir),
+            step_history=self._history("decision", MAX_BACKSTOP_RETRIES),
+            backstop_reasons_out=reasons_retry,
+        )
+        assert result_retry is not None
+        assert result_retry["step"] == "decision"
+        assert "Retry with dispatch_next(branch=...)" in result_retry["reason"]
+        assert reasons_retry == [result_retry["reason"]]
+
+    def test_backstop_budget_exhausted_unmatched_branch(self, tmp_path: Path):
+        """Budget exhaustion applies to the unmatched-branch case too —
+        bounded loop-back covers both missing and unknown branch values."""
+        from resolve_workflow import MAX_BACKSTOP_RETRIES
+
+        wdir = self._decision_workflow(tmp_path)
+        resolve = _import_resolver()
+        reasons: list = []
+        result = resolve(
+            "wf", "decision", str(wdir),
+            branch_result="bogus",
+            step_history=self._history("decision", MAX_BACKSTOP_RETRIES + 1),
+            backstop_reasons_out=reasons,
+        )
+        assert result is None
+        assert len(reasons) == 1
+        assert 'branch "bogus" matches no on_result' in reasons[0]
+        assert "Retry budget exhausted" in reasons[0]
+
+    def test_unmatched_branch_without_default_loops_back(self, tmp_path: Path):
+        """A present-but-unmatched branch (no default condition) also triggers
+        the backstop loop-back — an unknown branch label is the same gap as a
+        missing one (issue #569 review, round 2)."""
         (tmp_path / "wf.yaml").write_text(yaml.dump({
             "name": "wf",
             "description": "Workflow with conditions, no default, no next",
@@ -601,7 +718,10 @@ class TestConditionBackstop:
         }))
         resolve = _import_resolver()
         result = resolve("wf", "decision", str(tmp_path), branch_result="bogus")
-        assert result is None
+        assert result is not None
+        assert result["task"] == "genius"
+        assert result["step"] == "decision"
+        assert 'branch "bogus" matches no on_result' in result["reason"]
 
 
 class TestEmptyWorkflowDefinition:

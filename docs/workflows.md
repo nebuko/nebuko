@@ -40,7 +40,9 @@ steps:
   each condition's `on_result`. Always include a
   catch-all (e.g., `default`) so routing stays deterministic — without a
   `default`, a missing or unknown `branch` loops the step back to itself with a
-  diagnostic so the agent can self-correct.
+  diagnostic so the agent can self-correct. This loop-back is bounded: after a
+  few consecutive runs of the same step, the workflow terminates with the
+  diagnostic instead of retrying forever.
 - `skill: [...]` attaches extra prompt context from `skills/` to that step.
 - `prompt:` injects a standing instruction into that step's agent context
   (see [Step Instructions](#step-instructions-prompt)).
