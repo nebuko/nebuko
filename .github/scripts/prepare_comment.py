@@ -21,6 +21,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from validate_output import AGENT_RUN_CONFIG_PATTERN, strip_agent_run_config
+from workflow_state.features.comment.to_git_comment import collapse_sections
 
 # ── Regex patterns (all DOTALL for multi-line safety) ─────────────
 
@@ -46,6 +47,16 @@ _AGENT_TRIGGER = re.compile(r"(?<![\w])@@([A-Za-z0-9_-]+)")
 _RECALL_COUNT_IN_METRICS = re.compile(r'"dispatch_recall_count"\s*:\s*(\d+)')
 
 MAX_COMMENT_LENGTH = 60000
+
+# Section headings of the ctx report template (.agents/prompts/ctx.md).
+# Wrapped in <details> at posting time so a long ctx report stays scannable
+# while remaining fully auditable in the comment body (issue #557).
+CTX_SECTION_HEADINGS = [
+    "FILES FOUND",
+    "RELEVANT SNIPPETS",
+    "EXTERNAL REFERENCES",
+    "OTHER FILES",
+]
 
 # Artifact written by the capture layer in build_output.py (issue #522):
 # the agent's latest full answer, preferred over the finish message as the
@@ -275,6 +286,21 @@ def escape_agent_triggers(content: str) -> str:
     return _AGENT_TRIGGER.sub(lambda m: m.group(0).replace("@@", "@@\u200b", 1), content)
 
 
+def _apply_ctx_collapse(cleaned: str) -> str:
+    """Wrap ctx-report sections in <details> blocks (issue #557).
+
+    Only applied when ROLE_NAME is "ctx": the title + executive summary
+    (above the first ### heading) stay visible; FILES FOUND / RELEVANT
+    SNIPPETS / EXTERNAL REFERENCES / OTHER FILES collapse by default.
+    Non-ctx roles and bodies without any recognized heading pass through
+    unchanged.
+    """
+    if os.environ.get("ROLE_NAME", "") != "ctx":
+        return cleaned
+    collapsed = collapse_sections(cleaned, CTX_SECTION_HEADINGS)
+    return cleaned if collapsed == cleaned else collapsed
+
+
 def _write_output(content: str) -> None:
     """Write content to github_comment.md and set HAS_COMMENT env var.
 
@@ -354,6 +380,7 @@ def prepare_comment() -> bool:
                     if body_metrics:
                         cleaned += "\n\n" + body_metrics
                     print(f"Using latest answer ({len(cleaned)} characters)", flush=True)
+                    cleaned = _apply_ctx_collapse(cleaned)
                     cleaned = _truncate_at_boundary(cleaned)
                     _write_output(cleaned)
                     return True
@@ -367,6 +394,7 @@ def prepare_comment() -> bool:
             # posted body: flag post-recall fallbacks for visibility (#558).
             _warn_post_recall_fallback(metrics_comment)
             print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
+            cleaned = _apply_ctx_collapse(cleaned)
             cleaned = _truncate_at_boundary(cleaned)
             _write_output(cleaned)
             return True

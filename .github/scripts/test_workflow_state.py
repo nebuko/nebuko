@@ -13,6 +13,7 @@ Tests cover:
 
 import json
 import os
+import re
 import sys
 import unittest
 
@@ -31,6 +32,7 @@ from workflow_state import (
     to_git_comment,
 )
 from workflow_state.features.comment.to_git_comment import (
+    collapse_sections,
     strip_state_section,
     wrap_comment_with_state,
 )
@@ -280,6 +282,82 @@ class TestStripStateSection(unittest.TestCase):
 
     def test_handles_empty_string(self):
         self.assertEqual(strip_state_section(""), "")
+
+
+class TestCollapseSections(unittest.TestCase):
+    """Test the generic collapsible-section transform (issue #557)."""
+
+    HEADINGS = ["FILES FOUND", "RELEVANT SNIPPETS", "EXTERNAL REFERENCES", "OTHER FILES"]
+
+    def test_wraps_each_section_with_details(self):
+        body = (
+            "## Title\n\n"
+            "Exec summary.\n\n"
+            "### FILES FOUND\n"
+            "*12 files covering the posting pipeline.*\n"
+            "| a.py | 1-10 |\n\n"
+            "### RELEVANT SNIPPETS\n"
+            "_No snippets._\n"
+            "```python\n"
+            "def foo():\n"
+            "    return 42\n"
+            "```\n\n"
+            "### EXTERNAL REFERENCES\n"
+            "Some links.\n\n"
+            "### OTHER FILES\n"
+            "Nothing else.\n"
+        )
+        out = collapse_sections(body, self.HEADINGS)
+        self.assertEqual(out.count("<details>"), 4)
+        self.assertEqual(out.count("</details>"), 4)
+        # Title + exec summary stay visible outside any details block
+        self.assertTrue(out.startswith("## Title\n\nExec summary.\n\n"))
+
+    def test_summary_carries_resume_when_present(self):
+        body = "### FILES FOUND\n*12 files covering the posting pipeline.*\n| a.py | 1-10 |\n"
+        out = collapse_sections(body, self.HEADINGS)
+        self.assertIn(
+            "<summary>FILES FOUND — 12 files covering the posting pipeline.</summary>", out
+        )
+
+    def test_summary_without_resume_is_bare_heading(self):
+        body = "### EXTERNAL REFERENCES\nSome links.\n"
+        out = collapse_sections(body, self.HEADINGS)
+        self.assertIn("<summary>EXTERNAL REFERENCES</summary>", out)
+
+    def test_single_section_and_no_match_pass_through(self):
+        body = "### UNRELATED\ncontent\n"
+        self.assertEqual(collapse_sections(body, self.HEADINGS), body)
+        self.assertEqual(collapse_sections("", self.HEADINGS), "")
+        self.assertEqual(collapse_sections(body, []), body)
+
+    def test_section_boundary_respects_nested_headings_and_fences(self):
+        body = (
+            "### FILES FOUND\n"
+            "intro\n"
+            "#### sub detail\n"
+            "more\n"
+            "```\n"
+            "### NOT A REAL HEADING inside fence\n"
+            "```\n"
+            "tail\n"
+        )
+        out = collapse_sections(body, ["FILES FOUND"])
+        self.assertEqual(out.count("<details>"), 1)
+        for token in ("#### sub detail", "### NOT A REAL HEADING inside fence", "tail"):
+            self.assertIn(token, out)
+
+    def test_content_byte_identical_when_unwrapped(self):
+        body = (
+            "### FILES FOUND\n*resume.*\ncontent line\n\n"
+            "### OTHER FILES\nother content\n"
+        )
+        out = collapse_sections(body, self.HEADINGS)
+        # Unwrap the <details>/<summary> markup; the wrapping inserts blank
+        # lines, so normalize runs of newlines before comparing.
+        unwrapped = re.sub(r"</?details>|<summary>.*?</summary>", "", out)
+        normalized = lambda text: re.sub(r"\n{2,}", "\n\n", text).strip()
+        self.assertEqual(normalized(unwrapped), normalized(body))
 
 
 class TestExtractLegacyMetrics(unittest.TestCase):
