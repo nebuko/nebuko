@@ -487,6 +487,32 @@ def _finish_action_event(text: str) -> "object":
     )
 
 
+def _dispatch_action_event(text: str) -> "object":
+    """Build a dispatch_next-turn ActionEvent carrying the deliverable in thought.
+
+    The full report is emitted on the same turn as the mandatory pre-finish
+    ``dispatch_next`` call, with no standalone ``MessageEvent`` (the issue
+    #555 regression path). The action arguments hold routing metadata only.
+    """
+    from openhands.sdk.event import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall, TextContent
+
+    tool_call = MessageToolCall(
+        id="tc-dispatch",
+        name="dispatch_next",
+        arguments='{"status": "advance"}',
+        origin="completion",
+    )
+    return ActionEvent(
+        source="agent",
+        tool_name="dispatch_next",
+        thought=[TextContent(text=text)],
+        tool_call_id="tc-dispatch",
+        tool_call=tool_call,
+        llm_response_id="r1",
+    )
+
+
 class TestExtractLatestAnswer(unittest.TestCase):
     """Capture layer: latest-wins selection of the agent's last text answer (issue #522)."""
 
@@ -547,6 +573,29 @@ class TestExtractLatestAnswer(unittest.TestCase):
 
     def test_blank_finish_turn_thought_returns_empty(self):
         events = [_finish_action_event("   \n  ")]
+        self.assertEqual(extract_latest_answer(events), "")
+
+    # --- issue #555 regression: deliverable lives on the dispatch_next turn ---
+
+    def test_dispatch_next_turn_thought_captured_when_no_message_event(self):
+        """Full report + dispatch_next sharing one turn is captured from thought."""
+        events = [_dispatch_action_event("  Full context report  ")]
+        self.assertEqual(extract_latest_answer(events), "Full context report")
+
+    def test_dispatch_next_turn_replaces_earlier_message(self):
+        events = [_msg_event("earlier answer"), _dispatch_action_event("dispatch report")]
+        self.assertEqual(extract_latest_answer(events), "dispatch report")
+
+    def test_finish_turn_after_dispatch_turn_wins(self):
+        events = [_dispatch_action_event("dispatch report"), _finish_action_event("finish report")]
+        self.assertEqual(extract_latest_answer(events), "finish report")
+
+    def test_newer_message_after_dispatch_turn_wins(self):
+        events = [_dispatch_action_event("dispatch report"), _msg_event("newer answer")]
+        self.assertEqual(extract_latest_answer(events), "newer answer")
+
+    def test_blank_dispatch_next_turn_thought_returns_empty(self):
+        events = [_dispatch_action_event("   \n  ")]
         self.assertEqual(extract_latest_answer(events), "")
 
 
