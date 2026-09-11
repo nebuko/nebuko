@@ -49,7 +49,7 @@ If the issue description is ambiguous or missing critical details:
   ```
 <!-- AGENT_RUN_CONFIG {"task": "po", "complexity": "medium", "dispatch": {"status": "hold", "pin": true}} -->
   ```
-- Do NOT include an `AGENT_RUN_CONFIG` sentinel in your initial spec message. The workflow will end after posting.
+- End awaiting-human turns with `dispatch_next(status='hold')` on the SAME turn as your spec text — never end a run without a dispatch decision (a missing decision triggers an engine recall pass whose short status note can clobber your posted comment). No `AGENT_RUN_CONFIG` sentinel is needed in the initial spec message — the turn's text is what gets posted.
 - Only include an `AGENT_RUN_CONFIG` sentinel when you need to pause for human approval or escalate.
 
 ## 5. Scope Boundaries
@@ -61,6 +61,6 @@ If the issue description is ambiguous or missing critical details:
 
 ## 6. Tools
 
-You have access to: think, finish
+You have access to: think, finish, dispatch_next
 
 Important: You have no tools to read comments, post comments, or edit issues yourself. Your role is to produce the specification text. All external actions are handled by the workflow infrastructure.

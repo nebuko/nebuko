@@ -275,12 +275,21 @@ def run_agent(
                 )
             return not watchdog.fired
 
+        # Capture the pre-recall event boundary BEFORE any recall pass:
+        # events from this index onward belong to engine-injected recall
+        # turns and must not overwrite the agent's real deliverable at
+        # latest-answer capture time (issue #558). Only meaningful when a
+        # recall actually fires — the count gate below keeps the
+        # no-recall path byte-identical to the legacy behavior.
+        pre_recall_offset = len(conversation.state.events)
         dispatch_recall_count = perform_dispatch_recalls(
             conversation, _has_dispatch, _run_recall_pass
         )
     if dispatch_recall_count:
         run_outcome = dataclasses.replace(
-            run_outcome, dispatch_recall_count=dispatch_recall_count
+            run_outcome,
+            dispatch_recall_count=dispatch_recall_count,
+            dispatch_recall_event_offset=pre_recall_offset,
         )
 
     # Attach to the conversation so build_output can consume it without a
