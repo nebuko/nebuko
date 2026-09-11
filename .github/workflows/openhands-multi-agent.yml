@@ -931,8 +931,15 @@ jobs:
           github.event.action == 'closed' &&
           github.event.issue.pull_request == null
         steps:
+            - name: Clean global git config
+              run:
+                git config --global --unset-all http.https://github.com/.extraheader || true
+                git config --global --unset-all credential.helper || true
+
             - name: Checkout repository
               uses: actions/checkout@v5
+              with:
+                persist-credentials: false
 
             - name: Check if git-flow-ai cache is needed
               id: check_gfa
