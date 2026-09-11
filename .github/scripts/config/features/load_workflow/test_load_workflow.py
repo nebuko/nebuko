@@ -72,6 +72,38 @@ class TestLoadWorkflow:
         assert wf.steps[0].conditions[0].on_result == "needs_review"
         os.unlink(f.name)
 
+    def test_load_workflow_with_step_prompt_roundtrip(self):
+        """A multi-line step prompt survives YAML round-trip verbatim (issue #551)."""
+        prompt_text = (
+            "Analyze the transcription and provide me:\n"
+            "a short summary (~5-10 sentences)\n"
+            "5 Key points\n"
+        )
+        raw = {
+            "name": "digest",
+            "description": "Digest workflow with a step prompt",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {
+                    "name": "analyze",
+                    "agent": "genius",
+                    "prompt": prompt_text,
+                    "next": "distill",
+                },
+                {"name": "distill", "agent": "dev", "next": None},
+            ],
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            yaml.dump(raw, f, default_flow_style=False)
+            f.flush()
+            wf = load_workflow(f.name)
+
+        assert wf.steps[0].prompt == prompt_text
+        assert wf.steps[1].prompt is None
+        os.unlink(f.name)
+
     def test_load_missing_file_raises(self):
         with pytest.raises(FileNotFoundError):
             load_workflow("/nonexistent/workflow.yaml")

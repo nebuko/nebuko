@@ -5,6 +5,7 @@ config/sub_domains/. This file retains only integration tests for
 resolve_workflow which depend on the config package.
 """
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -271,6 +272,114 @@ class TestResolveWorkflowRouting:
 
 
 # ── Sub-workflow Resolver Tests ────────────────────────────────────────
+
+
+class TestStepPromptFile:
+    """STEP_PROMPT_FILE emission and content (issue #551)."""
+
+    PROMPT = (
+        "Analyze the transcription and provide me:\n"
+        "a short summary (~5-10 sentences)\n"
+        "5 Key points\n"
+    )
+    PROMPT_PATH = "/tmp/step_prompt.md"
+
+    def _wf(self, steps):
+        return {
+            "name": "wf",
+            "description": "prompt wf",
+            "trigger": {"agents": ["genius"]},
+            "steps": steps,
+        }
+
+    def _resolve(self, request, tmpdir):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from resolve_workflow import resolve_workflow_routing
+        return resolve_workflow_routing(request, tmpdir, ".agents/prompts")
+
+    def _cleanup(self):
+        if os.path.exists(self.PROMPT_PATH):
+            os.unlink(self.PROMPT_PATH)
+
+    def test_first_step_with_prompt_writes_file(self):
+        self._cleanup()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                (Path(tmpdir) / "wf.yaml").write_text(yaml.dump(self._wf([
+                    {"name": "analyze", "agent": "genius", "prompt": self.PROMPT, "next": None},
+                ])))
+                result = self._resolve({"task": "genius", "workflow": "wf"}, tmpdir)
+                assert result["STEP_PROMPT_FILE"] == self.PROMPT_PATH
+                assert Path(self.PROMPT_PATH).read_text() == self.PROMPT
+        finally:
+            self._cleanup()
+
+    def test_next_step_with_prompt_writes_file(self):
+        self._cleanup()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                (Path(tmpdir) / "wf.yaml").write_text(yaml.dump(self._wf([
+                    {"name": "first", "agent": "genius", "next": "second"},
+                    {"name": "second", "agent": "dev", "prompt": self.PROMPT, "next": None},
+                ])))
+                result = self._resolve(
+                    {"task": "dev", "workflow": "wf", "step": "second"}, tmpdir
+                )
+                assert result["ROLE_NAME"] == "dev"
+                assert result["STEP_PROMPT_FILE"] == self.PROMPT_PATH
+                assert Path(self.PROMPT_PATH).read_text() == self.PROMPT
+        finally:
+            self._cleanup()
+
+    def test_step_without_prompt_emits_empty(self):
+        self._cleanup()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                (Path(tmpdir) / "wf.yaml").write_text(yaml.dump(self._wf([
+                    {"name": "only", "agent": "dev", "next": None},
+                ])))
+                result = self._resolve({"task": "dev", "workflow": "wf"}, tmpdir)
+                assert result["STEP_PROMPT_FILE"] == ""
+                assert not os.path.exists(self.PROMPT_PATH)
+        finally:
+            self._cleanup()
+
+    def test_step_without_prompt_removes_stale_file(self):
+        # A previous run on this runner left a file behind; resolution of a
+        # step without a prompt must remove it so CI sees no injection.
+        Path(self.PROMPT_PATH).write_text("stale")
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                (Path(tmpdir) / "wf.yaml").write_text(yaml.dump(self._wf([
+                    {"name": "only", "agent": "dev", "next": None},
+                ])))
+                result = self._resolve({"task": "dev", "workflow": "wf"}, tmpdir)
+                assert result["STEP_PROMPT_FILE"] == ""
+                assert not os.path.exists(self.PROMPT_PATH)
+        finally:
+            self._cleanup()
+
+    def test_sub_workflow_entry_uses_child_step_prompt(self):
+        self._cleanup()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                (Path(tmpdir) / "parent.yaml").write_text(yaml.dump(self._wf([
+                    {"name": "start", "agent": "genius", "next": "subtask"},
+                    {"name": "subtask", "workflow": "child", "next": None},
+                ])))
+                (Path(tmpdir) / "child.yaml").write_text(yaml.dump(self._wf([
+                    {"name": "scan", "agent": "ctx", "prompt": self.PROMPT, "next": None},
+                ])))
+                result = self._resolve(
+                    {"task": "ctx", "workflow": "parent", "step": "subtask"}, tmpdir
+                )
+                assert result["WORKFLOW_NAME"] != "parent"
+                assert result["WORKFLOW_STEP"] == "scan"
+                assert result["STEP_PROMPT_FILE"] == self.PROMPT_PATH
+                assert Path(self.PROMPT_PATH).read_text() == self.PROMPT
+        finally:
+            self._cleanup()
 
 
 class TestSubWorkflowResolution:

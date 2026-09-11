@@ -60,3 +60,38 @@ class TestBuildResult:
         assert result["AGENT_SKILLS"] == ""
         assert result["CONFIG_MODEL"] == ""
         assert result["HUMAN_RESUME_INPUT"] == ""
+
+    def test_step_prompt_file_passes_through(self):
+        # Issue #551: STEP_PROMPT_FILE from resolve_workflow_routing must
+        # reach the final env dict so CI can inject the step instruction.
+        prompt = "Do the thing\nsecond line\n"
+        wf_yaml = (
+            "name: wf\n"
+            "description: prompt passthrough\n"
+            "trigger:\n"
+            "  agents: [dev]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: dev\n"
+            "    prompt: |\n"
+            "      Do the thing\n"
+            "      second line\n"
+            "    next: null\n"
+        )
+        prompt_base, workflows_dir = _make_dirs()
+        with open(os.path.join(workflows_dir, "wf.yaml"), "w") as f:
+            f.write(wf_yaml)
+        try:
+            if os.path.exists("/tmp/step_prompt.md"):
+                os.unlink("/tmp/step_prompt.md")
+            result = _build_result(
+                {"task": "dev", "config_workflow": "wf"},
+                prompt_base,
+                workflows_dir,
+            )
+            assert result["STEP_PROMPT_FILE"] == "/tmp/step_prompt.md"
+            with open("/tmp/step_prompt.md") as f:
+                assert f.read() == prompt
+        finally:
+            if os.path.exists("/tmp/step_prompt.md"):
+                os.unlink("/tmp/step_prompt.md")

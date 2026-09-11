@@ -103,6 +103,7 @@ def _build_result(
         "AGENT_ROUND": config.get("config_round", ""),
         "AGENT_SKILLS": config.get("config_skills", ""),
         "STEP_SKILLS": wf_result.get("STEP_SKILLS", ""),
+        "STEP_PROMPT_FILE": wf_result.get("STEP_PROMPT_FILE", ""),
         "CONFIG_MODEL": config.get("config_model", ""),
         "CONFIG_TEMPERATURE": config.get("config_temperature", ""),
         "CONFIG_TOP_P": config.get("config_top_p", ""),
