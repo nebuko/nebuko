@@ -41,6 +41,10 @@ _CONSOLE_MARKER = "Message from Agent " + "\u2500" * 63
 # @@agent trigger tokens (e.g. @@genius, @@dev)
 _AGENT_TRIGGER = re.compile(r"(?<![\w])@@([A-Za-z0-9_-]+)")
 
+# dispatch_recall_count inside the agent-metrics JSON payload (issue #558):
+# surfaces the post-recall finish-fallback case as a WARNING in CI logs.
+_RECALL_COUNT_IN_METRICS = re.compile(r'"dispatch_recall_count"\s*:\s*(\d+)')
+
 MAX_COMMENT_LENGTH = 60000
 
 # Artifact written by the capture layer in build_output.py (issue #522):
@@ -111,6 +115,27 @@ def _read_latest_answer(path: str = LATEST_ANSWER_FILE) -> str:
             return f.read()
     except OSError:
         return ""
+
+
+def _warn_post_recall_fallback(metrics_comment: str) -> None:
+    """Surface the post-recall finish-fallback case in CI logs (issue #558).
+
+    Fires when the posted body came from the finish message although the
+    run went through a dispatch-recall pass — a signature of the
+    clobber/fallback family of bugs. Reads the count from the
+    agent-metrics payload already attached to the body; adds no new
+    plumbing channel.
+    """
+    if not metrics_comment:
+        return
+    match = _RECALL_COUNT_IN_METRICS.search(metrics_comment)
+    if match and int(match.group(1)) > 0:
+        print(
+            "Warning: finish-message fallback used after dispatch recall "
+            f"(dispatch_recall_count={match.group(1)}) — no text answer was "
+            "captured; check the agent logs for a capture regression",
+            flush=True,
+        )
 
 
 # ── Core cleaning functions ───────────────────────────────────────
@@ -338,6 +363,9 @@ def prepare_comment() -> bool:
         cleaned = clean_message(raw, metrics_comment)
 
         if cleaned:
+            # Latest-answer artifact empty/missing → finish message is the
+            # posted body: flag post-recall fallbacks for visibility (#558).
+            _warn_post_recall_fallback(metrics_comment)
             print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
             cleaned = _truncate_at_boundary(cleaned)
             _write_output(cleaned)

@@ -30,12 +30,19 @@ used only as a fallback when no text answer exists.
    the `reason` field — `reason` is one sentence of routing justification, not a
    report container.
 
-4. **Hand-off sentinel goes in the `finish` message.**
+4. **Awaiting-human endings require an explicit hold.**
+   Proposals, revised proposals, and clarification requests terminate with
+   `dispatch_next(status='hold')` on the same turn as the deliverable text.
+   Never end a run without a dispatch decision — doing so triggers an engine
+   recall pass whose short status note can clobber your posted answer
+   (issue #558). No `AGENT_RUN_CONFIG` sentinel is needed for these endings.
+
+5. **Hand-off sentinel goes in the `finish` message.**
    End the `finish` message with the single-line `AGENT_RUN_CONFIG` sentinel
    (per `call-agent` / your agent rules). The orchestrator extracts dispatch from
    it; the ETL layer also re-appends the sentinel to the posted body exactly once.
 
-5. **Size is handled for you.**
+6. **Size is handled for you.**
    Long answers are automatically split into multiple comments (10k chars per
    part, 60k cap). Write at the length the content needs; do not artificially
    compress just to fit.
@@ -49,3 +56,5 @@ used only as a fallback when no text answer exists.
   that chatter becomes the posted comment.
 - Re-posting the deliverable in `finish` "just in case" — it duplicates nothing
   and bloats the state snapshot.
+- Ending a proposal or clarification turn without calling `dispatch_next`
+  (engine recall fires and its short status note can clobber your deliverable).

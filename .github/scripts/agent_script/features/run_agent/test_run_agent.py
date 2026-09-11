@@ -199,6 +199,90 @@ class TestRunAgentIntegration(unittest.TestCase):
         # No wind-down on a crash — only the original prompt is sent.
         self.assertEqual(convo.send_message.call_count, 1)
 
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_recall_fires_records_pre_recall_event_offset(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        """When a recall pass fires, the pre-recall event count is pinned on
+        RunOutcome so the capture layer can exclude the recall turn's text
+        from latest-answer selection (issue #558)."""
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        convo = _make_conversation("finished")
+        convo.state.events = [SimpleNamespace(id=f"ev-{i}") for i in range(5)]
+        mock_conversation_cls.return_value = convo
+
+        from agent_script.features.run_agent.run_watchdog import RunWatchdog
+
+        # Both the main pass and the recall pass complete within budget.
+        def fake_supervised(c, budget_s, label):
+            return RunWatchdog(50.0, lambda: None), None
+
+        with patch(
+            "agent_script.features.run_agent.run_agent._run_supervised",
+            side_effect=fake_supervised,
+        ), patch(
+            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            return_value=None,
+        ), patch(
+            "agent_script.features.run_agent.run_agent.has_dispatch_decision",
+            # No decision at end of main run (recall fires), then the model
+            # supplies it on the recall turn (second check stops the loop).
+            side_effect=[False, True],
+        ):
+            result = run_agent(
+                llm_config={},
+                prompt="do the thing",
+                agent_cfg=SimpleNamespace(tools=["finish", "dispatch_next"]),
+            )
+        self.assertIs(result, convo)
+        self.assertEqual(convo.run_outcome.dispatch_recall_count, 1)
+        # Offset pinned at the pre-recall event count — the index of the
+        # first engine-injected recall event.
+        self.assertEqual(convo.run_outcome.dispatch_recall_event_offset, 5)
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_no_recall_keeps_event_offset_none(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        """A dispatch decision already present means zero recall turns and
+        the offset stays None — the capture path must stay byte-identical
+        to the legacy behavior (#558)."""
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        convo = _make_conversation("finished")
+        convo.state.events = [SimpleNamespace(id=f"ev-{i}") for i in range(3)]
+        mock_conversation_cls.return_value = convo
+
+        from agent_script.features.run_agent.run_watchdog import RunWatchdog
+
+        with patch(
+            "agent_script.features.run_agent.run_agent._run_supervised",
+            return_value=(RunWatchdog(50.0, lambda: None), None),
+        ), patch(
+            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            return_value=None,
+        ), patch(
+            "agent_script.features.run_agent.run_agent.has_dispatch_decision",
+            return_value=True,
+        ):
+            result = run_agent(
+                llm_config={},
+                prompt="do the thing",
+                agent_cfg=SimpleNamespace(tools=["finish", "dispatch_next"]),
+            )
+        self.assertIs(result, convo)
+        self.assertEqual(convo.run_outcome.dispatch_recall_count, 0)
+        self.assertIsNone(convo.run_outcome.dispatch_recall_event_offset)
+
 
 class TestResolveSecurityPolicy(unittest.TestCase):
     """Skills route through the system channel; SDK default as fallback (#510)."""

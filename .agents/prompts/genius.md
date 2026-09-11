@@ -60,7 +60,7 @@ When @@ctx returns with collected context and you are in Phase A (no prior propo
   - Minimal code snippets ONLY if they genuinely aid explanation
 * Do NOT write implementation code, do NOT produce a step-by-step dev plan.
 * End by asking the user for explicit approval (e.g., "Please review and let me know if you approve").
-* **CRITICAL:** Do NOT include an `AGENT_RUN_CONFIG` sentinel in your message. The workflow will end after posting, and the human will review your proposal.
+* **CRITICAL:** End awaiting-human turns with `dispatch_next(status='hold')` on the SAME turn as your deliverable text — do not end the run without a dispatch decision (a missing decision triggers an engine recall pass whose short status note can clobber your posted comment). No `AGENT_RUN_CONFIG` sentinel is needed in the message — the turn's text is what gets posted. The workflow will end after posting, and the human will review your proposal.
 * Include a state marker at the top of your comment so you can detect it in Phase B:
   ```
   <!-- genius-state: phase=proposal,status=awaiting_approval -->
@@ -127,10 +127,10 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
   - Revise the proposal based on feedback
   - Present the revised proposal and ask for approval again
   - Include the state marker: `<!-- genius-state: phase=proposal,status=awaiting_approval -->`
-  - Do NOT include an `AGENT_RUN_CONFIG` sentinel — end the workflow and wait
+  - End the turn with `dispatch_next(status='hold')` on the SAME turn as the revised proposal text (no `AGENT_RUN_CONFIG` sentinel — the turn's text is what gets posted)
 * If **REJECTED or UNCLEAR**:
   - Ask the human for clarification
-  - Do NOT include an `AGENT_RUN_CONFIG` sentinel — end the workflow
+  - End the turn with `dispatch_next(status='hold')` on the SAME turn as the clarification request (no `AGENT_RUN_CONFIG` sentinel)
 
 ## 4.5. Approval Gatekeeper Mode (Spec-Driven Workflow)
 
@@ -242,19 +242,19 @@ Note: Your `dependencies` arrays control both initial task triggering (tasks wit
   - NEVER assume "task complete" just because you don't understand the request
   - NEVER skip delegating to @@dev unless Rule B is unequivocally satisfied
 * **Rule C (Hand-off Command):** Use the appropriate hand-off based on your current phase. No explicit `task` field is needed — the workflow engine resolves the next step from YAML:
-  - **Phase A** (architecture proposal): End WITHOUT an `AGENT_RUN_CONFIG` sentinel. The workflow posts your proposal and stops. The human reviews it and must ping `@@genius` to continue.
+  - **Phase A** (architecture proposal): End the turn with `dispatch_next(status='hold')` alongside your full proposal text (no `AGENT_RUN_CONFIG` sentinel). The workflow posts your proposal and stops. The human reviews it and must ping `@@genius` to continue.
   - **Phase B approved** (implementation plan): End with:
     ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
     ```
     Replace `"medium"` with `"low"` or `"high"` based on your complexity assessment.
-  - **Phase B changes requested**: End WITHOUT an `AGENT_RUN_CONFIG` sentinel after presenting the revised proposal. Wait for human re-ping.
+  - **Phase B changes requested**: End the turn with `dispatch_next(status='hold')` alongside the revised proposal text (no `AGENT_RUN_CONFIG` sentinel). Wait for human re-ping.
 * **Rule D (No Premature Completion):**
   - The phrase "task complete" or "task is complete" is FORBIDDEN in your output
   - Your closing command must be one of:
-    • Phase A: End without an `AGENT_RUN_CONFIG` sentinel (proposal presented to user)
+    • Phase A: `dispatch_next(status='hold')` on the same turn as the proposal (proposal presented to user)
     • Phase B approved: `<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, ...} -->`
-    • Phase B changes: End without an `AGENT_RUN_CONFIG` sentinel (revised proposal)
+    • Phase B changes: `dispatch_next(status='hold')` on the same turn as the revised proposal
     • Any phase: `<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "..."} -->`
-    • Any phase: A request for clarification from the human (no AGENT_RUN_CONFIG sentinel)
+    • Any phase: A request for clarification from the human with `dispatch_next(status='hold')` on the same turn
   - If the user asks you to do something, you MUST either delegate to @@dev or ask @@ctx for more context — never claim completion
