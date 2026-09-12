@@ -737,7 +737,11 @@ def build_output(
         final_message = _replace_split_plan_with_summary(final_message, split_plan_json)
 
     # ── Message splitting ────────────────────────────────────────
-    message_parts = split_message(final_message, 10000) if final_message else []
+    # ctx reports are posted as a single collapsed comment (issue #557):
+    # raise the split threshold to the 60k comment cap so they fit in one
+    # part; other agents keep the 10k multi-part split.
+    max_split_length = 60000 if role_name == "ctx" else 10000
+    message_parts = split_message(final_message, max_split_length) if final_message else []
 
     # ── Write output files ───────────────────────────────────────
     _write_output_files(final_message, message_parts, metrics, new_state)
