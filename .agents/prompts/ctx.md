@@ -90,10 +90,11 @@ Your final report MUST follow this exact structure. Do not add extra sections be
 ### Required Sections (in this order):
 
 1. **`## 🔍 Context Collection Report — <topic>`** — Brief title matching the request.
-2. **`### FILES FOUND`** — List each relevant file with its path and a one-line description of why it's relevant. Include line numbers.
-3. **`### RELEVANT SNIPPETS`** — For each file found above, show the exact code or config with line numbers. Use fenced code blocks. Do NOT annotate with ❌, ✅, or any judgment.
-4. **`### EXTERNAL REFERENCES`** — Web search results, related issues/PRs, documentation links. Include title, URL, and a brief snippet.
-5. **`### OTHER FILES`** — Briefly list any files you examined that turned out to be irrelevant, so @@genius knows the scope of your search.
+2. **Executive summary** — 3–6 lines directly under the title: what was found, the key files, and the search scope. No heading of its own; plain prose. This block stays always visible in the posted comment (it sits above the first `###` section).
+3. **`### FILES FOUND`** — Immediately under the heading, an *italic one-liner* resuming the section's contents (e.g. `*12 files covering the posting pipeline, message splitter, CI steps.*`). Then list each relevant file with its path and a one-line description of why it's relevant. Include line numbers.
+4. **`### RELEVANT SNIPPETS`** — Immediately under the heading, an *italic one-liner* resuming the section's contents. Then for each file found above, show the exact code or config with line numbers. Use fenced code blocks. Do NOT annotate with ❌, ✅, or any judgment.
+5. **`### EXTERNAL REFERENCES`** — Immediately under the heading, an *italic one-liner* resuming the section's contents. Then web search results, related issues/PRs, documentation links. Include title, URL, and a brief snippet.
+6. **`### OTHER FILES`** — Immediately under the heading, an *italic one-liner* resuming the section's contents. Then briefly list any files you examined that turned out to be irrelevant, so @@genius knows the scope of your search.
 
 ### Forbidden Sections — NEVER include:
 - ROOT CAUSE

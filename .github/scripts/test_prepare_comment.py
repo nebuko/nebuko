@@ -469,5 +469,64 @@ class TestPrepareCommentLatestAnswerETL(TestPrepareCommentIntegration):
         self.assertEqual(result.count(block), 1)
 
 
+class TestPrepareCommentCtxCollapse(TestPrepareCommentIntegration):
+    """ctx-role reports get sections collapsed into <details> (issue #557)."""
+
+    CTX_REPORT = (
+        "## 🔍 Context Collection Report — posting pipeline\n\n"
+        "Exec summary line one.\nExec summary line two.\n\n"
+        "### FILES FOUND\n"
+        "*3 files covering the posting pipeline.*\n"
+        "a.py | 1-10\n\n"
+        "### RELEVANT SNIPPETS\n"
+        "*2 snippets.*\n"
+        "```python\ndef foo(): pass\n```\n\n"
+        "### EXTERNAL REFERENCES\n"
+        "*No external refs.*\n\n"
+        "### OTHER FILES\n"
+        "*Nothing else.*\n"
+    )
+
+    def setUp(self):
+        super().setUp()
+        self._saved_role = os.environ.pop("ROLE_NAME", None)
+
+    def tearDown(self):
+        if self._saved_role is not None:
+            os.environ["ROLE_NAME"] = self._saved_role
+        super().tearDown()
+
+    def test_ctx_report_sections_collapsed(self):
+        os.environ["ROLE_NAME"] = "ctx"
+        self._write("final_message.txt", self.CTX_REPORT)
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertEqual(result.count("<details>"), 4)
+        self.assertIn(
+            "<summary>FILES FOUND — 3 files covering the posting pipeline.</summary>",
+            result,
+        )
+        # Title + exec summary stay visible outside any details block
+        self.assertTrue(result.startswith("## 🔍 Context Collection Report"))
+        idx_summary = result.index("Exec summary line two.")
+        idx_details = result.index("<details>")
+        self.assertLess(idx_summary, idx_details)
+
+    def test_non_ctx_report_untouched(self):
+        os.environ["ROLE_NAME"] = "dev"
+        self._write("final_message.txt", self.CTX_REPORT)
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertNotIn("<details>", result)
+        self.assertIn("### FILES FOUND", result)
+
+    def test_ctx_body_without_sections_passes_through(self):
+        os.environ["ROLE_NAME"] = "ctx"
+        plain = "Just a short answer, no sections."
+        self._write("final_message.txt", plain)
+        prepare_comment()
+        self.assertEqual(self._read("github_comment.md"), plain)
+
+
 if __name__ == "__main__":
     unittest.main()
