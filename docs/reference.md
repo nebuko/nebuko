@@ -84,8 +84,12 @@ from the git-flow-ai repo (zero-copy). See [workflows.md](./workflows.md).
 | `trigger.agents` | file | string[] | no | Which `@@mention`s can start this workflow. |
 | `steps` | file | list | yes | Ordered list of steps. |
 | `steps[].name` | step | string | yes | Unique step name. |
-| `steps[].agent` | step | string | one of `agent`/`workflow` | Agent role executing the step. |
-| `steps[].workflow` | step | string/path | one of `agent`/`workflow` | Sub-workflow to mount instead of an agent (name or path like `tmp_impl/workflow.yaml`). |
+| `steps[].agent` | step | string | one of `agent`/`workflow`/`repo`/`script` | Agent role executing the step. |
+| `steps[].workflow` | step | string/path | one of `agent`/`workflow`/`repo`/`script` | Sub-workflow to mount instead of an agent (name or path like `tmp_impl/workflow.yaml`). |
+| `steps[].script` | step | object | one of `agent`/`workflow`/`repo`/`script` | Deterministic, non-agent script execution (see below). |
+| `steps[].script.path` | script | string | yes (with `script`) | Repo-relative path of the script to run. Absolute paths and `..` segments are rejected. |
+| `steps[].script.args` | script | string[] | no | Arguments passed to the script (argv list, no shell interpolation). |
+| `steps[].script.timeout_minutes` | script | int | no | Execution timeout in minutes (≥ 1; default 30, capped at 60). |
 | `steps[].next` | step | string/null | no | Next step name, or `null` for terminal. |
 | `steps[].conditions` | step | list | no | Conditional routing, evaluated in order. |
 | `steps[].conditions[].on_result` | condition | string | yes | Result key reported by the agent (e.g., `approved`, `rejected`, `default`). |
@@ -115,7 +119,25 @@ steps:
 - `next` / `conditions[].next` must reference a valid step name or `null`.
 - Conditions are evaluated in order; include a catch-all (e.g., `default`) to
   keep routing deterministic.
-- A step must declare exactly one of `agent` or `workflow`.
+- A step must declare exactly one of `agent`, `workflow`, `repo`, or `script`.
+- A `script` step is deterministic and non-agent: it runs the repo-local script
+  named by `script.path`, posts its output as a comment, then advances. The
+  result is reported as `pass` (exit 0) or `fail` (non-zero exit / timeout) so
+  `conditions[]` can route on it (e.g., `on_result: fail → dev`). **A failing
+  script still advances** the workflow in v1 — it does not hold or terminate;
+  the successor (usually an agent) receives the raw failure output.
+
+Script step example:
+
+```yaml
+steps:
+  - name: run-tests
+    script:
+      path: scripts/test.sh   # repo-relative, required
+      args: ["--unit"]        # optional argv list
+      timeout_minutes: 15     # optional, default 30
+    next: review
+```
 
 ---
 
@@ -220,6 +242,10 @@ Variables the orchestrator sets/consumes per run:
 | `WORKFLOW_STEP` | `resolve_config` / `resolve_workflow` | Resolved current step name. |
 | `WORKFLOW_NEXT` | `resolve_config` / `resolve_workflow` | Next step name after the current one. |
 | `STEP_PROMPT_FILE` | `resolve_config` / `resolve_workflow` | Path to the step's standing instruction file (`steps[].prompt`). Empty when the step has no prompt. |
+| `RUN_SCRIPT` | `resolve_config` | `"true"` when the resolved step is a deterministic `script` step (no agent runs). |
+| `SCRIPT_PATH` | `resolve_config` | Repo-relative path of the script to run (from `script.path`). |
+| `SCRIPT_ARGS` | `resolve_config` | Space-joined argument string for the script (empty when none). |
+| `SCRIPT_TIMEOUT_MINUTES` | `resolve_config` | Script timeout in minutes (empty → default 30). |
 | `PARENT_WORKFLOW_STEP` | `resolve_config` | Step in the parent workflow that mounted a sub-workflow. |
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables debug-mode routing (recover) and verbose logs. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
@@ -238,6 +264,7 @@ writes to `GITHUB_ENV` the same way.
 |--------|---------|
 | `<!-- bot-workflow-terminal -->` | Universal bot marker prepended (line 1) to every CI-posted comment. Makes human-vs-bot classification deterministic. Defined as `BOT_MARKER` in `github_client.py`. |
 | `<!-- bot-agent-{name} -->` | Per-agent marker identifying which agent posted a comment (e.g., `<!-- bot-agent-genius -->`). Used by circuit breaker and metrics extraction. |
+| `<!-- bot-agent-script -->` | Pseudo-role marker for deterministic `script` steps (issue #541): the step output is posted under this fixed tag so repeated runs update rather than duplicate, and circuit-breaker marker counting stays intact. |
 | `<!-- bot-agent-summary -->` | Marks a summarizer output; the summarizer gate checks for it before triggering again. |
 | `<!-- AGENT_RUN_CONFIG ... -->` | Dispatch sentinel — see [AGENT_RUN_CONFIG](#agent_run_config). Canonical regex in `validate_output.py`: `<!--(?:[ \t])*AGENT_RUN_CONFIG[ \t]+(\{.*?\})(?:[ \t])*-->` (single-line, no DOTALL). |
 | `<!-- WORKFLOW_STATE_START -->` ... `<!-- WORKFLOW_STATE_END -->` | Collapsed JSON workflow-state section — see [WORKFLOW_STATE v1](#workflow_state-v1). |
