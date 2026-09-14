@@ -41,7 +41,7 @@ on:
     secrets:
       OPENROUTER_API_KEY:
         description: 'Default API key for the LLM provider (used as fallback)'
-        required: true
+        required: false
       LOCAL_VLLM_API_TOKEN:
         description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
         required: false
