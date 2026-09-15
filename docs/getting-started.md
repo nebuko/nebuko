@@ -164,6 +164,50 @@ Where to look when something goes wrong:
 
 ---
 
+## Caller authorization (`CALLER_AUTH`)
+
+By default (`CALLER_AUTH: off`) the workflow starts whenever *any* GitHub user
+posts an issue or comment whose body matches a trigger (`@@agent` or
+`/workflow`). On a **public** repo that means an outsider can start a full
+agent run and burn your LLM tokens.
+
+Set the `CALLER_AUTH` input to `on` to gate the trigger on the author's
+repository association:
+
+```yaml
+- uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+  with:
+    CALLER_AUTH: on
+```
+
+When `on`, the workflow's `if:` condition requires the triggering author's
+`author_association` (from the GitHub event payload) to be one of
+`OWNER`, `MEMBER`, or `COLLABORATOR`. Everything else is skipped before any
+job, runner time, or token is spent — a denied comment never reaches the LLM.
+
+| `author_association` | `CALLER_AUTH: on` |
+|---|---|
+| `OWNER`, `MEMBER`, `COLLABORATOR` | ✅ allowed |
+| `NONE`, `FIRST_TIMER`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` | ❌ skipped |
+| missing / `null` | ❌ skipped (fail-closed) |
+
+Notes and trade-offs:
+
+- **`workflow_call` is exempt** — the association field is not present on
+  `workflow_call` events, so programmatic/Actions triggers are unaffected.
+- **`COLLABORATOR` includes read-only invites** — a user invited with
+  read-only access can still trigger. If you want "write access or above",
+  that needs a permission-API check (out of scope for this gate).
+- **On org repos, `MEMBER` = any org member**, not necessarily a repo
+  collaborator — slightly broader than strict "repo registered user".
+- **Fail-closed by construction** — if `author_association` is ever missing,
+  the `contains(...)` check evaluates false and the job simply doesn't start.
+
+**Recommendation: set `CALLER_AUTH: on` for public repos** to prevent
+outsider token burn.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Checklist |
