@@ -280,6 +280,22 @@ def _resolve_sub_workflow_entry(
     }
 
 
+def resolve_sub_workflow_entry(
+    current_step: WorkflowStep,
+    workflow: WorkflowDefinition,
+    workflows_dir: str,
+    prompt_base: str,
+) -> Optional[dict]:
+    """Public entry point for sub-workflow entry resolution.
+
+    Delegates to :func:`_resolve_sub_workflow_entry` (same contract) so that
+    other resolution paths (e.g. ``/workflow force-next-step``, issue #599)
+    can force-enter a sub-workflow step with exactly the same child-loading
+    and parent-reference logic as the normal happy path.
+    """
+    return _resolve_sub_workflow_entry(current_step, workflow, workflows_dir, prompt_base)
+
+
 def _resolve_return_to_parent(
     parent_workflow_name: str,
     parent_workflow_step_name: str,
