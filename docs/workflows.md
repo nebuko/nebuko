@@ -114,6 +114,58 @@ never intercepted, and `loop` retries within a step are not intercepted.
 
 ---
 
+## Script Steps
+
+A step can be a **deterministic script run** instead of an agent: the engine
+executes a repo-local script, posts its raw output as a comment, and advances
+to the next step. The `script:` key is itself the step source (the nested
+object name is the kind — no separate `kind` field), like `agent:` or
+`workflow:`.
+
+```yaml
+steps:
+  - name: run-tests
+    script:
+      path: scripts/test.sh   # required, repo-relative
+      args: ["--unit"]        # optional argv list (no shell interpolation)
+      timeout_minutes: 15     # optional, >= 1 (default 30, capped at 60)
+    next: review
+```
+
+Mechanics:
+
+1. The resolver detects the `script:` source and emits the execution contract
+   (`RUN_SCRIPT=true`, `SCRIPT_PATH`, `SCRIPT_ARGS`, `SCRIPT_TIMEOUT_MINUTES`)
+   instead of a task assignment; no agent is run for that step.
+2. The CI job executes the script in a dedicated "Run Script Step" step,
+   bounded by a step-level timeout and an executor-level timeout.
+3. The executor posts a structured comment — a **PASS ✅ / FAIL ⚠️** banner,
+   the script path, args, exit code, duration, and the raw output in a fenced
+   code block (so trigger-like strings in the output stay inert) — and
+   advances the workflow state with a synthetic dispatch so the next step
+   fires exactly as after an agent run.
+
+Result semantics (feeds the existing `conditions` mechanism):
+
+- Exit `0` → result `pass`; non-zero exit or timeout → result `fail`.
+- If the step declares `conditions[]`, routing uses the matching branch
+  (e.g. `on_result: fail → dev`); otherwise it follows the declared `next`.
+- **A failing script still advances the workflow** in v1 — it does not hold
+  or terminate. The successor (usually an agent) receives the raw failure
+  output and reacts. A `stop_on_fail` policy switch is a deferred
+  enhancement.
+
+Security notes:
+
+- Scripts must live in the repo: `script.path` is repo-relative, absolute
+  paths and `..` segments are rejected at parse time and re-verified at
+  runtime (realpath containment inside the checkout).
+- The script runs in the same CI job with the job's full environment and
+  permissions — the same trust level as the workflow YAML itself. Secret
+  scrubbing / sandboxed execution are deferred enhancements.
+
+---
+
 ## Built-in Workflows
 
 | Workflow | File | One-line description |

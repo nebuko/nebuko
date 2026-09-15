@@ -185,6 +185,38 @@ authorization that releases the gate. `terminate` is never intercepted, and
 `loop` retries are not intercepted (the gate fires on step transitions). See
 [workflows.md — Human Gates](./workflows.md#human-gates).
 
+### Deterministic `script` steps (issue #541)
+
+A step can also be a **script**: instead of running an agent, the engine runs
+a repo-local script deterministically and posts its raw output as a comment.
+
+```
+resolved step declares a `script:` source (nested `script: {path, args, timeout_minutes}`)
+│
+├─ resolve_config emits RUN_SCRIPT=true + SKIP_AGENT=true + SCRIPT_PATH /
+│  SCRIPT_ARGS / SCRIPT_TIMEOUT_MINUTES instead of a task assignment,
+│  with ROLE_NAME="script"
+├─ GHA "Run Script Step" executes .github/scripts/features/run_script/run_script.py
+│  (bounded by GHA timeout-minutes and an executor-level timeout); no agent run
+├─ executor writes the standard artifacts: final_message.txt (+ 10k split parts
+│  on overflow) and workflow_state.json with history advanced and a synthetic
+│  dispatch {status: advance, branch: pass|fail}
+└─ the existing posting pipeline runs untouched: prepare_comment → bot marker
+   (tag <!-- bot-agent-script -->) → peter-evans post → continuation trigger
+```
+
+Result semantics: exit 0 → synthetic `branch: "pass"`; non-zero exit or
+timeout → `branch: "fail"`. Routing uses the step's `conditions[]` on that
+branch if declared, otherwise the declared `next`. A failing script still
+**advances** in v1 (does not hold or terminate) — the successor, usually an
+agent, receives the raw failure output. Raw script output is wrapped in a
+fenced code block in the posted comment so trigger-like strings in the output
+(`@@agent`, `/workflow`) stay inert. Scripts must live in the repo
+(repo-relative path, no leading `/` or `..` segment); they run in the same
+CI job with the job's full environment and permissions — same trust level as
+the workflow YAML itself. Secret scrubbing / sandboxed execution are deferred
+enhancements.
+
 ---
 
 ## Sub-Workflow Composition

@@ -35,6 +35,25 @@ def _build_result(
     Returns:
         Dict with all environment variables to set.
     """
+    # Deterministic script step (issue #541): no agent runs — emit the script
+    # execution contract and let GHA branch on RUN_SCRIPT before agent steps.
+    run_script = config.get("run_script")
+    if run_script:
+        return {
+            "TASK": "",
+            "ROLE_NAME": "script",
+            "AGENT_SELECTED": "false",
+            "SKIP_AGENT": "true",
+            "RUN_SCRIPT": "true",
+            "SCRIPT_PATH": run_script.get("path", ""),
+            "SCRIPT_ARGS": run_script.get("args_str", ""),
+            "SCRIPT_TIMEOUT_MINUTES": str(run_script.get("timeout_minutes") or ""),
+            "WORKFLOW_NAME": config.get("config_workflow", ""),
+            "WORKFLOW_STEP": config.get("config_step", ""),
+            "PARENT_WORKFLOW": config.get("config_parent_workflow", ""),
+            "PARENT_WORKFLOW_STEP": config.get("config_parent_workflow_step", ""),
+        }
+
     task = config.get("task", "")
     if not task:
         # Enriched reason: carries /workflow failure detail (name + searched
