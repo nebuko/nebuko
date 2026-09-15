@@ -760,6 +760,211 @@ class TestForceNextStepIntegration(unittest.TestCase):
         self.assertIn("does not exist", result["REASON"])
 
 
+class TestForceNextStepSubWorkflow(unittest.TestCase):
+    """force-next-step must run a step regardless of its shape (issue #599).
+
+    A sub-workflow step (``workflow:`` / ``repo:`` / ``path:``) has no inline
+    ``agent``; force-next-step must reuse the happy-path child-entry
+    resolution and point at the child workflow's first step with correct
+    parent fields so return-to-parent works.
+    """
+
+    @staticmethod
+    def _child_workflow_yaml(name="child", first_agent="ctx", second_agent="dev"):
+        lines = [
+            f"name: {name}",
+            "description: Child workflow",
+            "trigger:",
+            f"  agents: [{first_agent}]",
+            "steps:",
+            f"  - name: first_step",
+            f"    agent: {first_agent}",
+            "    next: second_step",
+            f"  - name: second_step",
+            f"    agent: {second_agent}",
+            "    next: null",
+        ]
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _subparent_workflow_yaml(sub_name="subtask", sub_ref="child"):
+        return (
+            "name: subparent\n"
+            "description: Parent with a sub-workflow step\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: subtask\n"
+            f"  - name: {sub_name}\n"
+            f"    workflow: {sub_ref}\n"
+            "    next: finalize\n"
+            "  - name: finalize\n"
+            "    agent: genius\n"
+            "    next: null\n"
+        )
+
+    def _setup_dirs(self, parent_yaml, child_yaml=None, child_name="child",
+                   parent_name="subparent"):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        with open(os.path.join(workflows_dir, f"{parent_name}.yaml"), "w") as f:
+            f.write(parent_yaml)
+        if child_yaml is not None:
+            with open(os.path.join(workflows_dir, f"{child_name}.yaml"), "w") as f:
+                f.write(child_yaml)
+        return prompt_base, workflows_dir
+
+    def _resolve(self, body, state_json, prompt_base, workflows_dir):
+        full_body = body + "\n\n" + state_json
+        return resolve_config(full_body, prompt_base, workflows_dir, is_bot=False)
+
+    def _state(self, workflow="subparent", step="analyze"):
+        import json as _json
+        state = {"version": 1, "workflow": workflow, "step": step, "agent": "genius"}
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def test_explicit_target_sub_workflow_step(self):
+        prompt_base, workflows_dir = self._setup_dirs(
+            self._subparent_workflow_yaml(), self._child_workflow_yaml()
+        )
+        result = self._resolve(
+            "/workflow force-next-step subtask",
+            self._state(step="analyze"),
+            prompt_base,
+            workflows_dir,
+        )
+        # Points at the child's first step with the child workflow as active
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertEqual(result["ROLE_NAME"], "ctx")
+        self.assertEqual(result["WORKFLOW_NAME"], "child")
+        self.assertEqual(result["WORKFLOW_STEP"], "first_step")
+        # Parent fields mirror the happy-path entry contract
+        self.assertEqual(result["PARENT_WORKFLOW"], "subparent")
+        self.assertEqual(result["PARENT_WORKFLOW_STEP"], "subtask")
+
+    def test_auto_advance_into_sub_workflow_step(self):
+        prompt_base, workflows_dir = self._setup_dirs(
+            self._subparent_workflow_yaml(), self._child_workflow_yaml()
+        )
+        result = self._resolve(
+            "/workflow force-next-step",
+            self._state(step="analyze"),  # analyze.next -> subtask
+            prompt_base,
+            workflows_dir,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "ctx")
+        self.assertEqual(result["WORKFLOW_NAME"], "child")
+        self.assertEqual(result["WORKFLOW_STEP"], "first_step")
+        self.assertEqual(result["PARENT_WORKFLOW"], "subparent")
+        self.assertEqual(result["PARENT_WORKFLOW_STEP"], "subtask")
+
+    def test_agent_target_unchanged_in_subparent(self):
+        # Regression: a plain agent step target in the same workflow is
+        # unaffected (WORKFLOW_NAME stays the parent workflow).
+        prompt_base, workflows_dir = self._setup_dirs(
+            self._subparent_workflow_yaml(), self._child_workflow_yaml()
+        )
+        result = self._resolve(
+            "/workflow force-next-step finalize",
+            self._state(step="analyze"),
+            prompt_base,
+            workflows_dir,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "genius")
+        self.assertEqual(result["WORKFLOW_NAME"], "subparent")
+        self.assertEqual(result["WORKFLOW_STEP"], "finalize")
+        self.assertEqual(result["PARENT_WORKFLOW"], "")
+
+    def test_missing_child_workflow(self):
+        prompt_base, workflows_dir = self._setup_dirs(
+            self._subparent_workflow_yaml(sub_ref="does_not_exist"), child_yaml=None
+        )
+        result = self._resolve(
+            "/workflow force-next-step subtask",
+            self._state(step="analyze"),
+            prompt_base,
+            workflows_dir,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("not found", result["REASON"])
+
+    def test_unknown_agent_in_child_first_step(self):
+        bad_child = (
+            "name: badchild\n"
+            "description: Child with unknown agent\n"
+            "trigger:\n"
+            "  agents: [ctx]\n"
+            "steps:\n"
+            "  - name: first_step\n"
+            "    agent: not_a_real_agent\n"
+            "    next: null\n"
+        )
+        prompt_base, workflows_dir = self._setup_dirs(
+            self._subparent_workflow_yaml(sub_ref="badchild"), bad_child,
+            child_name="badchild",
+        )
+        result = self._resolve(
+            "/workflow force-next-step subtask",
+            self._state(step="analyze"),
+            prompt_base,
+            workflows_dir,
+        )
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertIn("Unknown agent", result["REASON"])
+
+    def test_script_step_target_runs_script(self):
+        script_parent = (
+            "name: scriptparent\n"
+            "description: Parent with a script step\n"
+            "trigger:\n"
+            "  agents: [genius]\n"
+            "steps:\n"
+            "  - name: analyze\n"
+            "    agent: genius\n"
+            "    next: run_check\n"
+            "  - name: run_check\n"
+            "    script:\n"
+            "      path: scripts/check.py\n"
+            "      args: [\"--fast\"]\n"
+            "      timeout_minutes: 5\n"
+            "    next: finalize\n"
+            "  - name: finalize\n"
+            "    agent: genius\n"
+            "    next: null\n"
+        )
+        prompt_base, workflows_dir = self._setup_dirs(
+            script_parent, child_yaml=None, parent_name="scriptparent"
+        )
+        result = self._resolve(
+            "/workflow force-next-step run_check",
+            self._state(workflow="scriptparent", step="analyze"),
+            prompt_base,
+            workflows_dir,
+        )
+        # build_result short-circuits to the script execution contract
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["RUN_SCRIPT"], "true")
+        self.assertEqual(result["ROLE_NAME"], "script")
+        self.assertEqual(result["SCRIPT_PATH"], "scripts/check.py")
+        self.assertEqual(result["SCRIPT_ARGS"], "--fast")
+        self.assertEqual(result["SCRIPT_TIMEOUT_MINUTES"], "5")
+        self.assertEqual(result["WORKFLOW_NAME"], "scriptparent")
+        self.assertEqual(result["WORKFLOW_STEP"], "run_check")
+        self.assertEqual(result["PARENT_WORKFLOW"], "")
+
+
 class TestForceNextStepFallbackFromComments(unittest.TestCase):
     """Tests for force-next-step fallback: fetching state from issue comments."""
 
