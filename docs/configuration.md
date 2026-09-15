@@ -85,6 +85,11 @@ Sampling parameters and their typical ranges:
 | `presence_penalty` | float | Discourages repeating tokens based on presence | -2.0–2.0 |
 | `repetition_penalty` | float | > 1.0 discourages repetition | 1.0–1.5 |
 
+> **Note:** `presence_penalty` must match the model's operating mode: `0.0` for
+> thinking-mode operation, ~`1.5` for instruct-only (per official Qwen model card).
+> PR #225 originally set 1.5 on the Qwen entries while they ran with
+> `thinking_enabled: true`, i.e., under the wrong regime.
+
 Example:
 
 ```yaml
