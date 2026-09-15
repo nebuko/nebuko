@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      CALLER_AUTH:
+        description: 'When "on", only OWNER/MEMBER/COLLABORATOR authors can trigger the workflow from issues/comments'
+        required: false
+        type: string
+        default: 'off'
     secrets:
       OPENROUTER_API_KEY:
         description: 'Default API key for the LLM provider (used as fallback)'
@@ -66,6 +71,9 @@ jobs:
           (
             github.event_name == 'workflow_call' ||
             (github.event_name == 'issues' &&
+             (inputs.CALLER_AUTH == 'off' ||
+              contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                       github.event.issue.user.author_association)) &&
              !startsWith(github.event.issue.body, '<!-- bot-agent-') &&
              !startsWith(github.event.issue.body, '<!-- bot-workflow-terminal -->') &&
              (contains(github.event.issue.body, '@@genius') ||
@@ -78,6 +86,9 @@ jobs:
               contains(github.event.issue.body, '@@summarize') ||
               contains(github.event.issue.body, '/workflow'))) ||
             (github.event_name == 'issue_comment' &&
+             (inputs.CALLER_AUTH == 'off' ||
+              contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                       github.event.comment.user.author_association)) &&
              ((!startsWith(github.event.comment.body, '<!-- bot-agent-') &&
                !startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
                (contains(github.event.comment.body, '@@genius') ||
