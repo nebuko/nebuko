@@ -137,9 +137,11 @@ def resolve_config(
     elif force_next:
         # Human explicit step jump — takes priority over auto-dispatch.
         # Must go through _resolve_human_path for validation/error handling.
+        # prompt_base lets the force-next branch resolve sub-workflow targets
+        # (issue #599).
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir, prev_state,
-            local_workflows_dir=local_workflows_dir,
+            local_workflows_dir=local_workflows_dir, prompt_base=prompt_base,
         )
     elif wf_override and not is_bot and resume_cmd is None:
         # Human /workflow override — use human path to honor the command.

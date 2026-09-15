@@ -9,9 +9,15 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from config import load_workflow, load_workflow_with_dirs
+from config import (
+    WorkflowDefinition,
+    WorkflowStep,
+    load_workflow,
+    load_workflow_with_dirs,
+)
 from resolve_workflow import (
     resolve_next_from_workflow,
+    resolve_sub_workflow_entry,
     _is_terminal_step,
     _load_workflow_by_reference,
     TASK_TO_PROMPT,
@@ -486,6 +492,118 @@ def _resolve_machine_trigger_path(
     }
 
 
+def _agent_step_entry(step: "WorkflowStep") -> dict:
+    """Step-entry result for a plain ``agent`` step (issue #599)."""
+    return {"task": step.agent, "skip_reason": None}
+
+
+def _script_step_entry(step: "WorkflowStep") -> dict:
+    """Step-entry result for a deterministic ``script`` step (issue #599).
+
+    Carries the same ``run_script`` marker shape ``resolve_next_from_workflow``
+    emits (issue #541) so ``build_result`` short-circuits to the script
+    execution contract and the GHA pipeline runs the step's script directly.
+    """
+    return {
+        "run_script": {
+            "path": step.script.path,
+            "args_str": " ".join(step.script.args or []),
+            "timeout_minutes": step.script.timeout_minutes,
+        },
+        "skip_reason": None,
+    }
+
+
+def _sub_workflow_step_entry(
+    step: "WorkflowStep",
+    wf_def: "WorkflowDefinition",
+    workflows_dir: str,
+    prompt_base: str,
+) -> dict:
+    """Step-entry result for a ``workflow``/``repo``/``path`` step (issue #599).
+
+    Reuses the happy-path child-entry resolution (``resolve_sub_workflow_entry``)
+    so the forced entry loads the child, resolves to its first step's agent,
+    and sets the parent/return fields identically to normal execution.
+    """
+    entry = resolve_sub_workflow_entry(step, wf_def, workflows_dir, prompt_base)
+    if not entry or entry.get("SKIP_AGENT") == "true":
+        reason = (entry or {}).get("REASON", f"step '{step.name}' is not a valid sub-workflow step")
+        return {"skip_reason": f"force-next-step: {reason}"}
+    return {
+        "task": entry["ROLE_NAME"],
+        "config_workflow": entry["WORKFLOW_NAME"],
+        "config_step": entry["WORKFLOW_STEP"],
+        "config_parent_workflow": entry["PARENT_WORKFLOW"],
+        "config_parent_workflow_step": entry["PARENT_WORKFLOW_STEP"],
+        "skip_reason": None,
+    }
+
+
+def _resolve_step_entry(
+    step: "WorkflowStep",
+    wf_def: "WorkflowDefinition",
+    workflows_dir: str,
+    prompt_base: str,
+) -> dict:
+    """Resolve the dispatchable entry for a force-next-step target (issue #599).
+
+    Shape-aware: a step has exactly one of ``agent``/``workflow``/``repo``/
+    ``script`` (validated by the WorkflowStep schema). Returns a dict with
+    ``task``/``run_script``/``config_*`` overrides when runnable, or
+    ``skip_reason`` when the step cannot be force-run.
+    """
+    if step.agent:
+        return _agent_step_entry(step)
+    if step.script is not None:
+        return _script_step_entry(step)
+    if step.workflow or step.repo or step.path:
+        return _sub_workflow_step_entry(step, wf_def, workflows_dir, prompt_base)
+    return {
+        "skip_reason": f"force-next-step: step '{step.name}' has no runnable source",
+    }
+
+
+def _build_force_next_result(
+    entry: dict,
+    config_step: str,
+    config_workflow: str,
+    fs_state: "WorkflowState",
+) -> dict:
+    """Build the force-next-step config dict from a step-entry result.
+
+    Sub-workflow entries override the workflow/step and parent fields with the
+    *child* workflow's first step and the explicit parent reference (matching
+    the happy-path entry contract, so return-to-parent works); other shapes
+    inherit the plain parent fields from the current state.
+    """
+    return {
+        "task": entry.get("task", ""),
+        "run_script": entry.get("run_script"),
+        "config_step": entry.get("config_step") or config_step,
+        "config_workflow": entry.get("config_workflow") or config_workflow,
+        "config_complexity": "medium",
+        "config_reasoning": "none",
+        "config_temperature": "",
+        "config_round": "",
+        "config_model": "",
+        "config_skills": "",
+        "config_top_p": "",
+        "config_top_k": "",
+        "config_repetition_penalty": "",
+        "config_debug": "",
+        "config_branch": "",
+        "config_parent_workflow": (
+            entry.get("config_parent_workflow")
+            or (fs_state.parent_workflow or "")
+        ),
+        "config_parent_workflow_step": (
+            entry.get("config_parent_workflow_step")
+            or (fs_state.parent_workflow_step or "")
+        ),
+    }
+
+
 def _resolve_human_path(
     trigger_body: str,
     repo: Optional[str],
@@ -494,6 +612,7 @@ def _resolve_human_path(
     prev_state: Optional["WorkflowState"] = None,
     pinned_task: Optional[str] = None,
     local_workflows_dir: Optional[str] = None,
+    prompt_base: str = "",
 ) -> dict:
     """Resolve config for a human-triggered comment.
 
@@ -513,6 +632,8 @@ def _resolve_human_path(
             #478); the caller supplies the mention explicitly instead.
         local_workflows_dir: Optional consumer-local workflows dir that takes
             precedence over ``workflows_dir`` (issue #529).
+        prompt_base: Path to prompt files; needed by the force-next-step
+            branch to resolve sub-workflow targets (issue #599).
 
     Returns:
         Config dict with task and config_* variables, or SKIP_AGENT dict.
@@ -557,78 +678,67 @@ def _resolve_human_path(
                     "SKIP_AGENT": "true",
                     "REASON": f"force-next-step: invalid target step name '{target_step}'",
                 }
-            # Explicit target step — validate it exists in the workflow
-            step_found = False
+            # Explicit target step — resolve its shape-aware entry
+            target_step_def = None
             for step in wf_def.steps:
                 if step.name == target_step:
-                    step_found = True
-                    if not step.agent:
-                        return {
-                            "SKIP_AGENT": "true",
-                            "REASON": f"force-next-step: step '{target_step}' has no agent defined",
-                        }
-                    config_step = target_step
-                    task = step.agent
+                    target_step_def = step
                     break
-            if not step_found:
+            if target_step_def is None:
                 return {
                     "SKIP_AGENT": "true",
                     "REASON": f"force-next-step: step '{target_step}' not found in workflow '{config_workflow}'",
                 }
+            entry = _resolve_step_entry(
+                target_step_def, wf_def, workflows_dir, prompt_base
+            )
+            if entry.get("skip_reason"):
+                return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
+            return _build_force_next_result(
+                entry, config_step=target_step,
+                config_workflow=config_workflow, fs_state=fs_state,
+            )
         elif current_step_in_wf:
             # Auto-advance: find current step and get its .next (skip conditions)
+            current_step_def = None
             for step in wf_def.steps:
                 if step.name == current_step_in_wf:
-                    if not step.next:
-                        return {
-                            "SKIP_AGENT": "true",
-                            "REASON": f"force-next-step: current step '{current_step_in_wf}' is terminal (no next step)",
-                        }
-                    for next_s in wf_def.steps:
-                        if next_s.name == step.next:
-                            if not next_s.agent:
-                                return {
-                                    "SKIP_AGENT": "true",
-                                    "REASON": f"force-next-step: next step '{next_s.name}' has no agent defined",
-                                }
-                            config_step = next_s.name
-                            task = next_s.agent
-                            break
-                    else:
-                        return {
-                            "SKIP_AGENT": "true",
-                            "REASON": f"force-next-step: step '{current_step_in_wf}' references next step '{step.next}' which does not exist in workflow '{config_workflow}'",
-                        }
+                    current_step_def = step
                     break
-            else:
+            if current_step_def is None:
                 return {
                     "SKIP_AGENT": "true",
                     "REASON": f"force-next-step: current step '{current_step_in_wf}' not found in workflow '{config_workflow}'",
                 }
+            if not current_step_def.next:
+                return {
+                    "SKIP_AGENT": "true",
+                    "REASON": f"force-next-step: current step '{current_step_in_wf}' is terminal (no next step)",
+                }
+            next_step_def = None
+            for step in wf_def.steps:
+                if step.name == current_step_def.next:
+                    next_step_def = step
+                    break
+            if next_step_def is None:
+                return {
+                    "SKIP_AGENT": "true",
+                    "REASON": f"force-next-step: step '{current_step_in_wf}' references next step '{current_step_def.next}' which does not exist in workflow '{config_workflow}'",
+                }
+            entry = _resolve_step_entry(
+                next_step_def, wf_def, workflows_dir, prompt_base
+            )
+            if entry.get("skip_reason"):
+                return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
+            return _build_force_next_result(
+                entry, config_step=next_step_def.name,
+                config_workflow=config_workflow, fs_state=fs_state,
+            )
         else:
             return {
                 "SKIP_AGENT": "true",
                 "REASON": "force-next-step: no current step in workflow state",
             }
-
-        return {
-            "task": task,
-            "config_step": config_step,
-            "config_workflow": config_workflow,
-            "config_complexity": "medium",
-            "config_reasoning": "none",
-            "config_temperature": "",
-            "config_round": "",
-            "config_model": "",
-            "config_skills": "",
-            "config_top_p": "",
-            "config_top_k": "",
-            "config_repetition_penalty": "",
-            "config_debug": "",
-            "config_branch": "",
-            "config_parent_workflow": fs_state.parent_workflow or "",
-            "config_parent_workflow_step": fs_state.parent_workflow_step or "",
-        }
 
     # Normal /workflow command normalization (human only)
     wf_name = extract_workflow_command(trigger_body)
