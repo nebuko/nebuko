@@ -25,7 +25,7 @@ from agent_script.sub_domains.message_splitter.message_splitter import split_mes
 from workflow_state import Dispatch, build_state, extract_state_from_body, state_to_json
 
 DEFAULT_TIMEOUT_MINUTES = 30
-MAX_TIMEOUT_MINUTES = 120  # matches the agent-run cap
+MAX_TIMEOUT_MINUTES = 60  # matches the GHA step hard cap (timeout-minutes: 60)
 FINAL_MESSAGE_MAX_LEN = 10000
 _FINAL_MESSAGE_FILE = "final_message.txt"
 _STATE_FILE = "workflow_state.json"

@@ -68,6 +68,10 @@ class TestReadConfig:
                               "SCRIPT_TIMEOUT_MINUTES": "900"})
         assert cfg["args"] == ["-a", "-b"]
         assert cfg["timeout_minutes"] == rs.MAX_TIMEOUT_MINUTES
+        for requested in ("90", "120"):
+            cfg = rs.read_config({"SCRIPT_PATH": "x.sh",
+                                  "SCRIPT_TIMEOUT_MINUTES": requested})
+            assert cfg["timeout_minutes"] == 60
 
     def test_rejects_bad_timeout(self):
         with pytest.raises(ValueError):

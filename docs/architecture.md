@@ -191,7 +191,7 @@ A step can also be a **script**: instead of running an agent, the engine runs
 a repo-local script deterministically and posts its raw output as a comment.
 
 ```
-resolved step is `kind: script` (nested `script: {path, args, timeout_minutes}`)
+resolved step declares a `script:` source (nested `script: {path, args, timeout_minutes}`)
 │
 ├─ resolve_config emits RUN_SCRIPT=true + SKIP_AGENT=true + SCRIPT_PATH /
 │  SCRIPT_ARGS / SCRIPT_TIMEOUT_MINUTES instead of a task assignment,
