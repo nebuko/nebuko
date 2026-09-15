@@ -45,7 +45,11 @@ You are in plan-scaffolding mode for a branch-mounted dynamic plan workflow (iss
    - Relevant file context (which files to read/modify for this step).
 5. **Commit** with message: `chore: scaffold plan workflow for issue #N`
 6. **Push** to the branch.
-7. **Dispatch**: end your message with:
+7. **Report the pushed branch name** as a machine-readable marker on its own line in your final answer (issue #604 — the engine persists it as `scaffold_branch` so later runs can fetch `tmp_impl/workflow.yaml` from this branch):
+   ```
+   SCAFFOLD_BRANCH: feature/issue-{N}-{short-name}
+   ```
+8. **Dispatch**: end your message with:
    ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
    ```
