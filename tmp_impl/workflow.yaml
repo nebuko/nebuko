@@ -1,0 +1,35 @@
+name: tmp-impl
+description: "Dynamically generated per-step execution workflow for issue #590"
+trigger:
+  agents: [dev]
+steps:
+  - name: step_1
+    workflow: dev-review-loop
+    skill: [tmp_impl/skills/step_1]
+    complexity: low
+    next: step_2
+  - name: step_2
+    workflow: dev-review-loop
+    skill: [tmp_impl/skills/step_2]
+    complexity: medium
+    next: step_3
+  - name: step_3
+    workflow: dev-review-loop
+    skill: [tmp_impl/skills/step_3]
+    complexity: medium
+    next: step_4
+  - name: step_4
+    workflow: dev-review-loop
+    skill: [tmp_impl/skills/step_4]
+    complexity: medium
+    next: step_5
+  - name: step_5
+    workflow: dev-review-loop
+    skill: [tmp_impl/skills/step_5]
+    complexity: high
+    next: step_6
+  - name: step_6
+    workflow: dev-review-loop
+    skill: [tmp_impl/skills/step_6]
+    complexity: medium
+    next: null
