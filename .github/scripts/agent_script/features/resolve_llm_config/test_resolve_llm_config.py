@@ -10,7 +10,64 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from resolve_llm_config import normalize_reasoning_effort, resolve_llm_config
+from resolve_llm_config import (
+    normalize_reasoning_effort,
+    resolve_api_url,
+    resolve_llm_config,
+)
+
+
+class TestResolveApiUrl(unittest.TestCase):
+    """Pure I/O tests for resolve_api_url()."""
+
+    ENV = "LOCAL_VLLM_API_URL"
+
+    def setUp(self):
+        self._saved = os.environ.get(self.ENV)
+        os.environ.pop(self.ENV, None)
+
+    def tearDown(self):
+        if self._saved is None:
+            os.environ.pop(self.ENV, None)
+        else:
+            os.environ[self.ENV] = self._saved
+
+    def test_http_url_passes_through(self):
+        self.assertEqual(
+            resolve_api_url("http://192.168.1.64:31728/v1"),
+            "http://192.168.1.64:31728/v1",
+        )
+
+    def test_https_url_passes_through_ignoring_env(self):
+        os.environ[self.ENV] = "https://should-not-be-used.example.com"
+        self.assertEqual(
+            resolve_api_url("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1",
+        )
+
+    def test_env_var_name_is_resolved(self):
+        os.environ[self.ENV] = "http://localhost:8000/v1"
+        self.assertEqual(resolve_api_url(self.ENV), "http://localhost:8000/v1")
+
+    def test_env_var_value_whitespace_is_stripped(self):
+        os.environ[self.ENV] = "  https://host.example.com/v1  "
+        self.assertEqual(
+            resolve_api_url(self.ENV), "https://host.example.com/v1"
+        )
+
+    def test_unset_env_var_raises(self):
+        with self.assertRaises(ValueError):
+            resolve_api_url(self.ENV)
+
+    def test_empty_env_var_raises(self):
+        os.environ[self.ENV] = "   "
+        with self.assertRaises(ValueError):
+            resolve_api_url(self.ENV)
+
+    def test_non_url_env_value_raises(self):
+        os.environ[self.ENV] = "not-a-url"
+        with self.assertRaises(ValueError):
+            resolve_api_url(self.ENV)
 
 
 class TestNormalizeReasoningEffort(unittest.TestCase):
@@ -155,6 +212,74 @@ agents:
         self.assertEqual(cfg["usage_id"], "agent_script")
         self.assertTrue(cfg["drop_params"])
         self.assertEqual(cfg["api_key"], "test-key")
+
+
+class TestApiUrlEnvVarRouting(unittest.TestCase):
+    """api_url as an env var name is resolved end-to-end by resolve_llm_config()."""
+
+    ENV = "LOCAL_VLLM_API_URL"
+    CONFIG_TEMPLATE = """\
+providers:
+  test_provider:
+    api_url: "@API_URL@"
+    api_token_env: "TEST_LLM_API_KEY"
+llms:
+  test-model:
+    model_path: "test/test-model"
+    provider: ${providers.test_provider}
+    default_temperature: 0.7
+agents:
+  dev:
+    model: ${llms.test-model}
+    temperature: 0.7
+    prompt_file: "dev.md"
+"""
+
+    def setUp(self):
+        self._env_keys = ["TEST_LLM_API_KEY", "LLM_BASE_URL", "AGENT_CONFIG_PATH", "ROLE_NAME", self.ENV]
+        self._saved = {k: os.environ.get(k) for k in self._env_keys}
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        os.environ["TEST_LLM_API_KEY"] = "test-key"
+        os.environ["ROLE_NAME"] = "dev"
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
+        os.environ.pop("LLM_BASE_URL", None)
+        os.environ.pop(self.ENV, None)
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _write_config(self, api_url: str) -> None:
+        with open(self._config_path, "w") as f:
+            f.write(self.CONFIG_TEMPLATE.replace("@API_URL@", api_url))
+
+    def _resolve(self, api_url: str):
+        self._write_config(api_url)
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+        return cfg
+
+    def test_literal_url_used_as_is(self):
+        cfg = self._resolve("http://192.168.1.64:31728/v1")
+        self.assertEqual(cfg["base_url"], "http://192.168.1.64:31728/v1")
+
+    def test_env_var_name_resolved_to_base_url(self):
+        os.environ[self.ENV] = "https://selfhosted.example.com/v1"
+        cfg = self._resolve(self.ENV)
+        self.assertEqual(cfg["base_url"], "https://selfhosted.example.com/v1")
+
+    def test_unset_env_var_fails_fast(self):
+        with self.assertRaises(ValueError):
+            self._resolve(self.ENV)
+
+    def test_non_url_env_value_fails_fast(self):
+        os.environ[self.ENV] = "garbage"
+        with self.assertRaises(ValueError):
+            self._resolve(self.ENV)
 
 
 if __name__ == "__main__":
