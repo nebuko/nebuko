@@ -45,7 +45,7 @@ backward compatibility.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `api_url` | string | yes | Chat-completions endpoint URL. |
+| `api_url` | string | yes | Chat-completions endpoint URL, or the name of an environment variable holding that URL (e.g. `LOCAL_VLLM_API_URL`), resolved at config-load time — mirrors `api_token_env`. |
 | `api_token_env` | string | yes | Name of the environment variable holding the API token. |
 
 ```yaml
@@ -54,7 +54,8 @@ providers:
     api_url: "https://openrouter.ai/api/v1/chat/completions"
     api_token_env: "OPENROUTER_API_KEY"
   local_vllm:
-    api_url: "http://192.168.1.64:31728/v1"
+    # api_url may also be an env var name (resolved at load time):
+    api_url: "LOCAL_VLLM_API_URL"
     api_token_env: "LOCAL_VLLM_API_TOKEN"
 ```
 
