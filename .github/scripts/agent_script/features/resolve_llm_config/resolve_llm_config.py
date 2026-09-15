@@ -34,6 +34,35 @@ def normalize_reasoning_effort(raw: str | None) -> str | None:
     return None
 
 
+def resolve_api_url(raw: str) -> str:
+    """Resolve a provider ``api_url`` value to a concrete URL.
+
+    If the value already looks like an ``http://`` or ``https://`` URL it is
+    returned unchanged. Otherwise it is treated as an environment variable
+    name (e.g. ``LOCAL_VLLM_API_URL``) and the variable's value is returned —
+    mirroring how ``api_token_env`` is resolved.
+
+    Raises:
+        ValueError: If the referenced env var is unset/empty, or its value is
+            not an ``http://``/``https://`` URL.
+    """
+    value = raw.strip()
+    if value.startswith(("http://", "https://")):
+        return value
+    resolved = os.environ.get(value)
+    if not resolved:
+        raise ValueError(
+            f"api_url '{value}' is not a URL and env var '{value}' is unset or empty"
+        )
+    resolved = resolved.strip()
+    if not resolved.startswith(("http://", "https://")):
+        raise ValueError(
+            f"Env var '{value}' must contain an http:// or https:// URL, "
+            f"got: {resolved!r}"
+        )
+    return resolved
+
+
 def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     """
     Resolve LLM configuration from layered sources.
@@ -61,6 +90,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     base_url = None
     temperature = None
     agent_cfg = None
+    api_url_raw = None
 
     # ── Layered config file ──────────────────────────────────────
     if os.path.isfile(config_path):
@@ -69,16 +99,13 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
 
             cfg = load_config(config_path)
             agent_cfg = cfg.agents.get(role_name)
+            api_url_raw = None
             if agent_cfg:
                 model = agent_cfg.model_ref.model_path
                 provider = agent_cfg.model_ref.provider_ref
                 api_key = os.environ.get(provider.api_token_env)
-                base_url = provider.api_url
+                api_url_raw = provider.api_url
                 temperature = agent_cfg.temperature
-                logger.info(
-                    f"Loaded config for agent '{role_name}' from {config_path}: "
-                    f"model={model}, provider={provider.api_url}"
-                )
             else:
                 logger.warning(
                     f"Agent role '{role_name}' not found in config; "
@@ -88,6 +115,15 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
             logger.warning(
                 f"Failed to load config from {config_path}: {e}; "
                 "falling back to env vars"
+            )
+
+        # Resolve api_url outside the load try/except: a bad env-var reference
+        # is a config error and must fail fast, not silently fall back.
+        if api_url_raw is not None:
+            base_url = resolve_api_url(api_url_raw)
+            logger.info(
+                f"Loaded config for agent '{role_name}' from {config_path}: "
+                f"model={model}, provider={base_url}"
             )
 
     # ── Backward-compatible env var fallback ─────────────────────
