@@ -315,12 +315,23 @@ def _resolve_dispatch_path(
             local_workflows_dir=local_workflows_dir,
         )
         if wf_result:
-            config["task"] = wf_result["task"]
-            config["config_step"] = wf_result.get("step", config["config_step"])
-            if wf_result.get("entered_sub_workflow") or wf_result.get("exited_sub_workflow"):
-                _apply_wf_marker(config, wf_result)
-            else:
+            if wf_result.get("run_script"):
+                # Deterministic script successor (issue #541): carry the script
+                # payload instead of an agent task; build_result short-circuits.
+                config["run_script"] = {
+                    "path": wf_result.get("script_path", ""),
+                    "args_str": wf_result.get("script_args_str", ""),
+                    "timeout_minutes": wf_result.get("timeout_minutes"),
+                }
+                config["config_step"] = wf_result.get("step", config["config_step"])
                 config["config_workflow"] = prev_state.workflow
+            else:
+                config["task"] = wf_result["task"]
+                config["config_step"] = wf_result.get("step", config["config_step"])
+                if wf_result.get("entered_sub_workflow") or wf_result.get("exited_sub_workflow"):
+                    _apply_wf_marker(config, wf_result)
+                else:
+                    config["config_workflow"] = prev_state.workflow
         else:
             dispatch_status = dispatch_obj.status or ""
             if dispatch_status == "hold":
@@ -742,8 +753,19 @@ def _resolve_bot_fallback_path(
                 local_workflows_dir=local_workflows_dir,
             )
             if wf_result:
-                config["task"] = wf_result["task"]
-                config["config_step"] = wf_result.get("step", config["config_step"])
+                if wf_result.get("run_script"):
+                    # Deterministic script successor (issue #541): no agent task;
+                    # build_result short-circuits on this.
+                    config.pop("task", None)
+                    config["run_script"] = {
+                        "path": wf_result.get("script_path", ""),
+                        "args_str": wf_result.get("script_args_str", ""),
+                        "timeout_minutes": wf_result.get("timeout_minutes"),
+                    }
+                    config["config_step"] = wf_result.get("step", config["config_step"])
+                else:
+                    config["task"] = wf_result["task"]
+                    config["config_step"] = wf_result.get("step", config["config_step"])
     elif dispatch.status == "loop":
         # Loop: re-dispatch current agent — use task_hint or resolve from state
         config["task"] = dispatch.task_hint or ""
@@ -839,11 +861,23 @@ def _resolve_workflow_next_step(
         local_workflows_dir=local_workflows_dir,
     )
     if wf_result:
-        config["task"] = wf_result["task"]
-        config["config_step"] = wf_result.get("step", config["config_step"])
-        if wf_result.get("branch"):
-            config["config_branch"] = wf_result["branch"]
-        _apply_wf_marker(config, wf_result)
+        if wf_result.get("run_script"):
+            # Deterministic script successor (issue #541): same treatment as
+            # the dispatch-driven path — build_result short-circuits on this.
+            config["run_script"] = {
+                "path": wf_result.get("script_path", ""),
+                "args_str": wf_result.get("script_args_str", ""),
+                "timeout_minutes": wf_result.get("timeout_minutes"),
+            }
+            config["config_step"] = wf_result.get("step", config["config_step"])
+            if wf_result.get("branch"):
+                config["config_branch"] = wf_result["branch"]
+        else:
+            config["task"] = wf_result["task"]
+            config["config_step"] = wf_result.get("step", config["config_step"])
+            if wf_result.get("branch"):
+                config["config_branch"] = wf_result["branch"]
+            _apply_wf_marker(config, wf_result)
     else:
         return _workflow_next_step_skip_reason(wf_name, current_step, workflows_dir)
 

@@ -791,10 +791,22 @@ def resolve_next_from_workflow(
         # return and no hint fallback — resolution fails cleanly.
         return None
 
-    result: dict = {
-        "task": target_step.agent,
-        "step": target_step.name,
-    }
+    # Deterministic script step (issue #541): distinct marker dict, same
+    # pattern as the sub-workflow lifecycle markers — no "task" key because
+    # downstream consumers assume a non-None agent name.
+    if target_step.script is not None:
+        result = {
+            "run_script": True,
+            "script_path": target_step.script.path,
+            "script_args_str": " ".join(target_step.script.args or []),
+            "timeout_minutes": target_step.script.timeout_minutes,
+            "step": target_step.name,
+        }
+    else:
+        result = {
+            "task": target_step.agent,
+            "step": target_step.name,
+        }
     if branch_key:
         result["branch"] = branch_key
     return result
