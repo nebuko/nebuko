@@ -299,9 +299,36 @@ jobs:
                   PARENT_WORKFLOW=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
                   PARENT_WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
                   HUMAN_RESUME_INPUT=$(echo "$RESOLVE_OUTPUT" | grep '^HUMAN_RESUME_INPUT=' | cut -d= -f2-)
+                  # Deterministic script step (issue #541): resolver emits the
+                  # script execution contract instead of a task assignment.
+                  RUN_SCRIPT=$(echo "$RESOLVE_OUTPUT" | grep '^RUN_SCRIPT=' | cut -d= -f2-)
+                  SCRIPT_PATH=$(echo "$RESOLVE_OUTPUT" | grep '^SCRIPT_PATH=' | cut -d= -f2-)
+                  SCRIPT_ARGS=$(echo "$RESOLVE_OUTPUT" | grep '^SCRIPT_ARGS=' | cut -d= -f2-)
+                  SCRIPT_TIMEOUT_MINUTES=$(echo "$RESOLVE_OUTPUT" | grep '^SCRIPT_TIMEOUT_MINUTES=' | cut -d= -f2-)
 
                   # Handle skip
                   if [ "$SKIP_AGENT" = "true" ]; then
+                    # Script step (issue #541): the resolver marks it as a skip
+                    # (no agent runs). SKIP_AGENT stays true so the whole
+                    # agent-specific section (ack, query context, agent run) is
+                    # naturally excluded; no REASON is exported, so the
+                    # "Workflow stopped" skip comment never fires. The posting
+                    # pipeline picks the run up via its RUN_SCRIPT guard, and
+                    # the executor advances the workflow state so the next step
+                    # fires exactly like after an agent run.
+                    if [ "$RUN_SCRIPT" = "true" ]; then
+                      echo "Script step resolved — running ${SCRIPT_PATH} (no agent)"
+                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                      echo "RUN_SCRIPT=true" >> $GITHUB_ENV
+                      echo "TASK=" >> $GITHUB_ENV
+                      echo "ROLE_NAME=${ROLE_NAME:-script}" >> $GITHUB_ENV
+                      echo "WORKFLOW_NAME=${WORKFLOW_NAME:-}" >> $GITHUB_ENV
+                      echo "WORKFLOW_STEP=${WORKFLOW_STEP:-}" >> $GITHUB_ENV
+                      echo "SCRIPT_PATH=${SCRIPT_PATH}" >> $GITHUB_ENV
+                      echo "SCRIPT_ARGS=${SCRIPT_ARGS}" >> $GITHUB_ENV
+                      echo "SCRIPT_TIMEOUT_MINUTES=${SCRIPT_TIMEOUT_MINUTES:-30}" >> $GITHUB_ENV
+                      exit 0
+                    fi
                     REASON=$(echo "$RESOLVE_OUTPUT" | grep '^REASON=' | cut -d= -f2-)
                     echo "Skipping agent: ${REASON:-no reason provided}"
                     echo "SKIP_AGENT=true" >> $GITHUB_ENV
@@ -646,8 +673,23 @@ jobs:
                 git config --local --unset http.https://github.com/.extraheader || true
                 git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git
 
+            - name: Run Script Step
+              if: always() && !cancelled() && env.RUN_SCRIPT == 'true'
+              timeout-minutes: 60
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+              run: |
+                echo "::group::[Step] Run Script Step (issue #541)"
+                echo "Running $SCRIPT_PATH args='$SCRIPT_ARGS' timeout=${SCRIPT_TIMEOUT_MINUTES}m"
+                SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
+                if [ ! -f "$SCRIPTS/features/run_script/run_script.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/features/run_script/run_script.py" ]; then
+                  SCRIPTS=".git-flow-ai-cache/.github/scripts"
+                fi
+                python3 "$SCRIPTS/features/run_script/run_script.py"
+                echo "::endgroup::"
+
             - name: Run OpenHands Agent
-              if: env.SKIP_AGENT == 'false'
+              if: env.SKIP_AGENT == 'false' && env.RUN_SCRIPT != 'true'
               id: openhands_agent
               timeout-minutes: 120
               env:
@@ -738,7 +780,7 @@ jobs:
                 stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" 2>&1 | tee console.log
 
             - name: Clean and Prepare Comment
-              if: always() && !cancelled() && env.SKIP_AGENT == 'false'
+              if: always() && !cancelled() && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true')
               run: |
                 SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
                 if [ ! -f "$SCRIPTS/prepare_comment.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/prepare_comment.py" ]; then
@@ -747,7 +789,7 @@ jobs:
                 python3 "$SCRIPTS/prepare_comment.py"
 
             - name: Add bot marker and workflow state to comment
-              if: always() && !cancelled() && env.SKIP_AGENT == 'false'
+              if: always() && !cancelled() && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true')
               shell: python
               run: |
                 import os
@@ -811,7 +853,7 @@ jobs:
                     f.write(prefix + content)
 
             - name: Post Agent Comment to GitHub
-              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true') && env.TARGET_NUMBER != '0'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
@@ -889,7 +931,7 @@ jobs:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
 
             - name: Post Additional Message Parts
-              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && hashFiles('final_message_parts_count.txt') != ''
+              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true') && env.TARGET_NUMBER != '0' && hashFiles('final_message_parts_count.txt') != ''
               run: |
                 PARTS_COUNT=$(cat final_message_parts_count.txt)
                 echo "Found $PARTS_COUNT message parts, posting parts 2 through $PARTS_COUNT"
