@@ -390,6 +390,129 @@ class TestSubWorkflowTraversal:
         }
 
 
+class TestThreeLevelNestingRuntime:
+    """Runtime-path (resolve_workflow_step) three-level nesting: the outer
+    parent pair must survive a nested re-entry so the chain unwinds one
+    level per return (issue #609, plan-orchestration -> tmp-impl ->
+    dev-review-loop shape)."""
+
+    @pytest.fixture
+    def three_level_dir(self, tmp_path: Path) -> Path:
+        # parent.mount -> workflow: mid (terminal mount)
+        (tmp_path / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Outer parent",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "analyze", "agent": "genius", "next": "mount"},
+                {"name": "mount", "workflow": "mid", "next": None},
+                {"name": "done", "agent": "review", "next": None},
+            ],
+        }))
+        # mid.run_1 -> workflow: leaf, next run_2; mid.run_2 -> workflow: leaf, terminal
+        (tmp_path / "mid.yaml").write_text(yaml.dump({
+            "name": "mid",
+            "description": "Intermediate loop driver",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "run_1", "workflow": "leaf", "next": "run_2"},
+                {"name": "run_2", "workflow": "leaf", "next": None},
+            ],
+        }))
+        # leaf: dev-review-loop shape
+        (tmp_path / "leaf.yaml").write_text(yaml.dump({
+            "name": "leaf",
+            "description": "Inner loop",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "implement", "agent": "dev", "next": "review"},
+                {"name": "review", "agent": "review", "next": None},
+            ],
+        }))
+        return tmp_path
+
+    def _r(self, tmp_path):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from resolve_workflow import resolve_workflow_step
+        return lambda task, workflow, step, **kw: resolve_workflow_step(
+            task=task, workflow_name=workflow, step_name=step,
+            workflows_dir=str(tmp_path), prompt_base="/tmp/prompts", **kw,
+        )
+
+    def test_outer_parent_survives_nested_reentry(self, three_level_dir):
+        """Entering mid.run_1 from inside the parent records the outer parent
+        pair; completing the first leaf loop re-enters run_2 while the state's
+        PARENT_WORKFLOW still records the outer parent (not clobbered)."""
+        r = self._r(three_level_dir)
+
+        # Inside leaf (entered via parent.mount -> mid.run_1 -> leaf): the
+        # on-record parent pair at this point is the immediate one,
+        # (parent, mount) per the runtime entry contract... the state pair at
+        # this point is the immediate one, (mid, run_1) after re-entry.
+        entry = r(
+            task="dev", workflow="mid", step="run_1", branch_key="",
+            parent_workflow="parent", parent_workflow_step="mount",
+        )
+        # Entry descends to the leaf; the outer pair must survive.
+        assert entry["ROLE_NAME"] == "dev"
+        assert entry["WORKFLOW_STEP"] == "implement"
+        assert entry["WORKFLOW_NAME"] == "mid"
+        assert entry["PARENT_WORKFLOW"] == "parent"
+        assert entry["PARENT_WORKFLOW_STEP"] == "mount"
+
+        # Complete the first leaf: leaf.review is terminal -> return to
+        # mid.run_1's next -> re-enter run_2 (another leaf descent) and the
+        # outer (parent, mount) pair must STILL be on record.
+        ret = r(
+            task="review", workflow="leaf", step="review", branch_key="",
+            parent_workflow="mid", parent_workflow_step="run_1",
+        )
+        assert ret["ROLE_NAME"] == "dev"
+        assert ret["WORKFLOW_STEP"] == "implement"
+        assert ret["WORKFLOW_NAME"] == "mid"
+        assert ret["WORKFLOW_STEP"] == "implement"
+        assert ret["PARENT_WORKFLOW"] == "parent"
+        assert ret["PARENT_WORKFLOW_STEP"] == "mount"
+
+        # Complete the second (terminal) leaf: mid is terminal, so the chain
+        # unwinds one more level to the outer parent: parent.resume (next
+        # after mount is None -> terminal), so with no further outer pair the
+        # run ends cleanly (Workflow completed) instead of losing the parent.
+        end = r(
+            task="review", workflow="leaf", step="review", branch_key="",
+            parent_workflow="mid", parent_workflow_step="run_2",
+        )
+        assert end["SKIP_AGENT"] == "true"
+        assert end["REASON"] == "Workflow completed"
+
+    def test_three_level_returns_to_outer_after_mid_terminates(self, three_level_dir):
+        """With a non-terminal mount (mid.mount next: done), completing the
+        last leaf unwinds to mid's terminal and then back to the outer
+        parent's step after the mount."""
+        # Rewrite parent so mount has a follow-up step.
+        (three_level_dir / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Outer parent",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "analyze", "agent": "genius", "next": "mount"},
+                {"name": "mount", "workflow": "mid", "next": "done"},
+                {"name": "done", "agent": "review", "next": None},
+            ],
+        }))
+        r = self._r(three_level_dir)
+        end = r(
+            task="review", workflow="leaf", step="review", branch_key="",
+            parent_workflow="mid", parent_workflow_step="run_2",
+        )
+        # mid.run_2 is terminal -> mid done -> outer parent.next after mount
+        assert end["ROLE_NAME"] == "review"
+        assert end["WORKFLOW_STEP"] == "done"
+        assert end["WORKFLOW_NAME"] == "parent"
+        assert end["PARENT_WORKFLOW"] == ""
+
+
 class TestCircularReference:
     """Test circular reference detection in step transitions."""
 

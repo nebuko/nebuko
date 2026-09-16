@@ -731,13 +731,28 @@ def _next_step_resolution(
             }
         if entry.get("SKIP_AGENT") == "true":
             return entry
+        # The flat parent-pair state holds one level, so on a nested re-entry
+        # the pair that must survive is the outermost one (issue #609): when
+        # an outer pair is on record and differs from this immediate parent,
+        # keep it so the *next* return-to-parent can resume that outer level.
+        # The immediate parent is re-derivable from the re-entry itself.
+        outer_wf = (
+            parent_workflow
+            if parent_workflow and parent_workflow != cur_wf.name
+            else cur_wf.name
+        )
+        outer_step = (
+            parent_step
+            if parent_workflow and parent_workflow != cur_wf.name
+            else next_step.name
+        )
         return {
             **entry,
             "WORKFLOW_NAME": cur_wf.name,
             "WORKFLOW_STEP": next_step_name,
             "WORKFLOW_NEXT": next_step.next or "",
-            "PARENT_WORKFLOW": cur_wf.name,
-            "PARENT_WORKFLOW_STEP": next_step.name,
+            "PARENT_WORKFLOW": outer_wf,
+            "PARENT_WORKFLOW_STEP": outer_step,
         }
 
     if next_step.script is not None:
@@ -839,7 +854,17 @@ def _resolve_return_to_parent(
     next_step_name = _condition_next_for(sub_wf_step, branch_key)
 
     if not next_step_name:
-        # Sub-workflow step was terminal in parent — workflow ends here
+        # Sub-workflow step was terminal in parent. With an outer pair on
+        # record (issue #609, three-level nesting) the chain must unwind one
+        # more level instead of ending: continue the return from the outer
+        # parent so the outermost workflow resumes after the mount step.
+        if outer_parent_workflow and outer_parent_workflow != parent_wf.name:
+            return _resolve_return_to_parent(
+                outer_parent_workflow, outer_parent_step, branch_key,
+                workflows_dir, prompt_base, scaffold_branch, local_workflows_dir,
+                "", "",
+            )
+        # Workflow ends here
         return {
             "ROLE_NAME": "",
             "PROMPT_LOCATION": "",
@@ -984,6 +1009,8 @@ def resolve_workflow_step(
         return _resolve_return_to_parent(
             parent_workflow, parent_workflow_step, branch_key, workflows_dir,
             prompt_base, scaffold_branch, local_workflows_dir,
+            outer_parent_workflow=parent_workflow,
+            outer_parent_step=parent_workflow_step,
         )
 
     # Check if this is a sub-workflow entry step (local or remote)
