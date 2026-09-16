@@ -48,6 +48,7 @@ def build_state(
     context_updates: Optional[dict[str, Any]] = None,
     parent_workflow: Optional[str] = None,
     parent_workflow_step: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
@@ -76,6 +77,9 @@ def build_state(
         context_updates: Key-value pairs to merge into current_context.
         parent_workflow: Parent workflow name (if in a sub-workflow).
         parent_workflow_step: Parent step name (if in a sub-workflow).
+        scaffold_branch: Feature branch the branch-mounted scaffold plan was
+            pushed to (issue #604). None preserves the previous state's
+            value; a non-None value overwrites it (a re-scaffold updates it).
         issue: Issue metadata (once set, persists across transitions).
         pull_request: PR metadata (once set, persists across transitions).
         resolution: Step resolution context from resolve_config (replaced each transition).
@@ -96,6 +100,7 @@ def build_state(
         base_workflow = ""
         base_parent_wf = None
         base_parent_step = None
+        base_scaffold_branch = None
         base_issue = None
         base_pr = None
     else:
@@ -106,6 +111,7 @@ def build_state(
         base_workflow = prev_state.workflow
         base_parent_wf = prev_state.parent_workflow
         base_parent_step = prev_state.parent_workflow_step
+        base_scaffold_branch = prev_state.scaffold_branch
         base_issue = prev_state.issue
         base_pr = prev_state.pull_request
 
@@ -148,6 +154,13 @@ def build_state(
     # Preserve PR info across transitions (once set, it persists)
     new_pr = pull_request or base_pr
 
+    # Preserve scaffold branch across transitions (issue #604): None means
+    # "no new scaffold info" (keep previous); a non-None value overwrites
+    # (a re-scaffold updates the branch — last write wins).
+    new_scaffold_branch = (
+        scaffold_branch if scaffold_branch is not None else base_scaffold_branch
+    )
+
     # Invariant: step/agent must not be silently dropped when a previous value
     # is recoverable (issue #458: empty WORKFLOW_STEP env produced states whose
     # scalar step disagreed with their own history).
@@ -166,6 +179,7 @@ def build_state(
         current_context=new_context,
         parent_workflow=new_parent_wf,
         parent_workflow_step=new_parent_step,
+        scaffold_branch=new_scaffold_branch,
         issue=new_issue,
         pull_request=new_pr,
         resolution=resolution,

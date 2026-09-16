@@ -66,6 +66,7 @@ def resolve_workflow_routing(
     workflows_dir: str,
     prompt_base: str,
     local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
 ) -> dict:
     """Resolve agent routing based on workflow definition or fallback.
 
@@ -73,6 +74,10 @@ def resolve_workflow_routing(
         agent_config: Parsed AGENT_RUN_CONFIG JSON.
         workflows_dir: Path to workflows/ directory.
         prompt_base: Path to prompt files directory.
+        local_workflows_dir: Optional consumer-local workflows dir (issue #529).
+        scaffold_branch: Branch carrying a branch-mounted child workflow;
+            enables fetch-on-miss for children absent from the local checkout
+            (issue #604).
 
     Returns:
         Dict with ROLE_NAME, PROMPT_LOCATION, WORKFLOW_NAME, WORKFLOW_STEP,
@@ -101,6 +106,7 @@ def resolve_workflow_routing(
             task, workflow_name, step_name, branch_key, workflows_dir, prompt_base,
             parent_workflow, parent_workflow_step,
             local_workflows_dir=local_workflows_dir,
+            scaffold_branch=scaffold_branch,
         )
 
     # Fallback: direct task-to-agent mapping (backward compatible)
@@ -196,11 +202,156 @@ def _is_terminal_step(step: WorkflowStep) -> bool:
     return False
 
 
+def _scaffold_child_reference(current_step: WorkflowStep) -> Optional[str]:
+    """Repo-root-relative reference for a branch-mounted child (issue #604).
+
+    Returns the step's raw ``path``/``workflow`` reference (as the author
+    wrote it) so the fetcher can locate the file inside the branch checkout,
+    or ``None`` when the step has no fetchable local reference (e.g. a
+    ``repo`` step, which is fetched elsewhere).
+    """
+    if current_step.path:
+        return current_step.path
+    if current_step.workflow:
+        return current_step.workflow
+    return None
+
+
+def _origin_repo_url() -> Optional[str]:
+    """Return the ``origin`` remote URL of the current checkout, or None.
+
+    In reusable-workflow mode the runner checks out the user's repo as the
+    primary working tree, so its ``origin`` is the correct fetch source for
+    a branch-mounted child (issue #604). Never raises.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _scaffold_fetch(name: str, scaffold_branch: Optional[str]) -> Optional[str]:
+    """Best-effort fetch of a branch-mounted workflow file (issue #604).
+
+    Returns an absolute path to the fetched workflow file, or ``None`` when
+    the fetch cannot be attempted or fails. Never raises: the miss is
+    surfaced by the caller (clean skip reason or the task fallback).
+    """
+    if not scaffold_branch or fetch_remote_workflow is None:
+        return None
+    origin = _origin_repo_url()
+    if not origin:
+        return None
+    try:
+        return fetch_remote_workflow(origin, scaffold_branch, name)
+    except (RuntimeError, FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def _fetch_scaffold_child(
+    current_step: WorkflowStep, scaffold_branch: Optional[str]
+) -> Optional[str]:
+    """Fetch a branch-mounted child workflow (sub-workflow entry, issue #604)."""
+    ref = _scaffold_child_reference(current_step)
+    if not ref:
+        return None
+    return _scaffold_fetch(ref, scaffold_branch)
+
+
+def _parent_step_child_reference(
+    parent_workflow: str,
+    parent_step_name: str,
+    workflows_dir: str,
+) -> Optional[str]:
+    """Child-workflow reference declared by a parent workflow step (issue #604).
+
+    The parent workflow lives in the default-branch checkout (e.g.
+    ``plan-orchestration.yaml``), so its step declaration (e.g.
+    ``workflow: tmp_impl/workflow.yaml``) is the authoritative reference for
+    where the branch-mounted child file lives. ``None`` when the parent or
+    step cannot be resolved locally.
+    """
+    if is_path_like_reference(parent_workflow):
+        resolved = resolve_workflow_reference(parent_workflow, workflows_dir)
+    else:
+        resolved = Path(workflows_dir) / f"{parent_workflow}.yaml"
+    if not Path(resolved).exists():
+        return None
+    try:
+        parent_wf = load_workflow(str(resolved))
+    except (FileNotFoundError, ValueError):
+        return None
+    for step in parent_wf.steps:
+        if step.name == parent_step_name:
+            return _scaffold_child_reference(step)
+    return None
+
+
+def _fetch_scaffold_workflow_file(
+    name: str,
+    workflows_dir: str,
+    scaffold_branch: Optional[str],
+    parent_workflow: str = "",
+    parent_workflow_step: str = "",
+) -> Optional[str]:
+    """Fetch a branch-mounted workflow file at step-entry re-resolution.
+
+    ``resolve_workflow_step`` loads the *current* workflow by name; a
+    branch-mounted child (e.g. the generated ``tmp_impl/workflow.yaml``) has
+    a name (e.g. ``implchild``) that does not match its file path, so the
+    fetch is driven by the child reference the parent step declared, with
+    the raw name and a ``.yaml`` suffix as fallbacks. ``None`` when the
+    fetch cannot be attempted or fails.
+    """
+    if not scaffold_branch or is_path_like_reference(name):
+        return None
+    if (Path(workflows_dir) / f"{name}.yaml").exists():
+        return None  # local hit wins; no fetch
+    refs = [name, f"{name}.yaml"] if not name.endswith(".yaml") else [name]
+    if parent_workflow and parent_workflow_step:
+        declared = _parent_step_child_reference(
+            parent_workflow, parent_workflow_step, workflows_dir
+        )
+        if declared:
+            refs = [declared]
+    for ref in refs:
+        path = _scaffold_fetch(ref, scaffold_branch)
+        if path:
+            return path
+    return None
+
+
+def _sub_workflow_miss_reason(
+    target_path: str, scaffold_branch: Optional[str]
+) -> dict:
+    """Clean SKIP_AGENT result for a child workflow that could not be loaded.
+
+    The reason names what was tried so a user can tell whether the branch was
+    absent, the state lacked ``scaffold_branch``, or the fetch failed (issue
+    #604). Always contains ``Sub-workflow not found``.
+    """
+    if scaffold_branch:
+        detail = f"default-branch checkout, scaffold_branch {scaffold_branch}; fetch failed"
+    else:
+        detail = "default-branch checkout (no scaffold_branch in state)"
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": f"Sub-workflow not found: {target_path} (tried: {detail})",
+    }
+
+
 def _resolve_sub_workflow_entry(
     current_step: WorkflowStep,
     workflow: WorkflowDefinition,
     workflows_dir: str,
     prompt_base: str,
+    scaffold_branch: Optional[str] = None,
 ) -> Optional[dict]:
     """Resolve entry into a sub-workflow from a step that references another workflow.
 
@@ -211,6 +362,11 @@ def _resolve_sub_workflow_entry(
 
     Loads the target workflow and returns the first step's resolution along with
     parent tracking information.
+
+    When the child file is absent from the local (default-branch) checkout and
+    ``scaffold_branch`` is set, the file is fetched from that branch via the
+    origin remote (issue #604) — this is how a branch-mounted child such as
+    ``tmp_impl/workflow.yaml`` resolves.
     """
     # Determine target workflow path
     if current_step.repo:
@@ -242,12 +398,22 @@ def _resolve_sub_workflow_entry(
     try:
         child_wf = load_workflow(target_path)
     except (FileNotFoundError, ValueError) as e:
-        print(f"Warning: Failed to load sub-workflow at '{target_path}': {e}",
-              file=sys.stderr)
-        return {
-            "SKIP_AGENT": "true",
-            "REASON": f"Sub-workflow not found: {target_path}",
-        }
+        # Fetch-on-miss (issue #604): a branch-mounted child (e.g.
+        # ``tmp_impl/workflow.yaml``) is absent from the default-branch
+        # checkout; fetch it from the state's ``scaffold_branch``.
+        fetched = _fetch_scaffold_child(current_step, scaffold_branch)
+        if fetched:
+            try:
+                child_wf = load_workflow(fetched)
+                target_path = fetched
+            except (FileNotFoundError, ValueError) as e2:
+                print(f"Warning: Fetched sub-workflow at '{fetched}' is unloadable: {e2}",
+                      file=sys.stderr)
+                return _sub_workflow_miss_reason(target_path, scaffold_branch)
+        else:
+            print(f"Warning: Failed to load sub-workflow at '{target_path}': {e}",
+                  file=sys.stderr)
+            return _sub_workflow_miss_reason(target_path, scaffold_branch)
 
     if not child_wf.steps:
         return {
@@ -285,15 +451,19 @@ def resolve_sub_workflow_entry(
     workflow: WorkflowDefinition,
     workflows_dir: str,
     prompt_base: str,
+    scaffold_branch: Optional[str] = None,
 ) -> Optional[dict]:
     """Public entry point for sub-workflow entry resolution.
 
     Delegates to :func:`_resolve_sub_workflow_entry` (same contract) so that
     other resolution paths (e.g. ``/workflow force-next-step``, issue #599)
     can force-enter a sub-workflow step with exactly the same child-loading
-    and parent-reference logic as the normal happy path.
+    and parent-reference logic as the normal happy path. ``scaffold_branch``
+    enables fetch-on-miss for branch-mounted children (issue #604).
     """
-    return _resolve_sub_workflow_entry(current_step, workflow, workflows_dir, prompt_base)
+    return _resolve_sub_workflow_entry(
+        current_step, workflow, workflows_dir, prompt_base, scaffold_branch
+    )
 
 
 def _resolve_return_to_parent(
@@ -419,6 +589,7 @@ def resolve_workflow_step(
     parent_workflow: str = "",
     parent_workflow_step: str = "",
     local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
 ) -> dict:
     """Resolve a specific step within a workflow.
 
@@ -435,6 +606,9 @@ def resolve_workflow_step(
         parent_workflow_step: Step name in parent that triggered the sub-workflow.
         local_workflows_dir: Optional consumer-local workflows dir with
             precedence over ``workflows_dir`` for plain-name lookups (issue #529).
+        scaffold_branch: Branch carrying a branch-mounted child workflow;
+            enables fetch-on-miss for children absent from the local checkout
+            (issue #604).
 
     Returns:
         Dict with routing variables.
@@ -449,6 +623,16 @@ def resolve_workflow_step(
             resolved = load_workflow_with_dirs(workflow_name, workflows_dir, local_workflows_dir or "")
         except FileNotFoundError:
             resolved = Path(workflows_dir) / f"{workflow_name}.yaml"
+    if not Path(resolved).exists():
+        # Fetch-on-miss (issue #604): a branch-mounted child workflow (e.g.
+        # the generated ``tmp_impl/workflow.yaml``) is absent from the
+        # default-branch checkout; fetch it from ``scaffold_branch``.
+        fetched = _fetch_scaffold_workflow_file(
+            workflow_name, workflows_dir, scaffold_branch,
+            parent_workflow, parent_workflow_step,
+        )
+        if fetched:
+            resolved = fetched
     if not Path(resolved).exists():
         # Fall back to direct task mapping if workflow file not found
         prompt_file = TASK_TO_PROMPT.get(task)
@@ -517,7 +701,9 @@ def resolve_workflow_step(
 
     # Check if this is a sub-workflow entry step (local or remote)
     if current_step.workflow or current_step.repo:
-        return _resolve_sub_workflow_entry(current_step, current_wf, workflows_dir, prompt_base)
+        return _resolve_sub_workflow_entry(
+            current_step, current_wf, workflows_dir, prompt_base, scaffold_branch
+        )
 
     # Resolve next step
     next_step: Optional[str] = None

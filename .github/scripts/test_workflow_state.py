@@ -77,6 +77,11 @@ class TestWorkflowStateSchema(unittest.TestCase):
         self.assertEqual(state.phase, "")
         self.assertEqual(state.version, 1)
 
+    def test_scaffold_branch_defaults_to_none(self):
+        """scaffold_branch is unset until the scaffold step runs (issue #604)."""
+        state = WorkflowState(workflow="test", agent="genius")
+        self.assertIsNone(state.scaffold_branch)
+
 
 class TestBuildState(unittest.TestCase):
     """Test build_state() pure state-transition function."""
@@ -433,6 +438,39 @@ class TestStateRoundtrip(unittest.TestCase):
         self.assertEqual(restored.parent_workflow_step, "subtask")
         self.assertEqual(restored.workflow, "child")
         self.assertEqual(restored.step, "impl")
+
+    def test_roundtrip_preserves_scaffold_branch(self):
+        """scaffold_branch survives serialize → deserialize (issue #604)."""
+        original = WorkflowState(
+            workflow="plan-orchestration",
+            step="plan",
+            agent="genius",
+            version=3,
+            scaffold_branch="feature/issue-604-scaffold-branch-fetch",
+        )
+
+        comment = to_git_comment(original)
+        restored = extract_state_from_body(comment)
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(
+            restored.scaffold_branch, "feature/issue-604-scaffold-branch-fetch"
+        )
+        self.assertEqual(restored.workflow, "plan-orchestration")
+
+    def test_roundtrip_omits_absent_scaffold_branch(self):
+        """States without a scaffold_branch omit the key and restore as None."""
+        original = WorkflowState(
+            workflow="default",
+            step="analyze",
+            agent="genius",
+        )
+
+        comment = to_git_comment(original)
+        restored = extract_state_from_body(comment)
+
+        self.assertIsNotNone(restored)
+        self.assertIsNone(restored.scaffold_branch)
 
 
 class TestExtractState(unittest.TestCase):

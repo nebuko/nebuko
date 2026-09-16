@@ -87,6 +87,7 @@ def _build_result(
         workflows_dir,
         prompt_base,
         local_workflows_dir,
+        scaffold_branch=config.get("config_scaffold_branch") or None,
     )
 
     if wf_result.get("SKIP_AGENT") == "true":

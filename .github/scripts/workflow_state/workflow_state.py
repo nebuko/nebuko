@@ -35,6 +35,11 @@ class WorkflowState(BaseModel):
             (pending tasks, constraints, decisions, etc.).
         parent_workflow: Parent workflow name if currently in a sub-workflow.
         parent_workflow_step: Step in parent that triggered the sub-workflow.
+        scaffold_branch: Feature branch the branch-mounted scaffold plan was
+            pushed to (issue #604). Set by the engine when the scaffold step
+            finishes; used as the fetch-on-miss ref so a sub-workflow file
+            that only exists on that branch (e.g. tmp_impl/workflow.yaml)
+            can still be resolved. None until the scaffold step has run.
         issue: Static issue metadata (number, URL, title, author, repo).
         pull_request: Static PR metadata (number, URL, title, author, repo).
     """
@@ -51,6 +56,7 @@ class WorkflowState(BaseModel):
     current_context: dict[str, Any] = Field(default_factory=dict)
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None
+    scaffold_branch: Optional[str] = None
     issue: Optional[IssueInfo] = None
     pull_request: Optional[PullRequestInfo] = None
     dispatch: Optional[Dispatch] = None
@@ -88,6 +94,7 @@ def go_next(
     context_updates: Optional[dict[str, Any]] = None,
     parent_workflow: Optional[str] = None,
     parent_workflow_step: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
@@ -110,6 +117,7 @@ def go_next(
         context_updates=context_updates,
         parent_workflow=parent_workflow,
         parent_workflow_step=parent_workflow_step,
+        scaffold_branch=scaffold_branch,
         issue=issue,
         pull_request=pull_request,
         resolution=resolution,

@@ -3,7 +3,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from workflow_state import WorkflowState, build_state
+from workflow_state import WorkflowState, build_state, go_next
 
 class TestBuildState(unittest.TestCase):
     """Test build_state() pure state-transition function."""
@@ -164,3 +164,90 @@ class TestBuildState(unittest.TestCase):
         )
         self.assertFalse(next_state.history[0].inject_context)
         self.assertTrue(next_state.history[1].inject_context)
+
+
+class TestBuildStateScaffoldBranch(unittest.TestCase):
+    """scaffold_branch persistence rules (issue #604, stub)."""
+
+    def test_initial_state_has_no_scaffold_branch(self):
+        state = build_state(
+            None,
+            workflow="plan-orchestration",
+            step="plan",
+            agent="genius",
+        )
+        self.assertIsNone(state.scaffold_branch)
+
+    def test_build_state_sets_scaffold_branch(self):
+        state = build_state(
+            None,
+            workflow="plan-orchestration",
+            step="plan",
+            agent="genius",
+            summary="Scaffolded plan",
+            scaffold_branch="feature/issue-604-scaffold-branch-fetch",
+        )
+        self.assertEqual(
+            state.scaffold_branch, "feature/issue-604-scaffold-branch-fetch"
+        )
+
+    def test_scaffold_branch_persists_when_not_repeated(self):
+        prev = build_state(
+            None,
+            workflow="plan-orchestration",
+            step="plan",
+            agent="genius",
+            scaffold_branch="feature/issue-604-scaffold-branch-fetch",
+        )
+        next_state = build_state(
+            prev,
+            workflow="plan-orchestration",
+            step="sub_impl",
+            agent="dev",
+        )
+        self.assertEqual(
+            next_state.scaffold_branch, "feature/issue-604-scaffold-branch-fetch"
+        )
+
+    def test_scaffold_branch_last_write_wins_on_rescaffold(self):
+        prev = build_state(
+            None,
+            workflow="plan-orchestration",
+            step="plan",
+            agent="genius",
+            scaffold_branch="feature/issue-604-old-scaffold",
+        )
+        next_state = build_state(
+            prev,
+            workflow="plan-orchestration",
+            step="plan",
+            agent="genius",
+            scaffold_branch="feature/issue-604-new-scaffold",
+        )
+        self.assertEqual(
+            next_state.scaffold_branch, "feature/issue-604-new-scaffold"
+        )
+
+    def test_go_next_threads_scaffold_branch(self):
+        state = go_next(
+            None,
+            workflow="plan-orchestration",
+            step="plan",
+            agent="genius",
+            scaffold_branch="feature/issue-604-scaffold-branch-fetch",
+        )
+        self.assertEqual(
+            state.scaffold_branch, "feature/issue-604-scaffold-branch-fetch"
+        )
+
+    def test_backward_compat_old_state_json_without_field(self):
+        """A state block written before #604 (no scaffold_branch key) loads cleanly."""
+        data = {
+            "version": 3,
+            "workflow": "plan-orchestration",
+            "step": "plan",
+            "agent": "genius",
+            "history": [{"step": "analyze", "agent": "genius", "summary": "ok"}],
+        }
+        state = WorkflowState.model_validate(data)
+        self.assertIsNone(state.scaffold_branch)
