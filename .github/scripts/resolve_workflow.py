@@ -346,6 +346,143 @@ def _sub_workflow_miss_reason(
     }
 
 
+def _load_child_workflow(
+    ref: str,
+    workflows_dir: str,
+    scaffold_branch: Optional[str],
+    fetch_cache: Optional[dict],
+) -> Optional[WorkflowDefinition]:
+    """Load a sub-workflow by name or repo-root-relative path (issue #609).
+
+    Tries the local (default-branch) checkout first; on a miss and a
+    ``scaffold_branch`` set, fetches the file from that branch (issue #604).
+    A per-entry ``fetch_cache`` (ref -> path) avoids re-fetching a branch-mounted
+    child more than once during a single nested descent. Returns ``None`` when
+    the workflow cannot be located or loaded.
+    """
+    resolved = str(resolve_workflow_reference(ref, workflows_dir))
+    if Path(resolved).exists():
+        try:
+            return load_workflow(resolved)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Warning: Failed to load sub-workflow '{resolved}': {e}", file=sys.stderr)
+            return None
+    fetched = None
+    if scaffold_branch:
+        if fetch_cache is not None and ref in fetch_cache:
+            fetched = fetch_cache[ref]
+        else:
+            fetched = _scaffold_fetch(ref, scaffold_branch)
+            if fetched and fetch_cache is not None:
+                fetch_cache[ref] = fetched
+    if fetched:
+        try:
+            return load_workflow(fetched)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Warning: Fetched sub-workflow '{fetched}' is unloadable: {e}", file=sys.stderr)
+            return None
+    print(f"Warning: Sub-workflow '{ref}' not found", file=sys.stderr)
+    return None
+
+
+def _resolve_sub_workflow_leaf(
+    child_wf: WorkflowDefinition,
+    entry_step: WorkflowStep,
+    workflows_dir: str,
+    scaffold_branch: Optional[str],
+    fetch_cache: dict,
+    chain: list,
+    visited: set,
+) -> dict:
+    """Resolve the innermost runnable leaf of a (possibly nested) child.
+
+    Descends through child first-steps that are themselves ``workflow:``/
+    ``path:`` sub-workflow references until a runnable leaf is found (an
+    ``agent`` step, or a deterministic ``script`` step). A child whose first
+    step has no runnable source is a leaf in its own right and is surfaced as
+    an error (issue #609). A visited-reference set bounds the descent against
+    circular references.
+
+    Returns a dict with:
+    - ``kind``: "agent" | "script" | "error"
+    - ``error``: reason string (only when kind == "error")
+    - ``agent``/``step``/``workflow``/``workflow_next``: leaf step details
+      (agent/script)
+    - ``skill``/``prompt``: merged skills + step prompt (parent entry-step
+      skills take precedence over the leaf step's own skills)
+    """
+    wf = child_wf
+    leaf = wf.steps[0] if wf.steps else None
+    while leaf is not None and not leaf.agent and leaf.script is None:
+        # A first-step with no runnable source is itself a leaf: surface it.
+        if not leaf.workflow and not leaf.path and not leaf.repo:
+            break
+        ref = leaf.workflow or leaf.path
+        if not ref:
+            break
+        if ref in visited:
+            return {
+                "kind": "error",
+                "error": (
+                    f"sub-workflow reference cycle detected while entering "
+                    f"'{entry_step.workflow or entry_step.path}' "
+                    f"(visited: {', '.join(sorted(visited))})"
+                ),
+            }
+        visited.add(ref)
+        child = _load_child_workflow(
+            ref, workflows_dir, scaffold_branch, fetch_cache
+        )
+        if child is None:
+            return {
+                "kind": "error",
+                "error": (
+                    f"Sub-workflow not found: {ref} "
+                    f"(nested under '{entry_step.workflow or entry_step.path}')"
+                ),
+            }
+        chain.append({"workflow": child.name, "step": leaf.name})
+        wf = child
+        leaf = child.steps[0] if child.steps else None
+        if leaf is None:
+            return {
+                "kind": "error",
+                "error": f"Sub-workflow '{child.name}' has no steps",
+            }
+
+    if leaf.script is not None:
+        return {
+            "kind": "script",
+            "step": leaf.name,
+            "workflow": wf.name,
+            "script_path": leaf.script.path,
+            "script_args": " ".join(leaf.script.args or []),
+            "script_timeout": leaf.script.timeout_minutes,
+            "skill": _skills_to_string(entry_step.skill or leaf.skill),
+            "prompt": leaf.prompt,
+        }
+    if leaf.agent:
+        return {
+            "kind": "agent",
+            "agent": leaf.agent,
+            "step": leaf.name,
+            "workflow": wf.name,
+            "workflow_next": wf.steps[1].name if len(wf.steps) > 1 else "",
+            "skill": _skills_to_string(entry_step.skill or leaf.skill),
+            "prompt": leaf.prompt,
+        }
+    # Runnable-source-less leaf (e.g. a first-step with only a ``repo`` ref):
+    # surface a precise reason instead of "Unknown agent 'None'" (issue #609).
+    return {
+        "kind": "error",
+        "error": (
+            f"Unknown agent '{leaf.agent}' in sub-workflow '{wf.name}' "
+            f"(step '{leaf.name}'; entered via "
+            f"'{entry_step.workflow or entry_step.path}')"
+        ),
+    }
+
+
 def _resolve_sub_workflow_entry(
     current_step: WorkflowStep,
     workflow: WorkflowDefinition,
@@ -369,6 +506,7 @@ def _resolve_sub_workflow_entry(
     ``tmp_impl/workflow.yaml`` resolves.
     """
     # Determine target workflow path
+    fetch_cache: dict = {}
     if current_step.repo:
         if fetch_remote_workflow is None:
             return {
@@ -385,6 +523,7 @@ def _resolve_sub_workflow_entry(
                 "SKIP_AGENT": "true",
                 "REASON": f"Failed to fetch remote workflow: {e}",
             }
+        fetch_cache["__repo__"] = target_path
     elif current_step.path:
         target_path = current_step.path
     elif current_step.workflow:
@@ -421,27 +560,49 @@ def _resolve_sub_workflow_entry(
             "REASON": f"Sub-workflow '{child_wf.name}' has no steps",
         }
 
-    # Resolve to the first step of the child workflow
-    first_step = child_wf.steps[0]
-    second_step = child_wf.steps[1].name if len(child_wf.steps) > 1 else ""
+    # Descend to the innermost runnable leaf (issue #609): the child's first
+    # step may itself reference a (further nested) sub-workflow.
+    leaf = _resolve_sub_workflow_leaf(
+        child_wf, current_step, workflows_dir, scaffold_branch,
+        fetch_cache, [], {child_wf.name},
+    )
+    if leaf["kind"] == "error":
+        return {"SKIP_AGENT": "true", "REASON": leaf["error"]}
 
-    prompt_file = TASK_TO_PROMPT.get(first_step.agent)
+    if leaf["kind"] == "script":
+        return {
+            "ROLE_NAME": "",
+            "RUN_SCRIPT": "true",
+            "SCRIPT_PATH": leaf["script_path"],
+            "SCRIPT_ARGS": leaf["script_args"],
+            "SCRIPT_TIMEOUT_MINUTES": str(leaf["script_timeout"] or ""),
+            "WORKFLOW_NAME": leaf["workflow"],
+            "WORKFLOW_STEP": leaf["step"],
+            "PARENT_WORKFLOW": workflow.name,
+            "PARENT_WORKFLOW_STEP": current_step.name,
+            "STEP_SKILLS": leaf["skill"],
+            "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
+            "SKIP_AGENT": "true",
+            "REASON": f"step '{leaf['step']}' in sub-workflow '{leaf['workflow']}' is a script step",
+        }
+
+    prompt_file = TASK_TO_PROMPT.get(leaf["agent"])
     if not prompt_file:
         return {
             "SKIP_AGENT": "true",
-            "REASON": f"Unknown agent '{first_step.agent}' in sub-workflow '{child_wf.name}'",
+            "REASON": leaf["error"],
         }
 
     return {
-        "ROLE_NAME": first_step.agent,
+        "ROLE_NAME": leaf["agent"],
         "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
-        "WORKFLOW_NAME": child_wf.name,
-        "WORKFLOW_STEP": first_step.name,
-        "WORKFLOW_NEXT": second_step,
+        "WORKFLOW_NAME": leaf["workflow"],
+        "WORKFLOW_STEP": leaf["step"],
+        "WORKFLOW_NEXT": leaf["workflow_next"],
         "PARENT_WORKFLOW": workflow.name,
         "PARENT_WORKFLOW_STEP": current_step.name,
-        "STEP_SKILLS": _skills_to_string(first_step.skill),
-        "STEP_PROMPT_FILE": _write_step_prompt_file(first_step.prompt),
+        "STEP_SKILLS": leaf["skill"],
+        "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
         "SKIP_AGENT": "false",
     }
 
