@@ -1066,6 +1066,8 @@ def _sub_workflow_entry_marker(
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
     scaffold_branch: Optional[str] = None,
+    outer_parent_workflow: str = "",
+    outer_parent_step: str = "",
 ) -> Optional[dict]:
     """Build the 'enter sub-workflow' result structure.
 
@@ -1084,13 +1086,27 @@ def _sub_workflow_entry_marker(
     if "error" in leaf:
         print(f"Warning: {leaf['error']}", file=sys.stderr)
         return None
+    # Prefer the outer parent pair when it differs from the immediate parent
+    # (issue #609): the flat parent-pair state can hold only one level, so the
+    # pair that survives a nested re-entry must be the outermost one. The
+    # immediate parent is re-derivable from the re-entry itself.
+    parent_wf_name = (
+        outer_parent_workflow
+        if outer_parent_workflow and outer_parent_workflow != parent_workflow.name
+        else parent_workflow.name
+    )
+    parent_step_name = (
+        outer_parent_step
+        if outer_parent_workflow and outer_parent_workflow != parent_workflow.name
+        else parent_step.name
+    )
     return {
         "entered_sub_workflow": True,
         "task": leaf["task"],
         "step": leaf["step"],
         "workflow": child_reference,
-        "parent_workflow": parent_workflow.name,
-        "parent_workflow_step": parent_step.name,
+        "parent_workflow": parent_wf_name,
+        "parent_workflow_step": parent_step_name,
     }
 
 
