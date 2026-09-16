@@ -319,6 +319,7 @@ def _resolve_dispatch_path(
             parent_workflow=parent_wf,
             parent_workflow_step=parent_wf_step,
             local_workflows_dir=local_workflows_dir,
+            scaffold_branch=getattr(prev_state, "scaffold_branch", None),
         )
         if wf_result:
             if wf_result.get("run_script"):
@@ -764,6 +765,7 @@ def _resolve_human_path(
     task = ""
     wf_fail_reason = ""
 
+    first_step_overrides: dict[str, str] = {}
     if wf_name and _SAFE_WF_NAME_RE.match(wf_name):
         try:
             wf_file = load_workflow_with_dirs(
@@ -773,6 +775,32 @@ def _resolve_human_path(
             task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
             if task:
                 wf_resolved = True
+            # Issue #609: a workflow whose first step mounts a sub-workflow
+            # (e.g. the scaffold's ``tmp-impl``) has no runnable first step —
+            # ``trigger.agents[0]`` alone would start with the wrong
+            # workflow/step state. Descend to the innermost runnable leaf and
+            # point the state at it (same contract as the force-next-step
+            # sub-workflow entry).
+            if wf_resolved and wf_def.steps and (
+                wf_def.steps[0].workflow or wf_def.steps[0].path
+                or wf_def.steps[0].repo
+            ):
+                entry = _sub_workflow_step_entry(
+                    wf_def.steps[0], wf_def, workflows_dir, prompt_base,
+                    scaffold_branch,
+                )
+                if entry.get("skip_reason"):
+                    wf_resolved = False
+                    wf_fail_reason = entry["skip_reason"]
+                    task = ""
+                else:
+                    task = entry["task"]
+                    first_step_overrides = {
+                        "config_step": entry["config_step"],
+                        "config_workflow": entry["config_workflow"],
+                        "config_parent_workflow": entry["config_parent_workflow"],
+                        "config_parent_workflow_step": entry["config_parent_workflow_step"],
+                    }
         except FileNotFoundError as e:
             # Multi-dir miss: the exception message enumerates every path
             # searched (issue #529).
@@ -796,10 +824,18 @@ def _resolve_human_path(
         task = pinned_task or extract_mention_agent(trigger_body) or ""
         wf_name = None
 
+    if not wf_resolved:
+        first_step_overrides = {}
+    if first_step_overrides:
+        # Nested first step (issue #609): the active workflow is the innermost
+        # leaf workflow, not the one named in the trigger.
+        config_workflow = first_step_overrides["config_workflow"]
+    else:
+        config_workflow = wf_name if wf_name and wf_resolved else ""
     result = {
         "task": task,
-        "config_workflow": wf_name if wf_name and wf_resolved else "",
-        "config_step": "",
+        "config_workflow": config_workflow,
+        "config_step": first_step_overrides.get("config_step", ""),
         "config_complexity": "medium",
         "config_reasoning": "none",
         "config_temperature": "",
@@ -811,8 +847,12 @@ def _resolve_human_path(
         "config_repetition_penalty": "",
         "config_debug": extract_debug_flag(trigger_body),
         "config_branch": "",
-        "config_parent_workflow": "",
-        "config_parent_workflow_step": "",
+        "config_parent_workflow": first_step_overrides.get(
+            "config_parent_workflow", ""
+        ),
+        "config_parent_workflow_step": first_step_overrides.get(
+            "config_parent_workflow_step", ""
+        ),
     }
     # Diagnostic for the terminal skip comment when /workflow failed and no
     # mention fallback produced a task (issue #529).
@@ -987,6 +1027,7 @@ def _resolve_workflow_next_step(
         parent_workflow=prev_state.parent_workflow or "",
         parent_workflow_step=prev_state.parent_workflow_step or "",
         local_workflows_dir=local_workflows_dir,
+        scaffold_branch=prev_state.scaffold_branch,
     )
     if wf_result:
         if wf_result.get("run_script"):
