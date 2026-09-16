@@ -195,6 +195,12 @@ def resolve_config(
     if config.get("SKIP_AGENT") == "true":
         return config
 
+    # Branch-mounted child fetch-on-miss (issue #604): carry the state's
+    # scaffold_branch into result-building so sub-workflow entry resolution
+    # can fetch children absent from the local (default-branch) checkout.
+    if prev_state is not None and prev_state.scaffold_branch:
+        config["config_scaffold_branch"] = prev_state.scaffold_branch
+
     result = _build_result(config, prompt_base, workflows_dir, local_workflows_dir=local_workflows_dir)
     if os.environ.get("DEBUG") or debug:
         print(f"DEBUG _build_result: {result}", file=sys.stderr)

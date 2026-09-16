@@ -37,6 +37,11 @@ from agent_script.sub_domains.split_plan.split_plan import (
     strip_split_plan,
     split_plan_summary,
 )
+from agent_script.sub_domains.scaffold_branch.scaffold_branch import (
+    extract_scaffold_branch,
+    scaffold_branch_summary,
+    strip_scaffold_branch,
+)
 from agent_script.sub_domains.message_splitter.message_splitter import split_message
 from agent_script.features.extract_recovery_trace.extract_recovery_trace import (
     extract_recovery_trace,
@@ -595,6 +600,7 @@ def build_output(
     args=None,
     prev_state: WorkflowState | None = None,
     split_plan_json: str | None = None,
+    scaffold_branch: str | None = None,
 ) -> dict:
     """
     Build workflow state and write output files.
@@ -609,12 +615,25 @@ def build_output(
         args: Parsed argparse namespace (unused, retained for compatibility).
         prev_state: Previous WorkflowState, or None to load from disk.
         split_plan_json: Pre-extracted split plan JSON, or None to extract from message.
+        scaffold_branch: Pre-extracted scaffold branch ref (issue #604), or
+            None to extract the SCAFFOLD_BRANCH marker from the message.
 
     Returns:
-        Dict with keys: 'workflow_state', 'split_plan_json', 'final_message'.
+        Dict with keys: 'workflow_state', 'split_plan_json', 'final_message',
+        'scaffold_branch'.
     """
     # ── Final response ───────────────────────────────────────────
     final_message = get_agent_final_response(conversation.state.events)
+
+    # ── Scaffold branch marker (issue #604) ──────────────────────
+    # Extracted before build_state so the value can be persisted this run.
+    # (None when pre-extracted by the caller; otherwise extracted here.)
+    if scaffold_branch is None:
+        scaffold_branch = extract_scaffold_branch(final_message)
+        if scaffold_branch is None and final_message and "SCAFFOLD_BRANCH:" in final_message:
+            # Marker present but malformed — warn, never crash the run.
+            logger.warning("SCAFFOLD_BRANCH marker found but is malformed; not persisted")
+            scaffold_branch = None
 
     # ── Latest-answer capture (issue #522) ────────────────────────
     # The full deliverable is the agent's last text answer; the finish
@@ -725,6 +744,7 @@ def build_output(
         dispatch=dispatch,
         function_call=function_call,
         inject_context=inject_context,
+        scaffold_branch=scaffold_branch,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 
@@ -735,6 +755,13 @@ def build_output(
     if split_plan_json:
         _save_split_plan(split_plan_json)
         final_message = _replace_split_plan_with_summary(final_message, split_plan_json)
+
+    # ── Scaffold branch marker (issue #604) ──────────────────────
+    if scaffold_branch:
+        final_message = strip_scaffold_branch(final_message)
+        if final_message:
+            final_message = final_message.rstrip() + f"\n\n{scaffold_branch_summary(scaffold_branch)}\n"
+        logger.info(f"Persisted scaffold_branch={scaffold_branch}")
 
     # ── Message splitting ────────────────────────────────────────
     # ctx reports are posted as a single collapsed comment (issue #557):
@@ -751,5 +778,6 @@ def build_output(
     return {
         "workflow_state": new_state,
         "split_plan_json": split_plan_json,
+        "scaffold_branch": scaffold_branch,
         "final_message": final_message,
     }
