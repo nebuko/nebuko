@@ -542,6 +542,8 @@ def _resolve_sub_workflow_entry(
     workflows_dir: str,
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
+    outer_parent_workflow: str = "",
+    outer_parent_step: str = "",
 ) -> Optional[dict]:
     """Resolve entry into a sub-workflow from a step that references another workflow.
 
@@ -623,6 +625,22 @@ def _resolve_sub_workflow_entry(
     if leaf["kind"] == "error":
         return {"SKIP_AGENT": "true", "REASON": leaf["error"]}
 
+    # The flat parent-pair state holds one level, so on a nested re-entry the
+    # pair that must survive is the outermost one (issue #609): when an outer
+    # pair is on record and differs from this immediate parent, keep it so the
+    # chain can unwind one level per return. The immediate parent is
+    # re-derivable from the re-entry itself.
+    parent_wf_name = (
+        outer_parent_workflow
+        if outer_parent_workflow and outer_parent_workflow != workflow.name
+        else workflow.name
+    )
+    parent_step_name = (
+        outer_parent_step
+        if outer_parent_workflow and outer_parent_workflow != workflow.name
+        else current_step.name
+    )
+
     if leaf["kind"] == "script":
         return {
             "ROLE_NAME": "",
@@ -632,8 +650,8 @@ def _resolve_sub_workflow_entry(
             "SCRIPT_TIMEOUT_MINUTES": str(leaf["script_timeout"] or ""),
             "WORKFLOW_NAME": leaf["workflow"],
             "WORKFLOW_STEP": leaf["step"],
-            "PARENT_WORKFLOW": workflow.name,
-            "PARENT_WORKFLOW_STEP": current_step.name,
+            "PARENT_WORKFLOW": parent_wf_name,
+            "PARENT_WORKFLOW_STEP": parent_step_name,
             "STEP_SKILLS": leaf["skill"],
             "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
             "SKIP_AGENT": "true",
@@ -656,8 +674,8 @@ def _resolve_sub_workflow_entry(
         "WORKFLOW_NAME": leaf["workflow"],
         "WORKFLOW_STEP": leaf["step"],
         "WORKFLOW_NEXT": leaf["workflow_next"],
-        "PARENT_WORKFLOW": workflow.name,
-        "PARENT_WORKFLOW_STEP": current_step.name,
+        "PARENT_WORKFLOW": parent_wf_name,
+        "PARENT_WORKFLOW_STEP": parent_step_name,
         "STEP_SKILLS": leaf["skill"],
         "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
         "SKIP_AGENT": "false",
@@ -722,7 +740,9 @@ def _next_step_resolution(
     """
     if next_step.workflow or next_step.path or next_step.repo:
         entry = _resolve_sub_workflow_entry(
-            next_step, cur_wf, workflows_dir, prompt_base, scaffold_branch
+            next_step, cur_wf, workflows_dir, prompt_base, scaffold_branch,
+            outer_parent_workflow=parent_workflow,
+            outer_parent_step=parent_step,
         )
         if entry is None:
             return {
@@ -731,29 +751,13 @@ def _next_step_resolution(
             }
         if entry.get("SKIP_AGENT") == "true":
             return entry
-        # The flat parent-pair state holds one level, so on a nested re-entry
-        # the pair that must survive is the outermost one (issue #609): when
-        # an outer pair is on record and differs from this immediate parent,
-        # keep it so the *next* return-to-parent can resume that outer level.
-        # The immediate parent is re-derivable from the re-entry itself.
-        outer_wf = (
-            parent_workflow
-            if parent_workflow and parent_workflow != cur_wf.name
-            else cur_wf.name
-        )
-        outer_step = (
-            parent_step
-            if parent_workflow and parent_workflow != cur_wf.name
-            else next_step.name
-        )
-        return {
-            **entry,
-            "WORKFLOW_NAME": cur_wf.name,
-            "WORKFLOW_STEP": next_step_name,
-            "WORKFLOW_NEXT": next_step.next or "",
-            "PARENT_WORKFLOW": outer_wf,
-            "PARENT_WORKFLOW_STEP": outer_step,
-        }
+        # Descend to the leaf (issue #609): keep the leaf workflow/step the
+        # entry resolved (``WORKFLOW_NAME``/``WORKFLOW_STEP``) rather than
+        # overriding back to the immediate reference. The outer parent pair
+        # (threaded in via ``outer_parent_*`` and the entry's prefer-outer
+        # logic) survives the flat state so the next return-to-parent resumes
+        # the outer level. The immediate parent is re-derivable from the graph.
+        return entry
 
     if next_step.script is not None:
         return {
@@ -792,6 +796,49 @@ def _next_step_resolution(
     }
 
 
+def _find_outer_parent(
+    workflow_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> Optional[tuple[str, str]]:
+    """Re-derive the immediate parent of ``workflow_name`` from the graph.
+
+    The runtime's flat state carries a single nesting level, so a three-level
+    nested sub-workflow (issue #609, e.g. ``parent -> mid -> leaf``) must
+    recover the *outer* level that is not on the state. Scanning the workflow
+    files for a step that references ``workflow_name`` (via a ``workflow:``
+    name reference) yields the outer ``(workflow, step)`` pair; that reference
+    edge is authoritative and lets the chain unwind one level per return.
+
+    Returns ``None`` when no workflow locally references ``workflow_name``
+    (it is not nested under a known parent) or it cannot be resolved. Only
+    plain-name ``workflow:`` references are matched — path/repo references
+    are ambiguous for reverse lookup and are out of scope here.
+    """
+    if not workflow_name or is_path_like_reference(workflow_name):
+        return None
+    candidates: list[Path] = [Path(workflows_dir)]
+    if local_workflows_dir:
+        candidates.append(Path(local_workflows_dir))
+    seen_files: set[str] = set()
+    for base in candidates:
+        if not base.exists():
+            continue
+        for wf_file in sorted(base.glob("*.yaml")) + sorted(base.glob("*.yml")):
+            key = str(wf_file.resolve())
+            if key in seen_files:
+                continue
+            seen_files.add(key)
+            try:
+                wf = load_workflow(str(wf_file))
+            except (FileNotFoundError, ValueError):
+                continue
+            for step in wf.steps:
+                if step.workflow == workflow_name:
+                    return (wf.name, step.name)
+    return None
+
+
 def _resolve_return_to_parent(
     parent_workflow_name: str,
     parent_workflow_step_name: str,
@@ -800,8 +847,7 @@ def _resolve_return_to_parent(
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
     local_workflows_dir: Optional[str] = None,
-    outer_parent_workflow: str = "",
-    outer_parent_step: str = "",
+    _visited: tuple[str, ...] = (),
 ) -> Optional[dict]:
     """Resolve returning to parent workflow after sub-workflow completion.
 
@@ -853,16 +899,33 @@ def _resolve_return_to_parent(
 
     next_step_name = _condition_next_for(sub_wf_step, branch_key)
 
+    # Re-derive the outer parent from the graph (issue #609, three-level
+    # nesting). The runtime's flat state carries only the immediate parent
+    # (e.g. ``mid``), so the *outer* pair (e.g. ``(parent, mount)``) is not on
+    # record and must be recovered from the workflow files. The reference edge
+    # is authoritative and lets the chain unwind one level per return. When
+    # the immediate parent is not nested under a known outer (top-level), the
+    # recorded parent is empty — the on-record ``outer_parent_*`` args carry
+    # the *immediate* parent (see the call site), not an outer level, so they
+    # are intentionally not used here.
+    graph_outer = _find_outer_parent(
+        parent_wf.name, workflows_dir, local_workflows_dir
+    )
+    eff_outer_wf = graph_outer[0] if graph_outer else ""
+    eff_outer_step = graph_outer[1] if graph_outer else ""
+
     if not next_step_name:
-        # Sub-workflow step was terminal in parent. With an outer pair on
-        # record (issue #609, three-level nesting) the chain must unwind one
-        # more level instead of ending: continue the return from the outer
-        # parent so the outermost workflow resumes after the mount step.
-        if outer_parent_workflow and outer_parent_workflow != parent_wf.name:
+        # Sub-workflow step was terminal in parent. With an outer pair the
+        # chain must unwind one more level instead of ending: continue the
+        # return from the outer parent so the outermost workflow resumes after
+        # the mount step. ``_visited`` bounds the recursion against reference
+        # cycles (issue #609).
+        if eff_outer_wf and eff_outer_wf != parent_wf.name \
+                and parent_wf.name not in _visited:
             return _resolve_return_to_parent(
-                outer_parent_workflow, outer_parent_step, branch_key,
+                eff_outer_wf, eff_outer_step, branch_key,
                 workflows_dir, prompt_base, scaffold_branch, local_workflows_dir,
-                "", "",
+                _visited=_visited + (parent_wf.name,),
             )
         # Workflow ends here
         return {
@@ -886,7 +949,7 @@ def _resolve_return_to_parent(
 
     return _next_step_resolution(
         next_step, next_step_name, parent_wf, workflows_dir, prompt_base,
-        scaffold_branch, outer_parent_workflow, outer_parent_step,
+        scaffold_branch, eff_outer_wf, eff_outer_step,
     )
 
 
@@ -1009,14 +1072,17 @@ def resolve_workflow_step(
         return _resolve_return_to_parent(
             parent_workflow, parent_workflow_step, branch_key, workflows_dir,
             prompt_base, scaffold_branch, local_workflows_dir,
-            outer_parent_workflow=parent_workflow,
-            outer_parent_step=parent_workflow_step,
         )
 
-    # Check if this is a sub-workflow entry step (local or remote)
+    # Check if this is a sub-workflow entry step (local or remote). The
+    # incoming parent pair (issue #609) is threaded through so a nested
+    # re-entry (outer ``parent`` -> ``mid`` -> ``leaf``) descends to the leaf
+    # while the outer pair survives the flat state.
     if current_step.workflow or current_step.repo:
         return _resolve_sub_workflow_entry(
-            current_step, current_wf, workflows_dir, prompt_base, scaffold_branch
+            current_step, current_wf, workflows_dir, prompt_base, scaffold_branch,
+            outer_parent_workflow=parent_workflow,
+            outer_parent_step=parent_workflow_step,
         )
 
     # Resolve next step
