@@ -1182,6 +1182,15 @@ def _sub_workflow_entry_marker(
     ``step`` is the leaf step to run. Returns ``None`` when the child
     cannot be loaded or has no runnable leaf; the caller then falls through
     to the no-runnable-source skip.
+
+    Invariant (trigger vs. runtime asymmetry): this marker records
+    ``workflow`` = the reference being entered, while the runtime entry path
+    (``_resolve_sub_workflow_entry``) records ``WORKFLOW_NAME`` = the innermost
+    leaf workflow. Both route correctly — the dispatch path re-resolves from
+    the reference step and the runtime entry is the state authority — but the
+    two must stay consistent in descent (same leaf, same skill merge); a
+    change to either side must preserve this invariant (pinned by
+    ``test_trigger_side_marker_matches_leaf``).
     """
     leaf = _resolve_entry_leaf_for_step(
         parent_step, workflows_dir, scaffold_branch, local_workflows_dir
