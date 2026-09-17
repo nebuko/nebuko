@@ -446,18 +446,16 @@ class TestThreeLevelNestingRuntime:
         PARENT_WORKFLOW still records the outer parent (not clobbered)."""
         r = self._r(three_level_dir)
 
-        # Inside leaf (entered via parent.mount -> mid.run_1 -> leaf): the
-        # on-record parent pair at this point is the immediate one,
-        # (parent, mount) per the runtime entry contract... the state pair at
-        # this point is the immediate one, (mid, run_1) after re-entry.
+        # Entering mid.run_1 with the outer (parent, mount) pair on record
+        # descends to the leaf; the entry runs in the leaf workflow while the
+        # outer parent pair must survive.
         entry = r(
             task="dev", workflow="mid", step="run_1", branch_key="",
             parent_workflow="parent", parent_workflow_step="mount",
         )
-        # Entry descends to the leaf; the outer pair must survive.
         assert entry["ROLE_NAME"] == "dev"
         assert entry["WORKFLOW_STEP"] == "implement"
-        assert entry["WORKFLOW_NAME"] == "mid"
+        assert entry["WORKFLOW_NAME"] == "leaf"
         assert entry["PARENT_WORKFLOW"] == "parent"
         assert entry["PARENT_WORKFLOW_STEP"] == "mount"
 
@@ -470,8 +468,7 @@ class TestThreeLevelNestingRuntime:
         )
         assert ret["ROLE_NAME"] == "dev"
         assert ret["WORKFLOW_STEP"] == "implement"
-        assert ret["WORKFLOW_NAME"] == "mid"
-        assert ret["WORKFLOW_STEP"] == "implement"
+        assert ret["WORKFLOW_NAME"] == "leaf"
         assert ret["PARENT_WORKFLOW"] == "parent"
         assert ret["PARENT_WORKFLOW_STEP"] == "mount"
 
@@ -511,6 +508,7 @@ class TestThreeLevelNestingRuntime:
         assert end["WORKFLOW_STEP"] == "done"
         assert end["WORKFLOW_NAME"] == "parent"
         assert end["PARENT_WORKFLOW"] == ""
+        assert end["PARENT_WORKFLOW_STEP"] == ""
 
 
 class TestCircularReference:
