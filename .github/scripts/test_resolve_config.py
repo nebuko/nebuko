@@ -2525,3 +2525,73 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
         self.assertEqual(result["WORKFLOW_STEP"], "do")
         self.assertEqual(result["PARENT_WORKFLOW"], "mid-wf")
         self.assertEqual(result["PARENT_WORKFLOW_STEP"], "run")
+
+    def test_force_next_step_exact_tmp_impl_shape(self):
+        """force-next-step on the exact issue #609 shape: a generated
+        workflow whose step references a nested sub-workflow (tmp-impl ->
+        dev-review-loop). The originally reported failure was
+        "force-next-step: Unknown agent 'None' in sub-workflow 'tmp-impl'";
+        the forced entry must descend to the leaf's runnable step."""
+        prompt_base, workflows_dir = self._setup_nested_dirs()
+        steps = []
+        for i in range(1, 7):
+            nxt = f"step_{i + 1}" if i < 6 else "null"
+            steps.append(
+                f"  - name: step_{i}\n"
+                f"    workflow: dev-review-loop\n"
+                f"    skill: [tmp_impl/skills/step_{i}]\n"
+                f"    next: {nxt}\n"
+            )
+        tmp_impl = (
+            "name: tmp-impl\n"
+            "description: dynamically generated per-step execution workflow\n"
+            "trigger:\n"
+            "  agents: [dev]\n"
+            "steps:\n" + "".join(steps)
+        )
+        with open(os.path.join(workflows_dir, "tmp-impl.yaml"), "w") as f:
+            f.write(tmp_impl)
+        with open(os.path.join(workflows_dir, "dev-review-loop.yaml"), "w") as f:
+            f.write(
+                "name: dev-review-loop\n"
+                "description: one implementation step + review loop\n"
+                "trigger:\n"
+                "  agents: [dev]\n"
+                "steps:\n"
+                "  - name: implement\n"
+                "    agent: dev\n"
+                "    next: review\n"
+                "  - name: review\n"
+                "    agent: review\n"
+                "    conditions:\n"
+                "      - on_result: approved\n"
+                "        next: null\n"
+                "      - on_result: rejected\n"
+                "        next: implement\n"
+            )
+
+        import json as _json
+        state_json = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(
+                {"version": 1, "workflow": "tmp-impl", "step": "step_1",
+                 "agent": "dev"}
+            )
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        result = resolve_config(
+            "/workflow force-next-step step_1\n\n" + state_json,
+            prompt_base,
+            workflows_dir,
+            is_bot=False,
+        )
+        # Descends to the leaf's runnable step, not a None agent
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["ROLE_NAME"], "dev")
+        self.assertEqual(result["WORKFLOW_NAME"], "dev-review-loop")
+        self.assertEqual(result["WORKFLOW_STEP"], "implement")
+        self.assertEqual(result["WORKFLOW_NEXT"], "review")
+        # Parent pair mirrors the tmp-impl reference step
+        self.assertEqual(result["PARENT_WORKFLOW"], "tmp-impl")
+        self.assertEqual(result["PARENT_WORKFLOW_STEP"], "step_1")

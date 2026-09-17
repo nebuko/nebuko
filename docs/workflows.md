@@ -4,7 +4,7 @@ Declarative multi-step agent chains. A workflow is a YAML file in `workflows/`
 that names an ordered set of steps; each step runs one agent (or mounts a
 sub-workflow), and routing between steps is driven by `next` and `conditions`.
 The full key-by-key grammar lives in
-[reference.md — Workflow YAML Grammar](./reference.md#workflow-yaml-grammar).
+[reference.md вАФ Workflow YAML Grammar](./reference.md#workflow-yaml-grammar).
 
 ---
 
@@ -44,7 +44,7 @@ steps:
   held after that step until a human releases it (see [Human Gates](#human-gates)).
 - Workflows can be started by an `@@mention` (matching `trigger.agents`), a
   `/workflow <name>` command, or a `dispatch` field pointing at them. Human
-  commands override state-based routing — see the routing cascade in
+  commands override state-based routing вАФ see the routing cascade in
   [architecture.md](./architecture.md#routing-cascade).
 
 ---
@@ -52,7 +52,7 @@ steps:
 ## Step Instructions (`prompt`)
 
 A step can carry a `prompt:` field with a standing instruction that is
-injected into that step's agent context every time the step runs — useful for
+injected into that step's agent context every time the step runs вАФ useful for
 repetitive per-workflow directives such as output-format contracts or analysis
 requirements.
 
@@ -69,14 +69,14 @@ steps:
 ```
 
 **Semantics & precedence.** The step prompt is a *standing instruction* for
-that step — it governs the format and behavior of that step. The issue body
+that step вАФ it governs the format and behavior of that step. The issue body
 remains the *task-specific* content and wins on task specifics; the role prompt
 stays the base identity. Injection order in the agent context:
-**role identity → step instruction → issue body/history** (section header:
-`### 🔴 STEP INSTRUCTION (from workflow.yaml)`).
+**role identity вЖТ step instruction вЖТ issue body/history** (section header:
+`### рЯФі STEP INSTRUCTION (from workflow.yaml)`).
 
 **Mechanics.** The resolver writes the prompt verbatim to
-`/tmp/step_prompt.md` and emits `STEP_PROMPT_FILE` (path only — the prompt may
+`/tmp/step_prompt.md` and emits `STEP_PROMPT_FILE` (path only вАФ the prompt may
 contain newlines). When the step has no `prompt`, the variable is empty and any
 stale file is removed, so existing workflows are unaffected. Multi-line YAML
 block scalars (`|` / `>`) are supported.
@@ -90,7 +90,7 @@ per-step directives that should live inline in the workflow. Use
 
 ## Human Gates
 
-`human_gate: true` is a security boundary enforced by the engine — not a
+`human_gate: true` is a security boundary enforced by the engine вАФ not a
 routing choice made by the agent. It guarantees that **no LLM can advance the
 workflow past a gated step on its own**; only a human action releases it.
 
@@ -102,7 +102,7 @@ Mechanics:
 2. A human reviews the output and runs `/workflow resume [optional feedback]`.
    This re-runs the gated step with the human's text injected into the agent's
    context.
-3. On that re-run the gate does **not** fire again — the human's resume is the
+3. On that re-run the gate does **not** fire again вАФ the human's resume is the
    authorization. If the agent approves immediately it advances to the next
    step; if it must rework based on the feedback, the result still advances
    once it emits `advance`.
@@ -119,7 +119,7 @@ never intercepted, and `loop` retries within a step are not intercepted.
 A step can be a **deterministic script run** instead of an agent: the engine
 executes a repo-local script, posts its raw output as a comment, and advances
 to the next step. The `script:` key is itself the step source (the nested
-object name is the kind — no separate `kind` field), like `agent:` or
+object name is the kind вАФ no separate `kind` field), like `agent:` or
 `workflow:`.
 
 ```yaml
@@ -139,18 +139,18 @@ Mechanics:
    instead of a task assignment; no agent is run for that step.
 2. The CI job executes the script in a dedicated "Run Script Step" step,
    bounded by a step-level timeout and an executor-level timeout.
-3. The executor posts a structured comment — a **PASS ✅ / FAIL ⚠️** banner,
+3. The executor posts a structured comment вАФ a **PASS вЬЕ / FAIL вЪ†пЄП** banner,
    the script path, args, exit code, duration, and the raw output in a fenced
-   code block (so trigger-like strings in the output stay inert) — and
+   code block (so trigger-like strings in the output stay inert) вАФ and
    advances the workflow state with a synthetic dispatch so the next step
    fires exactly as after an agent run.
 
 Result semantics (feeds the existing `conditions` mechanism):
 
-- Exit `0` → result `pass`; non-zero exit or timeout → result `fail`.
+- Exit `0` вЖТ result `pass`; non-zero exit or timeout вЖТ result `fail`.
 - If the step declares `conditions[]`, routing uses the matching branch
-  (e.g. `on_result: fail → dev`); otherwise it follows the declared `next`.
-- **A failing script still advances the workflow** in v1 — it does not hold
+  (e.g. `on_result: fail вЖТ dev`); otherwise it follows the declared `next`.
+- **A failing script still advances the workflow** in v1 вАФ it does not hold
   or terminate. The successor (usually an agent) receives the raw failure
   output and reacts. A `stop_on_fail` policy switch is a deferred
   enhancement.
@@ -161,7 +161,7 @@ Security notes:
   paths and `..` segments are rejected at parse time and re-verified at
   runtime (realpath containment inside the checkout).
 - The script runs in the same CI job with the job's full environment and
-  permissions — the same trust level as the workflow YAML itself. Secret
+  permissions вАФ the same trust level as the workflow YAML itself. Secret
   scrubbing / sandboxed execution are deferred enhancements.
 
 ---
@@ -170,22 +170,22 @@ Security notes:
 
 | Workflow | File | One-line description |
 |----------|------|---------------------|
-| `default` | [`default.yaml`](../workflows/default.yaml) | Standard dev chain: analyze → context → plan → implement → review |
-| `think` | [`think.yaml`](../workflows/think.yaml) | Thinking only — analyze + context + plan, no implementation |
+| `default` | [`default.yaml`](../workflows/default.yaml) | Standard dev chain: analyze вЖТ context вЖТ plan вЖТ implement вЖТ review |
+| `think` | [`think.yaml`](../workflows/think.yaml) | Thinking only вАФ analyze + context + plan, no implementation |
 | `review-only` | [`review-only.yaml`](../workflows/review-only.yaml) | Standalone single-shot code review |
 | `dev-review-loop` | [`dev-review-loop.yaml`](../workflows/dev-review-loop.yaml) | Reusable sub-workflow: one plan step with review, loops on rejection |
 | `plan-orchestration` | [`plan-orchestration.yaml`](../workflows/plan-orchestration.yaml) | Full multi-step plan lifecycle sharing one PR |
-| `spec-driven` | [`spec-driven.yaml`](../workflows/spec-driven.yaml) | Spec → stub (human-gated) → implement |
-| `spec-driven-impl` | [`spec-driven-impl.yaml`](../workflows/spec-driven-impl.yaml) | Plan → stub (human-gated) → implement |
+| `spec-driven` | [`spec-driven.yaml`](../workflows/spec-driven.yaml) | Spec вЖТ stub (human-gated) вЖТ implement |
+| `spec-driven-impl` | [`spec-driven-impl.yaml`](../workflows/spec-driven-impl.yaml) | Plan вЖТ stub (human-gated) вЖТ implement |
 | `debug` | [`debug.yaml`](../workflows/debug.yaml) | Direct single-agent debug call |
 | `demo-composition` | [`demo-composition.yaml`](../workflows/demo-composition.yaml) | Demo of sub-workflow composition |
 
 ### default
 
 ```
-analyze (genius) → context (ctx) → plan (genius) ──approved──► implement (dev) → review (review) ◆
-                                                    │rejected
-                                                    └────────► context (loop)
+analyze (genius) вЖТ context (ctx) вЖТ plan (genius) вФАвФАapprovedвФАвФАвЦЇ implement (dev) вЖТ review (review) вЧЖ
+                                                    вФВrejected
+                                                    вФФвФАвФАвФАвФАвФАвФАвФАвФАвЦЇ context (loop)
 ```
 
 Trigger: `@@genius`. The standard development cycle used when a human hands a
@@ -201,90 +201,90 @@ Example trigger:
 ### think
 
 ```
-analyze (genius) → context (ctx) → plan (genius) ◆
-                                └─ rejected ─► context (loop)
+analyze (genius) вЖТ context (ctx) вЖТ plan (genius) вЧЖ
+                                вФФвФА rejected вФАвЦЇ context (loop)
 ```
 
-Trigger: `@@genius`. Pure analysis — ends after the plan/answer is produced;
+Trigger: `@@genius`. Pure analysis вАФ ends after the plan/answer is produced;
 nothing is implemented. Use for "help me understand / define X" requests.
 
 ### review-only
 
 ```
-review (review) ◆
+review (review) вЧЖ
 ```
 
 Trigger: `@@review`. Standalone review of code without a prior implementation
-step in the same workflow — used for ad-hoc review requests and nightly review
+step in the same workflow вАФ used for ad-hoc review requests and nightly review
 (issue #161).
 
 ### dev-review-loop
 
 ```
-implement (dev) → review (review) ──approved──► ◆
-                              └─rejected─► implement (loop)
+implement (dev) вЖТ review (review) вФАвФАapprovedвФАвФАвЦЇ вЧЖ
+                              вФФвФАrejectedвФАвЦЇ implement (loop)
 ```
 
 Trigger: `@@dev`. A **reusable sub-workflow**: it executes a *single* plan
 step with review and loops until the reviewer approves. It is not typically
-started directly — it is referenced per-step from a dynamically generated
+started directly вАФ it is referenced per-step from a dynamically generated
 `tmp_impl/workflow.yaml` (see `plan-orchestration`).
 
 ### plan-orchestration
 
 ```
-architect (genius) → context (ctx) → plan (genius) ──approved──► scaffold (dev, skill: scaffold-plan)
-                                                   │rejected                │
-                                                   └────► plan (loop)       ▼
+architect (genius) вЖТ context (ctx) вЖТ plan (genius) вФАвФАapprovedвФАвФАвЦЇ scaffold (dev, skill: scaffold-plan)
+                                                   вФВrejected                вФВ
+                                                   вФФвФАвФАвФАвФАвЦЇ plan (loop)       вЦЉ
                                                             sub_impl (workflow: tmp_impl/workflow.yaml)
-                                                                         │
-                                                                         ▼
+                                                                         вФВ
+                                                                         вЦЉ
                                                        sub_clean (dev, skill: plan-cleanup)
-                                                                         │
-                                                    ┌────────────────────▼────────────────────┐
-                                                    ▼                                         │
-                                             final_review (review) ──rejected──► final_fix (dev, skill: final-fix)
-                                                                    │approved          │
-                                                                    └►◆◄────────────────┘
+                                                                         вФВ
+                                                    вФМвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвЦЉвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФР
+                                                    вЦЉ                                         вФВ
+                                             final_review (review) вФАвФАrejectedвФАвФАвЦЇ final_fix (dev, skill: final-fix)
+                                                                    вФВapproved          вФВ
+                                                                    вФФвЦЇвЧЖвЧДвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФАвФШ
 ```
 
 Trigger: `@@genius`. The full lifecycle for a **multi-step plan that shares a
 single PR** (issue #462):
 
-1. `architect` / `context` / `plan` — genius produces a structured plan; a
-   human approves it (reject → re-plan loop).
-2. `scaffold` — dev converts the approved `<planWorkflow>` JSON into
+1. `architect` / `context` / `plan` вАФ genius produces a structured plan; a
+   human approves it (reject вЖТ re-plan loop).
+2. `scaffold` вАФ dev converts the approved `<planWorkflow>` JSON into
    `tmp_impl/workflow.yaml`, a per-step sub-workflow (skill: `scaffold-plan`).
-3. `sub_impl` — **mounts** the generated sub-workflow as one step. Each plan
-   step runs through `dev-review-loop` (implement → review, loop on
+3. `sub_impl` вАФ **mounts** the generated sub-workflow as one step. Each plan
+   step runs through `dev-review-loop` (implement вЖТ review, loop on
    rejection).
-4. `sub_clean` — dev removes the `tmp_impl/` scaffolding (skill:
+4. `sub_clean` вАФ dev removes the `tmp_impl/` scaffolding (skill:
    `plan-cleanup`).
-5. `final_review` ↔ `final_fix` — one whole-PR review; rejections are
+5. `final_review` вЖФ `final_fix` вАФ one whole-PR review; rejections are
    addressed across all plan steps (skill: `final-fix`) and re-reviewed.
 
-This is the main demonstration of **sub-workflow composition** — a step
+This is the main demonstration of **sub-workflow composition** вАФ a step
 declaring `workflow:` instead of `agent:`, with a runtime-generated path.
 
 ### spec-driven
 
 ```
-spec (po) ──rejected──► spec
-     │approved
-     ▼
-architect_prepare_ctx (genius) → ctx_architect (ctx) → architect_review_ctx (genius)
-                                                        │rejected
-                                                        └► ctx_architect (loop)
-     │approved/default
-     ▼
-stub (dev, skill: stub-only) ◄──rejected── stub_review (review)
-     │                                       │approved/default
-     ▼                                       ▼
-                          stub_approval (genius, human_gate) ◄──rejected
-     │approved/default                            │
-     ▼                                            ▼
-implement (dev) ──rejected── review (review) → ◆
-                ▲______________________________│
+spec (po) вФАвФАrejectedвФАвФАвЦЇ spec
+     вФВapproved
+     вЦЉ
+architect_prepare_ctx (genius) вЖТ ctx_architect (ctx) вЖТ architect_review_ctx (genius)
+                                                        вФВrejected
+                                                        вФФвЦЇ ctx_architect (loop)
+     вФВapproved/default
+     вЦЉ
+stub (dev, skill: stub-only) вЧДвФАвФАrejectedвФАвФА stub_review (review)
+     вФВ                                       вФВapproved/default
+     вЦЉ                                       вЦЉ
+                          stub_approval (genius, human_gate) вЧДвФАвФАrejected
+     вФВapproved/default                            вФВ
+     вЦЉ                                            вЦЉ
+implement (dev) вФАвФАrejectedвФАвФА review (review) вЖТ вЧЖ
+                вЦ≤______________________________вФВ
 ```
 
 Trigger: `@@po`. Two **human gates**: the spec must be approved before any
@@ -295,15 +295,15 @@ logic). Review rejects send the dev back to fixing stubs or implementation.
 ### spec-driven-impl
 
 ```
-analyze (genius) → context (ctx) → plan (genius) ──approved──► stub (dev, stub-only)
-                                                   │rejected          │
-                                                   └► context         ▼
+analyze (genius) вЖТ context (ctx) вЖТ plan (genius) вФАвФАapprovedвФАвФАвЦЇ stub (dev, stub-only)
+                                                   вФВrejected          вФВ
+                                                   вФФвЦЇ context         вЦЉ
                                                             stub_review (review)
-                                                                     │
+                                                                     вФВ
                                                      stub_approval (genius, human_gate)
-                                                                     │approved
-                                                                     ▼
-                                                          implement (dev) ◆
+                                                                     вФВapproved
+                                                                     вЦЉ
+                                                          implement (dev) вЧЖ
 ```
 
 Trigger: `@@genius`. Same gate structure as `spec-driven`, but starts from the
@@ -313,16 +313,16 @@ human approval is the quality gate before implementation.
 ### debug
 
 ```
-debug (debug) ◆
+debug (debug) вЧЖ
 ```
 
-Trigger: `@@debug`. Single-agent call — the debug agent investigates unusual
+Trigger: `@@debug`. Single-agent call вАФ the debug agent investigates unusual
 agent behavior from past run logs and artifacts.
 
 ### demo-composition
 
 ```
-analyze (genius) → subtask (workflow: review-only) → finalize (genius) ◆
+analyze (genius) вЖТ subtask (workflow: review-only) вЖТ finalize (genius) вЧЖ
 ```
 
 Trigger: `@@genius`. Minimal example of **sub-workflow composition**: the
@@ -356,10 +356,19 @@ Rules:
 - Start by typing `@@<trigger agent>` in an issue, or use
   `/workflow my-workflow` to force it on an existing issue.
 - Local files take precedence over remotely fetched workflows of the same name
-  (zero-copy fetch — see [features.md](./features.md#remote-workflows-zero-copy)).
+  (zero-copy fetch вАФ see [features.md](./features.md#remote-workflows-zero-copy)).
 
 **Reusable sub-workflows** are just workflows referenced by `workflow:` in a
-step — `dev-review-loop` and `review-only` are the built-in examples. The
+step вАФ `dev-review-loop` and `review-only` are the built-in examples. The
 referenced path may be a workflow name (resolved against `workflows/`) or a
 relative file path (e.g., `tmp_impl/workflow.yaml`), which enables
 runtime-generated workflows.
+
+**Nested sub-workflows**: a step that references a workflow whose first step is
+itself a `workflow:` reference is supported (e.g. `tmp_impl` → `dev-review-loop`).
+On entry, the resolver descends to the innermost runnable leaf
+(`agent:` or `script:` step), up to a depth guard with cycle detection. `skill:`
+values declared on the referencing parent step propagate down to the leaf.
+Each sub-workflow's terminal return resumes only its *immediate* parent; an
+outer parent pair already on record survives nested re-entry, so the chain
+unwinds one level per return.
