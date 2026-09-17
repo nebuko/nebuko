@@ -594,6 +594,55 @@ class TestScaffoldShapeNestedEntry:
             "parent_workflow_step": "step_1",
         }
 
+    def test_reentry_carries_next_step_skill(self, scaffold_dir):
+        """After step_1's loop completes, state lands on (tmp-impl, step_2):
+        the descent re-enters dev-review-loop at implement and carries
+        step_2's skill (not step_1's)."""
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="tmp-impl", step_name="step_2",
+            branch_key="", workflows_dir=str(scaffold_dir),
+            prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["WORKFLOW_NAME"] == "dev-review-loop"
+        assert r["WORKFLOW_STEP"] == "implement"
+        assert r["STEP_SKILLS"] == "tmp_impl/skills/step_2"
+
+    def test_last_step_reentry_carries_last_skill(self, scaffold_dir):
+        """step_6 (next: null) re-enters the loop with step_6's skill — the
+        final plan item, not a stale earlier one."""
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="tmp-impl", step_name="step_6",
+            branch_key="", workflows_dir=str(scaffold_dir),
+            prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["STEP_SKILLS"] == "tmp_impl/skills/step_6"
+
+    def test_internal_reject_loop_stays_inside_leaf(self, scaffold_dir):
+        """The reject -> implement loop stays inside dev-review-loop: state
+        at (dev-review-loop, implement) with the nesting parent pair on record
+        does not fire return-to-parent — the parent pair is preserved and the
+        config is the leaf's own."""
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="dev-review-loop", step_name="implement",
+            branch_key="rejected", workflows_dir=str(scaffold_dir),
+            prompt_base="/tmp/prompts",
+            parent_workflow="tmp-impl", parent_workflow_step="step_1",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["WORKFLOW_NAME"] == "dev-review-loop"
+        assert r["WORKFLOW_STEP"] == "implement"
+        assert r["WORKFLOW_NEXT"] == "review"
+        assert r["PARENT_WORKFLOW"] == "tmp-impl"
+        assert r["PARENT_WORKFLOW_STEP"] == "step_1"
+
 
 class TestNestedEntrySkillPrecedence:
     """Skill merge during nested descent (issue #609): the entry step's
