@@ -2420,3 +2420,108 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
+
+
+class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
+    """Plain /workflow trigger on a workflow whose first step mounts a sub-workflow
+    whose first step is itself a sub-workflow reference (three-level nesting,
+    issue #609: plan-orchestration -> tmp-impl -> dev-review-loop shape).
+
+    The trigger path must descend to the innermost runnable leaf and keep the
+    outermost parent pair on record so the flat parent-pair state survives the
+    nesting (the chain unwinds one level per return).
+    """
+
+    @staticmethod
+    def _nested_fixtures_yaml():
+        return {
+            "parent-wf.yaml": (
+                "name: parent-wf\n"
+                "description: outer parent\n"
+                "trigger:\n"
+                "  agents: [dev]\n"
+                "steps:\n"
+                "  - name: mount\n"
+                "    workflow: mid-wf\n"
+                "    next: null\n"
+            ),
+            "mid-wf.yaml": (
+                "name: mid-wf\n"
+                "description: middle level\n"
+                "trigger:\n"
+                "  agents: [dev]\n"
+                "steps:\n"
+                "  - name: run\n"
+                "    workflow: leaf-wf\n"
+                "    skill: [mid_skills/skill_a]\n"
+                "    next: null\n"
+            ),
+            "leaf-wf.yaml": (
+                "name: leaf-wf\n"
+                "description: innermost loop\n"
+                "trigger:\n"
+                "  agents: [dev]\n"
+                "steps:\n"
+                "  - name: do\n"
+                "    agent: dev\n"
+                "    next: check\n"
+                "  - name: check\n"
+                "    agent: review\n"
+                "    conditions:\n"
+                "      - on_result: approved\n"
+                "        next: null\n"
+                "      - on_result: rejected\n"
+                "        next: do\n"
+            ),
+        }
+
+    def _setup_nested_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        for fname, content in self._nested_fixtures_yaml().items():
+            with open(os.path.join(workflows_dir, fname), "w") as f:
+                f.write(content)
+        return prompt_base, workflows_dir
+
+    def test_plain_trigger_descends_to_innermost_leaf(self):
+        """A plain /workflow trigger on a nested-first-step workflow descends to the leaf."""
+        prompt_base, workflows_dir = self._setup_nested_dirs()
+        body = "/workflow parent-wf\n\nstart the nested plan"
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["ROLE_NAME"], "dev")
+        self.assertEqual(result["WORKFLOW_NAME"], "leaf-wf")
+        self.assertEqual(result["WORKFLOW_STEP"], "do")
+        self.assertEqual(result["WORKFLOW_NEXT"], "check")
+
+    def test_plain_trigger_outer_parent_pair_survives(self):
+        """The outermost parent pair survives the nested descent into the flat state."""
+        prompt_base, workflows_dir = self._setup_nested_dirs()
+        body = "/workflow parent-wf\n\nstart the nested plan"
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        self.assertEqual(result["PARENT_WORKFLOW"], "parent-wf")
+        self.assertEqual(result["PARENT_WORKFLOW_STEP"], "mount")
+
+    def test_plain_trigger_two_level_nesting_immediate_parent(self):
+        """With only two levels, the immediate parent pair is recorded."""
+        prompt_base, workflows_dir = self._setup_nested_dirs()
+        # Triggering mid-wf directly: parent-wf is out of the picture, so the
+        # recorded pair is the intermediate level's reference step.
+        body = "/workflow mid-wf\n\nstart the loop"
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["WORKFLOW_NAME"], "leaf-wf")
+        self.assertEqual(result["WORKFLOW_STEP"], "do")
+        self.assertEqual(result["PARENT_WORKFLOW"], "mid-wf")
+        self.assertEqual(result["PARENT_WORKFLOW_STEP"], "run")
