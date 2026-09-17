@@ -424,6 +424,7 @@ def _resolve_entry_leaf_for_step(
     leaf = _resolve_sub_workflow_leaf(
         child, step, workflows_dir, scaffold_branch, {}, {child.name},
         parent_skill=step.skill,
+        local_workflows_dir=local_workflows_dir,
     )
     if leaf["kind"] == "error":
         return {"error": leaf["error"]}
@@ -442,6 +443,7 @@ def _resolve_sub_workflow_leaf(
     fetch_cache: dict,
     visited: set,
     parent_skill: Optional[list] = None,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve the innermost runnable leaf of a (possibly nested) child.
 
@@ -480,7 +482,8 @@ def _resolve_sub_workflow_leaf(
             }
         visited.add(ref)
         child = _load_child_workflow(
-            ref, workflows_dir, scaffold_branch, fetch_cache
+            ref, workflows_dir, scaffold_branch, fetch_cache,
+            local_workflows_dir,
         )
         if child is None:
             return {
@@ -544,6 +547,7 @@ def _resolve_sub_workflow_entry(
     scaffold_branch: Optional[str] = None,
     outer_parent_workflow: str = "",
     outer_parent_step: str = "",
+    local_workflows_dir: Optional[str] = None,
 ) -> Optional[dict]:
     """Resolve entry into a sub-workflow from a step that references another workflow.
 
@@ -621,6 +625,7 @@ def _resolve_sub_workflow_entry(
         child_wf, current_step, workflows_dir, scaffold_branch,
         fetch_cache, {child_wf.name},
         parent_skill=current_step.skill,
+        local_workflows_dir=local_workflows_dir,
     )
     if leaf["kind"] == "error":
         return {"SKIP_AGENT": "true", "REASON": leaf["error"]}
@@ -688,6 +693,7 @@ def resolve_sub_workflow_entry(
     workflows_dir: str,
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
 ) -> Optional[dict]:
     """Public entry point for sub-workflow entry resolution.
 
@@ -698,7 +704,8 @@ def resolve_sub_workflow_entry(
     enables fetch-on-miss for branch-mounted children (issue #604).
     """
     return _resolve_sub_workflow_entry(
-        current_step, workflow, workflows_dir, prompt_base, scaffold_branch
+        current_step, workflow, workflows_dir, prompt_base, scaffold_branch,
+        local_workflows_dir=local_workflows_dir,
     )
 
 
@@ -729,6 +736,7 @@ def _next_step_resolution(
     scaffold_branch: Optional[str],
     parent_workflow: str,
     parent_step: str,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve the parent's next step, re-entering a nested reference.
 
@@ -743,6 +751,7 @@ def _next_step_resolution(
             next_step, cur_wf, workflows_dir, prompt_base, scaffold_branch,
             outer_parent_workflow=parent_workflow,
             outer_parent_step=parent_step,
+            local_workflows_dir=local_workflows_dir,
         )
         if entry is None:
             return {
@@ -949,7 +958,7 @@ def _resolve_return_to_parent(
 
     return _next_step_resolution(
         next_step, next_step_name, parent_wf, workflows_dir, prompt_base,
-        scaffold_branch, eff_outer_wf, eff_outer_step,
+        scaffold_branch, eff_outer_wf, eff_outer_step, local_workflows_dir,
     )
 
 
@@ -1083,6 +1092,7 @@ def resolve_workflow_step(
             current_step, current_wf, workflows_dir, prompt_base, scaffold_branch,
             outer_parent_workflow=parent_workflow,
             outer_parent_step=parent_workflow_step,
+            local_workflows_dir=local_workflows_dir,
         )
 
     # Resolve next step

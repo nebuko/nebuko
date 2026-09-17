@@ -521,6 +521,7 @@ def _sub_workflow_step_entry(
     workflows_dir: str,
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Step-entry result for a ``workflow``/``repo``/``path`` step (issue #599).
 
@@ -531,7 +532,8 @@ def _sub_workflow_step_entry(
     are absent from the local (default-branch) checkout (issue #604).
     """
     entry = resolve_sub_workflow_entry(
-        step, wf_def, workflows_dir, prompt_base, scaffold_branch
+        step, wf_def, workflows_dir, prompt_base, scaffold_branch,
+        local_workflows_dir=local_workflows_dir,
     )
     if not entry or entry.get("SKIP_AGENT") == "true":
         reason = (entry or {}).get("REASON", f"step '{step.name}' is not a valid sub-workflow step")
@@ -552,6 +554,7 @@ def _resolve_step_entry(
     workflows_dir: str,
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve the dispatchable entry for a force-next-step target (issue #599).
 
@@ -566,7 +569,8 @@ def _resolve_step_entry(
         return _script_step_entry(step)
     if step.workflow or step.repo or step.path:
         return _sub_workflow_step_entry(
-            step, wf_def, workflows_dir, prompt_base, scaffold_branch
+            step, wf_def, workflows_dir, prompt_base, scaffold_branch,
+            local_workflows_dir,
         )
     return {
         "skip_reason": f"force-next-step: step '{step.name}' has no runnable source",
@@ -708,7 +712,7 @@ def _resolve_human_path(
                 }
             entry = _resolve_step_entry(
                 target_step_def, wf_def, workflows_dir, prompt_base,
-                scaffold_branch,
+                scaffold_branch, local_workflows_dir,
             )
             if entry.get("skip_reason"):
                 return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
@@ -745,7 +749,7 @@ def _resolve_human_path(
                 }
             entry = _resolve_step_entry(
                 next_step_def, wf_def, workflows_dir, prompt_base,
-                scaffold_branch,
+                scaffold_branch, local_workflows_dir,
             )
             if entry.get("skip_reason"):
                 return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
@@ -787,7 +791,7 @@ def _resolve_human_path(
             ):
                 entry = _sub_workflow_step_entry(
                     wf_def.steps[0], wf_def, workflows_dir, prompt_base,
-                    scaffold_branch,
+                    scaffold_branch, local_workflows_dir,
                 )
                 if entry.get("skip_reason"):
                     wf_resolved = False
