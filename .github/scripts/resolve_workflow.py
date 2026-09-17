@@ -327,6 +327,44 @@ def _fetch_scaffold_workflow_file(
     return None
 
 
+_WORKFLOW_FILE_SUFFIXES = (".yaml", ".yml")
+
+# Bound on sub-workflow nesting depth (review round 2, issue #609): the
+# cycle guard covers infinite descent, but a deep non-cyclic chain must also
+# terminate instead of recursing unbounded.
+_MAX_SUB_WORKFLOW_DEPTH = 10
+
+
+def _workflow_ref_stem(ref: str) -> str:
+    """Return the canonical file stem of a workflow reference.
+
+    Used for path-reference matching (issue #609): two references denote
+    the same workflow file when their stems agree.
+    """
+    base = ref.rsplit("/", 1)[-1]
+    for suffix in _WORKFLOW_FILE_SUFFIXES:
+        if base.lower().endswith(suffix):
+            return base[: -len(suffix)]
+    return base
+
+
+def _ref_matches_workflow(
+    ref: Optional[str], workflow_name: str, target_stem: str
+) -> bool:
+    """Return True when a step's ``workflow:`` reference targets
+    ``workflow_name``.
+
+    Plain-name references match on exact name; path-like references match
+    on the file stem so a child mounted as ``tmp_impl/workflow.yaml`` is
+    found when its loaded ``name`` is used in the state (issue #609).
+    """
+    if not ref:
+        return False
+    if ref == workflow_name:
+        return True
+    return is_path_like_reference(ref) and _workflow_ref_stem(ref) == target_stem
+
+
 def _sub_workflow_miss_reason(
     target_path: str, scaffold_branch: Optional[str]
 ) -> dict:
@@ -451,8 +489,13 @@ def _resolve_sub_workflow_leaf(
     ``path:`` sub-workflow references until a runnable leaf is found (an
     ``agent`` step, or a deterministic ``script`` step). A child whose first
     step has no runnable source is a leaf in its own right and is surfaced as
-    an error (issue #609). A visited-reference set bounds the descent against
-    circular references.
+    an error (issue #609).
+
+    Two guards bound the descent (review round 2): a *cycle* guard keyed on
+    the loaded workflow's canonical ``name`` (plus a pre-load check on the
+    reference stem, so a path-based self/cycle is caught before its fetch),
+    and a *max-depth* bound (``_MAX_SUB_WORKFLOW_DEPTH``) so a deep
+    non-cyclic chain terminates instead of unbounded descent.
 
     Returns a dict with:
     - ``kind``: "agent" | "script" | "error"
@@ -462,8 +505,10 @@ def _resolve_sub_workflow_leaf(
     - ``skill``/``prompt``: merged skills + step prompt (parent entry-step
       skills take precedence over the leaf step's own skills)
     """
+    entry_ref = entry_step.workflow or entry_step.path
     wf = child_wf
     leaf = wf.steps[0] if wf.steps else None
+    depth = 0
     while leaf is not None and not leaf.agent and leaf.script is None:
         # A first-step with no runnable source is itself a leaf: surface it.
         if not leaf.workflow and not leaf.path and not leaf.repo:
@@ -471,16 +516,28 @@ def _resolve_sub_workflow_leaf(
         ref = leaf.workflow or leaf.path
         if not ref:
             break
-        if ref in visited:
+        # Pre-load cycle check on the reference stem: catches a path-based
+        # self/cycle (stem matches a visited name) before paying for the
+        # fetch. The authoritative check is on the loaded child's name below.
+        if _workflow_ref_stem(ref) in visited:
             return {
                 "kind": "error",
                 "error": (
                     f"sub-workflow reference cycle detected while entering "
-                    f"'{entry_step.workflow or entry_step.path}' "
-                    f"(visited: {', '.join(sorted(visited))})"
+                    f"'{entry_ref}' (at '{ref}'; "
+                    f"visited: {', '.join(sorted(visited))})"
                 ),
             }
-        visited.add(ref)
+        if depth >= _MAX_SUB_WORKFLOW_DEPTH:
+            return {
+                "kind": "error",
+                "error": (
+                    f"max sub-workflow nesting depth "
+                    f"({_MAX_SUB_WORKFLOW_DEPTH}) exceeded while entering "
+                    f"'{entry_ref}' (at '{ref}'); "
+                    f"visited: {', '.join(sorted(visited))}"
+                ),
+            }
         child = _load_child_workflow(
             ref, workflows_dir, scaffold_branch, fetch_cache,
             local_workflows_dir,
@@ -490,9 +547,23 @@ def _resolve_sub_workflow_leaf(
                 "kind": "error",
                 "error": (
                     f"Sub-workflow not found: {ref} "
-                    f"(nested under '{entry_step.workflow or entry_step.path}')"
+                    f"(nested under '{entry_ref}')"
                 ),
             }
+        # Canonical cycle check on the loaded name: a reference may be a
+        # path whose stem differs from the workflow's declared name, so the
+        # name (already in ``visited`` for the top child) is the true key.
+        if child.name in visited:
+            return {
+                "kind": "error",
+                "error": (
+                    f"sub-workflow reference cycle detected while entering "
+                    f"'{entry_ref}' (at '{ref}'; "
+                    f"visited: {', '.join(sorted(visited))})"
+                ),
+            }
+        visited.add(child.name)
+        depth += 1
         # Carry the first declared skill down through the descent: a
         # per-plan skill (issue #609) may sit on an intermediate
         # reference step rather than the original entry step.
@@ -769,9 +840,18 @@ def _next_step_resolution(
         return entry
 
     if next_step.script is not None:
+        # Deterministic script successor (issue #541): same contract as the
+        # nested-entry script branch and the ``run_script`` path in
+        # ``build_result`` — SKIP_AGENT stays true so the agent section is
+        # skipped, and RUN_SCRIPT lets the GHA script gate (and the posting
+        # pipeline) pick the run up and advance state. No REASON is emitted,
+        # so the "Workflow stopped" skip comment never fires (issue #609).
         return {
             "ROLE_NAME": "",
-            "PROMPT_LOCATION": "",
+            "RUN_SCRIPT": "true",
+            "SCRIPT_PATH": next_step.script.path,
+            "SCRIPT_ARGS": " ".join(next_step.script.args or []),
+            "SCRIPT_TIMEOUT_MINUTES": str(next_step.script.timeout_minutes or ""),
             "WORKFLOW_NAME": cur_wf.name,
             "WORKFLOW_STEP": next_step_name,
             "WORKFLOW_NEXT": next_step.next or "",
@@ -779,10 +859,7 @@ def _next_step_resolution(
             "PARENT_WORKFLOW_STEP": parent_step,
             "STEP_SKILLS": _skills_to_string(next_step.skill),
             "STEP_PROMPT_FILE": "",
-            "SCRIPT_PATH": next_step.script.path,
-            "SCRIPT_ARGS": " ".join(next_step.script.args or []),
-            "SCRIPT_TIMEOUT_MINUTES": str(next_step.script.timeout_minutes or ""),
-            "SKIP_AGENT": "false",
+            "SKIP_AGENT": "true",
         }
 
     prompt_file = TASK_TO_PROMPT.get(next_step.agent)
@@ -820,20 +897,33 @@ def _find_outer_parent(
     edge is authoritative and lets the chain unwind one level per return.
 
     Returns ``None`` when no workflow locally references ``workflow_name``
-    (it is not nested under a known parent) or it cannot be resolved. Only
-    plain-name ``workflow:`` references are matched — path/repo references
-    are ambiguous for reverse lookup and are out of scope here.
+    (it is not nested under a known parent). Plain names are matched exactly;
+    path-like references are matched by file stem so a child mounted as
+    ``tmp_impl/workflow.yaml`` is found when its loaded ``name`` is recorded
+    in the state. Repo references are out of scope for reverse lookup.
+
+    Raises ``ValueError`` when multiple distinct workflows reference the
+    child: the outer pair is then ambiguous and resuming the first match
+    would silently pick the wrong workflow (review round 2, issue #609).
+    Multiple steps inside a *single* referrer workflow (e.g. a plan whose
+    steps each mount the same reusable loop) are not ambiguous about which
+    workflow to resume; the first such step is used.
     """
-    if not workflow_name or is_path_like_reference(workflow_name):
+    if not workflow_name:
         return None
+    target_stem = _workflow_ref_stem(workflow_name)
     candidates: list[Path] = [Path(workflows_dir)]
     if local_workflows_dir:
         candidates.append(Path(local_workflows_dir))
+    referrers: list[tuple[str, str]] = []
     seen_files: set[str] = set()
     for base in candidates:
         if not base.exists():
             continue
-        for wf_file in sorted(base.glob("*.yaml")) + sorted(base.glob("*.yml")):
+        # Recursive scan: branch-mounted plans (issue #604) live in
+        # subdirectories (e.g. ``tmp_impl/workflow.yaml``), so the outer
+        # referrer is not always a top-level file.
+        for wf_file in sorted(base.rglob("*.yaml")) + sorted(base.rglob("*.yml")):
             key = str(wf_file.resolve())
             if key in seen_files:
                 continue
@@ -843,9 +933,19 @@ def _find_outer_parent(
             except (FileNotFoundError, ValueError):
                 continue
             for step in wf.steps:
-                if step.workflow == workflow_name:
-                    return (wf.name, step.name)
-    return None
+                if _ref_matches_workflow(step.workflow, workflow_name, target_stem):
+                    referrers.append((wf.name, step.name))
+    referrer_workflows = {w for w, _ in referrers}
+    if len(referrer_workflows) > 1:
+        # Ambiguous: a reusable child mounted by multiple workflows cannot
+        # be reverse-resolved unambiguously (review round 2, issue #609).
+        # Surface a precise error instead of silently resuming the wrong one.
+        detail = ", ".join(f"{w}.{s}" for w, s in referrers)
+        raise ValueError(
+            f"ambiguous outer parent for '{workflow_name}': multiple workflows "
+            f"reference it ({detail})"
+        )
+    return referrers[0] if referrers else None
 
 
 def _resolve_return_to_parent(
@@ -917,9 +1017,17 @@ def _resolve_return_to_parent(
     # recorded parent is empty — the on-record ``outer_parent_*`` args carry
     # the *immediate* parent (see the call site), not an outer level, so they
     # are intentionally not used here.
-    graph_outer = _find_outer_parent(
-        parent_wf.name, workflows_dir, local_workflows_dir
-    )
+    try:
+        graph_outer = _find_outer_parent(
+            parent_wf.name, workflows_dir, local_workflows_dir
+        )
+    except ValueError as e:
+        # Multiple workflows mount the same child: the outer resume target is
+        # ambiguous. Fail loudly instead of resuming the wrong workflow.
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Ambiguous sub-workflow exit: {e}",
+        }
     eff_outer_wf = graph_outer[0] if graph_outer else ""
     eff_outer_step = graph_outer[1] if graph_outer else ""
 

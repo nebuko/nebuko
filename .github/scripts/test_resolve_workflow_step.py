@@ -790,6 +790,122 @@ class TestNestedEntryErrors:
         assert "cycle detected" in r["REASON"]
         assert "'b'" in r["REASON"]
 
+    def test_path_based_cycle_guard_stops_descent(self, tmp_path: Path, monkeypatch):
+        """A self/cycle expressed as a *path* reference (``workflow:`` key
+        holding a path value, whose file stem differs from the declared
+        name) is still caught — review round 2, issue #609: the name-seed
+        alone misses a path reference, so the canonical loaded-name check
+        must fire. Path-like references resolve repo-root-relative, so the
+        process cwd is moved to the fixture dir (as in
+        test_path_based_workflow_reference)."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "loop").mkdir()
+        (tmp_path / "loop" / "workflow.yaml").write_text(yaml.dump({
+            "name": "loop",
+            "description": "Self-cycle via its own path",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "s", "workflow": "loop/workflow.yaml", "next": None},
+            ],
+        }))
+        (tmp_path / "start.yaml").write_text(yaml.dump({
+            "name": "start",
+            "description": "Mounts the self-cycling child by path",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "go", "agent": "dev", "next": "enter"},
+                {"name": "enter", "workflow": "loop/workflow.yaml", "next": None},
+            ],
+        }))
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="start", step_name="enter",
+            branch_key="", workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "true"
+        assert "cycle detected" in r["REASON"]
+
+    def test_max_depth_bound_stops_deep_chain(self, tmp_path: Path, monkeypatch):
+        """A deep non-cyclic chain terminates at the depth bound instead of
+        unbounded descent (review round 2, issue #609). The bound is
+        monkeypatched down so the fixture stays small."""
+        rmod = _import_resolve_module()
+        monkeypatch.setattr(rmod, "_MAX_SUB_WORKFLOW_DEPTH", 1)
+        # chain_a -> chain_b -> chain_c: the entry loads chain_b; the
+        # descent loads chain_c (depth 1) and then hits the bound before
+        # loading the next level, so chain_d need not exist.
+        for name, nxt in (
+            ("chain_a", "chain_b"),
+            ("chain_b", "chain_c"),
+            ("chain_c", "chain_d"),
+        ):
+            (tmp_path / f"{name}.yaml").write_text(yaml.dump({
+                "name": name,
+                "description": f"{name} references {nxt}",
+                "trigger": {"agents": ["dev"]},
+                "steps": [{"name": "s", "workflow": nxt, "next": None}],
+            }))
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="chain_a", step_name="s",
+            branch_key="", workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "true"
+        assert "max sub-workflow nesting depth" in r["REASON"]
+
+
+class TestLinearScriptSuccessor:
+    """A linear ``script:`` successor reached via return-to-parent must emit
+    the deterministic script contract (issue #541 / #609 review round 2):
+    the GHA gate runs the script only when ``SKIP_AGENT=true`` AND
+    ``RUN_SCRIPT=true``; the old ``SKIP_AGENT=false`` shape fell through to
+    the agent-run section with an empty role."""
+
+    def test_script_successor_after_sub_workflow_emit_contract(self, tmp_path: Path):
+        # child.end is terminal; completing it returns to parent where the
+        # next step after the mount is a linear script step.
+        (tmp_path / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Parent with a script successor after the mount",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "start", "agent": "genius", "next": "mount"},
+                {"name": "mount", "workflow": "child", "next": "post"},
+                {
+                    "name": "post",
+                    "script": {
+                        "path": "scripts/post.py",
+                        "args": ["--issue", "42"],
+                        "timeout_minutes": 5,
+                    },
+                    "next": None,
+                },
+            ],
+        }))
+        (tmp_path / "child.yaml").write_text(yaml.dump({
+            "name": "child",
+            "description": "Child with a single terminal agent step",
+            "trigger": {"agents": ["dev"]},
+            "steps": [{"name": "end", "agent": "dev", "next": None}],
+        }))
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="child", step_name="end", branch_key="",
+            parent_workflow="parent", parent_workflow_step="mount",
+            workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
+        )
+        # Same contract as the nested-entry script branch and build_result's
+        # run_script path: skip the agent, run the script.
+        assert r["SKIP_AGENT"] == "true"
+        assert r["RUN_SCRIPT"] == "true"
+        assert r["ROLE_NAME"] == ""
+        assert "REASON" not in r
+        assert r["SCRIPT_PATH"] == "scripts/post.py"
+        assert r["SCRIPT_ARGS"] == "--issue 42"
+        assert r["SCRIPT_TIMEOUT_MINUTES"] == "5"
+        assert r["WORKFLOW_NAME"] == "parent"
+        assert r["WORKFLOW_STEP"] == "post"
+
 
 class TestNestedFetchOnMiss:
     """Two-level fetch-on-miss: a branch-mounted child absent locally,
