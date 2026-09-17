@@ -390,6 +390,582 @@ class TestSubWorkflowTraversal:
         }
 
 
+class TestThreeLevelNestingRuntime:
+    """Runtime-path (resolve_workflow_step) three-level nesting: the outer
+    parent pair must survive a nested re-entry so the chain unwinds one
+    level per return (issue #609, plan-orchestration -> tmp-impl ->
+    dev-review-loop shape)."""
+
+    @pytest.fixture
+    def three_level_dir(self, tmp_path: Path) -> Path:
+        # parent.mount -> workflow: mid (terminal mount)
+        (tmp_path / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Outer parent",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "analyze", "agent": "genius", "next": "mount"},
+                {"name": "mount", "workflow": "mid", "next": None},
+                {"name": "done", "agent": "review", "next": None},
+            ],
+        }))
+        # mid.run_1 -> workflow: leaf, next run_2; mid.run_2 -> workflow: leaf, terminal
+        (tmp_path / "mid.yaml").write_text(yaml.dump({
+            "name": "mid",
+            "description": "Intermediate loop driver",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "run_1", "workflow": "leaf", "next": "run_2"},
+                {"name": "run_2", "workflow": "leaf", "next": None},
+            ],
+        }))
+        # leaf: dev-review-loop shape
+        (tmp_path / "leaf.yaml").write_text(yaml.dump({
+            "name": "leaf",
+            "description": "Inner loop",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "implement", "agent": "dev", "next": "review"},
+                {"name": "review", "agent": "review", "next": None},
+            ],
+        }))
+        return tmp_path
+
+    def _r(self, tmp_path):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from resolve_workflow import resolve_workflow_step
+        return lambda task, workflow, step, **kw: resolve_workflow_step(
+            task=task, workflow_name=workflow, step_name=step,
+            workflows_dir=str(tmp_path), prompt_base="/tmp/prompts", **kw,
+        )
+
+    def test_outer_parent_survives_nested_reentry(self, three_level_dir):
+        """Entering mid.run_1 from inside the parent records the outer parent
+        pair; completing the first leaf loop re-enters run_2 while the state's
+        PARENT_WORKFLOW still records the outer parent (not clobbered)."""
+        r = self._r(three_level_dir)
+
+        # Entering mid.run_1 with the outer (parent, mount) pair on record
+        # descends to the leaf; the entry runs in the leaf workflow while the
+        # outer parent pair must survive.
+        entry = r(
+            task="dev", workflow="mid", step="run_1", branch_key="",
+            parent_workflow="parent", parent_workflow_step="mount",
+        )
+        assert entry["ROLE_NAME"] == "dev"
+        assert entry["WORKFLOW_STEP"] == "implement"
+        assert entry["WORKFLOW_NAME"] == "leaf"
+        assert entry["PARENT_WORKFLOW"] == "parent"
+        assert entry["PARENT_WORKFLOW_STEP"] == "mount"
+
+        # Complete the first leaf: leaf.review is terminal -> return to
+        # mid.run_1's next -> re-enter run_2 (another leaf descent) and the
+        # outer (parent, mount) pair must STILL be on record.
+        ret = r(
+            task="review", workflow="leaf", step="review", branch_key="",
+            parent_workflow="mid", parent_workflow_step="run_1",
+        )
+        assert ret["ROLE_NAME"] == "dev"
+        assert ret["WORKFLOW_STEP"] == "implement"
+        assert ret["WORKFLOW_NAME"] == "leaf"
+        assert ret["PARENT_WORKFLOW"] == "parent"
+        assert ret["PARENT_WORKFLOW_STEP"] == "mount"
+
+        # Complete the second (terminal) leaf: mid is terminal, so the chain
+        # unwinds one more level to the outer parent: parent.resume (next
+        # after mount is None -> terminal), so with no further outer pair the
+        # run ends cleanly (Workflow completed) instead of losing the parent.
+        end = r(
+            task="review", workflow="leaf", step="review", branch_key="",
+            parent_workflow="mid", parent_workflow_step="run_2",
+        )
+        assert end["SKIP_AGENT"] == "true"
+        assert end["REASON"] == "Workflow completed"
+
+    def test_three_level_returns_to_outer_after_mid_terminates(self, three_level_dir):
+        """With a non-terminal mount (mid.mount next: done), completing the
+        last leaf unwinds to mid's terminal and then back to the outer
+        parent's step after the mount."""
+        # Rewrite parent so mount has a follow-up step.
+        (three_level_dir / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Outer parent",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "analyze", "agent": "genius", "next": "mount"},
+                {"name": "mount", "workflow": "mid", "next": "done"},
+                {"name": "done", "agent": "review", "next": None},
+            ],
+        }))
+        r = self._r(three_level_dir)
+        end = r(
+            task="review", workflow="leaf", step="review", branch_key="",
+            parent_workflow="mid", parent_workflow_step="run_2",
+        )
+        # mid.run_2 is terminal -> mid done -> outer parent.next after mount
+        assert end["ROLE_NAME"] == "review"
+        assert end["WORKFLOW_STEP"] == "done"
+        assert end["WORKFLOW_NAME"] == "parent"
+        assert end["PARENT_WORKFLOW"] == ""
+        assert end["PARENT_WORKFLOW_STEP"] == ""
+
+
+def _import_workflow_step():
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent))
+    from resolve_workflow import resolve_workflow_step
+    return resolve_workflow_step
+
+
+def _import_resolve_module():
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent))
+    import resolve_workflow
+    return resolve_workflow
+
+
+class TestScaffoldShapeNestedEntry:
+    """Exact issue #609 shape: a generated workflow (tmp-impl) whose every
+    step references a nested sub-workflow (dev-review-loop) with per-step
+    skills. Entry must resolve to the leaf's runnable step with the
+    entry step's skill."""
+
+    @pytest.fixture
+    def scaffold_dir(self, tmp_path: Path) -> Path:
+        steps = []
+        for i in range(1, 7):
+            steps.append({
+                "name": f"step_{i}",
+                "workflow": "dev-review-loop",
+                "skill": [f"tmp_impl/skills/step_{i}"],
+                "next": f"step_{i + 1}" if i < 6 else None,
+            })
+        (tmp_path / "tmp-impl.yaml").write_text(yaml.dump({
+            "name": "tmp-impl",
+            "description": "Dynamically generated per-step execution workflow",
+            "trigger": {"agents": ["dev"]},
+            "steps": steps,
+        }))
+        (tmp_path / "dev-review-loop.yaml").write_text(yaml.dump({
+            "name": "dev-review-loop",
+            "description": "Reusable sub-workflow: implement + review loop",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "implement", "agent": "dev", "next": "review"},
+                {
+                    "name": "review",
+                    "agent": "review",
+                    "conditions": [
+                        {"on_result": "approved", "next": None},
+                        {"on_result": "rejected", "next": "implement"},
+                        {"on_result": "default", "next": "implement"},
+                    ],
+                },
+            ],
+        }))
+        return tmp_path
+
+    def test_runtime_entry_resolves_to_leaf_with_step_skill(self, scaffold_dir):
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="tmp-impl", step_name="step_1",
+            branch_key="", workflows_dir=str(scaffold_dir),
+            prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["WORKFLOW_NAME"] == "dev-review-loop"
+        assert r["WORKFLOW_STEP"] == "implement"
+        assert r["WORKFLOW_NEXT"] == "review"
+        assert r["STEP_SKILLS"] == "tmp_impl/skills/step_1"
+
+    def test_trigger_side_marker_matches_leaf(self, scaffold_dir):
+        """Plain-trigger entry marker descends to the same leaf the runtime
+        path runs (no task=None / Unknown agent 'None')."""
+        resolve = _import_resolver()
+        m = resolve("tmp-impl", "step_1", str(scaffold_dir))
+        assert m == {
+            "entered_sub_workflow": True,
+            "task": "dev",
+            "step": "implement",
+            "workflow": "dev-review-loop",
+            "parent_workflow": "tmp-impl",
+            "parent_workflow_step": "step_1",
+        }
+
+    def test_reentry_carries_next_step_skill(self, scaffold_dir):
+        """After step_1's loop completes, state lands on (tmp-impl, step_2):
+        the descent re-enters dev-review-loop at implement and carries
+        step_2's skill (not step_1's)."""
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="tmp-impl", step_name="step_2",
+            branch_key="", workflows_dir=str(scaffold_dir),
+            prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["WORKFLOW_NAME"] == "dev-review-loop"
+        assert r["WORKFLOW_STEP"] == "implement"
+        assert r["STEP_SKILLS"] == "tmp_impl/skills/step_2"
+
+    def test_last_step_reentry_carries_last_skill(self, scaffold_dir):
+        """step_6 (next: null) re-enters the loop with step_6's skill — the
+        final plan item, not a stale earlier one."""
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="tmp-impl", step_name="step_6",
+            branch_key="", workflows_dir=str(scaffold_dir),
+            prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["STEP_SKILLS"] == "tmp_impl/skills/step_6"
+
+    def test_internal_reject_loop_stays_inside_leaf(self, scaffold_dir):
+        """The reject -> implement loop stays inside dev-review-loop: state
+        at (dev-review-loop, implement) with the nesting parent pair on record
+        does not fire return-to-parent — the parent pair is preserved and the
+        config is the leaf's own."""
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="dev-review-loop", step_name="implement",
+            branch_key="rejected", workflows_dir=str(scaffold_dir),
+            prompt_base="/tmp/prompts",
+            parent_workflow="tmp-impl", parent_workflow_step="step_1",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["WORKFLOW_NAME"] == "dev-review-loop"
+        assert r["WORKFLOW_STEP"] == "implement"
+        assert r["WORKFLOW_NEXT"] == "review"
+        assert r["PARENT_WORKFLOW"] == "tmp-impl"
+        assert r["PARENT_WORKFLOW_STEP"] == "step_1"
+
+
+class TestNestedEntrySkillPrecedence:
+    """Skill merge during nested descent (issue #609): the entry step's
+    skills take precedence over the leaf step's own skills; the leaf's
+    skills are used when the entry declares none; an intermediate
+    reference step's skill is carried down when the entry has none."""
+
+    @pytest.fixture
+    def skill_dirs(self, tmp_path: Path) -> Path:
+        (tmp_path / "child1.yaml").write_text(yaml.dump({
+            "name": "child1",
+            "description": "Child with a skillead leaf",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "do", "agent": "dev", "skill": ["leaf1"], "next": None},
+            ],
+        }))
+        # child1b: first step is a skillead reference to child2; the
+        # grandchild leaf has no skills of its own.
+        (tmp_path / "child1b.yaml").write_text(yaml.dump({
+            "name": "child1b",
+            "description": "Child whose first step is a reference",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "ref", "workflow": "child2", "skill": ["mid1"], "next": None},
+            ],
+        }))
+        (tmp_path / "child2.yaml").write_text(yaml.dump({
+            "name": "child2",
+            "description": "Grandchild leaf without skills",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "do", "agent": "dev", "next": None},
+            ],
+        }))
+        return tmp_path
+
+    def _parent(self, tmp_path: Path, ref: str, skill=None):
+        step = {"name": "mount", "workflow": ref, "next": None}
+        if skill is not None:
+            step["skill"] = skill
+        (tmp_path / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Parent with a nested reference",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "start", "agent": "genius", "next": "mount"},
+                step,
+            ],
+        }))
+
+    def test_entry_skill_overrides_leaf_skill(self, skill_dirs):
+        self._parent(skill_dirs, "child1", skill=["entry1"])
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="genius", workflow_name="parent", step_name="mount",
+            branch_key="", workflows_dir=str(skill_dirs), prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["STEP_SKILLS"] == "entry1"
+
+    def test_leaf_skill_used_when_entry_has_none(self, skill_dirs):
+        self._parent(skill_dirs, "child1")
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="genius", workflow_name="parent", step_name="mount",
+            branch_key="", workflows_dir=str(skill_dirs), prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["STEP_SKILLS"] == "leaf1"
+
+    def test_intermediate_reference_skill_carried_down(self, skill_dirs):
+        self._parent(skill_dirs, "child1b")
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="genius", workflow_name="parent", step_name="mount",
+            branch_key="", workflows_dir=str(skill_dirs), prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["WORKFLOW_NAME"] == "child2"
+        assert r["WORKFLOW_STEP"] == "do"
+        assert r["STEP_SKILLS"] == "mid1"
+
+
+class TestNestedEntryErrors:
+    """Precise failures for nested descent: a leaf without a runnable
+    source and a reference cycle (issue #609)."""
+
+    def test_first_step_without_runnable_source_precise_reason(self, tmp_path: Path):
+        (tmp_path / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Parent mounting a child",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "start", "agent": "genius", "next": "mount"},
+                {"name": "mount", "workflow": "child", "next": None},
+            ],
+        }))
+        # Child first step has a repo ref only: no agent/script/workflow
+        # source to descend into — the old code reported bare
+        # "Unknown agent 'None'"; the new reason names step + entry.
+        (tmp_path / "child.yaml").write_text(yaml.dump({
+            "name": "child",
+            "description": "Child without a runnable first step",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "first",
+                 "repo": "https://github.com/owner/repo.git",
+                 "ref": "main", "next": None},
+            ],
+        }))
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="genius", workflow_name="parent", step_name="mount",
+            branch_key="", workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "true"
+        assert r["REASON"] == (
+            "Unknown agent 'None' in sub-workflow 'child' "
+            "(step 'first'; entered via 'child')"
+        )
+
+    def test_reference_cycle_guard_stops_descent(self, tmp_path: Path):
+        (tmp_path / "a.yaml").write_text(yaml.dump({
+            "name": "a",
+            "description": "A references B",
+            "trigger": {"agents": ["dev"]},
+            "steps": [{"name": "s", "workflow": "b", "next": None}],
+        }))
+        (tmp_path / "b.yaml").write_text(yaml.dump({
+            "name": "b",
+            "description": "B references A (cycle)",
+            "trigger": {"agents": ["dev"]},
+            "steps": [{"name": "s", "workflow": "a", "next": None}],
+        }))
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="a", step_name="s",
+            branch_key="", workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "true"
+        assert "cycle detected" in r["REASON"]
+        assert "'b'" in r["REASON"]
+
+    def test_path_based_cycle_guard_stops_descent(self, tmp_path: Path, monkeypatch):
+        """A self/cycle expressed as a *path* reference (``workflow:`` key
+        holding a path value, whose file stem differs from the declared
+        name) is still caught — review round 2, issue #609: the name-seed
+        alone misses a path reference, so the canonical loaded-name check
+        must fire. Path-like references resolve repo-root-relative, so the
+        process cwd is moved to the fixture dir (as in
+        test_path_based_workflow_reference)."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "loop").mkdir()
+        (tmp_path / "loop" / "workflow.yaml").write_text(yaml.dump({
+            "name": "loop",
+            "description": "Self-cycle via its own path",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "s", "workflow": "loop/workflow.yaml", "next": None},
+            ],
+        }))
+        (tmp_path / "start.yaml").write_text(yaml.dump({
+            "name": "start",
+            "description": "Mounts the self-cycling child by path",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "go", "agent": "dev", "next": "enter"},
+                {"name": "enter", "workflow": "loop/workflow.yaml", "next": None},
+            ],
+        }))
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="start", step_name="enter",
+            branch_key="", workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "true"
+        assert "cycle detected" in r["REASON"]
+
+    def test_max_depth_bound_stops_deep_chain(self, tmp_path: Path, monkeypatch):
+        """A deep non-cyclic chain terminates at the depth bound instead of
+        unbounded descent (review round 2, issue #609). The bound is
+        monkeypatched down so the fixture stays small."""
+        rmod = _import_resolve_module()
+        monkeypatch.setattr(rmod, "_MAX_SUB_WORKFLOW_DEPTH", 1)
+        # chain_a -> chain_b -> chain_c: the entry loads chain_b; the
+        # descent loads chain_c (depth 1) and then hits the bound before
+        # loading the next level, so chain_d need not exist.
+        for name, nxt in (
+            ("chain_a", "chain_b"),
+            ("chain_b", "chain_c"),
+            ("chain_c", "chain_d"),
+        ):
+            (tmp_path / f"{name}.yaml").write_text(yaml.dump({
+                "name": name,
+                "description": f"{name} references {nxt}",
+                "trigger": {"agents": ["dev"]},
+                "steps": [{"name": "s", "workflow": nxt, "next": None}],
+            }))
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="chain_a", step_name="s",
+            branch_key="", workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
+        )
+        assert r["SKIP_AGENT"] == "true"
+        assert "max sub-workflow nesting depth" in r["REASON"]
+
+
+class TestLinearScriptSuccessor:
+    """A linear ``script:`` successor reached via return-to-parent must emit
+    the deterministic script contract (issue #541 / #609 review round 2):
+    the GHA gate runs the script only when ``SKIP_AGENT=true`` AND
+    ``RUN_SCRIPT=true``; the old ``SKIP_AGENT=false`` shape fell through to
+    the agent-run section with an empty role."""
+
+    def test_script_successor_after_sub_workflow_emit_contract(self, tmp_path: Path):
+        # child.end is terminal; completing it returns to parent where the
+        # next step after the mount is a linear script step.
+        (tmp_path / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Parent with a script successor after the mount",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "start", "agent": "genius", "next": "mount"},
+                {"name": "mount", "workflow": "child", "next": "post"},
+                {
+                    "name": "post",
+                    "script": {
+                        "path": "scripts/post.py",
+                        "args": ["--issue", "42"],
+                        "timeout_minutes": 5,
+                    },
+                    "next": None,
+                },
+            ],
+        }))
+        (tmp_path / "child.yaml").write_text(yaml.dump({
+            "name": "child",
+            "description": "Child with a single terminal agent step",
+            "trigger": {"agents": ["dev"]},
+            "steps": [{"name": "end", "agent": "dev", "next": None}],
+        }))
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="dev", workflow_name="child", step_name="end", branch_key="",
+            parent_workflow="parent", parent_workflow_step="mount",
+            workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
+        )
+        # Same contract as the nested-entry script branch and build_result's
+        # run_script path: skip the agent, run the script.
+        assert r["SKIP_AGENT"] == "true"
+        assert r["RUN_SCRIPT"] == "true"
+        assert r["ROLE_NAME"] == ""
+        assert "REASON" not in r
+        assert r["SCRIPT_PATH"] == "scripts/post.py"
+        assert r["SCRIPT_ARGS"] == "--issue 42"
+        assert r["SCRIPT_TIMEOUT_MINUTES"] == "5"
+        assert r["WORKFLOW_NAME"] == "parent"
+        assert r["WORKFLOW_STEP"] == "post"
+
+
+class TestNestedFetchOnMiss:
+    """Two-level fetch-on-miss: a branch-mounted child absent locally,
+    whose first step references a further branch-mounted child. Each
+    reference is fetched exactly once per entry (issue #604/#609)."""
+
+    def test_each_reference_fetched_once(self, tmp_path: Path, monkeypatch):
+        mod = _import_resolve_module()
+        fetched_dir = tmp_path / "fetched"
+        fetched_dir.mkdir()
+        (fetched_dir / "inner.yaml").write_text(yaml.dump({
+            "name": "inner",
+            "description": "Branch-mounted grandchild",
+            "trigger": {"agents": ["dev"]},
+            "steps": [{"name": "do", "agent": "dev", "next": None}],
+        }))
+        (fetched_dir / "child.yaml").write_text(yaml.dump({
+            "name": "child",
+            "description": "Branch-mounted child",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {"name": "run", "workflow": "inner/wf.yaml", "next": None},
+            ],
+        }))
+        (tmp_path / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Local parent",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "start", "agent": "genius", "next": "mount"},
+                {"name": "mount", "workflow": "tmp_impl/workflow.yaml", "next": None},
+            ],
+        }))
+
+        calls: list = []
+
+        def fake_fetch(ref, scaffold_branch):
+            calls.append(ref)
+            mapping = {
+                "tmp_impl/workflow.yaml": str(fetched_dir / "child.yaml"),
+                "inner/wf.yaml": str(fetched_dir / "inner.yaml"),
+            }
+            return mapping.get(ref)
+
+        monkeypatch.setattr(mod, "_scaffold_fetch", fake_fetch)
+
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="genius", workflow_name="parent", step_name="mount",
+            branch_key="", workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
+            scaffold_branch="feature/issue-590-engine-core",
+        )
+        assert r["SKIP_AGENT"] == "false"
+        assert r["ROLE_NAME"] == "dev"
+        assert r["WORKFLOW_NAME"] == "inner"
+        assert r["WORKFLOW_STEP"] == "do"
+        assert calls.count("tmp_impl/workflow.yaml") == 1
+        assert calls.count("inner/wf.yaml") == 1
+
+
 class TestCircularReference:
     """Test circular reference detection in step transitions."""
 

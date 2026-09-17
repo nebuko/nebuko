@@ -319,6 +319,7 @@ def _resolve_dispatch_path(
             parent_workflow=parent_wf,
             parent_workflow_step=parent_wf_step,
             local_workflows_dir=local_workflows_dir,
+            scaffold_branch=getattr(prev_state, "scaffold_branch", None),
         )
         if wf_result:
             if wf_result.get("run_script"):
@@ -520,6 +521,7 @@ def _sub_workflow_step_entry(
     workflows_dir: str,
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Step-entry result for a ``workflow``/``repo``/``path`` step (issue #599).
 
@@ -530,7 +532,8 @@ def _sub_workflow_step_entry(
     are absent from the local (default-branch) checkout (issue #604).
     """
     entry = resolve_sub_workflow_entry(
-        step, wf_def, workflows_dir, prompt_base, scaffold_branch
+        step, wf_def, workflows_dir, prompt_base, scaffold_branch,
+        local_workflows_dir=local_workflows_dir,
     )
     if not entry or entry.get("SKIP_AGENT") == "true":
         reason = (entry or {}).get("REASON", f"step '{step.name}' is not a valid sub-workflow step")
@@ -551,6 +554,7 @@ def _resolve_step_entry(
     workflows_dir: str,
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
 ) -> dict:
     """Resolve the dispatchable entry for a force-next-step target (issue #599).
 
@@ -565,7 +569,8 @@ def _resolve_step_entry(
         return _script_step_entry(step)
     if step.workflow or step.repo or step.path:
         return _sub_workflow_step_entry(
-            step, wf_def, workflows_dir, prompt_base, scaffold_branch
+            step, wf_def, workflows_dir, prompt_base, scaffold_branch,
+            local_workflows_dir,
         )
     return {
         "skip_reason": f"force-next-step: step '{step.name}' has no runnable source",
@@ -707,7 +712,7 @@ def _resolve_human_path(
                 }
             entry = _resolve_step_entry(
                 target_step_def, wf_def, workflows_dir, prompt_base,
-                scaffold_branch,
+                scaffold_branch, local_workflows_dir,
             )
             if entry.get("skip_reason"):
                 return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
@@ -744,7 +749,7 @@ def _resolve_human_path(
                 }
             entry = _resolve_step_entry(
                 next_step_def, wf_def, workflows_dir, prompt_base,
-                scaffold_branch,
+                scaffold_branch, local_workflows_dir,
             )
             if entry.get("skip_reason"):
                 return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
@@ -764,6 +769,7 @@ def _resolve_human_path(
     task = ""
     wf_fail_reason = ""
 
+    first_step_overrides: dict[str, str] = {}
     if wf_name and _SAFE_WF_NAME_RE.match(wf_name):
         try:
             wf_file = load_workflow_with_dirs(
@@ -773,6 +779,32 @@ def _resolve_human_path(
             task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
             if task:
                 wf_resolved = True
+            # Issue #609: a workflow whose first step mounts a sub-workflow
+            # (e.g. the scaffold's ``tmp-impl``) has no runnable first step —
+            # ``trigger.agents[0]`` alone would start with the wrong
+            # workflow/step state. Descend to the innermost runnable leaf and
+            # point the state at it (same contract as the force-next-step
+            # sub-workflow entry).
+            if wf_resolved and wf_def.steps and (
+                wf_def.steps[0].workflow or wf_def.steps[0].path
+                or wf_def.steps[0].repo
+            ):
+                entry = _sub_workflow_step_entry(
+                    wf_def.steps[0], wf_def, workflows_dir, prompt_base,
+                    scaffold_branch, local_workflows_dir,
+                )
+                if entry.get("skip_reason"):
+                    wf_resolved = False
+                    wf_fail_reason = entry["skip_reason"]
+                    task = ""
+                else:
+                    task = entry["task"]
+                    first_step_overrides = {
+                        "config_step": entry["config_step"],
+                        "config_workflow": entry["config_workflow"],
+                        "config_parent_workflow": entry["config_parent_workflow"],
+                        "config_parent_workflow_step": entry["config_parent_workflow_step"],
+                    }
         except FileNotFoundError as e:
             # Multi-dir miss: the exception message enumerates every path
             # searched (issue #529).
@@ -796,10 +828,18 @@ def _resolve_human_path(
         task = pinned_task or extract_mention_agent(trigger_body) or ""
         wf_name = None
 
+    if not wf_resolved:
+        first_step_overrides = {}
+    if first_step_overrides:
+        # Nested first step (issue #609): the active workflow is the innermost
+        # leaf workflow, not the one named in the trigger.
+        config_workflow = first_step_overrides["config_workflow"]
+    else:
+        config_workflow = wf_name if wf_name and wf_resolved else ""
     result = {
         "task": task,
-        "config_workflow": wf_name if wf_name and wf_resolved else "",
-        "config_step": "",
+        "config_workflow": config_workflow,
+        "config_step": first_step_overrides.get("config_step", ""),
         "config_complexity": "medium",
         "config_reasoning": "none",
         "config_temperature": "",
@@ -811,8 +851,12 @@ def _resolve_human_path(
         "config_repetition_penalty": "",
         "config_debug": extract_debug_flag(trigger_body),
         "config_branch": "",
-        "config_parent_workflow": "",
-        "config_parent_workflow_step": "",
+        "config_parent_workflow": first_step_overrides.get(
+            "config_parent_workflow", ""
+        ),
+        "config_parent_workflow_step": first_step_overrides.get(
+            "config_parent_workflow_step", ""
+        ),
     }
     # Diagnostic for the terminal skip comment when /workflow failed and no
     # mention fallback produced a task (issue #529).
@@ -987,6 +1031,7 @@ def _resolve_workflow_next_step(
         parent_workflow=prev_state.parent_workflow or "",
         parent_workflow_step=prev_state.parent_workflow_step or "",
         local_workflows_dir=local_workflows_dir,
+        scaffold_branch=prev_state.scaffold_branch,
     )
     if wf_result:
         if wf_result.get("run_script"):
