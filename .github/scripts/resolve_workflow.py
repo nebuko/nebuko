@@ -327,6 +327,44 @@ def _fetch_scaffold_workflow_file(
     return None
 
 
+_WORKFLOW_FILE_SUFFIXES = (".yaml", ".yml")
+
+# Bound on sub-workflow nesting depth (review round 2, issue #609): the
+# cycle guard covers infinite descent, but a deep non-cyclic chain must also
+# terminate instead of recursing unbounded.
+_MAX_SUB_WORKFLOW_DEPTH = 10
+
+
+def _workflow_ref_stem(ref: str) -> str:
+    """Return the canonical file stem of a workflow reference.
+
+    Used for path-reference matching (issue #609): two references denote
+    the same workflow file when their stems agree.
+    """
+    base = ref.rsplit("/", 1)[-1]
+    for suffix in _WORKFLOW_FILE_SUFFIXES:
+        if base.lower().endswith(suffix):
+            return base[: -len(suffix)]
+    return base
+
+
+def _ref_matches_workflow(
+    ref: Optional[str], workflow_name: str, target_stem: str
+) -> bool:
+    """Return True when a step's ``workflow:`` reference targets
+    ``workflow_name``.
+
+    Plain-name references match on exact name; path-like references match
+    on the file stem so a child mounted as ``tmp_impl/workflow.yaml`` is
+    found when its loaded ``name`` is used in the state (issue #609).
+    """
+    if not ref:
+        return False
+    if ref == workflow_name:
+        return True
+    return is_path_like_reference(ref) and _workflow_ref_stem(ref) == target_stem
+
+
 def _sub_workflow_miss_reason(
     target_path: str, scaffold_branch: Optional[str]
 ) -> dict:
@@ -346,12 +384,241 @@ def _sub_workflow_miss_reason(
     }
 
 
+def _load_child_workflow(
+    ref: str,
+    workflows_dir: str,
+    scaffold_branch: Optional[str],
+    fetch_cache: Optional[dict],
+    local_workflows_dir: Optional[str] = None,
+) -> Optional[WorkflowDefinition]:
+    """Load a sub-workflow by name or repo-root-relative path (issue #609).
+
+    Tries the local (default-branch) checkout first; on a miss and a
+    ``scaffold_branch`` set, fetches the file from that branch (issue #604).
+    A per-entry ``fetch_cache`` (ref -> path) avoids re-fetching a branch-mounted
+    child more than once during a single nested descent. Returns ``None`` when
+    the workflow cannot be located or loaded. Plain names honor the
+    consumer-local directory precedence (issue #529) when
+    ``local_workflows_dir`` is given.
+    """
+    if not is_path_like_reference(ref) and local_workflows_dir:
+        try:
+            resolved = str(load_workflow_with_dirs(ref, workflows_dir, local_workflows_dir))
+        except (FileNotFoundError, ValueError):
+            resolved = ""
+    else:
+        resolved = ""
+    if not resolved:
+        resolved = str(resolve_workflow_reference(ref, workflows_dir))
+    if Path(resolved).exists():
+        try:
+            return load_workflow(resolved)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Warning: Failed to load sub-workflow '{resolved}': {e}", file=sys.stderr)
+            return None
+    fetched = None
+    if scaffold_branch:
+        if fetch_cache is not None and ref in fetch_cache:
+            fetched = fetch_cache[ref]
+        else:
+            fetched = _scaffold_fetch(ref, scaffold_branch)
+            if fetched and fetch_cache is not None:
+                fetch_cache[ref] = fetched
+    if fetched:
+        try:
+            return load_workflow(fetched)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Warning: Fetched sub-workflow '{fetched}' is unloadable: {e}", file=sys.stderr)
+            return None
+    print(f"Warning: Sub-workflow '{ref}' not found", file=sys.stderr)
+    return None
+
+
+def _resolve_entry_leaf_for_step(
+    step: WorkflowStep,
+    workflows_dir: str,
+    scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
+) -> dict:
+    """Resolve the runnable leaf a sub-workflow entry step descends to.
+
+    Shared by the runtime entry path and the trigger-side marker builders
+    (issue #609) so all entry routes agree. Loads the referenced child and
+    descends to the innermost runnable leaf. Returns ``{"task", "step",
+    "workflow"}`` on success (``task`` empty for script leaves) or
+    ``{"error": <reason>}``.
+    """
+    ref = step.workflow or step.path
+    if not ref:
+        return {"error": f"step '{step.name}' has no sub-workflow reference"}
+    child = _load_child_workflow(
+        ref, workflows_dir, scaffold_branch,
+        local_workflows_dir=local_workflows_dir, fetch_cache={},
+    )
+    if child is None:
+        return {
+            "error": f"Sub-workflow '{ref}' not found (entered via step '{step.name}')"
+        }
+    leaf = _resolve_sub_workflow_leaf(
+        child, step, workflows_dir, scaffold_branch, {}, {child.name},
+        parent_skill=step.skill,
+        local_workflows_dir=local_workflows_dir,
+    )
+    if leaf["kind"] == "error":
+        return {"error": leaf["error"]}
+    return {
+        "task": leaf["agent"] if leaf["kind"] == "agent" else "",
+        "step": leaf["step"],
+        "workflow": leaf["workflow"],
+    }
+
+
+def _resolve_sub_workflow_leaf(
+    child_wf: WorkflowDefinition,
+    entry_step: WorkflowStep,
+    workflows_dir: str,
+    scaffold_branch: Optional[str],
+    fetch_cache: dict,
+    visited: set,
+    parent_skill: Optional[list] = None,
+    local_workflows_dir: Optional[str] = None,
+) -> dict:
+    """Resolve the innermost runnable leaf of a (possibly nested) child.
+
+    Descends through child first-steps that are themselves ``workflow:``/
+    ``path:`` sub-workflow references until a runnable leaf is found (an
+    ``agent`` step, or a deterministic ``script`` step). A child whose first
+    step has no runnable source is a leaf in its own right and is surfaced as
+    an error (issue #609).
+
+    Two guards bound the descent (review round 2): a *cycle* guard keyed on
+    the loaded workflow's canonical ``name`` (plus a pre-load check on the
+    reference stem, so a path-based self/cycle is caught before its fetch),
+    and a *max-depth* bound (``_MAX_SUB_WORKFLOW_DEPTH``) so a deep
+    non-cyclic chain terminates instead of unbounded descent.
+
+    Returns a dict with:
+    - ``kind``: "agent" | "script" | "error"
+    - ``error``: reason string (only when kind == "error")
+    - ``agent``/``step``/``workflow``/``workflow_next``: leaf step details
+      (agent/script)
+    - ``skill``/``prompt``: merged skills + step prompt (parent entry-step
+      skills take precedence over the leaf step's own skills)
+    """
+    entry_ref = entry_step.workflow or entry_step.path
+    wf = child_wf
+    leaf = wf.steps[0] if wf.steps else None
+    depth = 0
+    while leaf is not None and not leaf.agent and leaf.script is None:
+        # A first-step with no runnable source is itself a leaf: surface it.
+        if not leaf.workflow and not leaf.path and not leaf.repo:
+            break
+        ref = leaf.workflow or leaf.path
+        if not ref:
+            break
+        # Pre-load cycle check on the reference stem: catches a path-based
+        # self/cycle (stem matches a visited name) before paying for the
+        # fetch. The authoritative check is on the loaded child's name below.
+        if _workflow_ref_stem(ref) in visited:
+            return {
+                "kind": "error",
+                "error": (
+                    f"sub-workflow reference cycle detected while entering "
+                    f"'{entry_ref}' (at '{ref}'; "
+                    f"visited: {', '.join(sorted(visited))})"
+                ),
+            }
+        if depth >= _MAX_SUB_WORKFLOW_DEPTH:
+            return {
+                "kind": "error",
+                "error": (
+                    f"max sub-workflow nesting depth "
+                    f"({_MAX_SUB_WORKFLOW_DEPTH}) exceeded while entering "
+                    f"'{entry_ref}' (at '{ref}'); "
+                    f"visited: {', '.join(sorted(visited))}"
+                ),
+            }
+        child = _load_child_workflow(
+            ref, workflows_dir, scaffold_branch, fetch_cache,
+            local_workflows_dir,
+        )
+        if child is None:
+            return {
+                "kind": "error",
+                "error": (
+                    f"Sub-workflow not found: {ref} "
+                    f"(nested under '{entry_ref}')"
+                ),
+            }
+        # Canonical cycle check on the loaded name: a reference may be a
+        # path whose stem differs from the workflow's declared name, so the
+        # name (already in ``visited`` for the top child) is the true key.
+        if child.name in visited:
+            return {
+                "kind": "error",
+                "error": (
+                    f"sub-workflow reference cycle detected while entering "
+                    f"'{entry_ref}' (at '{ref}'; "
+                    f"visited: {', '.join(sorted(visited))})"
+                ),
+            }
+        visited.add(child.name)
+        depth += 1
+        # Carry the first declared skill down through the descent: a
+        # per-plan skill (issue #609) may sit on an intermediate
+        # reference step rather than the original entry step.
+        if parent_skill is None and leaf.skill:
+            parent_skill = leaf.skill
+        wf = child
+        leaf = child.steps[0] if child.steps else None
+        if leaf is None:
+            return {
+                "kind": "error",
+                "error": f"Sub-workflow '{child.name}' has no steps",
+            }
+
+    if leaf.script is not None:
+        return {
+            "kind": "script",
+            "step": leaf.name,
+            "workflow": wf.name,
+            "script_path": leaf.script.path,
+            "script_args": " ".join(leaf.script.args or []),
+            "script_timeout": leaf.script.timeout_minutes,
+            "skill": _skills_to_string(parent_skill or leaf.skill),
+            "prompt": leaf.prompt,
+        }
+    if leaf.agent:
+        return {
+            "kind": "agent",
+            "agent": leaf.agent,
+            "step": leaf.name,
+            "workflow": wf.name,
+            "workflow_next": wf.steps[1].name if len(wf.steps) > 1 else "",
+            "skill": _skills_to_string(parent_skill or leaf.skill),
+            "prompt": leaf.prompt,
+        }
+    # Runnable-source-less leaf (e.g. a first-step with only a ``repo`` ref):
+    # surface a precise reason instead of "Unknown agent 'None'" (issue #609).
+    return {
+        "kind": "error",
+        "error": (
+            f"Unknown agent '{leaf.agent}' in sub-workflow '{wf.name}' "
+            f"(step '{leaf.name}'; entered via "
+            f"'{entry_step.workflow or entry_step.path}')"
+        ),
+    }
+
+
 def _resolve_sub_workflow_entry(
     current_step: WorkflowStep,
     workflow: WorkflowDefinition,
     workflows_dir: str,
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
+    outer_parent_workflow: str = "",
+    outer_parent_step: str = "",
+    local_workflows_dir: Optional[str] = None,
 ) -> Optional[dict]:
     """Resolve entry into a sub-workflow from a step that references another workflow.
 
@@ -369,6 +636,7 @@ def _resolve_sub_workflow_entry(
     ``tmp_impl/workflow.yaml`` resolves.
     """
     # Determine target workflow path
+    fetch_cache: dict = {}
     if current_step.repo:
         if fetch_remote_workflow is None:
             return {
@@ -385,6 +653,7 @@ def _resolve_sub_workflow_entry(
                 "SKIP_AGENT": "true",
                 "REASON": f"Failed to fetch remote workflow: {e}",
             }
+        fetch_cache["__repo__"] = target_path
     elif current_step.path:
         target_path = current_step.path
     elif current_step.workflow:
@@ -421,27 +690,70 @@ def _resolve_sub_workflow_entry(
             "REASON": f"Sub-workflow '{child_wf.name}' has no steps",
         }
 
-    # Resolve to the first step of the child workflow
-    first_step = child_wf.steps[0]
-    second_step = child_wf.steps[1].name if len(child_wf.steps) > 1 else ""
+    # Descend to the innermost runnable leaf (issue #609): the child's first
+    # step may itself reference a (further nested) sub-workflow.
+    leaf = _resolve_sub_workflow_leaf(
+        child_wf, current_step, workflows_dir, scaffold_branch,
+        fetch_cache, {child_wf.name},
+        parent_skill=current_step.skill,
+        local_workflows_dir=local_workflows_dir,
+    )
+    if leaf["kind"] == "error":
+        return {"SKIP_AGENT": "true", "REASON": leaf["error"]}
 
-    prompt_file = TASK_TO_PROMPT.get(first_step.agent)
+    # The flat parent-pair state holds one level, so on a nested re-entry the
+    # pair that must survive is the outermost one (issue #609): when an outer
+    # pair is on record and differs from this immediate parent, keep it so the
+    # chain can unwind one level per return. The immediate parent is
+    # re-derivable from the re-entry itself.
+    parent_wf_name = (
+        outer_parent_workflow
+        if outer_parent_workflow and outer_parent_workflow != workflow.name
+        else workflow.name
+    )
+    parent_step_name = (
+        outer_parent_step
+        if outer_parent_workflow and outer_parent_workflow != workflow.name
+        else current_step.name
+    )
+
+    if leaf["kind"] == "script":
+        return {
+            "ROLE_NAME": "",
+            "RUN_SCRIPT": "true",
+            "SCRIPT_PATH": leaf["script_path"],
+            "SCRIPT_ARGS": leaf["script_args"],
+            "SCRIPT_TIMEOUT_MINUTES": str(leaf["script_timeout"] or ""),
+            "WORKFLOW_NAME": leaf["workflow"],
+            "WORKFLOW_STEP": leaf["step"],
+            "PARENT_WORKFLOW": parent_wf_name,
+            "PARENT_WORKFLOW_STEP": parent_step_name,
+            "STEP_SKILLS": leaf["skill"],
+            "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
+            "SKIP_AGENT": "true",
+            "REASON": f"step '{leaf['step']}' in sub-workflow '{leaf['workflow']}' is a script step",
+        }
+
+    prompt_file = TASK_TO_PROMPT.get(leaf["agent"])
     if not prompt_file:
         return {
             "SKIP_AGENT": "true",
-            "REASON": f"Unknown agent '{first_step.agent}' in sub-workflow '{child_wf.name}'",
+            "REASON": (
+                f"Unknown agent '{leaf['agent']}' in sub-workflow "
+                f"'{leaf['workflow']}' (step '{leaf['step']}')"
+            ),
         }
 
     return {
-        "ROLE_NAME": first_step.agent,
+        "ROLE_NAME": leaf["agent"],
         "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
-        "WORKFLOW_NAME": child_wf.name,
-        "WORKFLOW_STEP": first_step.name,
-        "WORKFLOW_NEXT": second_step,
-        "PARENT_WORKFLOW": workflow.name,
-        "PARENT_WORKFLOW_STEP": current_step.name,
-        "STEP_SKILLS": _skills_to_string(first_step.skill),
-        "STEP_PROMPT_FILE": _write_step_prompt_file(first_step.prompt),
+        "WORKFLOW_NAME": leaf["workflow"],
+        "WORKFLOW_STEP": leaf["step"],
+        "WORKFLOW_NEXT": leaf["workflow_next"],
+        "PARENT_WORKFLOW": parent_wf_name,
+        "PARENT_WORKFLOW_STEP": parent_step_name,
+        "STEP_SKILLS": leaf["skill"],
+        "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
         "SKIP_AGENT": "false",
     }
 
@@ -452,6 +764,7 @@ def resolve_sub_workflow_entry(
     workflows_dir: str,
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
 ) -> Optional[dict]:
     """Public entry point for sub-workflow entry resolution.
 
@@ -462,8 +775,177 @@ def resolve_sub_workflow_entry(
     enables fetch-on-miss for branch-mounted children (issue #604).
     """
     return _resolve_sub_workflow_entry(
-        current_step, workflow, workflows_dir, prompt_base, scaffold_branch
+        current_step, workflow, workflows_dir, prompt_base, scaffold_branch,
+        local_workflows_dir=local_workflows_dir,
     )
+
+
+def _find_workflow_step(workflow: WorkflowDefinition, step_name: str) -> Optional[WorkflowStep]:
+    """Find a step by name within a loaded workflow."""
+    return next((s for s in workflow.steps if s.name == step_name), None)
+
+
+def _condition_next_for(step: WorkflowStep, branch_key: str) -> Optional[str]:
+    """Resolve a step's next target honoring conditions against a branch key."""
+    if not branch_key or not step.conditions:
+        return step.next
+    for condition in step.conditions:
+        if condition.on_result == branch_key:
+            return condition.next
+    for condition in step.conditions:
+        if condition.on_result == "default":
+            return condition.next
+    return step.next
+
+
+def _next_step_resolution(
+    next_step: WorkflowStep,
+    next_step_name: str,
+    cur_wf: WorkflowDefinition,
+    workflows_dir: str,
+    prompt_base: str,
+    scaffold_branch: Optional[str],
+    parent_workflow: str,
+    parent_step: str,
+    local_workflows_dir: Optional[str] = None,
+) -> dict:
+    """Resolve the parent's next step, re-entering a nested reference.
+
+    When the next step itself mounts a sub-workflow (issue #609, e.g.
+    ``tmp-impl``'s ``step_2: workflow: dev-review-loop``), the resolution
+    descends to the innermost runnable leaf and records the immediate
+    nesting level as the new parent pair. Skills/prompt from the reference
+    step are propagated to the leaf.
+    """
+    if next_step.workflow or next_step.path or next_step.repo:
+        entry = _resolve_sub_workflow_entry(
+            next_step, cur_wf, workflows_dir, prompt_base, scaffold_branch,
+            outer_parent_workflow=parent_workflow,
+            outer_parent_step=parent_step,
+            local_workflows_dir=local_workflows_dir,
+        )
+        if entry is None:
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": f"Step '{next_step_name}' is not a valid sub-workflow step",
+            }
+        if entry.get("SKIP_AGENT") == "true":
+            return entry
+        # Descend to the leaf (issue #609): keep the leaf workflow/step the
+        # entry resolved (``WORKFLOW_NAME``/``WORKFLOW_STEP``) rather than
+        # overriding back to the immediate reference. The outer parent pair
+        # (threaded in via ``outer_parent_*`` and the entry's prefer-outer
+        # logic) survives the flat state so the next return-to-parent resumes
+        # the outer level. The immediate parent is re-derivable from the graph.
+        return entry
+
+    if next_step.script is not None:
+        # Deterministic script successor (issue #541): same contract as the
+        # nested-entry script branch and the ``run_script`` path in
+        # ``build_result`` — SKIP_AGENT stays true so the agent section is
+        # skipped, and RUN_SCRIPT lets the GHA script gate (and the posting
+        # pipeline) pick the run up and advance state. No REASON is emitted,
+        # so the "Workflow stopped" skip comment never fires (issue #609).
+        return {
+            "ROLE_NAME": "",
+            "RUN_SCRIPT": "true",
+            "SCRIPT_PATH": next_step.script.path,
+            "SCRIPT_ARGS": " ".join(next_step.script.args or []),
+            "SCRIPT_TIMEOUT_MINUTES": str(next_step.script.timeout_minutes or ""),
+            "WORKFLOW_NAME": cur_wf.name,
+            "WORKFLOW_STEP": next_step_name,
+            "WORKFLOW_NEXT": next_step.next or "",
+            "PARENT_WORKFLOW": parent_workflow,
+            "PARENT_WORKFLOW_STEP": parent_step,
+            "STEP_SKILLS": _skills_to_string(next_step.skill),
+            "STEP_PROMPT_FILE": "",
+            "SKIP_AGENT": "true",
+        }
+
+    prompt_file = TASK_TO_PROMPT.get(next_step.agent)
+    if not prompt_file:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Unknown agent '{next_step.agent}' in parent workflow",
+        }
+    return {
+        "ROLE_NAME": next_step.agent,
+        "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
+        "WORKFLOW_NAME": cur_wf.name,
+        "WORKFLOW_STEP": next_step_name,
+        "WORKFLOW_NEXT": next_step.next or "",
+        "PARENT_WORKFLOW": parent_workflow,
+        "PARENT_WORKFLOW_STEP": parent_step,
+        "STEP_SKILLS": _skills_to_string(next_step.skill),
+        "STEP_PROMPT_FILE": _write_step_prompt_file(next_step.prompt),
+        "SKIP_AGENT": "false",
+    }
+
+
+def _find_outer_parent(
+    workflow_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> Optional[tuple[str, str]]:
+    """Re-derive the immediate parent of ``workflow_name`` from the graph.
+
+    The runtime's flat state carries a single nesting level, so a three-level
+    nested sub-workflow (issue #609, e.g. ``parent -> mid -> leaf``) must
+    recover the *outer* level that is not on the state. Scanning the workflow
+    files for a step that references ``workflow_name`` (via a ``workflow:``
+    name reference) yields the outer ``(workflow, step)`` pair; that reference
+    edge is authoritative and lets the chain unwind one level per return.
+
+    Returns ``None`` when no workflow locally references ``workflow_name``
+    (it is not nested under a known parent). Plain names are matched exactly;
+    path-like references are matched by file stem so a child mounted as
+    ``tmp_impl/workflow.yaml`` is found when its loaded ``name`` is recorded
+    in the state. Repo references are out of scope for reverse lookup.
+
+    Raises ``ValueError`` when multiple distinct workflows reference the
+    child: the outer pair is then ambiguous and resuming the first match
+    would silently pick the wrong workflow (review round 2, issue #609).
+    Multiple steps inside a *single* referrer workflow (e.g. a plan whose
+    steps each mount the same reusable loop) are not ambiguous about which
+    workflow to resume; the first such step is used.
+    """
+    if not workflow_name:
+        return None
+    target_stem = _workflow_ref_stem(workflow_name)
+    candidates: list[Path] = [Path(workflows_dir)]
+    if local_workflows_dir:
+        candidates.append(Path(local_workflows_dir))
+    referrers: list[tuple[str, str]] = []
+    seen_files: set[str] = set()
+    for base in candidates:
+        if not base.exists():
+            continue
+        # Recursive scan: branch-mounted plans (issue #604) live in
+        # subdirectories (e.g. ``tmp_impl/workflow.yaml``), so the outer
+        # referrer is not always a top-level file.
+        for wf_file in sorted(base.rglob("*.yaml")) + sorted(base.rglob("*.yml")):
+            key = str(wf_file.resolve())
+            if key in seen_files:
+                continue
+            seen_files.add(key)
+            try:
+                wf = load_workflow(str(wf_file))
+            except (FileNotFoundError, ValueError):
+                continue
+            for step in wf.steps:
+                if _ref_matches_workflow(step.workflow, workflow_name, target_stem):
+                    referrers.append((wf.name, step.name))
+    referrer_workflows = {w for w, _ in referrers}
+    if len(referrer_workflows) > 1:
+        # Ambiguous: a reusable child mounted by multiple workflows cannot
+        # be reverse-resolved unambiguously (review round 2, issue #609).
+        # Surface a precise error instead of silently resuming the wrong one.
+        detail = ", ".join(f"{w}.{s}" for w, s in referrers)
+        raise ValueError(
+            f"ambiguous outer parent for '{workflow_name}': multiple workflows "
+            f"reference it ({detail})"
+        )
+    return referrers[0] if referrers else None
 
 
 def _resolve_return_to_parent(
@@ -472,18 +954,34 @@ def _resolve_return_to_parent(
     branch_key: str,
     workflows_dir: str,
     prompt_base: str,
+    scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
+    _visited: tuple[str, ...] = (),
 ) -> Optional[dict]:
     """Resolve returning to parent workflow after sub-workflow completion.
 
-    Loads the parent workflow, finds the step that was the sub-workflow entry point,
-    and resolves the next step after it using conditional routing if available.
+    Loads the parent workflow, finds the step that was the sub-workflow entry
+    point, and resolves the next step after it using conditional routing.
+    When that next step is itself a sub-workflow reference (issue #609, e.g.
+    ``tmp-impl``'s ``step_2: workflow: dev-review-loop``), the resolution
+    re-enters it via :func:`_next_step_resolution` so the scaffold's
+    per-step plan advances one loop at a time.
     """
     # Load parent workflow — supports names and repo-root-relative paths
     # (issue #468): path-like references resolve outside workflows/.
+    # Plain names honor consumer-local precedence (issue #529).
+    resolved = ""
     if is_path_like_reference(parent_workflow_name):
         resolved = resolve_workflow_reference(parent_workflow_name, workflows_dir)
     else:
-        resolved = Path(workflows_dir) / f"{parent_workflow_name}.yaml"
+        try:
+            resolved = str(load_workflow_with_dirs(
+                parent_workflow_name, workflows_dir, local_workflows_dir or "",
+            ))
+        except (FileNotFoundError, ValueError):
+            resolved = ""
+    if not resolved:
+        resolved = str(Path(workflows_dir) / f"{parent_workflow_name}.yaml")
     if not Path(resolved).exists():
         print(f"Warning: Parent workflow '{parent_workflow_name}' not found",
               file=sys.stderr)
@@ -501,38 +999,52 @@ def _resolve_return_to_parent(
             "REASON": f"Failed to load parent workflow: {e}",
         }
 
-    # Find the sub-workflow step in the parent
-    sub_wf_step = None
-    for step in parent_wf.steps:
-        if step.name == parent_workflow_step_name:
-            sub_wf_step = step
-            break
-
+    sub_wf_step = _find_workflow_step(parent_wf, parent_workflow_step_name)
     if sub_wf_step is None:
         return {
             "SKIP_AGENT": "true",
             "REASON": f"Step '{parent_workflow_step_name}' not found in parent workflow",
         }
 
-    # Resolve next step — support conditional routing
-    next_step_name = None
-    if branch_key and sub_wf_step.conditions:
-        branch_matched = False
-        for condition in sub_wf_step.conditions:
-            if condition.on_result == branch_key:
-                next_step_name = condition.next
-                branch_matched = True
-                break
-        if not branch_matched:
-            for condition in sub_wf_step.conditions:
-                if condition.on_result == "default":
-                    next_step_name = condition.next
-                    break
-    else:
-        next_step_name = sub_wf_step.next
+    next_step_name = _condition_next_for(sub_wf_step, branch_key)
+
+    # Re-derive the outer parent from the graph (issue #609, three-level
+    # nesting). The runtime's flat state carries only the immediate parent
+    # (e.g. ``mid``), so the *outer* pair (e.g. ``(parent, mount)``) is not on
+    # record and must be recovered from the workflow files. The reference edge
+    # is authoritative and lets the chain unwind one level per return. When
+    # the immediate parent is not nested under a known outer (top-level), the
+    # recorded parent is empty — the on-record ``outer_parent_*`` args carry
+    # the *immediate* parent (see the call site), not an outer level, so they
+    # are intentionally not used here.
+    try:
+        graph_outer = _find_outer_parent(
+            parent_wf.name, workflows_dir, local_workflows_dir
+        )
+    except ValueError as e:
+        # Multiple workflows mount the same child: the outer resume target is
+        # ambiguous. Fail loudly instead of resuming the wrong workflow.
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"Ambiguous sub-workflow exit: {e}",
+        }
+    eff_outer_wf = graph_outer[0] if graph_outer else ""
+    eff_outer_step = graph_outer[1] if graph_outer else ""
 
     if not next_step_name:
-        # Sub-workflow step was terminal in parent — workflow ends here
+        # Sub-workflow step was terminal in parent. With an outer pair the
+        # chain must unwind one more level instead of ending: continue the
+        # return from the outer parent so the outermost workflow resumes after
+        # the mount step. ``_visited`` bounds the recursion against reference
+        # cycles (issue #609).
+        if eff_outer_wf and eff_outer_wf != parent_wf.name \
+                and parent_wf.name not in _visited:
+            return _resolve_return_to_parent(
+                eff_outer_wf, eff_outer_step, branch_key,
+                workflows_dir, prompt_base, scaffold_branch, local_workflows_dir,
+                _visited=_visited + (parent_wf.name,),
+            )
+        # Workflow ends here
         return {
             "ROLE_NAME": "",
             "PROMPT_LOCATION": "",
@@ -545,38 +1057,17 @@ def _resolve_return_to_parent(
             "REASON": "Workflow completed",
         }
 
-    # Find the actual next step
-    next_step = None
-    for step in parent_wf.steps:
-        if step.name == next_step_name:
-            next_step = step
-            break
-
+    next_step = _find_workflow_step(parent_wf, next_step_name)
     if next_step is None:
         return {
             "SKIP_AGENT": "true",
             "REASON": f"Next step '{next_step_name}' not found in parent workflow",
         }
 
-    prompt_file = TASK_TO_PROMPT.get(next_step.agent)
-    if not prompt_file:
-        return {
-            "SKIP_AGENT": "true",
-            "REASON": f"Unknown agent '{next_step.agent}' in parent workflow",
-        }
-
-    return {
-        "ROLE_NAME": next_step.agent,
-        "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
-        "WORKFLOW_NAME": parent_wf.name,
-        "WORKFLOW_STEP": next_step_name,
-        "WORKFLOW_NEXT": next_step.next or "",
-        "PARENT_WORKFLOW": "",
-        "PARENT_WORKFLOW_STEP": "",
-        "STEP_SKILLS": _skills_to_string(next_step.skill),
-        "STEP_PROMPT_FILE": _write_step_prompt_file(next_step.prompt),
-        "SKIP_AGENT": "false",
-    }
+    return _next_step_resolution(
+        next_step, next_step_name, parent_wf, workflows_dir, prompt_base,
+        scaffold_branch, eff_outer_wf, eff_outer_step, local_workflows_dir,
+    )
 
 
 def resolve_workflow_step(
@@ -696,13 +1187,20 @@ def resolve_workflow_step(
     # Check for sub-workflow completion: terminal step and we're in a sub-workflow
     if parent_workflow and _is_terminal_step(current_step):
         return _resolve_return_to_parent(
-            parent_workflow, parent_workflow_step, branch_key, workflows_dir, prompt_base
+            parent_workflow, parent_workflow_step, branch_key, workflows_dir,
+            prompt_base, scaffold_branch, local_workflows_dir,
         )
 
-    # Check if this is a sub-workflow entry step (local or remote)
+    # Check if this is a sub-workflow entry step (local or remote). The
+    # incoming parent pair (issue #609) is threaded through so a nested
+    # re-entry (outer ``parent`` -> ``mid`` -> ``leaf``) descends to the leaf
+    # while the outer pair survives the flat state.
     if current_step.workflow or current_step.repo:
         return _resolve_sub_workflow_entry(
-            current_step, current_wf, workflows_dir, prompt_base, scaffold_branch
+            current_step, current_wf, workflows_dir, prompt_base, scaffold_branch,
+            outer_parent_workflow=parent_workflow,
+            outer_parent_step=parent_workflow_step,
+            local_workflows_dir=local_workflows_dir,
         )
 
     # Resolve next step
@@ -773,24 +1271,62 @@ def _resolve_sub_workflow_ref_target(
 
 
 def _sub_workflow_entry_marker(
-    child_workflow: WorkflowDefinition,
     child_reference: str,
     parent_workflow: WorkflowDefinition,
     parent_step: WorkflowStep,
-) -> dict:
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
+    outer_parent_workflow: str = "",
+    outer_parent_step: str = "",
+) -> Optional[dict]:
     """Build the 'enter sub-workflow' result structure.
 
-    Carries the sub-workflow's first step plus parent tracking so the caller
-    can record ``parent_workflow`` / ``parent_workflow_step``.
+    Descends to the child's innermost runnable leaf (issue #609) — a child
+    whose first step is itself a sub-workflow reference (e.g. the scaffold's
+    ``tmp-impl`` steps) resolves to the leaf workflow's leaf step instead of
+    carrying ``task=None``. The recorded ``workflow`` stays the reference
+    being entered (the immediate parent for the return leg) while
+    ``step`` is the leaf step to run. Returns ``None`` when the child
+    cannot be loaded or has no runnable leaf; the caller then falls through
+    to the no-runnable-source skip.
+
+    Invariant (trigger vs. runtime asymmetry): this marker records
+    ``workflow`` = the reference being entered, while the runtime entry path
+    (``_resolve_sub_workflow_entry``) records ``WORKFLOW_NAME`` = the innermost
+    leaf workflow. Both route correctly — the dispatch path re-resolves from
+    the reference step and the runtime entry is the state authority — but the
+    two must stay consistent in descent (same leaf, same skill merge); a
+    change to either side must preserve this invariant (pinned by
+    ``test_trigger_side_marker_matches_leaf``).
     """
-    first_step = child_workflow.steps[0]
+    leaf = _resolve_entry_leaf_for_step(
+        parent_step, workflows_dir, scaffold_branch, local_workflows_dir
+    )
+    if "error" in leaf:
+        print(f"Warning: {leaf['error']}", file=sys.stderr)
+        return None
+    # Prefer the outer parent pair when it differs from the immediate parent
+    # (issue #609): the flat parent-pair state can hold only one level, so the
+    # pair that survives a nested re-entry must be the outermost one. The
+    # immediate parent is re-derivable from the re-entry itself.
+    parent_wf_name = (
+        outer_parent_workflow
+        if outer_parent_workflow and outer_parent_workflow != parent_workflow.name
+        else parent_workflow.name
+    )
+    parent_step_name = (
+        outer_parent_step
+        if outer_parent_workflow and outer_parent_workflow != parent_workflow.name
+        else parent_step.name
+    )
     return {
         "entered_sub_workflow": True,
-        "task": first_step.agent,
-        "step": first_step.name,
+        "task": leaf["task"],
+        "step": leaf["step"],
         "workflow": child_reference,
-        "parent_workflow": parent_workflow.name,
-        "parent_workflow_step": parent_step.name,
+        "parent_workflow": parent_wf_name,
+        "parent_workflow_step": parent_step_name,
     }
 
 
@@ -799,14 +1335,21 @@ def _return_to_parent_marker(
     parent_step_name: str,
     branch_key: Optional[str],
     parent_reference: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
 ) -> Optional[dict]:
     """Build the 'exit sub-workflow' result structure.
 
-    Loads nothing; given the parent's sub-workflow reference step, resolves
-    the parent's next step after it, honoring that step's conditions against
-    the incoming branch key. ``parent_reference`` is the state's workflow
-    name/path used to restore ``config_workflow``. Returns None when the
-    parent step is missing or itself terminal (overall terminal).
+    Given the parent's sub-workflow reference step, resolves the parent's
+    next step after it, honoring that step's conditions against the incoming
+    branch key. When that next step is itself a sub-workflow reference
+    (issue #609, e.g. ``tmp-impl``'s ``step_2: workflow: dev-review-loop``),
+    the marker re-enters it via the entry-leaf descent so the recorded
+    ``workflow``/``step`` pair is the leaf to run and the parent tracking
+    fields point at the parent level. ``parent_reference`` is the state's
+    workflow name/path used to restore ``config_workflow``. Returns None
+    when the parent step is missing or itself terminal (overall terminal).
     """
     parent_step = next(
         (s for s in parent_workflow.steps if s.name == parent_step_name), None
@@ -824,6 +1367,22 @@ def _return_to_parent_marker(
         (s for s in parent_workflow.steps if s.name == target_name), None
     )
     if target_step is None:
+        return None
+
+    # The parent's next step may itself mount a sub-workflow: re-enter it
+    # through the leaf descent instead of reading ``agent`` (which is None
+    # on a reference step — issue #609).
+    if target_step.workflow or target_step.path or target_step.repo:
+        marker = _sub_workflow_entry_marker(
+            target_step.workflow or target_step.path or target_step.repo,
+            parent_workflow, target_step, workflows_dir, local_workflows_dir,
+            scaffold_branch,
+        )
+        if marker is not None:
+            effective_branch = _branch_key_for(parent_step, branch_key or "")
+            if effective_branch:
+                marker["branch"] = effective_branch
+            return marker
         return None
 
     marker: dict = {
@@ -845,6 +1404,7 @@ def _return_to_parent_on_terminal(
     workflows_dir: str,
     agent_hint: Optional[str],
     local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
 ) -> Optional[dict]:
     """Exit to the parent when a sub-workflow cannot advance internally.
 
@@ -857,7 +1417,8 @@ def _return_to_parent_on_terminal(
         parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir, local_workflows_dir)
         if parent_wf is not None:
             marker = _return_to_parent_marker(
-                parent_wf, parent_workflow_step, branch_result, parent_workflow
+                parent_wf, parent_workflow_step, branch_result, parent_workflow,
+                workflows_dir, local_workflows_dir, scaffold_branch,
             )
             if marker is not None:
                 return marker
@@ -875,6 +1436,7 @@ def resolve_next_from_workflow(
     parent_workflow: str = "",
     parent_workflow_step: str = "",
     local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
 ) -> Optional[dict]:
     """Resolve the next step in a workflow given the current step.
 
@@ -901,6 +1463,9 @@ def resolve_next_from_workflow(
             sub-workflow; enables return-to-parent on terminal steps.
         parent_workflow_step: The parent's sub-workflow reference step name;
             the parent resumes at the step after this one.
+        scaffold_branch: Branch carrying a branch-mounted child workflow;
+            enables fetch-on-miss for children absent from the local checkout
+            (issue #604).
 
     Returns:
         ``{"task", "step"}`` for linear routing, ``{"task", "step", "branch"}``
@@ -927,14 +1492,17 @@ def resolve_next_from_workflow(
         return None
 
     # Sub-workflow entry step (local ref only; remote sources are out of
-    # scope for the trigger-side resolver)
+    # scope for the trigger-side resolver). The marker descends to the
+    # innermost runnable leaf, so a child whose first step is itself a
+    # sub-workflow reference resolves to that leaf (issue #609).
     child_ref = _resolve_sub_workflow_ref_target(current_step)
     if child_ref:
-        child_workflow = _load_workflow_by_reference(child_ref, workflows_dir, local_workflows_dir)
-        if child_workflow is not None and child_workflow.steps:
-            return _sub_workflow_entry_marker(
-                child_workflow, child_ref, workflow, current_step
-            )
+        marker = _sub_workflow_entry_marker(
+            child_ref, workflow, current_step, workflows_dir,
+            local_workflows_dir, scaffold_branch,
+        )
+        if marker is not None:
+            return marker
 
     # Terminal step: return to parent when inside a sub-workflow
     if _is_terminal_step(current_step):
@@ -942,7 +1510,8 @@ def resolve_next_from_workflow(
             parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir, local_workflows_dir)
             if parent_wf is not None:
                 marker = _return_to_parent_marker(
-                    parent_wf, parent_workflow_step, branch_result, parent_workflow
+                    parent_wf, parent_workflow_step, branch_result, parent_workflow,
+                    workflows_dir, local_workflows_dir, scaffold_branch,
                 )
                 if marker is not None:
                     return marker
@@ -978,7 +1547,7 @@ def resolve_next_from_workflow(
     if target_step_name is None:
         return _return_to_parent_on_terminal(
             parent_workflow, parent_workflow_step, branch_result, workflows_dir, agent_hint,
-            local_workflows_dir,
+            local_workflows_dir, scaffold_branch,
         )
 
     # Look up target step to get its agent

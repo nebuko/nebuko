@@ -363,3 +363,12 @@ step — `dev-review-loop` and `review-only` are the built-in examples. The
 referenced path may be a workflow name (resolved against `workflows/`) or a
 relative file path (e.g., `tmp_impl/workflow.yaml`), which enables
 runtime-generated workflows.
+
+**Nested sub-workflows**: a step that references a workflow whose first step is
+itself a `workflow:` reference is supported (e.g. `tmp_impl` → `dev-review-loop`).
+On entry, the resolver descends to the innermost runnable leaf
+(`agent:` or `script:` step), up to a depth guard with cycle detection. `skill:`
+values declared on the referencing parent step propagate down to the leaf.
+Each sub-workflow's terminal return resumes only its *immediate* parent; an
+outer parent pair already on record survives nested re-entry, so the chain
+unwinds one level per return.
