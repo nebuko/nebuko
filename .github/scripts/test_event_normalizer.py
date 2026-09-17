@@ -1,10 +1,17 @@
 """Tests for event_normalizer.py."""
 
 import json
-import tempfile
 import os
+import sys
+import tempfile
+from pathlib import Path
 
 import pytest
+
+# Repo root must be importable for `engine.models` regardless of pytest CWD.
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from event_normalizer import normalize_event
 
@@ -143,3 +150,72 @@ class TestNormalizeEvent:
             normalize_event(path, "unknown_event")
 
         os.unlink(path)
+
+
+class TestNormalizeTrigger:
+    """Test the pure normalize_trigger(payload) -> Trigger seam (issue #590)."""
+
+    _ISSUE_COMMENT_PAYLOAD = {
+        "comment": {
+            "body": "@@dev please fix it",
+            "user": {"login": "olivier-norture"},
+        }
+    }
+
+    def test_trigger_fields_match_normalize_event(self):
+        """Trigger fields equal the KEY=value values normalize_event emits."""
+        from event_normalizer import normalize_event, normalize_trigger
+
+        data = self._ISSUE_COMMENT_PAYLOAD
+        path = self._write_event(data)
+        try:
+            kv = normalize_event(path, "issue_comment", issue_number=90)
+            trigger = normalize_trigger(data, "issue_comment", issue_number=90)
+        finally:
+            os.unlink(path)
+
+        assert trigger.author == kv["TRIGGER_AUTHOR"]
+        assert trigger.body == kv["TRIGGER_BODY"]
+        assert trigger.type == kv["EVENT_TYPE"]
+        assert str(trigger.number) == kv["TARGET_NUMBER"]
+
+    def test_trigger_is_pydantic_model(self):
+        from engine.models import Trigger
+        from event_normalizer import normalize_trigger
+
+        trigger = normalize_trigger(
+            self._ISSUE_COMMENT_PAYLOAD, "issue_comment", issue_number=90
+        )
+        assert isinstance(trigger, Trigger)
+        assert trigger.number == 90
+
+    def test_workflow_call_trigger_fields(self):
+        from event_normalizer import normalize_trigger
+
+        payload = {"workflow_run": {"triggering_actor": {"login": "ci-bot"}}}
+        trigger = normalize_trigger(
+            payload,
+            "workflow_call",
+            prompt_body="do the thing",
+            triggering_actor="ci-bot",
+            actor="fallback",
+        )
+        assert trigger.type == "workflow_call"
+        assert trigger.author == "ci-bot"
+        assert trigger.body == "do the thing"
+        assert trigger.number == 0
+
+    def test_unknown_event_exits(self):
+        from event_normalizer import normalize_trigger
+
+        with pytest.raises(SystemExit):
+            normalize_trigger({}, "unknown_event")
+
+    def _write_event(self, data):
+        import json
+        import tempfile
+
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        json.dump(data, f)
+        f.close()
+        return f.name

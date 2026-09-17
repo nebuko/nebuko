@@ -39,3 +39,40 @@ class TestFetchWorkflowStateFromHistory:
             "resolve_config.get_issue_comments", side_effect=RuntimeError("boom")
         ):
             assert _fetch_workflow_state_from_history("owner/repo", 42) is None
+
+    def test_uses_injected_history_provider(self):
+        """An injected provider is called instead of the GitHub client."""
+        comments = [{"body": _state_block(workflow="wf", step="s"), "id": 1}]
+        calls = []
+
+        def provider(repo, issue_number):
+            calls.append((repo, issue_number))
+            return comments
+
+        state = _fetch_workflow_state_from_history(
+            "owner/repo", 42, history_provider=provider
+        )
+        assert state is not None
+        assert state.workflow == "wf"
+        assert calls == [("owner/repo", 42)]
+
+    def test_provider_bypasses_default_client(self, mocker):
+        """When a provider is given, the GitHub client must not be called."""
+        spy = mocker.patch("resolve_config.get_issue_comments")
+        comments = [{"body": _state_block(), "id": 1}]
+        state = _fetch_workflow_state_from_history(
+            "owner/repo", 42, history_provider=lambda r, n: comments
+        )
+        assert state is not None
+        spy.assert_not_called()
+
+    def test_provider_error_returns_none(self):
+        def provider(repo, issue_number):
+            raise RuntimeError("boom")
+
+        assert (
+            _fetch_workflow_state_from_history(
+                "owner/repo", 42, history_provider=provider
+            )
+            is None
+        )

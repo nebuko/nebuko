@@ -19,6 +19,7 @@ import argparse
 import os
 import re
 import sys
+from typing import Callable, List, Optional
 
 sys.path.insert(0, os.path.dirname(__file__))
 from github_client import get_issue_comments, post_comment
@@ -52,6 +53,7 @@ def check_circuit_breaker(
     repo: str = "",
     gh_token: str = "",
     dry_run: bool = False,
+    history_provider: Optional[Callable[[], List[str]]] = None,
 ) -> dict:
     """Evaluate circuit breaker condition.
 
@@ -61,6 +63,10 @@ def check_circuit_breaker(
         repo: Repository owner/repo string.
         gh_token: GitHub token for API access.
         dry_run: If True, don't actually call GitHub API.
+        history_provider: Optional callable returning comment body strings
+            (any adapter's history). When provided, marker counting runs
+            over those bodies instead of the GitHub API, and no warning
+            comment is posted (the caller owns posting on that path).
 
     Returns:
         Dict with CIRCUIT_BREAKER_TRIPPED and related env vars.
@@ -72,7 +78,10 @@ def check_circuit_breaker(
             "BOT_MARKER_COUNT": "0",
         }
 
-    comments = get_issue_comments(repo, issue_number, gh_token, dry_run=dry_run)
+    if history_provider is not None:
+        comments = [{"body": body} for body in history_provider()]
+    else:
+        comments = get_issue_comments(repo, issue_number, gh_token, dry_run=dry_run)
     bot_count, summary_count = count_bot_markers(comments)
 
     # Agent calls = (total bot markers - summary markers) / 2
@@ -87,7 +96,7 @@ def check_circuit_breaker(
         "CIRCUIT_BREAKER_THRESHOLD": str(threshold),
     }
 
-    if agent_calls >= threshold and not dry_run:
+    if agent_calls >= threshold and not dry_run and history_provider is None:
         # Post warning comment
         warning = (
             f"\n⚠️ **Circuit Breaker Activated**\n\n"

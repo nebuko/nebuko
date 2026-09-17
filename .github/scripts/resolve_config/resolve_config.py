@@ -9,7 +9,7 @@ Package-by-feature DDD layout:
 import argparse
 import os
 import sys
-from typing import Optional
+from typing import Callable, List, Optional
 
 from .features.build_result.build_result import _build_result
 from .features.fetch_state.fetch_state import _fetch_workflow_state_from_history
@@ -46,6 +46,7 @@ def resolve_config(
     issue_number: Optional[int] = None,
     debug: bool = False,
     local_workflows_dir: Optional[str] = None,
+    history_provider: Optional[Callable[[str, int], List[dict]]] = None,
 ) -> dict:
     """Resolve complete agent configuration from trigger body.
 
@@ -77,6 +78,9 @@ def resolve_config(
         local_workflows_dir: Optional consumer-local workflows dir that takes
             precedence over ``workflows_dir`` for workflow lookups (issue
             #529).
+        history_provider: Optional callable (repo, issue_number) -> list of
+            raw comment dicts used to fetch workflow state from history.
+            Defaults to github_client.get_issue_comments (the GHA path).
 
     Returns:
         Dict with all environment variables to set.
@@ -95,7 +99,9 @@ def resolve_config(
 
     # Centralized fallback: if no state from current body, try comment history
     if not prev_state:
-        prev_state = _fetch_workflow_state_from_history(repo, issue_number)
+        prev_state = _fetch_workflow_state_from_history(
+            repo, issue_number, history_provider=history_provider
+        )
         if prev_state:
             dispatch_obj = prev_state.dispatch
 

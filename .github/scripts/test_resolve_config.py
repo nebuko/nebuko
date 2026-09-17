@@ -2595,3 +2595,66 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
         # Parent pair mirrors the tmp-impl reference step
         self.assertEqual(result["PARENT_WORKFLOW"], "tmp-impl")
         self.assertEqual(result["PARENT_WORKFLOW_STEP"], "step_1")
+
+
+class TestHistoryProviderInjection:
+    """Issue #590 seam: resolve_config accepts an injected history provider so
+    the state-fetch path can be driven by any adapter without network I/O."""
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        return prompt_base, workflows_dir
+
+    def test_history_provider_drives_state_fetch(self, mocker):
+        prompt_base, workflows_dir = self._setup_dirs()
+        provider_comments = [
+            {
+                "body": (
+                    "<!-- WORKFLOW_STATE_START -->\n"
+                    '{"version": 1, "dispatch": {"task_hint": "dev", "complexity": "high"}}\n'
+                    "<!-- WORKFLOW_STATE_END -->"
+                ),
+                "id": 1,
+            }
+        ]
+        spy = mocker.patch("resolve_config.get_issue_comments")
+
+        # CI-posted mention trigger (universal bot marker + mention-only body),
+        # the shape that routes through the fetched state's mention/agent.
+        result = resolve_config(
+            "<!-- bot-workflow-terminal -->\n@@dev\n",
+            prompt_base,
+            workflows_dir,
+            repo="owner/repo",
+            issue_number=42,
+            history_provider=lambda repo, issue_number: provider_comments,
+        )
+
+        assert result["TASK"] == "dev"
+        assert result["ROLE_NAME"] == "dev"
+        assert result["SKIP_AGENT"] == "false"
+        spy.assert_not_called()
+
+    def test_history_provider_error_falls_back_to_no_state(self, mocker):
+        prompt_base, workflows_dir = self._setup_dirs()
+
+        def provider(repo, issue_number):
+            raise RuntimeError("boom")
+
+        result = resolve_config(
+            "@@genius\n",
+            prompt_base,
+            workflows_dir,
+            is_bot=False,
+            repo="owner/repo",
+            issue_number=42,
+            history_provider=provider,
+        )
+
+        # Human mention with no usable state still routes (not skipped),
+        # mirroring the API-error degradation on the GHA default path.
+        assert result["SKIP_AGENT"] == "false"

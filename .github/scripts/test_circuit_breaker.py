@@ -142,3 +142,68 @@ class TestCheckCircuitBreakerDryRun:
         )
         assert result["CIRCUIT_BREAKER_TRIPPED"] == "false"
         assert result["AGENT_CALLS"] == "0"
+
+
+class TestCheckCircuitBreakerHistoryProvider:
+    """Test the injected history-provider seam (no network)."""
+
+    _BOTS = ["<!-- bot-agent-dev --> ran"] * 10
+
+    def test_provider_counts_markers_without_client(self, mocker):
+        spy = mocker.patch("circuit_breaker.get_issue_comments")
+        post_spy = mocker.patch("circuit_breaker.post_comment")
+        result = check_circuit_breaker(
+            issue_number=42,
+            threshold=5,
+            history_provider=lambda: self._BOTS,
+        )
+        assert result["CIRCUIT_BREAKER_TRIPPED"] == "true"
+        assert result["AGENT_CALLS"] == "5"
+        spy.assert_not_called()
+
+    def test_provider_path_does_not_post_warning(self, mocker):
+        """Provider path is pure decision-making: caller owns posting."""
+        post_spy = mocker.patch("circuit_breaker.post_comment")
+        check_circuit_breaker(
+            issue_number=42,
+            threshold=5,
+            history_provider=lambda: self._BOTS,
+        )
+        post_spy.assert_not_called()
+
+    def test_provider_below_threshold_not_tripped(self, mocker):
+        spy = mocker.patch("circuit_breaker.get_issue_comments")
+        result = check_circuit_breaker(
+            issue_number=42,
+            threshold=10,
+            history_provider=lambda: self._BOTS,
+        )
+        assert result["CIRCUIT_BREAKER_TRIPPED"] == "false"
+        assert result["AGENT_CALLS"] == "5"
+        spy.assert_not_called()
+
+    def test_provider_summary_markers_excluded(self):
+        bodies = [
+            "<!-- bot-agent-summary -->",
+            "<!-- bot-agent-dev --> a",
+            "<!-- bot-agent-dev --> b",
+            "<!-- bot-agent-dev --> c",
+            "<!-- bot-agent-dev --> d",
+        ]
+        # 4 dev markers, 1 summary marker -> (4-1)//2 = 2 calls
+        result = check_circuit_breaker(
+            issue_number=42,
+            threshold=1,
+            history_provider=lambda: bodies,
+        )
+        assert result["AGENT_CALLS"] == "2"
+        assert result["CIRCUIT_BREAKER_TRIPPED"] == "true"
+
+    def test_empty_provider_not_tripped(self):
+        result = check_circuit_breaker(
+            issue_number=42,
+            threshold=1,
+            history_provider=lambda: [],
+        )
+        assert result["CIRCUIT_BREAKER_TRIPPED"] == "false"
+        assert result["AGENT_CALLS"] == "0"

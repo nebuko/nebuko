@@ -20,6 +20,45 @@ import os
 import sys
 
 
+def _trigger_fields(
+    event_data: dict,
+    event_name: str,
+    issue_number: int = 0,
+    prompt_body: str = "",
+    triggering_actor: str = "",
+    actor: str = "",
+):
+    """Extract (body, author, target_number, event_type) from an event payload.
+
+    Pure mapping from a parsed event payload dict; shared by
+    ``normalize_event`` (file/KEY=value path) and ``normalize_trigger``
+    (typed Trigger path) so both stay in lock-step.
+
+    Raises:
+        SystemExit: on an unknown event name (legacy stderr message kept).
+    """
+    if event_name == "issue_comment":
+        trigger_body = event_data.get("comment", {}).get("body", "")
+        trigger_author = event_data.get("comment", {}).get("user", {}).get("login", "")
+        target_number = issue_number
+        event_type = "issue_comment"
+    elif event_name == "issues":
+        trigger_body = event_data.get("issue", {}).get("body", "")
+        trigger_author = event_data.get("issue", {}).get("user", {}).get("login", "")
+        target_number = issue_number
+        event_type = "issues"
+    elif event_name == "workflow_call":
+        trigger_body = prompt_body
+        trigger_author = triggering_actor or actor
+        target_number = 0
+        event_type = "workflow_call"
+    else:
+        print(f"Unknown event type: {event_name}", file=sys.stderr)
+        sys.exit(1)
+
+    return trigger_body, trigger_author, target_number, event_type
+
+
 def normalize_event(
     event_path: str,
     event_name: str,
@@ -44,24 +83,14 @@ def normalize_event(
     with open(event_path, "r", encoding="utf-8") as f:
         event_data = json.load(f)
 
-    if event_name == "issue_comment":
-        trigger_body = event_data.get("comment", {}).get("body", "")
-        trigger_author = event_data.get("comment", {}).get("user", {}).get("login", "")
-        target_number = issue_number
-        event_type = "issue_comment"
-    elif event_name == "issues":
-        trigger_body = event_data.get("issue", {}).get("body", "")
-        trigger_author = event_data.get("issue", {}).get("user", {}).get("login", "")
-        target_number = issue_number
-        event_type = "issues"
-    elif event_name == "workflow_call":
-        trigger_body = prompt_body
-        trigger_author = triggering_actor or actor
-        target_number = 0
-        event_type = "workflow_call"
-    else:
-        print(f"Unknown event type: {event_name}", file=sys.stderr)
-        sys.exit(1)
+    trigger_body, trigger_author, target_number, event_type = _trigger_fields(
+        event_data,
+        event_name,
+        issue_number=issue_number,
+        prompt_body=prompt_body,
+        triggering_actor=triggering_actor,
+        actor=actor,
+    )
 
     return {
         "TARGET_NUMBER": str(target_number),
@@ -69,6 +98,55 @@ def normalize_event(
         "TRIGGER_AUTHOR": trigger_author or "",
         "EVENT_TYPE": event_type,
     }
+
+
+def normalize_trigger(
+    payload: dict,
+    event_name: str,
+    issue_number: int = 0,
+    prompt_body: str = "",
+    triggering_actor: str = "",
+    actor: str = "",
+) -> "Trigger":
+    """Normalize a GitHub event payload dict into a typed Trigger.
+
+    Pure function over the already-parsed payload (no file I/O); produces the
+    same values as ``normalize_event`` over the same event file.
+
+    Args:
+        payload: Parsed GitHub event JSON (dict).
+        event_name: GitHub event name (issue_comment, issues, workflow_call).
+        issue_number: Issue number (for issue_comment/issues events).
+        prompt_body: Body text for workflow_call events.
+        triggering_actor: Actor who triggered a workflow_call.
+        actor: Fallback actor name.
+
+    Returns:
+        ``engine.models.Trigger`` (author, body, type, number).
+
+    Raises:
+        SystemExit: on an unknown event name (legacy stderr message kept).
+    """
+    trigger_body, trigger_author, target_number, event_type = _trigger_fields(
+        payload,
+        event_name,
+        issue_number=issue_number,
+        prompt_body=prompt_body,
+        triggering_actor=triggering_actor,
+        actor=actor,
+    )
+
+    # Imported lazily: the pipeline scripts run standalone (scripts dir on
+    # sys.path) where the repo-root `engine` package is not importable, and
+    # the GHA default path never reaches this import.
+    from engine.models import Trigger
+
+    return Trigger(
+        author=trigger_author or "",
+        body=trigger_body or "",
+        type=event_type,
+        number=int(target_number),
+    )
 
 
 def main():
