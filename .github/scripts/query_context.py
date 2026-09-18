@@ -71,17 +71,22 @@ def _check_env_value_size(key: str, value: str) -> None:
         )
 
 
-def _write_context_file(filename: str, content: str) -> str:
-    """Write a context payload to CONTEXT_FILES_DIR and return the file path.
+def _write_context_file_in(directory: Path, filename: str, content: str) -> str:
+    """Write a context payload to ``directory`` and return the file path.
 
     Used for large payloads (issue body, comment history) that must stay out
     of job-level environment variables.
     """
-    CONTEXT_FILES_DIR.mkdir(parents=True, exist_ok=True)
-    path = CONTEXT_FILES_DIR / filename
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / filename
     path.write_text(content, encoding="utf-8")
     print(f"Wrote {len(content)} chars to {path}", file=sys.stderr)
     return str(path)
+
+
+def _write_context_file(filename: str, content: str) -> str:
+    """Write a context payload to CONTEXT_FILES_DIR and return the file path."""
+    return _write_context_file_in(CONTEXT_FILES_DIR, filename, content)
 
 
 def load_event_data(event_path: str) -> dict:
@@ -363,37 +368,33 @@ def _build_state_context(comments, repo: str) -> str:
     return ""
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Prepare agent query context from GitHub issue data"
-    )
-    parser.add_argument(
-        "--issue-number",
-        type=int,
-        required=True,
-        help="GitHub issue number",
-    )
-    parser.add_argument(
-        "--output-file",
-        default="/tmp/ready_prompt.md",
-        help="Path to write formatted query output (default: /tmp/ready_prompt.md)",
-    )
-    parser.add_argument(
-        "--event-path",
-        default=os.environ.get("GITHUB_EVENT_PATH"),
-        help="Path to GitHub event JSON file",
-    )
+def _default_state_dir() -> Path:
+    """Legacy state-file location: ``$RUNNER_TEMP`` (fallback ``/tmp``)."""
+    return Path(os.environ.get("RUNNER_TEMP", "/tmp"))
 
-    args = parser.parse_args()
 
-    # Resolve repo name
-    repo_name = _resolve_repo_name()
+def _build_context(
+    *,
+    event_data: dict,
+    comments: list,
+    repo_name: str,
+    state_dir,
+    context_dir,
+    output_file: str,
+) -> None:
+    """Shared core for main() and build_query_context(): build artifacts.
 
-    # Load event data
-    event_data = load_event_data(args.event_path)
+    Writes the same artifacts the GHA path has always produced:
+      * ``prev_workflow_state.json`` under ``state_dir`` (latest workflow
+        state, or removed if stale)
+      * the formatted query at ``output_file`` (ready_prompt.md)
+      * ``issue_body.md`` / ``comment_history.md`` under ``context_dir``
 
-    # Fetch comments
-    comments = get_issue_comments(repo_name, args.issue_number)
+    Preserves the E2BIG guard (issue #520) and the recovery-log +
+    ``HUMAN_RESUME_INPUT`` injections.
+    """
+    state_dir = Path(state_dir)
+    context_dir = Path(context_dir)
 
     # Extract workflow state FIRST (needed for inject_context filtering)
     prev_state = None
@@ -419,9 +420,7 @@ def main():
 
     # Save extracted workflow state as JSON for the next agent step
     # Use RUNNER_TEMP for per-run isolation (avoids cross-contamination on self-hosted runners)
-    state_file_path = os.path.join(
-        os.environ.get("RUNNER_TEMP", "/tmp"), "prev_workflow_state.json"
-    )
+    state_file_path = state_dir / "prev_workflow_state.json"
     try:
         if prev_state:
             with open(state_file_path, "w", encoding="utf-8") as sf:
@@ -480,12 +479,10 @@ def main():
         print("Injected human resume input into agent query context", file=sys.stderr)
 
     # Write output file
-    with open(args.output_file, "w", encoding="utf-8") as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(query)
 
     # ─────────────────────────────────────────────────────────────
-    # Output to stdout for >> $GITHUB_ENV consumption
-    #
     # Only small scalar values may be emitted into the environment: OpenHands
     # mirrors os.environ into tmux (one `set-environment <k> <v>` per variable)
     # and a single value > ~128 KiB makes the kernel reject the execve with
@@ -495,19 +492,125 @@ def main():
     body_val = event_data["body"].strip()
     history_val = history.strip()
 
-    print(f"AGENT_QUERY_PATH={args.output_file}")
+    print(f"AGENT_QUERY_PATH={output_file}")
     _check_env_value_size("ISSUE_TITLE", event_data["title"])
     print(f"ISSUE_TITLE={event_data['title']}")
     _check_env_value_size("ISSUE_AUTHOR", event_data["author"])
     print(f"ISSUE_AUTHOR={event_data['author']}")
 
-    body_path = _write_context_file("issue_body.md", body_val)
-    history_path = _write_context_file("comment_history.md", history_val)
+    body_path = _write_context_file_in(context_dir, "issue_body.md", body_val)
+    history_path = _write_context_file_in(context_dir, "comment_history.md", history_val)
     print(f"ISSUE_BODY_PATH={body_path}")
     print(f"COMMENT_HISTORY_PATH={history_path}")
 
     # Log to stderr only (won't interfere with GITHUB_ENV)
-    print(f"Wrote agent query context to {args.output_file}", file=sys.stderr)
+    print(f"Wrote agent query context to {output_file}", file=sys.stderr)
+
+
+def build_query_context(
+    trigger: "Trigger",
+    *,
+    history_provider,
+    output_dir,
+    repo: str = "",
+    event_data: dict = None,
+    output_file: str = None,
+) -> None:
+    """Build the agent query context artifacts from an adapter trigger (issue #585 Stage A).
+
+    Provider-injected counterpart of ``main()``: comments are fetched via
+    ``history_provider`` (a callable ``(repo, issue_number) -> list[dict]``,
+    e.g. ``PlatformAdapter.load_history`` mapped to dicts) instead of the
+    ``gh`` CLI. The same artifacts are written into ``output_dir``
+    (``prev_workflow_state.json``, ``ready_prompt.md``, ``issue_body.md``,
+    ``comment_history.md``); the E2BIG guard and the recovery-log /
+    ``HUMAN_RESUME_INPUT`` injections are preserved.
+
+    Args:
+        trigger: Normalized trigger (``engine.models.Trigger``).
+        history_provider: Callable ``(repo, issue_number) -> list[dict]``.
+        output_dir: Directory for the context artifacts.
+        repo: Repository in owner/repo format ("" disables pinned fetches).
+        event_data: Optional preloaded event fields ({title, body, author});
+            when omitted the prompt is built from the trigger itself.
+        output_file: Path for ready_prompt.md (defaults to
+            ``<output_dir>/ready_prompt.md``).
+    """
+    event_data = event_data or {
+        "title": "",
+        "body": trigger.body,
+        "author": trigger.author,
+    }
+    comments = history_provider(repo, trigger.number)
+    output_dir = Path(output_dir)
+    _build_context(
+        event_data=event_data,
+        comments=comments,
+        repo_name=repo,
+        state_dir=output_dir,
+        context_dir=output_dir,
+        output_file=output_file or str(output_dir / "ready_prompt.md"),
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Prepare agent query context from GitHub issue data"
+    )
+    parser.add_argument(
+        "--issue-number",
+        type=int,
+        required=True,
+        help="GitHub issue number",
+    )
+    parser.add_argument(
+        "--output-file",
+        default="/tmp/ready_prompt.md",
+        help="Path to write formatted query output (default: /tmp/ready_prompt.md)",
+    )
+    parser.add_argument(
+        "--event-path",
+        default=os.environ.get("GITHUB_EVENT_PATH"),
+        help="Path to GitHub event JSON file",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help=(
+            "Directory for the context artifacts (prev_workflow_state.json, "
+            "issue_body.md, comment_history.md). Default: $RUNNER_TEMP "
+            "(fallback /tmp), matching the legacy GHA path."
+        ),
+    )
+
+    args = parser.parse_args()
+
+    # Resolve repo name
+    repo_name = _resolve_repo_name()
+
+    # Load event data
+    event_data = load_event_data(args.event_path)
+
+    # Fetch comments (default history provider: gh CLI via github_client)
+    comments = get_issue_comments(repo_name, args.issue_number)
+
+    # GHA default: state file under $RUNNER_TEMP, oversized payloads under
+    # CONTEXT_FILES_DIR (/tmp/agent_query) — byte-identical to the legacy path.
+    # --output-dir (issue #585 Stage A) redirects both into a single caller
+    # directory, e.g. a LocalAdapter run dir.
+    if args.output_dir is not None:
+        state_dir = context_dir = Path(args.output_dir)
+    else:
+        state_dir, context_dir = _default_state_dir(), CONTEXT_FILES_DIR
+
+    _build_context(
+        event_data=event_data,
+        comments=comments,
+        repo_name=repo_name,
+        state_dir=state_dir,
+        context_dir=context_dir,
+        output_file=args.output_file,
+    )
 
 
 if __name__ == "__main__":

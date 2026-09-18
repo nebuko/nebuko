@@ -20,7 +20,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -182,6 +182,98 @@ class GitHubClient:
         return result.get("id")
 
 
+# ── Task Sink seam (issue #585 Stage A) ─────────────────────────────
+#
+# create_sub_issues / store_split_plan_state / trigger_workflows depend on
+# this Protocol instead of the concrete GitHubClient, so a local sink can
+# replace the REST transport without touching the orchestration code. The
+# default path is unchanged: main() still builds a GitHubClient.
+
+
+class TaskSink(Protocol):
+    """Transport contract for sub-issue creation side effects.
+
+    Structural (duck-typed) protocol: the default sink is the REST
+    ``GitHubClient`` itself, so existing call sites and tests are
+    unchanged. Any object with the three methods below — e.g. the
+    file-backed ``LocalTaskSink`` — can be injected instead.
+    """
+
+    def create_issue(self, title: str, body: str,
+                     labels: List[str]) -> Optional[Dict[str, Any]]:
+        """Create a task; return {"number", "id"} or None on missing fields."""
+        ...
+
+    def add_sub_issue(self, parent_number: int, sub_issue_id: int,
+                      position: Optional[int] = None) -> None:
+        """Link a created task as a sub-task of ``parent_number``."""
+        ...
+
+    def create_comment(self, issue_number: int, body: str) -> Any:
+        """Post a comment on the given issue number."""
+        ...
+
+
+class LocalTaskSink:
+    """TaskSink that writes one JSON file per sub-task — no REST, no gh.
+
+    Files land in ``directory`` as ``task_<index>.json`` with
+    ``{"index", "number", "id", "title", "body", "labels", "meta"}``;
+    link/trigger comments are recorded in ``comments.json``.
+    """
+
+    def __init__(self, directory: str):
+        self.directory = directory
+        os.makedirs(directory, exist_ok=True)
+        self._next = 1
+
+    def create_issue(self, title: str, body: str,
+                     labels: List[str]) -> Optional[Dict[str, Any]]:
+        index = self._next
+        self._next += 1
+        record = {
+            "index": index,
+            "number": index,
+            "id": index,
+            "title": title,
+            "body": body,
+            "labels": list(labels),
+            "meta": {},
+        }
+        with open(os.path.join(self.directory, f"task_{index:03d}.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump(record, f, indent=2, ensure_ascii=False)
+        return {"number": index, "id": index}
+
+    def add_sub_issue(self, parent_number: int, sub_issue_id: int,
+                      position: Optional[int] = None) -> None:
+        links = self._load_json("sub_issue_links.json", [])
+        links.append({"parent": parent_number, "sub_issue_id": sub_issue_id,
+                      "position": position})
+        self._save_json("sub_issue_links.json", links)
+
+    def create_comment(self, issue_number: int, body: str) -> Any:
+        comments = self._load_json("comments.json", [])
+        entry = {"issue_number": issue_number,
+                 "body": ensure_bot_marker(body),
+                 "id": len(comments) + 1}
+        comments.append(entry)
+        self._save_json("comments.json", comments)
+        return entry["id"]
+
+    def _load_json(self, filename: str, default):
+        path = os.path.join(self.directory, filename)
+        if not os.path.isfile(path):
+            return default
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def _save_json(self, filename: str, data) -> None:
+        with open(os.path.join(self.directory, filename), "w",
+                  encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+
 # ── Split Plan Operations ────────────────────────────────────────────
 
 
@@ -243,7 +335,7 @@ def load_split_plan(path: str) -> SplitPlan:
 
 
 def create_sub_issues(
-    client: GitHubClient,
+    client: "TaskSink",
     plan: SplitPlan,
     parent_number: int,
 ) -> List[Dict[str, Any]]:
@@ -322,7 +414,7 @@ def create_sub_issues(
 
 
 def store_split_plan_state(
-    client: GitHubClient,
+    client: "TaskSink",
     parent_number: int,
     tasks_with_numbers: List[Dict[str, Any]],
 ) -> None:
@@ -356,7 +448,7 @@ def store_split_plan_state(
 
 
 def trigger_workflows(
-    client: GitHubClient,
+    client: "TaskSink",
     tasks_with_numbers: List[Dict[str, Any]],
 ) -> None:
     """Post @@genius comments only on tasks with no pending dependencies.

@@ -528,5 +528,75 @@ class TestPrepareCommentCtxCollapse(TestPrepareCommentIntegration):
         self.assertEqual(self._read("github_comment.md"), plain)
 
 
+# ── Poster injection seam (issue #585 Stage A) ─────────────────────
+
+
+class TestPosterInjection(unittest.TestCase):
+    """prepare_comment(poster=...) posts via the injected callable."""
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self.tmpdir = tempfile.mkdtemp()
+        os.chdir(self.tmpdir)
+        self._saved_github_env = os.environ.pop("GITHUB_ENV", None)
+        self._saved_trigger = os.environ.pop("TRIGGER_AUTHOR", None)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        if os.path.exists(self.tmpdir):
+            for f in os.listdir(self.tmpdir):
+                os.remove(os.path.join(self.tmpdir, f))
+            os.rmdir(self.tmpdir)
+        if self._saved_github_env:
+            os.environ["GITHUB_ENV"] = self._saved_github_env
+        if self._saved_trigger:
+            os.environ["TRIGGER_AUTHOR"] = self._saved_trigger
+
+    def _write(self, name, content):
+        with open(name, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def _read(self, name):
+        with open(name, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_poster_receives_final_body_and_file_still_written(self):
+        self._write("final_message.txt", "Hello from the poster seam.")
+        posted = []
+        self.assertTrue(prepare_comment(poster=posted.append))
+        self.assertEqual(posted, ["Hello from the poster seam."])
+        self.assertEqual(self._read("github_comment.md"), posted[0])
+
+    def test_poster_receives_escaped_body(self):
+        self._write("final_message.txt", "Done — next: @@dev")
+        posted = []
+        prepare_comment(poster=posted.append)
+        self.assertEqual(len(posted), 1)
+        self.assertNotIn("@@dev", posted[0])
+        self.assertEqual(posted[0], self._read("github_comment.md"))
+
+    def test_poster_used_on_fallback_path(self):
+        self._write("final_message.txt", "__NO_FINAL_MESSAGE__ no data")
+        self._write("console.log",
+                     "Message from Agent " + "\u2500" * 63 + "\nFallback via poster\nTokens: 5")
+        posted = []
+        prepare_comment(poster=posted.append)
+        self.assertEqual(len(posted), 1)
+        self.assertIn("Fallback via poster", posted[0])
+
+    def test_default_poster_none_is_byte_identical(self):
+        # No poster -> file written, nothing posted (GHA default unchanged)
+        self._write("final_message.txt", "Plain default path")
+        self.assertTrue(prepare_comment())
+        self.assertEqual(self._read("github_comment.md"), "Plain default path")
+
+    def test_default_post_comment_helper_delegates_to_github_client(self):
+        from unittest.mock import patch
+        import prepare_comment as pc
+        with patch("github_client.post_comment") as mock_post:
+            pc.post_comment("body", repo="owner/repo", issue_number=7)
+        mock_post.assert_called_once_with("owner/repo", 7, "body", dry_run=False)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1092,3 +1092,74 @@ class TestInjectContextFiltering:
         )
         ids = _get_injectable_comment_ids(state)
         assert ids == {1}
+
+
+# ── build_query_context provider injection (issue #585 Stage A) ─────
+
+
+class TestBuildQueryContext:
+    """build_query_context(trigger, history_provider=..., output_dir=...)
+    writes the same artifacts as main() with comments from an in-memory
+    provider (no gh CLI, no network)."""
+
+    def test_provider_comments_drive_artifacts(self, tmp_path):
+        import sys
+        from pathlib import Path
+
+        _repo_root = str(Path(__file__).resolve().parents[2])
+        if _repo_root not in sys.path:
+            sys.path.insert(0, _repo_root)
+        from engine.models import Trigger
+        from query_context import build_query_context
+
+        fetched = []
+
+        def provider(repo, issue_number):
+            fetched.append((repo, issue_number))
+            return [
+                {"author": "alice", "body": "First comment", "created_at": "2026-01-01T00:00:00Z"},
+                {"author": "bob", "body": "Second comment", "created_at": "2026-01-02T00:00:00Z"},
+            ]
+
+        trigger = Trigger(author="alice", body="@@genius please plan", type="comment", number=42)
+        build_query_context(trigger, history_provider=provider, output_dir=tmp_path, repo="owner/repo")
+
+        assert fetched == [("owner/repo", 42)]
+        prompt = (tmp_path / "ready_prompt.md").read_text()
+        assert "@@genius please plan" in prompt
+        history = (tmp_path / "comment_history.md").read_text()
+        assert "First comment" in history
+        assert "Second comment" in history
+        issue_body = (tmp_path / "issue_body.md").read_text()
+        assert issue_body == "@@genius please plan"
+        # No state in the recorded history -> stale/absent state file
+        assert not (tmp_path / "prev_workflow_state.json").exists()
+
+    def test_provider_state_roundtrip_into_state_file(self, tmp_path):
+        import sys
+        from pathlib import Path
+
+        _repo_root = str(Path(__file__).resolve().parents[2])
+        if _repo_root not in sys.path:
+            sys.path.insert(0, _repo_root)
+        from engine.models import Trigger
+        from query_context import build_query_context
+        from workflow_state import WorkflowState, to_git_comment
+
+        state = WorkflowState(workflow="dev-review-loop", step="implement", agent="dev")
+
+        def provider(repo, issue_number):
+            return [
+                {"author": "gh-bot[bot]", "body": "prev", "created_at": "2026-01-01T00:00:00Z"},
+                {"author": "bot", "body": to_git_comment(state), "created_at": "2026-01-02T00:00:00Z"},
+            ]
+
+        trigger = Trigger(author="alice", body="resume", type="comment", number=7)
+        build_query_context(trigger, history_provider=provider, output_dir=tmp_path)
+
+        state_path = tmp_path / "prev_workflow_state.json"
+        assert state_path.is_file()
+        recovered = json.loads(state_path.read_text())
+        assert recovered["step"] == "implement"
+        assert recovered["agent"] == "dev"
+        assert recovered["workflow"] == "dev-review-loop"

@@ -541,3 +541,85 @@ class TestCLIMain:
         mock_client.get_issue_by_number.assert_called_once_with(42)
         # Verify internal id (98765) is passed, not display number (42)
         mock_client.add_sub_issue.assert_called_once_with(10, 98765)
+
+
+# ── LocalTaskSink Tests (issue #585 Stage A) ────────────────────────
+
+
+class TestLocalTaskSink:
+    """File-backed sink: no REST, no gh subprocess — one JSON per task."""
+
+    def test_create_issue_writes_task_file(self, tmp_path):
+        from issue_creation import LocalTaskSink
+
+        sink = LocalTaskSink(str(tmp_path))
+        result = sink.create_issue("[Sub-task 1/2] T", "Body B", ["parent-10", "bug"])
+        assert result == {"number": 1, "id": 1}
+        record = json.loads((tmp_path / "task_001.json").read_text())
+        assert record["index"] == 1
+        assert record["title"] == "[Sub-task 1/2] T"
+        assert record["body"] == "Body B"
+        assert record["labels"] == ["parent-10", "bug"]
+        assert record["meta"] == {}
+
+    def test_create_issue_numbers_sequentially(self, tmp_path):
+        from issue_creation import LocalTaskSink
+
+        sink = LocalTaskSink(str(tmp_path))
+        assert sink.create_issue("A", "", [])["number"] == 1
+        assert sink.create_issue("B", "", [])["number"] == 2
+        assert (tmp_path / "task_002.json").is_file()
+
+    def test_add_sub_issue_records_link(self, tmp_path):
+        from issue_creation import LocalTaskSink
+
+        sink = LocalTaskSink(str(tmp_path))
+        sink.add_sub_issue(50, 1, position=1)
+        sink.add_sub_issue(50, 2)
+        links = json.loads((tmp_path / "sub_issue_links.json").read_text())
+        assert links == [
+            {"parent": 50, "sub_issue_id": 1, "position": 1},
+            {"parent": 50, "sub_issue_id": 2, "position": None},
+        ]
+
+    def test_create_comment_records_with_bot_marker(self, tmp_path):
+        from issue_creation import LocalTaskSink
+
+        sink = LocalTaskSink(str(tmp_path))
+        sink.create_comment(101, "@@genius")
+        comments = json.loads((tmp_path / "comments.json").read_text())
+        assert len(comments) == 1
+        assert comments[0]["issue_number"] == 101
+        assert comments[0]["body"].startswith("<!-- bot-workflow-terminal -->")
+        assert comments[0]["id"] == 1
+
+    def test_full_orchestration_flow_with_local_sink(self, tmp_path):
+        """create_sub_issues + state + trigger against LocalTaskSink, no network."""
+        from issue_creation import (
+            LocalTaskSink,
+            SplitPlan,
+            TaskDefinition,
+            create_sub_issues,
+            store_split_plan_state,
+            trigger_workflows,
+        )
+
+        sink = LocalTaskSink(str(tmp_path))
+        plan = SplitPlan(tasks=[
+            TaskDefinition(title="Task A", body="Body A"),
+            TaskDefinition(title="Task B", body="Body B"),
+        ])
+        created = create_sub_issues(sink, plan, parent_number=50)
+        assert [t["number"] for t in created] == [1, 2]
+        store_split_plan_state(sink, parent_number=50, tasks_with_numbers=created)
+        trigger_workflows(sink, created)
+
+        state_bodies = [
+            c["body"] for c in json.loads((tmp_path / "comments.json").read_text())
+            if "<!-- split-plan-state: " in c["body"]
+        ]
+        assert len(state_bodies) == 1
+        state = _split_plan_state_roundtrip(state_bodies[0])
+        assert [t["issue_number"] for t in state["tasks"]] == [1, 2]
+        links = json.loads((tmp_path / "sub_issue_links.json").read_text())
+        assert len(links) == 2

@@ -320,10 +320,27 @@ def _write_output(content: str) -> None:
             ge.write("HAS_COMMENT=true\n")
 
 
+def post_comment(body: str, repo: str = None, issue_number: int = None,
+                 dry_run: bool = False) -> None:
+    """Default poster: post ``body`` via ``github_client.post_comment``.
+
+    GHA reads the posted body from ``github_comment.md``; the GitHub path
+    posts it directly (issue #585 Stage A seam). ``post_comment`` already
+    prepends the universal bot marker idempotently.
+    """
+    from github_client import post_comment as _gh_post_comment
+    _gh_post_comment(
+        repo or os.environ.get("GITHUB_REPOSITORY", ""),
+        int(issue_number or os.environ.get("ISSUE_NUMBER", "0")),
+        body,
+        dry_run=dry_run,
+    )
+
+
 # ── Main entry point ──────────────────────────────────────────────
 
 
-def prepare_comment() -> bool:
+def prepare_comment(poster=None) -> bool:
     """Orchestrate comment preparation from final_message.txt or fallbacks.
 
     Mirrors the four-path logic from the workflow YAML:
@@ -332,9 +349,23 @@ def prepare_comment() -> bool:
       Path C: Agent crashed before producing output
       Path D: final_message.txt doesn't exist
 
+    Args:
+        poster: Optional callable ``poster(body: str) -> None`` invoked with
+            the final body after ``github_comment.md`` is written (issue #585
+            Stage A seam). ``None`` (the GHA default) posts nothing here —
+            the workflow action posts the file instead.
+
     Returns:
         True if github_comment.md was written successfully.
     """
+    def _finalize(content: str) -> bool:
+        _write_output(content)
+        if poster is not None:
+            # Post the same escaped body that github_comment.md carries,
+            # mirroring the GHA action that posts the file itself.
+            poster(escape_agent_triggers(content))
+        return True
+
     trigger_author = os.environ.get("TRIGGER_AUTHOR", "")
     author_ping = f"@{trigger_author} " if trigger_author else ""
 
@@ -350,7 +381,7 @@ def prepare_comment() -> bool:
             metrics_comment = extract_metrics(raw)
             fallback = extract_from_console_log(metrics_comment)
             if fallback:
-                _write_output(fallback)
+                _finalize(fallback)
                 return True
             error_msg = (
                 author_ping
@@ -359,7 +390,7 @@ def prepare_comment() -> bool:
             )
             if metrics_comment:
                 error_msg += "\n\n" + metrics_comment
-            _write_output(error_msg)
+            _finalize(error_msg)
             return True
 
         # ── Latest-answer ETL (issue #522) ───────────────────────
@@ -382,7 +413,7 @@ def prepare_comment() -> bool:
                     print(f"Using latest answer ({len(cleaned)} characters)", flush=True)
                     cleaned = _apply_ctx_collapse(cleaned)
                     cleaned = _truncate_at_boundary(cleaned)
-                    _write_output(cleaned)
+                    _finalize(cleaned)
                     return True
 
         # Normal path: extract metrics, clean, write
@@ -396,7 +427,7 @@ def prepare_comment() -> bool:
             print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
             cleaned = _apply_ctx_collapse(cleaned)
             cleaned = _truncate_at_boundary(cleaned)
-            _write_output(cleaned)
+            _finalize(cleaned)
             return True
 
         # Content was empty after cleaning — fall through to console.log
@@ -404,7 +435,7 @@ def prepare_comment() -> bool:
               "falling back to console.log", flush=True)
         fallback = extract_from_console_log(metrics_comment)
         if fallback:
-            _write_output(fallback)
+            _finalize(fallback)
             return True
 
         # Console.log also empty — crash message
@@ -415,14 +446,14 @@ def prepare_comment() -> bool:
         )
         if metrics_comment:
             error_msg += "\n\n" + metrics_comment
-        _write_output(error_msg)
+        _finalize(error_msg)
         return True
 
     # ── Path B: console.log only (final_message.txt missing/empty) ─
     metrics_comment = ""
     fallback = extract_from_console_log(metrics_comment)
     if fallback:
-        _write_output(fallback)
+        _finalize(fallback)
         return True
 
     # ── Path C/D: No output at all ──────────────────────────────
@@ -431,7 +462,7 @@ def prepare_comment() -> bool:
         + "> \u26a0\ufe0f The agent did not produce a final message. "
         + "Please check the full logs in the workflow run."
     )
-    _write_output(error_msg)
+    _finalize(error_msg)
     return True
 
 
