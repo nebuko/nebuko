@@ -17,7 +17,7 @@ jobs:
     with:
       runs_on: "self-hosted"
       agent_config_path: "agent-config.yaml"
-      circuit_breaker_threshold: 15
+      circuit_breaker_threshold: 25
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
