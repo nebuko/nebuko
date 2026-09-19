@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Any, Optional
 
 # Import domain entities first (no circular dependency)
@@ -9,6 +9,7 @@ from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.dispatch.dispatch import Dispatch
 from .sub_domains.function_call import FunctionCall
 from .sub_domains.step_resolution.step_resolution import StepResolution
+from .sub_domains.parent_ref.parent_ref import ParentRef
 
 STATE_MARKER_START = "<!-- WORKFLOW_STATE_START -->"
 STATE_MARKER_END = "<!-- WORKFLOW_STATE_END -->"
@@ -35,6 +36,13 @@ class WorkflowState(BaseModel):
             (pending tasks, constraints, decisions, etc.).
         parent_workflow: Parent workflow name if currently in a sub-workflow.
         parent_workflow_step: Step in parent that triggered the sub-workflow.
+        parent: Machine-readable pointer to the parent workflow's continuation
+            point (issue #613): which parent flow (workflow + step), which
+            issue it runs on, and which plan step this sub-workflow
+            implements. Consumed on sub-workflow completion to resume the
+            parent flow. Legacy flat ``parent_workflow`` /
+            ``parent_workflow_step`` states are normalized into this block
+            by the reader.
         scaffold_branch: Feature branch the branch-mounted scaffold plan was
             pushed to (issue #604). Set by the engine when the scaffold step
             finishes; used as the fetch-on-miss ref so a sub-workflow file
@@ -56,6 +64,7 @@ class WorkflowState(BaseModel):
     current_context: dict[str, Any] = Field(default_factory=dict)
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None
+    parent: Optional[ParentRef] = None
     scaffold_branch: Optional[str] = None
     issue: Optional[IssueInfo] = None
     pull_request: Optional[PullRequestInfo] = None
@@ -65,6 +74,30 @@ class WorkflowState(BaseModel):
     # Consumed by the next run's resolver, which emits a fresh state with it
     # cleared so it cannot re-fire (consumption by supersession).
     function_call: Optional[FunctionCall] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_parent_aliases(cls, data: Any) -> Any:
+        """Normalize legacy flat parent fields into the ``parent`` block (issue #613).
+
+        States written before #613 carry the parent reference only as the flat
+        ``parent_workflow`` / ``parent_workflow_step`` fields. On read, when the
+        new ``parent`` block is absent, the flat fields are normalized into it
+        so all consumers read one structure. An explicit ``parent`` block
+        always wins (it is the richer, post-#613 source of truth).
+        """
+        if not isinstance(data, dict):
+            return data
+        if data.get("parent"):
+            return data
+        legacy_wf = data.get("parent_workflow")
+        legacy_step = data.get("parent_workflow_step")
+        if legacy_wf or legacy_step:
+            parent = dict(data.get("parent") or {})
+            parent.setdefault("workflow", legacy_wf or "")
+            parent.setdefault("step", legacy_step or "")
+            data["parent"] = parent
+        return data
 
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json
@@ -94,6 +127,7 @@ def go_next(
     context_updates: Optional[dict[str, Any]] = None,
     parent_workflow: Optional[str] = None,
     parent_workflow_step: Optional[str] = None,
+    parent: Optional[ParentRef] = None,
     scaffold_branch: Optional[str] = None,
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
@@ -117,6 +151,7 @@ def go_next(
         context_updates=context_updates,
         parent_workflow=parent_workflow,
         parent_workflow_step=parent_workflow_step,
+        parent=parent,
         scaffold_branch=scaffold_branch,
         issue=issue,
         pull_request=pull_request,

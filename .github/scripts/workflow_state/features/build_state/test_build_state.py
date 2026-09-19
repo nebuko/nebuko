@@ -3,7 +3,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from workflow_state import WorkflowState, build_state, go_next
+from workflow_state import WorkflowState, ParentRef, build_state, go_next
 
 class TestBuildState(unittest.TestCase):
     """Test build_state() pure state-transition function."""
@@ -251,3 +251,149 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.scaffold_branch)
+
+class TestBuildStateParent(unittest.TestCase):
+    """parent block persistence rules (issue #613, stub)."""
+
+    def test_initial_state_has_no_parent(self):
+        state = build_state(
+            None,
+            workflow="dev-review-loop",
+            step="implement",
+            agent="dev",
+        )
+        self.assertIsNone(state.parent)
+        self.assertIsNone(state.parent_workflow)
+        self.assertIsNone(state.parent_workflow_step)
+
+    def test_build_state_sets_parent_block(self):
+        state = build_state(
+            None,
+            workflow="dev-review-loop",
+            step="implement",
+            agent="dev",
+            parent=ParentRef(
+                workflow="plan-orchestration",
+                step="sub_impl",
+                issue_number=589,
+                plan_step_index=2,
+                plan_total_steps=6,
+            ),
+        )
+        self.assertIsNotNone(state.parent)
+        self.assertEqual(state.parent.workflow, "plan-orchestration")
+        self.assertEqual(state.parent.step, "sub_impl")
+        self.assertEqual(state.parent.issue_number, 589)
+        self.assertEqual(state.parent.plan_step_index, 2)
+        self.assertEqual(state.parent.plan_total_steps, 6)
+
+    def test_parent_persists_when_not_repeated(self):
+        prev = build_state(
+            None,
+            workflow="dev-review-loop",
+            step="implement",
+            agent="dev",
+            parent=ParentRef(
+                workflow="plan-orchestration",
+                step="sub_impl",
+                issue_number=589,
+                plan_step_index=2,
+                plan_total_steps=6,
+            ),
+        )
+        next_state = build_state(
+            prev,
+            workflow="dev-review-loop",
+            step="review",
+            agent="review",
+        )
+        self.assertIsNotNone(next_state.parent)
+        self.assertEqual(next_state.parent.workflow, "plan-orchestration")
+        self.assertEqual(next_state.parent.plan_step_index, 2)
+
+    def test_parent_last_write_wins_on_override(self):
+        prev = build_state(
+            None,
+            workflow="dev-review-loop",
+            step="implement",
+            agent="dev",
+            parent=ParentRef(workflow="plan-orchestration", step="sub_impl"),
+        )
+        next_state = build_state(
+            prev,
+            workflow="dev-review-loop",
+            step="review",
+            agent="review",
+            parent=ParentRef(
+                workflow="plan-orchestration",
+                step="final_fix",
+                plan_step_index=3,
+            ),
+        )
+        self.assertEqual(next_state.parent.step, "final_fix")
+        self.assertEqual(next_state.parent.plan_step_index, 3)
+
+    def test_go_next_threads_parent(self):
+        state = go_next(
+            None,
+            workflow="dev-review-loop",
+            step="implement",
+            agent="dev",
+            parent=ParentRef(
+                workflow="plan-orchestration",
+                step="sub_impl",
+                issue_number=589,
+                plan_step_index=2,
+                plan_total_steps=6,
+            ),
+        )
+        self.assertIsNotNone(state.parent)
+        self.assertEqual(state.parent.issue_number, 589)
+
+    def test_backward_compat_old_state_json_without_parent(self):
+        """A state block written before #613 (no parent key) loads cleanly."""
+        data = {
+            "version": 3,
+            "workflow": "dev-review-loop",
+            "step": "implement",
+            "agent": "dev",
+            "history": [{"step": "implement", "agent": "dev", "summary": "ok"}],
+        }
+        state = WorkflowState.model_validate(data)
+        self.assertIsNone(state.parent)
+
+    def test_legacy_flat_parent_fields_normalize_to_parent_block(self):
+        """Pre-#613 flat parent fields normalize into the parent block on read."""
+        data = {
+            "version": 2,
+            "workflow": "dev-review-loop",
+            "step": "implement",
+            "agent": "dev",
+            "parent_workflow": "plan-orchestration",
+            "parent_workflow_step": "sub_impl",
+        }
+        state = WorkflowState.model_validate(data)
+        self.assertIsNotNone(state.parent)
+        self.assertEqual(state.parent.workflow, "plan-orchestration")
+        self.assertEqual(state.parent.step, "sub_impl")
+
+    def test_explicit_parent_block_wins_over_legacy_flat(self):
+        """An explicit parent block is not clobbered by the legacy aliases."""
+        data = {
+            "version": 3,
+            "workflow": "dev-review-loop",
+            "step": "implement",
+            "agent": "dev",
+            "parent_workflow": "stale-alias",
+            "parent_workflow_step": "stale-alias-step",
+            "parent": {
+                "workflow": "plan-orchestration",
+                "step": "sub_impl",
+                "issue_number": 589,
+                "plan_step_index": 2,
+            },
+        }
+        state = WorkflowState.model_validate(data)
+        self.assertEqual(state.parent.workflow, "plan-orchestration")
+        self.assertEqual(state.parent.step, "sub_impl")
+        self.assertEqual(state.parent.issue_number, 589)

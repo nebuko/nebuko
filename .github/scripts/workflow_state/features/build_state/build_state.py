@@ -8,6 +8,7 @@ from ...sub_domains.state_metrics.state_metrics import StateMetrics
 from ...sub_domains.step_resolution.step_resolution import StepResolution
 from ...sub_domains.dispatch.dispatch import Dispatch
 from ...sub_domains.function_call import FunctionCall
+from ...sub_domains.parent_ref.parent_ref import ParentRef
 
 def _last_history_value(history: list[HistoryEntry], field: str) -> str:
     """Return the last non-empty value of ``field`` across history entries."""
@@ -48,6 +49,7 @@ def build_state(
     context_updates: Optional[dict[str, Any]] = None,
     parent_workflow: Optional[str] = None,
     parent_workflow_step: Optional[str] = None,
+    parent: Optional[ParentRef] = None,
     scaffold_branch: Optional[str] = None,
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
@@ -77,6 +79,10 @@ def build_state(
         context_updates: Key-value pairs to merge into current_context.
         parent_workflow: Parent workflow name (if in a sub-workflow).
         parent_workflow_step: Parent step name (if in a sub-workflow).
+        parent: Machine-readable pointer to the parent continuation point
+            (issue #613). None preserves the previous state's value; a
+            non-None value overwrites it (re-entry refreshes the pointer —
+            last write wins, mirroring scaffold_branch).
         scaffold_branch: Feature branch the branch-mounted scaffold plan was
             pushed to (issue #604). None preserves the previous state's
             value; a non-None value overwrites it (a re-scaffold updates it).
@@ -100,6 +106,7 @@ def build_state(
         base_workflow = ""
         base_parent_wf = None
         base_parent_step = None
+        base_parent = None
         base_scaffold_branch = None
         base_issue = None
         base_pr = None
@@ -111,6 +118,7 @@ def build_state(
         base_workflow = prev_state.workflow
         base_parent_wf = prev_state.parent_workflow
         base_parent_step = prev_state.parent_workflow_step
+        base_parent = prev_state.parent
         base_scaffold_branch = prev_state.scaffold_branch
         base_issue = prev_state.issue
         base_pr = prev_state.pull_request
@@ -148,6 +156,12 @@ def build_state(
     new_parent_wf = parent_workflow if parent_workflow is not None else base_parent_wf
     new_parent_step = parent_workflow_step if parent_workflow_step is not None else base_parent_step
 
+    # Preserve the parent continuation pointer across transitions (issue #613):
+    # None means "no new pointer" (keep previous); a non-None value overwrites
+    # (re-scaffolding the same sub-workflow refreshes it — last write wins,
+    # mirroring scaffold_branch).
+    new_parent = parent if parent is not None else base_parent
+
     # Preserve issue info across transitions (once set, it persists)
     new_issue = issue or base_issue
 
@@ -179,6 +193,7 @@ def build_state(
         current_context=new_context,
         parent_workflow=new_parent_wf,
         parent_workflow_step=new_parent_step,
+        parent=new_parent,
         scaffold_branch=new_scaffold_branch,
         issue=new_issue,
         pull_request=new_pr,

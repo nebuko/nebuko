@@ -472,6 +472,47 @@ class TestStateRoundtrip(unittest.TestCase):
         self.assertIsNotNone(restored)
         self.assertIsNone(restored.scaffold_branch)
 
+    def test_roundtrip_preserves_parent_block(self):
+        """The parent pointer survives serialize → deserialize (issue #613)."""
+        original = WorkflowState(
+            workflow="dev-review-loop",
+            step="implement",
+            agent="dev",
+            version=3,
+            parent={
+                "workflow": "plan-orchestration",
+                "step": "sub_impl",
+                "issue_number": 589,
+                "plan_step_index": 2,
+                "plan_total_steps": 6,
+            },
+        )
+
+        comment = to_git_comment(original)
+        restored = extract_state_from_body(comment)
+
+        self.assertIsNotNone(restored)
+        self.assertIsNotNone(restored.parent)
+        self.assertEqual(restored.parent.workflow, "plan-orchestration")
+        self.assertEqual(restored.parent.step, "sub_impl")
+        self.assertEqual(restored.parent.issue_number, 589)
+        self.assertEqual(restored.parent.plan_step_index, 2)
+        self.assertEqual(restored.parent.plan_total_steps, 6)
+
+    def test_roundtrip_omits_absent_parent(self):
+        """States without a parent block omit the key and restore as None."""
+        original = WorkflowState(
+            workflow="default",
+            step="analyze",
+            agent="genius",
+        )
+
+        comment = to_git_comment(original)
+        restored = extract_state_from_body(comment)
+
+        self.assertIsNotNone(restored)
+        self.assertIsNone(restored.parent)
+
 
 class TestExtractState(unittest.TestCase):
     """Test extract_state() — the primary entry point that works with a list of comment dicts."""
