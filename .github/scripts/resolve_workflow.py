@@ -25,6 +25,7 @@ Output (written to --env-file):
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -200,6 +201,37 @@ def _is_terminal_step(step: WorkflowStep) -> bool:
                 return False
         return True
     return False
+
+
+# Plan step names follow the scaffold convention ``step_N`` (1-based, issue
+# #462/#613): a branch-mounted plan workflow (``tmp_impl/workflow.yaml``) has
+# one ``step_N`` per plan item, each mounting the reusable per-step loop.
+_PLAN_STEP_NAME_RE = re.compile(r"^step_(\d+)$")
+
+
+def _plan_step_index(step_name: str) -> Optional[int]:
+    """Return the 1-based plan step index for a ``step_N`` name, else None."""
+    match = _PLAN_STEP_NAME_RE.match(step_name)
+    return int(match.group(1)) if match else None
+
+
+def _parent_plan_position(
+    plan_wf: Optional[WorkflowDefinition], step_name: str
+) -> tuple[str, str]:
+    """Derive the plan position (index, total) of a plan step.
+
+    The plan workflow (``tmp_impl/workflow.yaml``) is generated with one
+    ``step_N`` per plan item, so the 1-based index comes from the ``step_N``
+    name and the total from the step count (issue #613). Returns
+    ``("", "")`` when the position is not derivable (non-plan child), so the
+    caller emits empty env values — additive, never breaks existing consumers.
+    """
+    if plan_wf is None or not plan_wf.steps:
+        return "", ""
+    index = _plan_step_index(step_name)
+    if index is None:
+        return "", ""
+    return str(index), str(len(plan_wf.steps))
 
 
 def _scaffold_child_reference(current_step: WorkflowStep) -> Optional[str]:
