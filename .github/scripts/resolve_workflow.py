@@ -749,6 +749,14 @@ def _resolve_sub_workflow_entry(
         else current_step.name
     )
 
+    # Plan position pointer (issue #613): when the entered child is a
+    # branch-mounted plan workflow (``tmp_impl/workflow.yaml`` with one
+    # ``step_N`` per plan item), record which plan step this entry implements.
+    # Additive keys — empty when not derivable, existing consumers unaffected.
+    plan_step_index, plan_total_steps = _parent_plan_position(
+        child_wf, current_step.name
+    )
+
     if leaf["kind"] == "script":
         return {
             "ROLE_NAME": "",
@@ -760,6 +768,8 @@ def _resolve_sub_workflow_entry(
             "WORKFLOW_STEP": leaf["step"],
             "PARENT_WORKFLOW": parent_wf_name,
             "PARENT_WORKFLOW_STEP": parent_step_name,
+            "PARENT_PLAN_STEP_INDEX": plan_step_index,
+            "PARENT_PLAN_TOTAL_STEPS": plan_total_steps,
             "STEP_SKILLS": leaf["skill"],
             "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
             "SKIP_AGENT": "true",
@@ -784,6 +794,8 @@ def _resolve_sub_workflow_entry(
         "WORKFLOW_NEXT": leaf["workflow_next"],
         "PARENT_WORKFLOW": parent_wf_name,
         "PARENT_WORKFLOW_STEP": parent_step_name,
+        "PARENT_PLAN_STEP_INDEX": plan_step_index,
+        "PARENT_PLAN_TOTAL_STEPS": plan_total_steps,
         "STEP_SKILLS": leaf["skill"],
         "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
         "SKIP_AGENT": "false",
