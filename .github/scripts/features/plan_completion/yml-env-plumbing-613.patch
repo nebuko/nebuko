@@ -1,0 +1,51 @@
+diff --git a/.github/workflows/openhands-multi-agent.yml b/.github/workflows/openhands-multi-agent.yml
+index 5fdcb3b..cb111b8 100644
+--- a/.github/workflows/openhands-multi-agent.yml
++++ b/.github/workflows/openhands-multi-agent.yml
+@@ -314,6 +314,13 @@ jobs:
+                   # non-plan children).
+                   PARENT_PLAN_STEP_INDEX=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_PLAN_STEP_INDEX=' | cut -d= -f2-)
+                   PARENT_PLAN_TOTAL_STEPS=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_PLAN_TOTAL_STEPS=' | cut -d= -f2-)
++                  # Terminal-return-leg signal (issue #613, review round 2):
++                  # true when the sub-workflow of the parent's current step
++                  # just reached its terminal step; COMPLETED_PLAN_* carry the
++                  # completed step's plan position (empty for non-plan steps).
++                  WORKFLOW_STEP_TERMINAL=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_STEP_TERMINAL=' | cut -d= -f2-)
++                  COMPLETED_PLAN_STEP_INDEX=$(echo "$RESOLVE_OUTPUT" | grep '^COMPLETED_PLAN_STEP_INDEX=' | cut -d= -f2-)
++                  COMPLETED_PLAN_TOTAL_STEPS=$(echo "$RESOLVE_OUTPUT" | grep '^COMPLETED_PLAN_TOTAL_STEPS=' | cut -d= -f2-)
+                   HUMAN_RESUME_INPUT=$(echo "$RESOLVE_OUTPUT" | grep '^HUMAN_RESUME_INPUT=' | cut -d= -f2-)
+                   # Deterministic script step (issue #541): resolver emits the
+                   # script execution contract instead of a task assignment.
+@@ -371,6 +378,9 @@ jobs:
+                   echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
+                   echo "PARENT_PLAN_STEP_INDEX=${PARENT_PLAN_STEP_INDEX:-}" >> $GITHUB_ENV
+                   echo "PARENT_PLAN_TOTAL_STEPS=${PARENT_PLAN_TOTAL_STEPS:-}" >> $GITHUB_ENV
++                  echo "WORKFLOW_STEP_TERMINAL=${WORKFLOW_STEP_TERMINAL:-}" >> $GITHUB_ENV
++                  echo "COMPLETED_PLAN_STEP_INDEX=${COMPLETED_PLAN_STEP_INDEX:-}" >> $GITHUB_ENV
++                  echo "COMPLETED_PLAN_TOTAL_STEPS=${COMPLETED_PLAN_TOTAL_STEPS:-}" >> $GITHUB_ENV
+                   echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
+                   echo "STEP_PROMPT_FILE=${STEP_PROMPT_FILE:-}" >> $GITHUB_ENV
+                   echo "HUMAN_RESUME_INPUT=${HUMAN_RESUME_INPUT:-}" >> $GITHUB_ENV
+@@ -880,6 +890,22 @@ jobs:
+                 tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
+                 mode: create
+ 
++            # Plan-terminates marker (issue #613): when the last plan step's
++            # sub-workflow ends the resolver returns SKIP_AGENT=true, so the
++            # agent step (and build_output) never runs — post the final
++            # plan step's completion marker here instead. Idempotent.
++            - name: Post Terminal Plan Step Completion Marker
++              if: always() && !cancelled() && env.SKIP_AGENT == 'true' && env.WORKFLOW_STEP_TERMINAL == 'true' && env.COMPLETED_PLAN_STEP_INDEX != '' && env.TARGET_NUMBER != '0'
++              timeout-minutes: 5
++              env:
++                GH_TOKEN: ${{ secrets.GH_PAT }}
++              run: |
++                SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
++                if [ ! -f "$SCRIPTS/features/plan_completion/post_plan_completion_marker.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/features/plan_completion/post_plan_completion_marker.py" ]; then
++                  SCRIPTS=".git-flow-ai-cache/.github/scripts"
++                fi
++                python3 "$SCRIPTS/features/plan_completion/post_plan_completion_marker.py"
++
+             - name: Minimize acknowledgment comment
+               if: always() && !cancelled() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ACK_COMMENT_ID != '' && env.ACK_COMMENT_NODE_ID != ''
+               run: |
