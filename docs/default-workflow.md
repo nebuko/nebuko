@@ -117,7 +117,7 @@ Installs the two core OpenHands packages directly from the `agent-sdk` GitHub re
 ### Step 8: Resolve Agent Configuration
 
 **Input:** `TRIGGER_BODY`, `PROMPT_BASE`, `WFLOWS_DIR`.  
-**Output:** Environment variables: `TASK`, `ROLE_NAME`, `PROMPT_LOCATION`, `AGENT_SELECTED`, `COMPLEXITY`, `LLM_REASONING`, `AGENT_ROUND`, `AGENT_SKILLS`, `STEP_SKILLS`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `CONFIG_TOP_P`, `CONFIG_TOP_K`, `CONFIG_REPETITION_PENALTY`, `WORKFLOW_NAME`, `WORKFLOW_STEP`, `WORKFLOW_NEXT`, `PARENT_WORKFLOW`, `PARENT_WORKFLOW_STEP`, `PARENT_PLAN_STEP_INDEX`, `PARENT_PLAN_TOTAL_STEPS`, `SKILL_CONTEXT_FILE`, `CONFIG_PR_NUMBER`.
+**Output:** Environment variables: `TASK`, `ROLE_NAME`, `PROMPT_LOCATION`, `AGENT_SELECTED`, `COMPLEXITY`, `LLM_REASONING`, `AGENT_ROUND`, `AGENT_SKILLS`, `STEP_SKILLS`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `CONFIG_TOP_P`, `CONFIG_TOP_K`, `CONFIG_REPETITION_PENALTY`, `WORKFLOW_NAME`, `WORKFLOW_STEP`, `WORKFLOW_NEXT`, `PARENT_WORKFLOW`, `PARENT_WORKFLOW_STEP`, `PARENT_PLAN_STEP_INDEX`, `PARENT_PLAN_TOTAL_STEPS`, `WORKFLOW_STEP_TERMINAL`, `COMPLETED_PLAN_STEP_INDEX`, `COMPLETED_PLAN_TOTAL_STEPS`, `SKILL_CONTEXT_FILE`, `CONFIG_PR_NUMBER`.
 
 Runs `resolve_config.py` which parses the trigger body to determine:
 1. Which agent role should handle the request (from a human `@@mention`, a machine trigger token, the `AGENT_RUN_CONFIG` `function_call` section, or the workflow state's dispatch).
@@ -356,7 +356,21 @@ step** they implement so the parent flow can resume after completion.
 resolver emits `PARENT_PLAN_STEP_INDEX` (1-based, derived from the `step_N`
 step name) and `PARENT_PLAN_TOTAL_STEPS` alongside the existing
 `PARENT_WORKFLOW` / `PARENT_WORKFLOW_STEP` pair. Both keys are empty when the
-mounted workflow is not a plan workflow.
+mounted workflow is not a plan workflow. A branch-mounted plan is recognized
+by its contiguous `step_1..step_N` step sequence (the naming convention the
+`scaffold-plan` skill mandates); a non-plan child whose steps do not form that
+sequence keeps the keys empty.
+
+**Terminal signal (issue #613, round 2):** When a plan step's sub-workflow
+reaches its terminal step, the resolver's return leg emits
+`WORKFLOW_STEP_TERMINAL=true` plus `COMPLETED_PLAN_STEP_INDEX` /
+`COMPLETED_PLAN_TOTAL_STEPS` carrying the **completed** step's plan position
+(derived before the pointer refreshes to the next step, so the completed index
+is authoritative at the boundary). `build_output` fires completion on
+`WORKFLOW_STEP_TERMINAL=true` using the completed index; the
+`WORKFLOW_NEXT == ""` path remains as the plan-terminates fallback. At plan
+termination the run sets `SKIP_AGENT=true`, so a dedicated gated workflow step
+(`post_plan_completion_marker.py`) posts the final marker instead.
 
 **Persistence (`WORKFLOW_STATE`):** `build_output` assembles the full pointer
 into the additive `parent` block when all fields are available:
@@ -375,13 +389,16 @@ Legacy flat `parent_workflow` / `parent_workflow_step` fields are normalized
 into this block on load (an explicit `parent` block wins). The persist-previous
 semantics keep the block alive across steps within the sub-workflow.
 
-**Completion (terminal step):** When a sub-workflow run resolves to a terminal
-step (empty `WORKFLOW_NEXT`) with a plan pointer on record, `build_output`
-posts `<!-- bot-subtask-complete: {plan_step_index - 1} -->` on the parent
-issue (same issue for branch-mounted plans — no sub-issue involved). Posting is
-idempotent: a marker for the same zero-index already present in the issue's
-comments is skipped. Genius then runs sub-task orchestration mode (section 5
-token) to update `split-plan-state` and sequence the parent's next plan step.
+**Completion (terminal step):** On the terminal signal (or, when the plan
+itself terminates, on empty `WORKFLOW_NEXT`), the completion path posts
+`<!-- bot-subtask-complete: {plan_step_index - 1} -->` — zero-indexed, matching
+the sub-task-orchestration convention — on the parent issue (same issue for
+branch-mounted plans; `parent.issue_number`, falling back to `TARGET_NUMBER`).
+Posting is idempotent: the issue's comments are fetched with `gh api
+--paginate` (each page's JSON array parsed from the concatenated stream) and a
+marker for the same zero-index already present is skipped. Genius then runs
+sub-task orchestration mode (section 5 token) to update `split-plan-state` and
+sequence the parent's next plan step.
 
 ---
 
@@ -512,6 +529,9 @@ GitHub Event
 | `PARENT_WORKFLOW_STEP` | Step 8 | Parent step of a sub-workflow run |
 | `PARENT_PLAN_STEP_INDEX` | Step 8 | 1-based plan step index (branch-mounted plan workflows) |
 | `PARENT_PLAN_TOTAL_STEPS` | Step 8 | Total plan steps (branch-mounted plan workflows) |
+| `WORKFLOW_STEP_TERMINAL` | Step 8 | `true` when the resolution took a terminal return leg (issue #613) |
+| `COMPLETED_PLAN_STEP_INDEX` | Step 8 | 1-based plan index of the step that just completed |
+| `COMPLETED_PLAN_TOTAL_STEPS` | Step 8 | Total plan steps at completion |
 | `SKIP_AGENT` | Steps 8-10 | Whether to skip agent execution |
 | `CIRCUIT_BREAKER_TRIPPED` | Step 10 | Whether circuit breaker activated |
 | `SUMMARIZER_NEEDED` | Step 11 | Whether summarizer should run |

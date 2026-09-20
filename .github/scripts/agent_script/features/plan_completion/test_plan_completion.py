@@ -160,6 +160,72 @@ class TestFetchAndPost(unittest.TestCase):
             )
             self.assertEqual(fetch_existing_bodies(7), ["a", "b"])
 
+    def test_fetch_parses_two_pages(self):
+        """A --paginate stream is two concatenated JSON arrays."""
+        import json
+        page1 = json.dumps([{"body": "a"}, {"body": "b"}])
+        page2 = json.dumps([{"body": "c"}, {"body": "d"}])
+        with patch(
+            "agent_script.features.plan_completion.plan_completion.subprocess.run",
+            return_value=_gh_ok(stdout=page1 + page2),
+        ):
+            from agent_script.features.plan_completion.plan_completion import (
+                fetch_existing_bodies,
+            )
+            self.assertEqual(fetch_existing_bodies(7), ["a", "b", "c", "d"])
+
+    def test_fetch_parses_marker_bodies_with_brackets(self):
+        """Bracket-bearing marker bodies (incl. HTML comment brackets)
+        survive the top-level-span scanner."""
+        import json
+        page1 = json.dumps(
+            [{"body": "<!-- bot-subtask-complete: 0 -->"}, {"body": "[link] x"}]
+        )
+        page2 = json.dumps([{"body": "plain"}])
+        with patch(
+            "agent_script.features.plan_completion.plan_completion.subprocess.run",
+            return_value=_gh_ok(stdout=page1 + page2),
+        ):
+            from agent_script.features.plan_completion.plan_completion import (
+                fetch_existing_bodies,
+            )
+            self.assertEqual(
+                fetch_existing_bodies(7),
+                ["<!-- bot-subtask-complete: 0 -->", "[link] x", "plain"],
+            )
+
+    def test_two_page_duplicate_marker_not_posted(self):
+        """Round-3 spec: marker only on the second page is caught — no post.
+
+        Without multi-page parsing the old single json.loads raised, the
+        guard fell through to post-anyway, and engine recalls duplicated the
+        marker on long, polluted issues.
+        """
+        import json
+        page1 = json.dumps([{"body": f"noise {i}"} for i in range(30)])
+        marker = completion_marker_body(0)
+        page2 = json.dumps([{"body": "tail"}, {"body": marker}])
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if cmd[1:3] == ["api", "--paginate"]:
+                return _gh_ok(stdout=page1 + page2)
+            return _gh_ok(stdout="")
+
+        with patch(
+            "agent_script.features.plan_completion.plan_completion.subprocess.run",
+            side_effect=fake_run,
+        ), patch.dict("os.environ", {"REPO_NAME": "acme/repo"}):
+            from agent_script.features.plan_completion.plan_completion import (
+                post_terminal_plan_completion,
+            )
+            self.assertFalse(post_terminal_plan_completion(_parent(index=1), 7))
+        self.assertEqual(
+            calls,
+            [["gh", "api", "--paginate", "repos/acme/repo/issues/7/comments"]],
+        )
+
     def test_fetch_failure_returns_none(self):
         with patch(
             "agent_script.features.plan_completion.plan_completion.subprocess.run",
@@ -169,6 +235,24 @@ class TestFetchAndPost(unittest.TestCase):
                 fetch_existing_bodies,
             )
             self.assertIsNone(fetch_existing_bodies(7))
+
+    def test_parser_unit_cases(self):
+        from agent_script.features.plan_completion.plan_completion import (
+            _parse_paginated_json_arrays,
+        )
+        self.assertEqual(_parse_paginated_json_arrays(""), [])
+        self.assertEqual(
+            _parse_paginated_json_arrays('[{"body": "a"}][{"body": "b"}]'),
+            [{"body": "a"}, {"body": "b"}],
+        )
+        # strings containing brackets/quotes/escapes must not desync the scan
+        tricky = '[{"body": "\u005c" ] [", "x": "["}][{"body": "[ok]"}]'
+        self.assertEqual(
+            _parse_paginated_json_arrays(tricky),
+            [{"body": '" ] [', "x": "["}, {"body": "[ok]"}],
+        )
+        # unparseable span → None (guard degrades to post-anyway branch)
+        self.assertIsNone(_parse_paginated_json_arrays("[{broken]"))
 
     def test_post_uses_gh_api(self):
         with patch(

@@ -68,6 +68,50 @@ def _repo() -> str:
     return os.environ.get("REPO_NAME", "")
 
 
+def _parse_paginated_json_arrays(stdout: str) -> Optional[list[dict]]:
+    """Parse a ``gh api --paginate`` stream into one concatenated list.
+
+    ``--paginate`` concatenates each page's JSON document into one stream —
+    ``[page1][page2]...`` — which is not a single valid JSON value. Walk the
+    stream and extract each top-level ``[...]`` span (bracket-balanced,
+    string-aware), then concatenate. ``None`` when no valid array was found.
+    """
+    comments: list[dict] = []
+    in_string = False
+    escaped = False
+    depth = 0
+    start = -1
+    for pos, ch in enumerate(stdout):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            if depth > 0:
+                in_string = True
+            continue
+        if ch == "[":
+            if depth == 0:
+                start = pos
+            depth += 1
+        elif ch == "]" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                try:
+                    page = json.loads(stdout[start : pos + 1])
+                except ValueError:
+                    return None
+                if isinstance(page, list):
+                    comments.extend(page)
+    if not comments and start == -1:
+        return []
+    return comments if start != -1 else None
+
+
 def fetch_existing_bodies(issue_number: int, timeout: int = 60) -> Optional[list[str]]:
     """Fetch the issue's comment bodies (best effort).
 
@@ -86,12 +130,15 @@ def fetch_existing_bodies(issue_number: int, timeout: int = 60) -> Optional[list
     if result.returncode != 0:
         logger.warning(f"plan_completion: comment fetch failed: {result.stderr.strip()}")
         return None
-    try:
-        comments = json.loads(result.stdout or "[]")
-        return [c.get("body", "") for c in comments]
-    except (ValueError, TypeError) as e:
-        logger.warning(f"plan_completion: failed to parse comment list: {e}")
+    # ``--paginate`` concatenates each page's JSON array into one stream —
+    # parse each top-level ``[...]`` span separately (a single ``json.loads``
+    # would raise on a multi-page stream and silently disable the
+    # idempotency guard on long issues, review round 3).
+    comments = _parse_paginated_json_arrays(result.stdout or "")
+    if comments is None:
+        logger.warning("plan_completion: failed to parse paginated comment stream")
         return None
+    return [c.get("body", "") for c in comments]
 
 
 def post_completion_marker(issue_number: int, zero_index: int, timeout: int = 60) -> bool:

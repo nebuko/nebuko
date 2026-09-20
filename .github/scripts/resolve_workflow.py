@@ -234,6 +234,22 @@ def _parent_plan_position(
     return str(index), str(len(plan_wf.steps))
 
 
+def _is_plan_step_sequence(steps) -> bool:
+    """True when ``steps`` form the generated plan's ``step_1..step_N`` shape.
+
+    All steps must be named ``step_N`` with 1-based contiguous indices.
+    Restricts plan-position derivation to the branch-mounted plan case
+    (issue #613, review round 2): a non-plan child whose first step happens
+    to be named ``step_N`` must not produce a bogus plan pointer.
+    """
+    if not steps:
+        return False
+    indices = [_plan_step_index(s.name) for s in steps]
+    return all(i is not None for i in indices) and indices == list(
+        range(1, len(steps) + 1)
+    )
+
+
 def _completed_plan_terminal_keys(
     parent_wf: WorkflowDefinition, step_name: str
 ) -> dict:
@@ -782,7 +798,7 @@ def _resolve_sub_workflow_entry(
         plan_step_index, plan_total_steps = _parent_plan_position(
             workflow, current_step.name
         )
-    elif child_wf.steps and _plan_step_index(child_wf.steps[0].name) is not None:
+    elif _is_plan_step_sequence(child_wf.steps):
         plan_step_index, plan_total_steps = _parent_plan_position(
             child_wf, child_wf.steps[0].name
         )

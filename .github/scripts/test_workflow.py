@@ -634,6 +634,39 @@ class TestSubWorkflowResolution:
             assert result["PARENT_PLAN_STEP_INDEX"] == ""
             assert result["PARENT_PLAN_TOTAL_STEPS"] == ""
 
+    def test_child_with_single_step_named_like_plan_keeps_position_empty(self):
+        """A non-plan child whose first step is named ``step_N`` (but whose
+        steps do not form a contiguous ``step_1..step_N`` sequence) must not
+        produce a bogus plan pointer (review round 2, issue 5).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "subtask", "workflow": "child", "next": "end"},
+                    {"name": "end", "agent": "dev", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
+                "name": "child",
+                "description": "Non-plan child with one step_N-named step",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "step_1", "agent": "ctx", "next": "finish"},
+                    {"name": "finish", "agent": "dev", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                {"task": "genius", "workflow": "parent", "step": "subtask"},
+                tmpdir, ".agents/prompts",
+            )
+            assert result["PARENT_PLAN_STEP_INDEX"] == ""
+            assert result["PARENT_PLAN_TOTAL_STEPS"] == ""
+
     def test_plan_workflow_return_leg_emits_next_plan_position(self):
         """Terminal return re-entering the plan's next step_N carries its index.
 

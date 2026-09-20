@@ -35,9 +35,11 @@ You are in plan-scaffolding mode for a branch-mounted dynamic plan workflow (iss
        next: null
    ```
    Rules:
+   - Step names are **mandatory**: `step_1`, `step_2`, …, `step_N` — 1-based and contiguous, one per plan item, in plan order. The resolver derives the `PARENT_PLAN_STEP_INDEX` / `PARENT_PLAN_TOTAL_STEPS` env values (issue #613) from these names; any other naming silently degrades the plan pointer to empty and the terminal completion marker never fires.
    - Each step references `workflow: dev-review-loop` and `skill: [tmp_impl/skills/step_N]` (N = 1-based plan index).
    - Optional fields: copy `complexity` (and `model` if non-null) from the corresponding plan step entry into the step definition.
    - The **last** step has `next: null`.
+   - Naming-overlap hazard (issue #613): the resolver recognizes a branch-mounted plan by a contiguous `step_1..step_N` step sequence. Keep that shape reserved for this generated plan workflow — do not name steps of other (non-plan) sub-workflows `step_1..step_N` in contiguous order, or they will be misclassified as plans.
 4. **Write each `tmp_impl/skills/step_N.md`** with clear, self-contained content:
    - Step title (from the plan).
    - Detailed instructions (verbatim from the plan's `instructions`, expanded with concrete file paths and context where helpful).
