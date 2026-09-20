@@ -4,11 +4,19 @@ All gh interactions are mocked at the subprocess boundary — no network in
 unit tests.
 """
 
+import json
+import os
+import sys
+import tempfile
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from workflow_state import ParentRef
+from workflow_state import ParentRef, WorkflowState
 
+from agent_script.features.build_output.build_output import (
+    _maybe_post_plan_completion,
+)
 from agent_script.features.plan_completion.plan_completion import (
     completion_marker_body,
     marker_already_present,
@@ -266,6 +274,301 @@ class TestBuildOutputTrigger(unittest.TestCase):
             side_effect=RuntimeError("boom"),
         ):
             _maybe_post_plan_completion(state, "")  # must not raise
+
+    def test_terminal_signal_posts_completed_index_not_refreshed(self):
+        """Return-leg boundary: the COMPLETED index wins over the state pointer.
+
+        At the boundary the state pointer already carries the *next* step
+        (index 2 here) while WORKFLOW_NEXT is non-empty; only the resolver's
+        WORKFLOW_STEP_TERMINAL + COMPLETED_PLAN_STEP_INDEX signal names the
+        step that just finished (index 1).
+        """
+        import os
+        from workflow_state import WorkflowState
+        from agent_script.features.build_output.build_output import (
+            _maybe_post_plan_completion,
+        )
+
+        state = WorkflowState(
+            workflow="drl",
+            step="implement",
+            agent="dev",
+            parent=_parent(index=2),  # refreshed pointer (next step)
+        )
+        with patch.dict(os.environ, {
+            "WORKFLOW_STEP_TERMINAL": "true",
+            "COMPLETED_PLAN_STEP_INDEX": "1",
+        }):
+            with patch(
+                "agent_script.features.build_output.build_output"
+                ".post_terminal_plan_completion"
+            ) as post:
+                _maybe_post_plan_completion(state, "review")
+                post.assert_called_once_with(_parent(index=1), 590)
+
+    def test_terminal_signal_without_state_pointer_uses_env(self):
+        """Terminal signal posts even when the state has no pointer yet.
+
+        The pointer is reconstructed from PARENT_WORKFLOW(_STEP) env when
+        ``new_state.parent`` lacks a plan index.
+        """
+        import os
+        from workflow_state import WorkflowState
+        from agent_script.features.build_output.build_output import (
+            _maybe_post_plan_completion,
+        )
+
+        state = WorkflowState(
+            workflow="drl",
+            step="implement",
+            agent="dev",
+            parent=None,
+        )
+        with patch.dict(os.environ, {
+            "WORKFLOW_STEP_TERMINAL": "true",
+            "COMPLETED_PLAN_STEP_INDEX": "1",
+            "PARENT_WORKFLOW": "plan-orchestration",
+            "PARENT_WORKFLOW_STEP": "sub_impl",
+            "PARENT_PLAN_STEP_INDEX": "2",
+            "PARENT_PLAN_TOTAL_STEPS": "3",
+            "TARGET_NUMBER": "590",
+        }):
+            with patch(
+                "agent_script.features.build_output.build_output"
+                ".post_terminal_plan_completion"
+            ) as post:
+                _maybe_post_plan_completion(state, "review")
+                post.assert_called_once()
+                posted, issue = post.call_args.args
+                self.assertEqual(posted.plan_step_index, 1)
+                self.assertEqual(posted.issue_number, 590)
+                self.assertEqual(issue, 590)
+
+    def test_pointer_without_issue_number_falls_back_to_target_number(self):
+        """Fix 3: pointer lacking issue_number posts via TARGET_NUMBER env."""
+        import os
+        from workflow_state import WorkflowState
+        from agent_script.features.build_output.build_output import (
+            _maybe_post_plan_completion,
+        )
+
+        state = WorkflowState(
+            workflow="dev-review-loop",
+            step="review",
+            agent="review",
+            parent=ParentRef(
+                workflow="plan-orchestration",
+                step="sub_impl",
+                plan_step_index=2,
+            ),  # no issue_number
+        )
+        with patch.dict(os.environ, {"TARGET_NUMBER": "590"}):
+            with patch(
+                "agent_script.features.build_output.build_output"
+                ".post_terminal_plan_completion"
+            ) as post:
+                _maybe_post_plan_completion(state, "")
+                post.assert_called_once()
+                posted, issue = post.call_args.args
+                self.assertEqual(posted.plan_step_index, 2)
+                self.assertEqual(issue, 590)
+
+    def test_no_issue_number_resolvable_skips(self):
+        """No pointer issue_number and no TARGET_NUMBER → silent no-op."""
+        import os
+        from workflow_state import WorkflowState
+        from agent_script.features.build_output.build_output import (
+            _maybe_post_plan_completion,
+        )
+
+        state = WorkflowState(
+            workflow="dev-review-loop",
+            step="review",
+            agent="review",
+            parent=ParentRef(
+                workflow="plan-orchestration",
+                step="sub_impl",
+                plan_step_index=2,
+            ),
+        )
+        env = {
+            "COMPLETED_PLAN_STEP_INDEX": "",
+            "WORKFLOW_STEP_TERMINAL": "",
+            "PARENT_WORKFLOW": "",
+            "PARENT_WORKFLOW_STEP": "",
+            "PARENT_PLAN_STEP_INDEX": "",
+            "PARENT_PLAN_TOTAL_STEPS": "",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with patch(
+                "agent_script.features.build_output.build_output"
+                ".post_terminal_plan_completion"
+            ) as post:
+                _maybe_post_plan_completion(state, "")
+                post.assert_not_called()
+
+
+class TestThreeStepPlanIntegration(unittest.TestCase):
+    """Reviewer spec (issue #613, round 2): end-to-end marker sequence.
+
+    Canonical plan-orchestration shape (3 plan steps, each mounting the same
+    per-step sub-workflow): after ``step_1``'s terminal leg the posted marker
+    is exactly ``<!-- bot-subtask-complete: 0 -->`` and after ``step_2``'s it
+    is exactly ``<!-- bot-subtask-complete: 1 -->`` — pinning both the
+    trigger (terminal return leg with non-empty WORKFLOW_NEXT) and the
+    zero-indexed index. The gh boundary is faked at the subprocess level;
+    resolver, trigger, and marker logic all run for real.
+    """
+
+    @staticmethod
+    def _plan_fixtures(tmpdir):
+        import yaml
+
+        (Path(tmpdir) / "plan.yaml").write_text(yaml.dump({
+            "name": "plan",
+            "description": "3-step plan workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "step_1", "workflow": "drl", "next": "step_2"},
+                {"name": "step_2", "workflow": "drl", "next": "step_3"},
+                {"name": "step_3", "workflow": "drl", "next": None},
+            ],
+        }))
+        (Path(tmpdir) / "drl.yaml").write_text(yaml.dump({
+            "name": "drl",
+            "description": "Per-step sub-workflow",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "implement", "agent": "dev", "next": "review"},
+                {"name": "review", "agent": "review", "next": None},
+            ],
+        }))
+
+    def _make_fake_run(self, store: list):
+        """Fake gh boundary: GET returns ``store``, POST appends to it."""
+
+        def fake_run(cmd, **kwargs):
+            if "--paginate" in cmd:
+                # GET: the issue already holds the comments in ``store``
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps(
+                        [{"body": b} for b in store]
+                    ),
+                    stderr="",
+                )
+            store.append(cmd[cmd.index("-f") + 1])
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        return fake_run
+
+    def _run_terminal(self, tmpdir, parent_step: str, store: list):
+        """Resolve the terminal leaf and run the real trigger once."""
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from resolve_workflow import resolve_workflow_routing
+
+        result = resolve_workflow_routing(
+            {
+                "task": "review",
+                "workflow": "drl",
+                "step": "review",
+                "parent_workflow": "plan",
+                "parent_workflow_step": parent_step,
+            },
+            tmpdir, ".agents/prompts",
+        )
+        # State as build_output would construct it from the same resolve.
+        # The parent pointer comes from the state written by the *previous*
+        # run (persist-previous): for the return leg that is the refreshed
+        # entry pointer; for the plan-terminates dict (no new entry) it is
+        # the pointer of the step that was running — the completed step.
+        plan_index = (
+            result.get("PARENT_PLAN_STEP_INDEX")
+            or result.get("COMPLETED_PLAN_STEP_INDEX", "")
+        )
+        state = WorkflowState(
+            workflow=result["WORKFLOW_NAME"],
+            step=result["WORKFLOW_STEP"],
+            agent=result.get("ROLE_NAME", ""),
+            parent=ParentRef(
+                workflow="plan",
+                step=result["PARENT_WORKFLOW_STEP"]
+                or result["WORKFLOW_STEP"],
+                issue_number=590,
+                plan_step_index=int(plan_index),
+                plan_total_steps=int(
+                    result.get("PARENT_PLAN_TOTAL_STEPS")
+                    or result.get("COMPLETED_PLAN_TOTAL_STEPS", "0")
+                ),
+            )
+            if plan_index
+            else None,
+        )
+
+        env = {
+            "REPO_NAME": "o/r",
+            "TARGET_NUMBER": "590",
+            "WORKFLOW_STEP_TERMINAL": result.get("WORKFLOW_STEP_TERMINAL", ""),
+            "COMPLETED_PLAN_STEP_INDEX": result.get(
+                "COMPLETED_PLAN_STEP_INDEX", ""
+            ),
+            "PARENT_WORKFLOW": result.get("PARENT_WORKFLOW", ""),
+            "PARENT_WORKFLOW_STEP": result.get("PARENT_WORKFLOW_STEP", ""),
+            "PARENT_PLAN_STEP_INDEX": result.get("PARENT_PLAN_STEP_INDEX", ""),
+            "PARENT_PLAN_TOTAL_STEPS": result.get(
+                "PARENT_PLAN_TOTAL_STEPS", ""
+            ),
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with patch(
+                "agent_script.features.plan_completion.plan_completion"
+                ".subprocess.run",
+                side_effect=self._make_fake_run(store),
+            ):
+                _maybe_post_plan_completion(state, result["WORKFLOW_NEXT"])
+
+    def test_step_boundaries_post_exact_zero_indexed_markers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._plan_fixtures(tmpdir)
+            store = []  # persistent comment history across both terminal legs
+
+            # step_1 terminal → marker 0
+            self._run_terminal(tmpdir, "step_1", store)
+            self.assertEqual(store, ["body=<!-- bot-subtask-complete: 0 -->"])
+
+            # step_2 terminal → marker 1 (marker 0 already on the issue)
+            self._run_terminal(tmpdir, "step_2", store)
+            self.assertEqual(
+                store,
+                [
+                    "body=<!-- bot-subtask-complete: 0 -->",
+                    "body=<!-- bot-subtask-complete: 1 -->",
+                ],
+            )
+
+    def test_plan_terminates_posts_final_marker(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._plan_fixtures(tmpdir)
+            store = []
+
+            # step_3 terminal → plan ends; SKIP_AGENT path uses the state
+            # pointer (WORKFLOW_NEXT empty; the resolver also emits the
+            # completed index, which the trigger prefers).
+            self._run_terminal(tmpdir, "step_3", store)
+            self.assertEqual(store, ["body=<!-- bot-subtask-complete: 2 -->"])
+
+    def test_idempotent_skip_on_rerun(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._plan_fixtures(tmpdir)
+            store = []
+
+            # First pass posts marker 0...
+            self._run_terminal(tmpdir, "step_1", store)
+            self.assertEqual(store, ["body=<!-- bot-subtask-complete: 0 -->"])
+            # ...re-running the same terminal leg posts nothing (guard).
+            before = list(store)
+            self._run_terminal(tmpdir, "step_1", store)
+            self.assertEqual(store, before)
 
 
 if __name__ == "__main__":

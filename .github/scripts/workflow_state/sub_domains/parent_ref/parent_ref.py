@@ -52,7 +52,3 @@ class ParentRef(BaseModel):
                         f"parent.{label} must be >= 1, got {value}"
                     )
         return self
-
-    def is_empty(self) -> bool:
-        """True when the block carries no parent pointer at all."""
-        return not self.workflow and not self.step

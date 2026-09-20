@@ -260,26 +260,89 @@ def _load_prev_state() -> WorkflowState | None:
         return None
 
 
+def _int_env(name: str) -> Optional[int]:
+    """Parse a positive integer env var; ``None`` when absent/invalid."""
+    raw = os.environ.get(name, "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def _completion_issue_number(parent) -> Optional[int]:
+    """Issue number for the marker target.
+
+    Prefers the state pointer's ``issue_number``; falls back to the
+    ``TARGET_NUMBER`` env (issue #613, review Fix 3) — always available in the
+    same-issue plan-orchestration case even when the pointer lacks it.
+    ``None`` when unresolvable (caller then skips posting).
+    """
+    if parent is not None and parent.issue_number is not None:
+        return parent.issue_number
+    raw = os.environ.get("TARGET_NUMBER", "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def _resolve_completion_target(new_state, workflow_next: str):
+    """Build the ``(parent pointer, issue number)`` to mark complete.
+
+    Returns ``(None, None)`` when no marker should be posted. The pointer's
+    ``plan_step_index`` is the **completed** step's index:
+
+    - Primary (issue #613, review round 2): the resolver's
+      ``WORKFLOW_STEP_TERMINAL`` + ``COMPLETED_PLAN_STEP_INDEX`` signal. This
+      names the plan step whose sub-workflow just reached its terminal step —
+      authoritative at the boundary, where ``new_state.parent`` has already
+      been refreshed to the *next* step.
+    - Fallback (plan-terminates, legacy): empty ``WORKFLOW_NEXT`` with a plan
+      pointer on record; uses the state's own pointer when the resolver did
+      not emit the completed index.
+    """
+    parent = new_state.parent
+    completed_index = _int_env("COMPLETED_PLAN_STEP_INDEX")
+    terminal = os.environ.get("WORKFLOW_STEP_TERMINAL", "").strip() == "true"
+
+    if terminal and completed_index is not None and completed_index >= 1:
+        # The state pointer is authoritative for the workflow/step target
+        # (issue_number may be None — the env fallback below covers it).
+        base = (
+            parent
+            if parent is not None and parent.plan_step_index is not None
+            else _build_parent_ref(
+                os.environ.get("PARENT_WORKFLOW", ""),
+                os.environ.get("PARENT_WORKFLOW_STEP", ""),
+            )
+        )
+        if base is not None:
+            issue_number = _completion_issue_number(parent)
+            if issue_number is not None:
+                return base.model_copy(
+                    update={"plan_step_index": completed_index}
+                ), issue_number
+
+    if (
+        workflow_next == ""
+        and parent is not None
+        and parent.plan_step_index is not None
+    ):
+        issue_number = _completion_issue_number(parent)
+        if issue_number is not None:
+            return parent, issue_number
+    return None, None
+
+
 def _maybe_post_plan_completion(new_state, workflow_next: str) -> None:
     """Post the plan-step completion marker on a terminal sub-workflow step.
 
-    Trigger: empty ``WORKFLOW_NEXT`` (the resolved step has no next — e.g.
-    ``dev-review-loop.review`` on approve) plus a plan pointer with a
-    ``plan_step_index`` on record. Parent-side sequencing stays authoritative
-    in the parent's ``split-plan-state``; the idempotency guard lives in
-    ``plan_completion``. Errors never propagate: a missed marker degrades to
-    a manual resume, never a crashed run.
+    Parent-side sequencing stays authoritative in the parent's
+    ``split-plan-state``; the idempotency guard lives in ``plan_completion``.
+    Errors never propagate: a missed marker degrades to a manual resume,
+    never a crashed run.
     """
     try:
-        parent = new_state.parent
-        if not (
-            workflow_next == ""
-            and parent is not None
-            and parent.plan_step_index is not None
-            and parent.issue_number is not None
-        ):
+        parent_to_post, issue_number = _resolve_completion_target(
+            new_state, workflow_next
+        )
+        if parent_to_post is None:
             return
-        post_terminal_plan_completion(parent, parent.issue_number)
+        post_terminal_plan_completion(parent_to_post, issue_number)
     except Exception as e:  # noqa: BLE001 — never break the output path
         logger.warning(f"plan_completion: skipped due to error: {e}")
 

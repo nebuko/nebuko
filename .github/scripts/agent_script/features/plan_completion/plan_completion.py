@@ -73,9 +73,14 @@ def fetch_existing_bodies(issue_number: int, timeout: int = 60) -> Optional[list
 
     ``None`` when the fetch failed: the caller then relies on the consuming
     side's own dedup rather than silently dropping the marker.
+
+    ``--paginate`` is mandatory (issue #613, review round 2): on a long,
+    message-polluted issue an older marker beyond the default 30-comment
+    page would otherwise be missed and the marker posted twice.
     """
     result = subprocess.run(
-        ["gh", "api", f"repos/{_repo()}/issues/{issue_number}/comments"],
+        ["gh", "api", "--paginate",
+         f"repos/{_repo()}/issues/{issue_number}/comments"],
         capture_output=True, text=True, timeout=timeout,
     )
     if result.returncode != 0:

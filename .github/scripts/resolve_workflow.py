@@ -234,6 +234,27 @@ def _parent_plan_position(
     return str(index), str(len(plan_wf.steps))
 
 
+def _completed_plan_terminal_keys(
+    parent_wf: WorkflowDefinition, step_name: str
+) -> dict:
+    """Terminal-return-leg signal keys for the plan step that just completed.
+
+    A terminal resolution of a sub-workflow entry means the parent step
+    mounted by ``step_name`` finished (issue #613, review round 2). The
+    refreshed entry pointer (``PARENT_PLAN_*``) already names the *next*
+    step, so the completion signal carries the **completed** step's
+    position, derived from the same ``step_N`` names. Empty keys for
+    non-plan steps; the caller merges these into the return-leg output —
+    additive, existing keys untouched.
+    """
+    completed_index, completed_total = _parent_plan_position(parent_wf, step_name)
+    return {
+        "WORKFLOW_STEP_TERMINAL": "true",
+        "COMPLETED_PLAN_STEP_INDEX": completed_index,
+        "COMPLETED_PLAN_TOTAL_STEPS": completed_total,
+    }
+
+
 def _scaffold_child_reference(current_step: WorkflowStep) -> Optional[str]:
     """Repo-root-relative reference for a branch-mounted child (issue #604).
 
@@ -1094,12 +1115,19 @@ def _resolve_return_to_parent(
         # cycles (issue #609).
         if eff_outer_wf and eff_outer_wf != parent_wf.name \
                 and parent_wf.name not in _visited:
+            # Unwind one more level: the recursion's own terminal signal
+            # (``WORKFLOW_STEP_TERMINAL`` / ``COMPLETED_PLAN_*``, issue
+            # #613) names the outer level's completed mount step, so its
+            # output is returned as-is.
             return _resolve_return_to_parent(
                 eff_outer_wf, eff_outer_step, branch_key,
                 workflows_dir, prompt_base, scaffold_branch, local_workflows_dir,
                 _visited=_visited + (parent_wf.name,),
             )
         # Workflow ends here
+        completed_index, completed_total = _parent_plan_position(
+            parent_wf, parent_workflow_step_name
+        )
         return {
             "ROLE_NAME": "",
             "PROMPT_LOCATION": "",
@@ -1108,6 +1136,9 @@ def _resolve_return_to_parent(
             "WORKFLOW_NEXT": "",
             "PARENT_WORKFLOW": "",
             "PARENT_WORKFLOW_STEP": "",
+            "WORKFLOW_STEP_TERMINAL": "true",
+            "COMPLETED_PLAN_STEP_INDEX": completed_index,
+            "COMPLETED_PLAN_TOTAL_STEPS": completed_total,
             "SKIP_AGENT": "true",
             "REASON": "Workflow completed",
         }
@@ -1119,10 +1150,19 @@ def _resolve_return_to_parent(
             "REASON": f"Next step '{next_step_name}' not found in parent workflow",
         }
 
-    return _next_step_resolution(
+    completed = _completed_plan_terminal_keys(
+        parent_wf, parent_workflow_step_name
+    )
+    entry = _next_step_resolution(
         next_step, next_step_name, parent_wf, workflows_dir, prompt_base,
         scaffold_branch, eff_outer_wf, eff_outer_step, local_workflows_dir,
     )
+    # The sub-workflow of the parent's current step just reached its
+    # terminal step even though resolution re-enters the *next* step's
+    # sub-workflow (issue #613): carry the completed step's terminal
+    # signal alongside the refreshed entry pointer. Additive merge.
+    entry.update(completed)
+    return entry
 
 
 def resolve_workflow_step(

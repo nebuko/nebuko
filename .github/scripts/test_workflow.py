@@ -682,6 +682,165 @@ class TestSubWorkflowResolution:
             assert result["PARENT_PLAN_STEP_INDEX"] == "2"
             assert result["PARENT_PLAN_TOTAL_STEPS"] == "2"
 
+    def test_plan_workflow_return_leg_emits_completed_plan_position(self):
+        """Terminal return leg also names the *completed* plan step.
+
+        Review round 2 (issue #613): at the boundary the refreshed
+        PARENT_PLAN_* keys point at the step being entered; the
+        COMPLETED_PLAN_* keys must carry the step whose sub-workflow just
+        reached its terminal step, and WORKFLOW_STEP_TERMINAL signals the
+        terminal return leg so the completion marker posts the right index.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "plan.yaml").write_text(yaml.dump({
+                "name": "plan",
+                "description": "3-step plan workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "step_1", "workflow": "drl", "next": "step_2"},
+                    {"name": "step_2", "workflow": "drl", "next": "step_3"},
+                    {"name": "step_3", "workflow": "drl", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "drl.yaml").write_text(yaml.dump({
+                "name": "drl",
+                "description": "Per-step sub-workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "implement", "agent": "dev", "next": "review"},
+                    {"name": "review", "agent": "review", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            # step_1's terminal leaf → return leg re-enters step_2.
+            result = resolve(
+                {
+                    "task": "review",
+                    "workflow": "drl",
+                    "step": "review",
+                    "parent_workflow": "plan",
+                    "parent_workflow_step": "step_1",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["WORKFLOW_NAME"] == "drl"
+            assert result["WORKFLOW_STEP"] == "implement"
+            # Refreshed pointer = step being entered (invariant, unchanged)
+            assert result["PARENT_PLAN_STEP_INDEX"] == "2"
+            # Completed pointer = step just finished (new signal)
+            assert result["WORKFLOW_STEP_TERMINAL"] == "true"
+            assert result["COMPLETED_PLAN_STEP_INDEX"] == "1"
+            assert result["COMPLETED_PLAN_TOTAL_STEPS"] == "3"
+
+            # step_2's terminal leaf → return leg re-enters step_3.
+            result = resolve(
+                {
+                    "task": "review",
+                    "workflow": "drl",
+                    "step": "review",
+                    "parent_workflow": "plan",
+                    "parent_workflow_step": "step_2",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["WORKFLOW_NAME"] == "drl"
+            assert result["PARENT_PLAN_STEP_INDEX"] == "3"
+            assert result["WORKFLOW_STEP_TERMINAL"] == "true"
+            assert result["COMPLETED_PLAN_STEP_INDEX"] == "2"
+            assert result["COMPLETED_PLAN_TOTAL_STEPS"] == "3"
+
+            # step_3's terminal leaf → plan terminates (no return leg).
+            result = resolve(
+                {
+                    "task": "review",
+                    "workflow": "drl",
+                    "step": "review",
+                    "parent_workflow": "plan",
+                    "parent_workflow_step": "step_3",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["SKIP_AGENT"] == "true"
+            assert result["WORKFLOW_STEP_TERMINAL"] == "true"
+            assert result["COMPLETED_PLAN_STEP_INDEX"] == "3"
+            assert result["COMPLETED_PLAN_TOTAL_STEPS"] == "3"
+
+    def test_non_plan_return_leg_emits_terminal_without_plan_position(self):
+        """Non-plan terminal return leg: terminal flag set, COMPLETED_* empty."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "subtask", "workflow": "child", "next": "end"},
+                    {"name": "end", "agent": "dev", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
+                "name": "child",
+                "description": "Non-plan child",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "scan", "agent": "ctx", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                {
+                    "task": "ctx",
+                    "workflow": "child",
+                    "step": "scan",
+                    "parent_workflow": "parent",
+                    "parent_workflow_step": "subtask",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["WORKFLOW_NAME"] == "parent"
+            assert result["WORKFLOW_STEP"] == "end"
+            assert result["WORKFLOW_STEP_TERMINAL"] == "true"
+            assert result["COMPLETED_PLAN_STEP_INDEX"] == ""
+            assert result["COMPLETED_PLAN_TOTAL_STEPS"] == ""
+
+    def test_non_terminal_steps_do_not_emit_terminal_flag(self):
+        """Non-terminal resolutions carry no terminal signal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "subtask", "workflow": "child", "next": "end"},
+                    {"name": "end", "agent": "dev", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
+                "name": "child",
+                "description": "Multi-step child",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "first", "agent": "ctx", "next": "last"},
+                    {"name": "last", "agent": "review", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            # Non-terminal step inside the child.
+            result = resolve(
+                {
+                    "task": "ctx",
+                    "workflow": "child",
+                    "step": "first",
+                    "parent_workflow": "parent",
+                    "parent_workflow_step": "subtask",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["WORKFLOW_NEXT"] == "last"
+            assert result.get("WORKFLOW_STEP_TERMINAL", "") in ("", None)
+
     def test_normal_step_preserves_empty_parent(self):
         """Normal agent step without parent context keeps parent fields empty."""
         with tempfile.TemporaryDirectory() as tmpdir:
