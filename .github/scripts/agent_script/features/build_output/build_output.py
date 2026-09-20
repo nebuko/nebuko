@@ -24,6 +24,7 @@ from workflow_state import (
     Dispatch,
     FunctionCall,
     IssueInfo,
+    ParentRef,
     PullRequestInfo,
     StepResolution,
     WorkflowState,
@@ -48,6 +49,9 @@ from agent_script.features.extract_recovery_trace.extract_recovery_trace import 
     recovery_trace_to_markdown,
 )
 from agent_script.features.run_agent.run_outcome import OutcomeStatus
+from agent_script.features.plan_completion.plan_completion import (
+    post_terminal_plan_completion,
+)
 from agent_script.features.ensure_pr.ensure_pr import (
     EnsurePrResult,
     ensure_pr,
@@ -256,6 +260,30 @@ def _load_prev_state() -> WorkflowState | None:
         return None
 
 
+def _maybe_post_plan_completion(new_state, workflow_next: str) -> None:
+    """Post the plan-step completion marker on a terminal sub-workflow step.
+
+    Trigger: empty ``WORKFLOW_NEXT`` (the resolved step has no next — e.g.
+    ``dev-review-loop.review`` on approve) plus a plan pointer with a
+    ``plan_step_index`` on record. Parent-side sequencing stays authoritative
+    in the parent's ``split-plan-state``; the idempotency guard lives in
+    ``plan_completion``. Errors never propagate: a missed marker degrades to
+    a manual resume, never a crashed run.
+    """
+    try:
+        parent = new_state.parent
+        if not (
+            workflow_next == ""
+            and parent is not None
+            and parent.plan_step_index is not None
+            and parent.issue_number is not None
+        ):
+            return
+        post_terminal_plan_completion(parent, parent.issue_number)
+    except Exception as e:  # noqa: BLE001 — never break the output path
+        logger.warning(f"plan_completion: skipped due to error: {e}")
+
+
 def _derive_phase(workflow_step: str) -> str:
     """Derive phase name from workflow step using keyword matching."""
     if not workflow_step:
@@ -272,6 +300,45 @@ def _derive_phase(workflow_step: str) -> str:
     if "review" in tokens:
         return "review"
     return ""
+
+
+def _build_parent_ref(
+    parent_workflow: Optional[str],
+    parent_workflow_step: Optional[str],
+) -> Optional[ParentRef]:
+    """Build the parent continuation pointer (issue #613) from env.
+
+    The resolver emits PARENT_PLAN_STEP_INDEX / PARENT_PLAN_TOTAL_STEPS on
+    sub-workflow entries into a branch-mounted plan workflow. A full pointer
+    (workflow + step + plan index) is returned only when every field is
+    present — ParentRef rejects plan/issue fields without the workflow+step
+    target. ``None`` otherwise, so build_state's persist-previous semantics
+    keep the previous pointer (or its absence) unchanged.
+    """
+    plan_index_raw = os.environ.get("PARENT_PLAN_STEP_INDEX", "").strip()
+    plan_total_raw = os.environ.get("PARENT_PLAN_TOTAL_STEPS", "").strip()
+    if not (parent_workflow and parent_workflow_step and plan_index_raw):
+        return None
+    try:
+        plan_index = int(plan_index_raw)
+        plan_total = int(plan_total_raw) if plan_total_raw else None
+    except ValueError:
+        logger.warning(
+            "Invalid plan position env values: index=%r total=%r — "
+            "skipping parent pointer", plan_index_raw, plan_total_raw,
+        )
+        return None
+    if plan_index < 1 or (plan_total is not None and plan_total < 1):
+        return None
+    issue_raw = os.environ.get("TARGET_NUMBER") or os.environ.get("ISSUE_NUMBER")
+    issue_number = int(issue_raw) if issue_raw and issue_raw.isdigit() else None
+    return ParentRef(
+        workflow=parent_workflow,
+        step=parent_workflow_step,
+        issue_number=issue_number,
+        plan_step_index=plan_index,
+        plan_total_steps=plan_total,
+    )
 
 
 def _build_issue_info() -> IssueInfo | None:
@@ -682,6 +749,7 @@ def build_output(
     workflow_step = os.environ.get("WORKFLOW_STEP", "")
     parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
     parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
+    workflow_next = os.environ.get("WORKFLOW_NEXT", "")
     phase = _derive_phase(workflow_step)
 
     # ── Issue / PR info ──────────────────────────────────────────
@@ -738,6 +806,10 @@ def build_output(
         context_updates=context_updates or None,
         parent_workflow=parent_workflow,
         parent_workflow_step=parent_workflow_step,
+        # Issue #613: full parent continuation pointer when the resolver
+        # emitted plan position for this sub-workflow entry. None keeps the
+        # previous state's pointer (persist-previous).
+        parent=_build_parent_ref(parent_workflow, parent_workflow_step),
         issue=issue_info,
         pull_request=pr_info,
         resolution=resolution,
@@ -747,6 +819,12 @@ def build_output(
         scaffold_branch=scaffold_branch,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
+
+    # ── Plan-step completion marker (issue #613, G3) ─────────────
+    # A terminal sub-workflow step (empty WORKFLOW_NEXT with a plan pointer
+    # on record) marks the plan step complete on the parent issue; the
+    # sub-task-orchestration mode then sequences the parent's next step.
+    _maybe_post_plan_completion(new_state, workflow_next)
 
     # ── Split plan handling ──────────────────────────────────────
     if split_plan_json is None:

@@ -749,13 +749,24 @@ def _resolve_sub_workflow_entry(
         else current_step.name
     )
 
-    # Plan position pointer (issue #613): when the entered child is a
-    # branch-mounted plan workflow (``tmp_impl/workflow.yaml`` with one
-    # ``step_N`` per plan item), record which plan step this entry implements.
-    # Additive keys — empty when not derivable, existing consumers unaffected.
-    plan_step_index, plan_total_steps = _parent_plan_position(
-        child_wf, current_step.name
-    )
+    # Plan position pointer (issue #613): record which plan step this entry
+    # implements. The branch-mounted plan (``tmp_impl/workflow.yaml``) is
+    # generated with one ``step_N`` per plan item, so the current plan step is
+    # either ``current_step`` itself — a re-entry where ``_next_step_resolution``
+    # advanced the plan one loop at a time, so the containing ``workflow`` is the
+    # plan — or the entered child's first step — a first entry where ``child_wf``
+    # IS the plan and ``step_1`` is being entered. ``("", "")`` for non-plan
+    # children; additive keys, existing consumers unaffected.
+    if _plan_step_index(current_step.name) is not None:
+        plan_step_index, plan_total_steps = _parent_plan_position(
+            workflow, current_step.name
+        )
+    elif child_wf.steps and _plan_step_index(child_wf.steps[0].name) is not None:
+        plan_step_index, plan_total_steps = _parent_plan_position(
+            child_wf, child_wf.steps[0].name
+        )
+    else:
+        plan_step_index, plan_total_steps = "", ""
 
     if leaf["kind"] == "script":
         return {

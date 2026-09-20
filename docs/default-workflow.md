@@ -117,7 +117,7 @@ Installs the two core OpenHands packages directly from the `agent-sdk` GitHub re
 ### Step 8: Resolve Agent Configuration
 
 **Input:** `TRIGGER_BODY`, `PROMPT_BASE`, `WFLOWS_DIR`.  
-**Output:** Environment variables: `TASK`, `ROLE_NAME`, `PROMPT_LOCATION`, `AGENT_SELECTED`, `COMPLEXITY`, `LLM_REASONING`, `AGENT_ROUND`, `AGENT_SKILLS`, `STEP_SKILLS`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `CONFIG_TOP_P`, `CONFIG_TOP_K`, `CONFIG_REPETITION_PENALTY`, `WORKFLOW_NAME`, `WORKFLOW_STEP`, `WORKFLOW_NEXT`, `PARENT_WORKFLOW`, `PARENT_WORKFLOW_STEP`, `SKILL_CONTEXT_FILE`, `CONFIG_PR_NUMBER`.
+**Output:** Environment variables: `TASK`, `ROLE_NAME`, `PROMPT_LOCATION`, `AGENT_SELECTED`, `COMPLEXITY`, `LLM_REASONING`, `AGENT_ROUND`, `AGENT_SKILLS`, `STEP_SKILLS`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `CONFIG_TOP_P`, `CONFIG_TOP_K`, `CONFIG_REPETITION_PENALTY`, `WORKFLOW_NAME`, `WORKFLOW_STEP`, `WORKFLOW_NEXT`, `PARENT_WORKFLOW`, `PARENT_WORKFLOW_STEP`, `PARENT_PLAN_STEP_INDEX`, `PARENT_PLAN_TOTAL_STEPS`, `SKILL_CONTEXT_FILE`, `CONFIG_PR_NUMBER`.
 
 Runs `resolve_config.py` which parses the trigger body to determine:
 1. Which agent role should handle the request (from a human `@@mention`, a machine trigger token, the `AGENT_RUN_CONFIG` `function_call` section, or the workflow state's dispatch).
@@ -346,7 +346,46 @@ The resolver maps this token directly to the `genius` agent (no `@@genius` neede
 
 ---
 
-## 6. Concurrency Model
+## 6. Plan-Step Parent Pointer & Completion (issue #613)
+
+Sub-workflows mounted from a branch-generated plan (`plan-orchestration` →
+`tmp_impl/workflow.yaml`, one `step_N` per plan item) need to know **which plan
+step** they implement so the parent flow can resume after completion.
+
+**Producer (resolver):** When entering a branch-mounted plan workflow, the
+resolver emits `PARENT_PLAN_STEP_INDEX` (1-based, derived from the `step_N`
+step name) and `PARENT_PLAN_TOTAL_STEPS` alongside the existing
+`PARENT_WORKFLOW` / `PARENT_WORKFLOW_STEP` pair. Both keys are empty when the
+mounted workflow is not a plan workflow.
+
+**Persistence (`WORKFLOW_STATE`):** `build_output` assembles the full pointer
+into the additive `parent` block when all fields are available:
+
+```json
+"parent": {
+  "workflow": "plan-orchestration",
+  "step": "sub_impl",
+  "issue_number": 590,
+  "plan_step_index": 2,
+  "plan_total_steps": 6
+}
+```
+
+Legacy flat `parent_workflow` / `parent_workflow_step` fields are normalized
+into this block on load (an explicit `parent` block wins). The persist-previous
+semantics keep the block alive across steps within the sub-workflow.
+
+**Completion (terminal step):** When a sub-workflow run resolves to a terminal
+step (empty `WORKFLOW_NEXT`) with a plan pointer on record, `build_output`
+posts `<!-- bot-subtask-complete: {plan_step_index - 1} -->` on the parent
+issue (same issue for branch-mounted plans — no sub-issue involved). Posting is
+idempotent: a marker for the same zero-index already present in the issue's
+comments is skipped. Genius then runs sub-task orchestration mode (section 5
+token) to update `split-plan-state` and sequence the parent's next plan step.
+
+---
+
+## 7. Concurrency Model
 
 ```yaml
 group: ${{ github.workflow }}-${{ github.event_name == 'issues' && format('-issue-{0}', github.event.issue.number) || format('-run-{0}', github.run_id) }}
@@ -359,7 +398,7 @@ cancel-in-progress: false
 
 ---
 
-## 7. Permissions
+## 8. Permissions
 
 | Permission | Level | Purpose |
 |-----------|-------|---------|
@@ -369,7 +408,7 @@ cancel-in-progress: false
 
 ---
 
-## 8. Data Flow Diagram
+## 9. Data Flow Diagram
 
 ```
 GitHub Event
@@ -425,7 +464,7 @@ GitHub Event
 
 ---
 
-## 9. Key Files Referenced by This Workflow
+## 10. Key Files Referenced by This Workflow
 
 | File | Purpose |
 |------|---------|
@@ -440,7 +479,7 @@ GitHub Event
 
 ---
 
-## 10. Environment Variables Summary
+## 11. Environment Variables Summary
 
 ### Input Variables (from workflow inputs/secrets)
 
@@ -466,6 +505,13 @@ GitHub Event
 | `COMPLEXITY` | Step 8 | Task complexity level |
 | `PROMPT_LOCATION` | Step 8 | Path to prompt template |
 | `AGENT_SKILLS` | Step 8 | Comma-separated skill file names |
+| `WORKFLOW_NAME` | Step 8 | Active workflow name |
+| `WORKFLOW_STEP` | Step 8 | Active workflow step |
+| `WORKFLOW_NEXT` | Step 8 | Next step (empty on terminal steps) |
+| `PARENT_WORKFLOW` | Step 8 | Parent workflow of a sub-workflow run |
+| `PARENT_WORKFLOW_STEP` | Step 8 | Parent step of a sub-workflow run |
+| `PARENT_PLAN_STEP_INDEX` | Step 8 | 1-based plan step index (branch-mounted plan workflows) |
+| `PARENT_PLAN_TOTAL_STEPS` | Step 8 | Total plan steps (branch-mounted plan workflows) |
 | `SKIP_AGENT` | Steps 8-10 | Whether to skip agent execution |
 | `CIRCUIT_BREAKER_TRIPPED` | Step 10 | Whether circuit breaker activated |
 | `SUMMARIZER_NEEDED` | Step 11 | Whether summarizer should run |
@@ -475,7 +521,7 @@ GitHub Event
 
 ---
 
-## 11. Bot Marker Conventions
+## 12. Bot Marker Conventions
 
 Every comment posted by CI (any non-human sender) carries a **universal bot
 marker** on its first line:

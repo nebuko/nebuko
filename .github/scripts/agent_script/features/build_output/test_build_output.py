@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest import mock
 from build_output import (
     LATEST_ANSWER_FILE,
+    _build_parent_ref,
     _recall_aware_events,
     _write_latest_answer_file,
     agent_run_config_to_dispatch,
@@ -754,6 +755,78 @@ class TestWriteLatestAnswerFile(unittest.TestCase):
         _write_latest_answer_file("")
         self.assertTrue(os.path.isfile(LATEST_ANSWER_FILE))
         self.assertEqual(os.path.getsize(LATEST_ANSWER_FILE), 0)
+
+
+class TestBuildParentRef(unittest.TestCase):
+    """G2 (issue #613): parent pointer built from resolver env keys."""
+
+    def setUp(self):
+        self._env = mock.patch.dict(
+            "os.environ",
+            {
+                "PARENT_PLAN_STEP_INDEX": "2",
+                "PARENT_PLAN_TOTAL_STEPS": "6",
+                "TARGET_NUMBER": "590",
+            },
+        )
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_full_pointer(self):
+        ref = _build_parent_ref("plan-orchestration", "sub_impl")
+        self.assertIsNotNone(ref)
+        self.assertEqual(ref.workflow, "plan-orchestration")
+        self.assertEqual(ref.step, "sub_impl")
+        self.assertEqual(ref.issue_number, 590)
+        self.assertEqual(ref.plan_step_index, 2)
+        self.assertEqual(ref.plan_total_steps, 6)
+
+    def test_no_flat_pair_is_none(self):
+        self.assertIsNone(_build_parent_ref(None, "sub_impl"))
+        self.assertIsNone(_build_parent_ref("plan-orchestration", None))
+
+    def test_no_plan_index_is_none(self):
+        with mock.patch.dict(
+            "os.environ", {"PARENT_PLAN_STEP_INDEX": ""}, clear=False
+        ):
+            self.assertIsNone(_build_parent_ref("plan-orchestration", "sub_impl"))
+
+    def test_invalid_index_is_none(self):
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "PARENT_PLAN_STEP_INDEX": "0",
+                "PARENT_PLAN_TOTAL_STEPS": "6",
+            },
+            clear=False,
+        ):
+            self.assertIsNone(_build_parent_ref("plan-orchestration", "sub_impl"))
+
+    def test_non_numeric_index_is_none(self):
+        with mock.patch.dict(
+            "os.environ", {"PARENT_PLAN_STEP_INDEX": "abc"}, clear=False
+        ):
+            self.assertIsNone(_build_parent_ref("plan-orchestration", "sub_impl"))
+
+    def test_missing_issue_number_keeps_pointer(self):
+        """issue_number is best-effort; the pointer is still built."""
+        with mock.patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("TARGET_NUMBER", None)
+            os.environ.pop("ISSUE_NUMBER", None)
+            ref = _build_parent_ref("plan-orchestration", "sub_impl")
+            self.assertIsNotNone(ref)
+            self.assertIsNone(ref.issue_number)
+
+    def test_total_absent_is_optional(self):
+        with mock.patch.dict(
+            "os.environ", {"PARENT_PLAN_TOTAL_STEPS": ""}, clear=False
+        ):
+            ref = _build_parent_ref("plan-orchestration", "sub_impl")
+            self.assertIsNotNone(ref)
+            self.assertEqual(ref.plan_step_index, 2)
+            self.assertIsNone(ref.plan_total_steps)
 
 
 if __name__ == "__main__":

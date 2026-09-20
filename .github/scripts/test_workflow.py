@@ -565,6 +565,123 @@ class TestSubWorkflowResolution:
             assert result["WORKFLOW_STEP"] == "after"
             assert result["PARENT_WORKFLOW"] == ""
 
+    def test_plan_workflow_entry_emits_plan_position(self):
+        """Entering a branch-mounted plan (one step_N per item) records the plan step.
+
+        First entry: current step is the mount point (``sub_impl``); the plan's
+        first step (``step_1``) is entered, so the pointer is derived from the
+        child. Non-plan children keep the keys empty.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "sub_impl", "workflow": "plan", "next": "sub_clean"},
+                    {"name": "sub_clean", "agent": "dev", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "plan.yaml").write_text(yaml.dump({
+                "name": "plan",
+                "description": "Plan workflow (one step_N per plan item)",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "step_1", "agent": "dev", "next": "step_2"},
+                    {"name": "step_2", "agent": "dev", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                {"task": "genius", "workflow": "parent", "step": "sub_impl"},
+                tmpdir, ".agents/prompts",
+            )
+            # Flat parent pair unchanged (existing invariant)
+            assert result["PARENT_WORKFLOW"] == "parent"
+            assert result["PARENT_WORKFLOW_STEP"] == "sub_impl"
+            # Plan position pointer emitted for the entered step
+            assert result["PARENT_PLAN_STEP_INDEX"] == "1"
+            assert result["PARENT_PLAN_TOTAL_STEPS"] == "2"
+
+    def test_non_plan_child_leaves_plan_position_empty(self):
+        """Non-plan sub-workflow children emit empty plan-position keys."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
+                "name": "parent",
+                "description": "Parent workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "subtask", "workflow": "child", "next": "end"},
+                    {"name": "end", "agent": "dev", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
+                "name": "child",
+                "description": "Non-plan child",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "scan", "agent": "ctx", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            result = resolve(
+                {"task": "genius", "workflow": "parent", "step": "subtask"},
+                tmpdir, ".agents/prompts",
+            )
+            assert result["PARENT_WORKFLOW"] == "parent"
+            assert result["PARENT_PLAN_STEP_INDEX"] == ""
+            assert result["PARENT_PLAN_TOTAL_STEPS"] == ""
+
+    def test_plan_workflow_return_leg_emits_next_plan_position(self):
+        """Terminal return re-entering the plan's next step_N carries its index.
+
+        Mirrors the plan-orchestration shape: terminal leaf inside the step's
+        sub-workflow returns to the plan, whose next step (``step_2``) re-enters
+        its sub-workflow via _next_step_resolution — the pointer must reflect
+        the step being entered, not the previous one.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "plan.yaml").write_text(yaml.dump({
+                "name": "plan",
+                "description": "Plan workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "step_1", "workflow": "drl", "next": "step_2"},
+                    {"name": "step_2", "workflow": "drl", "next": None},
+                ],
+            }))
+            (Path(tmpdir) / "drl.yaml").write_text(yaml.dump({
+                "name": "drl",
+                "description": "Per-step sub-workflow",
+                "trigger": {"agents": ["genius"]},
+                "steps": [
+                    {"name": "implement", "agent": "dev", "next": "review"},
+                    {"name": "review", "agent": "review", "next": None},
+                ],
+            }))
+
+            resolve = self._import_resolver()
+            # Terminal leaf in drl (step_1's sub-workflow) → return to plan,
+            # re-entering step_2 → drl.implement with the step_2 pointer.
+            result = resolve(
+                {
+                    "task": "review",
+                    "workflow": "drl",
+                    "step": "review",
+                    "parent_workflow": "plan",
+                    "parent_workflow_step": "step_1",
+                },
+                tmpdir, ".agents/prompts",
+            )
+            assert result["WORKFLOW_NAME"] == "drl"
+            assert result["WORKFLOW_STEP"] == "implement"
+            assert result["PARENT_WORKFLOW"] == "plan"
+            assert result["PARENT_WORKFLOW_STEP"] == "step_2"
+            assert result["PARENT_PLAN_STEP_INDEX"] == "2"
+            assert result["PARENT_PLAN_TOTAL_STEPS"] == "2"
+
     def test_normal_step_preserves_empty_parent(self):
         """Normal agent step without parent context keeps parent fields empty."""
         with tempfile.TemporaryDirectory() as tmpdir:

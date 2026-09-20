@@ -135,6 +135,10 @@ def _build_result(
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
         "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
         "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
+        # Plan position pointer (issue #613): which plan step the current
+        # sub-workflow entry implements; empty for non-plan children.
+        "PARENT_PLAN_STEP_INDEX": wf_result.get("PARENT_PLAN_STEP_INDEX", ""),
+        "PARENT_PLAN_TOTAL_STEPS": wf_result.get("PARENT_PLAN_TOTAL_STEPS", ""),
         "MATCHED_RULE": matched_rule,
         "HUMAN_RESUME_INPUT": config.get("config_human_resume_input", ""),
         "SKIP_AGENT": "false",
