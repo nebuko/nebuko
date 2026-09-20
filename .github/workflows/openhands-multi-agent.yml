@@ -309,6 +309,11 @@ jobs:
                   WORKFLOW_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
                   PARENT_WORKFLOW=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
                   PARENT_WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
+                  # Plan position pointer (issue #613): which plan step the
+                  # current sub-workflow entry implements (empty for
+                  # non-plan children).
+                  PARENT_PLAN_STEP_INDEX=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_PLAN_STEP_INDEX=' | cut -d= -f2-)
+                  PARENT_PLAN_TOTAL_STEPS=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_PLAN_TOTAL_STEPS=' | cut -d= -f2-)
                   HUMAN_RESUME_INPUT=$(echo "$RESOLVE_OUTPUT" | grep '^HUMAN_RESUME_INPUT=' | cut -d= -f2-)
                   # Deterministic script step (issue #541): resolver emits the
                   # script execution contract instead of a task assignment.
@@ -364,6 +369,8 @@ jobs:
                   echo "WORKFLOW_NEXT=$WORKFLOW_NEXT" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW=$PARENT_WORKFLOW" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
+                  echo "PARENT_PLAN_STEP_INDEX=${PARENT_PLAN_STEP_INDEX:-}" >> $GITHUB_ENV
+                  echo "PARENT_PLAN_TOTAL_STEPS=${PARENT_PLAN_TOTAL_STEPS:-}" >> $GITHUB_ENV
                   echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
                   echo "STEP_PROMPT_FILE=${STEP_PROMPT_FILE:-}" >> $GITHUB_ENV
                   echo "HUMAN_RESUME_INPUT=${HUMAN_RESUME_INPUT:-}" >> $GITHUB_ENV
