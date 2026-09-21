@@ -21,6 +21,8 @@ from resolve_workflow import (
     resolve_sub_workflow_entry,
     _is_terminal_step,
     _load_workflow_by_reference,
+    _load_child_workflow,
+    resolve_workflow_reference,
     TASK_TO_PROMPT,
 )
 from validate_output import has_agent_run_config_marker
@@ -380,9 +382,20 @@ def _mount_chain_ref_resolver(workflows_dir: str, local_workflows_dir: Optional[
         if wf is None:
             return None
         try:
-            candidate = Path(ref) if "/" in ref else Path(workflows_dir) / f"{ref}.yaml"
-            resolved = str(Path(candidate).resolve())
-            object.__setattr__(wf, "source_path", resolved)
+            if "/" in ref or ref.endswith((".yaml", ".yml")):
+                # Path-form reference: the loader resolved exactly this file
+                # (issue #468 resolution rules).
+                source_path = str(Path(resolve_workflow_reference(ref, workflows_dir)))
+            else:
+                # Name-form reference: mirror the loader's multi-directory
+                # scan (consumer-local dir wins, issue #529) instead of the
+                # old name heuristic (issue #618, review fix).
+                try:
+                    source_path = str(load_workflow_with_dirs(ref, workflows_dir, local_workflows_dir or ""))
+                except Exception:
+                    source_path = ""
+            if source_path:
+                object.__setattr__(wf, "source_path", source_path)
         except Exception:
             pass
         return wf
@@ -548,7 +561,25 @@ def _entry_step_name(child_def: WorkflowDefinition) -> str:
 
 
 def _child_workflow_path(child_def: WorkflowDefinition, child_ref: str) -> str:
-    """Best-effort repo-root path for a loaded child workflow."""
+    """Repo-root path of a loaded child workflow (issue #618, review fix).
+
+    Prefers the loader-resolved file path recorded on the definition
+    (``source_path``, set by the real ref port) over the old
+    ``workflows/{name}.yaml`` name guess, which was wrong for
+    consumer-local dirs and branch-mounted references. Falls back to the
+    reference / name heuristic only when the loader did not record a path.
+    """
+    source_path = getattr(child_def, "source_path", None)
+    if source_path:
+        try:
+            resolved = Path(source_path).resolve()
+            repo_root = Path.cwd().resolve()
+            if resolved.parent == repo_root:
+                # workflows-dir sits directly at the repo root.
+                return resolved.name
+            return str(resolved.relative_to(repo_root.parent.resolve()))
+        except (ValueError, OSError):
+            pass
     name = getattr(child_def, "name", "") or ""
     if child_ref and ("/" in child_ref or child_ref.endswith((".yaml", ".yml"))):
         return child_ref
