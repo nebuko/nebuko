@@ -39,6 +39,19 @@ class TestDispatchNextActionToDispatch(unittest.TestCase):
         self.assertEqual(d.complexity, "medium")
         self.assertIsNone(d.reason)
 
+    def test_branch_round_trip(self):
+        """branch survives the action -> Dispatch mapping (issue #618)."""
+        act = DispatchNextAction(status="advance", branch="approved")
+        d = action_to_dispatch(act)
+        self.assertIsInstance(d, Dispatch)
+        self.assertEqual(d.branch, "approved")
+
+    def test_branch_defaults_to_none(self):
+        act = DispatchNextAction(status="advance")
+        d = action_to_dispatch(act)
+        self.assertIsNotNone(d)
+        self.assertIsNone(d.branch)
+
     def test_invalid_status_returns_none(self):
         act = DispatchNextAction(status="bogus")
         self.assertIsNone(action_to_dispatch(act))

@@ -1540,6 +1540,16 @@ def resolve_next_from_workflow(
                     target_step_name = condition.next
                     branch_key = "default"
                     break
+    elif not branch_result and current_step.conditions and current_step.next is None:
+        # Branch-less dispatch on a conditions-only step (issue #618):
+        # honor a ``default`` condition instead of dead-ending. Only when the
+        # linear ``next`` is also absent, so existing steps with both keep
+        # their linear behavior.
+        for condition in current_step.conditions:
+            if condition.on_result == "default":
+                target_step_name = condition.next
+                branch_key = "default"
+                break
     else:
         # Follow linear next field
         target_step_name = current_step.next
