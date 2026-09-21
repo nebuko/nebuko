@@ -412,7 +412,78 @@ def resolve_position(
           -> tmp-impl / step_1
             -> dev-review-loop / implement
     """
-    raise NotImplementedError("stub — resolve_position builder (issue #618)")
+    step = _find_step(wf_def, step_name)
+    if step is None:
+        # Unknown step: record the requested name so the chain stays
+        # diagnostic, but do not descend (the leaf is this bare position).
+        return WorkflowPosition(
+            workflow_name=getattr(wf_def, "name", "") or step_name,
+            workflow_path=workflow_path,
+            step_name=step_name,
+        )
+    if not _is_mount_step(step):
+        return WorkflowPosition(
+            workflow_name=getattr(wf_def, "name", "") or step_name,
+            workflow_path=workflow_path,
+            step_name=step.name,
+        )
+    child_ref = step.workflow or step.path or ""
+    child_def = resolve_ref(child_ref) if resolve_ref is not None else None
+    if child_def is None:
+        # Mount reference cannot be resolved (e.g. a dynamic tmp_impl
+        # absent from the checkout): the position stops at the mount step.
+        return WorkflowPosition(
+            workflow_name=getattr(wf_def, "name", "") or step_name,
+            workflow_path=workflow_path,
+            step_name=step.name,
+        )
+    entry_name = _entry_step_name(child_def)
+    if not entry_name:
+        return WorkflowPosition(
+            workflow_name=getattr(wf_def, "name", "") or step_name,
+            workflow_path=workflow_path,
+            step_name=step.name,
+        )
+    child_path = _child_workflow_path(child_def, child_ref)
+    sub = resolve_position(
+        child_def, entry_name, resolve_ref=resolve_ref, workflow_path=child_path
+    )
+    return WorkflowPosition(
+        workflow_name=getattr(wf_def, "name", "") or step_name,
+        workflow_path=workflow_path,
+        step_name=step.name,
+        sub=sub,
+    )
+
+
+def _find_step(wf_def: Optional[WorkflowDefinition], step_name: str) -> Optional[WorkflowStep]:
+    """Return the named step from a workflow definition, or None."""
+    for step in getattr(wf_def, "steps", None) or []:
+        if getattr(step, "name", "") == step_name:
+            return step
+    return None
+
+
+def _is_mount_step(step: WorkflowStep) -> bool:
+    """True for a workflow-mount step (workflow/path reference, no agent)."""
+    return (
+        not getattr(step, "agent", None)
+        and bool(getattr(step, "workflow", None) or getattr(step, "path", None))
+    )
+
+
+def _entry_step_name(child_def: WorkflowDefinition) -> str:
+    """Name of the mounted workflow's entry (first) step, or ''."""
+    steps = getattr(child_def, "steps", None) or []
+    return steps[0].name if steps else ""
+
+
+def _child_workflow_path(child_def: WorkflowDefinition, child_ref: str) -> str:
+    """Best-effort repo-root path for a loaded child workflow."""
+    name = getattr(child_def, "name", "") or ""
+    if child_ref and ("/" in child_ref or child_ref.endswith((".yaml", ".yml"))):
+        return child_ref
+    return f"workflows/{name}.yaml" if name else child_ref
 
 
 def _resolve_function_call_path(
