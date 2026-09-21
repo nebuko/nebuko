@@ -443,12 +443,21 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
     return ""
 
 
+# Bound on mount-chain descent (issue #618 review fix): a circular mount
+# (A mounts B which mounts A) must terminate instead of recursing to
+# RecursionError. Mirrors ``_MAX_SUB_WORKFLOW_DEPTH`` in resolve_workflow.py.
+_MAX_POSITION_DEPTH = 10
+
+
 # @stub-protected: signature defined by architect — do not modify
 def resolve_position(
     wf_def: WorkflowDefinition,
     step_name: str,
     resolve_ref: Optional[Callable[[str], Optional[WorkflowDefinition]]] = None,
     workflow_path: str = "",
+    *,
+    _seen: Optional[set] = None,
+    _depth: int = 0,
 ) -> "WorkflowPosition":
     """Build the recursive :class:`WorkflowPosition` for a step (issue #618).
 
@@ -461,47 +470,52 @@ def resolve_position(
     child's entry step. Stops at the first agent-bearing step (the leaf)
     or when the chain can no longer be resolved.
 
+    Descent is bounded two ways (review fix): a seen-chain (definition
+    identity) guard terminates circular mounts, and ``_depth`` caps
+    non-cyclic chains at ``_MAX_POSITION_DEPTH`` levels. Both stop the
+    walk at the current position rather than raising.
+
     For the #617 scenario this yields::
 
         plan-orchestration / sub_impl
           -> tmp-impl / step_1
             -> dev-review-loop / implement
     """
+    def _bare(step_label: str = step_name) -> "WorkflowPosition":
+        # Current position as leaf — descent stops here (unknown step,
+        # non-mount step, unresolvable ref, or a bound hit).
+        return WorkflowPosition(
+            workflow_name=getattr(wf_def, "name", "") or step_label,
+            workflow_path=workflow_path,
+            step_name=step_label,
+        )
+
     step = _find_step(wf_def, step_name)
     if step is None:
         # Unknown step: record the requested name so the chain stays
         # diagnostic, but do not descend (the leaf is this bare position).
-        return WorkflowPosition(
-            workflow_name=getattr(wf_def, "name", "") or step_name,
-            workflow_path=workflow_path,
-            step_name=step_name,
-        )
+        return _bare()
     if not _is_mount_step(step):
-        return WorkflowPosition(
-            workflow_name=getattr(wf_def, "name", "") or step_name,
-            workflow_path=workflow_path,
-            step_name=step.name,
-        )
+        return _bare(step.name)
+    # Descent bounds (review fix): a circular mount or an abnormally deep
+    # non-cyclic chain stops at the current position instead of recursing.
+    seen = _seen if _seen is not None else set()
+    if id(wf_def) in seen or _depth >= _MAX_POSITION_DEPTH:
+        return _bare(step.name)
+    seen.add(id(wf_def))
     child_ref = step.workflow or step.path or ""
     child_def = resolve_ref(child_ref) if resolve_ref is not None else None
     if child_def is None:
         # Mount reference cannot be resolved (e.g. a dynamic tmp_impl
         # absent from the checkout): the position stops at the mount step.
-        return WorkflowPosition(
-            workflow_name=getattr(wf_def, "name", "") or step_name,
-            workflow_path=workflow_path,
-            step_name=step.name,
-        )
+        return _bare(step.name)
     entry_name = _entry_step_name(child_def)
     if not entry_name:
-        return WorkflowPosition(
-            workflow_name=getattr(wf_def, "name", "") or step_name,
-            workflow_path=workflow_path,
-            step_name=step.name,
-        )
+        return _bare(step.name)
     child_path = _child_workflow_path(child_def, child_ref)
     sub = resolve_position(
-        child_def, entry_name, resolve_ref=resolve_ref, workflow_path=child_path
+        child_def, entry_name, resolve_ref=resolve_ref, workflow_path=child_path,
+        _seen=seen, _depth=_depth + 1,
     )
     return WorkflowPosition(
         workflow_name=getattr(wf_def, "name", "") or step_name,
