@@ -88,5 +88,57 @@ class TestResolveDispatch(unittest.TestCase):
         self.assertIsNone(function_call)
 
 
+class TestSentinelRoutingFieldMerge(unittest.TestCase):
+    """A co-emitted sentinel fills branch/workflow/step left unset by the
+    tool call (issue #618), without overriding tool values or inverting
+    the #524 precedence."""
+
+    def test_merge_sentinel_branch_into_tool_dispatch(self):
+        recorded = Dispatch(status="advance", reason="routed")
+        sentinel = (
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", '
+            '"branch": "approved", "workflow": "plan-orchestration", '
+            '"step": "plan"}} -->'
+        )
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=recorded
+        ):
+            dispatch, function_call, message = _resolve_dispatch(
+                _FakeConv("conv-merge"), sentinel
+            )
+        self.assertEqual(dispatch.status, "advance")  # tool owns status
+        self.assertEqual(dispatch.branch, "approved")
+        self.assertEqual(dispatch.workflow, "plan-orchestration")
+        self.assertEqual(dispatch.step, "plan")
+        self.assertIsNone(function_call)
+        self.assertNotIn("AGENT_RUN_CONFIG", message)
+
+    def test_tool_branch_not_overridden_by_sentinel(self):
+        """A branch the tool explicitly set wins over the sentinel's."""
+        recorded = Dispatch(status="advance", branch="rejected")
+        sentinel = (
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", '
+            '"branch": "approved"}} -->'
+        )
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=recorded
+        ):
+            dispatch, _, _ = _resolve_dispatch(
+                _FakeConv("conv-merge-guard"), sentinel
+            )
+        self.assertEqual(dispatch.branch, "rejected")
+
+    def test_no_sentinel_leaves_tool_dispatch_unchanged(self):
+        recorded = Dispatch(status="advance", reason="x")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=recorded
+        ):
+            dispatch, _, _ = _resolve_dispatch(
+                _FakeConv("conv-merge-none"), "plain answer"
+            )
+        self.assertEqual(dispatch, recorded)
+        self.assertIsNone(dispatch.branch)
+
+
 if __name__ == "__main__":
     unittest.main()

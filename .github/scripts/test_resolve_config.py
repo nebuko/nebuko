@@ -1,5 +1,6 @@
 """Tests for resolve_config.py."""
 
+import json
 import tempfile
 import os
 from pathlib import Path
@@ -2595,3 +2596,70 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
         # Parent pair mirrors the tmp-impl reference step
         self.assertEqual(result["PARENT_WORKFLOW"], "tmp-impl")
         self.assertEqual(result["PARENT_WORKFLOW_STEP"], "step_1")
+
+
+class TestBranchRoutingRegression617:
+    """Regression replay of issue #617 / #618: the plan-orchestration
+    sub-workflow must start from a persisted state whose dispatch carries
+    ``branch: approved`` (workflow=plan-orchestration, step=plan).
+
+    Before the fix the branch field was dropped at persistence, so the
+    conditions-only ``plan`` step dead-ended into "No valid task found".
+    """
+
+    def _setup(self):
+        prompt_base = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        return prompt_base
+
+    def _real_workflows_dir(self):
+        return Path(__file__).resolve().parents[2] / "workflows"
+
+    def _v6_body(self, dispatch_json):
+        state = {
+            "version": 6,
+            "workflow": "plan-orchestration",
+            "step": "plan",
+            "agent": "genius",
+            "dispatch": dispatch_json,
+        }
+        return (
+            "<!-- bot-workflow-terminal -->\n"
+            "*Genius answer*\n\n"
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def test_branch_approved_routes_to_scaffold(self):
+        """Dispatch with branch=approved on step=plan routes to the
+        scaffold agent, not a skip."""
+        prompt_base = self._setup()
+        body = self._v6_body(
+            {"status": "advance", "branch": "approved",
+             "reason": "Re-emitted approved planWorkflow with the AGENT_RUN_CONFIG sentinel to start plan-orchestration execution."}
+        )
+        result = resolve_config(
+            body, prompt_base, str(self._real_workflows_dir()), is_bot=True
+        )
+        assert result["SKIP_AGENT"] == "false"
+        assert result["TASK"] == "dev"
+        assert result["WORKFLOW_NAME"] == "plan-orchestration"
+        assert result["WORKFLOW_STEP"] == "scaffold"
+
+    def test_branchless_plan_step_still_skips_without_default(self):
+        """Pre-fix persisted shape (dispatch with reason only, no branch)
+        on the conditions-only plan step without a default condition still
+        dead-ends — the branch fix in the tool/sentinel merge is what makes
+        the primary test pass."""
+        prompt_base = self._setup()
+        body = self._v6_body(
+            {"status": "advance",
+             "reason": "Re-emitted approved planWorkflow with the AGENT_RUN_CONFIG sentinel to start plan-orchestration execution."}
+        )
+        result = resolve_config(
+            body, prompt_base, str(self._real_workflows_dir()), is_bot=True
+        )
+        assert result["SKIP_AGENT"] == "true"

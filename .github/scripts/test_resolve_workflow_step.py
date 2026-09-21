@@ -1093,6 +1093,42 @@ class TestConditionsOnlyWorkflow:
         # No matching condition, no "default" condition → None
         assert result is None
 
+    def test_conditions_only_branchless_honors_default_condition(
+        self, tmp_path: Path
+    ):
+        """Branch-less dispatch on a conditions-only step honors the
+        ``default`` condition instead of dead-ending (issue #618)."""
+        (tmp_path / "branchless_default.yaml").write_text(yaml.dump({
+            "name": "branchless_default",
+            "description": "Conditions-only step with a default condition",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {
+                    "name": "decision",
+                    "agent": "genius",
+                    "conditions": [
+                        {"on_result": "approved", "next": "proceed"},
+                        {"on_result": "rejected", "next": "decision"},
+                        {"on_result": "default", "next": "proceed"},
+                    ],
+                    "next": None,
+                },
+                {"name": "proceed", "agent": "dev", "next": None},
+            ],
+        }))
+        resolve = _import_resolver()
+        result = resolve("branchless_default", "decision", str(tmp_path))
+        assert result == {"task": "dev", "step": "proceed", "branch": "default"}
+
+    def test_conditions_only_branchless_no_default_is_terminal(
+        self, conditions_only_workflows_dir
+    ):
+        """Branch-less dispatch on a conditions-only step with no
+        ``default`` condition stays terminal (documents the #617 edge)."""
+        resolve = _import_resolver()
+        result = resolve("conditions_only", "decision", str(conditions_only_workflows_dir))
+        assert result is None
+
 
 class TestEmptyWorkflowDefinition:
     """Test empty workflow definition."""
