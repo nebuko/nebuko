@@ -150,6 +150,7 @@ When invoked in the `spec_approval` or `stub_approval` step of the spec-driven w
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "rejected"}} -->
     ```
   - **If unclear** (no human response yet or ambiguous): Use `branch: "approved"` as the default (the workflow's `on_result: default` also routes forward).
+  - **Keep the two channels aligned:** if you also record the decision via the `dispatch_next` tool, pass the same `branch` value in the tool call (e.g. `branch='approved'`) so the persisted dispatch matches the sentinel. A tool call without `branch` can only inherit it from the sentinel at persistence time.
 
 ### The `human_gate` security boundary (engine-enforced)
 
@@ -199,6 +200,7 @@ This mode applies when the approved plan consists of **2+ sequential steps that 
     ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "rejected", "workflow": "plan-orchestration", "step": "plan"}} -->
     ```
+  - When recording the decision via the `dispatch_next` tool as well, pass the same `branch` value in the tool call so the persisted dispatch carries the routing key (see section 4.5).
 
 * This mode adds no new tool access and does not change the section 5 restrictions.
 

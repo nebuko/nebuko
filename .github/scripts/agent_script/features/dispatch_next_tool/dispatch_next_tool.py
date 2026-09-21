@@ -55,6 +55,14 @@ class DispatchNextAction(Action):
         default="medium",
         description="'low', 'medium', or 'high'. Defaults to 'medium'.",
     )
+    branch: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional workflow branch/condition key to route on "
+            "(e.g. 'approved', 'rejected'). Omit to let the engine use a "
+            "default condition."
+        ),
+    )
     reason: Optional[str] = Field(
         default=None,
         description="Free-text justification of the dispatch decision.",
@@ -75,6 +83,7 @@ Parameters:
 - status: 'advance' (route to the next step/agent), 'loop' (repeat the current step), or 'hold' (wait for human input).
 - agent: optional explicit target agent name; omit to let the workflow engine decide from the workflow definition.
 - complexity: 'low' | 'medium' | 'high' for the next agent.
+- branch: optional workflow branch/condition key to route on (e.g. 'approved', 'rejected'); omit to let the engine use a default condition.
 - reason: one-sentence justification.
 
 Do NOT encode the dispatch decision in prose or HTML comments instead of calling this tool.
@@ -133,6 +142,7 @@ def action_to_dispatch(action: DispatchNextAction) -> Optional[Dispatch]:
             status=action.status,
             task_hint=action.agent,
             complexity=action.complexity,
+            branch=action.branch,
             reason=action.reason,
         )
     except Exception as e:  # pydantic ValidationError or similar

@@ -521,6 +521,40 @@ def _write_latest_answer_file(text: str) -> None:
         f.write(text)
     logger.info("Wrote latest answer artifact (%d chars)", len(text))
 
+def _merge_sentinel_routing_fields(
+    tool_dispatch: Dispatch, final_message: str
+) -> Dispatch:
+    """Merge branch/workflow/step from a co-emitted sentinel into a winning
+    tool dispatch (issue #618, defense-in-depth).
+
+    The tool call owns ``status``/``complexity``/``task_hint`` (issue #524
+    precedence is preserved). When the tool's schema left a routing field
+    unset (``None``), fill it in from the co-emitted sentinel so the two
+    channels are complementary instead of the tool silently truncating a
+    richer sentinel. A non-``None`` value the tool explicitly set is never
+    overridden.
+    """
+    if not final_message:
+        return tool_dispatch
+    extract_result = extract_dispatch_resilient(final_message)
+    if extract_result.payload is None:
+        return tool_dispatch
+    sentinel_dispatch = agent_run_config_to_dispatch(extract_result.payload)
+    if sentinel_dispatch is None:
+        return tool_dispatch
+
+    updates = {}
+    for field in ("branch", "workflow", "step"):
+        tool_value = getattr(tool_dispatch, field)
+        sentinel_value = getattr(sentinel_dispatch, field)
+        if tool_value is None and sentinel_value is not None:
+            updates[field] = sentinel_value
+    if not updates:
+        return tool_dispatch
+    logger.info(f"Merged sentinel routing fields into tool dispatch: {updates}")
+    return tool_dispatch.model_copy(update=updates)
+
+
 def _resolve_dispatch(
     conversation, final_message: str
 ) -> tuple[Optional[Dispatch], Optional[FunctionCall], str]:
@@ -533,6 +567,10 @@ def _resolve_dispatch(
       2. Legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel — silent compat
          fallback during the dual-mode migration window.
       3. Nothing — dispatch/function_call stay None.
+
+    When the tool call wins, ``branch``/``workflow``/``step`` left unset by
+    the tool are merged in from a co-emitted sentinel (issue #618) so the
+    richer sentinel can no longer be silently truncated.
 
     When the tool call names an explicit ``agent`` target, a matching
     ``FunctionCall(call_agent)`` is also populated so the state's
@@ -548,7 +586,7 @@ def _resolve_dispatch(
     tool_dispatch = get_recorded_dispatch(conv_id) if conv_id is not None else None
 
     if tool_dispatch is not None:
-        dispatch = tool_dispatch
+        dispatch = _merge_sentinel_routing_fields(tool_dispatch, final_message)
         # Explicit cross-agent targeting flows through function_call in the
         # routing chain; keep that field populated when the tool names a target.
         # The shared helper validates the name against the agent roster and
