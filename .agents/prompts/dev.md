@@ -55,6 +55,7 @@ These modes override the generic "Understand / Plan / Implement / Verify" flow o
 * **Composition pipeline** — Chain transitions together to build workflows; each function's output feeds the next function's input.
 * **Language-appropriate idioms** — Use `dataclass(frozen=True)` in Python, `record` in Java, structural copies in TypeScript, etc. Fall back to defensive copying when frozen types aren't available.
 * **Mutation boundary** — Confine side effects to adapters/ports at the system edge; core business logic remains pure.
+* **Plan contract takes precedence** — when the plan carries an Object Design Contract, it is the source of truth for structure: implement the prescribed classes (fields + stubbed methods, then bodies), don't re-architect into an ad-hoc function suite. The functional-first pattern above applies only where the plan has no class (genuinely stateless utilities).
 
 ## 2. Port and Adapter Pattern
 * When interacting with **external services, APIs, databases, or third-party libraries**, always use the **Port/Adapter pattern** (Hexagonal/Clean Architecture).
