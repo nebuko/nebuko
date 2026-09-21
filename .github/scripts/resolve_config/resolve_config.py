@@ -36,6 +36,7 @@ from .features.resolve_route.resolve_route import (
     _resolve_bot_fallback_path,
     _resolve_workflow_next_step,
 )
+from config import is_self_function_call
 
 def resolve_config(
     trigger_body: str,
@@ -168,11 +169,17 @@ def resolve_config(
             pinned_task=ci_agent,
             local_workflows_dir=local_workflows_dir,
         )
-    elif prev_state and prev_state.function_call:
+    elif (
+        prev_state
+        and prev_state.function_call
+        and not is_self_function_call(prev_state.function_call, getattr(prev_state, "agent", ""))
+    ):
         # Imperative agent-to-agent hand-off (call_agent): explicit pinning of
         # the next agent, beats workflow continuation (same tier as human
         # mention). Consumed once — the fresh state built for the called agent
-        # clears the field, so a re-trigger no-ops.
+        # clears the field, so a re-trigger no-ops. A *self* hand-off is
+        # neutralized here (issue #618, defect 2b): routing falls through to
+        # the dispatch / workflow-next path below.
         config = _resolve_function_call_path(prev_state.function_call, workflows_dir, prev_state, local_workflows_dir=local_workflows_dir)
     elif extract_machine_trigger(trigger_body):
         # CI-posted machine trigger token (bot-subtask-complete /

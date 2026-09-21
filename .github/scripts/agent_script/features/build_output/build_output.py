@@ -13,7 +13,7 @@ from openhands.sdk.llm.message import content_to_str
 from openhands.sdk.tool.builtins.finish import FinishTool
 from pydantic import ValidationError
 
-from config import load_workflow, resolve_workflow_reference
+from config import is_self_function_call, load_workflow, resolve_workflow_reference
 from metrics_schema import Metrics
 from validate_output import (
     extract_dispatch_resilient,
@@ -731,6 +731,17 @@ def build_output(
     dispatch, function_call, final_message = _resolve_dispatch(
         conversation, final_message
     )
+
+    # Self function_call neutralization (issue #618, defect 2a): a self
+    # hand-off (agent dispatches to itself) must not outrank the plain
+    # dispatch / workflow-next routing. Drop the function_call and keep
+    # the plain dispatch so the router falls through to workflow-next.
+    if function_call is not None and is_self_function_call(function_call, role_name):
+        logger.info(
+            f"Self function_call neutralized (agent={role_name}); "
+            f"keeping plain dispatch for workflow-next routing"
+        )
+        function_call = None
 
     # Clear the run-scoped dispatch registry on every exit path (issue #524):
     # build_output runs exactly once per agent run, so this must not leak into
