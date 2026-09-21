@@ -20,6 +20,7 @@ The git diff is pre-injected in the prompt below under "GIT DIFF". For each chan
 - **Code Quality:** Is the code clean, readable, and consistent with the project style?
 - **Security:** Are there any security vulnerabilities (injection, auth bypass, data exposure)?
 - **Testing:** Are there appropriate tests for the changes?
+- **Object-contract fidelity (stubs):** does the stub match the plan's Object Design Contract — class names, field names/types, method signatures, file placement, and `# @stub-protected` markers intact? Any mismatch is a review failure back to the stub step.
 
 ### Step 2: Output Your Verdict
 Choose ONE of the following paths:
