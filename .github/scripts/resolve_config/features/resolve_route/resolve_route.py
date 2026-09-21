@@ -361,7 +361,35 @@ def _resolve_dispatch_path(
     return config
 
 
-def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None) -> str:
+def _mount_chain_ref_resolver(workflows_dir: str, local_workflows_dir: Optional[str] = None) -> Callable[[str], Optional[WorkflowDefinition]]:
+    """Build a ``resolve_position`` ref port over the real workflow loader.
+
+    The port maps a mount reference (name or repo-root-relative path) to the
+    loaded :class:`WorkflowDefinition` or ``None`` when unresolvable. It
+    carries the child's actual file path onto the definition as
+    ``source_path`` so :func:`resolve_position` records the real location
+    instead of guessing (issue #618, review fix: no name heuristic).
+    """
+    def resolve_ref(ref: str) -> Optional[WorkflowDefinition]:
+        if not ref:
+            return None
+        try:
+            wf = _load_workflow_by_reference(ref, workflows_dir, local_workflows_dir)
+        except Exception:
+            return None
+        if wf is None:
+            return None
+        try:
+            candidate = Path(ref) if "/" in ref else Path(workflows_dir) / f"{ref}.yaml"
+            resolved = str(Path(candidate).resolve())
+            object.__setattr__(wf, "source_path", resolved)
+        except Exception:
+            pass
+        return wf
+    return resolve_ref
+
+
+def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None, exclude_step: Optional[str] = None) -> str:
     """Resolve the workflow step that ``callee`` should run (issue #507).
 
     When a caller hands off via ``function_call`` while a workflow is active,
@@ -370,20 +398,47 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
     re-trigger mis-resolves the next task to the callee itself, which the
     same-agent loop guard then skips (issue #506 repro).
 
-    Chain: the linear successor of ``current_step`` whose ``agent == callee``
-    (matches in-workflow hand-offs such as genius(analyze) -> ctx(context));
-    failing that, the first workflow step owned by ``callee``. Empty string
-    when the workflow cannot be loaded or owns no step for the callee.
+    Resolution order (issue #618 defect 1):
+      1. Linear successor of ``current_step`` whose ``agent == callee``
+         (in-workflow hand-offs such as genius(analyze) -> ctx(context)).
+      2. When ``current_step``'s successor is a *workflow-mount* step the
+         callee enters through a sub-workflow: resolve the mount chain via
+         :func:`resolve_position` and return the leaf step it lands on — the
+         ``dev`` hand-off from ``scaffold`` must resolve to the mounted
+         ``dev-review-loop / implement`` leaf, never the already-consumed
+         ``scaffold`` (the #617 dead-end).
+      3. Fallback: the first step owned by ``callee`` **within the current
+         workflow only**, excluding the already-consumed step. The old
+         implementation scanned only the parent's top-level steps, which is
+         exactly how ``scaffold`` got re-selected.
+    Empty string when the workflow cannot be loaded or owns no step for
+    the callee.
     """
     try:
         result = resolve_next_from_workflow(wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir)
     except Exception:
-        return ""
+        result = None
     if result and result.get("task") == callee and result.get("step"):
         return result["step"]
     workflow = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)
+    current = _find_step(workflow, current_step)
+    if current is not None and _is_mount_step(current):
+        position = resolve_position(
+            workflow,
+            current.name,
+            resolve_ref=_mount_chain_ref_resolver(workflows_dir, local_workflows_dir),
+            workflow_path=f"workflows/{wf_name}.yaml" if wf_name else "",
+        )
+        leaf = position.leaf
+        if leaf.workflow_name != wf_name and leaf.step_name and leaf.step_name != (exclude_step or ""):
+            return leaf.step_name
     for step in getattr(workflow, "steps", None) or []:
-        if getattr(step, "agent", None) == callee and getattr(step, "name", ""):
+        if (
+            getattr(step, "agent", None) == callee
+            and getattr(step, "name", "")
+            and step.name != (current_step or "")
+            and step.name != (exclude_step or "")
+        ):
             return step.name
     return ""
 
