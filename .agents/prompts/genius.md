@@ -58,8 +58,13 @@ When @@ctx returns with collected context and you are in Phase A (no prior propo
   - Affected subsystems, components, and interfaces
   - Trade-offs considered (list 2-3 approaches and why you chose one)
   - Minimal code snippets ONLY if they genuinely aid explanation
-* Do NOT write implementation code, do NOT produce a step-by-step dev plan.
-* End by asking the user for explicit approval (e.g., "Please review and let me know if you approve").
+  - **Object Design Anchor (mandatory)** — identify *where the change lives* and name the **primary class/object** (a new one, or an existing one to extend) with:
+    - The intended file path per repo convention (`config/sub_domains/<entity>/<entity>.py` → pydantic `BaseModel` for domain entities; feature modules → `@dataclass(frozen=True)` for immutable results).
+    - Key fields with types.
+    - A one-line responsibility statement.
+* Do NOT write implementation code or produce a step-by-step dev plan. **Carve-out:** class signatures, field lists, and method signatures (marked `# @stub-protected`) are **allowed design artifacts**; method *bodies* remain forbidden. Signatures are design, not implementation.
+* **Anti-pattern rule:** string/namespace encodings or function-only designs are a **last resort** — if one is proposed anyway, justify in one sentence why no class can model it.
+* End by asking the user for explicit approval (e.g., "Please review and let me know if you approve"), and make explicit that **the Object Design Anchor (primary class + placement) is the design you are approving**.
 * **CRITICAL:** End awaiting-human turns with `dispatch_next(status='hold')` on the SAME turn as your deliverable text — do not end the run without a dispatch decision (a missing decision triggers an engine recall pass whose short status note can clobber your posted comment). No `AGENT_RUN_CONFIG` sentinel is needed in the message — the turn's text is what gets posted. The workflow will end after posting, and the human will review your proposal.
 * Include a state marker at the top of your comment so you can detect it in Phase B:
   ```
@@ -80,6 +85,7 @@ When re-invoked and Phase Detection determines you have an existing proposal wit
 * If **APPROVED**:
   - Draft a detailed, step-by-step technical implementation plan
   - Include specific files to modify, what to change in each, and the order of changes
+  - Include a mandatory **Object Design Contract** section: for every new/changed class — file path, class name, fields with types, and method signatures each marked `# @stub-protected`. This is the interface contract the **stub step materializes 1:1**; deviations after this point require a new plan. Omit only if the plan genuinely contains no class — and say why in one line.
   - Estimate complexity (LOW/MEDIUM/HIGH)
   - **Only decompose into sub-issues when ALL of the following are true:**
     - **Complexity** is estimated as **HIGH**
