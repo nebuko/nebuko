@@ -7,13 +7,14 @@ path the next agent takes and produce the resolved config dict.
 import re
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from config import (
     WorkflowDefinition,
     WorkflowStep,
     load_workflow,
     load_workflow_with_dirs,
+    WorkflowPosition,
 )
 from resolve_workflow import (
     resolve_next_from_workflow,
@@ -385,6 +386,33 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
         if getattr(step, "agent", None) == callee and getattr(step, "name", ""):
             return step.name
     return ""
+
+
+# @stub-protected: signature defined by architect — do not modify
+def resolve_position(
+    wf_def: WorkflowDefinition,
+    step_name: str,
+    resolve_ref: Optional[Callable[[str], Optional[WorkflowDefinition]]] = None,
+    workflow_path: str = "",
+) -> "WorkflowPosition":
+    """Build the recursive :class:`WorkflowPosition` for a step (issue #618).
+
+    Pure builder: walks the mount chain starting at ``wf_def`` /
+    ``step_name``. When the step is a workflow-mount step (``workflow``/
+    ``path`` reference, no agent), the child definition is obtained via
+    the ``resolve_ref`` port (the implement step wires it to
+    ``_load_workflow_by_reference`` with ``workflows_dir`` /
+    ``local_workflows_dir`` closure) and the position recurses into the
+    child's entry step. Stops at the first agent-bearing step (the leaf)
+    or when the chain can no longer be resolved.
+
+    For the #617 scenario this yields::
+
+        plan-orchestration / sub_impl
+          -> tmp-impl / step_1
+            -> dev-review-loop / implement
+    """
+    raise NotImplementedError("stub — resolve_position builder (issue #618)")
 
 
 def _resolve_function_call_path(

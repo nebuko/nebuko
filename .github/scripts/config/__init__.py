@@ -12,6 +12,11 @@ from .sub_domains.workflow_step.script_step_spec import ScriptStepSpec
 from .sub_domains.workflow_step.workflow_step import WorkflowStep
 from .sub_domains.workflow_trigger.workflow_trigger import WorkflowTrigger
 from .sub_domains.workflow_definition.workflow_definition import WorkflowDefinition
+from .sub_domains.workflow_position.workflow_position import (
+    POSITION_STATE_VERSION,
+    WorkflowPosition,
+    is_self_function_call,
+)
 
 # Features
 from .features.resolve_refs.resolve_refs import resolve_refs, REF_PATTERN
@@ -39,6 +44,9 @@ __all__ = [
     "WorkflowStep",
     "WorkflowTrigger",
     "WorkflowDefinition",
+    "WorkflowPosition",
+    "is_self_function_call",
+    "POSITION_STATE_VERSION",
     # Features
     "resolve_refs",
     "REF_PATTERN",
