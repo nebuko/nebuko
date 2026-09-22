@@ -1,7 +1,13 @@
 """Tests for the SCAFFOLD_BRANCH marker handling (issue #604)."""
 
+from dataclasses import FrozenInstanceError
+
+import pytest
+
 from agent_script.sub_domains.scaffold_branch.scaffold_branch import (
+    ScaffoldBranchResult,
     extract_scaffold_branch,
+    extract_scaffold_branch_any,
     scaffold_branch_summary,
     strip_scaffold_branch,
 )
@@ -51,6 +57,63 @@ class TestExtractScaffoldBranch:
         # Not in the `SCAFFOLD_BRANCH: <ref>` line form → ignored.
         msg = "The SCAFFOLD_BRANCH value lives in the state."
         assert extract_scaffold_branch(msg) is None
+
+
+class TestExtractScaffoldBranchAny:
+    """extract_scaffold_branch_any: dual-source search (issue #636)."""
+
+    def test_marker_only_in_latest_answer(self):
+        result = extract_scaffold_branch_any(
+            "Short finish note.",
+            "Report.\nSCAFFOLD_BRANCH: feature/issue-635-x\nDone.",
+        )
+        assert result == ScaffoldBranchResult(
+            branch="feature/issue-635-x", source="latest_answer"
+        )
+
+    def test_marker_in_both_finish_message_wins(self):
+        result = extract_scaffold_branch_any(
+            "SCAFFOLD_BRANCH: feature/issue-1-finish",
+            "SCAFFOLD_BRANCH: feature/issue-1-answer",
+        )
+        assert result == ScaffoldBranchResult(
+            branch="feature/issue-1-finish", source="finish_message"
+        )
+
+    def test_malformed_in_finish_valid_in_answer_falls_back(self):
+        result = extract_scaffold_branch_any(
+            "SCAFFOLD_BRANCH: 'broken'",
+            "SCAFFOLD_BRANCH: feature/issue-1-ok",
+        )
+        assert result == ScaffoldBranchResult(
+            branch="feature/issue-1-ok", source="latest_answer"
+        )
+
+    def test_malformed_in_both_returns_none(self):
+        result = extract_scaffold_branch_any(
+            "SCAFFOLD_BRANCH: -bad", "SCAFFOLD_BRANCH: 'also-bad'"
+        )
+        assert result == ScaffoldBranchResult(branch=None, source=None)
+
+    def test_no_marker_anywhere_returns_none(self):
+        result = extract_scaffold_branch_any("Prose A.", "Prose B.")
+        assert result == ScaffoldBranchResult(branch=None, source=None)
+
+    def test_none_inputs_return_none(self):
+        result = extract_scaffold_branch_any(None, None)
+        assert result == ScaffoldBranchResult(branch=None, source=None)
+
+    def test_invalid_ref_rejected_in_both_sources(self):
+        for bad in ("feature|evil", "<x>", "feature/ok<x>"):
+            result = extract_scaffold_branch_any(
+                f"SCAFFOLD_BRANCH: {bad}", f"SCAFFOLD_BRANCH: {bad}"
+            )
+            assert result == ScaffoldBranchResult(branch=None, source=None)
+
+    def test_result_is_frozen(self):
+        result = extract_scaffold_branch_any(None, "SCAFFOLD_BRANCH: feature/1")
+        with pytest.raises(FrozenInstanceError):
+            result.branch = "other"
 
 
 class TestStripScaffoldBranch:

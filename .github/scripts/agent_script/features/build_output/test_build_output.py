@@ -17,6 +17,7 @@ from build_output import (
 )
 from validate_output import strip_agent_run_config
 from workflow_state import Dispatch
+from workflow_state.features.to_json.to_json import state_to_json
 
 
 class TestAgentRunConfigToDispatch(unittest.TestCase):
@@ -754,6 +755,138 @@ class TestWriteLatestAnswerFile(unittest.TestCase):
         _write_latest_answer_file("")
         self.assertTrue(os.path.isfile(LATEST_ANSWER_FILE))
         self.assertEqual(os.path.getsize(LATEST_ANSWER_FILE), 0)
+
+
+def _finish_event(message: str):
+    """Build a real finish ActionEvent so get_agent_final_response returns ``message``.
+
+    Distinct from ``_finish_action_event`` above: that helper only carries
+    thought text for the capture layer; the SDK's final-response channel
+    (``get_agent_final_response``) reads ``ActionEvent.action`` instead.
+    """
+    from openhands.sdk.event import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall
+    from openhands.sdk.tool.builtins.finish import FinishAction
+
+    tool_call = MessageToolCall(
+        id="tc-final-finish",
+        name="finish",
+        arguments=json.dumps({"message": message}),
+        origin="completion",
+    )
+    return ActionEvent(
+        source="agent",
+        tool_name="finish",
+        thought=[],
+        tool_call_id="tc-final-finish",
+        tool_call=tool_call,
+        llm_response_id="r-final",
+        action=FinishAction(message=message),
+    )
+
+
+class TestBuildOutputScaffoldBranchWiring(unittest.TestCase):
+    """End-to-end SCAFFOLD_BRANCH wiring in build_output (issue #636):
+    dual-source extraction, state persistence, and strip of both texts."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._cwd = os.getcwd()
+        os.chdir(self._tmp.name)
+        env_patch = mock.patch.dict(
+            "os.environ",
+            {
+                "ROLE_NAME": "dev",
+                "WORKFLOW_NAME": "plan-orchestration",
+                "WORKFLOW_STEP": "scaffold",
+            },
+            clear=False,
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def _run(self, finish_message, latest_answer_text):
+        from metrics_schema import Metrics
+        from build_output import build_output
+
+        conv = SimpleNamespace(
+            state=SimpleNamespace(
+                events=[_msg_event(latest_answer_text), _finish_event(finish_message)]
+            )
+        )
+        return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
+
+    def test_marker_only_in_latest_answer_persisted_and_stripped_both(self):
+        finish_note = "Scaffolding complete, handing off."
+        answer = (
+            "# Report\n\nSCAFFOLD_BRANCH: feature/issue-635-workflow-command\n"
+            "Done.\n"
+        )
+        result = self._run(finish_note, answer)
+
+        # Persisted in the built state (and therefore the posted state JSON).
+        self.assertEqual(
+            result["workflow_state"].scaffold_branch,
+            "feature/issue-635-workflow-command",
+        )
+        state_json = state_to_json(result["workflow_state"])
+        self.assertIn('"scaffold_branch"', state_json)
+        self.assertIn("feature/issue-635-workflow-command", state_json)
+
+        # Posted body: marker stripped, summary line appended.
+        self.assertNotIn("SCAFFOLD_BRANCH:", result["final_message"])
+        self.assertIn(
+            "Scaffold branch: `feature/issue-635-workflow-command`",
+            result["final_message"],
+        )
+
+        # Latest-answer file: marker stripped, no raw marker left behind.
+        with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
+            written = f.read()
+        self.assertNotIn("SCAFFOLD_BRANCH:", written)
+        self.assertIn("# Report", written)
+
+    def test_finish_message_marker_still_wins_and_is_stripped(self):
+        result = self._run(
+            "Scaffolding done.\nSCAFFOLD_BRANCH: feature/issue-1-finish",
+            "SCAFFOLD_BRANCH: feature/issue-1-answer\nBody.",
+        )
+        self.assertEqual(result["workflow_state"].scaffold_branch, "feature/issue-1-finish")
+        self.assertNotIn("SCAFFOLD_BRANCH:", result["final_message"])
+        self.assertIn("Scaffold branch: `feature/issue-1-finish`", result["final_message"])
+        with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
+            self.assertNotIn("SCAFFOLD_BRANCH:", f.read())
+
+    def test_malformed_finish_valid_answer_falls_back(self):
+        result = self._run(
+            "SCAFFOLD_BRANCH: 'broken'",
+            "SCAFFOLD_BRANCH: feature/issue-1-fallback\nBody.",
+        )
+        self.assertEqual(
+            result["workflow_state"].scaffold_branch, "feature/issue-1-fallback"
+        )
+        with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
+            self.assertNotIn("SCAFFOLD_BRANCH:", f.read())
+
+    def test_malformed_in_both_not_persisted(self):
+        result = self._run(
+            "SCAFFOLD_BRANCH: 'broken'", "SCAFFOLD_BRANCH: -also-broken\nBody."
+        )
+        self.assertIsNone(result["workflow_state"].scaffold_branch)
+        # No successful persistence → texts posted as-is, no summary line.
+        self.assertNotIn("Scaffold branch:", result["final_message"])
+        with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
+            self.assertIn("SCAFFOLD_BRANCH:", f.read())
+
+    def test_no_marker_leaves_latest_answer_file_untouched(self):
+        result = self._run("Plain finish note.", "# Report\n\nBody only.")
+        self.assertIsNone(result["workflow_state"].scaffold_branch)
+        with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "# Report\n\nBody only.")
 
 
 if __name__ == "__main__":
