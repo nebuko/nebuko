@@ -36,7 +36,7 @@ When invoked inside a branch-mounted dynamic plan workflow, check the `workflow`
   3. Verify with the appropriate test suite where one exists.
   4. Commit with message: `[step N/M] <step title>` (N = current step index, M = total number of plan steps).
   5. Push to the existing PR branch (the existing PR detection logic in the git workflow rules handles branch selection).
-  6. Dispatch: end with `status: "advance"`:
+  6. Dispatch: end with `status: "advance"` — with **no `agent` field and no self `function_call`**: the engine resolves the next step from the workflow definition; a self-hand-off re-triggers the same-agent guard and dead-ends the workflow (issue #618).
      ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
      ```

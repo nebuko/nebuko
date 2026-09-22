@@ -10,9 +10,9 @@ Scenarios from the approved plan:
      -> dev-review-loop / implement (leaf), not the parent's `scaffold`.
   4. Self function_call neutralization helper (defect 2).
 
-Builder tests (class `TestResolvePositionBuilder`) are expected to fail
-against the current `NotImplementedError` stub — they are the acceptance
-gate for the implement step.
+Builder tests (class `TestResolvePositionBuilder`) are the acceptance gate
+for issue #618 — they resolve the full mount chain through `resolve_position`
+and must pass against the real builder.
 """
 
 import sys
@@ -203,11 +203,8 @@ class TestWorkflowStatePositionField:
 
 
 class TestResolvePositionBuilder:
-    """Acceptance gate (issue #617 regression).
-
-    Expected to FAIL against the current NotImplementedError stub until the
-    implement step fills the builder body.
-    """
+    """Acceptance gate (issue #617 regression): the builder must resolve the
+    full mount chain through ``resolve_position``."""
 
     def _resolve(self, wf_def: WorkflowDefinition, step_name: str) -> WorkflowPosition:
         from resolve_config.features.resolve_route.resolve_route import resolve_position

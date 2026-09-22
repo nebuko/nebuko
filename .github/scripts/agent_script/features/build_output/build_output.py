@@ -344,6 +344,25 @@ def _build_resolution() -> StepResolution:
     )
 
 
+def _parse_position_env() -> Optional[dict]:
+    """Parse the v2 mount-chain position from the WORKFLOW_POSITION env var.
+
+    The resolver emits a single-line nested JSON (``WorkflowPosition.
+    to_state_dict`` shape) when the run entered a sub-workflow (issue #618).
+    Returns the nested dict for ``WorkflowState.position``, or ``None`` when
+    the var is unset/empty/malformed (v1 states stay position-less).
+    """
+    raw = os.environ.get("WORKFLOW_POSITION", "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("WORKFLOW_POSITION is not valid JSON; dropping position")
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _save_split_plan(json_str: str) -> None:
     """Save split plan JSON to file."""
     with open("split_plan.json", "w", encoding="utf-8") as f:
@@ -720,6 +739,7 @@ def build_output(
     workflow_step = os.environ.get("WORKFLOW_STEP", "")
     parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
     parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
+    position = _parse_position_env()
     phase = _derive_phase(workflow_step)
 
     # ── Issue / PR info ──────────────────────────────────────────
@@ -794,6 +814,7 @@ def build_output(
         function_call=function_call,
         inject_context=inject_context,
         scaffold_branch=scaffold_branch,
+        position=position,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 

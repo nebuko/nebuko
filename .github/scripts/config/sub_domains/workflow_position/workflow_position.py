@@ -87,8 +87,10 @@ class WorkflowPosition:
         )
 
     def is_self_call(self, step_agent: str, running_agent: str) -> bool:
-        """True when the leaf step is owned by ``step_agent`` and that is the
-        running agent (i.e. the position would re-execute the caller itself)."""
+        """Pure identity check: True iff ``step_agent`` is non-empty and equals
+        ``running_agent``. This does NOT inspect any position/agent field of
+        self — callers must pass the *leaf* position's owning agent so the
+        check answers "does the leaf re-execute the caller" (issue #618)."""
         return step_agent != "" and step_agent == running_agent
 
 

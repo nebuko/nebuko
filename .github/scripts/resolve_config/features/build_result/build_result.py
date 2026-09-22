@@ -135,6 +135,9 @@ def _build_result(
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
         "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
         "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
+        # v2 mount-chain position (issue #618): present only when the run
+        # entered a sub-workflow (entry resolution emits it).
+        "WORKFLOW_POSITION": wf_result.get("WORKFLOW_POSITION", ""),
         "MATCHED_RULE": matched_rule,
         "HUMAN_RESUME_INPUT": config.get("config_human_resume_input", ""),
         "SKIP_AGENT": "false",

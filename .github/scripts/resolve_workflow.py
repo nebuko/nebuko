@@ -434,6 +434,86 @@ def _load_child_workflow(
     return None
 
 
+def _position_to_json(nodes: list) -> str:
+    """Serialize a position chain to single-line JSON (issue #618).
+
+    ``nodes`` is an outermost-first list of ``(workflow_name, ref,
+    step_name)`` tuples (see :func:`_build_position_chain`). The chain is
+    folded into a nested ``step`` block with the ``version``/leaf aliases
+    mirroring ``WorkflowPosition.to_state_dict`` so the posted
+    ``WORKFLOW_STATE`` carries the full mount chain (the #617 dead-end hid
+    the sub-workflow behind a single flat ``step``). Single-line so it
+    survives the ``KEY=value`` resolver output contract.
+    """
+    if not nodes:
+        return ""
+    leaf_name = nodes[-1][0]
+    leaf_step = nodes[-1][2]
+    block: dict = {
+        "version": 2,
+        "workflow_name": leaf_name,
+        "workflow_path": nodes[-1][1],
+        "step_name": leaf_step,
+        "leaf_workflow": leaf_name,
+        "leaf_step": leaf_step,
+    }
+    for name, ref, step in reversed(nodes[:-1]):
+        block = {
+            "version": 2,
+            "workflow_name": name,
+            "workflow_path": ref,
+            "step_name": step,
+            "leaf_workflow": leaf_name,
+            "leaf_step": leaf_step,
+            "step": block,
+        }
+    return json.dumps(block, separators=(",", ":"))
+
+
+def _build_position_chain(
+    start_ref: str,
+    start_name: str,
+    start_step: str,
+    fetch_cache: dict,
+    visited: set,
+    workflows_dir: str,
+    scaffold_branch: Optional[str],
+    local_workflows_dir: Optional[str] = None,
+) -> list:
+    """Build the mount-chain position for a sub-workflow entry (issue #618).
+
+    Starts at the outer parent node ``(start_name, start_step)`` and
+    descends through the child's first steps (reusing the loader and the
+    shared ``fetch_cache``) until an agent-bearing leaf. Returns a list of
+    ``(workflow_name, workflow_path, step_name)`` tuples, outermost first.
+    Cycles/depth reuse the ``visited`` name set plus
+    ``_MAX_SUB_WORKFLOW_DEPTH``; an unresolvable reference or entryless
+    child stops the chain at the node already built.
+    """
+    chain: list = [(start_name, "", start_step)]
+    ref = start_ref
+    while True:
+        if not ref or ref in visited:
+            break
+        if len(chain) > _MAX_SUB_WORKFLOW_DEPTH:
+            break
+        child = _load_child_workflow(
+            ref, workflows_dir, scaffold_branch, fetch_cache,
+            local_workflows_dir,
+        )
+        if child is None or not child.steps:
+            break
+        if child.name in visited:
+            break
+        visited.add(child.name)
+        chain.append((child.name, ref, child.steps[0].name))
+        leaf = child.steps[0]
+        ref = leaf.workflow or leaf.path or ""
+        if leaf.agent or leaf.script is not None or not ref:
+            break
+    return chain
+
+
 def _resolve_entry_leaf_for_step(
     step: WorkflowStep,
     workflows_dir: str,
@@ -717,6 +797,18 @@ def _resolve_sub_workflow_entry(
         else current_step.name
     )
 
+    # Full mount-chain address (issue #618): the leaf pair above is one level;
+    # the v2 position records the whole chain (outermost -> leaf) so the
+    # posted WORKFLOW_STATE reveals the sub-workflow the run executes in.
+    # ``target_path`` is the loader-resolved file path of the mount (local,
+    # fetched, or cloned), so the chain records actual paths, not guesses.
+    position_json = _position_to_json(_build_position_chain(
+        target_path, workflow.name, current_step.name,
+        fetch_cache, {workflow.name},
+        workflows_dir, scaffold_branch,
+        local_workflows_dir=local_workflows_dir,
+    ))
+
     if leaf["kind"] == "script":
         return {
             "ROLE_NAME": "",
@@ -732,7 +824,7 @@ def _resolve_sub_workflow_entry(
             "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
             "SKIP_AGENT": "true",
             "REASON": f"step '{leaf['step']}' in sub-workflow '{leaf['workflow']}' is a script step",
-        }
+        } | ({"WORKFLOW_POSITION": position_json} if position_json else {})
 
     prompt_file = TASK_TO_PROMPT.get(leaf["agent"])
     if not prompt_file:
@@ -755,7 +847,7 @@ def _resolve_sub_workflow_entry(
         "STEP_SKILLS": leaf["skill"],
         "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
         "SKIP_AGENT": "false",
-    }
+    } | ({"WORKFLOW_POSITION": position_json} if position_json else {})
 
 
 def resolve_sub_workflow_entry(

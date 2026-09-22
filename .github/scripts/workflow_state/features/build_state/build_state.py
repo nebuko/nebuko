@@ -54,6 +54,7 @@ def build_state(
     resolution: Optional[StepResolution] = None,
     dispatch: Optional[Dispatch] = None,
     function_call: Optional[FunctionCall] = None,
+    position: Optional[dict] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -185,4 +186,5 @@ def build_state(
         resolution=resolution,
         dispatch=dispatch,
         function_call=function_call,
+        position=position,
     )
