@@ -19,9 +19,116 @@ Output:
 """
 
 import argparse
+import json
 import os
 import re
 import sys
+
+_WORKFLOW_STATE_START = "<!-- WORKFLOW_STATE_START -->"
+_WORKFLOW_STATE_END = "<!-- WORKFLOW_STATE_END -->"
+
+
+def _iter_workflow_states(trigger_body: str):
+    """Yield each parsed WORKFLOW_STATE block in a trigger body (oldest last
+    marker wins the comparison — the yml guard reads the last one too)."""
+    pos = trigger_body.find(_WORKFLOW_STATE_START)
+    while pos != -1:
+        stop = trigger_body.find(_WORKFLOW_STATE_END, pos + len(_WORKFLOW_STATE_START))
+        if stop == -1:
+            break
+        try:
+            state = json.loads(trigger_body[pos + len(_WORKFLOW_STATE_START):stop].strip())
+        except Exception:
+            state = None
+        if isinstance(state, dict):
+            yield state
+        pos = trigger_body.find(_WORKFLOW_STATE_START, stop + len(_WORKFLOW_STATE_END))
+
+
+def trigger_step(trigger_body: str) -> str:
+    """Flat ``step`` of the last parseable WORKFLOW_STATE block (v1 shape)."""
+    step = ""
+    for state in _iter_workflow_states(trigger_body):
+        value = state.get("step")
+        if isinstance(value, str) and value:
+            step = value
+    return step
+
+
+def _flatten_position(position: dict) -> str:
+    """Flatten a v2 position block to the outermost-first path form the
+    resolver emits in ``WORKFLOW_POSITION_PATH`` (``wf/step|wf/step|...``)."""
+    parts: list[str] = []
+    node = position
+    while isinstance(node, dict) and node.get("workflow_name"):
+        parts.append(f"{node['workflow_name']}/{node.get('step_name', '')}")
+        node = node.get("step")
+    return "|".join(parts)
+
+
+def trigger_position_path(trigger_body: str) -> str:
+    """Full mount-chain path posted by the v2 trigger state (issue #618).
+
+    Reads the nested ``position`` block of the last parseable
+    WORKFLOW_STATE; empty when the trigger is a legacy v1 state (no
+    position) — callers then fall back to the flat step comparison.
+    """
+    path = ""
+    for state in _iter_workflow_states(trigger_body):
+        position = state.get("position")
+        if isinstance(position, dict):
+            path = _flatten_position(position)
+    return path
+
+
+def check_same_agent_advance(
+    trigger_body: str,
+    resolved_position_path: str,
+    resolved_step: str,
+) -> dict:
+    """Same-agent re-trigger decision, position-aware (issue #618).
+
+    v2 (both sides carry a full mount-chain path): identical path is a
+    true self loop (skip); a different path is a legitimate advance across
+    or within sub-workflows (``step_1`` -> ``step_2`` re-enters the same
+    leaf, so the flat step alone cannot tell them apart — allow).
+    Legacy/ambiguous (either side has no position): fall back to the v1
+    flat-step comparison — different step (or no trigger state) allows,
+    same step skips.
+    """
+    trigger_path = trigger_position_path(trigger_body)
+    if trigger_path and resolved_position_path:
+        if trigger_path == resolved_position_path:
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": (
+                    f"Same-agent loop detected (same v2 position "
+                    f"'{trigger_path}'). Skipping."
+                ),
+            }
+        return {
+            "SKIP_AGENT": "false",
+            "REASON": (
+                f"Same-agent advance to new position "
+                f"('{trigger_path}' -> '{resolved_position_path}'). Allowing."
+            ),
+        }
+    trigger_step_name = trigger_step(trigger_body)
+    if trigger_step_name and trigger_step_name != resolved_step:
+        return {
+            "SKIP_AGENT": "false",
+            "REASON": (
+                f"Same-agent advance to new step "
+                f"('{trigger_step_name}' -> '{resolved_step}'). Allowing."
+            ),
+        }
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": (
+            "Same-agent loop detected "
+            f"(no position / same step '{trigger_step_name or resolved_step}'). Skipping."
+        ),
+    }
 
 
 def detect_same_agent_loop(trigger_body: str, current_agent: str) -> bool:

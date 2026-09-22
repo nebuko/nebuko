@@ -8,10 +8,43 @@ from typing import Optional
 
 from resolve_workflow import (
     resolve_workflow_routing,
+    build_workflow_position,
     TASK_TO_PROMPT,
 )
 
 __all__ = ["_build_result"]
+
+
+def _attach_position(
+    result: dict,
+    config: dict,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> dict:
+    """Centralized v2 position emission (issue #618, review fix for defect 3).
+
+    Every agent result inside or entering a sub-workflow must carry the
+    full mount chain — the resolver's own entry path already does (keep it
+    verbatim for exact fidelity), so only non-entry results are rebuilt
+    here from the leaf pair + the recorded parent pair.
+    """
+    if result.get("WORKFLOW_POSITION"):
+        # Entry path already emitted the position (resolver fidelity).
+        return result
+    leaf_wf = result.get("WORKFLOW_NAME", "")
+    leaf_step = result.get("WORKFLOW_STEP", "")
+    parent_wf = result.get("PARENT_WORKFLOW", "")
+    if not (leaf_wf and parent_wf):
+        # Top-level workflow (no parent pair) or no leaf — v1 position-less.
+        return result
+    pair = build_workflow_position(
+        leaf_wf, leaf_step, parent_wf,
+        result.get("PARENT_WORKFLOW_STEP", ""),
+        workflows_dir,
+        scaffold_branch=config.get("config_scaffold_branch") or None,
+        local_workflows_dir=local_workflows_dir,
+    )
+    return result | pair
 
 
 def _build_result(
@@ -39,7 +72,7 @@ def _build_result(
     # execution contract and let GHA branch on RUN_SCRIPT before agent steps.
     run_script = config.get("run_script")
     if run_script:
-        return {
+        script_result = {
             "TASK": "",
             "ROLE_NAME": "script",
             "AGENT_SELECTED": "false",
@@ -53,6 +86,12 @@ def _build_result(
             "PARENT_WORKFLOW": config.get("config_parent_workflow", ""),
             "PARENT_WORKFLOW_STEP": config.get("config_parent_workflow_step", ""),
         }
+        # Centralized v2 position emission (issue #618): the script path
+        # returns before routing, so attach the chain here from the flat
+        # leaf + parent pairs.
+        return _attach_position(
+            script_result, config, workflows_dir, local_workflows_dir
+        )
 
     task = config.get("task", "")
     if not task:
@@ -135,9 +174,14 @@ def _build_result(
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
         "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
         "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
+        # v2 mount-chain position (issue #618): attached below by
+        # ``_attach_position`` (entry-path emission is kept verbatim; all
+        # other sub-workflow runs rebuild the full chain from the leaf +
+        # parent pairs so every run posts a non-None position).
         "MATCHED_RULE": matched_rule,
         "HUMAN_RESUME_INPUT": config.get("config_human_resume_input", ""),
         "SKIP_AGENT": "false",
     }
-
-    return result
+    result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")
+    result["WORKFLOW_POSITION_PATH"] = wf_result.get("WORKFLOW_POSITION_PATH", "")
+    return _attach_position(result, config, workflows_dir, local_workflows_dir)

@@ -13,7 +13,12 @@ from openhands.sdk.llm.message import content_to_str
 from openhands.sdk.tool.builtins.finish import FinishTool
 from pydantic import ValidationError
 
-from config import load_workflow, resolve_workflow_reference
+from config import (
+    is_self_function_call,
+    load_workflow,
+    parse_position_env,
+    resolve_workflow_reference,
+)
 from metrics_schema import Metrics
 from validate_output import (
     extract_dispatch_resilient,
@@ -342,6 +347,19 @@ def _build_resolution() -> StepResolution:
         parent_workflow_step=os.environ.get("PARENT_WORKFLOW_STEP", ""),
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def _parse_position_env() -> Optional[dict]:
+    """Parse the v2 mount-chain position from the WORKFLOW_POSITION env var.
+
+    The resolver emits a single-line nested JSON (``WorkflowPosition.
+    to_state_dict`` shape) when the run is inside a sub-workflow
+    (issue #618). Returns the nested dict for ``WorkflowState.position``,
+    or ``None`` when the var is unset/empty/malformed (v1 states stay
+    position-less). Delegates to the shared ``config.parse_position_env``
+    so the script path (``run_script``) behaves identically.
+    """
+    return parse_position_env(os.environ.get("WORKFLOW_POSITION", ""))
 
 
 def _save_split_plan(json_str: str) -> None:
@@ -720,6 +738,7 @@ def build_output(
     workflow_step = os.environ.get("WORKFLOW_STEP", "")
     parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
     parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
+    position = _parse_position_env()
     phase = _derive_phase(workflow_step)
 
     # ── Issue / PR info ──────────────────────────────────────────
@@ -731,6 +750,17 @@ def build_output(
     dispatch, function_call, final_message = _resolve_dispatch(
         conversation, final_message
     )
+
+    # Self function_call neutralization (issue #618, defect 2a): a self
+    # hand-off (agent dispatches to itself) must not outrank the plain
+    # dispatch / workflow-next routing. Drop the function_call and keep
+    # the plain dispatch so the router falls through to workflow-next.
+    if function_call is not None and is_self_function_call(function_call, role_name):
+        logger.info(
+            f"Self function_call neutralized (agent={role_name}); "
+            f"keeping plain dispatch for workflow-next routing"
+        )
+        function_call = None
 
     # Clear the run-scoped dispatch registry on every exit path (issue #524):
     # build_output runs exactly once per agent run, so this must not leak into
@@ -783,6 +813,7 @@ def build_output(
         function_call=function_call,
         inject_context=inject_context,
         scaffold_branch=scaffold_branch,
+        position=position,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 
