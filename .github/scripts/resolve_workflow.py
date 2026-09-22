@@ -434,6 +434,35 @@ def _load_child_workflow(
     return None
 
 
+def _position_path_str(nodes: list) -> str:
+    """Flat outermost-first mount-chain path (issue #618).
+
+    ``name/step|name/step|...`` over a chain produced by
+    :func:`_build_position_chain`. The same-agent guard compares this string
+    (``WORKFLOW_POSITION_PATH``) between the trigger's posted state and the
+    resolved next run: ``step_1`` -> ``step_2`` re-enters the *same* leaf
+    (``dev-review-loop/implement``), so only the full chain distinguishes a
+    legitimate advance from a true self loop.
+    """
+    if not nodes:
+        return ""
+    return "|".join(f"{name}/{step}" for name, _, step in nodes)
+
+
+def _position_pair(nodes: list) -> dict:
+    """Emission pair over a position chain (issue #618).
+
+    Returns ``{WORKFLOW_POSITION, WORKFLOW_POSITION_PATH}`` with empty values
+    for an empty chain, so callers can merge the dict unconditionally
+    (``result | pair``) without per-field conditionals.
+    """
+    position_json = _position_to_json(nodes)
+    return {
+        "WORKFLOW_POSITION": position_json,
+        "WORKFLOW_POSITION_PATH": _position_path_str(nodes) if position_json else "",
+    }
+
+
 def _position_to_json(nodes: list) -> str:
     """Serialize a position chain to single-line JSON (issue #618).
 
@@ -479,6 +508,7 @@ def _build_position_chain(
     workflows_dir: str,
     scaffold_branch: Optional[str],
     local_workflows_dir: Optional[str] = None,
+    start_path: str = "",
 ) -> list:
     """Build the mount-chain position for a sub-workflow entry (issue #618).
 
@@ -486,11 +516,14 @@ def _build_position_chain(
     descends through the child's first steps (reusing the loader and the
     shared ``fetch_cache``) until an agent-bearing leaf. Returns a list of
     ``(workflow_name, workflow_path, step_name)`` tuples, outermost first.
-    Cycles/depth reuse the ``visited`` name set plus
-    ``_MAX_SUB_WORKFLOW_DEPTH``; an unresolvable reference or entryless
-    child stops the chain at the node already built.
+    ``start_path`` (the caller-known file path of the outer workflow) is
+    recorded on the outermost node; child nodes always carry the loader-
+    resolved reference of the mount that reached them. Cycles/depth reuse
+    the ``visited`` name set plus ``_MAX_SUB_WORKFLOW_DEPTH``; an
+    unresolvable reference or entryless child stops the chain at the node
+    already built.
     """
-    chain: list = [(start_name, "", start_step)]
+    chain: list = [(start_name, start_path, start_step)]
     ref = start_ref
     while True:
         if not ref or ref in visited:
@@ -512,6 +545,111 @@ def _build_position_chain(
         if leaf.agent or leaf.script is not None or not ref:
             break
     return chain
+
+
+def _resolve_outer_path(
+    name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> str:
+    """Best-effort path of an outer workflow referenced by name (issue #618).
+
+    Used to backfill the outermost node of a rebuilt position chain; the
+    reference is already proven (it loaded earlier in the same resolution),
+    so an empty result is a pure diagnostic gap, never a failure.
+    """
+    if not name:
+        return ""
+    if is_path_like_reference(name):
+        try:
+            return resolve_workflow_reference(name, workflows_dir)
+        except ValueError:
+            return ""
+    try:
+        return str(load_workflow_with_dirs(name, workflows_dir, local_workflows_dir or ""))
+    except (FileNotFoundError, ValueError):
+        return ""
+
+
+def _step_mount_ref(
+    workflow_name: str,
+    step_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> str:
+    """Mount reference of ``step_name`` in ``workflow_name`` (issue #618).
+
+    The recorded parent pair is ``workflow/step`` — not a loadable
+    reference — so the step's own ``workflow``/``path`` field must be
+    looked up to continue the chain descent. Empty when the workflow or
+    step cannot be loaded (the chain then stops at the parent node).
+    """
+    try:
+        resolved = load_workflow_with_dirs(workflow_name, workflows_dir, local_workflows_dir or "")
+        wf = load_workflow(resolved)
+    except (FileNotFoundError, ValueError):
+        return ""
+    step = _find_workflow_step(wf, step_name)
+    if step is None:
+        return ""
+    return step.workflow or step.path or ""
+
+
+def build_workflow_position(
+    leaf_name: str,
+    leaf_step: str,
+    parent_workflow: str,
+    parent_step: str,
+    workflows_dir: str,
+    scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
+) -> dict:
+    """Centralized v2 position emission (issue #618, review fix for defect 3).
+
+    Rebuilds the mount chain from the *leaf* the run actually executes,
+    walking back up through intermediate first-steps anchored on the
+    recorded parent pair, and returns the ``WORKFLOW_POSITION``/
+    ``WORKFLOW_POSITION_PATH`` pair (empty strings when the run is
+    top-level). The resolver's own entry-path emission is kept verbatim
+    when present — this helper exists so the linear steps *inside* a
+    sub-workflow (and every other non-entry resolution path) post the
+    same full chain instead of ``position=None``.
+    """
+    if not (leaf_name and parent_workflow):
+        return {"WORKFLOW_POSITION": "", "WORKFLOW_POSITION_PATH": ""}
+    fetch_cache: dict = {}
+    # Anchor the chain on the parent pair (outermost recorded level) and
+    # descend first steps until the leaf workflow/step pair is reached.
+    # The descent ref is the parent *step's* mount reference — a ``wf/step``
+    # composite is not a loadable workflow reference, so it must be looked
+    # up in the parent workflow itself.
+    chain = _build_position_chain(
+        _step_mount_ref(parent_workflow, parent_step, workflows_dir, local_workflows_dir),
+        parent_workflow, parent_step,
+        fetch_cache, {parent_workflow},
+        workflows_dir, scaffold_branch,
+        local_workflows_dir,
+        start_path=_resolve_outer_path(parent_workflow, workflows_dir, local_workflows_dir),
+    )
+    leaf_node = (leaf_name, "", leaf_step)
+    if chain and chain[-1][0] == leaf_name and chain[-1][2] == leaf_step:
+        pass  # leaf already recorded — nothing to append
+    elif chain and chain[-1][0] == leaf_name:
+        # Leaf workflow reached but the step differs (re-entry, e.g.
+        # ``step_2: workflow: dev-review-loop`` where the executed step is
+        # ``implement``, not the child's first step) — substitute.
+        chain[-1] = (leaf_name, chain[-1][1], leaf_step)
+    else:
+        # The recorded parent pair is further out than the leaf (the flat
+        # state can carry the outermost level while the run executes a
+        # deeper level): append the leaf as the innermost node.
+        chain.append(leaf_node)
+    position = _position_pair(chain)
+    path = position["WORKFLOW_POSITION_PATH"]
+    return {
+        "WORKFLOW_POSITION": position["WORKFLOW_POSITION"],
+        "WORKFLOW_POSITION_PATH": path if position["WORKFLOW_POSITION"] else "",
+    }
 
 
 def _resolve_entry_leaf_for_step(
@@ -802,7 +940,7 @@ def _resolve_sub_workflow_entry(
     # posted WORKFLOW_STATE reveals the sub-workflow the run executes in.
     # ``target_path`` is the loader-resolved file path of the mount (local,
     # fetched, or cloned), so the chain records actual paths, not guesses.
-    position_json = _position_to_json(_build_position_chain(
+    position = _position_pair(_build_position_chain(
         target_path, workflow.name, current_step.name,
         fetch_cache, {workflow.name},
         workflows_dir, scaffold_branch,
@@ -824,7 +962,7 @@ def _resolve_sub_workflow_entry(
             "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
             "SKIP_AGENT": "true",
             "REASON": f"step '{leaf['step']}' in sub-workflow '{leaf['workflow']}' is a script step",
-        } | ({"WORKFLOW_POSITION": position_json} if position_json else {})
+        } | position
 
     prompt_file = TASK_TO_PROMPT.get(leaf["agent"])
     if not prompt_file:
@@ -847,7 +985,7 @@ def _resolve_sub_workflow_entry(
         "STEP_SKILLS": leaf["skill"],
         "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
         "SKIP_AGENT": "false",
-    } | ({"WORKFLOW_POSITION": position_json} if position_json else {})
+    } | position
 
 
 def resolve_sub_workflow_entry(

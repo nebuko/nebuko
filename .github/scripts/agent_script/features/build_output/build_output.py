@@ -13,7 +13,12 @@ from openhands.sdk.llm.message import content_to_str
 from openhands.sdk.tool.builtins.finish import FinishTool
 from pydantic import ValidationError
 
-from config import is_self_function_call, load_workflow, resolve_workflow_reference
+from config import (
+    is_self_function_call,
+    load_workflow,
+    parse_position_env,
+    resolve_workflow_reference,
+)
 from metrics_schema import Metrics
 from validate_output import (
     extract_dispatch_resilient,
@@ -348,19 +353,13 @@ def _parse_position_env() -> Optional[dict]:
     """Parse the v2 mount-chain position from the WORKFLOW_POSITION env var.
 
     The resolver emits a single-line nested JSON (``WorkflowPosition.
-    to_state_dict`` shape) when the run entered a sub-workflow (issue #618).
-    Returns the nested dict for ``WorkflowState.position``, or ``None`` when
-    the var is unset/empty/malformed (v1 states stay position-less).
+    to_state_dict`` shape) when the run is inside a sub-workflow
+    (issue #618). Returns the nested dict for ``WorkflowState.position``,
+    or ``None`` when the var is unset/empty/malformed (v1 states stay
+    position-less). Delegates to the shared ``config.parse_position_env``
+    so the script path (``run_script``) behaves identically.
     """
-    raw = os.environ.get("WORKFLOW_POSITION", "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("WORKFLOW_POSITION is not valid JSON; dropping position")
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    return parse_position_env(os.environ.get("WORKFLOW_POSITION", ""))
 
 
 def _save_split_plan(json_str: str) -> None:

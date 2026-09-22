@@ -12,10 +12,35 @@ run resolved to the parent's ``scaffold`` step instead of the mounted
 ``dev-review-loop / implement`` leaf).
 """
 
+import json
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 POSITION_STATE_VERSION = 2
+
+
+def parse_position_env(raw: str) -> Optional[dict]:
+    """Parse the v2 mount-chain position from the WORKFLOW_POSITION env value.
+
+    Returns the nested dict for ``WorkflowState.position`` (the
+    ``WorkflowPosition.to_state_dict`` shape), or ``None`` when the value is
+    empty, malformed, or not a JSON object (legacy v1 states stay
+    position-less). Pure I/O — the env read stays with the caller so the
+    same helper serves the agent path (``build_output``) and the script path
+    (``run_script``) without duplicating the parse.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, ValueError):
+        logging.getLogger(__name__).warning(
+            "WORKFLOW_POSITION is not valid JSON; dropping position"
+        )
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 # @stub-protected: signature defined by architect — do not modify

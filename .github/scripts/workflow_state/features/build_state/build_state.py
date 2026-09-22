@@ -1,5 +1,7 @@
 from typing import Optional, Any
 
+from config import POSITION_STATE_VERSION
+
 from ...workflow_state import WorkflowState
 from ...sub_domains.issue_info.issue_info import IssueInfo
 from ...sub_domains.pull_request_info.pull_request_info import PullRequestInfo
@@ -89,6 +91,9 @@ def build_state(
         function_call: Imperative agent-to-agent hand-off from the
             AGENT_RUN_CONFIG function_call section (replaced each transition;
             None clears any pending call).
+        position: v2 recursive workflow mount-chain (issue #618), parsed
+            from the WORKFLOW_POSITION env; non-None marks the state as
+            v2-shaped and bumps its version to POSITION_STATE_VERSION.
 
     Returns:
         A new WorkflowState instance.
@@ -162,6 +167,18 @@ def build_state(
         scaffold_branch if scaffold_branch is not None else base_scaffold_branch
     )
 
+    # State shape version (issue #618): the WORKFLOW_STATE carries a v2
+    # nested ``position`` block when the run executes inside a sub-workflow;
+    # a non-None position marks the v2 shape so the guard/resolver detect it.
+    # ``max`` keeps the counter monotonic (a long workflow that enters a
+    # sub-workflow part-way stays above the v1 baseline). V1 consumers are
+    # unaffected (flat fields keep leaf semantics).
+    state_version = (
+        max(POSITION_STATE_VERSION, base_version + 1)
+        if position is not None
+        else base_version + 1
+    )
+
     # Invariant: step/agent must not be silently dropped when a previous value
     # is recoverable (issue #458: empty WORKFLOW_STEP env produced states whose
     # scalar step disagreed with their own history).
@@ -169,7 +186,7 @@ def build_state(
     effective_agent = _fallback_field(agent, prev_state, base_history, "agent")
 
     return WorkflowState(
-        version=base_version + 1,
+        version=state_version,
         workflow=workflow or base_workflow,
         step=effective_step,
         agent=effective_agent,

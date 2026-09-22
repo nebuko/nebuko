@@ -423,7 +423,12 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
       3. Fallback: the first step owned by ``callee`` **within the current
          workflow only**, excluding the already-consumed step. The old
          implementation scanned only the parent's top-level steps, which is
-         exactly how ``scaffold`` got re-selected.
+         exactly how ``scaffold`` got re-selected. A mount-step ``current``
+         whose position could not be resolved to a *foreign* leaf skips the
+         fallback entirely (review non-blocking item 5): silently degrading
+         to a top-level agent-step scan could re-select another mount step
+         owned by the callee and re-enter the wrong sub-workflow — failing
+         empty (the run skips with a reason) is strictly safer.
     Empty string when the workflow cannot be loaded or owns no step for
     the callee.
     """
@@ -445,6 +450,17 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
         leaf = position.leaf
         if leaf.workflow_name != wf_name and leaf.step_name and leaf.step_name != (exclude_step or ""):
             return leaf.step_name
+        # The mount position degraded to a local (bare) position: the
+        # foreign leaf is unknown. Do NOT fall through to the top-level
+        # agent-step scan — re-entering via another mount step owned by the
+        # callee would land in the wrong sub-workflow.
+        print(
+            f"Warning: mount step '{current_step}' in '{wf_name}' did not "
+            f"resolve to a foreign leaf for callee '{callee}'; no step "
+            f"assigned (silent fallback to a top-level step disabled)",
+            file=sys.stderr,
+        )
+        return ""
     for step in getattr(workflow, "steps", None) or []:
         if (
             getattr(step, "agent", None) == callee

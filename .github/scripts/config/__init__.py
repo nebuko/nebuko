@@ -16,6 +16,7 @@ from .sub_domains.workflow_position.workflow_position import (
     POSITION_STATE_VERSION,
     WorkflowPosition,
     is_self_function_call,
+    parse_position_env,
 )
 
 # Features
@@ -47,6 +48,7 @@ __all__ = [
     "WorkflowPosition",
     "is_self_function_call",
     "POSITION_STATE_VERSION",
+    "parse_position_env",
     # Features
     "resolve_refs",
     "REF_PATTERN",

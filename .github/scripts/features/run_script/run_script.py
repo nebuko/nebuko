@@ -22,6 +22,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from agent_script.sub_domains.message_splitter.message_splitter import split_message
+from config import parse_position_env
 from workflow_state import Dispatch, build_state, extract_state_from_body, state_to_json
 
 DEFAULT_TIMEOUT_MINUTES = 30
@@ -243,6 +244,9 @@ def write_workflow_state(config: dict, result: str) -> dict:
         comment_ids=[],
         result=result,
         dispatch=Dispatch(status="advance", branch=result),
+        # v2 mount-chain position (issue #618): script runs inside a
+        # sub-workflow post the full chain too (same env the agent path uses).
+        position=parse_position_env(os.environ.get("WORKFLOW_POSITION", "")),
     )
     with open(_STATE_FILE, "w", encoding="utf-8") as f:
         f.write(state_to_json(new_state))
