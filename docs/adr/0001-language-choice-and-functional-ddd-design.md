@@ -66,10 +66,38 @@ The phrase "functional programming" is used throughout this project's docs but i
 
 **Why dataclasses (not OOP class methods, not string/namespace encodings):** frozen dataclasses give an explicit, typed, immutable field list — ideal for both AI-agent search and the `build_new_state(prev, inputs)` signature — with zero OOP ceremony. A function-only / string-encoding design was considered and rejected because it loses the typed field contract; real immutable dataclasses are the minimal, search-friendly model. (Anti-pattern check satisfied: no class-free / string-namespace design is proposed.)
 
+**Implementation refinement (recorded 2026-09-22, issue #630):** `WorkflowState` is persisted as JSON in the workflow-state comment and round-tripped on every run, so its immutability is enforced with pydantic `ConfigDict(frozen=True)` rather than a bare frozen dataclass — a bare `@dataclass` would break that serialization. The state core will also use explicit `Phase`/`Step` str-enums (values mirroring the strings in `workflows/*.yaml`) consumed by the pure `build_state` transition, rejecting unknown transitions with a typed error.
+
+### 2.4 OpenHands SDK Usage Surface
+
+Added 2026-09-22 in response to the challenge of this ADR (issue #630), which questioned whether the OpenHands integration is "just an exec call with a prompt in and the answer parsed from the log." Verified evidence: **it is not.** Seven distinct SDK capabilities are in use, and answer extraction consumes the SDK's typed event model — raw log parsing is deliberately avoided.
+
+| # | Capability | Location | Why it matters |
+|---|---|---|---|
+| 1 | **Type-level tool extension** — `DispatchNextTool` subclasses SDK `ToolDefinition`/`Action`/`Observation`/`ToolExecutor` | `.github/scripts/agent_script/features/dispatch_next_tool/dispatch_next_tool.py` | The entire agent hand-off/dispatch protocol is a *custom SDK tool*. A REST/WS call cannot express this; the alpha TS client cannot express it at all. |
+| 2 | **Async conversation lifecycle** — `Conversation.arun()` under an asyncio loop | `.github/scripts/agent_script/features/run_agent/run_agent.py` (L96–98) | A black-box process "exec" gives no mid-run handle. |
+| 3 | **`conversation.interrupt` watchdog** — budget enforcement mid-conversation | `run_agent.py` (L93) | Cannot be reproduced faithfully against a black box; timeouts would be guessed. |
+| 4 | **Context condenser** — `get_default_condenser(llm)` wired per-conversation | `run_agent.py` (L199) | Internal SDK behavior, not exposed through REST. |
+| 5 | **Event-stream answer extraction** — `get_agent_final_response(conversation.state.events)`, iteration over `ActionEvent`/`MessageEvent`, `content_to_str` | `.github/scripts/agent_script/features/build_output/build_output.py` (L435+, L664) | The typed SDK event model is consumed; migrating to a non-Python surface means re-implementing an event normalizer against log text or WebSocket payloads. |
+| 6 | **In-process SDK state access** for the dispatch-recall loop | `run_agent.py` (L248–293) | `conversation.state` is in-process data; remotely it is an extra API surface. |
+| 7 | **Per-role SDK tools** (`terminal`, `file_editor`, `task_tracker`) configured declaratively | `agent-config.yaml` (L66–75) | Available first-class only in the Python SDK. |
+
+**Import footprint.** 14+ files import `openhands.sdk`; exactly **one** of those files performs a type-level extension (the custom tool in capability #1); the rest go through `Agent`/`Conversation`/`LLM` construction and SDK event types. This footprint is the concrete blast radius any language migration would touch.
+
+**Integration risk notes.**
+
+- **Unpinned SDK install.** CI installs `openhands-sdk` and `openhands-tools` from `git+https://github.com/OpenHands/software-agent-sdk.git@main` with no ref pin (`.github/workflows/openhands-multi-agent.yml`, L209–210). Any upstream commit can break the build. Recorded as a known risk tied to the Python-SDK choice; pinning to a fixed commit SHA / version tag is a follow-up action (see §5).
+- **TS client status.** The OpenHands TypeScript client is explicitly **alpha** ("not stable, API may change significantly without notice"); its standalone `OpenHands/typescript-client` repo was **archived** (2026-08-30) and the client now lives under `clients/typescript` in `software-agent-sdk` with an early-testing disclaimer. This is the basis for rejecting TypeScript *now* — not in principle.
+
 ## 3. Consequences
 
 - The refactor is a **structural** refactor (packaging, layout, typing, adapter boundary) — **not** a language migration.
 - `adapters/openhands` becomes the **only** module allowed to `import openhands.sdk`; everything else sees only domain types (`AgentSpec`, `ConversationResult`, `ActionEventRecord`). This makes the language decision **reversible**: if OpenHands later ships a first-class Go/Rust SDK, or the TS client matures, we swap one adapter and keep all domain code.
+  - **Status (as of 2026-09-22): this single-boundary clause is *not yet implemented*.** The SDK is currently imported directly in ~14 files (`run_agent.py`, `dispatch_next_tool.py`, `build_output.py`, and others). Building the boundary is an open action item (§5), not a current-state claim.
+- **Revisit trigger** (recorded 2026-09-22, issue #630): re-open the language decision of §2.1 when **any** of the following holds —
+  (a) the OpenHands TypeScript client leaves alpha and supports type-level custom tools;
+  (b) OpenHands ships a first-class non-Python SDK (e.g. Go/Rust);
+  (c) the `adapters/openhands` boundary of this section proves to be a maintenance burden over 2 consecutive migrations.
 - The declarative YAML layer and all markdown agent-guidance remain valid, unchanged.
 - The open-source release becomes feasible: the license is now **declared** in packaging metadata, and the OpenHands dependency (MIT) is confirmed Apache-2.0-compatible.
 
@@ -78,3 +106,12 @@ The phrase "functional programming" is used throughout this project's docs but i
 - `docs/architecture_code.md` — the target DDD / functional architecture reference.
 - OpenHands SDK license: MIT (Apache-2.0 compatible).
 - **This ADR records the *decision* from issue #627. It does not start the refactor** — the step-by-step implementation plan is a separate, later effort.
+
+## 5. Deferred follow-ups (tracked in separate issues)
+
+The challenge of this ADR (issue #630) was resolved with a documentation amendment only, per the maintainer's scoping decision. The approved design work below is **not** part of that amendment and is deferred to dedicated issues:
+
+1. **`adapters/openhands` boundary** — the single SDK-importing package: `OpenHandsAdapter` (owns `Agent`/`Conversation`/`LLM` construction, `arun` lifecycle, interrupt watchdog, event→domain projection) plus frozen domain contracts `AgentSpec` / `ConversationResult` / `ActionEventRecord`. Design per the approved proposal of issue #630; `DispatchNextTool` moves inside the adapter package as an SDK implementation detail.
+2. **Frozen state core** — `WorkflowState` immutability via pydantic `ConfigDict(frozen=True)` (see §2.3 refinement) plus explicit `Phase`/`Step` str-enums with typed-transition validation in the pure `build_state` function.
+3. **CI gates** — `mypy --strict` job scoped to `adapters/` and `workflow_state/` (repo-wide strict deferred), plus a boundary-guard check failing on any `import openhands` outside `.github/scripts/adapters/`.
+4. **SDK pinning** — pin `openhands-sdk` / `openhands-tools` in CI to a fixed commit SHA / version tag, replacing the unpinned `@main` install flagged in §2.4.
