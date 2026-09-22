@@ -309,6 +309,10 @@ jobs:
                   WORKFLOW_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
                   PARENT_WORKFLOW=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
                   PARENT_WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
+                  # v2 mount-chain position (issue #618): full chain (JSON) +
+                  # a flat outermost-first path the same-agent guard compares.
+                  WORKFLOW_POSITION=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_POSITION=' | cut -d= -f2-)
+                  WORKFLOW_POSITION_PATH=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_POSITION_PATH=' | cut -d= -f2-)
                   HUMAN_RESUME_INPUT=$(echo "$RESOLVE_OUTPUT" | grep '^HUMAN_RESUME_INPUT=' | cut -d= -f2-)
                   # Deterministic script step (issue #541): resolver emits the
                   # script execution contract instead of a task assignment.
@@ -335,6 +339,8 @@ jobs:
                       echo "ROLE_NAME=${ROLE_NAME:-script}" >> $GITHUB_ENV
                       echo "WORKFLOW_NAME=${WORKFLOW_NAME:-}" >> $GITHUB_ENV
                       echo "WORKFLOW_STEP=${WORKFLOW_STEP:-}" >> $GITHUB_ENV
+                      echo "WORKFLOW_POSITION=${WORKFLOW_POSITION:-}" >> $GITHUB_ENV
+                      echo "WORKFLOW_POSITION_PATH=${WORKFLOW_POSITION_PATH:-}" >> $GITHUB_ENV
                       echo "SCRIPT_PATH=${SCRIPT_PATH}" >> $GITHUB_ENV
                       echo "SCRIPT_ARGS=${SCRIPT_ARGS}" >> $GITHUB_ENV
                       echo "SCRIPT_TIMEOUT_MINUTES=${SCRIPT_TIMEOUT_MINUTES:-30}" >> $GITHUB_ENV
@@ -364,6 +370,8 @@ jobs:
                   echo "WORKFLOW_NEXT=$WORKFLOW_NEXT" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW=$PARENT_WORKFLOW" >> $GITHUB_ENV
                   echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
+                  echo "WORKFLOW_POSITION=${WORKFLOW_POSITION:-}" >> $GITHUB_ENV
+                  echo "WORKFLOW_POSITION_PATH=${WORKFLOW_POSITION_PATH:-}" >> $GITHUB_ENV
                   echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
                   echo "STEP_PROMPT_FILE=${STEP_PROMPT_FILE:-}" >> $GITHUB_ENV
                   echo "HUMAN_RESUME_INPUT=${HUMAN_RESUME_INPUT:-}" >> $GITHUB_ENV
@@ -459,40 +467,40 @@ jobs:
                   if [[ -n "$CALLER_AGENT" && -n "$TASK" ]]; then
                       TARGET_AGENT="$TASK"
                       if [[ "$CALLER_AGENT" == "$TARGET_AGENT" ]]; then
-                        # Same-agent trigger: distinguish a genuine no-forward-progress
-                        # re-trigger from a legitimate advance to a different step
-                        # (consecutive same-agent steps) — issue #507. The trigger
-                        # comment carries the caller's posted state block; its (step)
-                        # is compared with WORKFLOW_STEP (the resolved next step).
-                        TRIGGER_STEP="$(printf '%s' "$TRIGGER_BODY" | python3 -c '
-                  import json, sys
+                        # Same-agent trigger: position-aware advance check
+                        # (issue #618). v2 states carry the full mount-chain
+                        # path (WORKFLOW_POSITION_PATH) — identical path is a
+                        # true self loop, a different path is a legitimate
+                        # advance (``step_1`` -> ``step_2`` re-enters the same
+                        # leaf, so the flat step alone cannot tell them apart).
+                        # Legacy v1 states fall back to the flat-step compare.
+                        GUARD_OUTPUT="$(printf '%s' "$TRIGGER_BODY" | python3 -c '
+                  import os, sys
+                  scripts_dir = os.environ.get("GIT_FLOW_AI_SCRIPTS") or ".github/scripts"
+                  if not os.path.isdir(scripts_dir) and os.path.isdir(".git-flow-ai-cache/.github/scripts"):
+                      scripts_dir = ".git-flow-ai-cache/.github/scripts"
+                  sys.path.insert(0, scripts_dir)
+                  from loop_guard import check_same_agent_advance
                   body = sys.stdin.read()
-                  start, end = "<!-- WORKFLOW_STATE_START -->", "<!-- WORKFLOW_STATE_END -->"
-                  pos = body.find(start)
-                  result = ""
-                  while pos != -1:
-                      stop = body.find(end, pos + len(start))
-                      if stop == -1:
-                          break
-                      try:
-                          result = (json.loads(body[pos + len(start):stop].strip()) or {}).get("step") or result
-                      except Exception:
-                          pass
-                      pos = body.find(start, stop + len(end))
-                  print(result)
-                  ' 2>/dev/null)"
-                        # Same step (or no state/step info available) -> genuine self
-                        # re-trigger: skip. Different step -> legitimate advance:
-                        # allow. Missing state keeps the legacy skip (defensive).
-                        if [[ -n "$TRIGGER_STEP" && "$TRIGGER_STEP" != "$WORKFLOW_STEP" ]]; then
-                          echo "Same-agent advance to new step ('$TRIGGER_STEP' -> '$WORKFLOW_STEP'). Allowing."
-                          echo "SKIP_AGENT=false" >> $GITHUB_ENV
-                          exit 0
-                        else
-                          echo "Same-agent loop detected ($CALLER_AGENT calling itself on step '${TRIGGER_STEP:-$WORKFLOW_STEP}'). Skipping."
+                  result = check_same_agent_advance(
+                      body,
+                      sys.argv[1],
+                      sys.argv[2],
+                  )
+                  print(result["SKIP_AGENT"])
+                  print(result["REASON"])
+                  ' "${WORKFLOW_POSITION_PATH:-}" "${WORKFLOW_STEP:-}" 2>/dev/null)"
+                        GUARD_SKIP="$(printf '%s' "$GUARD_OUTPUT" | sed -n '1p')"
+                        GUARD_REASON="$(printf '%s' "$GUARD_OUTPUT" | sed -n '2p')"
+                        if [[ -z "$GUARD_SKIP" ]]; then
+                          # Guard module unavailable — legacy behavior: skip.
+                          echo "Same-agent guard unavailable; skipping defensively."
                           echo "SKIP_AGENT=true" >> $GITHUB_ENV
                           exit 0
                         fi
+                        echo "$GUARD_REASON"
+                        echo "SKIP_AGENT=$GUARD_SKIP" >> $GITHUB_ENV
+                        exit 0
                       else
                         echo "Cross-agent call ($CALLER_AGENT -> $TARGET_AGENT). Allowing."
                         echo "SKIP_AGENT=false" >> $GITHUB_ENV

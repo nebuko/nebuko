@@ -7,19 +7,22 @@ path the next agent takes and produce the resolved config dict.
 import re
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from config import (
     WorkflowDefinition,
     WorkflowStep,
     load_workflow,
     load_workflow_with_dirs,
+    WorkflowPosition,
 )
 from resolve_workflow import (
     resolve_next_from_workflow,
     resolve_sub_workflow_entry,
     _is_terminal_step,
     _load_workflow_by_reference,
+    _load_child_workflow,
+    resolve_workflow_reference,
     TASK_TO_PROMPT,
 )
 from validate_output import has_agent_run_config_marker
@@ -360,7 +363,46 @@ def _resolve_dispatch_path(
     return config
 
 
-def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None) -> str:
+def _mount_chain_ref_resolver(workflows_dir: str, local_workflows_dir: Optional[str] = None) -> Callable[[str], Optional[WorkflowDefinition]]:
+    """Build a ``resolve_position`` ref port over the real workflow loader.
+
+    The port maps a mount reference (name or repo-root-relative path) to the
+    loaded :class:`WorkflowDefinition` or ``None`` when unresolvable. It
+    carries the child's actual file path onto the definition as
+    ``source_path`` so :func:`resolve_position` records the real location
+    instead of guessing (issue #618, review fix: no name heuristic).
+    """
+    def resolve_ref(ref: str) -> Optional[WorkflowDefinition]:
+        if not ref:
+            return None
+        try:
+            wf = _load_workflow_by_reference(ref, workflows_dir, local_workflows_dir)
+        except Exception:
+            return None
+        if wf is None:
+            return None
+        try:
+            if "/" in ref or ref.endswith((".yaml", ".yml")):
+                # Path-form reference: the loader resolved exactly this file
+                # (issue #468 resolution rules).
+                source_path = str(Path(resolve_workflow_reference(ref, workflows_dir)))
+            else:
+                # Name-form reference: mirror the loader's multi-directory
+                # scan (consumer-local dir wins, issue #529) instead of the
+                # old name heuristic (issue #618, review fix).
+                try:
+                    source_path = str(load_workflow_with_dirs(ref, workflows_dir, local_workflows_dir or ""))
+                except Exception:
+                    source_path = ""
+            if source_path:
+                object.__setattr__(wf, "source_path", source_path)
+        except Exception:
+            pass
+        return wf
+    return resolve_ref
+
+
+def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None, exclude_step: Optional[str] = None) -> str:
     """Resolve the workflow step that ``callee`` should run (issue #507).
 
     When a caller hands off via ``function_call`` while a workflow is active,
@@ -369,22 +411,195 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
     re-trigger mis-resolves the next task to the callee itself, which the
     same-agent loop guard then skips (issue #506 repro).
 
-    Chain: the linear successor of ``current_step`` whose ``agent == callee``
-    (matches in-workflow hand-offs such as genius(analyze) -> ctx(context));
-    failing that, the first workflow step owned by ``callee``. Empty string
-    when the workflow cannot be loaded or owns no step for the callee.
+    Resolution order (issue #618 defect 1):
+      1. Linear successor of ``current_step`` whose ``agent == callee``
+         (in-workflow hand-offs such as genius(analyze) -> ctx(context)).
+      2. When ``current_step``'s successor is a *workflow-mount* step the
+         callee enters through a sub-workflow: resolve the mount chain via
+         :func:`resolve_position` and return the leaf step it lands on — the
+         ``dev`` hand-off from ``scaffold`` must resolve to the mounted
+         ``dev-review-loop / implement`` leaf, never the already-consumed
+         ``scaffold`` (the #617 dead-end).
+      3. Fallback: the first step owned by ``callee`` **within the current
+         workflow only**, excluding the already-consumed step. The old
+         implementation scanned only the parent's top-level steps, which is
+         exactly how ``scaffold`` got re-selected. A mount-step ``current``
+         whose position could not be resolved to a *foreign* leaf skips the
+         fallback entirely (review non-blocking item 5): silently degrading
+         to a top-level agent-step scan could re-select another mount step
+         owned by the callee and re-enter the wrong sub-workflow — failing
+         empty (the run skips with a reason) is strictly safer.
+    Empty string when the workflow cannot be loaded or owns no step for
+    the callee.
     """
     try:
         result = resolve_next_from_workflow(wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir)
     except Exception:
-        return ""
+        result = None
     if result and result.get("task") == callee and result.get("step"):
         return result["step"]
     workflow = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)
+    current = _find_step(workflow, current_step)
+    if current is not None and _is_mount_step(current):
+        position = resolve_position(
+            workflow,
+            current.name,
+            resolve_ref=_mount_chain_ref_resolver(workflows_dir, local_workflows_dir),
+            workflow_path=f"workflows/{wf_name}.yaml" if wf_name else "",
+        )
+        leaf = position.leaf
+        if leaf.workflow_name != wf_name and leaf.step_name and leaf.step_name != (exclude_step or ""):
+            return leaf.step_name
+        # The mount position degraded to a local (bare) position: the
+        # foreign leaf is unknown. Do NOT fall through to the top-level
+        # agent-step scan — re-entering via another mount step owned by the
+        # callee would land in the wrong sub-workflow.
+        print(
+            f"Warning: mount step '{current_step}' in '{wf_name}' did not "
+            f"resolve to a foreign leaf for callee '{callee}'; no step "
+            f"assigned (silent fallback to a top-level step disabled)",
+            file=sys.stderr,
+        )
+        return ""
     for step in getattr(workflow, "steps", None) or []:
-        if getattr(step, "agent", None) == callee and getattr(step, "name", ""):
+        if (
+            getattr(step, "agent", None) == callee
+            and getattr(step, "name", "")
+            and step.name != (current_step or "")
+            and step.name != (exclude_step or "")
+        ):
             return step.name
     return ""
+
+
+# Bound on mount-chain descent (issue #618 review fix): a circular mount
+# (A mounts B which mounts A) must terminate instead of recursing to
+# RecursionError. Mirrors ``_MAX_SUB_WORKFLOW_DEPTH`` in resolve_workflow.py.
+_MAX_POSITION_DEPTH = 10
+
+
+# @stub-protected: signature defined by architect — do not modify
+def resolve_position(
+    wf_def: WorkflowDefinition,
+    step_name: str,
+    resolve_ref: Optional[Callable[[str], Optional[WorkflowDefinition]]] = None,
+    workflow_path: str = "",
+    *,
+    _seen: Optional[set] = None,
+    _depth: int = 0,
+) -> "WorkflowPosition":
+    """Build the recursive :class:`WorkflowPosition` for a step (issue #618).
+
+    Pure builder: walks the mount chain starting at ``wf_def`` /
+    ``step_name``. When the step is a workflow-mount step (``workflow``/
+    ``path`` reference, no agent), the child definition is obtained via
+    the ``resolve_ref`` port (the implement step wires it to
+    ``_load_workflow_by_reference`` with ``workflows_dir`` /
+    ``local_workflows_dir`` closure) and the position recurses into the
+    child's entry step. Stops at the first agent-bearing step (the leaf)
+    or when the chain can no longer be resolved.
+
+    Descent is bounded two ways (review fix): a seen-chain (definition
+    identity) guard terminates circular mounts, and ``_depth`` caps
+    non-cyclic chains at ``_MAX_POSITION_DEPTH`` levels. Both stop the
+    walk at the current position rather than raising.
+
+    For the #617 scenario this yields::
+
+        plan-orchestration / sub_impl
+          -> tmp-impl / step_1
+            -> dev-review-loop / implement
+    """
+    def _bare(step_label: str = step_name) -> "WorkflowPosition":
+        # Current position as leaf — descent stops here (unknown step,
+        # non-mount step, unresolvable ref, or a bound hit).
+        return WorkflowPosition(
+            workflow_name=getattr(wf_def, "name", "") or step_label,
+            workflow_path=workflow_path,
+            step_name=step_label,
+        )
+
+    step = _find_step(wf_def, step_name)
+    if step is None:
+        # Unknown step: record the requested name so the chain stays
+        # diagnostic, but do not descend (the leaf is this bare position).
+        return _bare()
+    if not _is_mount_step(step):
+        return _bare(step.name)
+    # Descent bounds (review fix): a circular mount or an abnormally deep
+    # non-cyclic chain stops at the current position instead of recursing.
+    seen = _seen if _seen is not None else set()
+    if id(wf_def) in seen or _depth >= _MAX_POSITION_DEPTH:
+        return _bare(step.name)
+    seen.add(id(wf_def))
+    child_ref = step.workflow or step.path or ""
+    child_def = resolve_ref(child_ref) if resolve_ref is not None else None
+    if child_def is None:
+        # Mount reference cannot be resolved (e.g. a dynamic tmp_impl
+        # absent from the checkout): the position stops at the mount step.
+        return _bare(step.name)
+    entry_name = _entry_step_name(child_def)
+    if not entry_name:
+        return _bare(step.name)
+    child_path = _child_workflow_path(child_def, child_ref)
+    sub = resolve_position(
+        child_def, entry_name, resolve_ref=resolve_ref, workflow_path=child_path,
+        _seen=seen, _depth=_depth + 1,
+    )
+    return WorkflowPosition(
+        workflow_name=getattr(wf_def, "name", "") or step_name,
+        workflow_path=workflow_path,
+        step_name=step.name,
+        sub=sub,
+    )
+
+
+def _find_step(wf_def: Optional[WorkflowDefinition], step_name: str) -> Optional[WorkflowStep]:
+    """Return the named step from a workflow definition, or None."""
+    for step in getattr(wf_def, "steps", None) or []:
+        if getattr(step, "name", "") == step_name:
+            return step
+    return None
+
+
+def _is_mount_step(step: WorkflowStep) -> bool:
+    """True for a workflow-mount step (workflow/path reference, no agent)."""
+    return (
+        not getattr(step, "agent", None)
+        and bool(getattr(step, "workflow", None) or getattr(step, "path", None))
+    )
+
+
+def _entry_step_name(child_def: WorkflowDefinition) -> str:
+    """Name of the mounted workflow's entry (first) step, or ''."""
+    steps = getattr(child_def, "steps", None) or []
+    return steps[0].name if steps else ""
+
+
+def _child_workflow_path(child_def: WorkflowDefinition, child_ref: str) -> str:
+    """Repo-root path of a loaded child workflow (issue #618, review fix).
+
+    Prefers the loader-resolved file path recorded on the definition
+    (``source_path``, set by the real ref port) over the old
+    ``workflows/{name}.yaml`` name guess, which was wrong for
+    consumer-local dirs and branch-mounted references. Falls back to the
+    reference / name heuristic only when the loader did not record a path.
+    """
+    source_path = getattr(child_def, "source_path", None)
+    if source_path:
+        try:
+            resolved = Path(source_path).resolve()
+            repo_root = Path.cwd().resolve()
+            if resolved.parent == repo_root:
+                # workflows-dir sits directly at the repo root.
+                return resolved.name
+            return str(resolved.relative_to(repo_root.parent.resolve()))
+        except (ValueError, OSError):
+            pass
+    name = getattr(child_def, "name", "") or ""
+    if child_ref and ("/" in child_ref or child_ref.endswith((".yaml", ".yml"))):
+        return child_ref
+    return f"workflows/{name}.yaml" if name else child_ref
 
 
 def _resolve_function_call_path(

@@ -49,7 +49,7 @@ You are in plan-scaffolding mode for a branch-mounted dynamic plan workflow (iss
    ```
    SCAFFOLD_BRANCH: feature/issue-{N}-{short-name}
    ```
-8. **Dispatch**: end your message with:
+8. **Dispatch**: end your message with — **no `agent` field, no self `function_call`** (the engine resolves the next step from the workflow definition; a self-hand-off re-triggers the same-agent guard, issue #618):
    ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
    ```

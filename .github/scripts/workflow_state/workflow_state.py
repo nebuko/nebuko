@@ -42,6 +42,10 @@ class WorkflowState(BaseModel):
             can still be resolved. None until the scaffold step has run.
         issue: Static issue metadata (number, URL, title, author, repo).
         pull_request: Static PR metadata (number, URL, title, author, repo).
+        position: Recursive workflow mount-chain address (issue #618);
+            innermost leaf = the step actually executed. Serialized by
+            ``position.to_state_dict()`` under the ``position`` key; the
+            flat ``workflow``/``step`` fields keep v1 (leaf) semantics.
     """
 
     version: int = 1
@@ -65,6 +69,9 @@ class WorkflowState(BaseModel):
     # Consumed by the next run's resolver, which emits a fresh state with it
     # cleared so it cannot re-fire (consumption by supersession).
     function_call: Optional[FunctionCall] = None
+    # Recursive workflow mount-chain address (issue #618). Stored as the
+    # ``to_state_dict()`` mapping so the posted state stays plain JSON.
+    position: Optional[dict] = None
 
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json
