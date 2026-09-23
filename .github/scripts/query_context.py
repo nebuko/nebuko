@@ -313,6 +313,9 @@ def _build_state_context(comments, repo: str) -> str:
             ]
             if state.phase:
                 lines.append(f"- **Phase:** {state.phase}")
+            if state.position:
+                path = "|".join(f"{r.workflow}/{r.step}" for r in state.position)
+                lines.append(f"- **Position:** `{path}`")
             if state.history:
                 lines.append("")
                 lines.append("**Execution History:**")

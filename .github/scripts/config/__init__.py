@@ -18,6 +18,7 @@ from .sub_domains.workflow_position.workflow_position import (
     is_self_function_call,
     parse_position_env,
 )
+from .sub_domains.step_ref.step_ref import StepRef
 
 # Features
 from .features.resolve_refs.resolve_refs import resolve_refs, REF_PATTERN
@@ -49,6 +50,7 @@ __all__ = [
     "is_self_function_call",
     "POSITION_STATE_VERSION",
     "parse_position_env",
+    "StepRef",
     # Features
     "resolve_refs",
     "REF_PATTERN",

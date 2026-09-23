@@ -138,8 +138,8 @@ class TestPositionChainBuilder:
         )
         doc = json.loads(pair["WORKFLOW_POSITION"])
         assert doc["version"] == POSITION_STATE_VERSION
-        assert doc["leaf_workflow"] == "dev-review-loop"
-        assert doc["leaf_step"] == "implement"
+        assert doc["workflow"] == "dev-review-loop"
+        assert doc["step"] == "implement"
 
     def test_unresolvable_mount_ref_stops_chain(self, scaffold_dir):
         wf_dir = str(scaffold_dir)
@@ -192,12 +192,12 @@ class TestPositionChainBuilder:
         doc = json.loads(_position_to_json(chain))
         pos = WorkflowPosition.from_state_dict(doc)
         assert pos is not None
-        assert pos.workflow_name == "plan-orchestration"
-        assert pos.leaf.workflow_name == "dev-review-loop"
-        assert pos.leaf.step_name == "implement"
-        # Round trip preserves the nested shape (incl. leaf aliases).
-        assert pos.to_state_dict()["leaf_workflow"] == "dev-review-loop"
-        assert pos.to_state_dict()["leaf_step"] == "implement"
+        assert pos.refs[0].workflow == "plan-orchestration"
+        assert pos.leaf().workflow == "dev-review-loop"
+        assert pos.leaf().step == "implement"
+        # Round trip preserves the flat v3 shape (incl. leaf aliases).
+        assert pos.to_state_dict()["workflow"] == "dev-review-loop"
+        assert pos.to_state_dict()["step"] == "implement"
 
     def test_path_str_and_pair_empty_chain(self):
         assert _position_path_str([]) == ""
@@ -222,7 +222,7 @@ class TestEntryPathEmission:
         )
         doc = json.loads(r["WORKFLOW_POSITION"])
         assert doc["version"] == POSITION_STATE_VERSION
-        assert doc["leaf_step"] == "implement"
+        assert doc["step"] == "implement"
 
     def test_entry_from_scaffold_enters_leaf_not_scaffold(self, scaffold_dir):
         """#617 regression: dev run entering from the scaffold phase lands
@@ -295,7 +295,7 @@ class TestNonEntryEmission:
         )
         doc = json.loads(r["WORKFLOW_POSITION"])
         assert doc["version"] == POSITION_STATE_VERSION
-        assert doc["leaf_workflow"] == "dev-review-loop"
+        assert doc["workflow"] == "dev-review-loop"
 
     def test_top_level_run_stays_position_less(self, scaffold_dir):
         """No recorded parent pair (top-level workflow) → v1 position-less."""
@@ -328,7 +328,7 @@ class TestNonEntryEmission:
             "tmp-impl/step_1|dev-review-loop/review"
         )
         doc = json.loads(pair["WORKFLOW_POSITION"])
-        assert doc["leaf_step"] == "review"
+        assert doc["step"] == "review"
 
     def test_build_workflow_position_missing_dynamic_child(self, scaffold_dir):
         """Parent references an absent dynamic workflow: the chain stops at
@@ -342,4 +342,4 @@ class TestNonEntryEmission:
             "ghost-impl/step_1|dev-review-loop/review"
         )
         doc = json.loads(pair["WORKFLOW_POSITION"])
-        assert doc["leaf_step"] == "review"
+        assert doc["step"] == "review"

@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Any, Optional
+
+from config import StepRef, WorkflowPosition
 
 # Import domain entities first (no circular dependency)
 from .sub_domains.history_entry.history_entry import HistoryEntry
@@ -42,10 +44,9 @@ class WorkflowState(BaseModel):
             can still be resolved. None until the scaffold step has run.
         issue: Static issue metadata (number, URL, title, author, repo).
         pull_request: Static PR metadata (number, URL, title, author, repo).
-        position: Recursive workflow mount-chain address (issue #618);
-            innermost leaf = the step actually executed. Serialized by
-            ``position.to_state_dict()`` under the ``position`` key; the
-            flat ``workflow``/``step`` fields keep v1 (leaf) semantics.
+        position: Flat workflow step path, outermost-first; last ref = the
+            step actually executed (issue #638). The flat ``workflow``/
+            ``step`` fields keep leaf (v1) semantics.
     """
 
     version: int = 1
@@ -69,9 +70,30 @@ class WorkflowState(BaseModel):
     # Consumed by the next run's resolver, which emits a fresh state with it
     # cleared so it cannot re-fire (consumption by supersession).
     function_call: Optional[FunctionCall] = None
-    # Recursive workflow mount-chain address (issue #618). Stored as the
-    # ``to_state_dict()`` mapping so the posted state stays plain JSON.
-    position: Optional[dict] = None
+    # Flat workflow step path, outermost-first, last ref = the step actually
+    # executed (issue #638). Legacy v2 nested position blocks in posted
+    # states are migrated to the flat refs by the validator below.
+    position: list[StepRef] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_position(cls, data: Any) -> Any:
+        """Coerce legacy position shapes to the flat v3 refs list (issue #638).
+
+        Accepts: a list of refs (already-typed or raw dicts — the normal v3
+        shape), the ``to_state_dict`` block (``refs`` key / legacy v2 nested
+        chain), or absent (v1 -> empty list).
+        """
+        if not isinstance(data, dict) or "position" not in data:
+            return data
+        value = data.pop("position")
+        if isinstance(value, (list, tuple)):
+            refs = [StepRef.model_validate(r) for r in value if r]
+        else:
+            position = WorkflowPosition.from_state_dict(value)
+            refs = position.refs if position else []
+        data["position"] = refs
+        return data
 
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json

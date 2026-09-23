@@ -55,10 +55,21 @@ def trigger_step(trigger_body: str) -> str:
     return step
 
 
-def _flatten_position(position: dict) -> str:
-    """Flatten a v2 position block to the outermost-first path form the
-    resolver emits in ``WORKFLOW_POSITION_PATH`` (``wf/step|wf/step|...``)."""
+def _flatten_position(position) -> str:
+    """Flatten a posted position block to the outermost-first path form the
+    resolver emits in ``WORKFLOW_POSITION_PATH`` (``wf/step|wf/step|...``).
+
+    Accepts the v3 shape (``{"refs": [{"workflow", "step"}, ...]}`` or a
+    bare refs list — issue #638) and legacy v2 nested blocks
+    (``workflow_name``/``step_name`` with the inner node under ``step``).
+    """
     parts: list[str] = []
+    refs = position.get("refs") if isinstance(position, dict) else position
+    if isinstance(refs, list):
+        for ref in refs:
+            if isinstance(ref, dict) and ref.get("workflow"):
+                parts.append(f"{ref['workflow']}/{ref.get('step', '')}")
+        return "|".join(parts)
     node = position
     while isinstance(node, dict) and node.get("workflow_name"):
         parts.append(f"{node['workflow_name']}/{node.get('step_name', '')}")
@@ -67,16 +78,19 @@ def _flatten_position(position: dict) -> str:
 
 
 def trigger_position_path(trigger_body: str) -> str:
-    """Full mount-chain path posted by the v2 trigger state (issue #618).
+    """Full mount-chain path posted by the trigger state (issue #618/#638).
 
-    Reads the nested ``position`` block of the last parseable
-    WORKFLOW_STATE; empty when the trigger is a legacy v1 state (no
-    position) — callers then fall back to the flat step comparison.
+    Reads the ``position`` block of the last parseable WORKFLOW_STATE —
+    v3 flat ``refs`` list or legacy v2 nested dict; empty when the
+    trigger is a legacy v1 state (no position) — callers then fall back
+    to the flat step comparison.
     """
     path = ""
     for state in _iter_workflow_states(trigger_body):
         position = state.get("position")
-        if isinstance(position, dict):
+        if isinstance(position, dict) and ("refs" in position or position.get("workflow_name")):
+            path = _flatten_position(position)
+        elif isinstance(position, list) and position:
             path = _flatten_position(position)
     return path
 
