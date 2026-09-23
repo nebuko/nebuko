@@ -1,6 +1,6 @@
 """Workflow position sub-domain."""
 
-from ..step_ref.step_ref import StepRef
+from ..step_ref import StepRef
 from .workflow_position import (
     POSITION_STATE_VERSION,
     WorkflowPosition,
