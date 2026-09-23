@@ -82,18 +82,21 @@ class WorkflowState(BaseModel):
 
         Accepts: a list of refs (already-typed or raw dicts — the normal v3
         shape), the ``to_state_dict`` block (``refs`` key / legacy v2 nested
-        chain), or absent (v1 -> empty list).
+        chain), or absent (v1 -> empty list). Operates on a copy so the
+        caller's raw dict (e.g. a freshly ``json.load``-ed state file) is
+        never mutated — it must stay JSON-serializable after validation.
         """
         if not isinstance(data, dict) or "position" not in data:
             return data
-        value = data.pop("position")
+        new_data = dict(data)
+        value = new_data.pop("position")
         if isinstance(value, (list, tuple)):
             refs = [StepRef.model_validate(r) for r in value if r]
         else:
             position = WorkflowPosition.from_state_dict(value)
             refs = position.refs if position else []
-        data["position"] = refs
-        return data
+        new_data["position"] = refs
+        return new_data
 
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json
