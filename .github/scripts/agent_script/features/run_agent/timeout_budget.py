@@ -16,7 +16,7 @@ from openhands.sdk import get_logger
 
 logger = get_logger(__name__)
 
-DEFAULT_SOFT_TIMEOUT_MINUTES = 110
+DEFAULT_SOFT_TIMEOUT_MINUTES = 20
 DEFAULT_WIND_DOWN_TIMEOUT_MINUTES = 8
 
 
