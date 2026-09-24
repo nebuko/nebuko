@@ -69,6 +69,23 @@ def _build_result(
     Returns:
         Dict with all environment variables to set.
     """
+    # Deterministic comment deletion (issue #644): no agent runs — emit the
+    # DELETE_COMMENTS contract and let GHA branch on it before agent steps.
+    delete_comments = config.get("delete_comments")
+    if delete_comments:
+        delete_result = {
+            "TASK": "",
+            "ROLE_NAME": "script",
+            "AGENT_SELECTED": "false",
+            "SKIP_AGENT": "true",
+            "DELETE_COMMENTS": "true",
+            "DELETE_COMMENTS_ISSUE": str(delete_comments.get("issue") or ""),
+            "DELETE_COMMENTS_FROM": str(delete_comments.get("from_id") or ""),
+        }
+        return _attach_position(
+            delete_result, config, workflows_dir, local_workflows_dir
+        )
+
     # Deterministic script step (issue #541): no agent runs — emit the script
     # execution contract and let GHA branch on RUN_SCRIPT before agent steps.
     run_script = config.get("run_script")

@@ -153,6 +153,15 @@ def resolve_config(
             local_workflows_dir=local_workflows_dir, prompt_base=prompt_base,
             workflow_command=wf_cmd,
         )
+    elif wf_cmd is not None and wf_cmd.action == "delete" and not is_bot:
+        # Human /workflow delete comments [--issue <n>] [--from <id>] (issue
+        # #644): deterministic batch deletion — no agent runs. Uses the human
+        # path so --issue can default to the invoking issue.
+        config = _resolve_human_path(
+            trigger_body, repo, issue_number, workflows_dir, prev_state,
+            local_workflows_dir=local_workflows_dir,
+            workflow_command=wf_cmd,
+        )
     elif wf_cmd is not None and wf_cmd.action == "run" and not is_bot:
         # Human /workflow run workflow --name <name> override — use human path
         # to honor the command.
