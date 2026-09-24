@@ -46,6 +46,14 @@ line numbers, search the web, and report in a fixed template (files found,
 relevant snippets, external references). Analysis and solution proposals
 belong exclusively to `@@genius` — its job is the raw material.
 
+Its web-search phase reads each selected reference **in full** (3 for LOW,
+5–6 for MEDIUM, up to 10 for HIGH complexity) and curates the result: verbatim
+relevant excerpts (≤ ~2K tokens per article), a short relevance summary, and a
+0.0–1.0 interest score — emitted as a fenced JSON block inside
+`### EXTERNAL REFERENCES` alongside the human-readable entries
+(schema: [reference.md — External Reference JSON](./reference.md#external-reference-json),
+sharing contract: [features.md — External Reference Sharing](./features.md#external-reference-sharing)).
+
 ### dev — Execution Developer
 Implements approved plans, writes and runs tests, and commits/pushes under
 strict git rules (never push to `main`; mandatory rebase on `origin/main` as
