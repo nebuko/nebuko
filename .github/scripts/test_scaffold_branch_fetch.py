@@ -14,7 +14,7 @@ Covers plan Step 6:
 3. Miss + no ``scaffold_branch`` -> clean skip, reason names the missing field.
 4. Miss + ``scaffold_branch`` set but branch absent upstream -> clean skip,
    no exception leaks.
-5. ``/workflow force-next-step`` (the exact command from the issue) threads
+5. ``/workflow force-step step --name <step>`` (the issue command, new grammar) threads
    the state's ``scaffold_branch`` end-to-end through ``resolve_config``.
 """
 
@@ -247,7 +247,7 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
         self.assertIn("scaffold_branch feature/does-not-exist", result["REASON"])
 
     def test_force_next_step_threads_scaffold_branch_from_state(self):
-        """/workflow force-next-step subtask — the exact issue command.
+        """/workflow force-step step --name subtask — the exact issue command.
 
         The state block carries ``scaffold_branch``; the force-next-step path
         must thread it into child resolution and fetch the branch-only child.
@@ -260,7 +260,7 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
             "scaffold_branch": SCAFFOLD_BRANCH,
         }
         body = (
-            "/workflow force-next-step subtask\n\n"
+            "/workflow force-step step --name subtask\n\n"
             "<!-- WORKFLOW_STATE_START -->\n"
             + json.dumps(state)
             + "\n<!-- WORKFLOW_STATE_END -->\n"
@@ -290,7 +290,7 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
             "agent": "genius",
         }
         body = (
-            "/workflow force-next-step subtask\n\n"
+            "/workflow force-step step --name subtask\n\n"
             "<!-- WORKFLOW_STATE_START -->\n"
             + json.dumps(state)
             + "\n<!-- WORKFLOW_STATE_END -->\n"

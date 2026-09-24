@@ -9,6 +9,9 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 from resolve_config.sub_domains.trigger_commands.trigger_commands import (  # noqa: E402
     TriggerCommands,
 )
+from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
+    WorkflowCommand,
+)
 
 
 class TestTriggerCommands:
@@ -18,39 +21,33 @@ class TestTriggerCommands:
         tc = TriggerCommands(
             is_bot=True,
             mention_agent="dev",
-            workflow_cmd="default",
-            force_next=("force-next-step", "implement"),
-            resume="fix the bug",
+            workflow_command=WorkflowCommand(
+                action="run", resource="workflow", params={"name": "default"}
+            ),
             debug=True,
         )
         assert tc.is_bot is True
         assert tc.mention_agent == "dev"
-        assert tc.workflow_cmd == "default"
-        assert tc.force_next == ("force-next-step", "implement")
-        assert tc.resume == "fix the bug"
+        assert tc.workflow_command.action == "run"
+        assert tc.workflow_command.resource == "workflow"
+        assert tc.workflow_command.params == {"name": "default"}
         assert tc.debug is True
 
     def test_defaults_none(self):
         tc = TriggerCommands(
             is_bot=False,
             mention_agent=None,
-            workflow_cmd=None,
-            force_next=None,
-            resume=None,
+            workflow_command=None,
             debug=False,
         )
         assert tc.mention_agent is None
-        assert tc.workflow_cmd is None
-        assert tc.force_next is None
-        assert tc.resume is None
+        assert tc.workflow_command is None
 
     def test_frozen(self):
         tc = TriggerCommands(
             is_bot=False,
             mention_agent=None,
-            workflow_cmd=None,
-            force_next=None,
-            resume=None,
+            workflow_command=None,
             debug=False,
         )
         with pytest.raises(Exception):

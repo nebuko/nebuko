@@ -195,7 +195,14 @@ class TestResolveFunctionCallPathWorkflowContext:
 
 
 class TestWorkflowCommandPrecedence:
-    """Tests for /workflow <name> multi-directory resolution (issue #529)."""
+    """Tests for /workflow run workflow --name <name> multi-directory resolution (issue #529)."""
+
+    @staticmethod
+    def _run_cmd(name):
+        from resolve_config.sub_domains.workflow_command.workflow_command import (
+            parse_workflow_command,
+        )
+        return parse_workflow_command("/workflow run workflow --name " + name)
 
     def _wf_yaml(self, agent):
         return (
@@ -220,7 +227,7 @@ class TestWorkflowCommandPrecedence:
         base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
         local = self._dir(tmp_path, "local", {"foo.yaml": self._wf_yaml("ctx")})
         config = _resolve_human_path(
-            "/workflow foo", None, None, str(base), local_workflows_dir=str(local)
+            "/workflow run workflow --name foo", None, None, str(base), local_workflows_dir=str(local), workflow_command=self._run_cmd("foo")
         )
         assert config["task"] == "ctx"
         assert config["config_workflow"] == "foo"
@@ -232,7 +239,7 @@ class TestWorkflowCommandPrecedence:
         base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("genius")})
         local = self._dir(tmp_path, "local", {})
         config = _resolve_human_path(
-            "/workflow foo", None, None, str(base), local_workflows_dir=str(local)
+            "/workflow run workflow --name foo", None, None, str(base), local_workflows_dir=str(local), workflow_command=self._run_cmd("foo")
         )
         assert config["task"] == "genius"
         assert config["config_workflow"] == "foo"
@@ -243,7 +250,7 @@ class TestWorkflowCommandPrecedence:
         base = self._dir(tmp_path, "base", {})
         local = self._dir(tmp_path, "local", {})
         config = _resolve_human_path(
-            "/workflow nope", None, None, str(base), local_workflows_dir=str(local)
+            "/workflow run workflow --name nope", None, None, str(base), local_workflows_dir=str(local), workflow_command=self._run_cmd("nope")
         )
         assert config["task"] == ""
         assert config["config_workflow"] == ""
@@ -259,7 +266,7 @@ class TestWorkflowCommandPrecedence:
         base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
         local = self._dir(tmp_path, "local", {"foo.yaml": "name: foo\n"})
         config = _resolve_human_path(
-            "/workflow foo", None, None, str(base), local_workflows_dir=str(local)
+            "/workflow run workflow --name foo", None, None, str(base), local_workflows_dir=str(local), workflow_command=self._run_cmd("foo")
         )
         # No silent fallthrough to the built-in of the same name
         assert config["task"] == ""
@@ -270,6 +277,6 @@ class TestWorkflowCommandPrecedence:
         from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
-        config = _resolve_human_path("/workflow foo", None, None, str(base))
+        config = _resolve_human_path("/workflow run workflow --name foo", None, None, str(base), workflow_command=self._run_cmd("foo"))
         assert config["task"] == "dev"
         assert "config_skip_reason" not in config

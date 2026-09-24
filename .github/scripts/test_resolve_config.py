@@ -8,11 +8,9 @@ from pathlib import Path
 import pytest
 
 from resolve_config import (
+    parse_workflow_command,
     is_bot_comment,
     extract_mention_agent,
-    extract_workflow_command,
-    extract_force_next_command,
-    extract_resume_command,
     normalize_resume_input,
     BARE_RESUME_INPUT,
     resolve_config,
@@ -174,7 +172,7 @@ class TestResolveConfig:
         """When workflow is specified, resolve_workflow handles routing."""
         prompt_base, workflows_dir = self._setup_dirs()
         # /workflow without a valid workflow file and no @@mention → SKIP_AGENT
-        body = "/workflow nonexistent\nPlease analyze this issue."
+        body = "/workflow run workflow --name nonexistent\nPlease analyze this issue."
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -275,41 +273,6 @@ class TestCIBotMentionRouting:
         assert result["ROLE_NAME"] == "dev"
 
 
-class TestExtractWorkflowCommand:
-    """Test /workflow command extraction from trigger body."""
-
-    def test_valid_workflow_command(self):
-        result = extract_workflow_command("/workflow default\nSome description")
-        assert result == "default"
-
-    def test_valid_workflow_command_with_spaces(self):
-        result = extract_workflow_command("/workflow  review-only")
-        assert result == "review-only"
-
-    def test_no_name_after_workflow(self):
-        result = extract_workflow_command("/workflow\nSome text")
-        assert result is None
-
-    def test_workflow_not_on_first_line(self):
-        result = extract_workflow_command("Some intro text\n/workflow default")
-        assert result is None
-
-    def test_slash_workflow_in_middle_of_text(self):
-        result = extract_workflow_command("Hello there /workflow default")
-        assert result is None
-
-    def test_empty_body(self):
-        result = extract_workflow_command("")
-        assert result is None
-
-    def test_similar_but_not_workflow(self):
-        result = extract_workflow_command("/workflows default")
-        assert result is None
-
-    def test_workflow_with_additional_text_same_line(self):
-        result = extract_workflow_command("/workflow demo-composition — please run this")
-        assert result == "demo-composition"
-
 
 class TestResolveConfigWithWorkflowCommand:
     """Test resolve_config with /workflow command."""
@@ -350,7 +313,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_default_resolves_genius(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow default\nPlease analyze this issue."
+        body = "/workflow run workflow --name default\nPlease analyze this issue."
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -361,7 +324,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_review_only_resolves_review(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow review-only\nReview my PR please."
+        body = "/workflow run workflow --name review-only\nReview my PR please."
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -371,7 +334,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_nonexistent_falls_through_mentions(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow nonexistent\n@@genius help me"
+        body = "/workflow run workflow --name nonexistent\n@@genius help me"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -384,7 +347,7 @@ class TestResolveConfigWithWorkflowCommand:
     def test_workflow_malformed_name_falls_through_mentions(self):
         """Workflow names with special chars are rejected and fall through."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = '/workflow "../etc/passwd"\n@@dev help'
+        body = "/workflow run workflow --name ../etc/passwd\n@@dev help"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -407,7 +370,7 @@ class TestResolveConfigWithWorkflowCommand:
                 "    agent: review\n"
                 "    next: null\n"
             )
-        body = "/workflow empty-agents\n@@ctx gather context"
+        body = "/workflow run workflow --name empty-agents\n@@ctx gather context"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -418,7 +381,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_not_on_first_line_ignored(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "Some intro text\n/workflow default"
+        body = "Some intro text\n/workflow run workflow --name default"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -428,7 +391,7 @@ class TestResolveConfigWithWorkflowCommand:
     def test_workflow_not_on_first_line_falls_through_mention(self):
         """When /workflow not on first line but @@mention present, use mention."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "Some intro text\n/workflow default\n@@dev please help"
+        body = "Some intro text\n/workflow run workflow --name default\n@@dev please help"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -438,7 +401,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_command_takes_precedence_over_mention(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow default\n@@review please also review"
+        body = "/workflow run workflow --name default\n@@review please also review"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -448,7 +411,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_bot_comment_skips(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "<!-- bot-agent-dev -->\n/workflow default"
+        body = "<!-- bot-agent-dev -->\n/workflow run workflow --name default"
 
         result = resolve_config(body, prompt_base, workflows_dir)
 
@@ -489,7 +452,7 @@ class TestResolveConfigWithWorkflowCommand:
     def test_step_skills_empty_when_not_defined(self):
         """STEP_SKILLS is empty when workflow step has no skill field."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow default\nPlease analyze this issue."
+        body = "/workflow run workflow --name default\nPlease analyze this issue."
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -558,39 +521,6 @@ class TestCountConsecutiveSameAgent(unittest.TestCase):
         self.assertEqual(count, 0)
 
 
-class TestExtractForceNextCommand(unittest.TestCase):
-    """Tests for extract_force_next_command function."""
-
-    def test_basic_force_next_step(self):
-        result = extract_force_next_command("/workflow force-next-step")
-        self.assertEqual(result, ("force-next-step", None))
-
-    def test_force_next_step_with_target(self):
-        result = extract_force_next_command("/workflow force-next-step implement")
-        self.assertEqual(result, ("force-next-step", "implement"))
-
-    def test_force_next_step_with_multiline_input(self):
-        result = extract_force_next_command("/workflow force-next-step implement\nSome description here")
-        self.assertEqual(result, ("force-next-step", "implement"))
-
-    def test_not_force_next_step(self):
-        result = extract_force_next_command("/workflow default")
-        self.assertIsNone(result)
-
-    def test_empty_body(self):
-        result = extract_force_next_command("")
-        self.assertIsNone(result)
-
-    def test_extra_text_after_target(self):
-        # Trailing text is now allowed — regex no longer requires $ anchor.
-        # The command matches and captures the target step; extra text is ignored.
-        result = extract_force_next_command("/workflow force-next-step implement some extra text")
-        self.assertEqual(result, ("force-next-step", "implement"))
-
-    def test_force_next_step_with_underscore_target(self):
-        result = extract_force_next_command("/workflow force-next-step code_review")
-        self.assertEqual(result, ("force-next-step", "code_review"))
-
 
 class TestForceNextStepIntegration(unittest.TestCase):
     """Integration tests for /workflow force-next-step command."""
@@ -652,75 +582,74 @@ class TestForceNextStepIntegration(unittest.TestCase):
 
     def test_force_next_step_auto_advance(self):
         state_json = self._build_state_json(workflow="default", step="implement")
-        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        result = self._resolve_with_state("/workflow force-step step --name review", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["TASK"], "review")
 
     def test_force_next_step_with_explicit_target(self):
         state_json = self._build_state_json(workflow="default", step="analyze")
-        result = self._resolve_with_state("/workflow force-next-step implement", state_json)
+        result = self._resolve_with_state("/workflow force-step step --name implement", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["TASK"], "dev")
 
     def test_force_next_step_no_workflow_state(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        result = resolve_config("/workflow force-next-step", prompt_base, workflows_dir, is_bot=False)
+        result = resolve_config(
+            "/workflow force-step step --name context", prompt_base, workflows_dir, is_bot=False
+        )
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("no workflow state found", result["REASON"])
 
-    def test_force_next_step_terminal_step(self):
-        state_json = self._build_state_json(workflow="default", step="review")
-        result = self._resolve_with_state("/workflow force-next-step", state_json)
-        self.assertEqual(result["SKIP_AGENT"], "true")
-        self.assertIn("terminal", result["REASON"])
-
     def test_force_next_step_invalid_target_step(self):
         state_json = self._build_state_json(workflow="default", step="analyze")
-        result = self._resolve_with_state("/workflow force-next-step nonexistent", state_json)
+        result = self._resolve_with_state("/workflow force-step step --name nonexistent", state_json)
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("not found", result["REASON"])
 
     def test_force_next_step_path_traversal_workflow_name(self):
         state_json = self._build_state_json(workflow="../etc/passwd", step="hack")
-        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        result = self._resolve_with_state("/workflow force-step step --name context", state_json)
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("invalid workflow name", result["REASON"])
 
     def test_force_next_step_path_traversal_target_step(self):
         state_json = self._build_state_json(workflow="default", step="analyze")
-        result = self._resolve_with_state("/workflow force-next-step ../../etc/passwd", state_json)
+        result = self._resolve_with_state("/workflow force-step step --name ../../etc/passwd", state_json)
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("invalid target step", result["REASON"])
 
     def test_force_next_step_invalid_workflow_file(self):
         state_json = self._build_state_json(workflow="nonexistent_workflow", step="analyze")
-        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        result = self._resolve_with_state("/workflow force-step step --name context", state_json)
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("not found", result["REASON"])
 
-    def test_force_next_step_current_step_not_in_workflow(self):
+    def test_force_step_explicit_target_ignores_current_step(self):
+        # The new grammar requires an explicit --name, so an unknown current
+        # step no longer matters (issue #635 removed the auto-advance arm).
         state_json = self._build_state_json(workflow="default", step="nonexistent_step")
-        result = self._resolve_with_state("/workflow force-next-step", state_json)
-        self.assertEqual(result["SKIP_AGENT"], "true")
-        self.assertIn("not found", result["REASON"])
+        result = self._resolve_with_state("/workflow force-step step --name context", state_json)
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "ctx")
 
     def test_force_next_step_preserves_parent_workflow(self):
         # Note: parent workflow fields are preserved by resolve_config.
         # Downstream resolve_workflow.py may reject if parent workflow YAML
         # doesn't exist — that's separate from force-next-step logic.
         state_json = self._build_state_json(workflow="default", step="implement")
-        result = self._resolve_with_state("/workflow force-next-step", state_json)
+        result = self._resolve_with_state("/workflow force-step step --name review", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["WORKFLOW_NAME"], "default")
 
     def test_force_next_step_jumps_to_context(self):
         state_json = self._build_state_json(workflow="default", step="analyze")
-        result = self._resolve_with_state("/workflow force-next-step context", state_json)
+        result = self._resolve_with_state("/workflow force-step step --name context", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["TASK"], "ctx")
 
-    def test_force_next_step_next_step_does_not_exist_in_workflow(self):
-        """When step.next references a step not in the workflow, return a clear error."""
+    def test_force_step_explicit_target_with_malformed_current_next(self):
+        """Explicit --name resolves regardless of a dangling next on the current step
+        (the auto-advance error path is gone under the new grammar, issue #635)."""
         prompt_base = tempfile.mkdtemp()
         workflows_dir = tempfile.mkdtemp()
         for name in TASK_TO_PROMPT.values():
@@ -752,13 +681,13 @@ class TestForceNextStepIntegration(unittest.TestCase):
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
         result = resolve_config(
-            "/workflow force-next-step\n\n" + state_block,
+            "/workflow force-step step --name context\n\n" + state_block,
             prompt_base,
             workflows_dir,
             is_bot=False,
         )
-        self.assertEqual(result["SKIP_AGENT"], "true")
-        self.assertIn("does not exist", result["REASON"])
+        self.assertEqual(result["SKIP_AGENT"], "false")
+        self.assertEqual(result["TASK"], "ctx")
 
 
 class TestForceNextStepSubWorkflow(unittest.TestCase):
@@ -838,7 +767,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             self._subparent_workflow_yaml(), self._child_workflow_yaml()
         )
         result = self._resolve(
-            "/workflow force-next-step subtask",
+            "/workflow force-step step --name subtask",
             self._state(step="analyze"),
             prompt_base,
             workflows_dir,
@@ -853,23 +782,6 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
         self.assertEqual(result["PARENT_WORKFLOW"], "subparent")
         self.assertEqual(result["PARENT_WORKFLOW_STEP"], "subtask")
 
-    def test_auto_advance_into_sub_workflow_step(self):
-        prompt_base, workflows_dir = self._setup_dirs(
-            self._subparent_workflow_yaml(), self._child_workflow_yaml()
-        )
-        result = self._resolve(
-            "/workflow force-next-step",
-            self._state(step="analyze"),  # analyze.next -> subtask
-            prompt_base,
-            workflows_dir,
-        )
-        self.assertEqual(result["SKIP_AGENT"], "false")
-        self.assertEqual(result["TASK"], "ctx")
-        self.assertEqual(result["WORKFLOW_NAME"], "child")
-        self.assertEqual(result["WORKFLOW_STEP"], "first_step")
-        self.assertEqual(result["PARENT_WORKFLOW"], "subparent")
-        self.assertEqual(result["PARENT_WORKFLOW_STEP"], "subtask")
-
     def test_agent_target_unchanged_in_subparent(self):
         # Regression: a plain agent step target in the same workflow is
         # unaffected (WORKFLOW_NAME stays the parent workflow).
@@ -877,7 +789,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             self._subparent_workflow_yaml(), self._child_workflow_yaml()
         )
         result = self._resolve(
-            "/workflow force-next-step finalize",
+            "/workflow force-step step --name finalize",
             self._state(step="analyze"),
             prompt_base,
             workflows_dir,
@@ -893,7 +805,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             self._subparent_workflow_yaml(sub_ref="does_not_exist"), child_yaml=None
         )
         result = self._resolve(
-            "/workflow force-next-step subtask",
+            "/workflow force-step step --name subtask",
             self._state(step="analyze"),
             prompt_base,
             workflows_dir,
@@ -917,7 +829,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             child_name="badchild",
         )
         result = self._resolve(
-            "/workflow force-next-step subtask",
+            "/workflow force-step step --name subtask",
             self._state(step="analyze"),
             prompt_base,
             workflows_dir,
@@ -949,7 +861,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             script_parent, child_yaml=None, parent_name="scriptparent"
         )
         result = self._resolve(
-            "/workflow force-next-step run_check",
+            "/workflow force-step step --name run_check",
             self._state(workflow="scriptparent", step="analyze"),
             prompt_base,
             workflows_dir,
@@ -1036,7 +948,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
 
         with patch("resolve_config.get_issue_comments", return_value=comments):
             result = resolve_config(
-                "/workflow force-next-step",
+                "/workflow force-step step --name context",
                 prompt_base,
                 workflows_dir,
                 is_bot=False,
@@ -1057,7 +969,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
 
         with patch("resolve_config.get_issue_comments", return_value=comments):
             result = resolve_config(
-                "/workflow force-next-step",
+                "/workflow force-step step --name context",
                 prompt_base,
                 workflows_dir,
                 is_bot=False,
@@ -1073,7 +985,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_dirs()
 
         result = resolve_config(
-            "/workflow force-next-step",
+            "/workflow force-step step --name context",
             prompt_base,
             workflows_dir,
             is_bot=False,
@@ -1802,7 +1714,7 @@ class TestForceNextStepWithWorkflowDriven(unittest.TestCase):
         """force-next-step works correctly when there's no agentRunConfig (human command)."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json("default", "analyze", "genius")
-        body = "/workflow force-next-step\n\n" + state_json
+        body = "/workflow force-step step --name context\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         # Auto-advance: analyze.next = context → agent ctx
         self.assertEqual(result["TASK"], "ctx")
@@ -1812,7 +1724,7 @@ class TestForceNextStepWithWorkflowDriven(unittest.TestCase):
         """force-next-step with explicit target overrides normal workflow progression."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json("default", "analyze", "genius")
-        body = "/workflow force-next-step implement\n\n" + state_json
+        body = "/workflow force-step step --name implement\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         # Explicit target "implement" → agent dev (bypasses normal analyze→context flow)
         self.assertEqual(result["TASK"], "dev")
@@ -1851,7 +1763,7 @@ class TestHumanWorkflowOverridePrecedence(unittest.TestCase):
             + '{"version": 1, "workflow": "default", "step": "analyze", "agent": "genius"}'
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        body = "/workflow review-only\n\n" + state_json
+        body = "/workflow run workflow --name review-only\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         # /workflow review-only should take precedence and resolve to first agent of review-only
         self.assertEqual(result["ROLE_NAME"], "review")
@@ -1860,7 +1772,7 @@ class TestHumanWorkflowOverridePrecedence(unittest.TestCase):
     def test_workflow_command_precedence_over_mention(self):
         """/workflow command takes precedence over @@mention."""
         prompt_base, workflows_dir = self._setup_dirs()
-        body = "/workflow default\n@@dev please implement something"
+        body = "/workflow run workflow --name default\n@@dev please implement something"
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         # /workflow default triggers the workflow — genius is the trigger agent
         self.assertEqual(result["ROLE_NAME"], "genius")
@@ -1941,43 +1853,6 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
             "dispatch.advance from 'analyze' step in default workflow should resolve to 'ctx' agent")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
-
-class TestExtractResumeCommand(unittest.TestCase):
-    """Tests for extract_resume_command function."""
-
-    def test_bare_resume_command(self):
-        """Bare '/workflow resume' returns empty string."""
-        result = extract_resume_command("/workflow resume")
-        self.assertEqual(result, "")
-
-    def test_resume_with_input(self):
-        """'/workflow resume <text>' returns the text."""
-        result = extract_resume_command("/workflow resume Yes, approved.")
-        self.assertEqual(result, "Yes, approved.")
-
-    def test_resume_with_multiline_input(self):
-        """Only first line is considered for the command."""
-        body = "/workflow resume Go ahead\nSecond line content"
-        result = extract_resume_command(body)
-        self.assertEqual(result, "Go ahead")
-
-    def test_not_resume_command(self):
-        """Non-resume commands return None."""
-        result = extract_resume_command("/workflow default")
-        self.assertIsNone(result)
-
-    def test_empty_body(self):
-        result = extract_resume_command("")
-        self.assertIsNone(result)
-
-    def test_resume_with_extra_whitespace(self):
-        """Leading/trailing whitespace on first line is handled."""
-        result = extract_resume_command("  /workflow resume approved  ")
-        self.assertEqual(result, "approved")
-
-    def test_force_next_step_is_not_resume(self):
-        result = extract_resume_command("/workflow force-next-step implement")
-        self.assertIsNone(result)
 
 
 class TestResumeIntegration(unittest.TestCase):
@@ -2066,7 +1941,7 @@ class TestResumeIntegration(unittest.TestCase):
                 workflow="default", step="implement", agent="dev",
                 dispatch_status="hold", complexity="high", reasoning="deep",
             )
-            body = self._build_trigger_body_with_state("/workflow resume Yes, approved.", state_json)
+            body = self._build_trigger_body_with_state("/workflow resume --feedback Yes, approved.", state_json)
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
@@ -2132,7 +2007,7 @@ class TestResumeIntegration(unittest.TestCase):
                 dispatch_status="hold", complexity="low",
             )
             body = self._build_trigger_body_with_state(
-                "/workflow resume Looks good, let me double-check.", state_json
+                "/workflow resume --feedback Looks good, let me double-check.", state_json
             )
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
@@ -2182,7 +2057,7 @@ class TestResumeIntegration(unittest.TestCase):
                 },
             }
             state_json = json.dumps(data)
-            body = self._build_trigger_body_with_state("/workflow resume OK", state_json)
+            body = self._build_trigger_body_with_state("/workflow resume --feedback OK", state_json)
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
@@ -2203,9 +2078,9 @@ class TestResumeIntegration(unittest.TestCase):
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
-            # Should not crash. Since extract_workflow_command("resume") matches as a
-            # workflow override, it falls through to human path which attempts to find
-            # resume.yaml. We just verify the result doesn't contain a crash-level error.
+            # Bare resume without workflow state falls through the cascade (resume
+            # requires a prev_state) to the human path. We just verify the result
+            # doesn't contain a crash-level error.
             self.assertIsInstance(result, dict)
 
     def _spec_driven_workflow_yaml(self):
@@ -2270,7 +2145,7 @@ class TestResumeIntegration(unittest.TestCase):
                 resolution={"task": "genius", "next_step": "context"},
             )
             body = self._build_trigger_body_with_state(
-                "/workflow resume Here is my feedback.", state_json
+                "/workflow resume --feedback Here is my feedback.", state_json
             )
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
@@ -2307,7 +2182,7 @@ class TestResumeIntegration(unittest.TestCase):
                 },
             )
             body = self._build_trigger_body_with_state(
-                "/workflow resume 1. Yes 2. No 3. Use REST API.", state_json
+                "/workflow resume --feedback 1. Yes 2. No 3. Use REST API.", state_json
             )
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
@@ -2389,7 +2264,7 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
         """/workflow force-next-step with embedded dispatch must honor the command."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
-        body = "/workflow force-next-step implement\n\n" + state_json
+        body = "/workflow force-step step --name implement\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -2398,7 +2273,7 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
         """/workflow command with embedded dispatch must honor the override."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
-        body = "/workflow default\n\n" + state_json
+        body = "/workflow run workflow --name default\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["ROLE_NAME"], "genius")
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -2414,10 +2289,10 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "false")
 
     def test_force_next_with_trailing_text_and_dispatch(self):
-        """/workflow force-next-step with trailing text and dispatch must still work."""
+        """/workflow force-step with dispatch must still work."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
-        body = "/workflow force-next-step implement some extra description\n\n" + state_json
+        body = "/workflow force-step step --name implement\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -2490,7 +2365,7 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
     def test_plain_trigger_descends_to_innermost_leaf(self):
         """A plain /workflow trigger on a nested-first-step workflow descends to the leaf."""
         prompt_base, workflows_dir = self._setup_nested_dirs()
-        body = "/workflow parent-wf\n\nstart the nested plan"
+        body = "/workflow run workflow --name parent-wf\n\nstart the nested plan"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -2504,7 +2379,7 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
     def test_plain_trigger_outer_parent_pair_survives(self):
         """The outermost parent pair survives the nested descent into the flat state."""
         prompt_base, workflows_dir = self._setup_nested_dirs()
-        body = "/workflow parent-wf\n\nstart the nested plan"
+        body = "/workflow run workflow --name parent-wf\n\nstart the nested plan"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -2516,7 +2391,7 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_nested_dirs()
         # Triggering mid-wf directly: parent-wf is out of the picture, so the
         # recorded pair is the intermediate level's reference step.
-        body = "/workflow mid-wf\n\nstart the loop"
+        body = "/workflow run workflow --name mid-wf\n\nstart the loop"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -2581,7 +2456,7 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
         result = resolve_config(
-            "/workflow force-next-step step_1\n\n" + state_json,
+            "/workflow force-step step --name step_1\n\n" + state_json,
             prompt_base,
             workflows_dir,
             is_bot=False,
