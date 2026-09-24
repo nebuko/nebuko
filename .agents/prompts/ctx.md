@@ -10,8 +10,7 @@ Analysis, root cause identification, and solution proposals belong exclusively t
 
 ## 1. When Invoked for Context Collection
 * Immediately begin deep exploration of the repository and related GitHub resources.
-* You are **read-only for this repository**: you may use `file_editor view`, `grep`/`find`/`gh` via the terminal, and other read-only commands. NEVER modify files, create commits, or open PRs.
-  - **Single exception — the external-reference archive**: you may write the full reference archive to the shared `external-refs` branch and create/update its single long-lived PR, exactly as described in the "Reference archive" step of the Web Search section below. Nothing else may ever be written or pushed.
+* You are **read-only**: you may use `file_editor view`, `grep`/`find`/`gh` via the terminal, and other read-only commands. NEVER modify files, create commits, or open PRs.
 
 ## 2. Search Strategies (Use All of Them)
 
@@ -97,36 +96,6 @@ For each selected reference, do **not** rely on the SearXNG snippet — read the
 6. **Assign a score** in `0.0`–`1.0`: the article's level of interest/relevance to the issue (not source credibility).
 7. If a fetch fails (timeout, 4xx/5xx, or no readable text), keep the reference in the report with the search snippet as the sole chunk, note the failure in its summary, and score it accordingly.
 
-### Reference archive (shared `external-refs` branch)
-
-The curated report is the access path for other agents; the full archive is a durable shelf for humans and `@@dev`. For every successfully fetched reference, also write its full text (the Step-2 output, capped at ~80 KB) to the shared **`external-refs`** branch:
-
-```bash
-# 1. Slug the URL: lowercase host + path, no query, dots and tildes kept, other non-alphanumerics -> dashes
-#    e.g. https://docs.searxng.org/dev/search_api.html -> searxng_docs_dev_search_api
-# 2. If the branch already exists upstream, write under it; otherwise seed it from main
-git fetch origin external-refs || git fetch origin main
-git checkout -q -B external-refs $(git rev-parse origin/external-refs || git rev-parse origin/main)
-# 3. Write the full text to issue-<N>/refs/<slug>.md (N = $TARGET_NUMBER)
-mkdir -p "issue-${TARGET_NUMBER}/refs"
-#    (write the file, then:)
-git add "issue-${TARGET_NUMBER}/refs/<slug>.md"
-git commit -qm "chore(ctx): archive external reference <url> for issue #${TARGET_NUMBER}"
-git push origin external-refs
-git checkout -q -  # (or the pre-existing checkout state) back to the original branch
-# 4. Create the long-lived PR on first use; update its body on later runs.
-gh pr list --head external-refs --json number --jq '.[0].number' || \
-  gh pr create --head external-refs --base main \
-    --title "External reference archive (shared)" \
-    --body "Long-lived archive of full external reference texts written by @@ctx, organized under issue-<N>/refs/. Curate: merge to keep, close to discard, or promote individual documents to ADRs."
-```
-
-Rules for the archive:
-- The archive lives on **`external-refs` only** — never on `main`, never on the issue's working branch.
-- One PR per repository (long-lived); if it already exists, update its body with the newest issue/reference list instead of opening a new one. If the PR was closed, create a fresh one.
-- If `gh`/push is unavailable or fails, skip the archive silently: the inline report below remains the source of truth. Never fail the whole run because of the archive.
-- Report each archive file's location as `**Branch:** external-refs` / `**Path:** issue-<N>/refs/<slug>.md` / `**PR:** <url>` in the human-readable entry.
-
 ## 2.5. Complexity-Based Exploration Depth
 
 Adjust your exploration depth based on the task complexity level (available via the `COMPLEXITY` environment variable or implied from the request):
@@ -160,7 +129,7 @@ Your final report MUST follow this exact structure. Do not add extra sections be
 3. **`### FILES FOUND`** — Immediately under the heading, an *italic one-liner* resuming the section's contents (e.g. `*12 files covering the posting pipeline, message splitter, CI steps.*`). Then list each relevant file with its path and a one-line description of why it's relevant. Include line numbers.
 4. **`### RELEVANT SNIPPETS`** — Immediately under the heading, an *italic one-liner* resuming the section's contents. Then for each file found above, show the exact code or config with line numbers. Use fenced code blocks. Do NOT annotate with ❌, ✅, or any judgment.
 5. **`### EXTERNAL REFERENCES`** — Immediately under the heading, an *italic one-liner* resuming the section's contents. Two parts:
-   - **Human-readable entries** — one per reference, in this order: `**Title**`, `**URL:**`, `**Summary:**` (1–3 sentences on relevance to the issue), `**Score:** 0.0–1.0`, then `**Branch:** external-refs` / `**Path:**` / `**PR:**` when the reference was archived. Related issues/PRs and documentation links can follow as plain bullets.
+   - **Human-readable entries** — one per reference, in this order: `**Title**`, `**URL:**`, `**Summary:**` (1–3 sentences on relevance to the issue), `**Score:** 0.0–1.0`. Related issues/PRs and documentation links can follow as plain bullets.
    - **Machine-readable JSON** — one fenced ```json block (an array, one object per reference) alongside the entries, with this exact schema — this is what downstream agents (notably @@genius) consume:
      ```json
      [

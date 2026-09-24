@@ -231,8 +231,7 @@ is authoritative.
 Contract for the fenced ```json block `@@ctx` emits inside
 `### EXTERNAL REFERENCES` of its context report. It is an **array** with one
 object per reference; the human-readable entries and this block must cover the
-same references. This block is the access path for tool-less agents (e.g.
-`@@genius`); the full-text archive lives on the `external-refs` branch
+same references. This block is the access path for tool-less agents (e.g. `@@genius`)
 ([features.md — External Reference Sharing](./features.md#external-reference-sharing)).
 
 | Field | Type | Description |

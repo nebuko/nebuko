@@ -51,12 +51,8 @@ Its web-search phase reads each selected reference **in full** (3 for LOW,
 relevant excerpts (≤ ~2K tokens per article), a short relevance summary, and a
 0.0–1.0 interest score — emitted as a fenced JSON block inside
 `### EXTERNAL REFERENCES` alongside the human-readable entries
-(schema: [reference.md — External Reference JSON](./reference.md#external-reference-json)).
-The full text of each reference is additionally archived under
-`issue-<N>/refs/<slug>.md` on the shared `external-refs` branch with one
-long-lived `external-refs → main` PR — the only exception to ctx's read-only
-rule, and the durable shelf humans and `@@dev` consume
-([features.md — External Reference Sharing](./features.md#external-reference-sharing)).
+(schema: [reference.md — External Reference JSON](./reference.md#external-reference-json),
+sharing contract: [features.md — External Reference Sharing](./features.md#external-reference-sharing)).
 
 ### dev — Execution Developer
 Implements approved plans, writes and runs tests, and commits/pushes under
