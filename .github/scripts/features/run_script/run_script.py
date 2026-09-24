@@ -244,8 +244,8 @@ def write_workflow_state(config: dict, result: str) -> dict:
         comment_ids=[],
         result=result,
         dispatch=Dispatch(status="advance", branch=result),
-        # v2 mount-chain position (issue #618): script runs inside a
-        # sub-workflow post the full chain too (same env the agent path uses).
+        # Flat v3 position (issue #638): script runs inside a sub-workflow
+        # post the full chain too (same env the agent path uses).
         position=parse_position_env(os.environ.get("WORKFLOW_POSITION", "")),
     )
     with open(_STATE_FILE, "w", encoding="utf-8") as f:

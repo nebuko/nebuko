@@ -15,6 +15,7 @@ from config import (
     load_workflow,
     load_workflow_with_dirs,
     WorkflowPosition,
+    StepRef,
 )
 from resolve_workflow import (
     resolve_next_from_workflow,
@@ -447,9 +448,9 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
             resolve_ref=_mount_chain_ref_resolver(workflows_dir, local_workflows_dir),
             workflow_path=f"workflows/{wf_name}.yaml" if wf_name else "",
         )
-        leaf = position.leaf
-        if leaf.workflow_name != wf_name and leaf.step_name and leaf.step_name != (exclude_step or ""):
-            return leaf.step_name
+        leaf = position.leaf()
+        if leaf and leaf.workflow != wf_name and leaf.step and leaf.step != (exclude_step or ""):
+            return leaf.step
         # The mount position degraded to a local (bare) position: the
         # foreign leaf is unknown. Do NOT fall through to the top-level
         # agent-step scan — re-entering via another mount step owned by the
@@ -488,16 +489,16 @@ def resolve_position(
     _seen: Optional[set] = None,
     _depth: int = 0,
 ) -> "WorkflowPosition":
-    """Build the recursive :class:`WorkflowPosition` for a step (issue #618).
+    """Build the flat :class:`WorkflowPosition` for a step (issue #638).
 
     Pure builder: walks the mount chain starting at ``wf_def`` /
-    ``step_name``. When the step is a workflow-mount step (``workflow``/
-    ``path`` reference, no agent), the child definition is obtained via
-    the ``resolve_ref`` port (the implement step wires it to
-    ``_load_workflow_by_reference`` with ``workflows_dir`` /
-    ``local_workflows_dir`` closure) and the position recurses into the
-    child's entry step. Stops at the first agent-bearing step (the leaf)
-    or when the chain can no longer be resolved.
+    ``step_name`` and appends one :class:`StepRef` per level. When the
+    step is a workflow-mount step (``workflow``/``path`` reference, no
+    agent), the child definition is obtained via the ``resolve_ref`` port
+    (the implement step wires it to ``_load_workflow_by_reference`` with
+    ``workflows_dir`` / ``local_workflows_dir`` closure) and the walk
+    appends the child's entry step. Stops at the first agent-bearing step
+    (the leaf) or when the chain can no longer be resolved.
 
     Descent is bounded two ways (review fix): a seen-chain (definition
     identity) guard terminates circular mounts, and ``_depth`` caps
@@ -506,23 +507,26 @@ def resolve_position(
 
     For the #617 scenario this yields::
 
-        plan-orchestration / sub_impl
-          -> tmp-impl / step_1
-            -> dev-review-loop / implement
+        refs = [
+            StepRef(plan-orchestration, sub_impl),
+            StepRef(tmp-impl, step_1),
+            StepRef(dev-review-loop, implement),
+        ]
     """
     def _bare(step_label: str = step_name) -> "WorkflowPosition":
-        # Current position as leaf — descent stops here (unknown step,
-        # non-mount step, unresolvable ref, or a bound hit).
+        # Current position as the final ref — descent stops here (unknown
+        # step, non-mount step, unresolvable ref, or a bound hit).
         return WorkflowPosition(
-            workflow_name=getattr(wf_def, "name", "") or step_label,
-            workflow_path=workflow_path,
-            step_name=step_label,
+            refs=[StepRef(
+                workflow=getattr(wf_def, "name", "") or step_label,
+                step=step_label,
+            )]
         )
 
     step = _find_step(wf_def, step_name)
     if step is None:
-        # Unknown step: record the requested name so the chain stays
-        # diagnostic, but do not descend (the leaf is this bare position).
+        # Unknown step: record the requested name so the path stays
+        # diagnostic, but do not descend (the leaf is this bare ref).
         return _bare()
     if not _is_mount_step(step):
         return _bare(step.name)
@@ -541,17 +545,17 @@ def resolve_position(
     entry_name = _entry_step_name(child_def)
     if not entry_name:
         return _bare(step.name)
-    child_path = _child_workflow_path(child_def, child_ref)
     sub = resolve_position(
-        child_def, entry_name, resolve_ref=resolve_ref, workflow_path=child_path,
+        child_def, entry_name, resolve_ref=resolve_ref,
+        workflow_path=_child_workflow_path(child_def, child_ref),
         _seen=seen, _depth=_depth + 1,
     )
-    return WorkflowPosition(
-        workflow_name=getattr(wf_def, "name", "") or step_name,
-        workflow_path=workflow_path,
-        step_name=step.name,
-        sub=sub,
+    # Prepend this level's ref: outermost first, the walk above already
+    # holds the innermost-first tail (child entry ... leaf).
+    this_ref = StepRef(
+        workflow=getattr(wf_def, "name", "") or step_name, step=step.name,
     )
+    return WorkflowPosition(refs=[this_ref, *sub.refs])
 
 
 def _find_step(wf_def: Optional[WorkflowDefinition], step_name: str) -> Optional[WorkflowStep]:

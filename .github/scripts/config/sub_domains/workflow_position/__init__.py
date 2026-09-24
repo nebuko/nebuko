@@ -1,5 +1,6 @@
 """Workflow position sub-domain."""
 
+from ..step_ref import StepRef
 from .workflow_position import (
     POSITION_STATE_VERSION,
     WorkflowPosition,
@@ -9,6 +10,7 @@ from .workflow_position import (
 
 __all__ = [
     "WorkflowPosition",
+    "StepRef",
     "is_self_function_call",
     "POSITION_STATE_VERSION",
     "parse_position_env",

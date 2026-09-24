@@ -132,6 +132,24 @@ def _nested_position(levels: list[tuple[str, str]]) -> dict:
     return out
 
 
+def _v3_refs(levels: list[tuple[str, str]]) -> list:
+    """v3 posted position: the flat refs array (state ``model_dump`` shape)."""
+    return [{"workflow": wf, "step": step} for wf, step in levels]
+
+
+def _v3_state_dict_block(levels: list[tuple[str, str]]) -> dict:
+    """v3 posted position: the full ``WorkflowPosition.to_state_dict`` block
+    (refs + flat leaf aliases + version)."""
+    refs = _v3_refs(levels)
+    leaf = refs[-1]
+    return {
+        "version": 3,
+        "workflow": leaf["workflow"],
+        "step": leaf["step"],
+        "refs": refs,
+    }
+
+
 class TestCheckSameAgentAdvancePositionAware:
     """v2 full-chain comparison (issue #618, review fix for defect 4)."""
 
@@ -214,3 +232,89 @@ class TestTriggerPositionPath:
     def test_v1_state_returns_empty(self):
         from loop_guard import trigger_position_path
         assert trigger_position_path(_state_block(1, "scaffold")) == ""
+
+    def test_v3_refs_list_returns_full_path(self):
+        """v3 trigger (issue #638): position posted as a flat refs array —
+        the shape every v3 run serializes — flattens to the exact
+        WORKFLOW_POSITION_PATH the resolver emits."""
+        from loop_guard import trigger_position_path
+        body = _state_block(3, "implement", _v3_refs([
+            ("plan-orchestration", "sub_impl"),
+            ("tmp-impl", "step_1"),
+            ("dev-review-loop", "implement"),
+        ]))
+        assert trigger_position_path(body) == (
+            "plan-orchestration/sub_impl|tmp-impl/step_1|dev-review-loop/implement"
+        )
+
+    def test_v3_to_state_dict_block_returns_full_path(self):
+        """v3 trigger carrying the full ``to_state_dict`` block (refs + leaf
+        aliases) — refs win over the lossy aliases."""
+        from loop_guard import trigger_position_path
+        body = _state_block(3, "implement", _v3_state_dict_block([
+            ("tmp-impl", "step_1"), ("dev-review-loop", "implement"),
+        ]))
+        assert trigger_position_path(body) == (
+            "tmp-impl/step_1|dev-review-loop/implement"
+        )
+
+
+class TestCheckSameAgentAdvanceV3:
+    """v3 flat-refs position comparison (issue #638, review fix round 1 —
+    the branch exercised by every v3 run in production)."""
+
+    def test_v3_refs_same_position_skips(self):
+        from loop_guard import check_same_agent_advance
+        body = _state_block(3, "implement", _v3_refs([
+            ("tmp-impl", "step_1"), ("dev-review-loop", "implement"),
+        ]))
+        result = check_same_agent_advance(
+            body, "tmp-impl/step_1|dev-review-loop/implement", "implement"
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert "same v2 position" in result["REASON"]
+
+    def test_v3_refs_different_position_allows(self):
+        from loop_guard import check_same_agent_advance
+        body = _state_block(3, "implement", _v3_refs([
+            ("tmp-impl", "step_1"), ("dev-review-loop", "implement"),
+        ]))
+        result = check_same_agent_advance(
+            body, "tmp-impl/step_2|dev-review-loop/implement", "implement"
+        )
+        assert result["SKIP_AGENT"] == "false"
+        assert "new position" in result["REASON"]
+
+    def test_v3_to_state_dict_block_same_position_skips(self):
+        from loop_guard import check_same_agent_advance
+        body = _state_block(3, "implement", _v3_state_dict_block([
+            ("tmp-impl", "step_1"), ("dev-review-loop", "implement"),
+        ]))
+        result = check_same_agent_advance(
+            body, "tmp-impl/step_1|dev-review-loop/implement", "implement"
+        )
+        assert result["SKIP_AGENT"] == "true"
+
+    def test_legacy_v2_nested_fixture_still_works(self):
+        """Backward compatibility: a legacy v2 trigger with a nested block
+        still compares full-chain (pin against v2 retirement)."""
+        from loop_guard import check_same_agent_advance
+        body = _state_block(2, "implement", _nested_position([
+            ("tmp-impl", "step_1"), ("dev-review-loop", "implement"),
+        ]))
+        result = check_same_agent_advance(
+            body, "tmp-impl/step_1|dev-review-loop/implement", "implement"
+        )
+        assert result["SKIP_AGENT"] == "true"
+
+    def test_v1_no_position_falls_back_to_flat_step(self):
+        """v1 trigger (no position key at all) + v3 resolved path: the
+        flat-step fallback applies — different step allows."""
+        from loop_guard import check_same_agent_advance
+        body = _state_block(1, "scaffold")
+        result = check_same_agent_advance(
+            body, "plan-orchestration/sub_impl|dev-review-loop/implement",
+            "implement",
+        )
+        assert result["SKIP_AGENT"] == "false"
+        assert "new step" in result["REASON"]
