@@ -53,8 +53,8 @@ def resolve_config(
     2. Bot detection (if not pre-determined).
     3. If no state in body, fetch from issue comment history.
     4. Route based on what was found (human commands take precedence):
-       - /workflow resume → _resolve_resume_path / next step.
-       - /workflow force-next-step → _resolve_human_path (regardless of state).
+       - /workflow resume [--feedback <text>] → _resolve_resume_path / next step.
+       - /workflow force-step step --name <step> → _resolve_human_path (regardless of state).
        - /workflow command by human → _resolve_human_path.
        - Human @@mention, or CI plain-mention trigger (universal bot marker
          + mention-only body, e.g. sub-task completion notification) →
