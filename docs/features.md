@@ -191,6 +191,37 @@ comment parts by the GHA *Post Additional Message Parts* step.
 
 ---
 
+## External Reference Sharing
+
+Two-layer contract for the web references `@@ctx` collects, so downstream
+agents actually see page content rather than 1–2 sentence SearXNG snippets:
+
+- **Layer 1 — inline curated JSON (agent access path).** `@@ctx` reads each
+  reference page in full, then emits a fenced ```json block inside the
+  `### EXTERNAL REFERENCES` section of its report: one object per reference
+  with `url`, `date` (ISO-8601 UTC fetch date), `chunks` (verbatim, unedited
+  excerpts, ≤ ~2K tokens per article → ≤ ~20K across a run), `summary`
+  (1–3 sentences on relevance to the issue), and `score` (0.0–1.0 relevance,
+  not credibility). Schema:
+  [reference.md — External Reference JSON](./reference.md#external-reference-json).
+  This rides the normal comment-history injection, so tool-less agents
+  (notably `@@genius`) consume the content with zero new machinery.
+- **Layer 2 — `external-refs` branch archive (human/dev shelf).** The full
+  text of each fetched reference (capped ~80 KB) is written by `@@ctx` to
+  `issue-<N>/refs/<slug>.md` on the shared long-lived `external-refs` branch,
+  behind one long-lived `external-refs → main` PR. `@@dev` reads it on demand
+  (`git fetch origin external-refs && git show external-refs:issue-<N>/refs/<slug>.md`)
+  without merging.
+
+The PR lifecycle is human-curated: **keep open** (temporary research shelf),
+**merge** (keep the documents in the repo), **close** (discard), or **promote**
+a selected document to an ADR under `docs/adr/`. Fetch failures degrade
+gracefully: the reference stays in the report with the search snippet as its
+sole chunk and no archive file. The `external-refs` write is the single
+documented exception to `@@ctx`'s read-only rule.
+
+---
+
 ## Remote Workflows (Zero-Copy)
 
 Consumer repositories do not need to vendor the workflow YAML files from this

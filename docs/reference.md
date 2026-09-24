@@ -226,6 +226,41 @@ is authoritative.
 
 ---
 
+## External Reference JSON
+
+Contract for the fenced ```json block `@@ctx` emits inside
+`### EXTERNAL REFERENCES` of its context report. It is an **array** with one
+object per reference; the human-readable entries and this block must cover the
+same references. This block is the access path for tool-less agents (e.g.
+`@@genius`); the full-text archive lives on the `external-refs` branch
+([features.md — External Reference Sharing](./features.md#external-reference-sharing)).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | The reference URL. |
+| `date` | string | ISO-8601 UTC fetch date. |
+| `chunks` | string[] | Verbatim, unedited excerpts of the page relevant to the issue (≤ ~2,000 tokens per reference, ≈ ≤ 8,000 chars; ≤ ~20K tokens across the whole run). |
+| `summary` | string | 1–3 sentences on the article's relevance/interest to the specific issue or question. |
+| `score` | number | Float in `0.0`–`1.0`: level of interest/relevance to the issue (not source credibility). |
+
+```json
+[
+  {
+    "url": "https://docs.searxng.org/dev/search_api.html",
+    "date": "2026-09-23T09:25:00Z",
+    "chunks": ["SearXNG supports querying via a simple HTTP API ..."],
+    "summary": "Documents the /search endpoint used by @@ctx; confirms results[].content is snippet-only.",
+    "score": 0.9
+  }
+]
+```
+
+The block must be valid JSON: no comments, no trailing commas, no prose
+outside the fence. There is no code model for this contract (prompt-only);
+this table is the source of truth.
+
+---
+
 ## Environment Variables Catalog
 
 Variables the orchestrator sets/consumes per run:

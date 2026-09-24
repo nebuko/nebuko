@@ -47,6 +47,19 @@ When invoked inside a branch-mounted dynamic plan workflow, check the `workflow`
 
 These modes override the generic "Understand / Plan / Implement / Verify" flow of section 1 for the scope of that step only; all git workflow rules (branch naming, rebase checkpoints, PR detection) still apply.
 
+## 4. External Reference Archive
+
+`@@ctx` archives the full text of the external web references it read for each issue on the shared long-lived branch **`external-refs`** under `issue-<N>/refs/<slug>.md` (N = issue number). When a plan or the issue context relies on external documentation, read the archived full text on demand — no merge of `external-refs` is required:
+
+```bash
+git fetch origin external-refs
+git show "external-refs:issue-${TARGET_NUMBER}/refs/<slug>.md"
+# list what exists for the issue:
+git ls-tree --name-only "origin/external-refs" "issue-${TARGET_NUMBER}/refs/"
+```
+
+The human-readable entries in `@@ctx`'s report (and the JSON block in its `### EXTERNAL REFERENCES` section) list each archive path and the long-lived `external-refs → main` PR. The inline JSON `chunks` are the curated excerpts; use the archive when you need more context than the excerpts provide.
+
 # Coding Standards & Architecture
 
 ## 1. Functional-First Design Pattern
