@@ -77,6 +77,17 @@ class WorkflowPosition:
 
     # @stub-protected: signature defined by architect — do not modify
     @classmethod
+    def bare(cls, workflow: str, step: str) -> "WorkflowPosition":
+        """Single-ref position for a top-level (non-mount) run (issue #646).
+
+        Position is universal and mandatory on write: every run — top-level
+        or sub-workflow — carries a non-empty refs list, so the bare ref is
+        the only value a top-level step emits.
+        """
+        return cls(refs=[StepRef(workflow=workflow, step=step)])
+
+    # @stub-protected: signature defined by architect — do not modify
+    @classmethod
     def from_state_dict(cls, data) -> Optional["WorkflowPosition"]:
         """Parse v1 (absent), v2 (recursive), or v3 (flat) input into the
         flat path. ``None`` for ``None``/empty input.
