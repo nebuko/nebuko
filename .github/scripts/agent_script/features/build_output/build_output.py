@@ -61,6 +61,10 @@ from agent_script.features.dispatch_next_tool import (
     clear_run,
     get_recorded_dispatch,
 )
+from agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
+    clear_scaffold_branch_run,
+    get_recorded_scaffold_branch,
+)
 
 logger = get_logger(__name__)
 
@@ -707,7 +711,15 @@ def build_output(
     # persisted this run.
     # (None when pre-extracted by the caller; otherwise extracted here.)
     if scaffold_branch is None:
-        result = extract_scaffold_branch_any(final_message, latest_answer)
+        # Primary source: the report_scaffold_branch tool registry (validated
+        # at call time by the executor). Marker parsing stays as fallback so
+        # legacy/in-flight runs keep working (issue #636).
+        tool_branch = get_recorded_scaffold_branch(
+            getattr(conversation, "id", None)
+        )
+        result = extract_scaffold_branch_any(
+            final_message, latest_answer, tool_branch=tool_branch
+        )
         scaffold_branch = result.branch
         if scaffold_branch:
             logger.info(
@@ -779,6 +791,7 @@ def build_output(
     # build_output runs exactly once per agent run, so this must not leak into
     # the next run in a long-lived process.
     clear_run(getattr(conversation, "id", None))
+    clear_scaffold_branch_run(getattr(conversation, "id", None))
 
     # ── Human gate intercept (issue #506) ────────────────────────
     # The trigger source is the sole authorization: a resume-triggered run

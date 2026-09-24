@@ -889,5 +889,99 @@ class TestBuildOutputScaffoldBranchWiring(unittest.TestCase):
             self.assertEqual(f.read(), "# Report\n\nBody only.")
 
 
+class TestBuildOutputScaffoldBranchToolWiring(unittest.TestCase):
+    """End-to-end report_scaffold_branch tool wiring (issue #636 rework):
+    tool-first precedence, marker fallback intact, registry cleanup."""
+
+    def setUp(self):
+        from agent_script.features.scaffold_branch_tool import reset_registry
+
+        self._reset_registry = reset_registry
+        reset_registry()
+        self.addCleanup(reset_registry)
+        self._conv_id = "tool-run-1"
+        self._tmp = tempfile.TemporaryDirectory()
+        self._cwd = os.getcwd()
+        os.chdir(self._tmp.name)
+        env_patch = mock.patch.dict(
+            "os.environ",
+            {
+                "ROLE_NAME": "dev",
+                "WORKFLOW_NAME": "plan-orchestration",
+                "WORKFLOW_STEP": "scaffold",
+            },
+            clear=False,
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def _run(self, finish_message, latest_answer_text):
+        from metrics_schema import Metrics
+        from build_output import build_output
+
+        conv = SimpleNamespace(
+            id=self._conv_id,
+            state=SimpleNamespace(
+                events=[_msg_event(latest_answer_text), _finish_event(finish_message)]
+            ),
+        )
+        return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
+
+    def _record_tool(self, branch):
+        from agent_script.features.scaffold_branch_tool import record_scaffold_branch
+
+        record_scaffold_branch(self._conv_id, branch)
+
+    def test_tool_recorded_no_markers_persisted_and_registry_cleared(self):
+        self._record_tool("feature/issue-635-tool")
+        result = self._run(
+            "Scaffolding complete, handing off.", "# Report\n\nBody only."
+        )
+
+        # Persisted from the tool channel; no marker present, so no strip.
+        self.assertEqual(
+            result["workflow_state"].scaffold_branch, "feature/issue-635-tool"
+        )
+        state_json = state_to_json(result["workflow_state"])
+        self.assertIn("feature/issue-635-tool", state_json)
+        self.assertNotIn("Scaffold branch:", result["final_message"])
+
+        # Run-scoped registry cleaned up on the exit path.
+        from agent_script.features.scaffold_branch_tool import (
+            get_recorded_scaffold_branch,
+        )
+
+        self.assertIsNone(get_recorded_scaffold_branch(self._conv_id))
+
+    def test_tool_beats_conflicting_markers_markers_still_stripped(self):
+        self._record_tool("feature/issue-635-tool")
+        result = self._run(
+            "Scaffolding done.\nSCAFFOLD_BRANCH: feature/issue-1-finish-marker",
+            "SCAFFOLD_BRANCH: feature/issue-1-answer-marker\nBody.",
+        )
+
+        # Tool value wins over both prose markers.
+        self.assertEqual(result["workflow_state"].scaffold_branch, "feature/issue-635-tool")
+        # The raw prose markers are still stripped (they are prose, whatever
+        # won the precedence).
+        self.assertNotIn("SCAFFOLD_BRANCH:", result["final_message"])
+        with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
+            self.assertNotIn("SCAFFOLD_BRANCH:", f.read())
+
+    def test_no_tool_marker_fallback_unchanged(self):
+        result = self._run(
+            "Scaffolding done.",
+            "Report.\nSCAFFOLD_BRANCH: feature/issue-635-marker\nDone.",
+        )
+        self.assertEqual(
+            result["workflow_state"].scaffold_branch, "feature/issue-635-marker"
+        )
+        self.assertNotIn("SCAFFOLD_BRANCH:", result["final_message"])
+
+
 if __name__ == "__main__":
     unittest.main()
