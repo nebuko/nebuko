@@ -853,11 +853,18 @@ def build_output(
 
     # ── Scaffold branch marker strip (issue #604; #636) ──────────
     # Strip the raw marker from both the posted comment and the
-    # latest-answer file so users never see it.
+    # latest-answer file so users never see it. The summary line
+    # replaces a stripped marker — when the branch came from the
+    # report_scaffold_branch tool (no marker in the prose), there is
+    # nothing to strip and nothing to append.
     if scaffold_branch:
+        marker_in_prose = (
+            "SCAFFOLD_BRANCH:" in (final_message or "")
+            or "SCAFFOLD_BRANCH:" in (latest_answer or "")
+        )
         latest_answer = strip_scaffold_branch(latest_answer)
         final_message = strip_scaffold_branch(final_message)
-        if final_message:
+        if marker_in_prose and final_message:
             final_message = final_message.rstrip() + f"\n\n{scaffold_branch_summary(scaffold_branch)}\n"
         logger.info(f"Persisted scaffold_branch={scaffold_branch}")
 
