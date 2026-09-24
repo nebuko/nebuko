@@ -79,7 +79,7 @@ agents:
     temperature: 0.1
     prompt_file: ".agents/prompts/dev.md"
     skills: ["posting-contract"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch"]
 
   ctx:
     model: "${llms.qwen-3-6-27b}"
