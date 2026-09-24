@@ -19,9 +19,7 @@ from .features.parse_trigger.parse_trigger import (
     is_plain_mention_trigger,
     extract_plain_mention_agent,
     extract_mention_agent,
-    extract_workflow_command,
-    extract_force_next_command,
-    extract_resume_command,
+    parse_workflow_command,
     normalize_resume_input,
     extract_debug_flag,
     extract_machine_trigger,
@@ -90,9 +88,7 @@ def resolve_config(
 
     # Check for human commands early — they take precedence over workflow state
     # regardless of whether prev_state exists (they need to resolve the command)
-    force_next = extract_force_next_command(trigger_body)
-    resume_cmd = extract_resume_command(trigger_body)
-    wf_override = extract_workflow_command(trigger_body)
+    wf_cmd = parse_workflow_command(trigger_body)
 
     # Centralized fallback: if no state from current body, try comment history
     if not prev_state:
@@ -120,38 +116,50 @@ def resolve_config(
     ci_mention = has_universal_bot_marker(trigger_body) and is_plain_mention_trigger(
         trigger_body
     )
-    if resume_cmd is not None and prev_state and prev_state.workflow and \
-       prev_state.dispatch and prev_state.dispatch.status == "hold":
+    if (
+        wf_cmd is not None
+        and wf_cmd.action == "resume"
+        and prev_state
+        and prev_state.workflow
+        and prev_state.dispatch
+        and prev_state.dispatch.status == "hold"
+    ):
         # /workflow resume — re-run the held step with human input
         config = _resolve_resume_path(
-            prev_state, trigger_body, workflows_dir, local_workflows_dir=local_workflows_dir
+            prev_state, trigger_body, workflows_dir, local_workflows_dir=local_workflows_dir,
+            human_input=normalize_resume_input(wf_cmd.params.get("feedback", "")),
         )
-    elif resume_cmd is not None and prev_state and prev_state.workflow and \
-         (prev_state.dispatch is None):
+    elif (
+        wf_cmd is not None
+        and wf_cmd.action == "resume"
+        and prev_state
+        and prev_state.workflow
+        and prev_state.dispatch is None
+    ):
         # /workflow resume with no dispatch — advance to next step, carrying
         # human input forward (issue #420: resolution-only state). A bare
         # resume maps to the BARE_RESUME_INPUT sentinel so the human_gate
         # interceptor (issue #506) treats this run as human-triggered.
-        human_input = normalize_resume_input(resume_cmd)
+        human_input = normalize_resume_input(wf_cmd.params.get("feedback", ""))
         config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir)
         config["config_human_resume_input"] = human_input
-    elif force_next:
-        # Human explicit step jump — takes priority over auto-dispatch.
-        # Must go through _resolve_human_path for validation/error handling.
-        # prompt_base lets the force-next branch resolve sub-workflow targets
-        # (issue #599).
+    elif wf_cmd is not None and wf_cmd.action == "force-step":
+        # Human explicit step jump (/workflow force-step step --name <step>) —
+        # takes priority over auto-dispatch. Must go through _resolve_human_path
+        # for validation/error handling. prompt_base lets the force-step branch
+        # resolve sub-workflow targets (issue #599).
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir, prev_state,
             local_workflows_dir=local_workflows_dir, prompt_base=prompt_base,
+            workflow_command=wf_cmd,
         )
-    elif wf_override and not is_bot and resume_cmd is None:
-        # Human /workflow override — use human path to honor the command.
-        # Guard: /workflow resume sets both resume_cmd ("") and wf_override ("resume"),
-        # but should NOT go through the override path. Check is None since
-        # extract_resume_command returns "" (empty, not None) for bare resume.
+    elif wf_cmd is not None and wf_cmd.action == "run" and not is_bot:
+        # Human /workflow run workflow --name <name> override — use human path
+        # to honor the command.
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir, prev_state,
             local_workflows_dir=local_workflows_dir,
+            workflow_command=wf_cmd,
         )
     elif human_mention or ci_mention:
         # Human @@mention (e.g. @@ctx) takes priority over auto-dispatch

@@ -36,13 +36,14 @@ from workflow_state import (
 
 from ..fetch_state.fetch_state import _fetch_workflow_state_from_history
 from ..parse_trigger.parse_trigger import (
-    extract_force_next_command,
     extract_mention_agent,
-    extract_resume_command,
-    extract_workflow_command,
     extract_debug_flag,
     extract_machine_trigger,
     normalize_resume_input,
+)
+from ...sub_domains.workflow_command.workflow_command import (
+    WorkflowCommand,
+    parse_workflow_command,
 )
 
 __all__ = [
@@ -129,6 +130,7 @@ def _resolve_resume_path(
     trigger_body: str,
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
+    human_input: str = "",
 ) -> dict:
     """Resolve config to re-run the currently held step after /workflow resume.
 
@@ -199,11 +201,15 @@ def _resolve_resume_path(
             "REASON": f"resume: step '{current_step_in_wf}' has no agent defined",
         }
 
-    # Extract human input text from the resume command. A bare resume
-    # (no feedback text) maps to the BARE_RESUME_INPUT sentinel so the
-    # human_gate interceptor (issue #506) recognizes this run as
-    # human-triggered and lets the re-run's advance pass the gate.
-    human_input = normalize_resume_input(extract_resume_command(trigger_body))
+    # Human input for the re-run. A bare resume (no feedback text) maps to
+    # the BARE_RESUME_INPUT sentinel so the human_gate interceptor
+    # (issue #506) recognizes this run as human-triggered and lets the
+    # re-run's advance pass the gate.
+    if not human_input:
+        wf_cmd = parse_workflow_command(trigger_body)
+        human_input = normalize_resume_input(
+            wf_cmd.params.get("feedback", "") if wf_cmd is not None else None
+        )
 
     # Copy dispatch parameters from previous state so the step re-runs
     # with the same LLM settings (model, temperature, etc.)
@@ -846,10 +852,11 @@ def _resolve_human_path(
     local_workflows_dir: Optional[str] = None,
     prompt_base: str = "",
     scaffold_branch: Optional[str] = None,
+    workflow_command: Optional[WorkflowCommand] = None,
 ) -> dict:
     """Resolve config for a human-triggered comment.
 
-    Handles force-next-step commands, /workflow commands, and @@mentions.
+    Handles /workflow force-step, /workflow run, and @@mentions.
     Falls back to fetching workflow state from comment history when needed.
 
     Args:
@@ -874,10 +881,16 @@ def _resolve_human_path(
     Returns:
         Config dict with task and config_* variables, or SKIP_AGENT dict.
     """
-    # Check for force-next-step command first (human only)
-    force_next = extract_force_next_command(trigger_body)
-    if force_next:
-        _, target_step = force_next
+    # /workflow force-step step --name <step> (human only). The flag grammar
+    # makes --name required, so the legacy bare-command auto-advance arm is
+    # gone (issue #635).
+    wf_cmd = workflow_command
+    target_step = (
+        wf_cmd.params["name"]
+        if wf_cmd is not None and wf_cmd.action == "force-step"
+        else None
+    )
+    if target_step:
         # Use pre-fetched state, fall back to body, then to comment history
         fs_state = prev_state
         if not fs_state:
@@ -887,7 +900,7 @@ def _resolve_human_path(
         if not fs_state or not fs_state.workflow:
             return {
                 "SKIP_AGENT": "true",
-                "REASON": "force-next-step requires an active workflow (no workflow state found)",
+                "REASON": "force-step requires an active workflow (no workflow state found)",
             }
         # Branch-mounted children (issue #604): fall back to the state's own
         # scaffold_branch when the caller did not pass one.
@@ -897,10 +910,8 @@ def _resolve_human_path(
         if not _SAFE_WF_NAME_RE.match(config_workflow):
             return {
                 "SKIP_AGENT": "true",
-                "REASON": f"force-next-step: invalid workflow name '{config_workflow}'",
+                "REASON": f"force-step: invalid workflow name '{config_workflow}'",
             }
-        current_step_in_wf = fs_state.step
-        wf_file_force = Path(workflows_dir) / f"{config_workflow}.yaml"
         try:
             wf_file_force = load_workflow_with_dirs(
                 config_workflow, workflows_dir, local_workflows_dir
@@ -909,81 +920,42 @@ def _resolve_human_path(
         except (FileNotFoundError, ValueError) as e:
             return {
                 "SKIP_AGENT": "true",
-                "REASON": f"force-next-step: workflow '{config_workflow}' not found ({e})",
+                "REASON": f"force-step: workflow '{config_workflow}' not found ({e})",
             }
 
-        if target_step:
-            if not _SAFE_WF_NAME_RE.match(target_step):
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": f"force-next-step: invalid target step name '{target_step}'",
-                }
-            # Explicit target step — resolve its shape-aware entry
-            target_step_def = None
-            for step in wf_def.steps:
-                if step.name == target_step:
-                    target_step_def = step
-                    break
-            if target_step_def is None:
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": f"force-next-step: step '{target_step}' not found in workflow '{config_workflow}'",
-                }
-            entry = _resolve_step_entry(
-                target_step_def, wf_def, workflows_dir, prompt_base,
-                scaffold_branch, local_workflows_dir,
-            )
-            if entry.get("skip_reason"):
-                return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
-            return _build_force_next_result(
-                entry, config_step=target_step,
-                config_workflow=config_workflow, fs_state=fs_state,
-            )
-        elif current_step_in_wf:
-            # Auto-advance: find current step and get its .next (skip conditions)
-            current_step_def = None
-            for step in wf_def.steps:
-                if step.name == current_step_in_wf:
-                    current_step_def = step
-                    break
-            if current_step_def is None:
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": f"force-next-step: current step '{current_step_in_wf}' not found in workflow '{config_workflow}'",
-                }
-            if not current_step_def.next:
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": f"force-next-step: current step '{current_step_in_wf}' is terminal (no next step)",
-                }
-            next_step_def = None
-            for step in wf_def.steps:
-                if step.name == current_step_def.next:
-                    next_step_def = step
-                    break
-            if next_step_def is None:
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": f"force-next-step: step '{current_step_in_wf}' references next step '{current_step_def.next}' which does not exist in workflow '{config_workflow}'",
-                }
-            entry = _resolve_step_entry(
-                next_step_def, wf_def, workflows_dir, prompt_base,
-                scaffold_branch, local_workflows_dir,
-            )
-            if entry.get("skip_reason"):
-                return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
-            return _build_force_next_result(
-                entry, config_step=next_step_def.name,
-                config_workflow=config_workflow, fs_state=fs_state,
-            )
-        else:
+        if not _SAFE_WF_NAME_RE.match(target_step):
             return {
                 "SKIP_AGENT": "true",
-                "REASON": "force-next-step: no current step in workflow state",
+                "REASON": f"force-step: invalid target step name '{target_step}'",
             }
+        # Explicit target step — resolve its shape-aware entry
+        target_step_def = None
+        for step in wf_def.steps:
+            if step.name == target_step:
+                target_step_def = step
+                break
+        if target_step_def is None:
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": f"force-step: step '{target_step}' not found in workflow '{config_workflow}'",
+            }
+        entry = _resolve_step_entry(
+            target_step_def, wf_def, workflows_dir, prompt_base,
+            scaffold_branch, local_workflows_dir,
+        )
+        if entry.get("skip_reason"):
+            return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
+        return _build_force_next_result(
+            entry, config_step=target_step,
+            config_workflow=config_workflow, fs_state=fs_state,
+        )
 
-    # Normal /workflow command normalization (human only)
-    wf_name = extract_workflow_command(trigger_body)
+    # /workflow run workflow --name <name> (human only)
+    wf_name = (
+        wf_cmd.params["name"]
+        if wf_cmd is not None and wf_cmd.action == "run"
+        else None
+    )
     wf_resolved = False
     task = ""
     wf_fail_reason = ""

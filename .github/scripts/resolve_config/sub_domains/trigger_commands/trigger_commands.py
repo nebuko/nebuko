@@ -5,7 +5,9 @@ typed value object consumed by the routing cascade in the facade.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
+
+from ..workflow_command.workflow_command import WorkflowCommand
 
 __all__ = ["TriggerCommands"]
 
@@ -17,15 +19,12 @@ class TriggerCommands:
     Attributes:
         is_bot: True if the trigger body looks like a bot comment.
         mention_agent: Last @@mention agent name, or None.
-        workflow_cmd: /workflow <name> command value, or None.
-        force_next: ('force-next-step', target_step_or_none) tuple, or None.
-        resume: /workflow resume input text ("" for bare resume), or None.
+        workflow_command: Parsed /workflow <action> <resource> --flag value
+            command, or None when the first line does not parse as one.
         debug: True if DEBUG=true was found in the body.
     """
 
     is_bot: bool
     mention_agent: Optional[str]
-    workflow_cmd: Optional[str]
-    force_next: Optional[Tuple[str, Optional[str]]]
-    resume: Optional[str]
+    workflow_command: Optional[WorkflowCommand]
     debug: bool
