@@ -10,8 +10,12 @@ Package-by-feature DDD layout:
 # Facade
 from .resolve_config import resolve_config, main
 
-# Domain value object
+# Domain value objects
 from .sub_domains.trigger_commands.trigger_commands import TriggerCommands
+from .sub_domains.workflow_command.workflow_command import (
+    WorkflowCommand,
+    parse_workflow_command,
+)
 
 # Public extraction helpers (backward compat for the old flat module surface)
 from .features.parse_trigger.parse_trigger import (
@@ -19,9 +23,6 @@ from .features.parse_trigger.parse_trigger import (
     has_universal_bot_marker,
     is_plain_mention_trigger,
     extract_mention_agent,
-    extract_workflow_command,
-    extract_force_next_command,
-    extract_resume_command,
     normalize_resume_input,
     BARE_RESUME_INPUT,
     extract_debug_flag,
@@ -47,13 +48,12 @@ __all__ = [
     "resolve_config",
     "main",
     "TriggerCommands",
+    "WorkflowCommand",
+    "parse_workflow_command",
     "is_bot_comment",
     "has_universal_bot_marker",
     "is_plain_mention_trigger",
     "extract_mention_agent",
-    "extract_workflow_command",
-    "extract_force_next_command",
-    "extract_resume_command",
     "normalize_resume_input",
     "BARE_RESUME_INPUT",
     "extract_debug_flag",
