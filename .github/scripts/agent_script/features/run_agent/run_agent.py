@@ -63,6 +63,27 @@ def _ensure_dispatch_tool_registered() -> None:
     _dispatch_tool_registered = True
 
 
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
+_scaffold_branch_tool_registered = False
+
+
+def _ensure_scaffold_branch_tool_registered() -> None:
+    """Register the ``report_scaffold_branch`` ToolDefinition with the SDK registry.
+
+    Idempotent — safe to call on every agent run.
+    """
+    global _scaffold_branch_tool_registered
+    if _scaffold_branch_tool_registered:
+        return
+    from agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
+        ScaffoldBranchReportTool,
+    )
+
+    register_tool("ScaffoldBranchReportTool", ScaffoldBranchReportTool)
+    _scaffold_branch_tool_registered = True
+
+
 def _resolve_security_policy() -> str:
     """Route skills through the system channel; fall back to the SDK default.
 
@@ -177,6 +198,9 @@ def run_agent(
             _ensure_dispatch_tool_registered()
             sdk_tools.append(Tool(name="DispatchNextTool"))
             dispatch_tool_enabled = True
+        elif tool_name == "report_scaffold_branch":
+            _ensure_scaffold_branch_tool_registered()
+            sdk_tools.append(Tool(name="ScaffoldBranchReportTool"))
         else:
             logger.warning(f"Unknown tool '{tool_name}' for agent '{role_name}' — skipping")
 

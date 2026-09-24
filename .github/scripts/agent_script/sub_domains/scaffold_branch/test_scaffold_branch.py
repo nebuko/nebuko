@@ -10,6 +10,7 @@ from agent_script.sub_domains.scaffold_branch.scaffold_branch import (
     extract_scaffold_branch_any,
     scaffold_branch_summary,
     strip_scaffold_branch,
+    validate_scaffold_branch_ref,
 )
 
 
@@ -114,6 +115,55 @@ class TestExtractScaffoldBranchAny:
         result = extract_scaffold_branch_any(None, "SCAFFOLD_BRANCH: feature/1")
         with pytest.raises(FrozenInstanceError):
             result.branch = "other"
+
+    def test_tool_branch_beats_both_markers(self):
+        result = extract_scaffold_branch_any(
+            "SCAFFOLD_BRANCH: feature/issue-1-finish",
+            "SCAFFOLD_BRANCH: feature/issue-1-answer",
+            tool_branch="feature/issue-635-tool",
+        )
+        assert result == ScaffoldBranchResult(
+            branch="feature/issue-635-tool", source="tool"
+        )
+
+    def test_tool_branch_with_no_markers(self):
+        result = extract_scaffold_branch_any(
+            "Short finish note.", "Plain answer.", tool_branch="feature/issue-635-x"
+        )
+        assert result == ScaffoldBranchResult(
+            branch="feature/issue-635-x", source="tool"
+        )
+
+    def test_no_tool_branch_preserves_dual_source_behavior(self):
+        """Regression: without tool_branch the PR #637 2-source
+        precedence is unchanged."""
+        result = extract_scaffold_branch_any(
+            "Short finish note.",
+            "Report.\nSCAFFOLD_BRANCH: feature/issue-635-x\nDone.",
+            tool_branch=None,
+        )
+        assert result == ScaffoldBranchResult(
+            branch="feature/issue-635-x", source="latest_answer"
+        )
+
+
+class TestValidateScaffoldBranchRef:
+    """validate_scaffold_branch_ref: shared ref-validation predicate."""
+
+    def test_valid_refs_accepted(self):
+        for good in ("feature/issue-635-workflow-command", "main", "fix/a-b/c"):
+            assert validate_scaffold_branch_ref(good)
+
+    def test_empty_and_none_rejected(self):
+        assert not validate_scaffold_branch_ref(None)
+        assert not validate_scaffold_branch_ref("")
+
+    def test_leading_dash_rejected(self):
+        assert not validate_scaffold_branch_ref("-main")
+
+    def test_hostile_chars_rejected(self):
+        for bad in ("feature|evil", "<x>", "feature/ok<x>", "a'b", 'a"b', "a|b"):
+            assert not validate_scaffold_branch_ref(bad)
 
 
 class TestStripScaffoldBranch:
