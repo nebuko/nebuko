@@ -199,8 +199,8 @@ def normalize_resume_input(resume_text: Optional[str]) -> str:
     otherwise the stripped human text is returned unchanged.
 
     Args:
-        resume_text: Result of extract_resume_command (may be None when the
-            trigger is not a resume command).
+        resume_text: Raw resume feedback (may be None when the trigger
+            is not a resume command).
 
     Returns:
         Human feedback text, or the sentinel for a bare resume.

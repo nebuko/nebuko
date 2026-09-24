@@ -7,11 +7,8 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 from resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
     build_trigger_commands,
     extract_debug_flag,
-    extract_force_next_command,
     extract_machine_trigger,
     extract_mention_agent,
-    extract_resume_command,
-    extract_workflow_command,
     is_bot_comment,
     is_plain_mention_trigger,
     normalize_resume_input,
@@ -19,6 +16,10 @@ from resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
 )
 from resolve_config.sub_domains.trigger_commands.trigger_commands import (  # noqa: E402
     TriggerCommands,
+)
+from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
+    parse_workflow_command,
+    WorkflowCommand,
 )
 
 
@@ -138,42 +139,6 @@ class TestExtractMachineTrigger:
         assert extract_machine_trigger(body) == ("genius", "1")
 
 
-class TestExtractWorkflowCommand:
-    def test_matches_first_line(self):
-        assert extract_workflow_command("/workflow spec-driven-impl") == "spec-driven-impl"
-
-    def test_ignores_later_lines(self):
-        assert extract_workflow_command("hello\n/workflow default") is None
-
-
-class TestExtractForceNextCommand:
-    def test_bare(self):
-        assert extract_force_next_command("/workflow force-next-step") == (
-            "force-next-step",
-            None,
-        )
-
-    def test_with_target_step(self):
-        assert extract_force_next_command("/workflow force-next-step implement") == (
-            "force-next-step",
-            "implement",
-        )
-
-    def test_not_a_command(self):
-        assert extract_force_next_command("some other command") is None
-
-
-class TestExtractResumeCommand:
-    def test_with_input(self):
-        assert extract_resume_command("/workflow resume fix it") == "fix it"
-
-    def test_bare_returns_empty_string(self):
-        assert extract_resume_command("/workflow resume") == ""
-
-    def test_not_a_command(self):
-        assert extract_resume_command("/workflow default") is None
-
-
 class TestNormalizeResumeInput:
     def test_nonempty_text_preserved(self):
         assert normalize_resume_input("approved") == "approved"
@@ -205,21 +170,22 @@ class TestExtractDebugFlag:
 class TestBuildTriggerCommands:
     def test_bundles_all_fields(self):
         body = (
-            "/workflow default DEBUG=true\n<!-- bot-agent-dev -->\n@@dev fix it"
+            "/workflow run workflow --name default\n"
+            "<!-- bot-agent-dev -->\n@@dev fix it\nDEBUG=true"
         )
         tc = build_trigger_commands(body)
         assert isinstance(tc, TriggerCommands)
         assert tc.is_bot is True
-        assert tc.workflow_cmd == "default"
+        assert tc.workflow_command is not None
+        assert tc.workflow_command.action == "run"
+        assert tc.workflow_command.params == {"name": "default"}
         assert tc.debug is True
         # Bot bodies never yield a mention (issue #478).
         assert tc.mention_agent is None
-        assert tc.force_next is None
-        assert tc.resume is None
 
     def test_plain_body_all_neutral(self):
         tc = build_trigger_commands("nothing here")
         assert tc.is_bot is False
         assert tc.debug is False
         assert tc.mention_agent is None
-        assert tc.workflow_cmd is None
+        assert tc.workflow_command is None
