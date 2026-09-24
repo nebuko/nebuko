@@ -158,15 +158,17 @@ The conversation runs via the async `arun()` API of the OpenHands SDK so that
 a **watchdog** can call `conversation.interrupt()` to cancel the in-flight
 task mid-LLM-call (issue #489). Timeouts are budget-based:
 
-| Knob | Env var | Default |
+| Knob | Env var | Value in this repo |
 |------|---------|---------|
-| Main run budget | `AGENT_SOFT_TIMEOUT_MINUTES` | 110 min |
-| Wind-down budget | `WIND_DOWN_TIMEOUT_MINUTES` | 8 min |
+| GHA hard stop | step `timeout-minutes` | 30 min |
+| Main run budget | `AGENT_SOFT_TIMEOUT_MINUTES` | 20 min |
+| Wind-down budget | `WIND_DOWN_TIMEOUT_MINUTES` | 10 min |
 
 When the soft budget elapses the agent is **not** hard-killed by the GitHub
 Actions timeout: it receives a **wind-down prompt** asking it to conclude its
 work (post its answer, dispatch, and checkpoint any code) within the wind-down
-budget.
+budget. A gracefully timed-out run feeds the recovery-log pipeline, so the
+next run resumes from a fresh session (see ADR-0002, issue #639).
 
 ### Deterministic PR fallback — `ensure_pr`
 
