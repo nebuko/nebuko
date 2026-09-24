@@ -297,15 +297,41 @@ class TestNonEntryEmission:
         assert doc["version"] == POSITION_STATE_VERSION
         assert doc["workflow"] == "dev-review-loop"
 
-    def test_top_level_run_stays_position_less(self, scaffold_dir):
-        """No recorded parent pair (top-level workflow) → v1 position-less."""
+    def test_top_level_run_emits_bare_position(self, scaffold_dir):
+        """No recorded parent pair (top-level workflow) → bare single-ref
+        position, never empty (issue #646)."""
         r = self._build(
             str(scaffold_dir),
             config_workflow="plan-orchestration",
             config_step="scaffold",
         )
-        assert r.get("WORKFLOW_POSITION", "") in ("", None)
-        assert r.get("WORKFLOW_POSITION_PATH", "") in ("", None)
+        assert r["WORKFLOW_POSITION_PATH"] == "plan-orchestration/scaffold"
+        doc = json.loads(r["WORKFLOW_POSITION"])
+        assert doc["version"] == POSITION_STATE_VERSION
+        assert doc["workflow"] == "plan-orchestration"
+        assert doc["step"] == "scaffold"
+        assert doc["refs"] == [
+            {"workflow": "plan-orchestration", "step": "scaffold"}
+        ]
+
+    def test_build_workflow_position_top_level_bare(self, scaffold_dir):
+        """Top-level run (no parent pair): the bare single-ref pair."""
+        pair = build_workflow_position(
+            "plan-orchestration", "scaffold", "", "", str(scaffold_dir),
+        )
+        assert pair["WORKFLOW_POSITION_PATH"] == "plan-orchestration/scaffold"
+        doc = json.loads(pair["WORKFLOW_POSITION"])
+        assert doc["version"] == POSITION_STATE_VERSION
+        assert doc["refs"] == [
+            {"workflow": "plan-orchestration", "step": "scaffold"}
+        ]
+
+    def test_build_workflow_position_no_leaf_stays_empty(self, scaffold_dir):
+        """No leaf resolvable at all → empty pair (positionless)."""
+        pair = build_workflow_position(
+            "", "", "", "", str(scaffold_dir),
+        )
+        assert pair == {"WORKFLOW_POSITION": "", "WORKFLOW_POSITION_PATH": ""}
 
     def test_entry_emission_kept_verbatim(self, scaffold_dir):
         """When the resolver's entry path already emitted a position,
