@@ -1,6 +1,6 @@
 from typing import Optional, Any
 
-from config import POSITION_STATE_VERSION
+from config import POSITION_STATE_VERSION, StepRef, WorkflowPosition
 
 from ...workflow_state import WorkflowState
 from ...sub_domains.issue_info.issue_info import IssueInfo
@@ -10,6 +10,19 @@ from ...sub_domains.state_metrics.state_metrics import StateMetrics
 from ...sub_domains.step_resolution.step_resolution import StepResolution
 from ...sub_domains.dispatch.dispatch import Dispatch
 from ...sub_domains.function_call import FunctionCall
+
+def _position_refs(position: Optional[dict]) -> list[StepRef]:
+    """Normalize a position input to the flat v3 refs list (issue #638).
+
+    Accepts the ``parse_position_env`` block (``to_state_dict`` shape), a
+    refs list, or ``None`` (v1 position-less run) — one reader for every
+    shape the build path can hand over.
+    """
+    if isinstance(position, (list, tuple)):
+        return [StepRef.model_validate(r) for r in position if r]
+    parsed = WorkflowPosition.from_state_dict(position)
+    return parsed.refs if parsed else []
+
 
 def _last_history_value(history: list[HistoryEntry], field: str) -> str:
     """Return the last non-empty value of ``field`` across history entries."""
@@ -91,9 +104,13 @@ def build_state(
         function_call: Imperative agent-to-agent hand-off from the
             AGENT_RUN_CONFIG function_call section (replaced each transition;
             None clears any pending call).
-        position: v2 recursive workflow mount-chain (issue #618), parsed
-            from the WORKFLOW_POSITION env; non-None marks the state as
-            v2-shaped and bumps its version to POSITION_STATE_VERSION.
+        position: v3 flat workflow position (issue #638), parsed from the
+            WORKFLOW_POSITION env via ``parse_position_env`` — the
+            ``WorkflowPosition.to_state_dict()`` block. Non-empty positions
+            are normalized to the flat refs list and recorded on both the new
+            history entry and the state (``history[-1].position == position``
+            invariant); a non-empty position also bumps the state version to
+            POSITION_STATE_VERSION.
 
     Returns:
         A new WorkflowState instance.
@@ -122,6 +139,10 @@ def build_state(
         base_pr = prev_state.pull_request
 
     # Build history entry for the current step
+    # Normalize the position block to the flat v3 refs list (issue #638);
+    # the same refs are recorded on the entry and the state so
+    # history[-1].position == state.position.
+    position_refs = _position_refs(position)
     entry = HistoryEntry(
         step=step,
         agent=agent,
@@ -131,6 +152,7 @@ def build_state(
         pin=pin,
         inject_context=inject_context,
         result=result,
+        position=position_refs,
     )
     new_history = base_history + [entry]
 
@@ -167,15 +189,16 @@ def build_state(
         scaffold_branch if scaffold_branch is not None else base_scaffold_branch
     )
 
-    # State shape version (issue #618): the WORKFLOW_STATE carries a v2
-    # nested ``position`` block when the run executes inside a sub-workflow;
-    # a non-None position marks the v2 shape so the guard/resolver detect it.
-    # ``max`` keeps the counter monotonic (a long workflow that enters a
-    # sub-workflow part-way stays above the v1 baseline). V1 consumers are
-    # unaffected (flat fields keep leaf semantics).
+    # State shape version (issue #638): the WORKFLOW_STATE carries a flat v3
+    # ``position`` refs list when the run executes inside (or on) a
+    # sub-workflow; a non-empty position marks the v3 shape so the
+    # guard/resolver detect it. ``max`` keeps the counter monotonic (a long
+    # workflow that enters a sub-workflow part-way stays above the v1
+    # baseline). V1 consumers are unaffected (flat fields keep leaf
+    # semantics).
     state_version = (
         max(POSITION_STATE_VERSION, base_version + 1)
-        if position is not None
+        if position_refs
         else base_version + 1
     )
 
@@ -203,5 +226,5 @@ def build_state(
         resolution=resolution,
         dispatch=dispatch,
         function_call=function_call,
-        position=position,
+        position=position_refs,
     )

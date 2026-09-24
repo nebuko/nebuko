@@ -40,6 +40,8 @@ from config import (
     is_path_like_reference,
     is_valid_workflow_reference,
     resolve_workflow_reference,
+    StepRef,
+    WorkflowPosition,
 )
 
 try:
@@ -464,38 +466,22 @@ def _position_pair(nodes: list) -> dict:
 
 
 def _position_to_json(nodes: list) -> str:
-    """Serialize a position chain to single-line JSON (issue #618).
+    """Serialize a position chain to single-line JSON (issue #638, v3).
 
     ``nodes`` is an outermost-first list of ``(workflow_name, ref,
     step_name)`` tuples (see :func:`_build_position_chain`). The chain is
-    folded into a nested ``step`` block with the ``version``/leaf aliases
-    mirroring ``WorkflowPosition.to_state_dict`` so the posted
-    ``WORKFLOW_STATE`` carries the full mount chain (the #617 dead-end hid
-    the sub-workflow behind a single flat ``step``). Single-line so it
-    survives the ``KEY=value`` resolver output contract.
+    rendered as the flat v3 state block — ``{"version": 3, "refs": [...],
+    "workflow": <leaf>, "step": <leaf>}`` — mirroring
+    ``WorkflowPosition.to_state_dict`` so the posted ``WORKFLOW_STATE``
+    carries the full mount chain (the #617 dead-end hid the sub-workflow
+    behind a single flat ``step``). Single-line so it survives the
+    ``KEY=value`` resolver output contract.
     """
     if not nodes:
         return ""
-    leaf_name = nodes[-1][0]
-    leaf_step = nodes[-1][2]
-    block: dict = {
-        "version": 2,
-        "workflow_name": leaf_name,
-        "workflow_path": nodes[-1][1],
-        "step_name": leaf_step,
-        "leaf_workflow": leaf_name,
-        "leaf_step": leaf_step,
-    }
-    for name, ref, step in reversed(nodes[:-1]):
-        block = {
-            "version": 2,
-            "workflow_name": name,
-            "workflow_path": ref,
-            "step_name": step,
-            "leaf_workflow": leaf_name,
-            "leaf_step": leaf_step,
-            "step": block,
-        }
+    block = WorkflowPosition(refs=[
+        StepRef(workflow=name, step=step) for name, _, step in nodes
+    ]).to_state_dict()
     return json.dumps(block, separators=(",", ":"))
 
 

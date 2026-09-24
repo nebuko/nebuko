@@ -40,3 +40,67 @@ class TestWorkflowStateSchema(unittest.TestCase):
         self.assertEqual(state.step, "")
         self.assertEqual(state.phase, "")
         self.assertEqual(state.version, 1)
+
+    def test_to_json_round_trip_preserves_position(self):
+        """Populated v3 position + history position survive to_json ->
+        re-validate (issue #638): exclude_defaults must NOT collapse a
+        non-empty refs list — the history[-1].position == position
+        invariant depends on this seam."""
+        import json
+        from config import StepRef
+        from workflow_state.workflow_state import to_json
+
+        refs = [
+            StepRef(workflow="plan-orchestration", step="sub_impl"),
+            StepRef(workflow="dev-review-loop", step="implement"),
+        ]
+        state = WorkflowState(
+            workflow="dev-review-loop",
+            step="implement",
+            agent="dev",
+            position=refs,
+            history=[
+                HistoryEntry(
+                    step="implement", agent="dev",
+                    summary="impl", position=refs,
+                )
+            ],
+        )
+        serialized = to_json(state)
+        # Byte-identical round trip: position + entry position survive.
+        back = WorkflowState.model_validate(json.loads(serialized))
+        self.assertEqual(back.position, refs)
+        self.assertEqual(back.history[-1].position, refs)
+
+    def test_v2_position_migration_does_not_mutate_input_dict(self):
+        """The position migration validator must not destroy the caller's
+        raw dict (issue #638, review fix round 1): a freshly json.load-ed
+        state file must stay json.dumps-able after validation."""
+        import json
+
+        raw = {
+            "workflow": "dev-review-loop",
+            "step": "implement",
+            "agent": "dev",
+            "position": {
+                "version": 2,
+                "workflow": "dev-review-loop",
+                "step": "implement",
+                "workflow_name": "plan-orchestration",
+                "step_name": "sub_impl",
+                "step": {
+                    "workflow_name": "dev-review-loop",
+                    "step_name": "implement",
+                },
+            },
+        }
+        original = json.dumps(raw)
+        state = WorkflowState.model_validate(raw)
+        # Migrated to the flat v3 refs (outermost-first chain walk).
+        self.assertEqual(
+            [(r.workflow, r.step) for r in state.position],
+            [("plan-orchestration", "sub_impl"),
+             ("dev-review-loop", "implement")],
+        )
+        # Caller's dict untouched — still serializes to the same payload.
+        self.assertEqual(json.dumps(raw), original)
