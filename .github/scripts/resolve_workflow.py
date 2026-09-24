@@ -595,14 +595,25 @@ def build_workflow_position(
     Rebuilds the mount chain from the *leaf* the run actually executes,
     walking back up through intermediate first-steps anchored on the
     recorded parent pair, and returns the ``WORKFLOW_POSITION``/
-    ``WORKFLOW_POSITION_PATH`` pair (empty strings when the run is
-    top-level). The resolver's own entry-path emission is kept verbatim
-    when present — this helper exists so the linear steps *inside* a
-    sub-workflow (and every other non-entry resolution path) post the
-    same full chain instead of ``position=None``.
+    ``WORKFLOW_POSITION_PATH`` pair. Position is universal (issue #646):
+    top-level runs emit the single bare ref; empty strings only when no
+    leaf is resolvable at all. The resolver's own entry-path emission is
+    kept verbatim when present — this helper exists so the linear steps
+    *inside* a sub-workflow (and every other non-entry resolution path)
+    post the same full chain instead of ``position=None``.
     """
-    if not (leaf_name and parent_workflow):
+    if not leaf_name:
         return {"WORKFLOW_POSITION": "", "WORKFLOW_POSITION_PATH": ""}
+    if not parent_workflow:
+        # Top-level run (issue #646): the bare single-ref position is the
+        # run's canonical address — never empty.
+        bare = WorkflowPosition.bare(leaf_name, leaf_step)
+        return {
+            "WORKFLOW_POSITION": json.dumps(
+                bare.to_state_dict(), separators=(",", ":")
+            ),
+            "WORKFLOW_POSITION_PATH": f"{leaf_name}/{leaf_step}",
+        }
     fetch_cache: dict = {}
     # Anchor the chain on the parent pair (outermost recorded level) and
     # descend first steps until the leaf workflow/step pair is reached.

@@ -31,6 +31,7 @@ from workflow_state import (
     extract_dispatch_from_state,
     to_git_comment,
 )
+from config import POSITION_STATE_VERSION
 from workflow_state.features.comment.to_git_comment import (
     collapse_sections,
     strip_state_section,
@@ -88,7 +89,9 @@ class TestBuildState(unittest.TestCase):
 
     def test_initial_state(self):
         state = build_state(None, workflow="default", step="analyze", agent="genius")
-        self.assertEqual(state.version, 1)
+        # issue #646: position is universal → every built state is at least
+        # the v3 shape.
+        self.assertEqual(state.version, POSITION_STATE_VERSION)
         self.assertEqual(state.workflow, "default")
         self.assertEqual(state.step, "analyze")
         self.assertEqual(state.agent, "genius")
@@ -109,7 +112,7 @@ class TestBuildState(unittest.TestCase):
             agent="ctx",
             summary="Collected files",
         )
-        self.assertEqual(next_state.version, 2)
+        self.assertEqual(next_state.version, POSITION_STATE_VERSION + 1)
         self.assertEqual(len(next_state.history), 2)
         self.assertEqual(next_state.history[0].summary, "Analyzed request")
         self.assertEqual(next_state.history[1].summary, "Collected files")
@@ -488,6 +491,11 @@ class TestExtractState(unittest.TestCase):
         state = self._make_state(version)
         return wrap_comment_with_state(state, "Some agent message content")
 
+    def _expected_version(self, runs: int) -> int:
+        """issue #646: first build_state hits the v3 floor, each subsequent
+        chained build adds +1 → POSITION_STATE_VERSION + (runs - 1)."""
+        return POSITION_STATE_VERSION + runs - 1
+
     def test_no_comments_returns_none(self):
         self.assertIsNone(extract_state([]))
 
@@ -500,7 +508,7 @@ class TestExtractState(unittest.TestCase):
         comments = [{"id": 100, "body": body}]
         state = extract_state(comments)
         self.assertIsNotNone(state)
-        self.assertEqual(state.version, 3)
+        self.assertEqual(state.version, self._expected_version(3))
         self.assertEqual(state.agent, "test")
 
     def test_multiple_comments_returns_last_with_state(self):
@@ -514,7 +522,7 @@ class TestExtractState(unittest.TestCase):
         ]
         state = extract_state(comments)
         self.assertIsNotNone(state)
-        self.assertEqual(state.version, 2)  # Last one wins
+        self.assertEqual(state.version, self._expected_version(2))  # Last one wins
 
     def test_mixed_comments_skips_non_state(self):
         body_v1 = self._make_state_body(version=1)
@@ -528,7 +536,7 @@ class TestExtractState(unittest.TestCase):
         ]
         state = extract_state(comments)
         self.assertIsNotNone(state)
-        self.assertEqual(state.version, 5)
+        self.assertEqual(state.version, self._expected_version(5))
 
     def test_empty_body_does_not_crash(self):
         comments = [{"id": 1, "body": ""}]
@@ -553,7 +561,7 @@ class TestExtractState(unittest.TestCase):
         ]
         state = extract_state(comments)
         self.assertIsNotNone(state)
-        self.assertEqual(state.version, 3)
+        self.assertEqual(state.version, self._expected_version(3))
 
 
 class TestIssueInfo(unittest.TestCase):

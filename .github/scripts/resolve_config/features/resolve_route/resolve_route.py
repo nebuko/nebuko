@@ -516,11 +516,8 @@ def resolve_position(
     def _bare(step_label: str = step_name) -> "WorkflowPosition":
         # Current position as the final ref — descent stops here (unknown
         # step, non-mount step, unresolvable ref, or a bound hit).
-        return WorkflowPosition(
-            refs=[StepRef(
-                workflow=getattr(wf_def, "name", "") or step_label,
-                step=step_label,
-            )]
+        return WorkflowPosition.bare(
+            getattr(wf_def, "name", "") or step_label, step_label
         )
 
     step = _find_step(wf_def, step_name)

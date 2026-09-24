@@ -189,18 +189,12 @@ def build_state(
         scaffold_branch if scaffold_branch is not None else base_scaffold_branch
     )
 
-    # State shape version (issue #638): the WORKFLOW_STATE carries a flat v3
-    # ``position`` refs list when the run executes inside (or on) a
-    # sub-workflow; a non-empty position marks the v3 shape so the
-    # guard/resolver detect it. ``max`` keeps the counter monotonic (a long
-    # workflow that enters a sub-workflow part-way stays above the v1
-    # baseline). V1 consumers are unaffected (flat fields keep leaf
+    # State shape version (issue #638, universalized in #646): position is
+    # now written on every run — top-level runs carry the bare single ref —
+    # so the state is always at least the v3 shape. ``max`` keeps the
+    # counter monotonic. V1 consumers are unaffected (flat fields keep leaf
     # semantics).
-    state_version = (
-        max(POSITION_STATE_VERSION, base_version + 1)
-        if position_refs
-        else base_version + 1
-    )
+    state_version = max(POSITION_STATE_VERSION, base_version + 1)
 
     # Invariant: step/agent must not be silently dropped when a previous value
     # is recoverable (issue #458: empty WORKFLOW_STEP env produced states whose

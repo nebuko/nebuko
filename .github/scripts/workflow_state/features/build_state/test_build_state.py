@@ -4,13 +4,16 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 from workflow_state import WorkflowState, build_state, go_next
+from config import POSITION_STATE_VERSION
 
 class TestBuildState(unittest.TestCase):
     """Test build_state() pure state-transition function."""
 
     def test_initial_state(self):
         state = build_state(None, workflow="default", step="analyze", agent="genius")
-        self.assertEqual(state.version, 1)
+        # issue #646: position is universal → every built state is at least
+        # the v3 shape.
+        self.assertEqual(state.version, POSITION_STATE_VERSION)
         self.assertEqual(state.workflow, "default")
         self.assertEqual(state.step, "analyze")
         self.assertEqual(state.agent, "genius")
@@ -31,7 +34,7 @@ class TestBuildState(unittest.TestCase):
             agent="ctx",
             summary="Collected files",
         )
-        self.assertEqual(next_state.version, 2)
+        self.assertEqual(next_state.version, POSITION_STATE_VERSION + 1)
         self.assertEqual(len(next_state.history), 2)
         self.assertEqual(next_state.history[0].summary, "Analyzed request")
         self.assertEqual(next_state.history[1].summary, "Collected files")

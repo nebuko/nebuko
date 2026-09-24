@@ -21,10 +21,11 @@ def _attach_position(
     workflows_dir: str,
     local_workflows_dir: Optional[str],
 ) -> dict:
-    """Centralized v2 position emission (issue #618, review fix for defect 3).
+    """Centralized position emission (issue #618, review fix for defect 3).
 
-    Every agent result inside or entering a sub-workflow must carry the
-    full mount chain — the resolver's own entry path already does (keep it
+    Every agent result carries a position (issue #646: universal) —
+    sub-workflow runs the full mount chain, top-level runs the bare
+    single ref. The resolver's own entry path already emits it (keep it
     verbatim for exact fidelity), so only non-entry results are rebuilt
     here from the leaf pair + the recorded parent pair.
     """
@@ -34,8 +35,8 @@ def _attach_position(
     leaf_wf = result.get("WORKFLOW_NAME", "")
     leaf_step = result.get("WORKFLOW_STEP", "")
     parent_wf = result.get("PARENT_WORKFLOW", "")
-    if not (leaf_wf and parent_wf):
-        # Top-level workflow (no parent pair) or no leaf — v1 position-less.
+    if not leaf_wf:
+        # No leaf resolvable — nothing to address (stays position-less).
         return result
     pair = build_workflow_position(
         leaf_wf, leaf_step, parent_wf,
