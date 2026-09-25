@@ -4,7 +4,7 @@ providers:
     api_url: "https://openrouter.ai/api/v1/chat/completions"
     api_token_env: "OPENROUTER_API_KEY"
   local_vllm:
-    api_url: "http://192.168.1.64:31728/v1"
+    api_url: "http://192.168.1.64:30080/v1"
     api_token_env: "LOCAL_VLLM_API_TOKEN"
 
 # ── LLMs: model paths referencing providers ──
