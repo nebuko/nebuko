@@ -1007,6 +1007,148 @@ def resolve_sub_workflow_entry(
     )
 
 
+def _immediate_parent_from_history(
+    history,
+    current_workflow: str,
+    recorded_parent_wf: str,
+    recorded_parent_step: str,
+) -> Optional[tuple[str, str]]:
+    """Recover the *immediate* parent pair from the state history (issue #657).
+
+    The flat parent-pair state records the outermost level only (issue #609
+    "prefer-outer" entry design), so in a 3-level chain
+    (``plan-orchestration -> tmp-impl -> dev-review-loop``) the intermediate
+    level (``tmp-impl/step_N``) is not on record. The history carries the full
+    position stack per executed step (issue #638), so an entry whose stack ends
+    in the current workflow and still contains the recorded pair pins that
+    intermediate level at ``stack[-2]``.
+
+    Returns the most recent such pair when it differs from the recorded
+    (outermost) one; ``None`` otherwise, so the caller keeps today's
+    recorded-pair behavior (also the behavior when no pair is recorded).
+    """
+    if not history or not current_workflow:
+        return None
+    if not (recorded_parent_wf and recorded_parent_step):
+        return None
+    recorded = (recorded_parent_wf, recorded_parent_step)
+    immediate: Optional[tuple[str, str]] = None
+    for entry in history:
+        stack = list(getattr(entry, "position", None) or [])
+        if len(stack) < 2 or stack[-1].workflow != current_workflow:
+            continue
+        # Only trust a stack that also carries the recorded outer pair: it
+        # proves the entry belongs to this nesting, not a stale run of the
+        # same reusable child under a different parent.
+        if not any((ref.workflow, ref.step) == recorded for ref in stack):
+            continue
+        parent_ref = stack[-2]
+        pair = (parent_ref.workflow, parent_ref.step)
+        if pair != recorded:
+            immediate = pair
+    return immediate
+
+
+def _load_workflow_by_name(
+    workflow_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> Optional[WorkflowDefinition]:
+    """Load a workflow by its declared ``name`` via a recursive file scan.
+
+    The state history records a workflow's declared name (issue #657), which
+    :func:`_load_workflow_by_reference` cannot resolve when the workflow is
+    mounted only through a path-like reference — e.g. a branch-mounted
+    ``tmp_impl/workflow.yaml`` declaring ``name: tmp-impl``. Scans the same
+    directories (and subdirectories) as :func:`_find_outer_parent`. Returns
+    ``None`` when no file declares that name.
+    """
+    if not workflow_name:
+        return None
+    bases = [Path(workflows_dir)]
+    if local_workflows_dir:
+        bases.append(Path(local_workflows_dir))
+    seen: set[str] = set()
+    for base in bases:
+        if not base.exists():
+            continue
+        for wf_file in sorted(base.rglob("*.yaml")) + sorted(base.rglob("*.yml")):
+            key = str(wf_file.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                wf = load_workflow(str(wf_file))
+            except (FileNotFoundError, ValueError):
+                continue
+            if wf.name == workflow_name:
+                return wf
+    return None
+
+
+def _return_marker_for_immediate_parent(
+    immediate_pair: tuple[str, str],
+    recorded_reference: str,
+    branch_key: Optional[str],
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
+) -> Optional[dict]:
+    """Return-to-parent marker anchored on the immediate parent level
+    (issue #657).
+
+    The flat parent-pair state records the outermost level only (issue #609
+    prefer-outer design), so for a nested child (``outer -> mid -> leaf``) the
+    recorded pair skips the intermediate mount — the exit would resume the
+    outer level instead of advancing the plan one step. Anchored on the
+    immediate level, the mount step's ``next`` is honored instead, and a
+    sub-workflow ``next`` re-enters the child carrying the immediate pair as
+    the new parent. Returns ``None`` when the marker cannot be built (the
+    immediate level is terminal or unloadable) so the caller falls back to the
+    recorded-pair marker — never worse than today's behavior.
+    """
+    immediate_wf_name, immediate_step_name = immediate_pair
+    immediate_wf = _load_workflow_by_reference(
+        immediate_wf_name, workflows_dir, local_workflows_dir
+    ) or _load_workflow_by_name(
+        immediate_wf_name, workflows_dir, local_workflows_dir
+    )
+    if immediate_wf is None:
+        return None
+    immediate_step = _find_workflow_step(immediate_wf, immediate_step_name)
+    if immediate_step is None:
+        return None
+    target_name = _match_condition(immediate_step, branch_key or "")
+    if target_name is None:
+        target_name = immediate_step.next
+    if target_name is None:
+        return None
+    target_step = _find_workflow_step(immediate_wf, target_name)
+    if target_step is None:
+        return None
+    if target_step.workflow or target_step.path or target_step.repo:
+        # The immediate parent's next step mounts the child again: re-enter it
+        # with the immediate pair as the recorded parent (issue #609 descent).
+        marker = _sub_workflow_entry_marker(
+            target_step.workflow or target_step.path or target_step.repo,
+            immediate_wf, target_step, workflows_dir, local_workflows_dir,
+            scaffold_branch,
+        )
+        if marker is None:
+            return None
+    else:
+        marker = {
+            "exited_sub_workflow": True,
+            "task": target_step.agent,
+            "step": target_step.name,
+            "workflow": recorded_reference,
+        }
+    effective_branch = _branch_key_for(immediate_step, branch_key or "")
+    if effective_branch:
+        marker["branch"] = effective_branch
+    return marker
+
+
 def _find_workflow_step(workflow: WorkflowDefinition, step_name: str) -> Optional[WorkflowStep]:
     """Find a step by name within a loaded workflow."""
     return next((s for s in workflow.steps if s.name == step_name), None)
@@ -1632,6 +1774,8 @@ def _return_to_parent_on_terminal(
     agent_hint: Optional[str],
     local_workflows_dir: Optional[str] = None,
     scaffold_branch: Optional[str] = None,
+    history: Optional[list] = None,
+    current_workflow: str = "",
 ) -> Optional[dict]:
     """Exit to the parent when a sub-workflow cannot advance internally.
 
@@ -1639,8 +1783,23 @@ def _return_to_parent_on_terminal(
     step is missing. Returns the parent's next step after the sub-workflow
     reference, or falls back to ``agent_hint`` / ``None`` when no parent is
     set (overall terminal).
+
+    When ``history`` reveals an *immediate* parent deeper than the recorded
+    (outermost) pair, the exit is anchored there first (issue #657) so a
+    nested plan advances one step at a time instead of skipping to the outer
+    level's successor. The recorded-pair marker stays the fallback.
     """
     if parent_workflow and parent_workflow_step:
+        immediate = _immediate_parent_from_history(
+            history, current_workflow, parent_workflow, parent_workflow_step,
+        )
+        if immediate is not None:
+            marker = _return_marker_for_immediate_parent(
+                immediate, parent_workflow, branch_result, workflows_dir,
+                local_workflows_dir, scaffold_branch,
+            )
+            if marker is not None:
+                return marker
         parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir, local_workflows_dir)
         if parent_wf is not None:
             marker = _return_to_parent_marker(
@@ -1664,6 +1823,7 @@ def resolve_next_from_workflow(
     parent_workflow_step: str = "",
     local_workflows_dir: Optional[str] = None,
     scaffold_branch: Optional[str] = None,
+    history: Optional[list] = None,
 ) -> Optional[dict]:
     """Resolve the next step in a workflow given the current step.
 
@@ -1693,6 +1853,9 @@ def resolve_next_from_workflow(
         scaffold_branch: Branch carrying a branch-mounted child workflow;
             enables fetch-on-miss for children absent from the local checkout
             (issue #604).
+        history: Executed-step history entries; their position stacks let a
+            terminal child recover its *immediate* parent level, which the flat
+            parent pair does not carry (issue #657).
 
     Returns:
         ``{"task", "step"}`` for linear routing, ``{"task", "step", "branch"}``
@@ -1733,18 +1896,11 @@ def resolve_next_from_workflow(
 
     # Terminal step: return to parent when inside a sub-workflow
     if _is_terminal_step(current_step):
-        if parent_workflow and parent_workflow_step:
-            parent_wf = _load_workflow_by_reference(parent_workflow, workflows_dir, local_workflows_dir)
-            if parent_wf is not None:
-                marker = _return_to_parent_marker(
-                    parent_wf, parent_workflow_step, branch_result, parent_workflow,
-                    workflows_dir, local_workflows_dir, scaffold_branch,
-                )
-                if marker is not None:
-                    return marker
-        if agent_hint:
-            return {"task": agent_hint}
-        return None
+        return _return_to_parent_on_terminal(
+            parent_workflow, parent_workflow_step, branch_result, workflows_dir,
+            agent_hint, local_workflows_dir, scaffold_branch,
+            history=history, current_workflow=workflow.name,
+        )
 
     # Resolve target step name
     target_step_name: Optional[str] = None
@@ -1785,6 +1941,7 @@ def resolve_next_from_workflow(
         return _return_to_parent_on_terminal(
             parent_workflow, parent_workflow_step, branch_result, workflows_dir, agent_hint,
             local_workflows_dir, scaffold_branch,
+            history=history, current_workflow=workflow.name,
         )
 
     # Look up target step to get its agent
