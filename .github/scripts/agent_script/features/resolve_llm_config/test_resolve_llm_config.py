@@ -282,5 +282,127 @@ agents:
             self._resolve(self.ENV)
 
 
+class TestComplexityOverrideRouting(unittest.TestCase):
+    """resolve_llm_config() applies per-agent complexity overrides."""
+
+    CONFIG_TEMPLATE = """\
+providers:
+  base_provider:
+    api_url: "http://base/v1"
+    api_token_env: "BASE_LLM_API_KEY"
+  high_provider:
+    api_url: "http://high/v1"
+    api_token_env: "HIGH_LLM_API_KEY"
+llms:
+  base-model:
+    model_path: "test/base-model"
+    provider: ${providers.base_provider}
+    default_temperature: 0.7
+  high-model:
+    model_path: "test/high-model"
+    provider: ${providers.high_provider}
+agents:
+  dev:
+    model: ${llms.base-model}
+    temperature: 0.7
+    prompt_file: "dev.md"
+    complexity_overrides:
+      low:
+        temperature: 0.0
+      high:
+        model: ${llms.high-model}
+        temperature: 0.9
+        reasoning: "xhigh"
+        top_p: 0.8
+"""
+
+    def setUp(self):
+        self._env_keys = [
+            "LLM_REASONING",
+            "BASE_LLM_API_KEY",
+            "HIGH_LLM_API_KEY",
+            "LLM_MODEL",
+            "CONFIG_MODEL",
+            "CONFIG_COMPLEXITY",
+            "CONFIG_TEMPERATURE",
+            "CONFIG_TOP_P",
+            "CONFIG_TOP_K",
+            "AGENT_CONFIG_PATH",
+            "ROLE_NAME",
+        ]
+        self._saved = {k: os.environ.get(k) for k in self._env_keys}
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        with open(self._config_path, "w") as f:
+            f.write(self.CONFIG_TEMPLATE)
+        os.environ["BASE_LLM_API_KEY"] = "base-key"
+        os.environ["HIGH_LLM_API_KEY"] = "high-key"
+        os.environ["ROLE_NAME"] = "dev"
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
+        for k in (
+            "LLM_REASONING",
+            "CONFIG_MODEL",
+            "CONFIG_COMPLEXITY",
+            "CONFIG_TEMPERATURE",
+            "CONFIG_TOP_P",
+            "CONFIG_TOP_K",
+        ):
+            os.environ.pop(k, None)
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _resolve(self, complexity=None):
+        if complexity is not None:
+            os.environ["CONFIG_COMPLEXITY"] = complexity
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+        return cfg
+
+    def test_high_tier_model_override(self):
+        cfg = self._resolve(complexity="high")
+        self.assertEqual(cfg["model"], "test/high-model")
+        self.assertEqual(cfg["base_url"], "http://high/v1")
+        self.assertEqual(cfg["api_key"], "high-key")
+
+    def test_high_tier_temperature_override(self):
+        cfg = self._resolve(complexity="high")
+        self.assertEqual(cfg["temperature"], 0.9)
+
+    def test_low_tier_temperature_override(self):
+        cfg = self._resolve(complexity="low")
+        self.assertEqual(cfg["temperature"], 0.0)
+
+    def test_medium_tier_falls_back_to_base(self):
+        cfg = self._resolve(complexity="medium")
+        self.assertEqual(cfg["model"], "test/base-model")
+        # base 0.7 vs medium floor 0.1 -> floor never lowers it
+        self.assertEqual(cfg["temperature"], 0.7)
+
+    def test_reasoning_override_applied_when_unset(self):
+        cfg = self._resolve(complexity="high")
+        kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
+        self.assertEqual(kwargs["reasoning_effort"], "xhigh")
+
+    def test_explicit_reasoning_wins_over_override(self):
+        os.environ["LLM_REASONING"] = "low"
+        cfg = self._resolve(complexity="high")
+        kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
+        self.assertEqual(kwargs["reasoning_effort"], "low")
+
+    def test_config_top_p_env_wins_over_override(self):
+        os.environ["CONFIG_TOP_P"] = "0.5"
+        cfg = self._resolve(complexity="high")
+        self.assertEqual(cfg["litellm_extra_body"]["top_p"], 0.5)
+
+    def test_override_top_p_wins_over_base(self):
+        cfg = self._resolve(complexity="high")
+        self.assertEqual(cfg["litellm_extra_body"]["top_p"], 0.8)
+
+
 if __name__ == "__main__":
     unittest.main()

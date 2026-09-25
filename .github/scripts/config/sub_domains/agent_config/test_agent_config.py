@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 from config import ProviderConfig, LLMConfig, AgentConfig, load_config
@@ -113,3 +114,40 @@ class TestAgentConfig:
         ]
 
         os.unlink(f.name)
+
+    def test_complexity_overrides_default_empty(self):
+        """AgentConfig defaults complexity_overrides to an empty dict."""
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        agent = AgentConfig(
+            model=llm,
+            prompt_file=".agents/prompts/genius.md",
+        )
+        assert agent.complexity_overrides == {}
+
+    def test_complexity_overrides_accepts_tiers(self):
+        """AgentConfig accepts low/medium/high tier overrides."""
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        agent = AgentConfig(
+            model=llm,
+            prompt_file=".agents/prompts/genius.md",
+            complexity_overrides={
+                "low": {"temperature": 0.0},
+                "high": {"temperature": 0.9, "reasoning": "xhigh"},
+            },
+        )
+        assert set(agent.complexity_overrides) == {"low", "high"}
+        assert agent.complexity_overrides["high"].reasoning == "xhigh"
+        assert agent.complexity_overrides["high"].temperature == 0.9
+
+    def test_complexity_overrides_rejects_invalid_tier(self):
+        """An unknown tier key (not low/medium/high) is rejected by Literal validation."""
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        with pytest.raises(ValidationError):
+            AgentConfig(
+                model=llm,
+                prompt_file=".agents/prompts/genius.md",
+                complexity_overrides={"critical": {"temperature": 0.9}},
+            )
