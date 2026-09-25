@@ -51,7 +51,7 @@ backward compatibility.
 ```yaml
 providers:
   openrouter:
-    api_url: "https://openrouter.ai/api/v1/chat/completions"
+    api_url: "https://openrouter.ai/api/v1"
     api_token_env: "OPENROUTER_API_KEY"
   local_vllm:
     # api_url may also be an env var name (resolved at load time):
@@ -180,7 +180,7 @@ providers:
 # ── Layer 1: Providers — API endpoints + auth env var name ──
 providers:
   openrouter:
-    api_url: "https://openrouter.ai/api/v1/chat/completions"
+    api_url: "https://openrouter.ai/api/v1"
     api_token_env: "OPENROUTER_API_KEY"
 
 # ── Layer 2: LLMs — models referencing providers, with sampling params ──

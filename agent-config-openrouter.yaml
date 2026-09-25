@@ -15,7 +15,7 @@ llms:
   
   glm-5_3-flash:
     model_path: "openrouter/z-ai/glm-5.3-flash"
-    provider: ${provider.openrouter}
+    provider: "${providers.openrouter}"
   
   claude-sonnet-5:
     model_path: "openrouter/anthropic/claude-sonnet-5"
@@ -34,14 +34,14 @@ agents:
     tools: ["think", "finish", "dispatch_next"]
 
   dev:
-    model: "${llms.deepseek-V4_1-flash}"
+    model: "${llms.deepseek-v4_1-flash}"
     temperature: 0.1
     prompt_file: ".agents/prompts/dev.md"
     skills: ["posting-contract"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch"]
 
   ctx:
-    model: "${llms.deepseek-V4_1-flash}"
+    model: "${llms.deepseek-v4_1-flash}"
     temperature: 0.1
     prompt_file: ".agents/prompts/ctx.md"
     skills: ["call-agent", "posting-contract"]
@@ -55,31 +55,31 @@ agents:
     tools: ["think", "finish", "dispatch_next"]
 
   issue:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.deepseek-v4_1-flash}"
     prompt_file: ".agents/prompts/issue.md"
     skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
 
   issue-reviewer:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.deepseek-v4_1-flash}"
     prompt_file: ".agents/prompts/issue-reviewer.md"
     skills: ["posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
 
   summarize:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.deepseek-v4_1-flash}"
     prompt_file: ".agents/prompts/summarize.md"
     skills: ["posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
 
   debug:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.deepseek-v4_1-flash}"
     prompt_file: ".agents/prompts/debug.md"
     skills: ["posting-contract"]
     tools: ["terminal", "file_editor", "think", "finish", "dispatch_next"]
 
   po:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.deepseek-v4_1-flash}"
     prompt_file: ".agents/prompts/po.md"
     skills: ["posting-contract"]
     tools: ["think", "finish", "dispatch_next"]

@@ -73,7 +73,7 @@ working example with 3 agents:
 ```yaml
 providers:
   openrouter:
-    api_url: "https://openrouter.ai/api/v1/chat/completions"
+    api_url: "https://openrouter.ai/api/v1"
     api_token_env: "OPENROUTER_API_KEY"
 
 llms:
