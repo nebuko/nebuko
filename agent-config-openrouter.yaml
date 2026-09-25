@@ -34,7 +34,7 @@ agents:
     tools: ["think", "finish", "dispatch_next"]
     complexity_overrides:
       - high:
-          model_ref: "${llms.claude-sonnet-5}"
+          model: "${llms.claude-sonnet-5}"
 
   dev:
     model: "${llms.deepseek-v4_1-flash}"
