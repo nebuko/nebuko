@@ -15,6 +15,14 @@ from resolve_workflow import (
 __all__ = ["_build_result"]
 
 
+def _delete_task_summary(delete_comments: dict) -> str:
+    """Human-readable ``TASK`` label for the delete-comments command (#644)."""
+    issue = delete_comments.get("issue")
+    from_id = delete_comments.get("from_id")
+    scope = f"from {from_id}" if from_id else "all"
+    return f"Delete comments on issue {issue} ({scope})"
+
+
 def _attach_position(
     result: dict,
     config: dict,
@@ -74,7 +82,7 @@ def _build_result(
     delete_comments = config.get("delete_comments")
     if delete_comments:
         delete_result = {
-            "TASK": "",
+            "TASK": _delete_task_summary(delete_comments),
             "ROLE_NAME": "script",
             "AGENT_SELECTED": "false",
             "SKIP_AGENT": "true",

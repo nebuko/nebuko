@@ -95,3 +95,29 @@ class TestBuildResult:
         finally:
             if os.path.exists("/tmp/step_prompt.md"):
                 os.unlink("/tmp/step_prompt.md")
+
+    def test_delete_comments_emits_contract_all_scope(self):
+        # Issue #644: the delete arm renders the DELETE_COMMENTS env contract
+        # with a human-readable TASK and no agent selected.
+        prompt_base, workflows_dir = _make_dirs()
+        result = _build_result(
+            {"task": "", "delete_comments": {"issue": 123, "from_id": ""}},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["DELETE_COMMENTS"] == "true"
+        assert result["DELETE_COMMENTS_ISSUE"] == "123"
+        assert result["DELETE_COMMENTS_FROM"] == ""
+        assert result["TASK"] == "Delete comments on issue 123 (all)"
+        assert result["AGENT_SELECTED"] == "false"
+        assert result["SKIP_AGENT"] == "true"
+
+    def test_delete_comments_from_scope_in_task_summary(self):
+        prompt_base, workflows_dir = _make_dirs()
+        result = _build_result(
+            {"task": "", "delete_comments": {"issue": 123, "from_id": "5811583860"}},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["DELETE_COMMENTS_FROM"] == "5811583860"
+        assert result["TASK"] == "Delete comments on issue 123 (from 5811583860)"

@@ -690,6 +690,75 @@ class TestForceNextStepIntegration(unittest.TestCase):
         self.assertEqual(result["TASK"], "ctx")
 
 
+class TestDeleteCommentsCommand(unittest.TestCase):
+    """Human `/workflow delete comments` arm (issue #644).
+
+    The command is human-only and emits the ``DELETE_COMMENTS`` env contract
+    with no agent selected. ``--issue`` is optional on the issue surface and
+    defaults to the invoking issue number.
+    """
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        return prompt_base, workflows_dir
+
+    def _resolve(self, body, issue_number=None):
+        prompt_base, workflows_dir = self._setup_dirs()
+        return resolve_config(
+            body, prompt_base, workflows_dir, is_bot=False,
+            issue_number=issue_number,
+        )
+
+    def test_explicit_issue_emits_contract(self):
+        result = self._resolve("/workflow delete comments --issue 123")
+        self.assertEqual(result["DELETE_COMMENTS"], "true")
+        self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "123")
+        self.assertEqual(result["DELETE_COMMENTS_FROM"], "")
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["AGENT_SELECTED"], "false")
+        self.assertEqual(result["TASK"], "Delete comments on issue 123 (all)")
+
+    def test_issue_defaults_to_invoking_issue(self):
+        result = self._resolve("/workflow delete comments", issue_number=456)
+        self.assertEqual(result["DELETE_COMMENTS"], "true")
+        self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "456")
+
+    def test_explicit_issue_wins_over_invoking_issue(self):
+        result = self._resolve(
+            "/workflow delete comments --issue 789", issue_number=456
+        )
+        self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "789")
+
+    def test_from_id_passes_through(self):
+        result = self._resolve(
+            "/workflow delete comments --issue 123 --from 5811583860"
+        )
+        self.assertEqual(result["DELETE_COMMENTS_FROM"], "5811583860")
+        self.assertEqual(
+            result["TASK"], "Delete comments on issue 123 (from 5811583860)"
+        )
+
+    def test_non_numeric_issue_treated_as_absent(self):
+        result = self._resolve("/workflow delete comments --issue abc", issue_number=456)
+        self.assertNotIn("DELETE_COMMENTS", result)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+
+    def test_non_numeric_from_treated_as_absent(self):
+        result = self._resolve("/workflow delete comments --from abc", issue_number=456)
+        self.assertNotIn("DELETE_COMMENTS", result)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+
+    def test_bot_trigger_does_not_route_to_delete(self):
+        result = self._resolve(
+            "<!-- bot-workflow-terminal -->\n/workflow delete comments --issue 123"
+        )
+        self.assertNotIn("DELETE_COMMENTS", result)
+
+
 class TestForceNextStepSubWorkflow(unittest.TestCase):
     """force-next-step must run a step regardless of its shape (issue #599).
 
