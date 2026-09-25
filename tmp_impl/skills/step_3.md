@@ -1,0 +1,21 @@
+# Step 3: Deletion script module — delete_comments.py + DeleteCommentsResult + tests
+
+## Instructions
+
+Create `.github/scripts/features/delete_comments/delete_comments.py` — deterministic deletion executor, no LLM/agent. It reads an env contract (like `features/run_script/run_script.py` precedent): `DELETE_COMMENTS_REPO` (owner/repo; fall back to `GITHUB_REPOSITORY`), `DELETE_COMMENTS_ISSUE` (int, required), `DELETE_COMMENTS_FROM` (int or empty). Materialize the Object Design Contract 1:1: `@dataclass(frozen=True) class DeleteCommentsResult: repo: str; issue: int; from_id: Optional[int]; deleted: int; skipped: Tuple[int, ...]; errors: Tuple[str, ...]` and functions `list_comment_ids(repo: str, issue: int) -> List[int]  # @stub-protected`, `delete_comments_from(repo: str, issue: int, from_id: Optional[int]) -> DeleteCommentsResult  # @stub-protected`, `main() -> int  # @stub-protected`. Implementation: (a) `list_comment_ids`: `gh api --paginate -H Accept:application/vnd.github+json /repos/{repo}/issues/{issue}/comments --jq '.[].id'` — ascending order, numeric ids only. Reuse the `gh` subprocess plumbing conventions of `.github/scripts/agent_script/sub_domains/github_client/github_client.py` (`_gh_cli`/`_run`/`_resolve_token` pattern) — import if the module is importable from this location, otherwise replicate the minimal `_run`/token pattern locally. Requires GH_TOKEN with issues:write. (b) `delete_comments_from`: list ids, filter `id >= from_id` (all when from_id is None); for each: `gh api --method DELETE /repos/{repo}/issues/comments/{id}`; HTTP 204 → deleted += 1; HTTP 404 → append to skipped (already gone — do NOT abort); any other failure → append a message to errors and STOP the batch. Return the DeleteCommentsResult. (c) `main`: validate the env contract (missing/non-numeric issue → write a clear failure message to stdout, exit non-zero per the run_script failure-result convention: artifacts still written, job continues to posting); run the deletion; render a human summary (e.g. `Deleted N comment(s) on issue X [from Y]. Skipped M already-gone. Errors: …` or the all-clear text); write `final_message.txt` (+ `workflow_state.json` if that is the convention in this repo's posting pipeline — follow exactly what `run_script.py` writes so the prepare → bot-marker → post chain runs untouched); exit 0. (d) Tests in a new test file next to the module (or where the repo places feature-module tests): full scope (from_id=None deletes all), partial scope (ids >= from only, ids < from untouched), 404 → skipped and batch continues, non-404 error → batch stops with partial result, empty issue (no comments) → deleted=0, contract validation errors. Mock the `gh` subprocess (subprocess layer only — test the real filtering/result logic). Run the new test suite; all must pass.
+
+## Expected outcome
+
+- `.github/scripts/features/delete_comments/delete_comments.py` exists with the `DeleteCommentsResult` frozen dataclass (exact fields above) and the three `# @stub-protected` functions, following the `run_script.py` env-contract + posting-pipeline conventions.
+- Deletion semantics: `id >= from_id` (all when omitted); 204 → deleted; 404 → skipped (no abort); other error → stop the batch with a partial result.
+- New test file covers: full scope, partial scope, 404-skip-continue, non-404-stop, empty issue, contract validation errors. All tests pass.
+
+## Relevant files
+
+- `.github/scripts/features/run_script/run_script.py` — the script-step executor precedent: env-contract reading (`read_config`), bounded failure-result convention, `final_message.txt` / `workflow_state.json` artifacts for the posting pipeline. Mirror its conventions exactly.
+- `.github/scripts/agent_script/sub_domains/github_client/github_client.py` — existing `gh` subprocess plumbing (`_gh_cli` lines 45–65, `_run` 68–85, `_resolve_token` 22–42); comment helpers are read-only today (no delete helper exists yet).
+- Test file location: follow the repo convention for feature-module tests (e.g. `.github/scripts/test_run_script_executor.py` pattern).
+
+## Verification
+
+Run the new delete_comments test suite; all tests must pass. Also confirm the module's env contract keys (`DELETE_COMMENTS_REPO`/`ISSUE`/`FROM`) match what the step 2 resolver arm emits.
