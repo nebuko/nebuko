@@ -1,9 +1,10 @@
 """Agent configuration entity."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from ..agent_complexity_override.agent_complexity_override import AgentComplexityOverride
 from ..llm_config.llm_config import LLMConfig
 
 
@@ -26,3 +27,5 @@ class AgentConfig(BaseModel):
     presence_penalty: Optional[float] = None
     repetition_penalty: Optional[float] = None
     stop_sequences: Optional[list[str]] = None
+    # Per-complexity-tier overrides (complexity -> partial agent override)
+    complexity_overrides: dict[Literal["low", "medium", "high"], AgentComplexityOverride] = Field(default_factory=dict)  # @stub-protected
