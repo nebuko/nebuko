@@ -463,6 +463,20 @@ agents:
         self.assertNotIn("input_cost_per_token", cfg)
         self.assertNotIn("output_cost_per_token", cfg)
 
+    def test_partial_prices_leave_keys_absent(self):
+        """Only one price set must not enable custom pricing — the SDK needs both."""
+        cfg = self._resolve("2.0", "null")
+        self.assertNotIn("input_cost_per_token", cfg)
+        self.assertNotIn("output_cost_per_token", cfg)
+
+    def test_forwarded_keys_are_valid_sdk_llm_fields(self):
+        """Guard against a typo breaking ``LLM(**llm_config)`` at runtime."""
+        from openhands.sdk import LLM
+
+        cfg = self._resolve("2.0", "8.0")
+        for key in ("input_cost_per_token", "output_cost_per_token"):
+            self.assertIn(key, LLM.model_fields)
+
 
 if __name__ == "__main__":
     unittest.main()

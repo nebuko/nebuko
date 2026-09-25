@@ -4,12 +4,9 @@ import os
 
 from openhands.sdk import get_logger
 
-logger = get_logger(__name__)
+from agent_script.sub_domains.metrics.cost import CostRates
 
-# Operator-configured `input_price`/`output_price` are expressed per million
-# tokens (the industry convention used in agent-config.yaml); the SDK's
-# telemetry expects a per-token cost.
-TOKENS_PER_MILLION = 1_000_000
+logger = get_logger(__name__)
 
 # Qwen3.8 flexible-thinking vocabulary, delivered via chat_template_kwargs.
 REASONING_EFFORT_VALUES = ("xhigh", "medium", "low")
@@ -183,18 +180,24 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         llm_config["temperature"] = temperature
 
     # ── Per-token pricing ────────────────────────────────────────
-    # Normalize the per-million operator price to a per-token cost and flow it
-    # into LLM(**llm_config) so the SDK can compute session cost (LiteLLM
-    # custom_cost_per_token). Keys are omitted when unset so LiteLLM's built-in
-    # model-map pricing still applies.
-    if agent_cfg and agent_cfg.model_ref.input_price is not None:
-        input_cost_per_token = agent_cfg.model_ref.input_price / TOKENS_PER_MILLION
-        llm_config["input_cost_per_token"] = input_cost_per_token
-        logger.info(f"Input price: {agent_cfg.model_ref.input_price} per M tokens")
-    if agent_cfg and agent_cfg.model_ref.output_price is not None:
-        output_cost_per_token = agent_cfg.model_ref.output_price / TOKENS_PER_MILLION
-        llm_config["output_cost_per_token"] = output_cost_per_token
-        logger.info(f"Output price: {agent_cfg.model_ref.output_price} per M tokens")
+    # Normalize the per-million operator prices to per-token costs and flow
+    # them into LLM(**llm_config) so the SDK can compute session cost (LiteLLM
+    # custom_cost_per_token). CostRates yields nothing unless *both* prices are
+    # set — the SDK ignores custom pricing when only one key is present — and
+    # keys are omitted entirely when unset so LiteLLM's built-in model-map
+    # pricing still applies.
+    if agent_cfg is not None:
+        rates = CostRates.from_prices(
+            agent_cfg.model_ref.input_price, agent_cfg.model_ref.output_price
+        )
+        if rates is not None:
+            llm_config["input_cost_per_token"] = rates.input_per_token
+            llm_config["output_cost_per_token"] = rates.output_per_token
+            logger.info(
+                f"Per-token pricing set from config prices "
+                f"(input={agent_cfg.model_ref.input_price}, "
+                f"output={agent_cfg.model_ref.output_price} per M tokens)"
+            )
 
     # ── Thinking parameters (litellm_extra_body) ─────────────────
     # Qwen3.x flexible thinking rides chat_template_kwargs, not the
