@@ -12,7 +12,10 @@ materialized 3-level nested workflows dir:
 observable. Case 1 pins the *correct* routing for the captured issue-#657
 state (review approved on plan step 1 → re-enter the plan at
 ``tmp-impl/step_2`` → ``dev-review-loop/implement``) instead of returning to
-the outermost parent (``plan-orchestration/sub_clean``).
+the outermost parent (``plan-orchestration/sub_clean``). A further case pins
+the round-2 unwind: a terminal review at ``tmp-impl/step_2`` must resume the
+outermost parent's successor (``plan-orchestration/sub_clean``) rather than
+end the run.
 
 Debug hook (quick replay of any captured state):
 
@@ -184,6 +187,43 @@ def _step2_implement_expected() -> dict:
     }
 
 
+def _round2_state() -> dict:
+    """State after the plan was re-entered at ``tmp-impl/step_2``.
+
+    The recorded parent pair is now the intermediate level; the position
+    stacks carry the full ``plan-orchestration -> tmp-impl -> dev-review-loop``
+    nesting, so the terminal review must unwind one level outward to the
+    outermost parent's successor (``plan-orchestration/sub_clean``).
+    """
+    state = _load_fixture(ISSUE657_REVIEW_APPROVED)
+    state["parent_workflow"] = "tmp-impl"
+    state["parent_workflow_step"] = "step_2"
+    state["position"] = [
+        {"workflow": "plan-orchestration", "step": "sub_impl"},
+        {"workflow": "tmp-impl", "step": "step_2"},
+        {"workflow": "dev-review-loop", "step": "review"},
+    ]
+    state["history"] = [
+        {
+            "step": "implement", "agent": "dev", "summary": "",
+            "position": [
+                {"workflow": "plan-orchestration", "step": "sub_impl"},
+                {"workflow": "tmp-impl", "step": "step_2"},
+                {"workflow": "dev-review-loop", "step": "implement"},
+            ],
+        },
+        {
+            "step": "review", "agent": "review", "summary": "",
+            "position": [
+                {"workflow": "plan-orchestration", "step": "sub_impl"},
+                {"workflow": "tmp-impl", "step": "step_2"},
+                {"workflow": "dev-review-loop", "step": "review"},
+            ],
+        },
+    ]
+    return state
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -225,6 +265,25 @@ class TestFullStateRouting:
         assert result["WORKFLOW_NAME"] == "dev-review-loop"
         assert result["WORKFLOW_STEP"] == "implement"
         assert "sub_clean" not in result.get("WORKFLOW_POSITION_PATH", "")
+
+    def test_issue657_step2_review_approved_unwinds_to_cleanup(
+        self, nested_workflows_dir: Path, prompt_base: str,
+    ):
+        """Terminal review at tmp-impl/step_2 must unwind to plan-orchestration/sub_clean."""
+        case = _issue657_case(
+            name=ISSUE657_REVIEW_APPROVED + "_step2",
+            state=_round2_state(),
+            workflows_dir=nested_workflows_dir,
+            expected={},
+        )
+        result = run_case(case, prompt_base)
+        assert result["TASK"] == "dev"
+        assert result["WORKFLOW_NAME"] == "plan-orchestration"
+        assert result["WORKFLOW_STEP"] == "sub_clean"
+        assert result["STEP_SKILLS"] == "plan-cleanup"
+        assert result.get("WORKFLOW_POSITION_PATH", "").endswith(
+            "plan-orchestration/sub_clean"
+        )
 
 
 # ---------------------------------------------------------------------------
