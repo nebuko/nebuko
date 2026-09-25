@@ -27,7 +27,7 @@ llms:
 #        think, finish (built-in defaults)
 agents:
   genius:
-    model: "${llms.claude-sonnet-6}"
+    model: "${llms.claude-sonnet-5}"
     temperature: 0.4
     prompt_file: ".agents/prompts/genius.md"
     skills: ["call-agent", "posting-contract"]
