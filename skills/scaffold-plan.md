@@ -45,10 +45,7 @@ You are in plan-scaffolding mode for a branch-mounted dynamic plan workflow (iss
    - Relevant file context (which files to read/modify for this step).
 5. **Commit** with message: `chore: scaffold plan workflow for issue #N`
 6. **Push** to the branch.
-7. **Report the pushed branch name** as a machine-readable marker on its own line in your final answer (issue #604 — the engine persists it as `scaffold_branch` so later runs can fetch `tmp_impl/workflow.yaml` from this branch):
-   ```
-   SCAFFOLD_BRANCH: feature/issue-{N}-{short-name}
-   ```
+7. **Report the pushed branch to the engine** by calling the `report_scaffold_branch` tool **immediately after pushing**, with the exact pushed branch name as the `branch` argument (issue #636 — the engine persists it as `scaffold_branch` so later runs can fetch `tmp_impl/workflow.yaml` from this branch). Call it **once**, before `dispatch_next`. If the tool returns a validation error, correct the ref and re-call. Do NOT rely on printing a `SCAFFOLD_BRANCH:` marker in your answer — that prose marker is only parsed as a legacy fallback for older runs.
 8. **Dispatch**: end your message with — **no `agent` field, no self `function_call`** (the engine resolves the next step from the workflow definition; a self-hand-off re-triggers the same-agent guard, issue #618):
    ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->

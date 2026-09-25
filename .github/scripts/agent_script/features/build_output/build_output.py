@@ -43,7 +43,7 @@ from agent_script.sub_domains.split_plan.split_plan import (
     split_plan_summary,
 )
 from agent_script.sub_domains.scaffold_branch.scaffold_branch import (
-    extract_scaffold_branch,
+    extract_scaffold_branch_any,
     scaffold_branch_summary,
     strip_scaffold_branch,
 )
@@ -60,6 +60,10 @@ from agent_script.features.ensure_pr.ensure_pr import (
 from agent_script.features.dispatch_next_tool import (
     clear_run,
     get_recorded_dispatch,
+)
+from agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
+    clear_scaffold_branch_run,
+    get_recorded_scaffold_branch,
 )
 
 logger = get_logger(__name__)
@@ -682,16 +686,6 @@ def build_output(
     # ── Final response ───────────────────────────────────────────
     final_message = get_agent_final_response(conversation.state.events)
 
-    # ── Scaffold branch marker (issue #604) ──────────────────────
-    # Extracted before build_state so the value can be persisted this run.
-    # (None when pre-extracted by the caller; otherwise extracted here.)
-    if scaffold_branch is None:
-        scaffold_branch = extract_scaffold_branch(final_message)
-        if scaffold_branch is None and final_message and "SCAFFOLD_BRANCH:" in final_message:
-            # Marker present but malformed — warn, never crash the run.
-            logger.warning("SCAFFOLD_BRANCH marker found but is malformed; not persisted")
-            scaffold_branch = None
-
     # ── Latest-answer capture (issue #522) ────────────────────────
     # The full deliverable is the agent's last text answer; the finish
     # message remains the status note used for dispatch/summary below.
@@ -702,11 +696,41 @@ def build_output(
     # keeps the FULL event stream: the recall turn is exactly where the
     # missing dispatch decision is supplied, and hiding it would
     # re-introduce the stall.
+    # The file write is deferred until after SCAFFOLD_BRANCH stripping
+    # (issue #636) so the persisted answer contains clean text.
     run_outcome = _get_run_outcome(conversation)
     latest_answer = extract_latest_answer(
         _recall_aware_events(conversation.state.events, run_outcome)
     )
-    _write_latest_answer_file(latest_answer)
+
+    # ── Scaffold branch marker (issue #604; dual-source since #636) ─
+    # The marker contract targets the agent's latest answer, but the
+    # finish message is checked first to preserve #604 behavior. A
+    # malformed marker in one source never blocks a valid marker in
+    # the other. Extracted before build_state so the value can be
+    # persisted this run.
+    # (None when pre-extracted by the caller; otherwise extracted here.)
+    if scaffold_branch is None:
+        # Primary source: the report_scaffold_branch tool registry (validated
+        # at call time by the executor). Marker parsing stays as fallback so
+        # legacy/in-flight runs keep working (issue #636).
+        tool_branch = get_recorded_scaffold_branch(
+            getattr(conversation, "id", None)
+        )
+        result = extract_scaffold_branch_any(
+            final_message, latest_answer, tool_branch=tool_branch
+        )
+        scaffold_branch = result.branch
+        if scaffold_branch:
+            logger.info(
+                f"SCAFFOLD_BRANCH persisted from {result.source}: {scaffold_branch}"
+            )
+        elif "SCAFFOLD_BRANCH:" in (final_message or "") or "SCAFFOLD_BRANCH:" in (
+            latest_answer or ""
+        ):
+            # Marker present but malformed in every source — warn, never
+            # crash the run.
+            logger.warning("SCAFFOLD_BRANCH marker found but is malformed; not persisted")
 
     # ── Graceful timeout handling (issue #489) ────────────────────
     is_graceful_timeout = (
@@ -767,6 +791,7 @@ def build_output(
     # build_output runs exactly once per agent run, so this must not leak into
     # the next run in a long-lived process.
     clear_run(getattr(conversation, "id", None))
+    clear_scaffold_branch_run(getattr(conversation, "id", None))
 
     # ── Human gate intercept (issue #506) ────────────────────────
     # The trigger source is the sole authorization: a resume-triggered run
@@ -826,12 +851,24 @@ def build_output(
         _save_split_plan(split_plan_json)
         final_message = _replace_split_plan_with_summary(final_message, split_plan_json)
 
-    # ── Scaffold branch marker (issue #604) ──────────────────────
+    # ── Scaffold branch marker strip (issue #604; #636) ──────────
+    # Strip the raw marker from both the posted comment and the
+    # latest-answer file so users never see it. The summary line
+    # replaces a stripped marker — when the branch came from the
+    # report_scaffold_branch tool (no marker in the prose), there is
+    # nothing to strip and nothing to append.
     if scaffold_branch:
+        marker_in_prose = (
+            "SCAFFOLD_BRANCH:" in (final_message or "")
+            or "SCAFFOLD_BRANCH:" in (latest_answer or "")
+        )
+        latest_answer = strip_scaffold_branch(latest_answer)
         final_message = strip_scaffold_branch(final_message)
-        if final_message:
+        if marker_in_prose and final_message:
             final_message = final_message.rstrip() + f"\n\n{scaffold_branch_summary(scaffold_branch)}\n"
         logger.info(f"Persisted scaffold_branch={scaffold_branch}")
+
+    _write_latest_answer_file(latest_answer)
 
     # ── Message splitting ────────────────────────────────────────
     # ctx reports are posted as a single collapsed comment (issue #557):
