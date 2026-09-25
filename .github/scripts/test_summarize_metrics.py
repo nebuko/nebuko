@@ -21,6 +21,7 @@ from summarize_metrics import (
     generate_agent_summary_table,
     generate_model_summary_table,
     format_number,
+    format_cost,
     get_agent_display_name,
     AGENT_DISPLAY_NAMES,
     _merge_per_tool_dict,
@@ -122,6 +123,7 @@ class TestMetricsSchema(unittest.TestCase):
                 "file_editor": {"input": 500, "output": 250, "cache_hit": 50, "reasoning": 25},
             },
             review_fix_requests=2,
+            cost=0.0123,
         )
 
     def test_to_dict_roundtrip(self):
@@ -146,6 +148,7 @@ class TestMetricsSchema(unittest.TestCase):
         self.assertEqual(restored.errors_per_tool, original.errors_per_tool)
         self.assertEqual(restored.tokens_per_tool, original.tokens_per_tool)
         self.assertEqual(restored.review_fix_requests, original.review_fix_requests)
+        self.assertEqual(restored.cost, original.cost)
 
     def test_from_dict_with_missing_optional_fields(self):
         """from_dict should handle missing optional fields gracefully."""
@@ -170,6 +173,7 @@ class TestMetricsSchema(unittest.TestCase):
         m = Metrics.from_dict(minimal_dict)
         self.assertEqual(m.run_id, "test")
         self.assertEqual(m.review_fix_requests, 0)
+        self.assertEqual(m.cost, 0.0)
         self.assertIsNone(m.error)
 
     def test_from_dict_with_error_field(self):
@@ -233,7 +237,7 @@ class TestMetricsSchema(unittest.TestCase):
         # Verify dict has all expected keys
         expected_keys = {
             "run_id", "model_name", "agent_role", "input_tokens", "output_tokens",
-            "max_context_window", "complexity", "tool_call_latency_ms", "agent_runtime_ms",
+            "max_context_window", "cost", "complexity", "tool_call_latency_ms", "agent_runtime_ms",
             "agent_runtimes_per_call_ms", "nb_tool_calls", "tool_call_error_rate",
             "start_time", "end_time", "tool_calls_per_tool", "errors_per_tool",
             "tokens_per_tool", "review_fix_requests", "dispatch_recall_count",
@@ -246,7 +250,8 @@ class TestAggregateByModel(unittest.TestCase):
 
     def _make_metric(self, model, input_tokens=100, output_tokens=50,
                      latency=1000.0, tool_calls=5, error_rate=0.0,
-                     review_fix_requests=0, max_context_window=8192):
+                     review_fix_requests=0, max_context_window=8192,
+                     cost=0.0):
         return Metrics(
             run_id="test-run",
             model_name=model,
@@ -266,6 +271,7 @@ class TestAggregateByModel(unittest.TestCase):
             errors_per_tool={},
             tokens_per_tool={},
             review_fix_requests=review_fix_requests,
+            cost=cost,
         )
 
     def test_single_model_single_run(self):
@@ -345,13 +351,32 @@ class TestAggregateByModel(unittest.TestCase):
         self.assertEqual(result["gpt-4"]["total_input_tokens"], 300)
         self.assertEqual(result["gpt-4"]["total_output_tokens"], 150)
 
+    def test_cost_aggregation_metrics_objects(self):
+        """Cost should sum across runs per model."""
+        metrics = [
+            self._make_metric("gpt-4", cost=0.01),
+            self._make_metric("gpt-4", cost=0.02),
+        ]
+        result = aggregate_by_model(metrics)
+        self.assertAlmostEqual(result["gpt-4"]["total_cost"], 0.03)
+
+    def test_cost_aggregation_legacy_dicts(self):
+        """Legacy dicts without a cost key default to zero."""
+        metrics = [
+            {"model_name": "gpt-4", "cost": 0.5},
+            {"model_name": "gpt-4"},
+        ]
+        result = aggregate_by_model(metrics)
+        self.assertAlmostEqual(result["gpt-4"]["total_cost"], 0.5)
+
 
 class TestAggregateByAgent(unittest.TestCase):
     """Test aggregate_by_agent function."""
 
     def _make_metric(self, agent, input_tokens=100, output_tokens=50,
                      latency=1000.0, tool_calls=5, error_rate=0.0,
-                     review_fix_requests=0, max_context_window=8192):
+                     review_fix_requests=0, max_context_window=8192,
+                     cost=0.0):
         return Metrics(
             run_id="test-run",
             model_name="gpt-4",
@@ -371,6 +396,7 @@ class TestAggregateByAgent(unittest.TestCase):
             errors_per_tool={},
             tokens_per_tool={},
             review_fix_requests=review_fix_requests,
+            cost=cost,
         )
 
     def test_single_agent_single_run(self):
@@ -449,6 +475,24 @@ class TestAggregateByAgent(unittest.TestCase):
         self.assertEqual(result["genius"]["total_input_tokens"], 300)
         self.assertEqual(result["genius"]["total_output_tokens"], 150)
 
+    def test_cost_aggregation_metrics_objects(self):
+        """Cost should sum across runs per agent."""
+        metrics = [
+            self._make_metric("genius", cost=0.01),
+            self._make_metric("genius", cost=0.02),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertAlmostEqual(result["genius"]["total_cost"], 0.03)
+
+    def test_cost_aggregation_legacy_dicts(self):
+        """Legacy dicts without a cost key default to zero."""
+        metrics = [
+            {"agent_role": "dev", "cost": 1.25},
+            {"agent_role": "dev"},
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertAlmostEqual(result["dev"]["total_cost"], 1.25)
+
 
 class TestFormatNumber(unittest.TestCase):
     """Test format_number function."""
@@ -464,6 +508,22 @@ class TestFormatNumber(unittest.TestCase):
 
     def test_zero(self):
         self.assertEqual(format_number(0), "0")
+
+
+class TestFormatCost(unittest.TestCase):
+    """Test format_cost function."""
+
+    def test_zero(self):
+        self.assertEqual(format_cost(0.0), "$0.0000")
+
+    def test_sub_cent_precision(self):
+        self.assertEqual(format_cost(0.0123), "$0.0123")
+
+    def test_thousands_separator(self):
+        self.assertEqual(format_cost(1234.5), "$1,234.5000")
+
+    def test_rounds_to_four_decimals(self):
+        self.assertEqual(format_cost(0.123456), "$0.1235")
 
 
 class TestGenerateSummaryTable(unittest.TestCase):
@@ -565,6 +625,20 @@ class TestGenerateSummaryTable(unittest.TestCase):
         lines = result.split("\n")
         claude_line = [l for l in lines if "claude" in l][0]
         self.assertIn("5.0%", claude_line)
+
+    def test_cost_column_shown(self):
+        result = generate_summary_table(self._make_aggregated())
+        self.assertIn("Cost (USD)", result)
+        # Missing total_cost defaults to $0.0000
+        gpt_line = [l for l in result.split("\n") if "gpt-4" in l][0]
+        self.assertIn("$0.0000", gpt_line)
+
+    def test_totals_includes_cost(self):
+        agg = self._make_aggregated()
+        agg["gpt-4"]["total_cost"] = 0.1234
+        agg["claude"]["total_cost"] = 0.0500
+        result = generate_summary_table(agg)
+        self.assertIn("$0.1734", result)
 
 
 class TestGetAgentDisplayName(unittest.TestCase):
@@ -851,6 +925,28 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         result = generate_agent_summary_table(agg)
         result_str = "\n".join(result)
         self.assertIn("| 0 ", result_str)
+
+    def test_cost_column_and_total(self):
+        """Agent table should include a Cost column and sum costs in totals."""
+        agg = {
+            "genius": {
+                "runs": 1,
+                "total_input_tokens": 100,
+                "total_output_tokens": 50,
+                "total_context_window": 8192,
+                "latency_sum": 1000.0,
+                "llm_runtime_sum": 5000.0,
+                "tool_calls_sum": 5,
+                "error_rate_sum": 0.0,
+                "total_cost": 0.1234,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            }
+        }
+        result_str = "\n".join(generate_agent_summary_table(agg))
+        self.assertIn("Cost (USD)", result_str)
+        self.assertIn("$0.1234", result_str)
 
 
 class TestGenerateModelSummaryTable(unittest.TestCase):
@@ -1313,6 +1409,14 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
             if "Genius" in line or "Ctx" in line:
                 # Should contain error count
                 self.assertTrue(any(c.isdigit() for c in line))
+
+    def test_model_table_cost_column(self):
+        """Model table should include a Cost column populated from total_cost."""
+        agg = self._make_aggregated_with_per_tool()
+        agg["genius"]["total_cost"] = 0.2500
+        result_str = "\n".join(generate_model_summary_table(agg))
+        self.assertIn("Cost (USD)", result_str)
+        self.assertIn("$0.2500", result_str)
 
 
 if __name__ == "__main__":

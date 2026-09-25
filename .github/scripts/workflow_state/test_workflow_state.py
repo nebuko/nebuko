@@ -104,3 +104,21 @@ class TestWorkflowStateSchema(unittest.TestCase):
         )
         # Caller's dict untouched — still serializes to the same payload.
         self.assertEqual(json.dumps(raw), original)
+
+
+class TestStateMetricsCost(unittest.TestCase):
+    """Cost is carried through the compact workflow-state metrics."""
+
+    def test_cost_defaults_to_zero(self):
+        self.assertEqual(StateMetrics().cost, 0.0)
+
+    def test_cost_extracted_from_full_metrics_dict(self):
+        metrics = StateMetrics.from_full_metrics_dict(
+            {"input_tokens": 10, "output_tokens": 5, "cost": 0.1234}
+        )
+        self.assertEqual(metrics.cost, 0.1234)
+
+    def test_cost_defaults_when_absent(self):
+        """Legacy metric dicts without 'cost' still load (backward compat)."""
+        metrics = StateMetrics.from_full_metrics_dict({"input_tokens": 10})
+        self.assertEqual(metrics.cost, 0.0)

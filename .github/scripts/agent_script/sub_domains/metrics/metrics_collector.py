@@ -140,6 +140,10 @@ def collect_llm_metrics(conversation):
             output_tokens = combined_metrics.accumulated_token_usage.completion_tokens
             max_context_window = combined_metrics.accumulated_token_usage.context_window
 
+        # Session cost as computed by the SDK from token usage × pricing
+        # (0.0 when no pricing is available for the model).
+        cost = float(getattr(combined_metrics, "accumulated_cost", 0.0) or 0.0)
+
         # Compute per-tool statistics
         tool_calls_per_tool = _compute_tool_calls_per_tool(conversation)
         errors_per_tool = _compute_errors_per_tool(conversation)
@@ -161,6 +165,7 @@ def collect_llm_metrics(conversation):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             max_context_window=max_context_window,
+            cost=cost,
             complexity=os.environ.get("COMPLEXITY", "N/A"),
             tool_call_latency_ms=tool_call_latency_ms,
             agent_runtime_ms=agent_runtime_ms,

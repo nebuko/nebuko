@@ -404,5 +404,65 @@ agents:
         self.assertEqual(cfg["litellm_extra_body"]["top_p"], 0.8)
 
 
+class TestPriceForwarding(unittest.TestCase):
+    """Config prices (per million tokens) become per-token SDK costs."""
+
+    CONFIG_TEMPLATE = """\
+providers:
+  test_provider:
+    api_url: "http://test/v1"
+    api_token_env: "TEST_LLM_API_KEY"
+llms:
+  test-model:
+    model_path: "test/test-model"
+    provider: ${providers.test_provider}
+    default_temperature: 0.7
+    input_price: @INPUT_PRICE@
+    output_price: @OUTPUT_PRICE@
+agents:
+  dev:
+    model: ${llms.test-model}
+    temperature: 0.7
+    prompt_file: "dev.md"
+"""
+
+    def setUp(self):
+        self._env_keys = ["TEST_LLM_API_KEY", "AGENT_CONFIG_PATH", "ROLE_NAME"]
+        self._saved = {k: os.environ.get(k) for k in self._env_keys}
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        os.environ["TEST_LLM_API_KEY"] = "test-key"
+        os.environ["ROLE_NAME"] = "dev"
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _resolve(self, input_price: str, output_price: str):
+        with open(self._config_path, "w") as f:
+            f.write(
+                self.CONFIG_TEMPLATE
+                .replace("@INPUT_PRICE@", input_price)
+                .replace("@OUTPUT_PRICE@", output_price)
+            )
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+        return cfg
+
+    def test_per_million_prices_normalized_to_per_token(self):
+        cfg = self._resolve("2.0", "8.0")
+        self.assertAlmostEqual(cfg["input_cost_per_token"], 2.0e-6)
+        self.assertAlmostEqual(cfg["output_cost_per_token"], 8.0e-6)
+
+    def test_unset_prices_leave_keys_absent(self):
+        cfg = self._resolve("null", "null")
+        self.assertNotIn("input_cost_per_token", cfg)
+        self.assertNotIn("output_cost_per_token", cfg)
+
+
 if __name__ == "__main__":
     unittest.main()

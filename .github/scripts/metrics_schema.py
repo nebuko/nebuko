@@ -26,6 +26,8 @@ class Metrics:
         input_tokens: Number of input/prompt tokens consumed.
         output_tokens: Number of output/completion tokens generated.
         max_context_window: Peak context window observed during the run (used for KV cache estimation).
+        cost: Total LLM cost for the run in USD, as reported by the SDK
+            (0.0 when the model has no pricing configured).
         complexity: Task complexity level (e.g. "medium", "high").
         tool_call_latency_ms: Average tool call latency in milliseconds.
         agent_runtime_ms: Total agent runtime in milliseconds (sum of all calls).
@@ -49,6 +51,7 @@ class Metrics:
     input_tokens: int = 0
     output_tokens: int = 0
     max_context_window: int = 0
+    cost: float = 0.0
     complexity: str = "N/A"
     tool_call_latency_ms: float = 0.0
     agent_runtime_ms: float = 0.0
