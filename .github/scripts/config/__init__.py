@@ -3,6 +3,7 @@
 # App Config sub-domains
 from .sub_domains.provider_config.provider_config import ProviderConfig
 from .sub_domains.llm_config.llm_config import LLMConfig
+from .sub_domains.agent_complexity_override.agent_complexity_override import AgentComplexityOverride
 from .sub_domains.agent_config.agent_config import AgentConfig
 from .sub_domains.app_config.app_config import AppConfig
 
@@ -38,6 +39,7 @@ __all__ = [
     # App Config entities
     "ProviderConfig",
     "LLMConfig",
+    "AgentComplexityOverride",
     "AgentConfig",
     "AppConfig",
     # Workflow Config entities
