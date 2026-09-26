@@ -752,6 +752,13 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         self.assertNotIn("DELETE_COMMENTS", result)
         self.assertEqual(result["SKIP_AGENT"], "true")
 
+    def test_unicode_digit_issue_treated_as_absent(self):
+        # '²' passes str.isdigit() but int() rejects it; the command must be
+        # treated as absent rather than crashing the resolver (issue #644 review).
+        result = self._resolve("/workflow delete comments --issue ²", issue_number=456)
+        self.assertNotIn("DELETE_COMMENTS", result)
+        self.assertEqual(result["SKIP_AGENT"], "true")
+
     def test_bot_trigger_does_not_route_to_delete(self):
         result = self._resolve(
             "<!-- bot-workflow-terminal -->\n/workflow delete comments --issue 123"
