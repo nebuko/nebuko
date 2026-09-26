@@ -10,7 +10,25 @@ import os
 
 from metrics_schema import Metrics
 
+from agent_script.sub_domains.metrics.cost import CostRates, SessionCost
+
 logger = get_logger(__name__)
+
+
+def _session_cost(combined_metrics, input_tokens, output_tokens, agent_cfg) -> float:
+    """Cost for the session: SDK-reported, else tokens × configured rates."""
+    rates = None
+    if agent_cfg is not None:
+        rates = CostRates.from_prices(
+            agent_cfg.model_ref.input_price, agent_cfg.model_ref.output_price
+        )
+    sdk_reported = float(getattr(combined_metrics, "accumulated_cost", 0.0) or 0.0)
+    return SessionCost(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        rates=rates,
+        sdk_reported_cost=sdk_reported,
+    ).total()
 
 
 def _compute_tool_calls_per_tool(conversation):
@@ -87,12 +105,14 @@ def _compute_tokens_per_tool(combined_metrics):
     return tokens_per_tool
 
 
-def collect_llm_metrics(conversation):
+def collect_llm_metrics(conversation, agent_cfg=None):
     """
     Collect LLM metrics from a conversation after it has completed.
 
     Args:
         conversation: The OpenHands Conversation object
+        agent_cfg: Optional AgentConfig supplying per-million prices for the
+            deterministic cost fallback when the SDK reports no cost.
 
     Returns:
         Metrics: Metrics object containing all collected metrics
@@ -140,6 +160,10 @@ def collect_llm_metrics(conversation):
             output_tokens = combined_metrics.accumulated_token_usage.completion_tokens
             max_context_window = combined_metrics.accumulated_token_usage.context_window
 
+        # Session cost: the SDK's accumulated_cost when it priced the model,
+        # otherwise tokens × configured rates (0.0 only when neither is known).
+        cost = _session_cost(combined_metrics, input_tokens, output_tokens, agent_cfg)
+
         # Compute per-tool statistics
         tool_calls_per_tool = _compute_tool_calls_per_tool(conversation)
         errors_per_tool = _compute_errors_per_tool(conversation)
@@ -161,6 +185,7 @@ def collect_llm_metrics(conversation):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             max_context_window=max_context_window,
+            cost=cost,
             complexity=os.environ.get("COMPLEXITY", "N/A"),
             tool_call_latency_ms=tool_call_latency_ms,
             agent_runtime_ms=agent_runtime_ms,

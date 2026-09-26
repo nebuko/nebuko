@@ -68,7 +68,7 @@ def main():
     conversation = run_agent(llm_config, prompt, args, agent_cfg=agent_cfg)
 
     # 6. Collect metrics
-    metrics = collect_and_save_metrics(conversation)
+    metrics = collect_and_save_metrics(conversation, agent_cfg)
 
     # 7. Build output
     output = build_output(conversation, metrics, args)

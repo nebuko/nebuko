@@ -141,6 +141,7 @@ def aggregate_by_model(all_metrics):
         "runs": 0,
         "total_input_tokens": 0,
         "total_output_tokens": 0,
+        "total_cost": 0.0,
         "total_context_window": 0,
         "latency_sum": 0.0,
         "llm_runtime_sum": 0.0,
@@ -158,6 +159,7 @@ def aggregate_by_model(all_metrics):
             model = m.model_name or "unknown"
             input_tokens = m.input_tokens
             output_tokens = m.output_tokens
+            cost = m.cost
             context_window = m.max_context_window
             latency = m.tool_call_latency_ms
             runtime = m.agent_runtime_ms
@@ -172,6 +174,7 @@ def aggregate_by_model(all_metrics):
             model = m.get("model_name", "unknown")
             input_tokens = m.get("input_tokens", 0)
             output_tokens = m.get("output_tokens", 0)
+            cost = m.get("cost", 0.0)
             context_window = m.get("max_context_window", 0)
             latency = m.get("tool_call_latency_ms", 0.0)
             runtime = m.get("agent_runtime_ms", 0.0)
@@ -186,6 +189,7 @@ def aggregate_by_model(all_metrics):
         agg["runs"] += 1
         agg["total_input_tokens"] += input_tokens
         agg["total_output_tokens"] += output_tokens
+        agg["total_cost"] += cost
         agg["total_context_window"] += context_window
         agg["latency_sum"] += latency
         agg["llm_runtime_sum"] += runtime
@@ -224,6 +228,7 @@ def aggregate_by_agent(all_metrics):
         "runs": 0,
         "total_input_tokens": 0,
         "total_output_tokens": 0,
+        "total_cost": 0.0,
         "total_context_window": 0,
         "latency_sum": 0.0,
         "llm_runtime_sum": 0.0,
@@ -241,6 +246,7 @@ def aggregate_by_agent(all_metrics):
             agent = m.agent_role or "unknown"
             input_tokens = m.input_tokens
             output_tokens = m.output_tokens
+            cost = m.cost
             context_window = m.max_context_window
             latency = m.tool_call_latency_ms
             runtime = m.agent_runtime_ms
@@ -255,6 +261,7 @@ def aggregate_by_agent(all_metrics):
             agent = m.get("agent_role", "unknown")
             input_tokens = m.get("input_tokens", 0)
             output_tokens = m.get("output_tokens", 0)
+            cost = m.get("cost", 0.0)
             context_window = m.get("max_context_window", 0)
             latency = m.get("tool_call_latency_ms", 0.0)
             runtime = m.get("agent_runtime_ms", 0.0)
@@ -269,6 +276,7 @@ def aggregate_by_agent(all_metrics):
         agg["runs"] += 1
         agg["total_input_tokens"] += input_tokens
         agg["total_output_tokens"] += output_tokens
+        agg["total_cost"] += cost
         agg["total_context_window"] += context_window
         agg["latency_sum"] += latency
         agg["llm_runtime_sum"] += runtime
@@ -294,6 +302,11 @@ def format_number(n):
     return f"{n:,}"
 
 
+def format_cost(value):
+    """Format a USD cost with 4 decimals (sub-cent precision)."""
+    return f"${value:,.4f}"
+
+
 def generate_summary_table(aggregated):
     """Generate a markdown table from aggregated metrics."""
     if not aggregated:
@@ -302,18 +315,20 @@ def generate_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Agent Statistics Summary")
     lines.append("")
-    lines.append("| Model | Runs | Input Tokens | Output Tokens | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Avg Error Rate |")
-    lines.append("|-------|------|-------------|---------------|-------------------|------------------|----------------------|----------------|----------------|")
+    lines.append("| Model | Runs | Input Tokens | Output Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Avg Error Rate |")
+    lines.append("|-------|------|-------------|---------------|-----------|-------------------|------------------|----------------------|----------------|----------------|")
 
     grand_runs = 0
     grand_input = 0
     grand_output = 0
+    grand_cost = 0.0
 
     for model in sorted(aggregated.keys()):
         agg = aggregated[model]
         runs = agg["runs"]
         input_tokens = agg["total_input_tokens"]
         output_tokens = agg["total_output_tokens"]
+        cost = agg.get("total_cost", 0.0)
         avg_context_window = agg.get("total_context_window", 0) // runs if runs else 0
         avg_latency = agg["latency_sum"] / runs if runs else 0
         avg_llm_runtime = agg["llm_runtime_sum"] / runs if runs else 0
@@ -325,6 +340,7 @@ def generate_summary_table(aggregated):
             f"| {runs} "
             f"| {format_number(input_tokens)} "
             f"| {format_number(output_tokens)} "
+            f"| {format_cost(cost)} "
             f"| {format_number(avg_context_window)} "
             f"| {avg_latency:.0f} "
             f"| {avg_llm_runtime:.0f} "
@@ -335,12 +351,14 @@ def generate_summary_table(aggregated):
         grand_runs += runs
         grand_input += input_tokens
         grand_output += output_tokens
+        grand_cost += cost
 
     lines.append("")
     lines.append(
         f"**Totals:** {grand_runs} run{'s' if grand_runs != 1 else ''} "
         f"· {format_number(grand_input)} input tokens "
-        f"· {format_number(grand_output)} output tokens"
+        f"· {format_number(grand_output)} output tokens "
+        f"· {format_cost(grand_cost)}"
     )
     lines.append("")
     lines.append(
@@ -358,12 +376,13 @@ def generate_agent_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Agent Statistics Summary")
     lines.append("")
-    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
-    lines.append("|-------|------|-------------|---------------|-------------------|------------------|----------------------|----------------|-------------|--------------|----------------|")
+    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|-----------|-------------------|------------------|----------------------|----------------|-------------|--------------|----------------|")
 
     grand_runs = 0
     grand_input = 0
     grand_output = 0
+    grand_cost = 0.0
 
     # Define a stable sort order for known agents
     agent_order = {"genius": 0, "ctx": 1, "dev": 2}
@@ -373,6 +392,7 @@ def generate_agent_summary_table(aggregated):
         runs = agg["runs"]
         input_tokens = agg["total_input_tokens"]
         output_tokens = agg["total_output_tokens"]
+        cost = agg.get("total_cost", 0.0)
         avg_context_window = agg["total_context_window"] // runs if runs else 0
         avg_latency = agg["latency_sum"] / runs if runs else 0
         avg_llm_runtime = agg["llm_runtime_sum"] / runs if runs else 0
@@ -391,6 +411,7 @@ def generate_agent_summary_table(aggregated):
             f"| {runs} "
             f"| {format_number(input_tokens)} "
             f"| {format_number(output_tokens)} "
+            f"| {format_cost(cost)} "
             f"| {format_number(avg_context_window)} "
             f"| {avg_latency:.0f} "
             f"| {avg_llm_runtime:.0f} "
@@ -403,12 +424,14 @@ def generate_agent_summary_table(aggregated):
         grand_runs += runs
         grand_input += input_tokens
         grand_output += output_tokens
+        grand_cost += cost
 
     lines.append("")
     lines.append(
         f"**Totals:** {grand_runs} run{'s' if grand_runs != 1 else ''} "
         f"· {format_number(grand_input)} input tokens "
-        f"· {format_number(grand_output)} output tokens"
+        f"· {format_number(grand_output)} output tokens "
+        f"· {format_cost(grand_cost)}"
     )
 
     return lines
@@ -422,14 +445,15 @@ def generate_model_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Model Statistics Summary")
     lines.append("")
-    lines.append("| Model | Runs | Input Tokens | Output Tokens | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
-    lines.append("|-------|------|-------------|---------------|-------------------|------------------|----------------------|----------------|-------------|--------------|----------------|")
+    lines.append("| Model | Runs | Input Tokens | Output Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|-----------|-------------------|------------------|----------------------|----------------|-------------|--------------|----------------|")
 
     for model in sorted(aggregated.keys()):
         agg = aggregated[model]
         runs = agg["runs"]
         input_tokens = agg["total_input_tokens"]
         output_tokens = agg["total_output_tokens"]
+        cost = agg.get("total_cost", 0.0)
         avg_context_window = agg["total_context_window"] // runs if runs else 0
         avg_latency = agg["latency_sum"] / runs if runs else 0
         avg_llm_runtime = agg["llm_runtime_sum"] / runs if runs else 0
@@ -446,6 +470,7 @@ def generate_model_summary_table(aggregated):
             f"| {runs} "
             f"| {format_number(input_tokens)} "
             f"| {format_number(output_tokens)} "
+            f"| {format_cost(cost)} "
             f"| {format_number(avg_context_window)} "
             f"| {avg_latency:.0f} "
             f"| {avg_llm_runtime:.0f} "
