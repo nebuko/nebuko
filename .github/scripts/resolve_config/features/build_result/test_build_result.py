@@ -121,3 +121,15 @@ class TestBuildResult:
         )
         assert result["DELETE_COMMENTS_FROM"] == "5811583860"
         assert result["TASK"] == "Delete comments on issue 123 (from 5811583860)"
+
+    def test_delete_comments_zero_from_keeps_scope_label(self):
+        # An explicit "0" from_id is falsy but a real scope; it must not
+        # collapse to "(all)" (issue #644 review observation).
+        prompt_base, workflows_dir = _make_dirs()
+        result = _build_result(
+            {"task": "", "delete_comments": {"issue": 123, "from_id": "0"}},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["DELETE_COMMENTS_FROM"] == "0"
+        assert result["TASK"] == "Delete comments on issue 123 (from 0)"

@@ -184,3 +184,9 @@ class TestParseMalformed:
 
     def test_delete_negative_issue_rejected(self):
         assert parse_workflow_command("/workflow delete comments --issue -5") is None
+
+    def test_delete_unicode_digit_rejected(self):
+        # '²' passes str.isdigit() but int() rejects it; numeric flags must be
+        # ASCII-only so the command is treated as absent (issue #644 review).
+        assert parse_workflow_command("/workflow delete comments --issue ²") is None
+        assert parse_workflow_command("/workflow delete comments --issue 123 --from ²") is None

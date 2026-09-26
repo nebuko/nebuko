@@ -839,6 +839,17 @@ def _build_force_next_result(
         ),
     }
 
+
+def _is_ascii_digits(value: Optional[str]) -> bool:
+    """True when ``value`` is a non-empty ASCII-digit string.
+
+    ``str.isdigit`` accepts non-ASCII digits (e.g. ``'²'``) that ``int()``
+    rejects, so guard the conversion against a resolver crash (issue #644
+    review).
+    """
+    return bool(value) and value.isascii() and value.isdigit()
+
+
 def _resolve_delete_comments(
     wf_cmd: "WorkflowCommand",
     issue_number: Optional[int],
@@ -851,12 +862,20 @@ def _resolve_delete_comments(
     that ``_build_result`` renders as the DELETE_COMMENTS env contract.
     """
     issue = wf_cmd.params.get("issue")
-    if not issue or not issue.isdigit():
+    if issue is not None:
+        # An explicit --issue must be valid ASCII digits; a malformed value
+        # (e.g. the unicode digit '²') makes the command absent rather than
+        # silently falling back to the invoking issue (issue #644 review).
+        if not _is_ascii_digits(issue):
+            return None
+    else:
+        # Omitted --issue: default to the invoking issue ("the issue ID is
+        # added on command invocation").
         issue = str(issue_number) if issue_number else ""
-    if not issue.isdigit():
+    if not _is_ascii_digits(issue):
         return None
     from_id = wf_cmd.params.get("from", "")
-    if from_id and not from_id.isdigit():
+    if from_id and not _is_ascii_digits(from_id):
         return None
     return {
         "task": "",

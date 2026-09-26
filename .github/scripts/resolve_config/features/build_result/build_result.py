@@ -19,7 +19,9 @@ def _delete_task_summary(delete_comments: dict) -> str:
     """Human-readable ``TASK`` label for the delete-comments command (#644)."""
     issue = delete_comments.get("issue")
     from_id = delete_comments.get("from_id")
-    scope = f"from {from_id}" if from_id else "all"
+    # Compare against None/"" (not truthiness) so an explicit "0" keeps its
+    # scope label rather than collapsing to "all".
+    scope = f"from {from_id}" if from_id not in (None, "") else "all"
     return f"Delete comments on issue {issue} ({scope})"
 
 

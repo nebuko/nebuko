@@ -59,6 +59,13 @@ class TestListCommentIds:
         monkeypatch.setattr(dc, "_run", fake)
         assert dc.list_comment_ids("o/r", 1) == [100, 200]
 
+    def test_ignores_non_ascii_digit_lines(self, monkeypatch):
+        # '²' passes str.isdigit() but int() rejects it; such lines must be
+        # dropped rather than crashing (issue #644 review).
+        fake, _ = _fake_run({"--paginate": (0, "100\n²\n200\n", "")})
+        monkeypatch.setattr(dc, "_run", fake)
+        assert dc.list_comment_ids("o/r", 1) == [100, 200]
+
     def test_nonzero_exit_raises(self, monkeypatch):
         fake, _ = _fake_run({"--paginate": (1, "", "HTTP 403: bad creds")})
         monkeypatch.setattr(dc, "_run", fake)
@@ -125,7 +132,7 @@ class TestDeleteCommentsFrom:
         assert result.errors == ()
 
     def test_non404_error_stops_batch_with_partial_result(self, monkeypatch):
-        fake, _ = _fake_run(
+        fake, calls = _fake_run(
             {
                 "--paginate": (0, "100\n200\n300\n", ""),
                 "/issues/comments/200": (1, "", "HTTP 500: boom"),
@@ -137,7 +144,8 @@ class TestDeleteCommentsFrom:
         assert result.deleted == 1  # 100 deleted, then stopped at 200
         assert result.errors and "comment 200" in result.errors[0]
         # 300 must NOT have been attempted after the stop.
-        assert result.skipped == ()
+        delete_calls = [c for c in calls if "--method" in c]
+        assert all(not any("300" in arg for arg in c) for c in delete_calls)
 
     def test_empty_issue_deletes_nothing(self, monkeypatch):
         fake, calls = _fake_run({"--paginate": (0, "", "")})
@@ -214,6 +222,17 @@ class TestReadConfig:
         )
         assert cfg["from_id"] is None
 
+    def test_non_ascii_digit_issue_raises(self):
+        # '²' passes str.isdigit() but int() rejects it; must raise, not crash.
+        with pytest.raises(ValueError, match="DELETE_COMMENTS_ISSUE"):
+            dc.read_config({"DELETE_COMMENTS_REPO": "o/r", "DELETE_COMMENTS_ISSUE": "²"})
+
+    def test_non_ascii_digit_from_ignored(self):
+        cfg = dc.read_config(
+            {"DELETE_COMMENTS_REPO": "o/r", "DELETE_COMMENTS_ISSUE": "7", "DELETE_COMMENTS_FROM": "²"}
+        )
+        assert cfg["from_id"] is None
+
 
 # ── main() end-to-end (artifacts + exit code) ────────────────────────
 
@@ -234,9 +253,17 @@ class TestMain:
         finally:
             os.chdir(old)
 
-    def test_missing_contract_exits_nonzero(self, sandbox):
+    def test_missing_contract_exits_nonzero_with_failure_artifacts(self, sandbox):
+        # A contract error is still a *result*: the failure artifacts must be
+        # written so the posting pipeline surfaces it on the issue
+        # (issue #644 review).
         assert dc.main() == 1
-        assert not os.path.exists("final_message.txt")
+        with open("final_message.txt", encoding="utf-8") as f:
+            assert "Config error" in f.read()
+        with open("workflow_state.json", encoding="utf-8") as f:
+            import json
+
+            assert json.load(f)["dispatch"]["branch"] == "fail"
 
     def test_successful_batch_writes_artifacts(self, sandbox, monkeypatch):
         fake, _ = _fake_run(

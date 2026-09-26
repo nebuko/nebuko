@@ -110,7 +110,7 @@ def list_comment_ids(repo: str, issue: int, token: Optional[str] = None) -> List
     ids: List[int] = []
     for line in (result.stdout or "").splitlines():
         line = line.strip()
-        if line.isdigit():
+        if _is_ascii_digits(line):
             ids.append(int(line))
     return sorted(ids)
 
@@ -161,7 +161,17 @@ def delete_comments_from(
 
 def _is_404(stderr: str) -> bool:
     """True when gh reports an HTTP 404 (comment already gone)."""
-    return "404" in (stderr or "")
+    return "HTTP 404" in (stderr or "")
+
+
+def _is_ascii_digits(value: str) -> bool:
+    """True for non-empty ASCII-digit strings.
+
+    ``str.isdigit`` also accepts non-ASCII digits (e.g. ``'²'``) that ``int()``
+    rejects; restricting numeric input to ASCII prevents an ``int()`` crash
+    (issue #644 review).
+    """
+    return value.isascii() and value.isdigit()
 
 
 # ── Summary rendering ────────────────────────────────────────────────
@@ -191,23 +201,34 @@ def render_summary(result: DeleteCommentsResult) -> str:
 # ── Config & artifacts (mirrors run_script conventions) ──────────────
 
 
+def _state_config(env) -> dict:
+    """State-pipeline fields, resolved without validation.
+
+    Used to write artifacts even when the env contract is invalid, so the GHA
+    posting pipeline still surfaces a failure comment (issue #644 review).
+    """
+    return {
+        "trigger_body": env.get("TRIGGER_BODY", "") or "",
+        "workflow": env.get("WORKFLOW_NAME", "") or "",
+        "step": env.get("WORKFLOW_STEP", "") or "",
+    }
+
+
 def read_config(env) -> dict:
     """Read and validate the delete env contract. Raises ValueError."""
     repo = (env.get("DELETE_COMMENTS_REPO", "") or env.get("GITHUB_REPOSITORY", "")).strip()
     if not repo:
         raise ValueError("DELETE_COMMENTS_REPO (or GITHUB_REPOSITORY) is required")
     issue_raw = (env.get("DELETE_COMMENTS_ISSUE", "") or "").strip()
-    if not issue_raw.isdigit():
+    if not _is_ascii_digits(issue_raw):
         raise ValueError(f"DELETE_COMMENTS_ISSUE must be a positive integer, got {issue_raw!r}")
     from_raw = (env.get("DELETE_COMMENTS_FROM", "") or "").strip()
-    from_id: Optional[int] = int(from_raw) if from_raw.isdigit() else None
+    from_id: Optional[int] = int(from_raw) if _is_ascii_digits(from_raw) else None
     return {
         "repo": repo,
         "issue": int(issue_raw),
         "from_id": from_id,
-        "trigger_body": env.get("TRIGGER_BODY", "") or "",
-        "workflow": env.get("WORKFLOW_NAME", "") or "",
-        "step": env.get("WORKFLOW_STEP", "") or "",
+        **_state_config(env),
     }
 
 
@@ -267,7 +288,13 @@ def main() -> int:
     try:
         config = read_config(os.environ)
     except ValueError as exc:
+        # A contract error is still a *result*, not a crash: write the failure
+        # artifacts so the posting pipeline surfaces it on the issue
+        # (issue #644 review).
         print(f"ERROR: {exc}", file=sys.stderr)
+        message = f"### 🧹 Delete comments — FAILED\n- **Config error:** {exc}"
+        write_final_message(message)
+        write_workflow_state(_state_config(os.environ), "fail")
         return 1
 
     print(

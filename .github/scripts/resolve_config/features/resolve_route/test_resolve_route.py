@@ -339,3 +339,14 @@ class TestResolveDeleteComments:
         # Parser rejects non-numeric upstream; exercise the resolver's guard.
         cmd = WorkflowCommand(action="delete", resource="comments", params={"from": "abc"})
         assert _resolve_delete_comments(cmd, 123) is None
+
+    def test_unicode_digit_issue_returns_none(self):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_delete_comments
+        from resolve_config.sub_domains.workflow_command.workflow_command import (
+            WorkflowCommand,
+        )
+
+        # '²' passes str.isdigit() but int() rejects it; the resolver must
+        # treat the command as absent instead of crashing (issue #644 review).
+        cmd = WorkflowCommand(action="delete", resource="comments", params={"issue": "²"})
+        assert _resolve_delete_comments(cmd, 123) is None

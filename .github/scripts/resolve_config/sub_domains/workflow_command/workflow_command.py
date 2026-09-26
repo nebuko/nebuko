@@ -133,11 +133,21 @@ def parse_workflow_command(trigger_body: str) -> Optional[WorkflowCommand]:
     return WorkflowCommand(action=action, resource=expected_resource, params=params)
 
 
+def _is_ascii_digits(value: str) -> bool:
+    """True for non-empty ASCII-digit strings.
+
+    ``str.isdigit`` also accepts non-ASCII digits (e.g. ``'²'``, ``'١٢٣'``)
+    which ``int()`` then rejects; genuine numeric flags must be ASCII so the
+    downstream ``int()`` conversion can never crash (issue #644 review).
+    """
+    return value.isascii() and value.isdigit()
+
+
 def _numeric_flags_valid(params: Dict[str, str], action: str) -> bool:
     """True unless a numeric-flag value for ``action`` is not all digits."""
     numeric_flags = _NUMERIC_FLAGS_BY_ACTION.get(action, set())
     return all(
-        value.isdigit()
+        _is_ascii_digits(value)
         for flag, value in params.items()
         if flag in numeric_flags
     )
