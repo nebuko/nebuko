@@ -158,6 +158,8 @@ trigger body
 ├─ /workflow resume ────────────────► held step re-run with human input,
 │                                     or advance if no active dispatch
 ├─ /workflow force-next-step <step> ► jump to that step (regardless of state)
+├─ /workflow delete comments ───────► deterministic comment deletion
+│                                     (terminal; no agent runs)
 ├─ /workflow <name> ────────────────► start/switch to workflow <name>
 ├─ @@mention (human, or plain-mention CI trigger)
 │                                    ► run the mentioned agent
