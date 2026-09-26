@@ -330,6 +330,7 @@ def _resolve_dispatch_path(
             parent_workflow_step=parent_wf_step,
             local_workflows_dir=local_workflows_dir,
             scaffold_branch=getattr(prev_state, "scaffold_branch", None),
+            history=prev_state.history,
         )
         if wf_result:
             if wf_result.get("run_script"):
@@ -1220,6 +1221,7 @@ def _resolve_workflow_next_step(
         parent_workflow_step=prev_state.parent_workflow_step or "",
         local_workflows_dir=local_workflows_dir,
         scaffold_branch=prev_state.scaffold_branch,
+        history=prev_state.history,
     )
     if wf_result:
         if wf_result.get("run_script"):
