@@ -4,6 +4,8 @@ import os
 
 from openhands.sdk import get_logger
 
+from agent_script.sub_domains.metrics.cost import CostRates
+
 logger = get_logger(__name__)
 
 # Qwen3.8 flexible-thinking vocabulary, delivered via chat_template_kwargs.
@@ -176,6 +178,26 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
 
     if temperature is not None:
         llm_config["temperature"] = temperature
+
+    # ── Per-token pricing ────────────────────────────────────────
+    # Normalize the per-million operator prices to per-token costs and flow
+    # them into LLM(**llm_config) so the SDK can compute session cost (LiteLLM
+    # custom_cost_per_token). CostRates yields nothing unless *both* prices are
+    # set — the SDK ignores custom pricing when only one key is present — and
+    # keys are omitted entirely when unset so LiteLLM's built-in model-map
+    # pricing still applies.
+    if agent_cfg is not None:
+        rates = CostRates.from_prices(
+            agent_cfg.model_ref.input_price, agent_cfg.model_ref.output_price
+        )
+        if rates is not None:
+            llm_config["input_cost_per_token"] = rates.input_per_token
+            llm_config["output_cost_per_token"] = rates.output_per_token
+            logger.info(
+                f"Per-token pricing set from config prices "
+                f"(input={agent_cfg.model_ref.input_price}, "
+                f"output={agent_cfg.model_ref.output_price} per M tokens)"
+            )
 
     # ── Thinking parameters (litellm_extra_body) ─────────────────
     # Qwen3.x flexible thinking rides chat_template_kwargs, not the
