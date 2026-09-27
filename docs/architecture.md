@@ -104,9 +104,14 @@ Key properties:
 - **Transitions are pure** — `go_next()` / `build_state()` take the previous
   state + inputs and return a *new* `WorkflowState` (Pydantic model); nothing
   is mutated in place.
-- **Pinning** — `pinned_comment_ids` marks comments whose full content should
-  be re-fetched at runtime for high-fidelity context (summaries otherwise keep
-  the context small).
+- **Pinning** — comments whose full content must reach the next agent are
+  injected **verbatim**; every other included comment is injected as a **summary**
+  (or a short excerpt when no summary marker is present). A comment is verbatim
+  when its id is listed in `pinned_comment_ids` **or** it belongs to a history
+  entry with `pin=True`. The retention policy lives in
+  `features/select_history_comments/` (`HistorySelection`); `query_context.py`
+  consumes it when building the `## History` section. Summaries keep the context
+  small (and its cost bounded) while pinned comments preserve high-fidelity text.
 
 ---
 

@@ -60,8 +60,10 @@ This thin wrapper calls the reusable orchestrator from this repository — you
 never vendor the 900-line workflow file itself (zero-copy, see
 [features.md — Remote Workflows](./features.md#remote-workflows-zero-copy)).
 Optional inputs: `runs_on` (default `ubuntu-latest`; e.g. `self-hosted` to use
-your own runners), `summarizer_threshold` (default 100), `python_version`
-(default `3.13`), `enable_uv_cache` (default `true`), `prompt_body`.
+your own runners), `summarizer_threshold` (default 100), `pin_comment` (default
+`false`; pin every agent step output for verbatim context injection),
+`python_version` (default `3.13`), `enable_uv_cache` (default `true`),
+`prompt_body`.
 
 ---
 

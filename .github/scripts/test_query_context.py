@@ -1294,3 +1294,53 @@ class TestBuildHistoryStringPinned:
 
         assert result.index("pinned-one") < result.index("summarized-two")
         assert result.index("summarized-two") < result.index("pinned-three")
+
+
+class TestHistoryRetentionIntegration:
+    """End-to-end retention check for a long thread (issue #617, step 3).
+
+    Simulates the >30-comment case that motivated the feature: only the pinned
+    comments' full bodies should survive into the rendered history; the rest are
+    reduced to summaries/excerpts, keeping the prompt bounded regardless of
+    thread length.
+    """
+
+    def _make_thread(self, total, pinned_ids):
+        comments = []
+        for i in range(total):
+            cid = 1000 + i
+            marker = ""
+            if cid not in pinned_ids and i % 2 == 0:
+                marker = f"<!-- bot-agent-summary -->\nSummary of comment {cid}\n---\n"
+            comments.append(
+                {
+                    "id": cid,
+                    "body": f"{marker}{'B' * 600}TAIL-{cid}",
+                    "user": {"login": "author"},
+                }
+            )
+        return comments
+
+    def test_long_thread_keeps_only_pinned_bodies_plus_summaries(self):
+        """40+ comments: pinned bodies verbatim, non-pinned tail truncated."""
+        from query_context import HISTORY_EXCERPT_CHARS, _build_history_string
+        from workflow_state import WorkflowState
+
+        pinned_ids = [1000, 1001]
+        comments = self._make_thread(total=40, pinned_ids=pinned_ids)
+        state = WorkflowState(pinned_comment_ids=pinned_ids)
+
+        result = _build_history_string(comments, state)
+
+        # Pinned comments keep their full body.
+        assert "TAIL-1000" in result
+        assert "TAIL-1001" in result
+
+        # Non-pinned comments are summarized/excerpted: their tails never appear.
+        for cid in range(1002, 1040):
+            assert f"TAIL-{cid}" not in result
+
+        # Bounded output, well smaller than forwarding all raw bodies.
+        raw_total = sum(len(c["body"]) for c in comments)
+        assert len(result) < raw_total / 2
+        assert len(result) < 40 * HISTORY_EXCERPT_CHARS
