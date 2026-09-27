@@ -18,6 +18,11 @@ on:
         required: false
         type: number
         default: 100
+      pin_comment:
+        description: 'When true, pin every agent step output comment for verbatim context injection (issue #617)'
+        required: false
+        type: boolean
+        default: false
       python_version:
         description: 'Python version'
         required: false
@@ -470,6 +475,9 @@ jobs:
                   echo "CONFIG_TOP_K=${CONFIG_TOP_K}" >> $GITHUB_ENV
                   echo "CONFIG_REPETITION_PENALTY=${CONFIG_REPETITION_PENALTY}" >> $GITHUB_ENV
                   echo "CONFIG_DEBUG=${CONFIG_DEBUG}" >> $GITHUB_ENV
+                  # Pin output comments for verbatim context injection (issue #617).
+                  # Consumed by build_output via the PIN_COMMENT env var.
+                  echo "PIN_COMMENT=${{ inputs.pin_comment }}" >> $GITHUB_ENV
                   echo "CONFIG_PR_NUMBER=${CONFIG_PR_NUMBER}" >> $GITHUB_ENV
 
                   echo "Resolved agent: ROLE_NAME=$ROLE_NAME MODEL=from-config COMPLEXITY=${COMPLEXITY}"
