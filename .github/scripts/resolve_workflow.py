@@ -27,6 +27,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -649,45 +650,56 @@ def build_workflow_position(
     }
 
 
+# @stub-protected: signature defined by architect — do not modify
+@dataclass(frozen=True)
+class SubWorkflowLeaf:
+    """Typed terminal leaf of a sub-workflow descent (issue #671).
+
+    The descent through ``workflow:``/``path:`` mount steps always lands on
+    the runnable leaf where a run actually executes. Carrying the leaf's
+    owning workflow (not the mount node), its step name, and the exact
+    descent chain (``refs``, outermost-first) lets the router advance from a
+    valid anchor instead of the empty-step mount node that stalled the
+    ``scaffold -> sub_impl`` transition in issue #648.
+
+    Attributes:
+        agent: Agent role that runs the leaf step.
+        step: Terminal agent step name; invariant: never empty.
+        workflow: Name of the workflow that owns the leaf step.
+        workflow_next: The leaf workflow's next step after ``step``.
+        skill: Merged skills string for the leaf step.
+        prompt: Inline prompt for the leaf step ("" when none).
+        refs: Descent chain, outermost-first; invariant:
+            ``refs[-1] == {"workflow": workflow, "step": step}``.
+    """
+
+    agent: str  # @stub-protected
+    step: str
+    workflow: str
+    workflow_next: str  # @stub-protected
+    skill: str  # @stub-protected
+    prompt: str  # @stub-protected
+    refs: tuple[dict, ...]
+
+
+# @stub-protected: signature defined by architect — do not modify
 def _resolve_entry_leaf_for_step(
     step: WorkflowStep,
     workflows_dir: str,
     scaffold_branch: Optional[str] = None,
     local_workflows_dir: Optional[str] = None,
-) -> dict:
+) -> SubWorkflowLeaf:
     """Resolve the runnable leaf a sub-workflow entry step descends to.
 
     Shared by the runtime entry path and the trigger-side marker builders
     (issue #609) so all entry routes agree. Loads the referenced child and
-    descends to the innermost runnable leaf. Returns ``{"task", "step",
-    "workflow"}`` on success (``task`` empty for script leaves) or
-    ``{"error": <reason>}``.
+    descends to the innermost runnable leaf, returning the typed
+    :class:`SubWorkflowLeaf` for that leaf (issue #671).
     """
-    ref = step.workflow or step.path
-    if not ref:
-        return {"error": f"step '{step.name}' has no sub-workflow reference"}
-    child = _load_child_workflow(
-        ref, workflows_dir, scaffold_branch,
-        local_workflows_dir=local_workflows_dir, fetch_cache={},
-    )
-    if child is None:
-        return {
-            "error": f"Sub-workflow '{ref}' not found (entered via step '{step.name}')"
-        }
-    leaf = _resolve_sub_workflow_leaf(
-        child, step, workflows_dir, scaffold_branch, {}, {child.name},
-        parent_skill=step.skill,
-        local_workflows_dir=local_workflows_dir,
-    )
-    if leaf["kind"] == "error":
-        return {"error": leaf["error"]}
-    return {
-        "task": leaf["agent"] if leaf["kind"] == "agent" else "",
-        "step": leaf["step"],
-        "workflow": leaf["workflow"],
-    }
+    raise NotImplementedError
 
 
+# @stub-protected: signature defined by architect — do not modify
 def _resolve_sub_workflow_leaf(
     child_wf: WorkflowDefinition,
     entry_step: WorkflowStep,
@@ -697,7 +709,7 @@ def _resolve_sub_workflow_leaf(
     visited: set,
     parent_skill: Optional[list] = None,
     local_workflows_dir: Optional[str] = None,
-) -> dict:
+) -> SubWorkflowLeaf:
     """Resolve the innermost runnable leaf of a (possibly nested) child.
 
     Descends through child first-steps that are themselves ``workflow:``/
@@ -712,117 +724,11 @@ def _resolve_sub_workflow_leaf(
     and a *max-depth* bound (``_MAX_SUB_WORKFLOW_DEPTH``) so a deep
     non-cyclic chain terminates instead of unbounded descent.
 
-    Returns a dict with:
-    - ``kind``: "agent" | "script" | "error"
-    - ``error``: reason string (only when kind == "error")
-    - ``agent``/``step``/``workflow``/``workflow_next``: leaf step details
-      (agent/script)
-    - ``skill``/``prompt``: merged skills + step prompt (parent entry-step
-      skills take precedence over the leaf step's own skills)
+    Returns the typed :class:`SubWorkflowLeaf` for the terminal runnable
+    leaf; an empty terminal step is an explicit error rather than a
+    silently-returned mount node (issue #671).
     """
-    entry_ref = entry_step.workflow or entry_step.path
-    wf = child_wf
-    leaf = wf.steps[0] if wf.steps else None
-    depth = 0
-    while leaf is not None and not leaf.agent and leaf.script is None:
-        # A first-step with no runnable source is itself a leaf: surface it.
-        if not leaf.workflow and not leaf.path and not leaf.repo:
-            break
-        ref = leaf.workflow or leaf.path
-        if not ref:
-            break
-        # Pre-load cycle check on the reference stem: catches a path-based
-        # self/cycle (stem matches a visited name) before paying for the
-        # fetch. The authoritative check is on the loaded child's name below.
-        if _workflow_ref_stem(ref) in visited:
-            return {
-                "kind": "error",
-                "error": (
-                    f"sub-workflow reference cycle detected while entering "
-                    f"'{entry_ref}' (at '{ref}'; "
-                    f"visited: {', '.join(sorted(visited))})"
-                ),
-            }
-        if depth >= _MAX_SUB_WORKFLOW_DEPTH:
-            return {
-                "kind": "error",
-                "error": (
-                    f"max sub-workflow nesting depth "
-                    f"({_MAX_SUB_WORKFLOW_DEPTH}) exceeded while entering "
-                    f"'{entry_ref}' (at '{ref}'); "
-                    f"visited: {', '.join(sorted(visited))}"
-                ),
-            }
-        child = _load_child_workflow(
-            ref, workflows_dir, scaffold_branch, fetch_cache,
-            local_workflows_dir,
-        )
-        if child is None:
-            return {
-                "kind": "error",
-                "error": (
-                    f"Sub-workflow not found: {ref} "
-                    f"(nested under '{entry_ref}')"
-                ),
-            }
-        # Canonical cycle check on the loaded name: a reference may be a
-        # path whose stem differs from the workflow's declared name, so the
-        # name (already in ``visited`` for the top child) is the true key.
-        if child.name in visited:
-            return {
-                "kind": "error",
-                "error": (
-                    f"sub-workflow reference cycle detected while entering "
-                    f"'{entry_ref}' (at '{ref}'; "
-                    f"visited: {', '.join(sorted(visited))})"
-                ),
-            }
-        visited.add(child.name)
-        depth += 1
-        # Carry the first declared skill down through the descent: a
-        # per-plan skill (issue #609) may sit on an intermediate
-        # reference step rather than the original entry step.
-        if parent_skill is None and leaf.skill:
-            parent_skill = leaf.skill
-        wf = child
-        leaf = child.steps[0] if child.steps else None
-        if leaf is None:
-            return {
-                "kind": "error",
-                "error": f"Sub-workflow '{child.name}' has no steps",
-            }
-
-    if leaf.script is not None:
-        return {
-            "kind": "script",
-            "step": leaf.name,
-            "workflow": wf.name,
-            "script_path": leaf.script.path,
-            "script_args": " ".join(leaf.script.args or []),
-            "script_timeout": leaf.script.timeout_minutes,
-            "skill": _skills_to_string(parent_skill or leaf.skill),
-            "prompt": leaf.prompt,
-        }
-    if leaf.agent:
-        return {
-            "kind": "agent",
-            "agent": leaf.agent,
-            "step": leaf.name,
-            "workflow": wf.name,
-            "workflow_next": wf.steps[1].name if len(wf.steps) > 1 else "",
-            "skill": _skills_to_string(parent_skill or leaf.skill),
-            "prompt": leaf.prompt,
-        }
-    # Runnable-source-less leaf (e.g. a first-step with only a ``repo`` ref):
-    # surface a precise reason instead of "Unknown agent 'None'" (issue #609).
-    return {
-        "kind": "error",
-        "error": (
-            f"Unknown agent '{leaf.agent}' in sub-workflow '{wf.name}' "
-            f"(step '{leaf.name}'; entered via "
-            f"'{entry_step.workflow or entry_step.path}')"
-        ),
-    }
+    raise NotImplementedError
 
 
 def _resolve_sub_workflow_entry(
