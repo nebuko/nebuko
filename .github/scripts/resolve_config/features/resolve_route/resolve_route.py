@@ -333,6 +333,11 @@ def _resolve_dispatch_path(
             history=prev_state.history,
         )
         if wf_result:
+            if wf_result.get("SKIP_AGENT") == "true":
+                # Surfaced mount-resolution failure (issue #671): a declared
+                # sub-workflow mount that could not be resolved must stop the
+                # run with a reason, not be silently stepped over.
+                return wf_result
             if wf_result.get("run_script"):
                 # Deterministic script successor (issue #541): carry the script
                 # payload instead of an agent task; build_result short-circuits.
@@ -1114,6 +1119,9 @@ def _resolve_bot_fallback_path(
                 local_workflows_dir=local_workflows_dir,
             )
             if wf_result:
+                if wf_result.get("SKIP_AGENT") == "true":
+                    # Surfaced mount-resolution failure (issue #671).
+                    return wf_result
                 if wf_result.get("run_script"):
                     # Deterministic script successor (issue #541): no agent task;
                     # build_result short-circuits on this.
@@ -1224,6 +1232,9 @@ def _resolve_workflow_next_step(
         history=prev_state.history,
     )
     if wf_result:
+        if wf_result.get("SKIP_AGENT") == "true":
+            # Surfaced mount-resolution failure (issue #671).
+            return wf_result
         if wf_result.get("run_script"):
             # Deterministic script successor (issue #541): same treatment as
             # the dispatch-driven path — build_result short-circuits on this.

@@ -10,16 +10,22 @@ terminal leaf and never on the mount node (issue #671).
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from resolve_workflow import (
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from resolve_workflow import (  # noqa: E402
     TASK_TO_PROMPT,
+    SubWorkflowLeafError,
     _find_workflow_step,
     _load_child_workflow,
+    _resolve_entry_leaf_for_step,
     resolve_next_from_workflow,
     resolve_workflow_routing,
+    resolve_workflow_step,
 )
 
 SCAFFOLD_BRANCH = "feature/issue-671-scaffold"
@@ -198,15 +204,30 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
         self.assertNotEqual(entered.get("workflow"), CHILD_REF)
 
     def test_unresolvable_child_is_surfaced_not_silently_skipped(self):
-        """A declared ``workflow:`` mount must never be silently stepped over."""
+        """A declared ``workflow:`` mount must never be silently stepped over.
+
+        The single pinned surface is ``SKIP_AGENT`` + a non-empty ``REASON``
+        (the codebase-wide failure convention), not a fall-through to the
+        mount's sibling step.
+        """
         result = self._enter_sub_workflow(None)
 
-        self.assertTrue(
-            result.get("entered_sub_workflow")
-            or result.get("error")
-            or result.get("SKIP_AGENT") == "true",
-            f"mount silently skipped: {result}",
-        )
+        self.assertEqual(result.get("SKIP_AGENT"), "true")
+        self.assertTrue(result.get("REASON"))
+        self.assertNotIn("entered_sub_workflow", result)
+
+    def test_unresolvable_mount_returns_typed_error(self):
+        """The descent failure is a typed ``SubWorkflowLeafError``."""
+
+        def run(workflows_dir):
+            parent = _load_child_workflow("plan-orchestration", workflows_dir, None, {})
+            mount_step = _find_workflow_step(parent, "sub_impl")
+            return _resolve_entry_leaf_for_step(mount_step, workflows_dir, None)
+
+        leaf = self._in_worktree(run)
+
+        self.assertIsInstance(leaf, SubWorkflowLeafError)
+        self.assertTrue(leaf.reason)
 
     def test_entered_child_is_routable_without_manual_resume(self):
         """The reported pair must actually resolve — no manual ``resume``."""
@@ -218,7 +239,7 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
         self.assertEqual(followup["WORKFLOW_STEP"], "implement")
 
     def test_entry_leaf_resolution_returns_typed_leaf(self):
-        from resolve_workflow import SubWorkflowLeaf, _resolve_entry_leaf_for_step
+        from resolve_workflow import SubWorkflowLeaf
 
         def run(workflows_dir):
             parent = _load_child_workflow("plan-orchestration", workflows_dir, None, {})
@@ -235,3 +256,72 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
         self.assertEqual(
             leaf.refs[-1], {"workflow": leaf.workflow, "step": leaf.step}
         )
+
+
+class TestScriptLeafResolution(unittest.TestCase):
+    """The frozen ``SubWorkflowLeaf`` contract must represent script leaves.
+
+    Regression guard: the pre-#671 dict protocol had a first-class
+    ``kind="script"`` branch returning ``script_path``/``script_args``/
+    ``script_timeout``; a contract that cannot express it forces the
+    implement step to either drop script-leaf support or break the frozen
+    signature (issue #671 review round 2).
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.wfdir = Path(self._tmp.name)
+        (self.wfdir / "script_parent.yaml").write_text(
+            "name: script_parent\n"
+            "description: Parent mounting a script child\n"
+            "trigger:\n  agents: [dev]\n"
+            "steps:\n"
+            "  - name: run\n"
+            "    workflow: script_child\n"
+            "    next: null\n"
+        )
+        (self.wfdir / "script_child.yaml").write_text(
+            "name: script_child\n"
+            "description: Child whose first step is a script\n"
+            "trigger:\n  agents: [dev]\n"
+            "steps:\n"
+            "  - name: build\n"
+            "    script:\n"
+            "      path: scripts/build.py\n"
+            "      args: ['--flag', '1']\n"
+            "      timeout_minutes: 5\n"
+            "    next: null\n"
+        )
+
+    def _script_leaf(self):
+        parent = _load_child_workflow("script_parent", str(self.wfdir), None, {})
+        mount_step = _find_workflow_step(parent, "run")
+        return _resolve_entry_leaf_for_step(mount_step, str(self.wfdir), None)
+
+    def test_entry_leaf_represents_script_leaf(self):
+        leaf = self._script_leaf()
+
+        self.assertNotIsInstance(leaf, SubWorkflowLeafError)
+        self.assertEqual(leaf.kind, "script")
+        self.assertEqual(leaf.agent, "")
+        self.assertEqual(leaf.step, "build")
+        self.assertEqual(leaf.script_path, "scripts/build.py")
+        self.assertEqual(leaf.script_args, "--flag 1")
+        self.assertEqual(leaf.script_timeout, 5)
+        self.assertEqual(
+            leaf.refs[-1], {"workflow": leaf.workflow, "step": leaf.step}
+        )
+
+    def test_script_leaf_routes_to_run_script(self):
+        result = resolve_workflow_step(
+            task="dev", workflow_name="script_parent", step_name="run",
+            branch_key="", workflows_dir=str(self.wfdir),
+            prompt_base="/tmp/prompts",
+        )
+
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["RUN_SCRIPT"], "true")
+        self.assertEqual(result["SCRIPT_PATH"], "scripts/build.py")
+        self.assertEqual(result["SCRIPT_ARGS"], "--flag 1")
+        self.assertEqual(result["SCRIPT_TIMEOUT_MINUTES"], "5")

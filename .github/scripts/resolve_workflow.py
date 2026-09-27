@@ -29,7 +29,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import yaml
 
@@ -663,14 +663,20 @@ class SubWorkflowLeaf:
     ``scaffold -> sub_impl`` transition in issue #648.
 
     Attributes:
-        agent: Agent role that runs the leaf step.
-        step: Terminal agent step name; invariant: never empty.
+        agent: Agent role that runs the leaf step ("" for a script leaf).
+        step: Terminal runnable step name; invariant: never empty.
         workflow: Name of the workflow that owns the leaf step.
         workflow_next: The leaf workflow's next step after ``step``.
         skill: Merged skills string for the leaf step.
         prompt: Inline prompt for the leaf step ("" when none).
         refs: Descent chain, outermost-first; invariant:
             ``refs[-1] == {"workflow": workflow, "step": step}``.
+        kind: Leaf kind, ``"agent"`` or ``"script"`` — a sub-workflow may
+            descend to a deterministic ``script:`` step (issue #541), which
+            must stay representable under this contract.
+        script_path: Script to run for a ``"script"`` leaf ("" otherwise).
+        script_args: Space-joined script args for a ``"script"`` leaf.
+        script_timeout: Script timeout in minutes for a ``"script"`` leaf.
     """
 
     agent: str  # @stub-protected
@@ -679,7 +685,35 @@ class SubWorkflowLeaf:
     workflow_next: str  # @stub-protected
     skill: str  # @stub-protected
     prompt: str  # @stub-protected
-    refs: tuple[dict, ...]
+    refs: tuple[dict[str, str], ...]
+    kind: str = "agent"  # @stub-protected
+    script_path: str = ""  # @stub-protected
+    script_args: str = ""  # @stub-protected
+    script_timeout: Optional[float] = None  # @stub-protected
+
+
+# @stub-protected: signature defined by architect — do not modify
+@dataclass(frozen=True)
+class SubWorkflowLeafError:
+    """Typed failure of a sub-workflow leaf descent (issue #671).
+
+    Returned in place of a :class:`SubWorkflowLeaf` when the referenced child
+    cannot be loaded, the descent cycles or exceeds
+    ``_MAX_SUB_WORKFLOW_DEPTH``, or the terminal step has no runnable source.
+    Consumers map ``reason`` onto their own failure surface so a declared
+    mount is surfaced rather than silently stepped over: the runtime entry
+    path returns ``SKIP_AGENT`` and the trigger-side marker builder returns
+    ``SKIP_AGENT`` with the same reason.
+
+    Attributes:
+        reason: Human-readable failure reason.
+    """
+
+    reason: str  # @stub-protected
+
+
+# Result of a sub-workflow leaf descent: a runnable leaf or a typed error.
+SubWorkflowResolution = Union[SubWorkflowLeaf, SubWorkflowLeafError]
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -688,13 +722,14 @@ def _resolve_entry_leaf_for_step(
     workflows_dir: str,
     scaffold_branch: Optional[str] = None,
     local_workflows_dir: Optional[str] = None,
-) -> SubWorkflowLeaf:
+) -> SubWorkflowResolution:
     """Resolve the runnable leaf a sub-workflow entry step descends to.
 
     Shared by the runtime entry path and the trigger-side marker builders
     (issue #609) so all entry routes agree. Loads the referenced child and
     descends to the innermost runnable leaf, returning the typed
-    :class:`SubWorkflowLeaf` for that leaf (issue #671).
+    :class:`SubWorkflowLeaf` for that leaf or a :class:`SubWorkflowLeafError`
+    when it cannot be resolved (issue #671).
     """
     raise NotImplementedError
 
@@ -709,7 +744,7 @@ def _resolve_sub_workflow_leaf(
     visited: set,
     parent_skill: Optional[list] = None,
     local_workflows_dir: Optional[str] = None,
-) -> SubWorkflowLeaf:
+) -> SubWorkflowResolution:
     """Resolve the innermost runnable leaf of a (possibly nested) child.
 
     Descends through child first-steps that are themselves ``workflow:``/
@@ -725,7 +760,8 @@ def _resolve_sub_workflow_leaf(
     non-cyclic chain terminates instead of unbounded descent.
 
     Returns the typed :class:`SubWorkflowLeaf` for the terminal runnable
-    leaf; an empty terminal step is an explicit error rather than a
+    leaf, or a :class:`SubWorkflowLeafError` when no runnable leaf can be
+    resolved; an empty terminal step is an explicit error rather than a
     silently-returned mount node (issue #671).
     """
     raise NotImplementedError
@@ -819,8 +855,8 @@ def _resolve_sub_workflow_entry(
         parent_skill=current_step.skill,
         local_workflows_dir=local_workflows_dir,
     )
-    if leaf["kind"] == "error":
-        return {"SKIP_AGENT": "true", "REASON": leaf["error"]}
+    if isinstance(leaf, SubWorkflowLeafError):
+        return {"SKIP_AGENT": "true", "REASON": leaf.reason}
 
     # The flat parent-pair state holds one level, so on a nested re-entry the
     # pair that must survive is the outermost one (issue #609): when an outer
@@ -850,43 +886,43 @@ def _resolve_sub_workflow_entry(
         local_workflows_dir=local_workflows_dir,
     ))
 
-    if leaf["kind"] == "script":
+    if leaf.kind == "script":
         return {
             "ROLE_NAME": "",
             "RUN_SCRIPT": "true",
-            "SCRIPT_PATH": leaf["script_path"],
-            "SCRIPT_ARGS": leaf["script_args"],
-            "SCRIPT_TIMEOUT_MINUTES": str(leaf["script_timeout"] or ""),
-            "WORKFLOW_NAME": leaf["workflow"],
-            "WORKFLOW_STEP": leaf["step"],
+            "SCRIPT_PATH": leaf.script_path,
+            "SCRIPT_ARGS": leaf.script_args,
+            "SCRIPT_TIMEOUT_MINUTES": str(leaf.script_timeout or ""),
+            "WORKFLOW_NAME": leaf.workflow,
+            "WORKFLOW_STEP": leaf.step,
             "PARENT_WORKFLOW": parent_wf_name,
             "PARENT_WORKFLOW_STEP": parent_step_name,
-            "STEP_SKILLS": leaf["skill"],
-            "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
+            "STEP_SKILLS": leaf.skill,
+            "STEP_PROMPT_FILE": _write_step_prompt_file(leaf.prompt),
             "SKIP_AGENT": "true",
-            "REASON": f"step '{leaf['step']}' in sub-workflow '{leaf['workflow']}' is a script step",
+            "REASON": f"step '{leaf.step}' in sub-workflow '{leaf.workflow}' is a script step",
         } | position
 
-    prompt_file = TASK_TO_PROMPT.get(leaf["agent"])
+    prompt_file = TASK_TO_PROMPT.get(leaf.agent)
     if not prompt_file:
         return {
             "SKIP_AGENT": "true",
             "REASON": (
-                f"Unknown agent '{leaf['agent']}' in sub-workflow "
-                f"'{leaf['workflow']}' (step '{leaf['step']}')"
+                f"Unknown agent '{leaf.agent}' in sub-workflow "
+                f"'{leaf.workflow}' (step '{leaf.step}')"
             ),
         }
 
     return {
-        "ROLE_NAME": leaf["agent"],
+        "ROLE_NAME": leaf.agent,
         "PROMPT_LOCATION": f"{prompt_base}/{prompt_file}",
-        "WORKFLOW_NAME": leaf["workflow"],
-        "WORKFLOW_STEP": leaf["step"],
-        "WORKFLOW_NEXT": leaf["workflow_next"],
+        "WORKFLOW_NAME": leaf.workflow,
+        "WORKFLOW_STEP": leaf.step,
+        "WORKFLOW_NEXT": leaf.workflow_next,
         "PARENT_WORKFLOW": parent_wf_name,
         "PARENT_WORKFLOW_STEP": parent_step_name,
-        "STEP_SKILLS": leaf["skill"],
-        "STEP_PROMPT_FILE": _write_step_prompt_file(leaf["prompt"]),
+        "STEP_SKILLS": leaf.skill,
+        "STEP_PROMPT_FILE": _write_step_prompt_file(leaf.prompt),
         "SKIP_AGENT": "false",
     } | position
 
@@ -1552,9 +1588,11 @@ def _sub_workflow_entry_marker(
     ``tmp-impl`` steps) resolves to the leaf workflow's leaf step instead of
     carrying ``task=None``. The recorded ``workflow`` stays the reference
     being entered (the immediate parent for the return leg) while
-    ``step`` is the leaf step to run. Returns ``None`` when the child
-    cannot be loaded or has no runnable leaf; the caller then falls through
-    to the no-runnable-source skip.
+    ``step`` is the leaf step to run. When the child cannot be loaded or has
+    no runnable leaf, the typed :class:`SubWorkflowLeafError` is surfaced as
+    ``{"SKIP_AGENT": "true", "REASON": ...}`` (the codebase-wide failure
+    convention) rather than ``None``; ``None`` is reserved for "not a mount",
+    so a declared mount is never silently stepped over (issue #671).
 
     Invariant (trigger vs. runtime asymmetry): this marker records
     ``workflow`` = the reference being entered, while the runtime entry path
@@ -1568,9 +1606,9 @@ def _sub_workflow_entry_marker(
     leaf = _resolve_entry_leaf_for_step(
         parent_step, workflows_dir, scaffold_branch, local_workflows_dir
     )
-    if "error" in leaf:
-        print(f"Warning: {leaf['error']}", file=sys.stderr)
-        return None
+    if isinstance(leaf, SubWorkflowLeafError):
+        print(f"Warning: {leaf.reason}", file=sys.stderr)
+        return {"SKIP_AGENT": "true", "REASON": leaf.reason}
     # Prefer the outer parent pair when it differs from the immediate parent
     # (issue #609): the flat parent-pair state can hold only one level, so the
     # pair that survives a nested re-entry must be the outermost one. The
@@ -1587,8 +1625,8 @@ def _sub_workflow_entry_marker(
     )
     return {
         "entered_sub_workflow": True,
-        "task": leaf["task"],
-        "step": leaf["step"],
+        "task": leaf.agent if leaf.kind == "agent" else "",
+        "step": leaf.step,
         "workflow": child_reference,
         "parent_workflow": parent_wf_name,
         "parent_workflow_step": parent_step_name,
