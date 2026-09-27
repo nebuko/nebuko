@@ -23,6 +23,7 @@ from agent_script.features.run_agent.dispatch_recall import (
     RECALL_PASS_BUDGET_S,
     perform_dispatch_recalls,
 )
+from agent_script.features.run_agent.run_failure import RunFailure, classify_failure
 from agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
@@ -246,6 +247,7 @@ def run_agent(
     main_status = status_value(conversation)
 
     wind_down_completed = False
+    failure: RunFailure | None = None
     if soft_timeout_fired and main_status != _STATUS_FINISHED:
         # Our watchdog interrupted the run mid-flight: ask the agent to
         # conclude its work while the conversation history is still live.
@@ -257,9 +259,11 @@ def run_agent(
     elif main_error is not None:
         # A non-cancellation crash escaped arun(): whatever status the
         # conversation reports, this is a hard failure — never classify
-        # it as success.
+        # it as success. Model the discarded exception so build_output can
+        # tell the human what failed and how to resume (issue #668).
         logger.error("Main run crashed — classifying as failure")
         outcome = OutcomeStatus.FAILURE
+        failure = classify_failure(main_error)
     else:
         outcome = classify_run(main_status, False)
 
@@ -267,6 +271,7 @@ def run_agent(
         status=outcome,
         soft_timeout_fired=soft_timeout_fired,
         wind_down_completed=wind_down_completed,
+        failure=failure,
     )
 
     # ── Bounded dispatch recall (issue #524) ────────────────────

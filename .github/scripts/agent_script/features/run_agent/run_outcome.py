@@ -7,6 +7,8 @@ out of ``run_agent.py`` so it can be unit-tested without an event loop.
 from dataclasses import dataclass
 from enum import Enum
 
+from agent_script.features.run_agent.run_failure import RunFailure
+
 
 class OutcomeStatus(str, Enum):
     """High-level outcome of a single agent run."""
@@ -43,6 +45,9 @@ class RunOutcome:
             first dispatch-recall pass (None when no recall occurred).
             Answers captured after this offset belong to engine-injected
             turns and are excluded from latest-answer selection (issue #558).
+        failure: The modelled cause of a FAILURE run (None otherwise).
+            Carries the user-facing summary and the resume command so
+            build_output can render a helpful terminal comment (issue #668).
     """
 
     status: OutcomeStatus
@@ -50,6 +55,7 @@ class RunOutcome:
     wind_down_completed: bool = False
     dispatch_recall_count: int = 0
     dispatch_recall_event_offset: int | None = None
+    failure: RunFailure | None = None  # @stub-protected
 
 
 def classify_run(status_value: str, soft_timeout_fired: bool) -> OutcomeStatus:
