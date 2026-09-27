@@ -1810,6 +1810,60 @@ def _return_to_parent_on_terminal(
     return None
 
 
+def _marker_for_target_step(
+    target_step: WorkflowStep,
+    workflow: WorkflowDefinition,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+    scaffold_branch: Optional[str],
+    branch_key: str = "",
+) -> Optional[dict]:
+    """Classify a resolved target step into a trigger-side resolution marker.
+
+    A target that mounts a sub-workflow (``workflow``/``path``) descends to the
+    child's innermost runnable leaf (issue #657) via the same
+    ``_resolve_entry_leaf_for_step`` descent the runtime entry path uses, so a
+    linear ``next`` pointing at a mount (e.g. ``scaffold -> sub_impl``) yields
+    the leaf's agent instead of ``task=None``. A ``script`` target yields the
+    issue #541 script marker; any other target yields the plain
+    ``{"task", "step"}`` marker. Returns ``None`` when a mount reference cannot
+    be resolved, preserving the clean-failure semantics.
+
+    This is the trigger-side counterpart of the runtime mount descent in
+    ``_next_step_resolution``; both classify the mount through the shared
+    ``_resolve_entry_leaf_for_step`` so they cannot drift.
+    """
+    child_ref = _resolve_sub_workflow_ref_target(target_step)
+    if child_ref:
+        marker = _sub_workflow_entry_marker(
+            child_ref, workflow, target_step, workflows_dir,
+            local_workflows_dir, scaffold_branch,
+        )
+        if marker is not None and branch_key:
+            marker["branch"] = branch_key
+        return marker
+
+    # Deterministic script step (issue #541): distinct marker dict, same
+    # pattern as the sub-workflow lifecycle markers — no "task" key because
+    # downstream consumers assume a non-None agent name.
+    if target_step.script is not None:
+        result = {
+            "run_script": True,
+            "script_path": target_step.script.path,
+            "script_args_str": " ".join(target_step.script.args or []),
+            "timeout_minutes": target_step.script.timeout_minutes,
+            "step": target_step.name,
+        }
+    else:
+        result = {
+            "task": target_step.agent,
+            "step": target_step.name,
+        }
+    if branch_key:
+        result["branch"] = branch_key
+    return result
+
+
 def resolve_next_from_workflow(
     workflow_name: str,
     current_step_name: str,
@@ -1953,25 +2007,14 @@ def resolve_next_from_workflow(
         # return and no hint fallback — resolution fails cleanly.
         return None
 
-    # Deterministic script step (issue #541): distinct marker dict, same
-    # pattern as the sub-workflow lifecycle markers — no "task" key because
-    # downstream consumers assume a non-None agent name.
-    if target_step.script is not None:
-        result = {
-            "run_script": True,
-            "script_path": target_step.script.path,
-            "script_args_str": " ".join(target_step.script.args or []),
-            "timeout_minutes": target_step.script.timeout_minutes,
-            "step": target_step.name,
-        }
-    else:
-        result = {
-            "task": target_step.agent,
-            "step": target_step.name,
-        }
-    if branch_key:
-        result["branch"] = branch_key
-    return result
+    # Classify the target into a marker (issue #657): a mount target descends
+    # to its leaf like the current-step entry path above, so a linear ``next``
+    # pointing at a sub-workflow (e.g. ``scaffold -> sub_impl``) resolves to the
+    # child's first runnable agent instead of an empty ``task``.
+    return _marker_for_target_step(
+        target_step, workflow, workflows_dir, local_workflows_dir,
+        scaffold_branch, branch_key or "",
+    )
 
 
 def main():

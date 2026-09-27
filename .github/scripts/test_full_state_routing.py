@@ -140,6 +140,20 @@ def _tmp_impl() -> dict:
     }
 
 
+def _tmp_impl_scaffold() -> dict:
+    """The scaffolded per-step plan shape (issue #648): ``step_1`` is a
+    runnable agent step, so the mount descent must stop at it."""
+    return {
+        "name": "tmp-impl",
+        "description": "Dynamically generated per-step execution workflow",
+        "trigger": {"agents": ["dev"]},
+        "steps": [
+            {"name": "step_1", "agent": "dev", "skill": ["step-1"], "next": "step_2"},
+            {"name": "step_2", "agent": "dev", "skill": ["step-2"], "next": None},
+        ],
+    }
+
+
 # @stub-protected
 @pytest.fixture
 def nested_workflows_dir(tmp_path: Path) -> Path:
@@ -148,6 +162,16 @@ def nested_workflows_dir(tmp_path: Path) -> Path:
     (tmp_path / "plan-orchestration.yaml").write_text(yaml.dump(_plan_orchestration()))
     (tmp_path / "tmp_impl").mkdir()
     (tmp_path / "tmp_impl" / "workflow.yaml").write_text(yaml.dump(_tmp_impl()))
+    return tmp_path
+
+
+@pytest.fixture
+def scaffold_workflows_dir(tmp_path: Path) -> Path:
+    """Materialize the issue-#648 scaffold shape: plan-orchestration's
+    ``sub_impl`` mounts a branch file whose ``step_1`` is a runnable agent."""
+    (tmp_path / "plan-orchestration.yaml").write_text(yaml.dump(_plan_orchestration()))
+    (tmp_path / "tmp_impl").mkdir()
+    (tmp_path / "tmp_impl" / "workflow.yaml").write_text(yaml.dump(_tmp_impl_scaffold()))
     return tmp_path
 
 
@@ -169,6 +193,7 @@ def _load_fixture(name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 ISSUE657_REVIEW_APPROVED = "workflow_state_issue657_step1_review_approved"
+ISSUE648_SCAFFOLD = "workflow_state_issue648_scaffold"
 
 
 def _issue657_case(name: str, state: dict, workflows_dir: Path,
@@ -283,6 +308,39 @@ class TestFullStateRouting:
         assert result["STEP_SKILLS"] == "plan-cleanup"
         assert result.get("WORKFLOW_POSITION_PATH", "").endswith(
             "plan-orchestration/sub_clean"
+        )
+
+    def test_issue648_scaffold_descends_to_step1(
+        self, scaffold_workflows_dir: Path, prompt_base: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Issue #648: a completed ``scaffold`` step must descend into the
+        branch-mounted ``sub_impl`` and start its ``step_1``.
+
+        Before the fix the trigger-side resolver returned ``{"task": None,
+        "step": "sub_impl"}`` because ``sub_impl`` is a mount (no agent), so
+        ``build_result`` emitted ``REASON="No valid task found"`` and the
+        workflow stopped instead of running ``step_1``.
+
+        ``tmp_impl/workflow.yaml`` is a path-like reference resolved relative
+        to the repository root, so the materialized workflows dir stands in
+        for the checkout root.
+        """
+        monkeypatch.chdir(scaffold_workflows_dir)
+        case = _issue657_case(
+            name=ISSUE648_SCAFFOLD,
+            state=_load_fixture(ISSUE648_SCAFFOLD),
+            workflows_dir=scaffold_workflows_dir,
+            expected={},
+        )
+        result = run_case(case, prompt_base)
+        assert result["TASK"] == "dev"
+        assert result["WORKFLOW_NAME"] == "tmp-impl"
+        assert result["WORKFLOW_STEP"] == "step_1"
+        assert result["SKIP_AGENT"] == "false"
+        assert result.get("REASON") != "No valid task found"
+        assert result.get("WORKFLOW_POSITION_PATH", "").endswith(
+            "plan-orchestration/sub_impl|tmp-impl/step_1"
         )
 
 
