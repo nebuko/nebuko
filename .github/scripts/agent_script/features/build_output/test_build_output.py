@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -14,9 +15,11 @@ from build_output import (
     apply_human_gate_intercept,
     extract_latest_answer,
     is_malformed_final_message,
+    load_prev_state_or_recover,
 )
 from validate_output import strip_agent_run_config
-from workflow_state import Dispatch
+from workflow_state import Dispatch, HistoryEntry, WorkflowState
+from workflow_state.features.comment.to_git_comment import format_collapsed_section
 from workflow_state.features.to_json.to_json import state_to_json
 
 
@@ -981,6 +984,190 @@ class TestBuildOutputScaffoldBranchToolWiring(unittest.TestCase):
             result["workflow_state"].scaffold_branch, "feature/issue-635-marker"
         )
         self.assertNotIn("SCAFFOLD_BRANCH:", result["final_message"])
+
+
+class TestLoadPrevStateHandoff(unittest.TestCase):
+    """Anomaly B: the prev-state hand-off must never silently drop history."""
+
+    def setUp(self):
+        self._env = dict(os.environ)
+        os.environ["REPO_NAME"] = "owner/repo"
+        os.environ["TARGET_NUMBER"] = "648"
+        self._tmp = tempfile.mkdtemp()
+        self._prev_runner_temp = os.environ.get("RUNNER_TEMP")
+        os.environ["RUNNER_TEMP"] = self._tmp
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._env)
+        if self._prev_runner_temp is None:
+            os.environ.pop("RUNNER_TEMP", None)
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    @staticmethod
+    def _state(version=7):
+        return WorkflowState(
+            version=version,
+            workflow="plan-orchestration",
+            step="scaffold",
+            agent="dev",
+        )
+
+    def _comment(self, state):
+        return {"id": 1, "body": format_collapsed_section(state) + "answer"}
+
+    def test_absent_handoff_falls_back_to_comments(self):
+        calls = {}
+
+        def fake_fetch(repo, number):
+            calls["args"] = (repo, number)
+            return [self._comment(self._state())]
+
+        state = load_prev_state_or_recover(fetch_comments=fake_fetch)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 7)
+        self.assertEqual(calls["args"], ("owner/repo", 648))
+
+    def test_valid_handoff_does_not_fetch_comments(self):
+        from workflow_state.state_codec import WorkflowStateCodec
+
+        WorkflowStateCodec().save_prev(self._state())
+
+        def fail_fetch(*_args, **_kwargs):
+            raise AssertionError("comments must not be fetched on a valid hand-off")
+
+        state = load_prev_state_or_recover(fetch_comments=fail_fetch)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 7)
+
+    def test_invalid_handoff_falls_back_to_comments(self):
+        with open(os.path.join(self._tmp, "prev_workflow_state.json"), "w") as f:
+            f.write("{ not valid json")
+
+        state = load_prev_state_or_recover(
+            fetch_comments=lambda _r, _n: [self._comment(self._state(version=9))]
+        )
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 9)
+
+    def test_missing_repo_env_returns_none(self):
+        os.environ.pop("REPO_NAME", None)
+        self.assertIsNone(load_prev_state_or_recover(fetch_comments=lambda *_a: []))
+
+
+class TestBuildOutputPrevStateIntegration(unittest.TestCase):
+    """The recovery seam must live *inside* ``build_output`` (issue #671).
+
+    Round-2 review showed the helper was tested in isolation while the
+    production ``build_output`` call site still used the disk-only loader, so
+    a missing ``$RUNNER_TEMP`` hand-off could still reset version/history
+    (anomaly B of #648). These drive the real builder end-to-end.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._cwd = os.getcwd()
+        os.chdir(self._tmp.name)
+        env_patch = mock.patch.dict(
+            "os.environ",
+            {
+                "ROLE_NAME": "dev",
+                "WORKFLOW_NAME": "plan-orchestration",
+                "WORKFLOW_STEP": "sub_impl",
+                "REPO_NAME": "owner/repo",
+                "TARGET_NUMBER": "648",
+                "RUNNER_TEMP": self._tmp.name,
+            },
+            clear=False,
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        self.addCleanup(os.chdir, self._cwd)
+        self.addCleanup(self._tmp.cleanup)
+
+    @staticmethod
+    def _recovered_v7() -> WorkflowState:
+        return WorkflowState(
+            version=7,
+            workflow="plan-orchestration",
+            step="scaffold",
+            agent="dev",
+            history=[
+                HistoryEntry(step=f"step_{i}", agent="genius", summary=f"s{i}")
+                for i in range(5)
+            ],
+        )
+
+    @staticmethod
+    def _conversation() -> SimpleNamespace:
+        return SimpleNamespace(
+            state=SimpleNamespace(
+                events=[
+                    _msg_event("# Report\n\nFilled the stub bodies."),
+                    _finish_event("Implement step complete."),
+                ]
+            )
+        )
+
+    def _run(self, **kwargs):
+        from metrics_schema import Metrics
+        from build_output import build_output
+
+        return build_output(
+            self._conversation(), Metrics(agent_role="dev"), None, **kwargs
+        )
+
+    def test_provided_prev_state_is_carried_into_output_state(self):
+        result = self._run(prev_state=self._recovered_v7())
+
+        state = result["workflow_state"]
+        self.assertEqual(state.version, 8)
+        self.assertEqual(
+            [h.step for h in state.history],
+            [f"step_{i}" for i in range(5)] + ["sub_impl"],
+        )
+
+    def test_comments_fallback_reaches_output_state_end_to_end(self):
+        """Production path: ``agent_script`` recovers (disk miss → comments)."""
+        from build_output import load_prev_state_or_recover
+
+        comment = {
+            "id": 1,
+            "body": format_collapsed_section(self._recovered_v7()) + "answer",
+        }
+        recovered = load_prev_state_or_recover(fetch_comments=lambda *_a: [comment])
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered.version, 7)
+
+        result = self._run(prev_state=recovered)
+
+        state = result["workflow_state"]
+        self.assertEqual(state.version, 8)
+        self.assertEqual(
+            [h.step for h in state.history],
+            [f"step_{i}" for i in range(5)] + ["sub_impl"],
+        )
+
+    def test_provided_state_is_authoritative_and_never_re_read(self):
+        import build_output as bo
+
+        with mock.patch.object(
+            bo, "_load_prev_state", side_effect=AssertionError("disk re-read")
+        ) as loader:
+            result = self._run(prev_state=self._recovered_v7())
+
+        loader.assert_not_called()
+        self.assertEqual(result["workflow_state"].version, 8)
+
+    def test_absent_handoff_does_not_invent_history(self):
+        import build_output as bo
+
+        with mock.patch.object(bo, "_load_prev_state", return_value=None):
+            result = self._run(prev_state=None)
+
+        state = result["workflow_state"]
+        self.assertEqual(state.version, 3)
+        self.assertEqual(len(state.history), 1)
 
 
 if __name__ == "__main__":
