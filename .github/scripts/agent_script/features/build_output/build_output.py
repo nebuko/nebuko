@@ -322,15 +322,17 @@ def _load_prev_state() -> WorkflowState | None:
     """Load previous workflow state from the ``$RUNNER_TEMP`` disk hand-off.
 
     Disk-only by design so the core builder stays pure and unit-testable. The
-    caller (``agent_script``) uses :func:`load_prev_state_or_recover` to add the
-    comments fallback for production runs.
+    production entry point (``agent_script.main``) supplies the recovered state
+    via :func:`load_prev_state_or_recover`, which adds the comments fallback for
+    a missing hand-off (issue #671, anomaly B of #648).
     """
     load = WorkflowStateCodec().load_prev()
     if load.status == "ok":
         return load.state
-    logger.warning(
-        f"Previous workflow state hand-off {load.status}: {load.detail}"
-    )
+    # A fresh run legitimately has no hand-off; only an unreadable or
+    # undecodable file (``invalid``) is worth a warning.
+    log = logger.debug if load.status == "absent" else logger.warning
+    log(f"Previous workflow state hand-off {load.status}: {load.detail}")
     return None
 
 
@@ -865,6 +867,11 @@ def build_output(
     metrics.review_fix_requests = review_fix_requests
 
     # ── Load previous state if not provided ───────────────────────
+    # A caller-supplied state is authoritative and never overwritten. The
+    # production entry point (``agent_script.main``) supplies the state after
+    # :func:`load_prev_state_or_recover` (disk hand-off → issue comments, issue
+    # #671 / anomaly B of #648); the disk-only fallback below keeps the builder
+    # pure and unit-testable for direct callers.
     if prev_state is None:
         prev_state = _load_prev_state()
 

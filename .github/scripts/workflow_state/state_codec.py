@@ -67,8 +67,12 @@ class WorkflowStateCodec:
     def save_prev(self, state: WorkflowState) -> str:
         """Persist ``state`` to the hand-off file and return its path."""
         path = self._handoff_path()
-        with open(path, "w", encoding="utf-8") as f:
+        # Write-then-rename so a crash mid-write cannot leave a truncated
+        # hand-off that the reader would reject as ``invalid``.
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(self.encode(state, compact=True))
+        os.replace(tmp_path, path)
         return path
 
     # @stub-protected: signature defined by architect — do not modify

@@ -907,8 +907,8 @@ def _resolve_sub_workflow_leaf(
         )
 
     return SubWorkflowLeafError(
-        f"Unknown agent '{leaf.agent}' in sub-workflow '{wf.name}' "
-        f"(step '{leaf.name}'; entered via '{entry_ref}')"
+        f"Sub-workflow '{wf.name}' step '{leaf.name}' has no runnable source "
+        f"(no agent or script; entered via '{entry_ref}')"
     )
 
 
@@ -1213,6 +1213,10 @@ def _return_marker_for_parent(
         )
         if marker is None:
             return None
+        if marker.get("SKIP_AGENT") == "true":
+            # Child re-entry failed: surface the typed failure unchanged
+            # rather than decorating it as a successful entry marker.
+            return marker
     else:
         marker = {
             "exited_sub_workflow": True,
