@@ -246,6 +246,7 @@ def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
             parent_workflow=data.get("parent_workflow"),
             parent_workflow_step=data.get("parent_workflow_step"),
             skills=data.get("skills"),
+            pin=bool(data.get("pin", False)),
         )
     except ValidationError as e:
         logger.warning(f"AGENT_RUN_CONFIG payload failed Dispatch validation: {e}")
@@ -756,6 +757,22 @@ def _resolve_dispatch(
     return dispatch, function_call, final_message
 
 
+def _resolve_pin(dispatch: Optional[Dispatch]) -> bool:
+    """Resolve whether this step's output comment(s) should be pinned.
+
+    Two sources, both opt-in:
+      * ``PIN_COMMENT`` env — a workflow-level override mirroring the
+        ``INJECT_CONTEXT`` knob. Parsed with an allow-list (empty/unset ⇒
+        False) because the flag defaults to off.
+      * ``dispatch.pin`` — a per-run request from the agent's structured
+        dispatch (``dispatch_next`` tool or the ``AGENT_RUN_CONFIG``
+        sentinel), used to pin this very step's output.
+    """
+    pin_str = (os.environ.get("PIN_COMMENT") or "false").strip().lower()
+    pin_from_env = pin_str in ("true", "1", "yes")
+    return pin_from_env or bool(dispatch and dispatch.pin)
+
+
 def build_output(
     conversation,
     metrics: Metrics,
@@ -939,6 +956,8 @@ def build_output(
     inject_context_str = os.environ.get("INJECT_CONTEXT", "true")
     inject_context = inject_context_str.lower() not in ("false", "0", "no")
 
+    pin = _resolve_pin(dispatch)
+
     new_state = build_state(
         prev_state,
         workflow=workflow_name,
@@ -956,6 +975,7 @@ def build_output(
         dispatch=dispatch,
         function_call=function_call,
         inject_context=inject_context,
+        pin=pin,
         scaffold_branch=scaffold_branch,
         position=position,
     )

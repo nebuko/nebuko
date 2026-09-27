@@ -36,7 +36,7 @@ When @@ctx returns with collected context, determine which phase you are in befo
 1. **If workflow state exists with `phase` field:**
    - Use the `phase` value directly (e.g., `"phase": "planning"` means you're in planning phase).
    - Check `history` to see which steps have already executed.
-   - Look for your previous proposal in the history (agent=genius, step=plan, pin=true).
+   - Look for your previous proposal in the history (agent=genius, step=plan, pin=true) — pinned entries are injected verbatim, so the full proposal text is available in your context.
    - If a human has responded since your proposal → **Phase B** (respond to approval/rejection).
    - If no human response yet → **Phase A** (produce proposal again).
 

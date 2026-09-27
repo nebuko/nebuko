@@ -45,11 +45,12 @@ If the issue description is ambiguous or missing critical details:
 - Post your specification as a comment on the issue.
 - End by asking the human for explicit approval.
 - If the human provides a clear user story already, acknowledge it and restructure it into the WHEN/IF/THEN format rather than creating new scenarios from scratch.
-- Pin your spec comment so downstream agents receive the full text. Use the `pin` dispatch mechanism:
-  ```
-<!-- AGENT_RUN_CONFIG {"task": "po", "complexity": "medium", "dispatch": {"status": "hold", "pin": true}} -->
-  ```
-- End awaiting-human turns with `dispatch_next(status='hold')` on the SAME turn as your spec text — never end a run without a dispatch decision (a missing decision triggers an engine recall pass whose short status note can clobber your posted comment). No `AGENT_RUN_CONFIG` sentinel is needed in the initial spec message — the turn's text is what gets posted.
+- Pin your spec comment so downstream agents receive the full text: set `pin: true`
+  on your `dispatch_next` call (equivalently, `"pin": true` in the
+  `AGENT_RUN_CONFIG` dispatch sentinel, or the `PIN_COMMENT` workflow input/env
+  var for a whole run). Pinned comments are injected **verbatim** into the next
+  agent's context; all other history is reduced to a summary or short excerpt.
+- End awaiting-human turns with `dispatch_next(status='hold', pin=True)` on the SAME turn as your spec text — never end a run without a dispatch decision (a missing decision triggers an engine recall pass whose short status note can clobber your posted comment). No `AGENT_RUN_CONFIG` sentinel is needed for these endings — the turn's text is what gets posted.
 - Only include an `AGENT_RUN_CONFIG` sentinel when you need to pause for human approval or escalate.
 
 ## 5. Scope Boundaries

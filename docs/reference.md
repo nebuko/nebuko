@@ -44,6 +44,7 @@ The current dispatch contract (see
 | `parent_workflow` | string | Parent workflow name when entering a sub-workflow. |
 | `parent_workflow_step` | string | Parent step that triggered the sub-workflow. |
 | `skills` | string | Optional skill(s) for the downstream agent. |
+| `pin` | bool | When true, pin this step's output comment(s) so downstream agents receive their full body verbatim (mirrors the `PIN_COMMENT` workflow input / env var). |
 | `reason` | string | Optional free-text explanation of the dispatch decision. |
 
 Defaults: `status: "advance"`, `complexity: "medium"`, `reasoning: "none"`,
@@ -165,7 +166,7 @@ is authoritative.
 | `agent` | string | Agent role executing the current step. |
 | `phase` | string | High-level phase (`analysis`, `planning`, `execution`, ...). |
 | `history` | HistoryEntry[] | Summarized records of prior steps (see below). |
-| `pinned_comment_ids` | int[] | Comment IDs whose full content should be re-fetched at runtime for high-fidelity context. |
+| `pinned_comment_ids` | int[] | Comment IDs injected **verbatim** into the next agent's context; every other included comment is injected as a summary/excerpt. |
 | `metrics` | StateMetrics \| null | Metrics of the most recent agent invocation (subset of the full `Metrics` schema). |
 | `current_context` | object | Free-form shared data between agents (pending tasks, constraints, decisions, `last_run_status`, ...). |
 | `parent_workflow` | string \| null | Parent workflow name when inside a sub-workflow. |
@@ -185,7 +186,7 @@ is authoritative.
 | `comment_ids` | int[] | GitHub comment IDs of the step output (multi-part agent messages are posted as several comments; legacy snapshots storing a scalar `comment_id` are coerced to a list on load). |
 | `inject_context` | bool | Whether the comment should be included in the next agent's context. |
 | `artifacts` | string[] | Paths to artifacts produced by the step. |
-| `pin` | bool | Whether the comment is pinned for re-fetch. |
+| `pin` | bool | Whether this entry's `comment_ids` are injected verbatim (their ids are unioned into `pinned_comment_ids` during state enrichment). |
 | `result` | string \| null | Reported result (`approved`, `rejected`, ...). |
 
 ### Annotated Example

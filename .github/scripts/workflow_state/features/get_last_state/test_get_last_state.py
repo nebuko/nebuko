@@ -10,6 +10,7 @@ from workflow_state import STATE_MARKER_START, STATE_MARKER_END
 from workflow_state.features.get_last_state.get_last_state import (
     extract_latest_state_from_comments,
     _enrich_history_with_comment_ids,
+    _enrich_pinned_comment_ids,
 )
 
 
@@ -271,6 +272,69 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         self.assertEqual(result.history[0].comment_ids, [500, 501, 502])
         # genius entry keeps its stored (legacy-coerced) ID
         self.assertEqual(result.history[1].comment_ids, [123])
+
+
+class TestEnrichPinnedCommentIds(unittest.TestCase):
+    """Test _enrich_pinned_comment_ids() derivation of pinned_comment_ids (issue #617)."""
+
+    def test_pinned_entry_contributes_its_comment_ids(self):
+        history = [
+            HistoryEntry(step="spec", agent="po", pin=True, comment_ids=[10, 11]),
+            HistoryEntry(step="dev", agent="dev", pin=False, comment_ids=[12]),
+        ]
+        pinned: list[int] = []
+        _enrich_pinned_comment_ids(history, pinned)
+        self.assertEqual(pinned, [10, 11])
+
+    def test_unpinned_entries_are_ignored(self):
+        history = [HistoryEntry(step="dev", agent="dev", pin=False, comment_ids=[12])]
+        pinned: list[int] = []
+        _enrich_pinned_comment_ids(history, pinned)
+        self.assertEqual(pinned, [])
+
+    def test_existing_ids_preserved_and_deduplicated(self):
+        history = [HistoryEntry(step="spec", agent="po", pin=True, comment_ids=[10, 11])]
+        pinned = [10, 99]
+        _enrich_pinned_comment_ids(history, pinned)
+        self.assertEqual(pinned, [10, 99, 11])
+
+    def test_is_idempotent(self):
+        history = [HistoryEntry(step="spec", agent="po", pin=True, comment_ids=[10, 11])]
+        pinned: list[int] = []
+        _enrich_pinned_comment_ids(history, pinned)
+        _enrich_pinned_comment_ids(history, pinned)
+        self.assertEqual(pinned, [10, 11])
+
+    def test_pinned_entry_without_comment_ids_is_noop(self):
+        history = [HistoryEntry(step="spec", agent="po", pin=True)]
+        pinned: list[int] = []
+        _enrich_pinned_comment_ids(history, pinned)
+        self.assertEqual(pinned, [])
+
+    def test_end_to_end_pinned_entry_aligned_to_state_comment(self):
+        """A pin=True entry's aligned state comment ID becomes pinned_comment_ids."""
+        entry = {"step": "spec", "agent": "po", "summary": "Spec", "pin": True}
+        comment = _make_state_comment(900, history_entries=[entry])
+        result = extract_latest_state_from_comments([comment])
+        self.assertIsNotNone(result)
+        self.assertEqual(result.history[0].comment_ids, [900])
+        self.assertEqual(result.pinned_comment_ids, [900])
+
+    def test_end_to_end_unpinned_entry_not_pinned(self):
+        entry = {"step": "dev", "agent": "dev", "summary": "Impl", "pin": False}
+        comment = _make_state_comment(901, history_entries=[entry])
+        result = extract_latest_state_from_comments([comment])
+        self.assertIsNotNone(result)
+        self.assertEqual(result.pinned_comment_ids, [])
+
+    def test_end_to_end_pinned_multi_part_message(self):
+        """All parts of a pinned multi-part message are pinned."""
+        entry = {"step": "spec", "agent": "po", "summary": "Spec", "pin": True}
+        state_comment = _make_agent_state_comment(910, [entry], 1, "po")
+        part_2 = _make_part_comment(2, 2, "po", 911)
+        result = extract_latest_state_from_comments([state_comment, part_2])
+        self.assertIsNotNone(result)
+        self.assertEqual(result.pinned_comment_ids, [910, 911])
 
 
 if __name__ == "__main__":
