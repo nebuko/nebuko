@@ -27,7 +27,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Union
 
@@ -422,6 +422,48 @@ def _sub_workflow_miss_reason(
         "SKIP_AGENT": "true",
         "REASON": f"Sub-workflow not found: {target_path} (tried: {detail})",
     }
+
+
+# @stub-protected
+@dataclass(frozen=True)
+class WorkflowLoadContext:
+    """Single source of truth for *where* to find a ``WorkflowDefinition``.
+
+    Threads the local checkout, the consumer-local workflows dir, and the
+    branch-mounted scaffold through one value object so both the *entry* and
+    the *exit* paths of a nested mount apply the same fetch-on-miss policy
+    (issue #675): a branch-mounted child (e.g. the generated
+    ``tmp_impl/workflow.yaml``) that is absent from the default-branch
+    checkout is fetched from ``scaffold_branch`` instead of being silently
+    dropped, which previously collapsed an intermediate mount level and
+    routed to the wrong (outer) step.
+
+    ``fetch_cache`` memoizes ``ref -> fetched path`` for the lifetime of one
+    resolution so a branch-mounted child is fetched at most once.
+    """
+
+    workflows_dir: str
+    local_workflows_dir: Optional[str] = None
+    scaffold_branch: Optional[str] = None
+    fetch_cache: Optional[dict] = field(default=None, compare=False)
+
+    # @stub-protected
+    def load(self, ref: str) -> Optional[WorkflowDefinition]:
+        """Load a workflow by name or repo-root-relative path reference.
+
+        Local checkout first (consumer-local precedence for plain names); on
+        a miss, fetch from ``scaffold_branch`` when set.
+        """
+        raise NotImplementedError
+
+    # @stub-protected
+    def load_by_name(self, name: str) -> Optional[WorkflowDefinition]:
+        """Load a workflow by its declared ``name`` via recursive file scan.
+
+        Falls back to a scaffold fetch keyed on the declared name when no
+        local file declares it.
+        """
+        raise NotImplementedError
 
 
 def _load_child_workflow(
