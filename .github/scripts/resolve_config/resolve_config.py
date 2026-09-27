@@ -36,6 +36,38 @@ from .features.resolve_route.resolve_route import (
 )
 from config import is_self_function_call
 
+
+def _delete_comments_env(wf_cmd, issue_number: Optional[int]):
+    """Resolve ``/workflow delete comments`` to its env contract (issue #644).
+
+    A human-only, deterministic batch deletion: no agent runs, so it returns
+    the full env dict directly (the same shape ``_build_result`` would emit)
+    instead of a config routed through the workflow machinery. ``--issue``
+    defaults to the invoking issue; when neither the flag nor an invoking
+    issue number is available the command is treated as absent (``None``), so
+    routing falls through to the normal cascade.
+
+    The parser already rejects non-numeric ``--issue``/``--from`` values, so
+    the values reaching here are either empty or ASCII digits.
+    """
+    issue = wf_cmd.params.get("issue")
+    if not issue:
+        issue = str(issue_number) if issue_number else ""
+    if not issue:
+        return None
+    from_id = wf_cmd.params.get("from", "")
+    scope = f"from {from_id}" if from_id else "all"
+    return {
+        "TASK": f"Delete comments on issue {issue} ({scope})",
+        "ROLE_NAME": "script",
+        "AGENT_SELECTED": "false",
+        "SKIP_AGENT": "true",
+        "DELETE_COMMENTS": "true",
+        "DELETE_COMMENTS_ISSUE": issue,
+        "DELETE_COMMENTS_FROM": from_id,
+    }
+
+
 def resolve_config(
     trigger_body: str,
     prompt_base: str,
@@ -55,6 +87,8 @@ def resolve_config(
     4. Route based on what was found (human commands take precedence):
        - /workflow resume [--feedback <text>] → _resolve_resume_path / next step.
        - /workflow force-step step --name <step> → _resolve_human_path (regardless of state).
+       - /workflow delete comments [--issue <n>] [--from <id>] (human) →
+         _delete_comments_env (self-contained contract; no agent runs).
        - /workflow command by human → _resolve_human_path.
        - Human @@mention, or CI plain-mention trigger (universal bot marker
          + mention-only body, e.g. sub-task completion notification) →
@@ -98,6 +132,14 @@ def resolve_config(
 
     if os.environ.get("DEBUG") or debug:
         print(f"DEBUG prev_state: {prev_state}", file=sys.stderr)
+
+    # /workflow delete comments is a sole deterministic command, outside the
+    # agent/workflow machinery: resolve it straight to its env contract and
+    # return (issue #644). Bot-posted commands are ignored (human-only).
+    if wf_cmd is not None and wf_cmd.action == "delete" and not is_bot:
+        delete_env = _delete_comments_env(wf_cmd, issue_number)
+        if delete_env is not None:
+            return delete_env
 
     # Route to appropriate handler based on what was found
     # Human commands (explicit intent) MUST be evaluated before auto-dispatch,
@@ -151,15 +193,6 @@ def resolve_config(
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir, prev_state,
             local_workflows_dir=local_workflows_dir, prompt_base=prompt_base,
-            workflow_command=wf_cmd,
-        )
-    elif wf_cmd is not None and wf_cmd.action == "delete" and not is_bot:
-        # Human /workflow delete comments [--issue <n>] [--from <id>] (issue
-        # #644): deterministic batch deletion — no agent runs. Uses the human
-        # path so --issue can default to the invoking issue.
-        config = _resolve_human_path(
-            trigger_body, repo, issue_number, workflows_dir, prev_state,
-            local_workflows_dir=local_workflows_dir,
             workflow_command=wf_cmd,
         )
     elif wf_cmd is not None and wf_cmd.action == "run" and not is_bot:

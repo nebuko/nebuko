@@ -840,49 +840,6 @@ def _build_force_next_result(
     }
 
 
-def _is_ascii_digits(value: Optional[str]) -> bool:
-    """True when ``value`` is a non-empty ASCII-digit string.
-
-    ``str.isdigit`` accepts non-ASCII digits (e.g. ``'²'``) that ``int()``
-    rejects, so guard the conversion against a resolver crash (issue #644
-    review).
-    """
-    return bool(value) and value.isascii() and value.isdigit()
-
-
-def _resolve_delete_comments(
-    wf_cmd: "WorkflowCommand",
-    issue_number: Optional[int],
-) -> Optional[dict]:
-    """Resolve ``/workflow delete comments`` to a delete config (issue #644).
-
-    ``--issue`` defaults to the invoking issue; when neither the flag nor the
-    invoking issue number is available the command is treated as absent
-    (returns None). Returns a config dict with a ``delete_comments`` marker
-    that ``_build_result`` renders as the DELETE_COMMENTS env contract.
-    """
-    issue = wf_cmd.params.get("issue")
-    if issue is not None:
-        # An explicit --issue must be valid ASCII digits; a malformed value
-        # (e.g. the unicode digit '²') makes the command absent rather than
-        # silently falling back to the invoking issue (issue #644 review).
-        if not _is_ascii_digits(issue):
-            return None
-    else:
-        # Omitted --issue: default to the invoking issue ("the issue ID is
-        # added on command invocation").
-        issue = str(issue_number) if issue_number else ""
-    if not _is_ascii_digits(issue):
-        return None
-    from_id = wf_cmd.params.get("from", "")
-    if from_id and not _is_ascii_digits(from_id):
-        return None
-    return {
-        "task": "",
-        "delete_comments": {"issue": int(issue), "from_id": from_id},
-    }
-
-
 def _resolve_human_path(
     trigger_body: str,
     repo: Optional[str],
@@ -922,18 +879,10 @@ def _resolve_human_path(
     Returns:
         Config dict with task and config_* variables, or SKIP_AGENT dict.
     """
-    # /workflow delete comments [--issue <n>] [--from <id>] (human only,
-    # issue #644): deterministic batch deletion — no agent runs. --issue
-    # defaults to the invoking issue_number when omitted.
-    wf_cmd = workflow_command
-    if wf_cmd is not None and wf_cmd.action == "delete":
-        delete_config = _resolve_delete_comments(wf_cmd, issue_number)
-        if delete_config is not None:
-            return delete_config
-
     # /workflow force-step step --name <step> (human only). The flag grammar
     # makes --name required, so the legacy bare-command auto-advance arm is
     # gone (issue #635).
+    wf_cmd = workflow_command
     target_step = (
         wf_cmd.params["name"]
         if wf_cmd is not None and wf_cmd.action == "force-step"

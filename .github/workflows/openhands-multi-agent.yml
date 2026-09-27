@@ -352,22 +352,17 @@ jobs:
                       exit 0
                     fi
                     # Delete-comments command (issue #644): a human-only,
-                    # deterministic batch deletion. Like the script step it runs
-                    # no agent (SKIP_AGENT stays true); the posting pipeline
-                    # picks the run up via its DELETE_COMMENTS guard so the
-                    # deletion summary is posted exactly like a script result.
+                    # deterministic batch deletion, outside agent scope. Like
+                    # the script step it runs no agent (SKIP_AGENT stays true);
+                    # the posting pipeline picks the run up via its
+                    # DELETE_COMMENTS guard so the summary is posted.
                     if [ "$DELETE_COMMENTS" = "true" ]; then
                       echo "Delete comments resolved — running delete_comments.py (no agent)"
                       echo "SKIP_AGENT=true" >> $GITHUB_ENV
                       echo "DELETE_COMMENTS=true" >> $GITHUB_ENV
                       echo "DELETE_COMMENTS_ISSUE=${DELETE_COMMENTS_ISSUE}" >> $GITHUB_ENV
                       echo "DELETE_COMMENTS_FROM=${DELETE_COMMENTS_FROM}" >> $GITHUB_ENV
-                      echo "TASK=" >> $GITHUB_ENV
                       echo "ROLE_NAME=${ROLE_NAME:-script}" >> $GITHUB_ENV
-                      echo "WORKFLOW_NAME=${WORKFLOW_NAME:-}" >> $GITHUB_ENV
-                      echo "WORKFLOW_STEP=${WORKFLOW_STEP:-}" >> $GITHUB_ENV
-                      echo "WORKFLOW_POSITION=${WORKFLOW_POSITION:-}" >> $GITHUB_ENV
-                      echo "WORKFLOW_POSITION_PATH=${WORKFLOW_POSITION_PATH:-}" >> $GITHUB_ENV
                       exit 0
                     fi
                     REASON=$(echo "$RESOLVE_OUTPUT" | grep '^REASON=' | cut -d= -f2-)
@@ -887,6 +882,10 @@ jobs:
                 # detection is exact; the state section follows it).
                 state_section = ""
                 add_continue_token = True
+                # /workflow delete comments is a terminal command (issue #644):
+                # it finishes the run, so never emit the continue token.
+                if os.environ.get("DELETE_COMMENTS") == "true":
+                    add_continue_token = False
                 state_file = "workflow_state.json"
                 if os.path.isfile(state_file) and os.path.getsize(state_file) > 0:
                     try:

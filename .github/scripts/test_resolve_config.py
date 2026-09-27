@@ -747,6 +747,11 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         self.assertNotIn("DELETE_COMMENTS", result)
         self.assertEqual(result["SKIP_AGENT"], "true")
 
+    def test_no_issue_and_no_invoking_issue_treated_as_absent(self):
+        # Neither --issue nor an invoking issue number: command is absent.
+        result = self._resolve("/workflow delete comments")
+        self.assertNotIn("DELETE_COMMENTS", result)
+
     def test_non_numeric_from_treated_as_absent(self):
         result = self._resolve("/workflow delete comments --from abc", issue_number=456)
         self.assertNotIn("DELETE_COMMENTS", result)

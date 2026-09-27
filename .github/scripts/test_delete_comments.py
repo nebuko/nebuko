@@ -246,26 +246,19 @@ class TestMain:
         monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
         monkeypatch.delenv("DELETE_COMMENTS_ISSUE", raising=False)
         monkeypatch.delenv("DELETE_COMMENTS_FROM", raising=False)
-        monkeypatch.delenv("TRIGGER_BODY", raising=False)
-        monkeypatch.delenv("WORKFLOW_POSITION", raising=False)
         try:
             yield tmp_path
         finally:
             os.chdir(old)
 
-    def test_missing_contract_exits_nonzero_with_failure_artifacts(self, sandbox):
-        # A contract error is still a *result*: the failure artifacts must be
-        # written so the posting pipeline surfaces it on the issue
-        # (issue #644 review).
+    def test_missing_contract_exits_nonzero_with_failure_summary(self, sandbox):
+        # A contract error is still a *result*: the failure summary must be
+        # written so the posting pipeline surfaces it on the issue.
         assert dc.main() == 1
         with open("final_message.txt", encoding="utf-8") as f:
             assert "Config error" in f.read()
-        with open("workflow_state.json", encoding="utf-8") as f:
-            import json
 
-            assert json.load(f)["dispatch"]["branch"] == "fail"
-
-    def test_successful_batch_writes_artifacts(self, sandbox, monkeypatch):
+    def test_successful_batch_writes_summary(self, sandbox, monkeypatch):
         fake, _ = _fake_run(
             {"--paginate": (0, "100\n200\n", ""), "--method DELETE": (0, "", "")}
         )
@@ -275,14 +268,6 @@ class TestMain:
         assert dc.main() == 0
         with open("final_message.txt", encoding="utf-8") as f:
             assert "Deleted: 2" in f.read()
-        with open("workflow_state.json", encoding="utf-8") as f:
-            import json
-
-            state = json.load(f)
-        # `status` defaults to "advance" and is dropped by exclude_defaults;
-        # absence of a dispatch override means the flow stays alive.
-        dispatch = state.get("dispatch") or {}
-        assert dispatch.get("status", "advance") == "advance"
 
     def test_batch_error_is_failure_result_not_crash(self, sandbox, monkeypatch):
         fake, _ = _fake_run(
@@ -297,13 +282,9 @@ class TestMain:
         monkeypatch.setenv("DELETE_COMMENTS_ISSUE", "7")
         assert dc.main() == 0  # result, not crash
         with open("final_message.txt", encoding="utf-8") as f:
-            assert "Stopped on error" in f.read()
-        with open("workflow_state.json", encoding="utf-8") as f:
-            import json
-
-            assert json.load(f)["dispatch"]["branch"] == "fail"
-        with open("final_message.txt", encoding="utf-8") as f:
-            assert "partial" in f.read().lower()
+            body = f.read()
+        assert "Stopped on error" in body
+        assert "partial" in body.lower()
 
     def test_listing_failure_is_failure_result(self, sandbox, monkeypatch):
         fake, _ = _fake_run({"--paginate": (1, "", "HTTP 403: bad creds")})

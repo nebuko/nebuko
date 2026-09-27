@@ -15,16 +15,6 @@ from resolve_workflow import (
 __all__ = ["_build_result"]
 
 
-def _delete_task_summary(delete_comments: dict) -> str:
-    """Human-readable ``TASK`` label for the delete-comments command (#644)."""
-    issue = delete_comments.get("issue")
-    from_id = delete_comments.get("from_id")
-    # Compare against None/"" (not truthiness) so an explicit "0" keeps its
-    # scope label rather than collapsing to "all".
-    scope = f"from {from_id}" if from_id not in (None, "") else "all"
-    return f"Delete comments on issue {issue} ({scope})"
-
-
 def _attach_position(
     result: dict,
     config: dict,
@@ -79,23 +69,6 @@ def _build_result(
     Returns:
         Dict with all environment variables to set.
     """
-    # Deterministic comment deletion (issue #644): no agent runs — emit the
-    # DELETE_COMMENTS contract and let GHA branch on it before agent steps.
-    delete_comments = config.get("delete_comments")
-    if delete_comments:
-        delete_result = {
-            "TASK": _delete_task_summary(delete_comments),
-            "ROLE_NAME": "script",
-            "AGENT_SELECTED": "false",
-            "SKIP_AGENT": "true",
-            "DELETE_COMMENTS": "true",
-            "DELETE_COMMENTS_ISSUE": str(delete_comments.get("issue") or ""),
-            "DELETE_COMMENTS_FROM": str(delete_comments.get("from_id") or ""),
-        }
-        return _attach_position(
-            delete_result, config, workflows_dir, local_workflows_dir
-        )
-
     # Deterministic script step (issue #541): no agent runs — emit the script
     # execution contract and let GHA branch on RUN_SCRIPT before agent steps.
     run_script = config.get("run_script")
