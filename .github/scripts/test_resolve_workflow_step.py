@@ -271,10 +271,16 @@ class TestSubWorkflowTraversal:
         wf_dir, _ = nested_dirs
         resolve = _import_resolver()
 
-        # 1. Parent's first step advances to the sub-workflow reference
-        #    (a reference step carries no agent of its own)
+        # 1. Parent's first step advances to the sub-workflow reference and
+        #    descends into the child's first runnable step (issue #657): a
+        #    linear target that is a mount must not yield an empty task.
         assert resolve("parent", "analyze", str(wf_dir)) == {
-            "task": None, "step": "subtask",
+            "entered_sub_workflow": True,
+            "task": "dev",
+            "step": "impl",
+            "workflow": "child",
+            "parent_workflow": "parent",
+            "parent_workflow_step": "subtask",
         }
 
         # 2. Sub-workflow reference step yields an entry marker
