@@ -1092,3 +1092,205 @@ class TestInjectContextFiltering:
         )
         ids = _get_injectable_comment_ids(state)
         assert ids == {1}
+
+
+class TestSelectHistoryComments:
+    """Test the pinned-vs-summary selection policy (issue #617)."""
+
+    def _select(self, comments, state):
+        from features.select_history_comments.select_history_comments import (
+            select_history_comments,
+        )
+
+        return select_history_comments(comments, state)
+
+    def test_none_state_summarizes_everything(self):
+        """With no state, every comment is summarized (nothing pinned)."""
+        selection = self._select([{"id": 1}, {"id": 2}], None)
+
+        assert selection.verbatim == ()
+        assert selection.summarized_ids == frozenset({1, 2})
+
+    def test_pinned_comment_ids_are_verbatim(self):
+        """A comment id in state.pinned_comment_ids is rendered verbatim."""
+        from workflow_state import WorkflowState
+
+        state = WorkflowState(pinned_comment_ids=[2])
+        selection = self._select([{"id": 1}, {"id": 2}], state)
+
+        assert selection.verbatim_ids == frozenset({2})
+        assert selection.summarized_ids == frozenset({1})
+
+    def test_pin_true_history_entry_marks_all_comment_ids_verbatim(self):
+        """Every comment id of a pin=True history entry is verbatim."""
+        from workflow_state import HistoryEntry, WorkflowState
+
+        state = WorkflowState(
+            history=[HistoryEntry(step="plan", agent="genius", comment_ids=[3, 4], pin=True)]
+        )
+        selection = self._select([{"id": 3}, {"id": 4}, {"id": 5}], state)
+
+        assert selection.verbatim_ids == frozenset({3, 4})
+        assert selection.summarized_ids == frozenset({5})
+
+    def test_pin_false_history_entry_is_not_verbatim(self):
+        """A history entry without pin does not promote its comments."""
+        from workflow_state import HistoryEntry, WorkflowState
+
+        state = WorkflowState(
+            history=[HistoryEntry(step="plan", agent="genius", comment_ids=[3], pin=False)]
+        )
+        selection = self._select([{"id": 3}], state)
+
+        assert selection.verbatim_ids == frozenset()
+        assert selection.summarized_ids == frozenset({3})
+
+    def test_pinned_comment_ids_and_pinned_history_union(self):
+        """pinned_comment_ids and pin=True entries are unioned."""
+        from workflow_state import HistoryEntry, WorkflowState
+
+        state = WorkflowState(
+            pinned_comment_ids=[1],
+            history=[HistoryEntry(step="plan", agent="genius", comment_ids=[2], pin=True)],
+        )
+        selection = self._select([{"id": 1}, {"id": 2}, {"id": 3}], state)
+
+        assert selection.verbatim_ids == frozenset({1, 2})
+        assert selection.summarized_ids == frozenset({3})
+
+    def test_selection_preserves_input_order_within_buckets(self):
+        """Verbatim and summarized tuples keep the input comment order."""
+        from workflow_state import WorkflowState
+
+        comments = [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
+        state = WorkflowState(pinned_comment_ids=[3, 1])
+        selection = self._select(comments, state)
+
+        assert [c["id"] for c in selection.verbatim] == [1, 3]
+        assert [c["id"] for c in selection.summarized] == [2, 4]
+
+
+class TestBuildHistoryStringPinned:
+    """Test pinned-vs-summary rendering in _build_history_string (issue #617)."""
+
+    _STATE_SECTION = (
+        "<details>\n"
+        "<summary>🤖 Workflow State (v1)</summary>\n\n"
+        "```json\n<!-- WORKFLOW_STATE_START -->\n{}\n<!-- WORKFLOW_STATE_END -->\n```\n\n"
+        "</details>\n\n"
+    )
+
+    def test_pinned_comment_renders_full_body(self):
+        """A pinned comment keeps its full, untruncated body."""
+        from query_context import _build_history_string
+        from workflow_state import WorkflowState
+
+        long_body = "HEAD-" + ("x" * 1000) + "-TAIL"
+        comments = [{"id": 9, "body": long_body, "user": {"login": "alice"}}]
+        state = WorkflowState(pinned_comment_ids=[9])
+
+        result = _build_history_string(comments, state)
+
+        assert "HEAD-" in result
+        assert "-TAIL" in result
+        assert "…" not in result
+
+    def test_pinned_comment_strips_state_section(self):
+        """The collapsed workflow-state JSON is stripped from a pinned body."""
+        from query_context import _build_history_string
+        from workflow_state import WorkflowState
+
+        body = self._STATE_SECTION + "Human readable content"
+        comments = [{"id": 7, "body": body, "user": {"login": "alice"}}]
+        state = WorkflowState(pinned_comment_ids=[7])
+
+        result = _build_history_string(comments, state)
+
+        assert "Human readable content" in result
+        assert "WORKFLOW_STATE_START" not in result
+
+    def test_pin_true_history_entry_renders_comment_ids_verbatim(self):
+        """comment_ids of a pin=True entry render verbatim, not excerpted."""
+        from query_context import _build_history_string
+        from workflow_state import HistoryEntry, WorkflowState
+
+        long_body = "PINNED-" + ("y" * 800) + "-END"
+        comments = [{"id": 42, "body": long_body, "user": {"login": "po"}}]
+        state = WorkflowState(
+            history=[HistoryEntry(step="spec", agent="po", comment_ids=[42], pin=True)]
+        )
+
+        result = _build_history_string(comments, state)
+
+        assert "-END" in result
+
+    def test_non_pinned_summary_marker_renders_summary_only(self):
+        """A summarized comment uses the bot-agent-summary marker text."""
+        from query_context import _build_history_string
+        from workflow_state import WorkflowState
+
+        body = "<!-- bot-agent-summary -->\nExtracted summary\n---\nfull body text"
+        comments = [{"id": 1, "body": body, "user": {"login": "bot"}}]
+        state = WorkflowState(pinned_comment_ids=[])
+
+        result = _build_history_string(comments, state)
+
+        assert "Extracted summary" in result
+        assert "full body text" not in result
+
+    def test_non_pinned_long_comment_without_marker_is_excerpted(self):
+        """A summarized comment without a marker is capped at HISTORY_EXCERPT_CHARS."""
+        from query_context import HISTORY_EXCERPT_CHARS, _build_history_string
+        from workflow_state import WorkflowState
+
+        head = "A" * HISTORY_EXCERPT_CHARS
+        body = head + "TAIL-THAT-MUST-NOT-APPEAR"
+        comments = [{"id": 1, "body": body, "user": {"login": "bot"}}]
+        state = WorkflowState(pinned_comment_ids=[])
+
+        result = _build_history_string(comments, state)
+
+        assert head in result
+        assert "TAIL-THAT-MUST-NOT-APPEAR" not in result
+        assert "…" in result
+
+    def test_non_pinned_short_comment_without_marker_kept_whole(self):
+        """A short summarized comment is rendered without truncation."""
+        from query_context import _build_history_string
+        from workflow_state import WorkflowState
+
+        comments = [{"id": 1, "body": "Short body", "user": {"login": "bot"}}]
+        state = WorkflowState(pinned_comment_ids=[])
+
+        result = _build_history_string(comments, state)
+
+        assert "Short body" in result
+        assert "…" not in result
+
+    def test_none_state_summarizes_everything(self):
+        """Without a state, long comment bodies are excerpted (issue #617)."""
+        from query_context import HISTORY_EXCERPT_CHARS, _build_history_string
+
+        body = ("Z" * HISTORY_EXCERPT_CHARS) + "TAIL"
+        comments = [{"id": 1, "body": body, "user": {"login": "bot"}}]
+
+        result = _build_history_string(comments, None)
+
+        assert "TAIL" not in result
+
+    def test_history_mixes_pinned_and_summarized_preserving_order(self):
+        """Pinned and summarized comments are interleaved in input order."""
+        from query_context import _build_history_string
+        from workflow_state import WorkflowState
+
+        comments = [
+            {"id": 1, "body": "pinned-one", "user": {"login": "po"}},
+            {"id": 2, "body": "summarized-two", "user": {"login": "bot"}},
+            {"id": 3, "body": "pinned-three", "user": {"login": "po"}},
+        ]
+        state = WorkflowState(pinned_comment_ids=[1, 3])
+
+        result = _build_history_string(comments, state)
+
+        assert result.index("pinned-one") < result.index("summarized-two")
+        assert result.index("summarized-two") < result.index("pinned-three")
