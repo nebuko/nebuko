@@ -27,7 +27,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Union
 
@@ -424,6 +424,144 @@ def _sub_workflow_miss_reason(
     }
 
 
+# @stub-protected
+@dataclass(frozen=True)
+class WorkflowLoadContext:
+    """Single source of truth for *where* to find a ``WorkflowDefinition``.
+
+    Threads the local checkout, the consumer-local workflows dir, and the
+    branch-mounted scaffold through one value object so both the *entry* and
+    the *exit* paths of a nested mount apply the same fetch-on-miss policy
+    (issue #675): a branch-mounted child (e.g. the generated
+    ``tmp_impl/workflow.yaml``) that is absent from the default-branch
+    checkout is fetched from ``scaffold_branch`` instead of being silently
+    dropped, which previously collapsed an intermediate mount level and
+    routed to the wrong (outer) step.
+
+    ``fetch_cache`` memoizes ``ref -> fetched path`` for the lifetime of one
+    resolution so a branch-mounted child is fetched at most once.
+    """
+
+    workflows_dir: str
+    local_workflows_dir: Optional[str] = None
+    scaffold_branch: Optional[str] = None
+    fetch_cache: Optional[dict] = field(default=None, compare=False)
+
+    # @stub-protected
+    def load(self, ref: str) -> Optional[WorkflowDefinition]:
+        """Load a workflow by name or repo-root-relative path reference.
+
+        Local checkout first (consumer-local precedence for plain names); on
+        a miss, fetch from ``scaffold_branch`` when set.
+        """
+        if not is_valid_workflow_reference(ref):
+            # The chain builder passes an already-resolved absolute mount
+            # path (``target_path``); load it directly. Other unsafe
+            # references (traversal) are rejected for path-safety.
+            if not Path(ref).is_absolute():
+                return None
+            return _try_load_workflow(ref)
+        resolved = ""
+        if not is_path_like_reference(ref) and self.local_workflows_dir:
+            try:
+                resolved = str(load_workflow_with_dirs(
+                    ref, self.workflows_dir, self.local_workflows_dir,
+                ))
+            except (FileNotFoundError, ValueError):
+                resolved = ""
+        if not resolved:
+            resolved = str(resolve_workflow_reference(ref, self.workflows_dir))
+        if Path(resolved).exists():
+            return _try_load_workflow(resolved)
+        fetched = _fetch_workflow_from_scaffold(
+            ref, self.scaffold_branch, self.fetch_cache,
+        )
+        return _try_load_workflow(fetched) if fetched else None
+
+    # @stub-protected
+    def load_by_name(self, name: str) -> Optional[WorkflowDefinition]:
+        """Load a workflow by its declared ``name`` via recursive file scan.
+
+        Falls back to a scaffold fetch keyed on the declared name when no
+        local file declares it.
+        """
+        local = _scan_workflow_by_name(name, self.workflows_dir, self.local_workflows_dir)
+        if local is not None:
+            return local
+        fetched = _fetch_workflow_from_scaffold(
+            name, self.scaffold_branch, self.fetch_cache,
+        )
+        return _try_load_workflow(fetched) if fetched else None
+
+
+def _try_load_workflow(path: Optional[str]) -> Optional[WorkflowDefinition]:
+    """Load a workflow file, returning ``None`` on any load failure."""
+    if not path:
+        return None
+    try:
+        return load_workflow(path)
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def _fetch_workflow_from_scaffold(
+    ref: str,
+    scaffold_branch: Optional[str],
+    fetch_cache: Optional[dict],
+) -> Optional[str]:
+    """Fetch a branch-mounted workflow file, memoized per resolution.
+
+    Returns the absolute path of the fetched file, or ``None`` when the fetch
+    cannot be attempted or fails. ``fetch_cache`` (``ref -> path``) is only
+    populated on a hit, so a miss is retried by the next caller.
+    """
+    if not scaffold_branch:
+        return None
+    if fetch_cache is not None and ref in fetch_cache:
+        return fetch_cache[ref]
+    fetched = _scaffold_fetch(ref, scaffold_branch)
+    if fetched and fetch_cache is not None:
+        fetch_cache[ref] = fetched
+    return fetched
+
+
+def _scan_workflow_by_name(
+    workflow_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> Optional[WorkflowDefinition]:
+    """Load a workflow by its declared ``name`` via a recursive file scan.
+
+    The state history records a workflow's declared name (issue #657), which
+    :func:`_load_workflow_by_reference` cannot resolve when the workflow is
+    mounted only through a path-like reference — e.g. a branch-mounted
+    ``tmp_impl/workflow.yaml`` declaring ``name: tmp-impl``. Scans the same
+    directories (and subdirectories) as :func:`_find_outer_parent`. Returns
+    ``None`` when no file declares that name.
+    """
+    if not workflow_name:
+        return None
+    bases = [Path(workflows_dir)]
+    if local_workflows_dir:
+        bases.append(Path(local_workflows_dir))
+    seen: set[str] = set()
+    for base in bases:
+        if not base.exists():
+            continue
+        for wf_file in sorted(base.rglob("*.yaml")) + sorted(base.rglob("*.yml")):
+            key = str(wf_file.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                wf = load_workflow(str(wf_file))
+            except (FileNotFoundError, ValueError):
+                continue
+            if wf.name == workflow_name:
+                return wf
+    return None
+
+
 def _load_child_workflow(
     ref: str,
     workflows_dir: str,
@@ -440,38 +578,17 @@ def _load_child_workflow(
     the workflow cannot be located or loaded. Plain names honor the
     consumer-local directory precedence (issue #529) when
     ``local_workflows_dir`` is given.
+
+    Delegates to :class:`WorkflowLoadContext` so the entry path shares the
+    exact fetch-on-miss policy with the exit path (issue #675).
     """
-    if not is_path_like_reference(ref) and local_workflows_dir:
-        try:
-            resolved = str(load_workflow_with_dirs(ref, workflows_dir, local_workflows_dir))
-        except (FileNotFoundError, ValueError):
-            resolved = ""
-    else:
-        resolved = ""
-    if not resolved:
-        resolved = str(resolve_workflow_reference(ref, workflows_dir))
-    if Path(resolved).exists():
-        try:
-            return load_workflow(resolved)
-        except (FileNotFoundError, ValueError) as e:
-            print(f"Warning: Failed to load sub-workflow '{resolved}': {e}", file=sys.stderr)
-            return None
-    fetched = None
-    if scaffold_branch:
-        if fetch_cache is not None and ref in fetch_cache:
-            fetched = fetch_cache[ref]
-        else:
-            fetched = _scaffold_fetch(ref, scaffold_branch)
-            if fetched and fetch_cache is not None:
-                fetch_cache[ref] = fetched
-    if fetched:
-        try:
-            return load_workflow(fetched)
-        except (FileNotFoundError, ValueError) as e:
-            print(f"Warning: Fetched sub-workflow '{fetched}' is unloadable: {e}", file=sys.stderr)
-            return None
-    print(f"Warning: Sub-workflow '{ref}' not found", file=sys.stderr)
-    return None
+    ctx = WorkflowLoadContext(
+        workflows_dir, local_workflows_dir, scaffold_branch, fetch_cache,
+    )
+    child = ctx.load(ref)
+    if child is None:
+        print(f"Warning: Sub-workflow '{ref}' not found", file=sys.stderr)
+    return child
 
 
 def _position_path_str(nodes: list) -> str:
@@ -1132,6 +1249,8 @@ def _load_workflow_by_name(
     workflow_name: str,
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
+    fetch_cache: Optional[dict] = None,
 ) -> Optional[WorkflowDefinition]:
     """Load a workflow by its declared ``name`` via a recursive file scan.
 
@@ -1141,28 +1260,14 @@ def _load_workflow_by_name(
     ``tmp_impl/workflow.yaml`` declaring ``name: tmp-impl``. Scans the same
     directories (and subdirectories) as :func:`_find_outer_parent`. Returns
     ``None`` when no file declares that name.
+
+    Fetch-on-miss (issue #675): when the name resolves only on the state's
+    ``scaffold_branch``, :class:`WorkflowLoadContext` fetches it, so the exit
+    path honors the same policy as the entry path.
     """
-    if not workflow_name:
-        return None
-    bases = [Path(workflows_dir)]
-    if local_workflows_dir:
-        bases.append(Path(local_workflows_dir))
-    seen: set[str] = set()
-    for base in bases:
-        if not base.exists():
-            continue
-        for wf_file in sorted(base.rglob("*.yaml")) + sorted(base.rglob("*.yml")):
-            key = str(wf_file.resolve())
-            if key in seen:
-                continue
-            seen.add(key)
-            try:
-                wf = load_workflow(str(wf_file))
-            except (FileNotFoundError, ValueError):
-                continue
-            if wf.name == workflow_name:
-                return wf
-    return None
+    return WorkflowLoadContext(
+        workflows_dir, local_workflows_dir, scaffold_branch, fetch_cache,
+    ).load_by_name(workflow_name)
 
 
 def _return_marker_for_parent(
@@ -1171,6 +1276,7 @@ def _return_marker_for_parent(
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
     scaffold_branch: Optional[str] = None,
+    load_ctx: Optional[WorkflowLoadContext] = None,
 ) -> Optional[dict]:
     """Return-to-parent marker anchored on one nesting level (issue #657).
 
@@ -1183,13 +1289,17 @@ def _return_marker_for_parent(
     ``next`` re-enters the child carrying the anchor pair as the new parent
     (issue #609 descent). Returns ``None`` when the level cannot be loaded or
     its step is terminal, so the caller unwinds one level further.
+
+    The anchor level is loaded through ``load_ctx`` (issue #675), so a
+    branch-mounted intermediate level (``tmp-impl``) is fetched instead of
+    being skipped — the missing level is what collapsed the unwind to the
+    outer step.
     """
     parent_wf_name, parent_step_name = parent_pair
-    parent_wf = _load_workflow_by_reference(
-        parent_wf_name, workflows_dir, local_workflows_dir
-    ) or _load_workflow_by_name(
-        parent_wf_name, workflows_dir, local_workflows_dir
+    ctx = load_ctx or WorkflowLoadContext(
+        workflows_dir, local_workflows_dir, scaffold_branch, {},
     )
+    parent_wf = ctx.load(parent_wf_name) or ctx.load_by_name(parent_wf_name)
     if parent_wf is None:
         return None
     parent_step = _find_workflow_step(parent_wf, parent_step_name)
@@ -1407,6 +1517,7 @@ def _resolve_return_to_parent(
     scaffold_branch: Optional[str] = None,
     local_workflows_dir: Optional[str] = None,
     _visited: tuple[str, ...] = (),
+    load_ctx: Optional[WorkflowLoadContext] = None,
 ) -> Optional[dict]:
     """Resolve returning to parent workflow after sub-workflow completion.
 
@@ -1416,37 +1527,27 @@ def _resolve_return_to_parent(
     ``tmp-impl``'s ``step_2: workflow: dev-review-loop``), the resolution
     re-enters it via :func:`_next_step_resolution` so the scaffold's
     per-step plan advances one loop at a time.
+
+    The parent is loaded through ``load_ctx`` (issue #675): a branch-mounted
+    parent level (``tmp-impl``) unresolved locally is fetched, matching the
+    entry-path fetch-on-miss policy.
     """
     # Load parent workflow — supports names and repo-root-relative paths
     # (issue #468): path-like references resolve outside workflows/.
     # Plain names honor consumer-local precedence (issue #529).
-    resolved = ""
-    if is_path_like_reference(parent_workflow_name):
-        resolved = resolve_workflow_reference(parent_workflow_name, workflows_dir)
-    else:
-        try:
-            resolved = str(load_workflow_with_dirs(
-                parent_workflow_name, workflows_dir, local_workflows_dir or "",
-            ))
-        except (FileNotFoundError, ValueError):
-            resolved = ""
-    if not resolved:
-        resolved = str(Path(workflows_dir) / f"{parent_workflow_name}.yaml")
-    if not Path(resolved).exists():
+    load_ctx = load_ctx or WorkflowLoadContext(
+        workflows_dir, local_workflows_dir, scaffold_branch, {},
+    )
+    parent_wf = (
+        load_ctx.load(parent_workflow_name)
+        or load_ctx.load_by_name(parent_workflow_name)
+    )
+    if parent_wf is None:
         print(f"Warning: Parent workflow '{parent_workflow_name}' not found",
               file=sys.stderr)
         return {
             "SKIP_AGENT": "true",
             "REASON": f"Parent workflow '{parent_workflow_name}' not found",
-        }
-
-    try:
-        parent_wf = load_workflow(str(resolved))
-    except (FileNotFoundError, ValueError) as e:
-        print(f"Warning: Failed to load parent workflow: {e}", file=sys.stderr)
-        return {
-            "SKIP_AGENT": "true",
-            "REASON": f"Failed to load parent workflow: {e}",
         }
 
     sub_wf_step = _find_workflow_step(parent_wf, parent_workflow_step_name)
@@ -1493,6 +1594,7 @@ def _resolve_return_to_parent(
                 eff_outer_wf, eff_outer_step, branch_key,
                 workflows_dir, prompt_base, scaffold_branch, local_workflows_dir,
                 _visited=_visited + (parent_wf.name,),
+                load_ctx=load_ctx,
             )
         # Workflow ends here
         return {
@@ -1687,22 +1789,21 @@ def _load_workflow_by_reference(
     workflow_name: str,
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
+    fetch_cache: Optional[dict] = None,
 ) -> Optional[WorkflowDefinition]:
     """Load a workflow by name or repo-root-relative path reference.
 
     Plain names are scanned with the consumer-local directory taking
     precedence (issue #529); path-like references resolve as before.
+
+    Fetch-on-miss (issue #675): a branch-mounted reference absent from the
+    default-branch checkout is fetched from ``scaffold_branch`` via
+    :class:`WorkflowLoadContext`, so the exit path matches the entry path.
     """
-    if not is_valid_workflow_reference(workflow_name):
-        return None
-    try:
-        if is_path_like_reference(workflow_name):
-            reference = resolve_workflow_reference(workflow_name, workflows_dir)
-            return load_workflow(str(reference))
-        candidate = load_workflow_with_dirs(workflow_name, workflows_dir, local_workflows_dir or "")
-        return load_workflow(str(candidate))
-    except (FileNotFoundError, ValueError):
-        return None
+    return WorkflowLoadContext(
+        workflows_dir, local_workflows_dir, scaffold_branch, fetch_cache,
+    ).load(workflow_name)
 
 
 def _resolve_sub_workflow_ref_target(
@@ -1875,21 +1976,20 @@ def _return_to_parent_on_terminal(
     marker stays the fallback.
     """
     if parent_workflow and parent_workflow_step:
+        load_ctx = WorkflowLoadContext(
+            workflows_dir, local_workflows_dir, scaffold_branch, {},
+        )
         for pair in _parent_chain_from_history(
             history, current_workflow, parent_workflow, parent_workflow_step,
         ):
             marker = _return_marker_for_parent(
                 pair, branch_result, workflows_dir,
-                local_workflows_dir, scaffold_branch,
+                local_workflows_dir, scaffold_branch, load_ctx=load_ctx,
             )
             if marker is not None:
                 return marker
         parent_wf = (
-            _load_workflow_by_reference(
-                parent_workflow, workflows_dir, local_workflows_dir
-            ) or _load_workflow_by_name(
-                parent_workflow, workflows_dir, local_workflows_dir
-            )
+            load_ctx.load(parent_workflow) or load_ctx.load_by_name(parent_workflow)
         )
         if parent_wf is not None:
             marker = _return_to_parent_marker(
