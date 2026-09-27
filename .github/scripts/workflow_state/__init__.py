@@ -45,6 +45,14 @@ from .workflow_state import (
     go_next,
 )
 
+# GateDecision lives in the resolve_config sub-domain and is referenced as a
+# forward ref by WorkflowState.gate (issue #648). Bind it only now that this
+# package's names are defined — importing it earlier would cycle through
+# resolve_config's features, which import this package.
+from resolve_config.sub_domains.gate_decision.gate_decision import GateDecision
+
+WorkflowState.model_rebuild(_types_namespace={"GateDecision": GateDecision})
+
 __all__ = [
     # Domain entities
     "HistoryEntry",
@@ -55,6 +63,7 @@ __all__ = [
     "StepResolution",
     "FunctionCall",
     "SUPPORTED_FUNCTIONS",
+    "GateDecision",
     # Features
     "build_state",
     "state_to_json",

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from config import StepRef, WorkflowPosition
 
@@ -11,6 +11,13 @@ from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.dispatch.dispatch import Dispatch
 from .sub_domains.function_call import FunctionCall
 from .sub_domains.step_resolution.step_resolution import StepResolution
+
+if TYPE_CHECKING:
+    # GateDecision lives in the resolve_config sub-domain. Importing it at
+    # runtime here would create a cycle (resolve_config's features import this
+    # package), so it is referenced as a forward ref and bound by
+    # workflow_state/__init__.py once this package's names exist.
+    from resolve_config.sub_domains.gate_decision.gate_decision import GateDecision
 
 STATE_MARKER_START = "<!-- WORKFLOW_STATE_START -->"
 STATE_MARKER_END = "<!-- WORKFLOW_STATE_END -->"
@@ -47,6 +54,12 @@ class WorkflowState(BaseModel):
         position: Flat workflow step path, outermost-first; last ref = the
             step actually executed (issue #638). The flat ``workflow``/
             ``step`` fields keep leaf (v1) semantics.
+        gate: Persisted record of the human's out-of-band decision on a held
+            ``human_gate`` step (issue #648). None while no decision is
+            recorded.
+        pending_gate_step: Name of the gated step currently on hold awaiting a
+            human ``/workflow approve|reject gate`` (issue #648). None when no
+            gate is pending.
     """
 
     version: int = 1
@@ -74,6 +87,8 @@ class WorkflowState(BaseModel):
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.
     position: list[StepRef] = Field(default_factory=list)
+    gate: Optional["GateDecision"] = None
+    pending_gate_step: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod

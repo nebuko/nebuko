@@ -15,7 +15,7 @@ from resolve_config.sub_domains.workflow_command.workflow_command import (  # no
 
 class TestTables:
     def test_actions(self):
-        assert ACTIONS == ("run", "resume", "force-step", "delete")
+        assert ACTIONS == ("run", "resume", "force-step", "delete", "approve", "reject")
 
     def test_resource_by_action(self):
         assert RESOURCE_BY_ACTION == {
@@ -23,6 +23,8 @@ class TestTables:
             "force-step": "step",
             "resume": None,
             "delete": "comments",
+            "approve": "gate",
+            "reject": "gate",
         }
 
     def test_flags_by_action(self):
@@ -31,6 +33,8 @@ class TestTables:
             "force-step": {"name"},
             "resume": {"feedback"},
             "delete": {"issue", "from"},
+            "approve": {"reason"},
+            "reject": {"reason"},
         }
 
 
@@ -104,6 +108,27 @@ class TestParseValid:
         cmd = parse_workflow_command("/workflow delete comments --from 5811583860")
         assert cmd is not None
         assert cmd.params == {"from": "5811583860"}
+
+    # /workflow approve|reject gate (issue #648)
+    def test_approve_gate_bare(self):
+        cmd = parse_workflow_command("/workflow approve gate")
+        assert cmd == WorkflowCommand(action="approve", resource="gate", params={})
+
+    def test_reject_gate_bare(self):
+        cmd = parse_workflow_command("/workflow reject gate")
+        assert cmd == WorkflowCommand(action="reject", resource="gate", params={})
+
+    def test_approve_gate_reason_multiword(self):
+        cmd = parse_workflow_command("/workflow approve gate --reason looks good to me")
+        assert cmd == WorkflowCommand(
+            action="approve", resource="gate", params={"reason": "looks good to me"}
+        )
+
+    def test_reject_gate_reason_multiword(self):
+        cmd = parse_workflow_command("/workflow reject gate --reason needs more tests")
+        assert cmd == WorkflowCommand(
+            action="reject", resource="gate", params={"reason": "needs more tests"}
+        )
 
 
 class TestParseMalformed:
@@ -190,3 +215,20 @@ class TestParseMalformed:
         # ASCII-only so the command is treated as absent (issue #644 review).
         assert parse_workflow_command("/workflow delete comments --issue ²") is None
         assert parse_workflow_command("/workflow delete comments --issue 123 --from ²") is None
+
+    # /workflow approve|reject gate (issue #648)
+    def test_gate_wrong_resource_rejected(self):
+        assert parse_workflow_command("/workflow approve step") is None
+        assert parse_workflow_command("/workflow reject workflow") is None
+
+    def test_gate_missing_resource_rejected(self):
+        assert parse_workflow_command("/workflow approve") is None
+        assert parse_workflow_command("/workflow reject") is None
+
+    def test_gate_unknown_flag_rejected(self):
+        assert parse_workflow_command("/workflow approve gate --feedback x") is None
+        assert parse_workflow_command("/workflow reject gate --name x") is None
+
+    def test_gate_bare_flag_no_value_rejected(self):
+        assert parse_workflow_command("/workflow approve gate --reason") is None
+        assert parse_workflow_command("/workflow reject gate --reason") is None

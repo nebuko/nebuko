@@ -10,6 +10,10 @@ Canonical actions (issue #635):
   - ``force-step`` resource ``step`` — jump to a step; ``--name`` required
   - ``delete``     resource ``comments`` — batch-delete issue comments (issue #644);
                    ``--issue`` and ``--from`` optional, both numeric
+  - ``approve``    resource ``gate`` — human release of a held ``human_gate``
+                   step (issue #648); ``--reason`` optional
+  - ``reject``     resource ``gate`` — human rejection of a held ``human_gate``
+                   step (issue #648); ``--reason`` optional
 
 Malformed input (unknown action, wrong/missing resource, unknown or
 duplicate flag, missing required flag) yields ``None`` so routing falls
@@ -34,18 +38,20 @@ __all__ = [
 class WorkflowCommand:
     """Immutable parsed /workflow <action> <resource> --flag value command."""
 
-    action: str  # "run" | "resume" | "force-step" | "delete"
-    resource: Optional[str]  # "workflow" | "step" | "comments" | None (resume)
+    action: str  # "run" | "resume" | "force-step" | "delete" | "approve" | "reject"
+    resource: Optional[str]  # "workflow" | "step" | "comments" | "gate" | None (resume)
     params: Dict[str, str]  # named flags, e.g. {"name": "spec-driven-impl"}
 
 
-ACTIONS: Tuple[str, ...] = ("run", "resume", "force-step", "delete")
+ACTIONS: Tuple[str, ...] = ("run", "resume", "force-step", "delete", "approve", "reject")
 
 RESOURCE_BY_ACTION: Dict[str, Optional[str]] = {
     "run": "workflow",
     "force-step": "step",
     "resume": None,
     "delete": "comments",
+    "approve": "gate",
+    "reject": "gate",
 }
 
 FLAGS_BY_ACTION: Dict[str, Set[str]] = {
@@ -53,6 +59,8 @@ FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "force-step": {"name"},
     "resume": {"feedback"},
     "delete": {"issue", "from"},
+    "approve": {"reason"},
+    "reject": {"reason"},
 }
 
 #: Required flags per action (absent ⇒ malformed ⇒ None).
@@ -60,7 +68,7 @@ _REQUIRED_FLAGS: Dict[str, str] = {"run": "name", "force-step": "name"}
 
 #: Flags whose value consumes all tokens up to the next ``--`` token or the
 #: end of line (multi-word, e.g. ``--feedback fix the bug``).
-_MULTIWORD_FLAGS = {"feedback"}
+_MULTIWORD_FLAGS = {"feedback", "reason"}
 
 #: Per-action flags whose value must be all digits (issue #644). A
 #: non-numeric value makes the command malformed (⇒ None).
