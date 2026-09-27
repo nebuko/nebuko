@@ -10,12 +10,15 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from openhands.sdk.llm.exceptions import LLMServiceUnavailableError
+
 from agent_script.features.run_agent.run_agent import (
     _perform_wind_down,
     _resolve_security_policy,
     _run_supervised,
     run_agent,
 )
+from agent_script.features.run_agent.run_failure import RunFailureKind
 from agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
@@ -198,6 +201,44 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertIs(convo.run_outcome.status, OutcomeStatus.FAILURE)
         # No wind-down on a crash — only the original prompt is sent.
         self.assertEqual(convo.send_message.call_count, 1)
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_unreachable_provider_failure_is_modelled_on_outcome(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        # An unreachable provider escapes arun() as a typed connectivity
+        # error; the run must record it (issue #668) so build_output can
+        # print a human-readable cause instead of the opaque sentinel.
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        convo = _make_conversation("finished")
+        mock_conversation_cls.return_value = convo
+
+        def fake_supervised(c, budget_s, label):
+            wd = __import__(
+                "agent_script.features.run_agent.run_watchdog", fromlist=["x"]
+            ).RunWatchdog(50.0, lambda: None)
+            return wd, LLMServiceUnavailableError(
+                "Cannot connect to host 192.168.1.64:31728"
+            )
+
+        with patch(
+            "agent_script.features.run_agent.run_agent._run_supervised",
+            side_effect=fake_supervised,
+        ), patch(
+            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            return_value=None,
+        ):
+            run_agent(llm_config={}, prompt="do the thing")
+        self.assertIs(convo.run_outcome.status, OutcomeStatus.FAILURE)
+        self.assertIsNotNone(convo.run_outcome.failure)
+        self.assertIs(
+            convo.run_outcome.failure.kind, RunFailureKind.LLM_UNREACHABLE
+        )
 
     @patch("agent_script.features.run_agent.run_agent.Conversation")
     @patch("agent_script.features.run_agent.run_agent.Agent")

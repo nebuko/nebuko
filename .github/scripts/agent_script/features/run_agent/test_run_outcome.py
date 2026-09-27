@@ -73,6 +73,11 @@ class TestRunOutcome(unittest.TestCase):
         self.assertEqual(outcome.dispatch_recall_count, 1)
         self.assertEqual(outcome.dispatch_recall_event_offset, 42)
 
+    def test_failure_field_defaults_none(self):
+        """A non-failure run carries no RunFailure (issue #668)."""
+        outcome = RunOutcome(status=OutcomeStatus.SUCCESS)
+        self.assertIsNone(outcome.failure)
+
     def test_frozen_rejects_mutation(self):
         outcome = RunOutcome(status=OutcomeStatus.SUCCESS)
         with self.assertRaises(Exception):
