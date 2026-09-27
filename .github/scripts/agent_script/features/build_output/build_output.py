@@ -52,6 +52,7 @@ from agent_script.features.extract_recovery_trace.extract_recovery_trace import 
     extract_recovery_trace,
     recovery_trace_to_markdown,
 )
+from agent_script.features.run_agent.run_failure import RunFailure, RunFailureKind
 from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 from agent_script.features.ensure_pr.ensure_pr import (
     EnsurePrResult,
@@ -134,6 +135,39 @@ def _build_timeout_summary(pr_result: EnsurePrResult | None) -> str:
     return "\n".join(lines)
 
 
+_UNREACHABLE_RESUME_HINT = (
+    "**To resume the workflow once the provider is reachable, "
+    "post this comment:**"
+)
+_GENERIC_RESUME_HINT = "**To resume the workflow, post this comment:**"
+
+_GENERIC_FAILURE_SUMMARY = (
+    "> \u26a0\ufe0f **The agent run failed before producing any output.** "
+    "Check the full logs in the workflow run for details."
+)
+
+
+def _resume_hint(kind: RunFailureKind) -> str:
+    """Recovery instruction tailored to the failure kind."""
+    if kind is RunFailureKind.LLM_UNREACHABLE:
+        return _UNREACHABLE_RESUME_HINT
+    return _GENERIC_RESUME_HINT
+
+
+def _render_failure_detail(detail: str) -> list[str]:
+    """Render the raw exception text inside a collapsed block, if any."""
+    if not detail:
+        return []
+    return [
+        "",
+        "<details><summary>Technical detail</summary>",
+        "",
+        f"`{detail}`",
+        "",
+        "</details>",
+    ]
+
+
 def _build_failure_summary(run_outcome: RunOutcome) -> str:  # @stub-protected
     """Synthesize a final message for a FAILURE run that produced none.
 
@@ -147,7 +181,22 @@ def _build_failure_summary(run_outcome: RunOutcome) -> str:  # @stub-protected
     Returns:
         Markdown summary for the terminal comment.
     """
-    raise NotImplementedError
+    failure = run_outcome.failure or RunFailure(
+        kind=RunFailureKind.UNKNOWN,
+        summary=_GENERIC_FAILURE_SUMMARY,
+        detail="",
+    )
+    lines = [
+        failure.summary,
+        "",
+        _resume_hint(failure.kind),
+        "",
+        "```",
+        failure.resume_command,
+        "```",
+    ]
+    lines.extend(_render_failure_detail(failure.detail))
+    return "\n".join(lines)
 
 
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
@@ -764,6 +813,18 @@ def build_output(
             # The wind-down did not finish its work — synthesize a clear
             # summary so downstream doesn't treat this as a crashed run.
             final_message = _build_timeout_summary(pr_result)
+
+    # ── Failure handling (issue #668) ─────────────────────────────
+    # A run that crashed with no output would otherwise reach the opaque
+    # "__NO_FINAL_MESSAGE__" sentinel. Sanity: never override a real answer.
+    is_failure = (
+        run_outcome is not None
+        and run_outcome.status is OutcomeStatus.FAILURE
+        and not final_message
+    )
+    if is_failure:
+        logger.info("Failure detected — synthesizing failure summary")
+        final_message = _build_failure_summary(run_outcome)
 
     # ── Review fix request counting ──────────────────────────────
     review_fix_requests = final_message.count("@@dev fix this") if final_message else 0
