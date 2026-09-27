@@ -32,8 +32,8 @@ from github_client import get_comment_body, get_issue_comments
 from workflow_state import (
     extract_latest_state_from_comments as extract_state,
     extract_state_from_body,
-    state_to_json,
 )
+from workflow_state.state_codec import WorkflowStateCodec
 from workflow_state.features.comment.to_git_comment import strip_state_section
 
 
@@ -427,8 +427,8 @@ def main():
     )
     try:
         if prev_state:
-            with open(state_file_path, "w", encoding="utf-8") as sf:
-                sf.write(state_to_json(prev_state, compact=True))
+            codec = WorkflowStateCodec()
+            state_file_path = codec.save_prev(prev_state)
             print(f"Saved previous workflow state to {state_file_path} (v{prev_state.version})", file=sys.stderr)
         else:
             if os.path.isfile(state_file_path):

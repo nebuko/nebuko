@@ -9,10 +9,15 @@ history in issue #648 — the runtime rebuilt state from ``prev_state=None``
 resolved ``version=7`` and written it to ``prev_workflow_state.json``.
 """
 
+import json
+import os
 from dataclasses import dataclass
 from typing import Literal
 
+from .features.to_json.to_json import state_to_json
 from .workflow_state import WorkflowState
+
+HANDOFF_FILENAME = "prev_workflow_state.json"
 
 
 @dataclass(frozen=True)
@@ -42,24 +47,50 @@ class WorkflowStateCodec:
 
     # @stub-protected: signature defined by architect — do not modify
     def __init__(self, runner_temp: str | None = None) -> None:
-        raise NotImplementedError
+        self._runner_temp = runner_temp
+
+    def _handoff_path(self) -> str:
+        base = self._runner_temp or os.environ.get("RUNNER_TEMP", "/tmp")
+        return os.path.join(base, HANDOFF_FILENAME)
 
     # @stub-protected: signature defined by architect — do not modify
     def encode(self, state: WorkflowState, *, compact: bool = False) -> str:
         """Serialise ``state`` to the canonical (optionally compact) JSON."""
-        raise NotImplementedError
+        return state_to_json(state, compact=compact)
 
     # @stub-protected: signature defined by architect — do not modify
     def decode(self, raw: str) -> WorkflowState:
         """Parse canonical JSON back into a lossless ``WorkflowState``."""
-        raise NotImplementedError
+        return WorkflowState.model_validate(json.loads(raw))
 
     # @stub-protected: signature defined by architect — do not modify
     def save_prev(self, state: WorkflowState) -> str:
         """Persist ``state`` to the hand-off file and return its path."""
-        raise NotImplementedError
+        path = self._handoff_path()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.encode(state, compact=True))
+        return path
 
     # @stub-protected: signature defined by architect — do not modify
     def load_prev(self) -> PrevStateLoad:
         """Load the hand-off state, distinguishing absent from invalid."""
-        raise NotImplementedError
+        path = self._handoff_path()
+        if not os.path.isfile(path):
+            return PrevStateLoad(
+                state=None,
+                status="absent",
+                detail=f"no previous workflow state hand-off at {path}",
+            )
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read()
+        except OSError as e:
+            return PrevStateLoad(
+                state=None, status="invalid", detail=f"cannot read {path}: {e}"
+            )
+        try:
+            return PrevStateLoad(state=self.decode(raw), status="ok")
+        except Exception as e:
+            return PrevStateLoad(
+                state=None, status="invalid", detail=f"cannot decode {path}: {e}"
+            )

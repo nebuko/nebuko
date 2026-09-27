@@ -226,7 +226,12 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
 
         leaf = self._in_worktree(run)
 
-        self.assertIsInstance(leaf, SubWorkflowLeafError)
+        # Re-import at call time: other suites reload ``resolve_workflow``
+        # (to reset its remote-fetch hook), which redefines the class, so the
+        # module-level binding would be a stale identity.
+        from resolve_workflow import SubWorkflowLeafError as CurrentLeafError
+
+        self.assertIsInstance(leaf, CurrentLeafError)
         self.assertTrue(leaf.reason)
 
     def test_entered_child_is_routable_without_manual_resume(self):

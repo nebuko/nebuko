@@ -12,6 +12,7 @@ from agent_script import (
     resolve_llm_config,
     run_agent,
     build_output,
+    load_prev_state_or_recover,
 )
 
 logger = get_logger(__name__)
@@ -71,7 +72,15 @@ def main():
     metrics = collect_and_save_metrics(conversation, agent_cfg)
 
     # 7. Build output
-    output = build_output(conversation, metrics, args)
+    #    Recover the previous state from issue comments when the per-run disk
+    #    hand-off is missing (issue #671, anomaly B of #648); disk-only reads
+    #    stay inside build_output so the builder remains unit-testable.
+    output = build_output(
+        conversation,
+        metrics,
+        args,
+        prev_state=load_prev_state_or_recover(),
+    )
 
     logger.info("Task completed successfully")
 

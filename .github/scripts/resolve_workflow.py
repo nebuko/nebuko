@@ -312,22 +312,59 @@ def _fetch_scaffold_workflow_file(
     the raw name and a ``.yaml`` suffix as fallbacks. ``None`` when the
     fetch cannot be attempted or fails.
     """
-    if not scaffold_branch or is_path_like_reference(name):
+    if is_path_like_reference(name):
         return None
     if (Path(workflows_dir) / f"{name}.yaml").exists():
         return None  # local hit wins; no fetch
-    refs = [name, f"{name}.yaml"] if not name.endswith(".yaml") else [name]
+    declared = None
     if parent_workflow and parent_workflow_step:
         declared = _parent_step_child_reference(
             parent_workflow, parent_workflow_step, workflows_dir
         )
-        if declared:
-            refs = [declared]
+        # The child may already be present in the checkout even though its
+        # declared workflow name (e.g. ``tmp-impl``) is not a filename: the
+        # parent step's declared reference is the authoritative location.
+        local = _local_child_path_for_name(declared, name, workflows_dir)
+        if local:
+            return local
+    if not scaffold_branch:
+        return None
+    refs = [declared] if declared else (
+        [name, f"{name}.yaml"] if not name.endswith(".yaml") else [name]
+    )
     for ref in refs:
         path = _scaffold_fetch(ref, scaffold_branch)
         if path:
             return path
     return None
+
+
+def _local_child_path_for_name(
+    declared: Optional[str],
+    name: str,
+    workflows_dir: str,
+) -> Optional[str]:
+    """Local path of a declared child reference when it holds ``name``.
+
+    A branch-mounted child (``tmp_impl/workflow.yaml``) may already be in the
+    checkout while its declared workflow name (``tmp-impl``) is not a filename,
+    so the by-name lookup misses. Re-resolving the parent step's declared
+    reference fills that gap; the loaded workflow's ``name`` must match so a
+    wrong file can never substitute (issue #671).
+    """
+    if not declared:
+        return None
+    try:
+        path = resolve_workflow_reference(declared, workflows_dir)
+    except ValueError:
+        return None
+    if not Path(path).exists():
+        return None
+    try:
+        child = load_workflow(str(path))
+    except (FileNotFoundError, ValueError):
+        return None
+    return str(path) if child.name == name else None
 
 
 _WORKFLOW_FILE_SUFFIXES = (".yaml", ".yml")
@@ -731,7 +768,30 @@ def _resolve_entry_leaf_for_step(
     :class:`SubWorkflowLeaf` for that leaf or a :class:`SubWorkflowLeafError`
     when it cannot be resolved (issue #671).
     """
-    raise NotImplementedError
+    ref = step.workflow or step.path
+    if not ref:
+        return SubWorkflowLeafError(
+            f"step '{step.name}' has no sub-workflow reference"
+        )
+    fetch_cache: dict = {}
+    child = _load_child_workflow(
+        ref, workflows_dir, scaffold_branch, fetch_cache,
+        local_workflows_dir=local_workflows_dir,
+    )
+    if child is None:
+        return SubWorkflowLeafError(
+            f"Sub-workflow not found: {ref} "
+            f"(entered via step '{step.name}'; "
+            f"{'no scaffold_branch in state'
+               if not scaffold_branch else f'scaffold_branch {scaffold_branch}'})"
+        )
+    if not child.steps:
+        return SubWorkflowLeafError(f"Sub-workflow '{child.name}' has no steps")
+    return _resolve_sub_workflow_leaf(
+        child, step, workflows_dir, scaffold_branch, fetch_cache, {child.name},
+        parent_skill=step.skill,
+        local_workflows_dir=local_workflows_dir,
+    )
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -764,7 +824,92 @@ def _resolve_sub_workflow_leaf(
     resolved; an empty terminal step is an explicit error rather than a
     silently-returned mount node (issue #671).
     """
-    raise NotImplementedError
+    entry_ref = entry_step.workflow or entry_step.path or ""
+    wf = child_wf
+    leaf = wf.steps[0] if wf.steps else None
+    if leaf is None:
+        return SubWorkflowLeafError(f"Sub-workflow '{wf.name}' has no steps")
+    refs: list[dict[str, str]] = [{"workflow": wf.name, "step": leaf.name}]
+    depth = 0
+    while leaf is not None and not leaf.agent and leaf.script is None:
+        # A first-step with no runnable source is itself a leaf: surface it.
+        if not leaf.workflow and not leaf.path and not leaf.repo:
+            break
+        ref = leaf.workflow or leaf.path
+        if not ref:
+            break
+        if _workflow_ref_stem(ref) in visited:
+            return SubWorkflowLeafError(
+                f"Sub-workflow cycle detected at '{ref}' "
+                f"(entered via '{entry_ref}')"
+            )
+        if depth >= _MAX_SUB_WORKFLOW_DEPTH:
+            return SubWorkflowLeafError(
+                f"max sub-workflow nesting depth ({_MAX_SUB_WORKFLOW_DEPTH}) "
+                f"exceeded at '{ref}' (entered via '{entry_ref}')"
+            )
+        child = _load_child_workflow(
+            ref, workflows_dir, scaffold_branch, fetch_cache,
+            local_workflows_dir,
+        )
+        if child is None:
+            return SubWorkflowLeafError(
+                f"Sub-workflow not found: {ref} (nested under '{entry_ref}')"
+            )
+        if child.name in visited:
+            return SubWorkflowLeafError(
+                f"Sub-workflow cycle detected at '{child.name}' "
+                f"(entered via '{entry_ref}')"
+            )
+        visited.add(child.name)
+        depth += 1
+        if not parent_skill and leaf.skill:
+            parent_skill = leaf.skill
+        wf = child
+        leaf = wf.steps[0] if wf.steps else None
+        if leaf is None:
+            return SubWorkflowLeafError(f"Sub-workflow '{wf.name}' has no steps")
+        refs.append({"workflow": wf.name, "step": leaf.name})
+
+    if leaf is None or not leaf.name:
+        return SubWorkflowLeafError(
+            f"Sub-workflow '{wf.name}' has no runnable leaf step "
+            f"(entered via '{entry_ref}')"
+        )
+
+    merged_skill = _skills_to_string(parent_skill or leaf.skill)
+    workflow_next = wf.steps[1].name if len(wf.steps) > 1 else ""
+
+    if leaf.agent:
+        return SubWorkflowLeaf(
+            agent=leaf.agent,
+            step=leaf.name,
+            workflow=wf.name,
+            workflow_next=workflow_next,
+            skill=merged_skill,
+            prompt=leaf.prompt or "",
+            refs=tuple(refs),
+        )
+
+    if leaf.script is not None:
+        return SubWorkflowLeaf(
+            agent="",
+            step=leaf.name,
+            workflow=wf.name,
+            workflow_next=workflow_next,
+            skill=merged_skill,
+            prompt=leaf.prompt or "",
+            refs=tuple(refs),
+            kind="script",
+            script_path=leaf.script.path or "",
+            script_args=" ".join(leaf.script.args or []),
+            script_timeout=leaf.script.timeout_minutes,
+        )
+
+    return SubWorkflowLeafError(
+        f"Unknown agent '{leaf.agent}' in sub-workflow '{wf.name}' "
+        f"(step '{leaf.name}'; entered via '{entry_ref}')"
+    )
 
 
 def _resolve_sub_workflow_entry(
@@ -1586,22 +1731,22 @@ def _sub_workflow_entry_marker(
     Descends to the child's innermost runnable leaf (issue #609) — a child
     whose first step is itself a sub-workflow reference (e.g. the scaffold's
     ``tmp-impl`` steps) resolves to the leaf workflow's leaf step instead of
-    carrying ``task=None``. The recorded ``workflow`` stays the reference
-    being entered (the immediate parent for the return leg) while
-    ``step`` is the leaf step to run. When the child cannot be loaded or has
-    no runnable leaf, the typed :class:`SubWorkflowLeafError` is surfaced as
+    carrying ``task=None``. The recorded ``workflow``/``step`` pair is the
+    terminal leaf the run actually executes (``workflow`` = the leaf's owning
+    workflow, never the mount reference) so the router has a valid anchor to
+    advance from — recording the mount node produced the empty-step stall of
+    issue #648. When the child cannot be loaded or has no runnable leaf, the
+    typed :class:`SubWorkflowLeafError` is surfaced as
     ``{"SKIP_AGENT": "true", "REASON": ...}`` (the codebase-wide failure
     convention) rather than ``None``; ``None`` is reserved for "not a mount",
     so a declared mount is never silently stepped over (issue #671).
 
-    Invariant (trigger vs. runtime asymmetry): this marker records
-    ``workflow`` = the reference being entered, while the runtime entry path
-    (``_resolve_sub_workflow_entry``) records ``WORKFLOW_NAME`` = the innermost
-    leaf workflow. Both route correctly — the dispatch path re-resolves from
-    the reference step and the runtime entry is the state authority — but the
-    two must stay consistent in descent (same leaf, same skill merge); a
-    change to either side must preserve this invariant (pinned by
-    ``test_trigger_side_marker_matches_leaf``).
+    Invariant (trigger vs. runtime symmetry): this marker records
+    ``workflow`` = the innermost leaf workflow, matching the runtime entry
+    path (``_resolve_sub_workflow_entry``), which records ``WORKFLOW_NAME`` =
+    that same leaf. Both must stay consistent in descent (same leaf, same
+    skill merge); a change to either side must preserve this invariant
+    (pinned by ``test_trigger_side_marker_matches_leaf``).
     """
     leaf = _resolve_entry_leaf_for_step(
         parent_step, workflows_dir, scaffold_branch, local_workflows_dir
@@ -1627,7 +1772,7 @@ def _sub_workflow_entry_marker(
         "entered_sub_workflow": True,
         "task": leaf.agent if leaf.kind == "agent" else "",
         "step": leaf.step,
-        "workflow": child_reference,
+        "workflow": leaf.workflow,
         "parent_workflow": parent_wf_name,
         "parent_workflow_step": parent_step_name,
     }

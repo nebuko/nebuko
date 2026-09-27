@@ -19,6 +19,7 @@ from config import (
     parse_position_env,
     resolve_workflow_reference,
 )
+from github_client import get_issue_comments
 from metrics_schema import Metrics
 from validate_output import (
     extract_dispatch_resilient,
@@ -34,8 +35,10 @@ from workflow_state import (
     WorkflowState,
 )
 from workflow_state import extract_function_call
+from workflow_state import extract_latest_state_from_comments
 from workflow_state.features.build_state.build_state import build_state
 from workflow_state.features.to_json.to_json import state_to_json
+from workflow_state.state_codec import WorkflowStateCodec
 
 from agent_script.sub_domains.split_plan.split_plan import (
     extract_split_plan,
@@ -316,17 +319,48 @@ def apply_human_gate_intercept(
 
 
 def _load_prev_state() -> WorkflowState | None:
-    """Load previous workflow state from disk, or return None."""
-    prev_state_path = os.path.join(
-        os.environ.get("RUNNER_TEMP", "/tmp"), "prev_workflow_state.json"
+    """Load previous workflow state from the ``$RUNNER_TEMP`` disk hand-off.
+
+    Disk-only by design so the core builder stays pure and unit-testable. The
+    caller (``agent_script``) uses :func:`load_prev_state_or_recover` to add the
+    comments fallback for production runs.
+    """
+    load = WorkflowStateCodec().load_prev()
+    if load.status == "ok":
+        return load.state
+    logger.warning(
+        f"Previous workflow state hand-off {load.status}: {load.detail}"
     )
-    if not os.path.isfile(prev_state_path):
+    return None
+
+
+def load_prev_state_or_recover(fetch_comments=None) -> WorkflowState | None:
+    """Load previous state from disk, recovering from issue comments on miss.
+
+    The ``$RUNNER_TEMP`` hand-off written by ``query_context`` is the fast path.
+    When it is absent or invalid (e.g. a container boundary hides the file) the
+    state is re-extracted from the issue comments — the same authority
+    ``query_context`` reads — so a missing hand-off no longer silently resets the
+    version/history (issue #671, anomaly B of #648).
+    """
+    state = _load_prev_state()
+    if state is not None:
+        return state
+    return _load_prev_state_from_comments(fetch_comments)
+
+
+def _load_prev_state_from_comments(fetch_comments=None) -> WorkflowState | None:
+    """Re-extract the latest workflow state from the issue comments."""
+    repo = os.environ.get("REPO_NAME", "")
+    issue_number = os.environ.get("TARGET_NUMBER", "")
+    if not repo or not issue_number.isdigit():
         return None
     try:
-        with open(prev_state_path, "r", encoding="utf-8") as f:
-            return WorkflowState.model_validate(json.load(f))
+        fetch = fetch_comments or get_issue_comments
+        comments = fetch(repo, int(issue_number))
+        return extract_latest_state_from_comments(comments)
     except Exception as e:
-        logger.warning(f"Failed to load previous state: {e}")
+        logger.warning(f"Failed to recover workflow state from comments: {e}")
         return None
 
 

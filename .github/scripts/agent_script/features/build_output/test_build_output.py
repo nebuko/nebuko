@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -14,9 +15,11 @@ from build_output import (
     apply_human_gate_intercept,
     extract_latest_answer,
     is_malformed_final_message,
+    load_prev_state_or_recover,
 )
 from validate_output import strip_agent_run_config
-from workflow_state import Dispatch
+from workflow_state import Dispatch, WorkflowState
+from workflow_state.features.comment.to_git_comment import format_collapsed_section
 from workflow_state.features.to_json.to_json import state_to_json
 
 
@@ -981,6 +984,75 @@ class TestBuildOutputScaffoldBranchToolWiring(unittest.TestCase):
             result["workflow_state"].scaffold_branch, "feature/issue-635-marker"
         )
         self.assertNotIn("SCAFFOLD_BRANCH:", result["final_message"])
+
+
+class TestLoadPrevStateHandoff(unittest.TestCase):
+    """Anomaly B: the prev-state hand-off must never silently drop history."""
+
+    def setUp(self):
+        self._env = dict(os.environ)
+        os.environ["REPO_NAME"] = "owner/repo"
+        os.environ["TARGET_NUMBER"] = "648"
+        self._tmp = tempfile.mkdtemp()
+        self._prev_runner_temp = os.environ.get("RUNNER_TEMP")
+        os.environ["RUNNER_TEMP"] = self._tmp
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._env)
+        if self._prev_runner_temp is None:
+            os.environ.pop("RUNNER_TEMP", None)
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    @staticmethod
+    def _state(version=7):
+        return WorkflowState(
+            version=version,
+            workflow="plan-orchestration",
+            step="scaffold",
+            agent="dev",
+        )
+
+    def _comment(self, state):
+        return {"id": 1, "body": format_collapsed_section(state) + "answer"}
+
+    def test_absent_handoff_falls_back_to_comments(self):
+        calls = {}
+
+        def fake_fetch(repo, number):
+            calls["args"] = (repo, number)
+            return [self._comment(self._state())]
+
+        state = load_prev_state_or_recover(fetch_comments=fake_fetch)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 7)
+        self.assertEqual(calls["args"], ("owner/repo", 648))
+
+    def test_valid_handoff_does_not_fetch_comments(self):
+        from workflow_state.state_codec import WorkflowStateCodec
+
+        WorkflowStateCodec().save_prev(self._state())
+
+        def fail_fetch(*_args, **_kwargs):
+            raise AssertionError("comments must not be fetched on a valid hand-off")
+
+        state = load_prev_state_or_recover(fetch_comments=fail_fetch)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 7)
+
+    def test_invalid_handoff_falls_back_to_comments(self):
+        with open(os.path.join(self._tmp, "prev_workflow_state.json"), "w") as f:
+            f.write("{ not valid json")
+
+        state = load_prev_state_or_recover(
+            fetch_comments=lambda _r, _n: [self._comment(self._state(version=9))]
+        )
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 9)
+
+    def test_missing_repo_env_returns_none(self):
+        os.environ.pop("REPO_NAME", None)
+        self.assertIsNone(load_prev_state_or_recover(fetch_comments=lambda *_a: []))
 
 
 if __name__ == "__main__":
