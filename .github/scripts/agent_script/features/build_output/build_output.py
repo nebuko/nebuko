@@ -52,7 +52,7 @@ from agent_script.features.extract_recovery_trace.extract_recovery_trace import 
     extract_recovery_trace,
     recovery_trace_to_markdown,
 )
-from agent_script.features.run_agent.run_outcome import OutcomeStatus
+from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 from agent_script.features.ensure_pr.ensure_pr import (
     EnsurePrResult,
     ensure_pr,
@@ -132,6 +132,22 @@ def _build_timeout_summary(pr_result: EnsurePrResult | None) -> str:
         elif pr_result.skipped:
             lines.append(f"- PR fallback skipped: {pr_result.message}")
     return "\n".join(lines)
+
+
+def _build_failure_summary(run_outcome: RunOutcome) -> str:  # @stub-protected
+    """Synthesize a final message for a FAILURE run that produced none.
+
+    Names the cause of the failure — e.g. an unreachable LLM API provider —
+    and prints the command that resumes the workflow once the provider is
+    reachable again (issue #668).
+
+    Args:
+        run_outcome: The observed run outcome, carrying the RunFailure.
+
+    Returns:
+        Markdown summary for the terminal comment.
+    """
+    raise NotImplementedError
 
 
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
