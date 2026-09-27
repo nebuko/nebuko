@@ -21,7 +21,10 @@ from .features.extract_split_plan.extract_split_plan import (
 )
 from .features.resolve_llm_config.resolve_llm_config import resolve_llm_config
 from .features.run_agent.run_agent import run_agent
-from .features.build_output.build_output import build_output
+from .features.build_output.build_output import (
+    build_output,
+    load_prev_state_or_recover,
+)
 
 __all__ = [
     "split_message",
@@ -37,4 +40,5 @@ __all__ = [
     "resolve_llm_config",
     "run_agent",
     "build_output",
+    "load_prev_state_or_recover",
 ]

@@ -751,8 +751,8 @@ class TestNestedEntryErrors:
             ],
         }))
         # Child first step has a repo ref only: no agent/script/workflow
-        # source to descend into — the old code reported bare
-        # "Unknown agent 'None'"; the new reason names step + entry.
+        # source to descend into — the reason names the unresolvable step
+        # and entry rather than the misleading "Unknown agent 'None'".
         (tmp_path / "child.yaml").write_text(yaml.dump({
             "name": "child",
             "description": "Child without a runnable first step",
@@ -770,8 +770,8 @@ class TestNestedEntryErrors:
         )
         assert r["SKIP_AGENT"] == "true"
         assert r["REASON"] == (
-            "Unknown agent 'None' in sub-workflow 'child' "
-            "(step 'first'; entered via 'child')"
+            "Sub-workflow 'child' step 'first' has no runnable source "
+            "(no agent or script; entered via 'child')"
         )
 
     def test_reference_cycle_guard_stops_descent(self, tmp_path: Path):
@@ -1267,3 +1267,57 @@ class TestDefaultWorkflowWithRealFile:
 
         result = resolve(state.workflow, state.step, str(_real_workflows_dir()))
         assert result == {"task": "ctx", "step": "context"}
+
+
+def _import_return_marker_for_parent():
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent))
+    from resolve_workflow import _return_marker_for_parent
+    return _return_marker_for_parent
+
+
+class TestParentReturnFailureSurface:
+    """A failed child re-entry while unwinding to the parent must stay a
+    typed failure marker (``SKIP_AGENT``), never be decorated as a
+    successful entry marker (issue #671 carry-forward)."""
+
+    def test_unresolvable_remount_is_surfaced_unchanged(self, tmp_path: Path):
+        (tmp_path / "parent.yaml").write_text(yaml.dump({
+            "name": "parent",
+            "description": "Parent with a conditional remount",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {
+                    "name": "anchor",
+                    "agent": "genius",
+                    "conditions": [
+                        {"on_result": "approved", "next": "remount"},
+                    ],
+                    "next": None,
+                },
+                {"name": "remount", "workflow": "broken"},
+            ],
+        }))
+        (tmp_path / "broken.yaml").write_text(yaml.dump({
+            "name": "broken",
+            "description": "Child without a runnable first step",
+            "trigger": {"agents": ["dev"]},
+            "steps": [
+                {
+                    "name": "first",
+                    "repo": "https://github.com/owner/repo.git",
+                    "ref": "main",
+                    "next": None,
+                },
+            ],
+        }))
+
+        marker = _import_return_marker_for_parent()(
+            ("parent", "anchor"), "approved", str(tmp_path),
+        )
+
+        assert marker is not None
+        assert marker.get("SKIP_AGENT") == "true"
+        assert "no runnable source" in marker["REASON"]
+        # The failure dict must not be decorated with a branch key.
+        assert "branch" not in marker
