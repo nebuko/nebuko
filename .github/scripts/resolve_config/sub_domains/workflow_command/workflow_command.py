@@ -8,6 +8,8 @@ Canonical actions (issue #635):
   - ``run``        resource ``workflow`` — start/switch a workflow; ``--name`` required
   - ``resume``     no resource — resume the held step; ``--feedback`` optional
   - ``force-step`` resource ``step`` — jump to a step; ``--name`` required
+  - ``delete``     resource ``comments`` — batch-delete issue comments (issue #644);
+                   ``--issue`` and ``--from`` optional, both numeric
 
 Malformed input (unknown action, wrong/missing resource, unknown or
 duplicate flag, missing required flag) yields ``None`` so routing falls
@@ -32,23 +34,25 @@ __all__ = [
 class WorkflowCommand:
     """Immutable parsed /workflow <action> <resource> --flag value command."""
 
-    action: str  # "run" | "resume" | "force-step"
-    resource: Optional[str]  # "workflow" | "step" | None (resume)
+    action: str  # "run" | "resume" | "force-step" | "delete"
+    resource: Optional[str]  # "workflow" | "step" | "comments" | None (resume)
     params: Dict[str, str]  # named flags, e.g. {"name": "spec-driven-impl"}
 
 
-ACTIONS: Tuple[str, ...] = ("run", "resume", "force-step")
+ACTIONS: Tuple[str, ...] = ("run", "resume", "force-step", "delete")
 
 RESOURCE_BY_ACTION: Dict[str, Optional[str]] = {
     "run": "workflow",
     "force-step": "step",
     "resume": None,
+    "delete": "comments",
 }
 
 FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "run": {"name"},
     "force-step": {"name"},
     "resume": {"feedback"},
+    "delete": {"issue", "from"},
 }
 
 #: Required flags per action (absent ⇒ malformed ⇒ None).
@@ -57,6 +61,12 @@ _REQUIRED_FLAGS: Dict[str, str] = {"run": "name", "force-step": "name"}
 #: Flags whose value consumes all tokens up to the next ``--`` token or the
 #: end of line (multi-word, e.g. ``--feedback fix the bug``).
 _MULTIWORD_FLAGS = {"feedback"}
+
+#: Per-action flags whose value must be all digits (issue #644). A
+#: non-numeric value makes the command malformed (⇒ None).
+_NUMERIC_FLAGS_BY_ACTION: Dict[str, Set[str]] = {
+    "delete": {"issue", "from"},
+}
 
 _WORKFLOW_CMD_RE = re.compile(r"^/workflow\s+(.*)$")
 
@@ -115,7 +125,29 @@ def parse_workflow_command(trigger_body: str) -> Optional[WorkflowCommand]:
     params = _parse_flags(tokens[i:], action)
     if params is None:
         return None
+    if not _numeric_flags_valid(params, action):
+        return None
     required = _REQUIRED_FLAGS.get(action)
     if required is not None and required not in params:
         return None
     return WorkflowCommand(action=action, resource=expected_resource, params=params)
+
+
+def _is_ascii_digits(value: str) -> bool:
+    """True for non-empty ASCII-digit strings.
+
+    ``str.isdigit`` also accepts non-ASCII digits (e.g. ``'²'``, ``'١٢٣'``)
+    which ``int()`` then rejects; genuine numeric flags must be ASCII so the
+    downstream ``int()`` conversion can never crash (issue #644 review).
+    """
+    return value.isascii() and value.isdigit()
+
+
+def _numeric_flags_valid(params: Dict[str, str], action: str) -> bool:
+    """True unless a numeric-flag value for ``action`` is not all digits."""
+    numeric_flags = _NUMERIC_FLAGS_BY_ACTION.get(action, set())
+    return all(
+        _is_ascii_digits(value)
+        for flag, value in params.items()
+        if flag in numeric_flags
+    )

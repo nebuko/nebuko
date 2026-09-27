@@ -25,13 +25,16 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 | `/workflow <name>` | Start (or switch to) the named workflow, regardless of current state. |
 | `/workflow resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. |
 | `/workflow force-next-step <step>` | Jump directly to `<step>` of the active workflow, regardless of state. |
+| `/workflow delete comments [--issue <id>] [--from <comment-id>]` | Human-only batch deletion of issue comments. `--issue <id>` selects the target issue (mandatory on the CLI surface; auto-filled with the invoking issue when the command is posted in that issue). Optional `--from <comment-id>` deletes that comment **and every later one**; omit it to delete **all** comments. Terminal command: it runs the deterministic deletion step and no agent. Requires `GH_PAT` with `issues:write`. |
 | `DEBUG=true` | Routes to the debug/recovery path instead of normal routing. |
 
 **Precedence:** human commands always override state-based routing (see the
 cascade in [architecture.md — Routing Cascade](./architecture.md#routing-cascade)):
-`resume` > `force-next-step` > `/workflow <name>` > `@@mention` > dispatch-based
-routing > next-step > bot fallback. This guarantee exists so explicit human
-intent is never absorbed by an active workflow's `dispatch` object.
+`resume` > `force-next-step` > `delete comments` > `/workflow <name>` >
+`@@mention` > dispatch-based routing > next-step > bot fallback. This guarantee
+exists so explicit human intent is never absorbed by an active workflow's
+`dispatch` object. `delete comments` is a **terminal** human command: it runs
+the deterministic deletion step and never invokes an agent.
 
 Note: **bot agents cannot use `@@mention`** (only humans may); bots hand off via
 the `AGENT_RUN_CONFIG` sentinel ([reference.md](./reference.md#agent_run_config)).
