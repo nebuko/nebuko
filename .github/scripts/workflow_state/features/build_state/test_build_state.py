@@ -60,6 +60,52 @@ class TestBuildState(unittest.TestCase):
         )
         self.assertTrue(state.history[0].pin)
 
+    def test_pin_adds_comment_ids_to_pinned_comment_ids(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="plan",
+            agent="genius",
+            summary="Architecture proposal",
+            pin=True,
+            comment_ids=[101, 102],
+        )
+        self.assertTrue(state.history[0].pin)
+        self.assertEqual(state.pinned_comment_ids, [101, 102])
+
+    def test_unpinned_does_not_add_to_pinned_comment_ids(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="dev",
+            agent="dev",
+            summary="Implementation",
+            pin=False,
+            comment_ids=[201],
+        )
+        self.assertEqual(state.pinned_comment_ids, [])
+
+    def test_pinned_comment_ids_persist_and_deduplicate(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="plan",
+            agent="genius",
+            summary="Plan",
+            pin=True,
+            comment_ids=[301],
+        )
+        nxt = build_state(
+            prev,
+            workflow="default",
+            step="dev",
+            agent="dev",
+            summary="Impl",
+            pin=True,
+            comment_ids=[301, 302],
+        )
+        self.assertEqual(nxt.pinned_comment_ids, [301, 302])
+
     def test_result_field(self):
         state = build_state(
             None,

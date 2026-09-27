@@ -93,6 +93,28 @@ def _enrich_history_with_comment_ids(
         entry.comment_ids = [cid for cid in part_groups[i] if cid is not None]
 
 
+def _enrich_pinned_comment_ids(
+    history: list[Any],  # list[HistoryEntry]
+    pinned_comment_ids: list[int],
+) -> None:
+    """Union the comment_ids of every ``pin=True`` history entry into
+    ``pinned_comment_ids`` (issue #617).
+
+    Downstream context assembly (_build_state_context) re-fetches the full
+    bodies of these IDs verbatim. Idempotent: existing IDs and duplicates are
+    skipped, so re-running on an already-enriched state is a no-op.
+    """
+    seen = set(pinned_comment_ids)
+    for entry in history:
+        if not getattr(entry, "pin", False):
+            continue
+        for cid in entry.comment_ids or []:
+            if cid is None or cid in seen:
+                continue
+            seen.add(cid)
+            pinned_comment_ids.append(cid)
+
+
 def extract_latest_state_from_comments(comments: list[dict[str, Any]]) -> Optional[WorkflowState]:
     """
     Extract the latest WorkflowState from a list of GitHub comments.
@@ -138,6 +160,8 @@ def extract_latest_state_from_comments(comments: list[dict[str, Any]]) -> Option
                 state = WorkflowState.model_validate(data)
                 # Enrich history entries with comment IDs from prior state comments
                 _enrich_history_with_comment_ids(state.history, state_comments, comments)
+                # Derive pinned_comment_ids from pin=True entries (issue #617)
+                _enrich_pinned_comment_ids(state.history, state.pinned_comment_ids)
                 return state
             except Exception:
                 continue

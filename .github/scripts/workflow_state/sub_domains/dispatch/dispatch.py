@@ -27,6 +27,8 @@ class Dispatch(BaseModel):
         branch: Optional branch name.
         parent_workflow, parent_workflow_step: Sub-workflow tracking.
         skills: Optional skills string for downstream agent.
+        pin: When True, pin this step's output comment(s) so their full body
+            is injected verbatim into downstream context (HistoryEntry.pin).
         reason: Optional free-text explanation for the dispatch decision.
     """
 
@@ -47,6 +49,7 @@ class Dispatch(BaseModel):
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None
     skills: Optional[str] = None
+    pin: bool = False
     debug: bool = False
     reason: Optional[str] = None
 

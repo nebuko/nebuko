@@ -449,6 +449,7 @@ GitHub Event
 | `AGENT_CONFIG_PATH` | `inputs.agent_config_path` | `agent-config.yaml` | Path to agent configuration YAML |
 | `CIRCUIT_BREAKER_THRESHOLD` | `inputs.circuit_breaker_threshold` | `15` | Max agent calls before circuit breaker trips |
 | `SUMMARIZER_THRESHOLD` | `inputs.summarizer_threshold` | `100` | Comment count before summarizer triggers |
+| `PIN_COMMENT` | `inputs.pin_comment` | `false` | Pin every agent step output comment for verbatim context injection |
 | `PYTHON_VERSION` | `inputs.python_version` | `3.13` | Python runtime version |
 | `ENABLE_UV_CACHE` | `inputs.enable_uv_cache` | `true` | Enable uv dependency caching |
 | `OPENROUTER_API_KEY` | `secrets.OPENROUTER_API_KEY` | (required) | Default LLM API key |

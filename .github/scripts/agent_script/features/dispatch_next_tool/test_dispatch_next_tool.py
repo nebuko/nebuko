@@ -52,6 +52,19 @@ class TestDispatchNextActionToDispatch(unittest.TestCase):
         self.assertIsNotNone(d)
         self.assertIsNone(d.branch)
 
+    def test_pin_round_trip(self):
+        """pin survives the action -> Dispatch mapping (issue #617)."""
+        act = DispatchNextAction(status="advance", pin=True)
+        d = action_to_dispatch(act)
+        self.assertIsInstance(d, Dispatch)
+        self.assertTrue(d.pin)
+
+    def test_pin_defaults_to_false(self):
+        act = DispatchNextAction(status="advance")
+        d = action_to_dispatch(act)
+        self.assertIsNotNone(d)
+        self.assertFalse(d.pin)
+
     def test_invalid_status_returns_none(self):
         act = DispatchNextAction(status="bogus")
         self.assertIsNone(action_to_dispatch(act))

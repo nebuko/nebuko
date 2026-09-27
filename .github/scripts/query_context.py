@@ -28,6 +28,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from features.select_history_comments.select_history_comments import (
+    select_history_comments,
+)
 from github_client import get_comment_body, get_issue_comments
 from workflow_state import (
     extract_latest_state_from_comments as extract_state,
@@ -58,6 +61,14 @@ MAX_GITHUB_ENV_VALUE_BYTES = 64 * 1024
 
 # Directory where oversized/large context payloads are written as files.
 CONTEXT_FILES_DIR = Path("/tmp/agent_query")
+
+# Max characters rendered for a non-pinned comment that carries no
+# bot-agent-summary marker. Keeps the history bounded without dropping the
+# comment entirely (issue #617).
+HISTORY_EXCERPT_CHARS = 400
+
+# Suffix appended to a truncated excerpt to signal elision.
+_EXCERPT_ELLIPSIS = "…"
 
 
 def _check_env_value_size(key: str, value: str) -> None:
@@ -251,16 +262,49 @@ def _filter_comments_by_inject_context(comments, state) -> list[dict]:
     return [c for c in comments if not _is_bot_comment(c) or c.get("id") in allowed_ids]
 
 
-def _build_history_string(comments) -> str:
+def _excerpt(text: str, limit: int = HISTORY_EXCERPT_CHARS) -> str:
+    """Truncate ``text`` to ``limit`` characters, marking any elision."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + _EXCERPT_ELLIPSIS
+
+
+def _render_history_comment(comment: dict, *, verbatim: bool) -> str:
+    """Render one comment as a history section, or '' when it has no content.
+
+    Pinned (``verbatim=True``) comments keep their full body; all others use
+    the ``<!-- bot-agent-summary -->`` summary when present, otherwise a
+    bounded excerpt. The collapsed state section is always stripped first.
+    """
+    body = comment.get("body", "")
+    author = comment.get("user", {}).get("login", "unknown")
+
+    if verbatim:
+        content = strip_state_section(body)
+    else:
+        summary = extract_summary_from_comment(body)
+        content = summary if summary is not None else _excerpt(strip_state_section(body))
+
+    if not content.strip():
+        return ""
+    return f"### {author} a écrit :\n{content}\n---\n"
+
+
+def _build_history_string(comments, state=None) -> str:
     """Build formatted history string from comments.
 
-    For each comment, tries to extract a bot-agent-summary. If found, uses
-    the summary; otherwise strips the state section and uses the raw comment body.
-    State sections (collapsed JSON) are stripped from the visible history to
-    reduce noise, but structured state is extracted separately.
+    Pinned comments (per ``state.pinned_comment_ids`` or a ``pin=True`` history
+    entry) render their full body; every other comment renders a
+    bot-agent-summary when present, otherwise an excerpt capped by
+    ``HISTORY_EXCERPT_CHARS``. State sections (collapsed JSON) are stripped from
+    the visible history to reduce noise, but structured state is extracted
+    separately.
 
     Args:
         comments: List of comment dicts from GitHub API.
+        state: WorkflowState whose pinning decides verbatim vs. summary.
+            ``None`` summarizes every comment.
 
     Returns:
         Formatted history string.
@@ -268,20 +312,14 @@ def _build_history_string(comments) -> str:
     if not comments:
         return "No previous comments"
 
+    pinned_ids = select_history_comments(comments, state).verbatim_ids
     parts = []
     for comment in comments:
-        body = comment.get("body", "")
-        author = comment.get("user", {}).get("login", "unknown")
-        summary = extract_summary_from_comment(body)
-        if summary is not None:
-            content = summary
-        else:
-            # Strip the collapsed state JSON section to reduce noise in history
-            content = strip_state_section(body)
-        if not content.strip():
-            continue
-        parts.append(f"### {author} a écrit :\n{content}\n---\n")
-
+        rendered = _render_history_comment(
+            comment, verbatim=comment.get("id") in pinned_ids
+        )
+        if rendered:
+            parts.append(rendered)
     return "\n".join(parts)
 
 
@@ -411,8 +449,9 @@ def main():
         skipped = len(comments) - len(filtered_comments)
         print(f"Filtered {skipped} comments based on inject_context settings", file=sys.stderr)
 
-    # Build history string from filtered comments
-    history = _build_history_string(filtered_comments)
+    # Build history string from filtered comments; pinned comments stay verbatim,
+    # everything else is summarized/excerpted (issue #617).
+    history = _build_history_string(filtered_comments, prev_state)
 
     # Build structured state context from latest workflow state (fetches pinned comment bodies)
     # NOTE: Intentionally passes UNFILTERED comments — _build_state_context scans ALL comments

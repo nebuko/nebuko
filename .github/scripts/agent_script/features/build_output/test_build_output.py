@@ -10,6 +10,7 @@ from unittest import mock
 from build_output import (
     LATEST_ANSWER_FILE,
     _recall_aware_events,
+    _resolve_pin,
     _write_latest_answer_file,
     agent_run_config_to_dispatch,
     apply_human_gate_intercept,
@@ -145,6 +146,55 @@ class TestAgentRunConfigToDispatch(unittest.TestCase):
         result = agent_run_config_to_dispatch(data)
         self.assertEqual(result.status, "advance")
         self.assertEqual(result.complexity, "medium")
+
+    def test_pin_field_is_parsed(self):
+        """pin in the sentinel maps onto Dispatch.pin (issue #617)."""
+        data = '{"dispatch": {"status": "advance", "pin": true}}'
+        result = agent_run_config_to_dispatch(data)
+        self.assertIsNotNone(result)
+        self.assertTrue(result.pin)
+
+    def test_pin_defaults_to_false(self):
+        data = '{"status": "advance"}'
+        result = agent_run_config_to_dispatch(data)
+        self.assertIsNotNone(result)
+        self.assertFalse(result.pin)
+
+
+class TestResolvePin(unittest.TestCase):
+    """Test _resolve_pin() — env override and dispatch request (issue #617)."""
+
+    def test_env_unset_defaults_false(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PIN_COMMENT", None)
+            self.assertFalse(_resolve_pin(None))
+
+    def test_dispatch_pin_true(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PIN_COMMENT", None)
+            self.assertTrue(_resolve_pin(Dispatch(status="advance", pin=True)))
+
+    def test_dispatch_pin_false(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PIN_COMMENT", None)
+            self.assertFalse(_resolve_pin(Dispatch(status="advance", pin=False)))
+
+    def test_env_override_wins_when_dispatch_absent(self):
+        with mock.patch.dict(os.environ, {"PIN_COMMENT": "true"}):
+            self.assertTrue(_resolve_pin(None))
+
+    def test_env_false_does_not_override_dispatch_pin(self):
+        with mock.patch.dict(os.environ, {"PIN_COMMENT": "false"}):
+            self.assertTrue(_resolve_pin(Dispatch(status="advance", pin=True)))
+
+    def test_empty_env_is_false(self):
+        with mock.patch.dict(os.environ, {"PIN_COMMENT": ""}):
+            self.assertFalse(_resolve_pin(None))
+
+    def test_accepted_env_truthy_values(self):
+        for value in ("true", "1", "yes", "TRUE", "Yes"):
+            with mock.patch.dict(os.environ, {"PIN_COMMENT": value}):
+                self.assertTrue(_resolve_pin(None), msg=value)
 
 
 class TestStripAgentRunConfigs(unittest.TestCase):
