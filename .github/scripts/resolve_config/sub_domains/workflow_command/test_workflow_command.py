@@ -1,14 +1,20 @@
 """Tests for the /workflow <action> <resource> --flag value parser (issue #635)."""
 
 import sys
+from dataclasses import FrozenInstanceError
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
     ACTIONS,
+    COMMAND_REGISTRY,
     FLAGS_BY_ACTION,
     RESOURCE_BY_ACTION,
+    CommentIntent,
     WorkflowCommand,
+    classify_comment,
     parse_workflow_command,
 )
 
@@ -104,6 +110,18 @@ class TestParseValid:
             parse_workflow_command("/workflow delete comments --from 5811583860") is None
         )
 
+    # /workflow clean comments (issue #679) — registry-local alias of delete;
+    # it reuses delete's grammar so flags parse and validate identically.
+    def test_clean_bare(self):
+        cmd = parse_workflow_command("/workflow clean comments")
+        assert cmd == WorkflowCommand(action="clean", resource="comments", params={})
+
+    def test_clean_issue(self):
+        cmd = parse_workflow_command("/workflow clean comments --issue 123")
+        assert cmd == WorkflowCommand(
+            action="clean", resource="comments", params={"issue": "123"}
+        )
+
 
 class TestParseMalformed:
     def test_unknown_action(self):
@@ -189,3 +207,88 @@ class TestParseMalformed:
         # ASCII-only so the command is treated as absent (issue #644 review).
         assert parse_workflow_command("/workflow delete comments --issue ²") is None
         assert parse_workflow_command("/workflow delete comments --issue 123 --from ²") is None
+
+    # Malformed /workflow clean ... must not parse (issue #679 review): a
+    # malformed invocation is not a recognized command and must not be able to
+    # destructively delete comments.
+    def test_clean_missing_resource_rejected(self):
+        assert parse_workflow_command("/workflow clean") is None
+
+    def test_clean_wrong_resource_rejected(self):
+        assert parse_workflow_command("/workflow clean files") is None
+
+    def test_clean_unknown_flag_rejected(self):
+        assert parse_workflow_command("/workflow clean comments --unknown x") is None
+
+    def test_clean_non_numeric_issue_rejected(self):
+        assert parse_workflow_command("/workflow clean comments --issue abc") is None
+
+
+class TestCommandRegistry:
+    def test_seeded_with_workflow_actions(self):
+        # Every canonical /workflow action is registered.
+        for action in ACTIONS:
+            assert action in COMMAND_REGISTRY
+
+    def test_registers_clean(self):
+        # `clean comments` is the bug trigger in issue #679 — it must be a
+        # recognized command so it can never reach the agent-trigger path.
+        assert "clean" in COMMAND_REGISTRY
+
+
+class TestClassifyComment:
+    def test_clean_is_command(self):
+        intent = classify_comment("/workflow clean comments")
+        assert intent == CommentIntent(
+            kind="command", command="clean", raw="/workflow clean comments"
+        )
+
+    def test_delete_is_command(self):
+        intent = classify_comment("/workflow delete comments --issue 123")
+        assert intent.kind == "command"
+        assert intent.command == "delete"
+
+    def test_run_is_command(self):
+        intent = classify_comment("/workflow run workflow --name spec-driven-impl")
+        assert intent.kind == "command"
+        assert intent.command == "run"
+
+    def test_mention_is_agent_trigger(self):
+        intent = classify_comment("@@ctx please look at this")
+        assert intent.kind == "agent_trigger"
+        assert intent.command is None
+
+    def test_machine_trigger_is_agent_trigger(self):
+        intent = classify_comment("<!-- bot-subtask-complete: 1 -->")
+        assert intent.kind == "agent_trigger"
+
+    def test_free_form_is_none(self):
+        assert classify_comment("this is just a normal comment").kind == "none"
+
+    def test_prose_mentioning_clean_is_not_command(self):
+        # A genuine free-form comment that merely contains the words must not
+        # be misclassified as a command (issue #679 over-matching guard).
+        assert classify_comment("we should clean comments later").kind != "command"
+
+    def test_clean_not_on_first_line_is_not_command(self):
+        assert classify_comment("hello\n/workflow clean comments").kind != "command"
+
+    def test_bare_form_is_not_command(self):
+        # Only the `/workflow`-prefixed form is recognized — the real trigger
+        # payload is `/workflow clean comments` (issue #590). A bare
+        # `clean comments` line must not be classified as a command (issue #679).
+        assert classify_comment("clean comments").kind != "command"
+
+    def test_malformed_clean_is_not_command(self):
+        # A malformed `clean` invocation is not a recognized command and must
+        # not be able to destructively delete comments (issue #679 review).
+        assert classify_comment("/workflow clean").kind == "none"
+        assert classify_comment("/workflow clean files").kind == "none"
+        assert classify_comment("/workflow clean comments --unknown x").kind == "none"
+
+    def test_frozen(self):
+        intent = CommentIntent(
+            kind="command", command="clean", raw="/workflow clean comments"
+        )
+        with pytest.raises(FrozenInstanceError):
+            intent.kind = "none"  # type: ignore[misc]

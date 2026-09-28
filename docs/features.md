@@ -26,6 +26,7 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 | `/workflow resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. |
 | `/workflow force-next-step <step>` | Jump directly to `<step>` of the active workflow, regardless of state. |
 | `/workflow delete comments [--issue <id>] [--from <comment-id>]` | Human-only batch deletion of issue comments. `--issue <id>` selects the target issue (mandatory on the CLI surface; auto-filled with the invoking issue when the command is posted in that issue). Optional `--from <comment-id>` deletes that comment **and every later one**; omit it to delete **all** comments. Terminal command: it runs the deterministic deletion step and no agent. Requires `GH_PAT` with `issues:write`. |
+| `/workflow clean comments` | Alias of `/workflow delete comments` (issue #679). Terminal; runs the deterministic deletion step and no agent. |
 | `DEBUG=true` | Routes to the debug/recovery path instead of normal routing. |
 
 **Precedence:** human commands always override state-based routing (see the

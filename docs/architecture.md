@@ -164,7 +164,7 @@ trigger body
 │                                     or advance if no active dispatch
 ├─ /workflow force-next-step <step> ► jump to that step (regardless of state)
 ├─ /workflow delete comments ───────► deterministic comment deletion
-│                                     (terminal; no agent runs)
+│  /workflow clean comments          (alias; terminal, no agent runs)
 ├─ /workflow <name> ────────────────► start/switch to workflow <name>
 ├─ @@mention (human, or plain-mention CI trigger)
 │                                    ► run the mentioned agent
