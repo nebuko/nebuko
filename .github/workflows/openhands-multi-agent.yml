@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: false
+      history_comment_count:
+        description: 'Number of most recent issue comments injected into each agent call (pinned comments are always added on top)'
+        required: false
+        type: number
+        default: 5
       python_version:
         description: 'Python version'
         required: false
