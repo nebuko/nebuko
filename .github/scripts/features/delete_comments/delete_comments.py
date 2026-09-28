@@ -1,57 +1,37 @@
-"""Deterministic issue-comment batch deletion (issue #644).
+"""Deterministic issue-comment deletion (issue #644, simplified #674).
 
-Human-only ``/workflow delete comments --issue <n> [--from <comment-id>]``: a
-sole command executed outside agent scope — no agent, no LLM, no workflow
-routing. It reads the resolver env contract, batch-deletes issue comments via
-the ``gh`` CLI and writes ``final_message.txt`` so the normal posting pipeline
-publishes the summary.
+Human-only ``/workflow delete comments --issue <n>``: a sole command executed
+outside agent scope — no agent, no LLM, no workflow routing, no comment
+posting. It deletes every comment on the target issue via the ``gh`` CLI and
+nothing else.
 
 Deletion semantics:
-* ``--from <id>`` present  -> delete every comment with ``id >= from_id``.
-* ``--from`` absent        -> delete ALL comments on the issue.
-* HTTP 204 -> deleted; HTTP 404 -> skipped (already gone, do NOT abort);
-  any other failure -> record the error and STOP the batch (partial result).
+* Every comment on the issue is deleted.
+* HTTP 404 -> the comment is already gone, so it is skipped and the batch
+  continues; any other failure -> raise (the CLI maps it to a non-zero exit).
 
 Env contract: ``DELETE_COMMENTS_REPO`` (owner/repo, falls back to
-``GITHUB_REPOSITORY``), ``DELETE_COMMENTS_ISSUE`` (int, required),
-``DELETE_COMMENTS_FROM`` (int or empty). Requires GH_TOKEN with issues:write.
+``GITHUB_REPOSITORY``), ``DELETE_COMMENTS_ISSUE`` (int, required). Requires
+GH_TOKEN (or GITHUB_TOKEN) with issues:write.
 """
 
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
-
-_FINAL_MESSAGE_FILE = "final_message.txt"
-
-
-@dataclass(frozen=True)
-class DeleteCommentsResult:
-    """Immutable outcome record of one batch deletion.
-
-    ``from_id`` is None for a full-issue scope; ``skipped`` holds comment ids
-    that were already gone (404); ``errors`` holds the non-404 failure message
-    that stopped the batch (empty on a clean finish).
-    """
-
-    repo: str
-    issue: int
-    from_id: Optional[int]
-    deleted: int
-    skipped: Tuple[int, ...]
-    errors: Tuple[str, ...]
+from typing import List, Optional
 
 
 # ── gh plumbing ──────────────────────────────────────────────────────
 
 
-def _run(args: List[str]) -> subprocess.CompletedProcess:
+def _run(
+    args: List[str], token: Optional[str] = None
+) -> subprocess.CompletedProcess:
     """Run a ``gh`` CLI command and return the CompletedProcess."""
     env = os.environ.copy()
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    if token:
-        env["GH_TOKEN"] = token
+    resolved = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if resolved:
+        env["GH_TOKEN"] = resolved
     return subprocess.run(["gh"] + args, capture_output=True, text=True, env=env)
 
 
@@ -72,9 +52,10 @@ def _is_404(stderr: str) -> bool:
 # ── Deletion ─────────────────────────────────────────────────────────
 
 
-def list_comment_ids(repo: str, issue: int) -> List[int]:
+def list_comment_ids(
+    repo: str, issue: int, token: Optional[str] = None
+) -> List[int]:
     """List the issue's comment ids in ascending order (numeric only)."""
-    # @stub-protected
     result = _run(
         [
             "api",
@@ -84,7 +65,8 @@ def list_comment_ids(repo: str, issue: int) -> List[int]:
             f"/repos/{repo}/issues/{issue}/comments",
             "--jq",
             ".[].id",
-        ]
+        ],
+        token,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -98,53 +80,6 @@ def list_comment_ids(repo: str, issue: int) -> List[int]:
     return sorted(ids)
 
 
-def delete_comments_from(
-    repo: str, issue: int, from_id: Optional[int]
-) -> DeleteCommentsResult:
-    """Delete comments on ``issue`` (``id >= from_id``, or all when None).
-
-    Per comment: HTTP 204 -> ``deleted += 1``; HTTP 404 -> appended to
-    ``skipped`` (already gone, batch continues); any other failure -> appended
-    to ``errors`` and the batch STOPS.
-    """
-    # @stub-protected
-    targets = [
-        cid
-        for cid in list_comment_ids(repo, issue)
-        if from_id is None or cid >= from_id
-    ]
-
-    deleted = 0
-    skipped: List[int] = []
-    errors: List[str] = []
-    for cid in targets:
-        result = _run(
-            ["api", "--method", "DELETE", f"/repos/{repo}/issues/comments/{cid}"]
-        )
-        if result.returncode == 0:
-            deleted += 1
-        elif _is_404(result.stderr):
-            skipped.append(cid)
-        else:
-            errors.append(
-                f"failed to delete comment {cid} on {repo}#{issue}: "
-                f"{result.stderr.strip()}"
-            )
-            break
-
-    return DeleteCommentsResult(
-        repo=repo,
-        issue=issue,
-        from_id=from_id,
-        deleted=deleted,
-        skipped=tuple(skipped),
-        errors=tuple(errors),
-    )
-
-
-# ── Pure action — Object Design Contract (issue #674) ────────────────
-
-
 def delete_issue_comments(repo: str, issue_number: int, token: str) -> None:
     """Delete all comments on the given issue via the GitHub API.
 
@@ -153,35 +88,17 @@ def delete_issue_comments(repo: str, issue_number: int, token: str) -> None:
     routing, no comment posting.
     """
     # @stub-protected: signature defined by architect — do not modify
-    raise NotImplementedError
-
-
-# ── Summary rendering ────────────────────────────────────────────────
-
-
-def render_summary(result: DeleteCommentsResult) -> str:
-    """Render the batch outcome as the posted comment body."""
-    scope = (
-        f"from comment {result.from_id}"
-        if result.from_id is not None
-        else "all comments"
-    )
-    if result.errors:
-        lines = [
-            f"### 🧹 Delete comments — issue #{result.issue} (partial, stopped)",
-            f"- Scope: {scope}",
-            f"- Deleted: {result.deleted}",
-            f"- Skipped (already gone): {len(result.skipped)}",
-            f"- **Stopped on error:** {result.errors[0]}",
-        ]
-    else:
-        lines = [
-            f"### 🧹 Delete comments — issue #{result.issue}",
-            f"- Scope: {scope}",
-            f"- Deleted: {result.deleted} comment(s)",
-            f"- Skipped (already gone): {len(result.skipped)}",
-        ]
-    return "\n".join(lines)
+    for cid in list_comment_ids(repo, issue_number, token):
+        result = _run(
+            ["api", "--method", "DELETE", f"/repos/{repo}/issues/comments/{cid}"],
+            token,
+        )
+        if result.returncode == 0 or _is_404(result.stderr):
+            continue
+        raise RuntimeError(
+            f"failed to delete comment {cid} on {repo}#{issue_number}: "
+            f"{result.stderr.strip()}"
+        )
 
 
 # ── Config & entry point ─────────────────────────────────────────────
@@ -199,56 +116,37 @@ def read_config(env) -> dict:
         raise ValueError(
             f"DELETE_COMMENTS_ISSUE must be a positive integer, got {issue_raw!r}"
         )
-    from_raw = (env.get("DELETE_COMMENTS_FROM", "") or "").strip()
-    return {
-        "repo": repo,
-        "issue": int(issue_raw),
-        "from_id": int(from_raw) if _is_ascii_digits(from_raw) else None,
-    }
+    return {"repo": repo, "issue": int(issue_raw)}
 
 
-def write_final_message(message: str) -> None:
-    """Write the posted body for the pipeline (``final_message.txt``)."""
-    with open(_FINAL_MESSAGE_FILE, "w", encoding="utf-8") as f:
-        f.write(message)
+def _auth_token(env) -> str:
+    """The token to authenticate the delete calls with."""
+    return (env.get("GH_TOKEN") or env.get("GITHUB_TOKEN") or "").strip()
 
 
 def main() -> int:
-    """Run the deletion; returns the process exit code.
+    """Delete the target issue's comments; return the process exit code.
 
-    A contract error is a *failure result*, not a crash: the failure summary
-    is still written so the GHA job continues to posting.
+    Pure CLI action: ``0`` on success, ``1`` on a contract or API failure. No
+    comment is posted and no workflow state is read or written.
     """
-    # @stub-protected
     try:
         config = read_config(os.environ)
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        write_final_message(f"### 🧹 Delete comments — FAILED\n- **Config error:** {exc}")
         return 1
 
     print(
-        f"Deleting comments on {config['repo']}#{config['issue']} "
-        f"(from_id={config['from_id']})",
+        f"Deleting all comments on {config['repo']}#{config['issue']}",
         flush=True,
     )
     try:
-        outcome = delete_comments_from(
-            config["repo"], config["issue"], config["from_id"]
+        delete_issue_comments(
+            config["repo"], config["issue"], _auth_token(os.environ)
         )
     except RuntimeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        write_final_message(
-            f"### 🧹 Delete comments — issue #{config['issue']}\n- **Failed:** {exc}"
-        )
-        return 0
-
-    write_final_message(render_summary(outcome))
-    print(
-        f"Deleted {outcome.deleted}, skipped {len(outcome.skipped)}, "
-        f"errors={len(outcome.errors)}",
-        flush=True,
-    )
+        return 1
     return 0
 
 

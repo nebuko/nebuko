@@ -52,7 +52,7 @@ FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "run": {"name"},
     "force-step": {"name"},
     "resume": {"feedback"},
-    "delete": {"issue", "from"},
+    "delete": {"issue"},
 }
 
 #: Required flags per action (absent ⇒ malformed ⇒ None).
@@ -65,7 +65,7 @@ _MULTIWORD_FLAGS = {"feedback"}
 #: Per-action flags whose value must be all digits (issue #644). A
 #: non-numeric value makes the command malformed (⇒ None).
 _NUMERIC_FLAGS_BY_ACTION: Dict[str, Set[str]] = {
-    "delete": {"issue", "from"},
+    "delete": {"issue"},
 }
 
 _WORKFLOW_CMD_RE = re.compile(r"^/workflow\s+(.*)$")
