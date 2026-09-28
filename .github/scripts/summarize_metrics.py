@@ -18,13 +18,25 @@ import sys
 import urllib.request
 import urllib.error
 from collections import defaultdict
+from datetime import datetime
 
 # Import the Metrics schema
 sys.path.insert(0, os.path.dirname(__file__))
-from github_client import ensure_bot_marker
+from github_client import BOT_MARKER, ensure_bot_marker
 from metrics_schema import Metrics
+from human_metrics import (
+    CommentRecord,
+    HumanMetricsAnalyzer,
+    HumanMetricsConfig,
+    HumanMetricsRenderer,
+    IssueData,
+)
 
 METRICS_REGEX = re.compile(r"<!--\s*agent-metrics:\s*(.*?)\s*-->")
+# Agent role marker emitted at the top of every agent comment (e.g. bot-agent-dev).
+BOT_AGENT_ROLE_REGEX = re.compile(r"<!--\s*bot-agent-([a-z0-9_-]+)\s*-->")
+# Human workflow trigger (e.g. @@dev, @@genius) used to count human commands.
+HUMAN_COMMAND_REGEX = re.compile(r"@@[a-z][a-z0-9_-]*")
 
 
 def fetch_comments(repo, issue_number, token, per_page=100):
@@ -59,6 +71,24 @@ def fetch_comments(repo, issue_number, token, per_page=100):
         page += 1
 
     return all_comments
+
+
+def fetch_issue(repo, issue_number, token):
+    """Fetch a single issue's body and metadata (body, closed_at)."""
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+    req = urllib.request.Request(url)
+    req.add_header("Authorization", f"token {token}")
+    req.add_header("Accept", "application/vnd.github.v3+json")
+    req.add_header("User-Agent", "git-flow-ai-metrics-summarizer")
+
+    try:
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        print(f"HTTP error fetching issue: {e.code} - {e.reason}")
+    except Exception as e:
+        print(f"Error fetching issue: {e}")
+    return {}
 
 
 def extract_metrics_from_comment(body):
@@ -507,6 +537,103 @@ def post_comment(repo, issue_number, token, body):
         raise
 
 
+def parse_iso_datetime(value):
+    """Parse a GitHub ISO-8601 timestamp (e.g. '2024-01-01T00:00:00Z')."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _metric_field(metric, name, default):
+    """Read a field from a Metrics object or a legacy dict."""
+    if isinstance(metric, dict):
+        return metric.get(name, default)
+    return getattr(metric, name, default)
+
+
+def build_comment_record(comment):
+    """Normalise one GitHub comment into a CommentRecord (or None if unusable).
+
+    Bot-vs-human is decided by the universal ``BOT_MARKER`` because bots post
+    through the maintainer's PAT and are therefore indistinguishable by login.
+    """
+    body = comment.get("body") or ""
+    created_at = parse_iso_datetime(comment.get("created_at"))
+    if created_at is None:
+        return None
+    login = (comment.get("user") or {}).get("login") or ""
+    return CommentRecord(
+        author_login=login,
+        author_is_bot=BOT_MARKER in body,
+        body=body,
+        created_at=created_at,
+        agent_role=parse_agent_role(body),
+        is_human_command=bool(HUMAN_COMMAND_REGEX.search(body)),
+    )
+
+
+def parse_agent_role(body):
+    """Extract the agent role from the ``bot-agent-<role>`` marker, if present."""
+    match = BOT_AGENT_ROLE_REGEX.search(body or "")
+    return match.group(1) if match else None
+
+
+def collect_issue_data(comments, all_metrics, issue_body, issue_closed_at):
+    """Build the pure ``IssueData`` input from already-fetched pipeline data."""
+    records = tuple(
+        record
+        for record in (build_comment_record(c) for c in comments)
+        if record is not None
+    )
+
+    start_times = [
+        start
+        for start in (
+            parse_iso_datetime(_metric_field(m, "start_time", None))
+            for m in all_metrics
+        )
+        if start is not None
+    ]
+    first_agent_start = min(start_times) if start_times else None
+
+    if all_metrics:
+        agent_tool_invocations = sum(
+            _metric_field(m, "nb_tool_calls", 0) or 0 for m in all_metrics
+        )
+        agent_time_spent_seconds = (
+            sum(_metric_field(m, "agent_runtime_ms", 0.0) or 0.0 for m in all_metrics)
+            / 1000.0
+        )
+    else:
+        agent_tool_invocations = None
+        agent_time_spent_seconds = None
+
+    return IssueData(
+        body=issue_body or "",
+        comments=records,
+        first_agent_start=first_agent_start,
+        closed_at=issue_closed_at,
+        agent_tool_invocations=agent_tool_invocations,
+        agent_time_spent_seconds=agent_time_spent_seconds,
+    )
+
+
+def build_human_metrics_section(comments, all_metrics, issue_body, issue_closed_at):
+    """Compute and render the human-metrics section for the resume.
+
+    Reading speed (200 wpm) and the empty allowlist ("any non-bot author is
+    human") are hardcoded defaults for now, per product decision; no workflow
+    variable is wired.
+    """
+    config = HumanMetricsConfig()
+    issue_data = collect_issue_data(comments, all_metrics, issue_body, issue_closed_at)
+    metrics = HumanMetricsAnalyzer(config).analyze(issue_data)
+    return HumanMetricsRenderer(config).render(metrics)
+
+
 def main():
     token = os.environ.get("GITHUB_TOKEN")
     repo = os.environ.get("GITHUB_REPOSITORY")
@@ -520,6 +647,10 @@ def main():
     comments = fetch_comments(repo, issue_number, token)
     print(f"Fetched {len(comments)} comments.")
 
+    issue = fetch_issue(repo, issue_number, token)
+    issue_body = issue.get("body") or ""
+    issue_closed_at = parse_iso_datetime(issue.get("closed_at"))
+
     # Extract all metrics from all comments
     all_metrics = []
     for comment in comments:
@@ -530,8 +661,14 @@ def main():
 
     print(f"Extracted {len(all_metrics)} metric entries.")
 
+    human_section = build_human_metrics_section(
+        comments, all_metrics, issue_body, issue_closed_at
+    )
+
     if not all_metrics:
         summary = "No agent metrics were found for this issue."
+        if human_section:
+            summary = f"{summary}\n\n{human_section}"
     else:
         agent_aggregated = aggregate_by_agent(all_metrics)
         model_aggregated = aggregate_by_model(all_metrics)
@@ -544,6 +681,9 @@ def main():
         model_table = generate_model_summary_table(model_aggregated)
         if model_table:
             sections.append("\n".join(model_table))
+
+        if human_section:
+            sections.append(human_section)
 
         if sections:
             summary = "\n\n".join(sections)
