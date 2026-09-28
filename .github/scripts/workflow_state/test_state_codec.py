@@ -17,7 +17,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import StepRef  # noqa: E402
-from workflow_state import HistoryEntry, WorkflowState  # noqa: E402
+from workflow_state import Dispatch, HistoryEntry, WorkflowState  # noqa: E402
 from workflow_state.state_codec import PrevStateLoad, WorkflowStateCodec  # noqa: E402
 
 HANDOFF_FILE = "prev_workflow_state.json"
@@ -79,6 +79,60 @@ class TestCodecRoundTrip(unittest.TestCase):
         raw = WorkflowStateCodec().encode(_state_v7(), compact=True)
 
         self.assertIsInstance(json.loads(raw), dict)
+
+
+def _state_with_per_entry_dispatch() -> WorkflowState:
+    """A state whose history entries each carry their own dispatch (issue #685)."""
+    return WorkflowState(
+        version=4,
+        workflow="spec-driven-impl",
+        step="plan",
+        agent="genius",
+        phase="planning",
+        history=[
+            HistoryEntry(
+                step="analyze",
+                agent="genius",
+                summary="a",
+                dispatch=Dispatch(status="advance", task_hint="ctx", reason="need context"),
+            ),
+            HistoryEntry(
+                step="context",
+                agent="ctx",
+                summary="c",
+                dispatch=Dispatch(status="hold", task_hint="genius", branch="approved"),
+            ),
+        ],
+    )
+
+
+class TestCodecRoundTripPreservesPerEntryDispatch(unittest.TestCase):
+    """The lossless hand-off must carry each history entry's dispatch (issue #685).
+
+    The disk hand-off (``save_prev``/``load_prev``) is the exact path where the
+    history was silently dropped in #648, so the replayable movement log added in
+    #685 must survive it, not just the comment-body path.
+    """
+
+    def test_compact_roundtrip_preserves_dispatch_per_entry(self):
+        codec = WorkflowStateCodec()
+
+        restored = codec.decode(codec.encode(_state_with_per_entry_dispatch(), compact=True))
+
+        self.assertEqual(restored.history[0].dispatch.status, "advance")
+        self.assertEqual(restored.history[0].dispatch.task_hint, "ctx")
+        self.assertEqual(restored.history[1].dispatch.status, "hold")
+        self.assertEqual(restored.history[1].dispatch.branch, "approved")
+
+    def test_disk_handoff_preserves_dispatch_per_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            codec = WorkflowStateCodec(runner_temp=tmp)
+
+            codec.save_prev(_state_with_per_entry_dispatch())
+            result = codec.load_prev()
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.state.history[1].dispatch.task_hint, "genius")
 
 
 class TestMalformedPositionNeverSilentlyDropped(unittest.TestCase):

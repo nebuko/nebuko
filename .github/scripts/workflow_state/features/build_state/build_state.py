@@ -153,6 +153,7 @@ def build_state(
         inject_context=inject_context,
         result=result,
         position=position_refs,
+        dispatch=dispatch,
     )
     new_history = base_history + [entry]
 

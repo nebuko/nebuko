@@ -815,5 +815,31 @@ class TestDispatchSerialization(unittest.TestCase):
         self.assertEqual(restored.dispatch.reason, "waiting on review")
 
 
+class TestHistoryEntryDispatchPersistence(unittest.TestCase):
+    """The per-step dispatch survives comment-body serialization (issue #685)."""
+
+    def test_history_dispatch_roundtrips_through_comment_body(self):
+        state = build_state(
+            None,
+            workflow="w",
+            step="plan",
+            agent="genius",
+            dispatch=Dispatch(status="hold", reason="awaiting approval"),
+        )
+        body = wrap_comment_with_state(state, "content")
+        restored = extract_state_from_body(body)
+        self.assertIsNotNone(restored)
+        self.assertIsNotNone(restored.history[-1].dispatch)
+        self.assertEqual(restored.history[-1].dispatch.status, "hold")
+        self.assertEqual(restored.history[-1].dispatch.reason, "awaiting approval")
+
+    def test_legacy_entry_without_dispatch_loads(self):
+        state = build_state(None, workflow="w", step="plan", agent="genius")
+        data = state.model_dump(mode="json")
+        data["history"][0].pop("dispatch", None)
+        restored = WorkflowState.model_validate(data)
+        self.assertIsNone(restored.history[-1].dispatch)
+
+
 if __name__ == "__main__":
     unittest.main()
