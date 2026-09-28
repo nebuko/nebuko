@@ -99,6 +99,29 @@ class TestExtractMentionAgent:
     def test_no_mention(self):
         assert extract_mention_agent("just some text") is None
 
+    def test_mention_po(self):
+        assert extract_mention_agent("@@po please write the spec") == "po"
+
+    def test_mention_debug(self):
+        assert extract_mention_agent("@@debug investigate this") == "debug"
+
+    def test_issue_prefix_not_shadowing_issue_reviewer(self):
+        assert extract_mention_agent("@@issue-reviewer take a look") == "issue-reviewer"
+        assert extract_mention_agent("@@issue open a ticket") == "issue"
+
+    def test_all_configured_agents_mentionable(self):
+        from config import load_agent_names
+
+        for agent in sorted(load_agent_names()):
+            assert extract_mention_agent(f"@@{agent} go") == agent
+
+    def test_unknown_mention_ignored(self):
+        assert extract_mention_agent("@@nobody please help") is None
+
+    def test_partial_name_not_matched(self):
+        # `@@polaris` starts with `po` but must not resolve to the `po` agent.
+        assert extract_mention_agent("@@polaris please help") is None
+
     def test_bot_body_never_yields_mention(self):
         # Bots cannot @@mention — stray tokens in bot prose must not re-route
         # execution (issue #478).

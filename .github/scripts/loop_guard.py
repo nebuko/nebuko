@@ -23,6 +23,9 @@ import json
 import os
 import re
 import sys
+from typing import Optional
+
+from config import load_agent_names
 
 _WORKFLOW_STATE_START = "<!-- WORKFLOW_STATE_START -->"
 _WORKFLOW_STATE_END = "<!-- WORKFLOW_STATE_END -->"
@@ -162,6 +165,19 @@ def detect_same_agent_loop(trigger_body: str, current_agent: str) -> bool:
     return False
 
 
+_agent_mentions_re_cache: Optional["re.Pattern[str]"] = None
+
+
+def _agent_mentions_re() -> "re.Pattern[str]":
+    """Compiled ``@@agent`` pattern derived from the live agent roster."""
+    global _agent_mentions_re_cache
+    if _agent_mentions_re_cache is None:
+        names = sorted(load_agent_names(), key=len, reverse=True)
+        alternatives = "|".join(re.escape(name) for name in names)
+        _agent_mentions_re_cache = re.compile(rf"@@(?:{alternatives})(?![A-Za-z0-9_-])")
+    return _agent_mentions_re_cache
+
+
 def detect_human_plus_agent_ping(trigger_body: str) -> bool:
     """Detect if both a human and an agent are pinged in the same message.
 
@@ -171,10 +187,7 @@ def detect_human_plus_agent_ping(trigger_body: str) -> bool:
     Returns:
         True if human + agent ping pattern detected.
     """
-    agent_mentions = re.findall(
-        r"@@(?:issue-reviewer|genius|ctx|dev|review|issue)",
-        trigger_body,
-    )
+    agent_mentions = re.findall(_agent_mentions_re(), trigger_body)
 
     # Find single @mentions (not @@) — these are human pings
     # Use negative lookbehind to skip @@ patterns

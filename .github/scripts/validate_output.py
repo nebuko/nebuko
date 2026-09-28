@@ -19,6 +19,8 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
+from config import load_agent_names
+
 # Canonical sentinel: single-line HTML comment, no DOTALL.
 # [ \t] (not \s) keeps the match strictly within one line: a sentinel split
 # across lines never matches. Payload is a compact JSON object; the non-greedy
@@ -349,10 +351,11 @@ def validate_agent_run_config(json_str: str) -> ValidationResult:
         result.add_error("AGENT_RUN_CONFIG missing required field: 'task'")
 
     # Validate known fields' types
-    valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer"}
+    valid_tasks = load_agent_names()
     if data.get("task") and data["task"] not in valid_tasks:
         result.add_error(
-            f"Invalid task '{data['task']}'. Must be one of: {valid_tasks}"
+            f"Invalid task '{data['task']}'. Must be one of: "
+            f"{', '.join(sorted(valid_tasks))}"
         )
 
     valid_complexities = {"low", "medium", "high"}
@@ -415,10 +418,11 @@ def validate_dispatch(data: dict) -> ValidationResult:
         )
 
     # Validate task_hint if present
-    valid_tasks = {"genius", "ctx", "dev", "review", "issue", "issue-reviewer"}
+    valid_tasks = load_agent_names()
     if data.get("task_hint") and data["task_hint"] not in valid_tasks:
         result.add_error(
-            f"Invalid task_hint '{data['task_hint']}'. Must be one of: {valid_tasks}"
+            f"Invalid task_hint '{data['task_hint']}'. Must be one of: "
+            f"{', '.join(sorted(valid_tasks))}"
         )
 
     # Reuse AGENT_RUN_CONFIG validators for shared fields

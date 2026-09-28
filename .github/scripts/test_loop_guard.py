@@ -58,6 +58,23 @@ class TestDetectHumanPlusAgentPing:
         body = "@charlie @@genius @@dev let's go"
         assert detect_human_plus_agent_ping(body) is True
 
+    def test_po_mention_with_human_ping(self):
+        body = "@alice @@po please draft the spec"
+        assert detect_human_plus_agent_ping(body) is True
+
+    def test_debug_mention_with_human_ping(self):
+        body = "@alice @@debug investigate"
+        assert detect_human_plus_agent_ping(body) is True
+
+    def test_po_mention_without_human_ping(self):
+        body = "@@po please draft the spec"
+        assert detect_human_plus_agent_ping(body) is False
+
+    def test_partial_agent_name_not_a_ping(self):
+        # `@@polaris` shares the `po` prefix but is not an agent ping.
+        body = "@alice @@polaris please help"
+        assert detect_human_plus_agent_ping(body) is False
+
     def test_empty_body(self):
         assert detect_human_plus_agent_ping("") is False
 

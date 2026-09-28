@@ -24,6 +24,10 @@ from .sub_domains.step_ref.step_ref import StepRef
 # Features
 from .features.resolve_refs.resolve_refs import resolve_refs, REF_PATTERN
 from .features.load_config.load_config import load_config
+from .features.load_agent_names.load_agent_names import (
+    DEFAULT_AGENT_NAMES,
+    load_agent_names,
+)
 from .features.load_workflow.load_workflow import (
     is_path_like_reference,
     is_valid_workflow_reference,
@@ -57,6 +61,8 @@ __all__ = [
     "resolve_refs",
     "REF_PATTERN",
     "load_config",
+    "load_agent_names",
+    "DEFAULT_AGENT_NAMES",
     "load_workflow",
     "load_workflow_with_dirs",
     "is_path_like_reference",
