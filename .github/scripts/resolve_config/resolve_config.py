@@ -47,24 +47,21 @@ def _delete_comments_env(wf_cmd, issue_number: Optional[int]):
     issue number is available the command is treated as absent (``None``), so
     routing falls through to the normal cascade.
 
-    The parser already rejects non-numeric ``--issue``/``--from`` values, so
-    the values reaching here are either empty or ASCII digits.
+    The parser already rejects non-numeric ``--issue`` values, so the value
+    reaching here is either empty or ASCII digits.
     """
     issue = wf_cmd.params.get("issue")
     if not issue:
         issue = str(issue_number) if issue_number else ""
     if not issue:
         return None
-    from_id = wf_cmd.params.get("from", "")
-    scope = f"from {from_id}" if from_id else "all"
     return {
-        "TASK": f"Delete comments on issue {issue} ({scope})",
+        "TASK": f"Delete comments on issue {issue}",
         "ROLE_NAME": "script",
         "AGENT_SELECTED": "false",
         "SKIP_AGENT": "true",
         "DELETE_COMMENTS": "true",
         "DELETE_COMMENTS_ISSUE": issue,
-        "DELETE_COMMENTS_FROM": from_id,
     }
 
 

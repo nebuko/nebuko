@@ -717,10 +717,10 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         result = self._resolve("/workflow delete comments --issue 123")
         self.assertEqual(result["DELETE_COMMENTS"], "true")
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "123")
-        self.assertEqual(result["DELETE_COMMENTS_FROM"], "")
+        self.assertNotIn("DELETE_COMMENTS_FROM", result)
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertEqual(result["AGENT_SELECTED"], "false")
-        self.assertEqual(result["TASK"], "Delete comments on issue 123 (all)")
+        self.assertEqual(result["TASK"], "Delete comments on issue 123")
 
     def test_issue_defaults_to_invoking_issue(self):
         result = self._resolve("/workflow delete comments", issue_number=456)
@@ -733,14 +733,13 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         )
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "789")
 
-    def test_from_id_passes_through(self):
+    def test_from_flag_treated_as_absent(self):
+        # `--from` support was removed in issue #674: the whole issue is
+        # deleted, so the flag is now unknown and the command is malformed.
         result = self._resolve(
             "/workflow delete comments --issue 123 --from 5811583860"
         )
-        self.assertEqual(result["DELETE_COMMENTS_FROM"], "5811583860")
-        self.assertEqual(
-            result["TASK"], "Delete comments on issue 123 (from 5811583860)"
-        )
+        self.assertNotIn("DELETE_COMMENTS", result)
 
     def test_non_numeric_issue_treated_as_absent(self):
         result = self._resolve("/workflow delete comments --issue abc", issue_number=456)
