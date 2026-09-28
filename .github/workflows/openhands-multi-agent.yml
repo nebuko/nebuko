@@ -707,6 +707,10 @@ jobs:
               if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
               env:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
+                # Number of most recent comments injected into the prompt (issue
+                # #683); pinned comments are always added on top. Empty (direct
+                # triggers) or invalid values fall back to 5 in query_context.py.
+                HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
               run: |
                 SCRIPT_PATH="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}/query_context.py"
                 if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/query_context.py" ]; then

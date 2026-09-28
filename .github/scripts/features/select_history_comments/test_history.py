@@ -2,16 +2,13 @@
 
 Covers the plan's edge cases (§5):
 
-- default ``5`` when the value is omitted / non-numeric
+- default ``5`` when the value is omitted / non-numeric / negative
 - explicit override wins
 - ``0`` → pinned only
 - more pinned than N → all pinned still injected
 - pinned comment inside the last-N window → de-duplicated (appears once)
 - fewer comments than N → inject all available
-- chronological order preserved
-
-Against the stubs these tests are expected to FAIL (``NotImplementedError``);
-they lock the contract for the implement step.
+- a single deterministic chronological order (last-N-overall ∪ pinned)
 """
 
 import os
@@ -75,10 +72,35 @@ class TestSelectHistory(unittest.TestCase):
         result = select_history(comments, [], HistoryWindowConfig(5))
         self.assertEqual(_ids(result.all_comments()), [1, 2, 3])
 
-    def test_last_n_non_pinned_comments_selected(self):
+    def test_last_n_overall_comments_selected(self):
         comments = [_comment(i) for i in range(1, 9)]
         result = select_history(comments, [], HistoryWindowConfig(3))
         self.assertEqual(_ids(result.all_comments()), [6, 7, 8])
+
+    def test_window_is_last_n_overall_regardless_of_pinned(self):
+        """N counts every comment, so a pinned comment inside the window consumes a slot."""
+        comments = [_comment(i) for i in range(1, 6)]
+        result = select_history(comments, ["4"], HistoryWindowConfig(2))
+        self.assertEqual(_ids(result.all_comments()), [4, 5])
+
+    def test_pinned_outside_window_added_chronologically(self):
+        """A pinned comment before the window is merged into chronological order."""
+        comments = [_comment(i) for i in range(1, 6)]
+        result = select_history(comments, ["1"], HistoryWindowConfig(2))
+        self.assertEqual(_ids(result.all_comments()), [1, 4, 5])
+
+    def test_pinned_inside_window_with_trailing_comments(self):
+        """Pinned inside the window plus newer comments: single chronological order."""
+        comments = [_comment(i) for i in range(1, 6)]
+        result = select_history(comments, ["2"], HistoryWindowConfig(3))
+        self.assertEqual(_ids(result.all_comments()), [2, 3, 4, 5])
+
+    def test_selection_exposes_resolved_window_fields(self):
+        comments = [_comment(i) for i in range(1, 6)]
+        result = select_history(comments, ["1"], HistoryWindowConfig(2))
+        self.assertEqual(result.requested_count, 2)
+        self.assertEqual(_ids(result.recent_comments), [4, 5])
+        self.assertEqual(_ids(result.pinned_comments), [1])
 
     def test_zero_injects_pinned_only(self):
         comments = [_comment(1), _comment(2), _comment(3)]
