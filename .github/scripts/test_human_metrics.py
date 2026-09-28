@@ -19,7 +19,7 @@ for the human-metrics module.
 import os
 import sys
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(
     0,
@@ -184,6 +184,67 @@ class TestWallClock(unittest.TestCase):
         self.assertAlmostEqual(
             analyzer.analyze(issue).wall_clock_seconds, 3600.0
         )
+
+
+class TestWallClockTimezoneAwareness(unittest.TestCase):
+    """Regression (#678): mixing naive and aware datetimes crashed the resume."""
+
+    def setUp(self):
+        self.analyzer = HumanMetricsAnalyzer(HumanMetricsConfig())
+
+    def test_naive_start_with_aware_close_does_not_raise(self):
+        issue = _issue(
+            [],
+            first_agent_start=T0,
+            closed_at=_at(60).replace(tzinfo=timezone.utc),
+        )
+        self.assertAlmostEqual(
+            self.analyzer.analyze(issue).wall_clock_seconds, 3600.0
+        )
+
+    def test_aware_start_with_naive_close_does_not_raise(self):
+        issue = _issue(
+            [],
+            first_agent_start=T0.replace(tzinfo=timezone.utc),
+            closed_at=_at(60),
+        )
+        self.assertAlmostEqual(
+            self.analyzer.analyze(issue).wall_clock_seconds, 3600.0
+        )
+
+    def test_non_utc_offsets_are_converted_not_truncated(self):
+        plus_two = timezone(timedelta(hours=2))
+        issue = _issue(
+            [],
+            first_agent_start=T0.replace(tzinfo=plus_two),
+            closed_at=_at(60).replace(tzinfo=timezone.utc),
+        )
+        # 10:00+02:00 == 08:00Z, so close (11:00Z) - start == 3 h.
+        self.assertAlmostEqual(
+            self.analyzer.analyze(issue).wall_clock_seconds, 10800.0
+        )
+
+    def test_response_latency_normalises_mixed_awareness(self):
+        issue = _issue(
+            [
+                _agent("openhands", "first", minutes=0),
+                CommentRecord(
+                    author_login="alice",
+                    author_is_bot=False,
+                    body="reply",
+                    created_at=_at(10).replace(tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        self.assertAlmostEqual(
+            self.analyzer.analyze(issue).human_response_latency_seconds, 600.0
+        )
+
+    def test_none_operands_still_mark_wall_clock_unavailable(self):
+        issue = _issue([], first_agent_start=None, closed_at=None)
+        metrics = self.analyzer.analyze(issue)
+        self.assertIsNone(metrics.wall_clock_seconds)
+        self.assertIn("wall_clock", " ".join(metrics.unavailable))
 
 
 class TestAgentEffortProxy(unittest.TestCase):
