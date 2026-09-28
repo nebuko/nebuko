@@ -294,3 +294,90 @@ class TestMain:
         assert dc.main() == 0
         with open("final_message.txt", encoding="utf-8") as f:
             assert "Failed" in f.read()
+
+
+# ── delete_issue_comments — pure action contract (issue #674) ────────
+#
+# Spec for the approved Object Design Contract: one stateless function that
+# deletes every comment on an issue through the GitHub API and does nothing
+# else — no agent, no workflow routing, no comment posting. The body is a
+# stub (raise NotImplementedError), so the behavioural tests below are RED
+# until the implement step lands; the signature assertion is green now.
+
+
+def _recording_run(script):
+    """Recording ``_run`` double capturing (args, token) per call."""
+    calls = []
+
+    def fake_run(args, token=None):
+        calls.append((list(args), token))
+        joined = " ".join(args)
+        for key, response in script.items():
+            if key in joined:
+                rc, out, err = response
+                return _proc(rc, out, err)
+        return _proc(0, "", "")
+
+    return fake_run, calls
+
+
+class TestDeleteIssueCommentsContract:
+    def test_signature_is_stable(self):
+        import inspect
+
+        sig = inspect.signature(dc.delete_issue_comments)
+        assert list(sig.parameters) == ["repo", "issue_number", "token"]
+        assert sig.return_annotation is None
+
+    def test_deletes_every_comment_through_the_api(self, monkeypatch):
+        fake, calls = _recording_run(
+            {
+                "--paginate": (0, "100\n200\n", ""),
+                "--method DELETE": (0, "", ""),
+            }
+        )
+        monkeypatch.setattr(dc, "_run", fake)
+        assert dc.delete_issue_comments("o/r", 7, "tok") is None
+        delete_calls = [c for c in calls if "--method" in c[0]]
+        assert [c[0][-1] for c in delete_calls] == [
+            "/repos/o/r/issues/comments/100",
+            "/repos/o/r/issues/comments/200",
+        ]
+
+    def test_uses_the_supplied_token(self, monkeypatch):
+        fake, calls = _recording_run({"--paginate": (0, "100\n", "")})
+        monkeypatch.setattr(dc, "_run", fake)
+        dc.delete_issue_comments("o/r", 7, "secret-token")
+        assert calls and all(token == "secret-token" for _, token in calls)
+
+    def test_raises_when_listing_fails(self, monkeypatch):
+        fake, _ = _recording_run({"--paginate": (1, "", "HTTP 403: bad creds")})
+        monkeypatch.setattr(dc, "_run", fake)
+        with pytest.raises(Exception) as exc:
+            dc.delete_issue_comments("o/r", 7, "tok")
+        # A real API failure, not the placeholder stub body.
+        assert not isinstance(exc.value, NotImplementedError)
+
+    def test_raises_when_a_delete_fails(self, monkeypatch):
+        fake, _ = _recording_run(
+            {
+                "--paginate": (0, "100\n", ""),
+                "/issues/comments/100": (1, "", "HTTP 500: boom"),
+            }
+        )
+        monkeypatch.setattr(dc, "_run", fake)
+        with pytest.raises(Exception) as exc:
+            dc.delete_issue_comments("o/r", 7, "tok")
+        assert not isinstance(exc.value, NotImplementedError)
+
+    def test_posts_no_comment(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        fake, _ = _recording_run(
+            {
+                "--paginate": (0, "100\n", ""),
+                "--method DELETE": (0, "", ""),
+            }
+        )
+        monkeypatch.setattr(dc, "_run", fake)
+        dc.delete_issue_comments("o/r", 7, "tok")
+        assert not (tmp_path / "final_message.txt").exists()

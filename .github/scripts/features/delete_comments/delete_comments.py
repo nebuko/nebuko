@@ -142,6 +142,20 @@ def delete_comments_from(
     )
 
 
+# ── Pure action — Object Design Contract (issue #674) ────────────────
+
+
+def delete_issue_comments(repo: str, issue_number: int, token: str) -> None:
+    """Delete all comments on the given issue via the GitHub API.
+
+    Raises on failure. The CLI layer maps exceptions to a non-zero exit code
+    and success to ``0``. This is the entire command: no agent, no workflow
+    routing, no comment posting.
+    """
+    # @stub-protected: signature defined by architect — do not modify
+    raise NotImplementedError
+
+
 # ── Summary rendering ────────────────────────────────────────────────
 
 
