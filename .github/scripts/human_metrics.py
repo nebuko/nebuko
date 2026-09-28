@@ -15,8 +15,24 @@ metric whose inputs are missing degrades to ``None`` with a reason in
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Mapping
+
+
+# @stub-protected
+def _ensure_aware_utc(value: datetime | None) -> datetime | None:
+    """Return *value* as a timezone-aware UTC datetime (or ``None``).
+
+    GitHub close timestamps are parsed with an offset (aware) while agent
+    ``start_time`` metrics may lack one (naive). Subtracting mixed datetimes
+    raises ``TypeError``, so every duration operand is normalised here. Naive
+    values are assumed to already be UTC; aware values are converted to UTC.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 # @stub-protected
@@ -125,12 +141,14 @@ class HumanMetricsAnalyzer:
         return words / self._config.reading_speed_wpm * 60
 
     def _wall_clock(self, issue: IssueData, unavailable: dict) -> float | None:
-        if issue.first_agent_start is None or issue.closed_at is None:
+        closed_at = _ensure_aware_utc(issue.closed_at)
+        first_agent_start = _ensure_aware_utc(issue.first_agent_start)
+        if first_agent_start is None or closed_at is None:
             unavailable["wall_clock_seconds"] = (
                 "first agent start timestamp or issue close time missing"
             )
             return None
-        seconds = (issue.closed_at - issue.first_agent_start).total_seconds()
+        seconds = (closed_at - first_agent_start).total_seconds()
         if seconds < 0:
             unavailable["wall_clock_seconds"] = (
                 "issue close time precedes first agent start"
@@ -142,7 +160,10 @@ class HumanMetricsAnalyzer:
         self, comments: tuple[CommentRecord, ...], unavailable: dict
     ) -> float | None:
         latencies = [
-            (following.created_at - preceding.created_at).total_seconds()
+            (
+                _ensure_aware_utc(following.created_at)
+                - _ensure_aware_utc(preceding.created_at)
+            ).total_seconds()
             for preceding, following in zip(comments, comments[1:])
             if preceding.author_is_bot and self._is_human(following)
         ]
