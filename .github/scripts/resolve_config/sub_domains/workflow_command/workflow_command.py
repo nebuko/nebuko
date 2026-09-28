@@ -10,6 +10,11 @@ Canonical actions (issue #635):
   - ``force-step`` resource ``step`` — jump to a step; ``--name`` required
   - ``delete``     resource ``comments`` — batch-delete issue comments (issue #644);
                    ``--issue`` and ``--from`` optional, both numeric
+  - ``clean``      resource ``comments`` — local maintenance command (issue #679);
+                   runs its script and starts no agent
+
+Only the ``/workflow``-prefixed form is recognized as a command; a bare
+``clean comments`` line is not one (issue #679).
 
 Malformed input (unknown action, wrong/missing resource, unknown or
 duplicate flag, missing required flag) yields ``None`` so routing falls
@@ -19,7 +24,7 @@ through to the normal cascade. Old positional forms (``/workflow default``,
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Literal, Optional, Set, Tuple
 
 __all__ = [
     "WorkflowCommand",
@@ -27,6 +32,11 @@ __all__ = [
     "ACTIONS",
     "RESOURCE_BY_ACTION",
     "FLAGS_BY_ACTION",
+    "COMMAND_REGISTRY",
+    "CommentIntent",
+    "CommentKind",
+    "CommandClass",
+    "classify_comment",
 ]
 
 
@@ -34,7 +44,7 @@ __all__ = [
 class WorkflowCommand:
     """Immutable parsed /workflow <action> <resource> --flag value command."""
 
-    action: str  # "run" | "resume" | "force-step" | "delete"
+    action: str  # "run" | "resume" | "force-step" | "delete" | "clean"
     resource: Optional[str]  # "workflow" | "step" | "comments" | None (resume)
     params: Dict[str, str]  # named flags, e.g. {"name": "spec-driven-impl"}
 
@@ -55,6 +65,28 @@ FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "delete": {"issue"},
 }
 
+#: Classification outcome for a single issue comment (issue #679).
+CommentKind = Literal["command", "agent_trigger", "none"]
+
+#: Command class: ``"workflow"`` commands bootstrap the agent pipeline,
+#: ``"local"`` commands run only their deterministic script (issue #679).
+CommandClass = Literal["workflow", "local"]
+
+#: Single source of truth for recognized commands (issue #679). Maps a command
+#: name to its command class. Only the ``/workflow``-prefixed form is
+#: recognized as a command — the real-world trigger payload is
+#: ``/workflow clean comments`` (issue #590), never a bare ``clean comments``.
+#: Any name listed here is a first-class short-circuit: it classifies as a
+#: command and can never fall through to the agent-trigger path. A new command
+#: only needs to be registered here.
+COMMAND_REGISTRY: Dict[str, CommandClass] = {
+    "run": "workflow",
+    "resume": "workflow",
+    "force-step": "workflow",
+    "delete": "local",
+    "clean": "local",
+}
+
 #: Required flags per action (absent ⇒ malformed ⇒ None).
 _REQUIRED_FLAGS: Dict[str, str] = {"run": "name", "force-step": "name"}
 
@@ -67,6 +99,13 @@ _MULTIWORD_FLAGS = {"feedback"}
 _NUMERIC_FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "delete": {"issue"},
 }
+
+#: Registry-local commands that reuse a core action's grammar (issue #679).
+#: ``clean`` is a registry alias of ``delete comments`` — same resource and
+#: flags — so its invocation is validated exactly like ``delete``. Without this
+#: a malformed ``/workflow clean`` prefix would over-match and be treated as a
+#: recognized command.
+_GRAMMAR_ALIASES: Dict[str, str] = {"clean": "delete"}
 
 _WORKFLOW_CMD_RE = re.compile(r"^/workflow\s+(.*)$")
 
@@ -114,20 +153,23 @@ def parse_workflow_command(trigger_body: str) -> Optional[WorkflowCommand]:
     if not tokens:
         return None
     action = tokens[0]
-    if action not in ACTIONS:
+    # Registry-local commands (``clean``) reuse a core action's grammar, so
+    # their resource/flag validation is identical to that action's (issue #679).
+    grammar_action = _GRAMMAR_ALIASES.get(action, action)
+    if grammar_action not in ACTIONS:
         return None
     i = 1
-    expected_resource = RESOURCE_BY_ACTION[action]
+    expected_resource = RESOURCE_BY_ACTION[grammar_action]
     if expected_resource is not None:
         if i >= len(tokens) or tokens[i] != expected_resource:
             return None
         i += 1
-    params = _parse_flags(tokens[i:], action)
+    params = _parse_flags(tokens[i:], grammar_action)
     if params is None:
         return None
-    if not _numeric_flags_valid(params, action):
+    if not _numeric_flags_valid(params, grammar_action):
         return None
-    required = _REQUIRED_FLAGS.get(action)
+    required = _REQUIRED_FLAGS.get(grammar_action)
     if required is not None and required not in params:
         return None
     return WorkflowCommand(action=action, resource=expected_resource, params=params)
@@ -151,3 +193,77 @@ def _numeric_flags_valid(params: Dict[str, str], action: str) -> bool:
         for flag, value in params.items()
         if flag in numeric_flags
     )
+
+
+# @stub-protected: signature defined by architect — do not modify
+@dataclass(frozen=True)
+class CommentIntent:
+    """Immutable outcome of classifying a single issue comment (issue #679).
+
+    Downstream routing consumes this instead of re-deriving intent from the
+    raw text, so a recognized command is a first-class short-circuit that can
+    never reach the agent-trigger path.
+
+    Attributes:
+        kind: ``"command"`` for a recognized command; ``"agent_trigger"``
+            when the comment carries an explicit agent trigger (human
+            ``@@mention`` or CI machine token); ``"none"`` otherwise.
+        command: Normalised command name when ``kind == "command"``
+            (e.g. ``"clean"``), else ``None``.
+        raw: Original comment body, kept for logging/diagnostics.
+    """
+
+    kind: CommentKind  # @stub-protected
+    command: Optional[str]  # @stub-protected
+    raw: str  # @stub-protected
+
+
+#: Human ``@@mention`` agent triggers. Mirrors the marker grammar owned by
+#: ``features/parse_trigger``; kept local so this domain module has no
+#: dependency on the application layer (issue #679).
+_MENTION_RE = re.compile(
+    r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)"
+)
+
+#: CI machine-trigger tokens (mirrors ``features/parse_trigger``).
+_MACHINE_TRIGGER_RE = re.compile(
+    r"<!--\s*bot-(?:subtask-complete|summarizer-trigger|trigger)\b"
+)
+
+
+def _has_agent_trigger(body: str) -> bool:
+    """True when ``body`` carries an explicit agent trigger (issue #679)."""
+    return bool(_MENTION_RE.search(body) or _MACHINE_TRIGGER_RE.search(body))
+
+
+# @stub-protected: signature defined by architect — do not modify
+def classify_comment(body: str) -> CommentIntent:
+    """Classify an issue comment into command / agent-trigger / none.
+
+    Delegates to :func:`parse_workflow_command`, so a comment is a ``"command"``
+    only when it is a **well-formed** registered command (including
+    ``/workflow clean comments``): malformed invocations — unknown action,
+    wrong/missing resource, unknown flag — parse to ``None`` and fall through to
+    ``"none"`` rather than over-matching. A recognized command must
+    short-circuit the agent-trigger path. Otherwise a body carrying an explicit
+    agent trigger (human ``@@mention`` or CI machine token) is an
+    ``"agent_trigger"``; anything else is ``"none"``.
+
+    Only the ``/workflow``-prefixed form is recognized as a command — the
+    real-world trigger payload for issue #679 is ``/workflow clean comments``
+    (issue #590), not a bare ``clean comments``. Matching is on the command
+    form at the start of the (trimmed) first line, never a substring search,
+    so prose that merely mentions "clean comments" is not misclassified.
+
+    Args:
+        body: Raw comment body.
+
+    Returns:
+        A frozen :class:`CommentIntent`.
+    """
+    wf_cmd = parse_workflow_command(body)
+    if wf_cmd is not None and wf_cmd.action in COMMAND_REGISTRY:
+        return CommentIntent(kind="command", command=wf_cmd.action, raw=body)
+    if _has_agent_trigger(body):
+        return CommentIntent(kind="agent_trigger", command=None, raw=body)
+    return CommentIntent(kind="none", command=None, raw=body)
