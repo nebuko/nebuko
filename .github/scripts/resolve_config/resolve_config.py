@@ -87,8 +87,9 @@ def resolve_config(
        - /workflow force-step step --name <step> → _resolve_human_path (regardless of state).
        - /workflow delete comments [--issue <n>] [--from <id>] (human) →
          _delete_comments_env (self-contained contract; no agent runs).
-       - /workflow clean comments (human) → same agent-free comment-maintenance
-         contract, matched via classify_comment (issues #674/#679).
+       - /workflow clean comments [--issue <n>] (human) → same agent-free
+         comment-maintenance contract, matched via classify_comment
+         (issues #674/#679).
        - /workflow command by human → _resolve_human_path.
        - Human @@mention, or CI plain-mention trigger (universal bot marker
          + mention-only body, e.g. sub-task completion notification) →
@@ -147,13 +148,19 @@ def resolve_config(
     # matched via the comment classifier. This short-circuit must run *before*
     # the agent-trigger cascade below, otherwise `/workflow clean comments`
     # falls through and boots ctx/genius (issue #590). Human-only, like delete.
+    # Flags are forwarded just as for `delete`, so `--issue <n>` targets that
+    # issue rather than silently falling back to the invoking issue.
     command_intent = classify_comment(trigger_body)
     if (
         command_intent.kind == "command"
         and command_intent.command == "clean"
         and not is_bot
     ):
-        clean_env = _delete_comments_env(None, issue_number)
+        clean_cmd = parse_workflow_command(trigger_body)
+        clean_env = _delete_comments_env(
+            clean_cmd.params.get("issue") if clean_cmd is not None else None,
+            issue_number,
+        )
         if clean_env is not None:
             return clean_env
 

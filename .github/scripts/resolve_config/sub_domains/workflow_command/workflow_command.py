@@ -44,7 +44,7 @@ __all__ = [
 class WorkflowCommand:
     """Immutable parsed /workflow <action> <resource> --flag value command."""
 
-    action: str  # "run" | "resume" | "force-step" | "delete"
+    action: str  # "run" | "resume" | "force-step" | "delete" | "clean"
     resource: Optional[str]  # "workflow" | "step" | "comments" | None (resume)
     params: Dict[str, str]  # named flags, e.g. {"name": "spec-driven-impl"}
 
@@ -100,6 +100,13 @@ _NUMERIC_FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "delete": {"issue"},
 }
 
+#: Registry-local commands that reuse a core action's grammar (issue #679).
+#: ``clean`` is a registry alias of ``delete comments`` — same resource and
+#: flags — so its invocation is validated exactly like ``delete``. Without this
+#: a malformed ``/workflow clean`` prefix would over-match and be treated as a
+#: recognized command.
+_GRAMMAR_ALIASES: Dict[str, str] = {"clean": "delete"}
+
 _WORKFLOW_CMD_RE = re.compile(r"^/workflow\s+(.*)$")
 
 
@@ -146,20 +153,23 @@ def parse_workflow_command(trigger_body: str) -> Optional[WorkflowCommand]:
     if not tokens:
         return None
     action = tokens[0]
-    if action not in ACTIONS:
+    # Registry-local commands (``clean``) reuse a core action's grammar, so
+    # their resource/flag validation is identical to that action's (issue #679).
+    grammar_action = _GRAMMAR_ALIASES.get(action, action)
+    if grammar_action not in ACTIONS:
         return None
     i = 1
-    expected_resource = RESOURCE_BY_ACTION[action]
+    expected_resource = RESOURCE_BY_ACTION[grammar_action]
     if expected_resource is not None:
         if i >= len(tokens) or tokens[i] != expected_resource:
             return None
         i += 1
-    params = _parse_flags(tokens[i:], action)
+    params = _parse_flags(tokens[i:], grammar_action)
     if params is None:
         return None
-    if not _numeric_flags_valid(params, action):
+    if not _numeric_flags_valid(params, grammar_action):
         return None
-    required = _REQUIRED_FLAGS.get(action)
+    required = _REQUIRED_FLAGS.get(grammar_action)
     if required is not None and required not in params:
         return None
     return WorkflowCommand(action=action, resource=expected_resource, params=params)
@@ -230,11 +240,14 @@ def _has_agent_trigger(body: str) -> bool:
 def classify_comment(body: str) -> CommentIntent:
     """Classify an issue comment into command / agent-trigger / none.
 
-    Normalises the first line and consults :data:`COMMAND_REGISTRY`; any
-    registered command (including ``/workflow clean comments``) is a
-    ``"command"`` and must short-circuit the agent-trigger path. Otherwise a
-    body carrying an explicit agent trigger (human ``@@mention`` or CI machine
-    token) is an ``"agent_trigger"``; anything else is ``"none"``.
+    Delegates to :func:`parse_workflow_command`, so a comment is a ``"command"``
+    only when it is a **well-formed** registered command (including
+    ``/workflow clean comments``): malformed invocations — unknown action,
+    wrong/missing resource, unknown flag — parse to ``None`` and fall through to
+    ``"none"`` rather than over-matching. A recognized command must
+    short-circuit the agent-trigger path. Otherwise a body carrying an explicit
+    agent trigger (human ``@@mention`` or CI machine token) is an
+    ``"agent_trigger"``; anything else is ``"none"``.
 
     Only the ``/workflow``-prefixed form is recognized as a command — the
     real-world trigger payload for issue #679 is ``/workflow clean comments``
@@ -248,12 +261,9 @@ def classify_comment(body: str) -> CommentIntent:
     Returns:
         A frozen :class:`CommentIntent`.
     """
-    first_line = body.split("\n", 1)[0].strip()
-    match = _WORKFLOW_CMD_RE.match(first_line)
-    if match:
-        tokens = match.group(1).split()
-        if tokens and tokens[0] in COMMAND_REGISTRY:
-            return CommentIntent(kind="command", command=tokens[0], raw=body)
+    wf_cmd = parse_workflow_command(body)
+    if wf_cmd is not None and wf_cmd.action in COMMAND_REGISTRY:
+        return CommentIntent(kind="command", command=wf_cmd.action, raw=body)
     if _has_agent_trigger(body):
         return CommentIntent(kind="agent_trigger", command=None, raw=body)
     return CommentIntent(kind="none", command=None, raw=body)

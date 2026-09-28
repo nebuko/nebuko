@@ -823,9 +823,36 @@ class TestCleanCommentsCommand(unittest.TestCase):
         self.assertEqual(result["AGENT_SELECTED"], "false")
         self.assertEqual(result["TASK"], "Delete comments on issue 590")
 
+    def test_clean_explicit_issue_targets_that_issue(self):
+        # Review fix (issue #679): `--issue` must be forwarded, exactly as for
+        # the `delete` alias, instead of silently defaulting to the invoking
+        # issue.
+        result = self._resolve("/workflow clean comments --issue 123")
+        self.assertEqual(result["DELETE_COMMENTS"], "true")
+        self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "123")
+
+    def test_clean_explicit_issue_wins_over_invoking_issue(self):
+        result = self._resolve(
+            "/workflow clean comments --issue 789", issue_number=456
+        )
+        self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "789")
+
+    def test_malformed_clean_is_not_a_command(self):
+        # Review fix (issue #679): a malformed `clean` invocation must not be
+        # treated as a command (which would destructively delete comments).
+        for body in (
+            "/workflow clean",
+            "/workflow clean files",
+            "/workflow clean comments --unknown x",
+            "/workflow clean comments --issue abc",
+        ):
+            with self.subTest(body=body):
+                result = self._resolve(body, issue_number=590)
+                self.assertNotIn("DELETE_COMMENTS", result)
+
     def test_bot_clean_is_ignored(self):
         result = self._resolve(
-            "<!-- bot-workflow-terminal -->\n/workflow clean comments --issue 123",
+            "<!-- bot-workflow-terminal -->\n/workflow clean comments",
             issue_number=590,
         )
         self.assertNotIn("DELETE_COMMENTS", result)

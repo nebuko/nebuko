@@ -110,6 +110,18 @@ class TestParseValid:
             parse_workflow_command("/workflow delete comments --from 5811583860") is None
         )
 
+    # /workflow clean comments (issue #679) — registry-local alias of delete;
+    # it reuses delete's grammar so flags parse and validate identically.
+    def test_clean_bare(self):
+        cmd = parse_workflow_command("/workflow clean comments")
+        assert cmd == WorkflowCommand(action="clean", resource="comments", params={})
+
+    def test_clean_issue(self):
+        cmd = parse_workflow_command("/workflow clean comments --issue 123")
+        assert cmd == WorkflowCommand(
+            action="clean", resource="comments", params={"issue": "123"}
+        )
+
 
 class TestParseMalformed:
     def test_unknown_action(self):
@@ -196,6 +208,21 @@ class TestParseMalformed:
         assert parse_workflow_command("/workflow delete comments --issue ²") is None
         assert parse_workflow_command("/workflow delete comments --issue 123 --from ²") is None
 
+    # Malformed /workflow clean ... must not parse (issue #679 review): a
+    # malformed invocation is not a recognized command and must not be able to
+    # destructively delete comments.
+    def test_clean_missing_resource_rejected(self):
+        assert parse_workflow_command("/workflow clean") is None
+
+    def test_clean_wrong_resource_rejected(self):
+        assert parse_workflow_command("/workflow clean files") is None
+
+    def test_clean_unknown_flag_rejected(self):
+        assert parse_workflow_command("/workflow clean comments --unknown x") is None
+
+    def test_clean_non_numeric_issue_rejected(self):
+        assert parse_workflow_command("/workflow clean comments --issue abc") is None
+
 
 class TestCommandRegistry:
     def test_seeded_with_workflow_actions(self):
@@ -251,6 +278,13 @@ class TestClassifyComment:
         # payload is `/workflow clean comments` (issue #590). A bare
         # `clean comments` line must not be classified as a command (issue #679).
         assert classify_comment("clean comments").kind != "command"
+
+    def test_malformed_clean_is_not_command(self):
+        # A malformed `clean` invocation is not a recognized command and must
+        # not be able to destructively delete comments (issue #679 review).
+        assert classify_comment("/workflow clean").kind == "none"
+        assert classify_comment("/workflow clean files").kind == "none"
+        assert classify_comment("/workflow clean comments --unknown x").kind == "none"
 
     def test_frozen(self):
         intent = CommentIntent(
