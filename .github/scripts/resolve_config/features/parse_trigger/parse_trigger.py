@@ -1,13 +1,16 @@
 """Trigger parsing feature.
 
-Pure string-parsing helpers that extract command flags and workflow state
-from the raw trigger body, with no I/O.
+String-parsing helpers that extract command flags and workflow state from the
+raw trigger body. The ``@@`` mention regex is derived from the live agent
+roster (the layered agent config), falling back to a canonical roster when the
+config cannot be read.
 """
 
 import re
 import sys
 from typing import Optional, Tuple
 
+from config import load_agent_names
 from workflow_state import extract_state_from_body
 
 from ...sub_domains.trigger_commands.trigger_commands import TriggerCommands
@@ -96,7 +99,7 @@ def is_plain_mention_trigger(trigger_body: str) -> bool:
     if extract_plain_mention_agent(trigger_body) is None:
         return False
     without_markers = re.sub(r"<!--.*?-->", " ", trigger_body, flags=re.DOTALL)
-    without_mentions = re.sub(_MENTION_RE, " ", without_markers)
+    without_mentions = re.sub(_mention_re(), " ", without_markers)
     return not without_mentions.strip()
 
 
@@ -113,13 +116,29 @@ def extract_plain_mention_agent(trigger_body: str) -> Optional[str]:
     Returns:
         Last mentioned agent name, or None when no mention is present.
     """
-    agents = re.findall(_MENTION_RE, trigger_body)
+    agents = re.findall(_mention_re(), trigger_body)
     if agents:
         return agents[-1].replace("@@", "")
     return None
 
 
-_MENTION_RE = r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)"
+_mention_re_cache: Optional["re.Pattern[str]"] = None
+
+
+def _mention_re() -> "re.Pattern[str]":
+    """Compiled ``@@`` mention regex built from the live agent roster (cached).
+
+    Names are ordered longest-first so ``issue-reviewer`` is matched before
+    ``issue`` (no prefix shadowing). The non-capturing group keeps
+    ``re.findall`` returning the whole ``@@name`` token, exactly as the
+    previous hard-coded pattern did.
+    """
+    global _mention_re_cache
+    if _mention_re_cache is None:
+        names = sorted(load_agent_names(), key=len, reverse=True)
+        alternatives = "|".join(re.escape(name) for name in names)
+        _mention_re_cache = re.compile(rf"@@(?:{alternatives})(?![A-Za-z0-9_-])")
+    return _mention_re_cache
 
 
 def extract_mention_agent(trigger_body: str) -> Optional[str]:
@@ -137,7 +156,7 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
         Agent name string or None.
     """
     if is_bot_comment(trigger_body):
-        ignored = re.findall(_MENTION_RE, trigger_body)
+        ignored = re.findall(_mention_re(), trigger_body)
         if ignored:
             print(
                 f"Warning: ignoring @@mention(s) {ignored} in bot comment "
@@ -145,7 +164,7 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
                 file=sys.stderr,
             )
         return None
-    agents = re.findall(_MENTION_RE, trigger_body)
+    agents = re.findall(_mention_re(), trigger_body)
     if agents:
         return agents[-1].replace("@@", "")
     return None
