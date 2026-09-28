@@ -30,10 +30,8 @@ from summarize_metrics import (
     parse_agent_role,
     build_comment_record,
     collect_issue_data,
-    human_metrics_config_from_env,
     build_human_metrics_section,
 )
-from human_metrics import HumanMetricsAnalyzer, HumanMetricsConfig
 
 
 class TestMetricsRegex(unittest.TestCase):
@@ -1507,29 +1505,17 @@ class TestCollectIssueData(unittest.TestCase):
         self.assertIsNone(data.first_agent_start)
 
 
-class TestHumanMetricsConfigFromEnv(unittest.TestCase):
-    """Env-driven configuration with defaults preserved."""
+class TestHumanMetricsHardcodedConfig(unittest.TestCase):
+    """Config is hardcoded (200 wpm, empty allowlist); no workflow env is wired."""
 
-    def test_defaults_when_env_absent(self):
-        with patch.dict(os.environ, {}, clear=True):
-            config = human_metrics_config_from_env()
-        self.assertEqual(config.reading_speed_wpm, 200)
-        self.assertEqual(config.human_logins, frozenset())
-
-    def test_reads_env_overrides(self):
+    def test_workflow_env_vars_are_ignored(self):
         env = {
             "HUMAN_METRICS_READING_WPM": "250",
-            "HUMAN_METRICS_HUMAN_LOGINS": "alice, bob",
+            "HUMAN_METRICS_HUMAN_LOGINS": "alice",
         }
         with patch.dict(os.environ, env, clear=True):
-            config = human_metrics_config_from_env()
-        self.assertEqual(config.reading_speed_wpm, 250)
-        self.assertEqual(config.human_logins, frozenset({"alice", "bob"}))
-
-    def test_invalid_wpm_falls_back_to_default(self):
-        with patch.dict(os.environ, {"HUMAN_METRICS_READING_WPM": "fast"}, clear=True):
-            config = human_metrics_config_from_env()
-        self.assertEqual(config.reading_speed_wpm, 200)
+            section = build_human_metrics_section([], [], "body", None)
+        self.assertIn("reading speed: 200 wpm", section)
 
 
 class TestBuildHumanMetricsSection(unittest.TestCase):
@@ -1546,11 +1532,10 @@ class TestBuildHumanMetricsSection(unittest.TestCase):
         ]
         metrics = [Metrics(agent_role="dev", nb_tool_calls=5, agent_runtime_ms=60000.0,
                            start_time="2026-09-01T10:01:00Z")]
-        with patch.dict(os.environ, {}, clear=True):
-            section = build_human_metrics_section(
-                comments, metrics, "issue body",
-                parse_iso_datetime("2026-09-01T10:30:00Z"),
-            )
+        section = build_human_metrics_section(
+            comments, metrics, "issue body",
+            parse_iso_datetime("2026-09-01T10:30:00Z"),
+        )
         self.assertIn("Human metrics", section)
         self.assertIn("Human comments", section)
         self.assertIn("| 2 |", section)  # two human comments

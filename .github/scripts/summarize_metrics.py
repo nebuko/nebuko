@@ -621,29 +621,14 @@ def collect_issue_data(comments, all_metrics, issue_body, issue_closed_at):
     )
 
 
-def human_metrics_config_from_env():
-    """Build the config from optional env vars, falling back to defaults."""
-    overrides = {}
-
-    reading_speed = os.environ.get("HUMAN_METRICS_READING_WPM")
-    if reading_speed:
-        try:
-            overrides["reading_speed_wpm"] = int(reading_speed)
-        except ValueError:
-            print(f"Warning: ignoring invalid HUMAN_METRICS_READING_WPM={reading_speed!r}")
-
-    logins = os.environ.get("HUMAN_METRICS_HUMAN_LOGINS")
-    if logins:
-        overrides["human_logins"] = frozenset(
-            login.strip() for login in logins.split(",") if login.strip()
-        )
-
-    return HumanMetricsConfig(**overrides)
-
-
 def build_human_metrics_section(comments, all_metrics, issue_body, issue_closed_at):
-    """Compute and render the human-metrics section for the resume."""
-    config = human_metrics_config_from_env()
+    """Compute and render the human-metrics section for the resume.
+
+    Reading speed (200 wpm) and the empty allowlist ("any non-bot author is
+    human") are hardcoded defaults for now, per product decision; no workflow
+    variable is wired.
+    """
+    config = HumanMetricsConfig()
     issue_data = collect_issue_data(comments, all_metrics, issue_body, issue_closed_at)
     metrics = HumanMetricsAnalyzer(config).analyze(issue_data)
     return HumanMetricsRenderer(config).render(metrics)
