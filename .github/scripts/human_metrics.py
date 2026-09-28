@@ -7,8 +7,9 @@ All I/O stays in ``summarize_metrics.py``: it builds ``IssueData`` from the
 comments/agent-metrics payloads it already fetches, then calls
 ``HumanMetricsAnalyzer.analyze`` and ``HumanMetricsRenderer.render``.
 
-Stub step: data models, class/function skeletons and config only. Method
-bodies are materialised by @@dev in the implement step.
+The models are immutable, the analyzer/renderer hold only their config, and any
+metric whose inputs are missing degrades to ``None`` with a reason in
+``unavailable`` (Scenario 9) instead of a misleading zero.
 """
 
 from __future__ import annotations

@@ -12,8 +12,8 @@ Covers the scenarios S1-S9 of the frozen spec:
 - S8 first-pass acceptance
 - S9 missing/partial data -> ``None`` + a reason in ``unavailable`` (never ``0``)
 
-Against the stubs these tests are expected to FAIL (``NotImplementedError``);
-they lock the contract for the implement step.
+These tests exercise the real code paths (no mocks) and lock the frozen contract
+for the human-metrics module.
 """
 
 import os
