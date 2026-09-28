@@ -179,6 +179,15 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     if temperature is not None:
         llm_config["temperature"] = temperature
 
+    # ── Brand attribution (OpenRouter HTTP-Referer / X-Title) ────
+    # The SDK defaults these to OpenHands; override them from the single
+    # BrandIdentity source of truth so requests appear as Nebuko.
+    from config import brand
+
+    _brand = brand()
+    llm_config["openrouter_app_name"] = _brand.app_name
+    llm_config["openrouter_site_url"] = str(_brand.site_url)
+
     # ── Per-token pricing ────────────────────────────────────────
     # Normalize the per-million operator prices to per-token costs and flow
     # them into LLM(**llm_config) so the SDK can compute session cost (LiteLLM
