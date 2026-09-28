@@ -208,6 +208,24 @@ class CommentIntent:
     raw: str  # @stub-protected
 
 
+#: Human ``@@mention`` agent triggers. Mirrors the marker grammar owned by
+#: ``features/parse_trigger``; kept local so this domain module has no
+#: dependency on the application layer (issue #679).
+_MENTION_RE = re.compile(
+    r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)"
+)
+
+#: CI machine-trigger tokens (mirrors ``features/parse_trigger``).
+_MACHINE_TRIGGER_RE = re.compile(
+    r"<!--\s*bot-(?:subtask-complete|summarizer-trigger|trigger)\b"
+)
+
+
+def _has_agent_trigger(body: str) -> bool:
+    """True when ``body`` carries an explicit agent trigger (issue #679)."""
+    return bool(_MENTION_RE.search(body) or _MACHINE_TRIGGER_RE.search(body))
+
+
 # @stub-protected: signature defined by architect — do not modify
 def classify_comment(body: str) -> CommentIntent:
     """Classify an issue comment into command / agent-trigger / none.
@@ -230,4 +248,12 @@ def classify_comment(body: str) -> CommentIntent:
     Returns:
         A frozen :class:`CommentIntent`.
     """
-    raise NotImplementedError
+    first_line = body.split("\n", 1)[0].strip()
+    match = _WORKFLOW_CMD_RE.match(first_line)
+    if match:
+        tokens = match.group(1).split()
+        if tokens and tokens[0] in COMMAND_REGISTRY:
+            return CommentIntent(kind="command", command=tokens[0], raw=body)
+    if _has_agent_trigger(body):
+        return CommentIntent(kind="agent_trigger", command=None, raw=body)
+    return CommentIntent(kind="none", command=None, raw=body)

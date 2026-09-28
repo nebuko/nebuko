@@ -770,6 +770,79 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         self.assertNotIn("DELETE_COMMENTS", result)
 
 
+class TestCleanCommentsCommand(unittest.TestCase):
+    """`/workflow clean comments` — the agent-free alias (issue #679).
+
+    The real-world bug (issue #590) is that ``/workflow clean comments`` used
+    to fall through the human-command cascade and boot ctx/genius. It is now a
+    recognized local command that resolves to the same deterministic
+    comment-removal contract as ``/workflow delete comments`` and starts no
+    agent, even when an active workflow dispatch is present.
+    """
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        return prompt_base, workflows_dir
+
+    def _resolve(self, body, issue_number=None):
+        prompt_base, workflows_dir = self._setup_dirs()
+        return resolve_config(
+            body, prompt_base, workflows_dir, is_bot=False,
+            issue_number=issue_number,
+        )
+
+    @staticmethod
+    def _state_block(dispatch):
+        state = {"version": 1, "dispatch": dispatch}
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def test_clean_defaults_to_invoking_issue(self):
+        result = self._resolve("/workflow clean comments", issue_number=590)
+        self.assertEqual(result["DELETE_COMMENTS"], "true")
+        self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "590")
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["AGENT_SELECTED"], "false")
+        self.assertEqual(result["ROLE_NAME"], "script")
+
+    def test_clean_ignores_active_dispatch(self):
+        # Regression #590: an active dispatch must NOT absorb the command and
+        # boot an agent; the local command still short-circuits.
+        body = "/workflow clean comments\n\n" + self._state_block(
+            {"status": "advance", "task_hint": "dev", "complexity": "high"}
+        )
+        result = self._resolve(body, issue_number=590)
+        self.assertEqual(result["DELETE_COMMENTS"], "true")
+        self.assertEqual(result["AGENT_SELECTED"], "false")
+        self.assertEqual(result["TASK"], "Delete comments on issue 590")
+
+    def test_bot_clean_is_ignored(self):
+        result = self._resolve(
+            "<!-- bot-workflow-terminal -->\n/workflow clean comments --issue 123",
+            issue_number=590,
+        )
+        self.assertNotIn("DELETE_COMMENTS", result)
+
+    def test_bare_clean_is_not_a_command(self):
+        result = self._resolve("clean comments", issue_number=590)
+        self.assertNotIn("DELETE_COMMENTS", result)
+
+    def test_prose_mentioning_clean_is_not_a_command(self):
+        result = self._resolve("we should clean comments later", issue_number=590)
+        self.assertNotIn("DELETE_COMMENTS", result)
+
+    def test_clean_not_on_first_line_is_not_a_command(self):
+        result = self._resolve("hello\n/workflow clean comments", issue_number=590)
+        self.assertNotIn("DELETE_COMMENTS", result)
+
+
 class TestForceNextStepSubWorkflow(unittest.TestCase):
     """force-next-step must run a step regardless of its shape (issue #599).
 

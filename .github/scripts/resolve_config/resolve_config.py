@@ -13,6 +13,7 @@ from typing import Optional
 
 from .features.build_result.build_result import _build_result
 from .features.fetch_state.fetch_state import _fetch_workflow_state_from_history
+from .sub_domains.workflow_command.workflow_command import classify_comment
 from .features.parse_trigger.parse_trigger import (
     is_bot_comment,
     has_universal_bot_marker,
@@ -37,22 +38,22 @@ from .features.resolve_route.resolve_route import (
 from config import is_self_function_call
 
 
-def _delete_comments_env(wf_cmd, issue_number: Optional[int]):
-    """Resolve ``/workflow delete comments`` to its env contract (issue #644).
+def _delete_comments_env(issue_param: Optional[str], issue_number: Optional[int]):
+    """Resolve an agent-free comment-removal command to its env contract.
 
-    A human-only, deterministic batch deletion: no agent runs, so it returns
-    the full env dict directly (the same shape ``_build_result`` would emit)
-    instead of a config routed through the workflow machinery. ``--issue``
-    defaults to the invoking issue; when neither the flag nor an invoking
-    issue number is available the command is treated as absent (``None``), so
-    routing falls through to the normal cascade.
+    Serves ``/workflow delete comments`` (issue #644) and its registry alias
+    ``/workflow clean comments`` (issues #674/#679): both run the deterministic
+    deletion step and no agent, so this returns the full env dict directly (the
+    same shape ``_build_result`` would emit) instead of a config routed through
+    the workflow machinery. ``issue_param`` is the optional ``--issue`` value;
+    it defaults to the invoking issue. When neither is available the command is
+    treated as absent (``None``), so routing falls through to the normal
+    cascade.
 
     The parser already rejects non-numeric ``--issue`` values, so the value
     reaching here is either empty or ASCII digits.
     """
-    issue = wf_cmd.params.get("issue")
-    if not issue:
-        issue = str(issue_number) if issue_number else ""
+    issue = issue_param or (str(issue_number) if issue_number else "")
     if not issue:
         return None
     return {
@@ -86,6 +87,8 @@ def resolve_config(
        - /workflow force-step step --name <step> → _resolve_human_path (regardless of state).
        - /workflow delete comments [--issue <n>] [--from <id>] (human) →
          _delete_comments_env (self-contained contract; no agent runs).
+       - /workflow clean comments (human) → same agent-free comment-maintenance
+         contract, matched via classify_comment (issues #674/#679).
        - /workflow command by human → _resolve_human_path.
        - Human @@mention, or CI plain-mention trigger (universal bot marker
          + mention-only body, e.g. sub-task completion notification) →
@@ -134,9 +137,25 @@ def resolve_config(
     # agent/workflow machinery: resolve it straight to its env contract and
     # return (issue #644). Bot-posted commands are ignored (human-only).
     if wf_cmd is not None and wf_cmd.action == "delete" and not is_bot:
-        delete_env = _delete_comments_env(wf_cmd, issue_number)
+        delete_env = _delete_comments_env(wf_cmd.params.get("issue"), issue_number)
         if delete_env is not None:
             return delete_env
+
+    # /workflow clean comments — registry alias of the agent-free comment
+    # maintenance path (issues #674/#679). `clean` is a registered local
+    # command but is not part of the core /workflow grammar (ACTIONS), so it is
+    # matched via the comment classifier. This short-circuit must run *before*
+    # the agent-trigger cascade below, otherwise `/workflow clean comments`
+    # falls through and boots ctx/genius (issue #590). Human-only, like delete.
+    command_intent = classify_comment(trigger_body)
+    if (
+        command_intent.kind == "command"
+        and command_intent.command == "clean"
+        and not is_bot
+    ):
+        clean_env = _delete_comments_env(None, issue_number)
+        if clean_env is not None:
+            return clean_env
 
     # Route to appropriate handler based on what was found
     # Human commands (explicit intent) MUST be evaluated before auto-dispatch,
