@@ -200,7 +200,7 @@ is authoritative.
   "agent": "ctx",
   "phase": "analysis",
   "history": [
-    {"step": "analyze", "agent": "genius", "summary": "Issue analyzed, plan requested", "comment_ids": [1029384], "result": "advance"}
+    {"step": "analyze", "agent": "genius", "summary": "Issue analyzed, plan requested", "comment_ids": [1029384], "result": "advance", "dispatch": {"status": "advance", "task_hint": "ctx", "complexity": "high"}}
   ],
   "pinned_comment_ids": [],
   "metrics": {
