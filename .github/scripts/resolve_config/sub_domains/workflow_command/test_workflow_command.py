@@ -1,7 +1,10 @@
 """Tests for the /workflow <action> <resource> --flag value parser (issue #635)."""
 
 import sys
+from dataclasses import FrozenInstanceError
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
@@ -243,10 +246,15 @@ class TestClassifyComment:
     def test_clean_not_on_first_line_is_not_command(self):
         assert classify_comment("hello\n/workflow clean comments").kind != "command"
 
+    def test_bare_form_is_not_command(self):
+        # Only the `/workflow`-prefixed form is recognized — the real trigger
+        # payload is `/workflow clean comments` (issue #590). A bare
+        # `clean comments` line must not be classified as a command (issue #679).
+        assert classify_comment("clean comments").kind != "command"
+
     def test_frozen(self):
-        intent = classify_comment("/workflow clean comments")
-        try:
+        intent = CommentIntent(
+            kind="command", command="clean", raw="/workflow clean comments"
+        )
+        with pytest.raises(FrozenInstanceError):
             intent.kind = "none"  # type: ignore[misc]
-            assert False, "frozen dataclass should reject assignment"
-        except Exception:
-            pass

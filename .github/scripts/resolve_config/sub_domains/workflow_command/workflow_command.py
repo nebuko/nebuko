@@ -10,6 +10,11 @@ Canonical actions (issue #635):
   - ``force-step`` resource ``step`` — jump to a step; ``--name`` required
   - ``delete``     resource ``comments`` — batch-delete issue comments (issue #644);
                    ``--issue`` and ``--from`` optional, both numeric
+  - ``clean``      resource ``comments`` — local maintenance command (issue #679);
+                   runs its script and starts no agent
+
+Only the ``/workflow``-prefixed form is recognized as a command; a bare
+``clean comments`` line is not one (issue #679).
 
 Malformed input (unknown action, wrong/missing resource, unknown or
 duplicate flag, missing required flag) yields ``None`` so routing falls
@@ -30,6 +35,7 @@ __all__ = [
     "COMMAND_REGISTRY",
     "CommentIntent",
     "CommentKind",
+    "CommandClass",
     "classify_comment",
 ]
 
@@ -59,23 +65,27 @@ FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "delete": {"issue"},
 }
 
+#: Classification outcome for a single issue comment (issue #679).
+CommentKind = Literal["command", "agent_trigger", "none"]
+
+#: Command class: ``"workflow"`` commands bootstrap the agent pipeline,
+#: ``"local"`` commands run only their deterministic script (issue #679).
+CommandClass = Literal["workflow", "local"]
+
 #: Single source of truth for recognized commands (issue #679). Maps a command
-#: name to its command class: ``"workflow"`` commands bootstrap the
-#: workflow/agent pipeline (``run``, ``resume``, ``force-step``); ``"local"``
-#: commands run only their deterministic script and start no agent
-#: (``delete``, ``clean``). Any name listed here is a first-class
-#: short-circuit — it classifies as a command and can never fall through to
-#: the agent-trigger path. A new command only needs to be registered here.
-COMMAND_REGISTRY: Dict[str, str] = {
+#: name to its command class. Only the ``/workflow``-prefixed form is
+#: recognized as a command — the real-world trigger payload is
+#: ``/workflow clean comments`` (issue #590), never a bare ``clean comments``.
+#: Any name listed here is a first-class short-circuit: it classifies as a
+#: command and can never fall through to the agent-trigger path. A new command
+#: only needs to be registered here.
+COMMAND_REGISTRY: Dict[str, CommandClass] = {
     "run": "workflow",
     "resume": "workflow",
     "force-step": "workflow",
     "delete": "local",
     "clean": "local",
 }
-
-#: Classification outcome for a single issue comment (issue #679).
-CommentKind = Literal["command", "agent_trigger", "none"]
 
 #: Required flags per action (absent ⇒ malformed ⇒ None).
 _REQUIRED_FLAGS: Dict[str, str] = {"run": "name", "force-step": "name"}
@@ -203,14 +213,16 @@ def classify_comment(body: str) -> CommentIntent:
     """Classify an issue comment into command / agent-trigger / none.
 
     Normalises the first line and consults :data:`COMMAND_REGISTRY`; any
-    registered command (including ``clean comments``) is a ``"command"`` and
-    must short-circuit the agent-trigger path. Otherwise a body carrying an
-    explicit agent trigger (human ``@@mention`` or CI machine token) is an
-    ``"agent_trigger"``; anything else is ``"none"``.
+    registered command (including ``/workflow clean comments``) is a
+    ``"command"`` and must short-circuit the agent-trigger path. Otherwise a
+    body carrying an explicit agent trigger (human ``@@mention`` or CI machine
+    token) is an ``"agent_trigger"``; anything else is ``"none"``.
 
-    Matching is on the command form at the start of the (trimmed) first line,
-    never a substring search, so prose that merely mentions "clean comments"
-    is not misclassified (issue #679).
+    Only the ``/workflow``-prefixed form is recognized as a command — the
+    real-world trigger payload for issue #679 is ``/workflow clean comments``
+    (issue #590), not a bare ``clean comments``. Matching is on the command
+    form at the start of the (trimmed) first line, never a substring search,
+    so prose that merely mentions "clean comments" is not misclassified.
 
     Args:
         body: Raw comment body.
