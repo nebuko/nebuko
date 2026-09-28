@@ -329,7 +329,6 @@ jobs:
                   # the delete contract instead of a task assignment.
                   DELETE_COMMENTS=$(echo "$RESOLVE_OUTPUT" | grep '^DELETE_COMMENTS=' | cut -d= -f2-)
                   DELETE_COMMENTS_ISSUE=$(echo "$RESOLVE_OUTPUT" | grep '^DELETE_COMMENTS_ISSUE=' | cut -d= -f2-)
-                  DELETE_COMMENTS_FROM=$(echo "$RESOLVE_OUTPUT" | grep '^DELETE_COMMENTS_FROM=' | cut -d= -f2-)
 
                   # Handle skip
                   if [ "$SKIP_AGENT" = "true" ]; then
@@ -356,17 +355,16 @@ jobs:
                       echo "SCRIPT_TIMEOUT_MINUTES=${SCRIPT_TIMEOUT_MINUTES:-30}" >> $GITHUB_ENV
                       exit 0
                     fi
-                    # Delete-comments command (issue #644): a human-only,
-                    # deterministic batch deletion, outside agent scope. Like
-                    # the script step it runs no agent (SKIP_AGENT stays true);
-                    # the posting pipeline picks the run up via its
-                    # DELETE_COMMENTS guard so the summary is posted.
+                    # Delete-comments command (issue #644, simplified #674): a
+                    # human-only, deterministic batch deletion, outside agent
+                    # scope. Like the script step it runs no agent (SKIP_AGENT
+                    # stays true) and it is a terminal action: it posts no
+                    # comment, so nothing downstream of the delete step runs.
                     if [ "$DELETE_COMMENTS" = "true" ]; then
                       echo "Delete comments resolved — running delete_comments.py (no agent)"
                       echo "SKIP_AGENT=true" >> $GITHUB_ENV
                       echo "DELETE_COMMENTS=true" >> $GITHUB_ENV
                       echo "DELETE_COMMENTS_ISSUE=${DELETE_COMMENTS_ISSUE}" >> $GITHUB_ENV
-                      echo "DELETE_COMMENTS_FROM=${DELETE_COMMENTS_FROM}" >> $GITHUB_ENV
                       echo "ROLE_NAME=${ROLE_NAME:-script}" >> $GITHUB_ENV
                       exit 0
                     fi
@@ -841,7 +839,7 @@ jobs:
                 stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" 2>&1 | tee console.log
 
             - name: Clean and Prepare Comment
-              if: always() && !cancelled() && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true' || env.DELETE_COMMENTS == 'true')
+              if: always() && !cancelled() && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true')
               run: |
                 SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
                 if [ ! -f "$SCRIPTS/prepare_comment.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/prepare_comment.py" ]; then
@@ -850,7 +848,7 @@ jobs:
                 python3 "$SCRIPTS/prepare_comment.py"
 
             - name: Add bot marker and workflow state to comment
-              if: always() && !cancelled() && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true' || env.DELETE_COMMENTS == 'true')
+              if: always() && !cancelled() && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true')
               shell: python
               run: |
                 import os
@@ -890,10 +888,6 @@ jobs:
                 # detection is exact; the state section follows it).
                 state_section = ""
                 add_continue_token = True
-                # /workflow delete comments is a terminal command (issue #644):
-                # it finishes the run, so never emit the continue token.
-                if os.environ.get("DELETE_COMMENTS") == "true":
-                    add_continue_token = False
                 state_file = "workflow_state.json"
                 if os.path.isfile(state_file) and os.path.getsize(state_file) > 0:
                     try:
@@ -918,7 +912,7 @@ jobs:
                     f.write(prefix + content)
 
             - name: Post Agent Comment to GitHub
-              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true' || env.DELETE_COMMENTS == 'true') && env.TARGET_NUMBER != '0'
+              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true') && env.TARGET_NUMBER != '0'
               uses: peter-evans/create-or-update-comment@v4
               with:
                 issue-number: ${{ env.TARGET_NUMBER }}
@@ -996,7 +990,7 @@ jobs:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
 
             - name: Post Additional Message Parts
-              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true' || env.DELETE_COMMENTS == 'true') && env.TARGET_NUMBER != '0' && hashFiles('final_message_parts_count.txt') != ''
+              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true') && env.TARGET_NUMBER != '0' && hashFiles('final_message_parts_count.txt') != ''
               run: |
                 PARTS_COUNT=$(cat final_message_parts_count.txt)
                 echo "Found $PARTS_COUNT message parts, posting parts 2 through $PARTS_COUNT"

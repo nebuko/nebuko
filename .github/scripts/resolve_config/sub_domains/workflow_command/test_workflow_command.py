@@ -30,7 +30,7 @@ class TestTables:
             "run": {"name"},
             "force-step": {"name"},
             "resume": {"feedback"},
-            "delete": {"issue", "from"},
+            "delete": {"issue"},
         }
 
 
@@ -92,18 +92,17 @@ class TestParseValid:
             action="delete", resource="comments", params={"issue": "123"}
         )
 
-    def test_delete_issue_and_from(self):
-        cmd = parse_workflow_command("/workflow delete comments --issue 123 --from 5811583860")
-        assert cmd == WorkflowCommand(
-            action="delete",
-            resource="comments",
-            params={"issue": "123", "from": "5811583860"},
+    def test_delete_rejects_from_flag(self):
+        # `--from` support was removed in issue #674: delete the whole issue.
+        assert (
+            parse_workflow_command("/workflow delete comments --issue 123 --from 5811583860")
+            is None
         )
 
-    def test_delete_from_only(self):
-        cmd = parse_workflow_command("/workflow delete comments --from 5811583860")
-        assert cmd is not None
-        assert cmd.params == {"from": "5811583860"}
+    def test_delete_from_only_rejected(self):
+        assert (
+            parse_workflow_command("/workflow delete comments --from 5811583860") is None
+        )
 
 
 class TestParseMalformed:
