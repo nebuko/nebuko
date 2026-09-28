@@ -10,10 +10,10 @@ trigger:
 steps:
   - name: spec
     agent: po
-    next: architect_prepare_ctx
+    human_gate: true
     conditions:
       - on_result: approved
-        next: architect_prepare_ctx
+        next: stub_and_implement
       - on_result: rejected
         next: spec
 
