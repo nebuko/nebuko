@@ -188,6 +188,7 @@ is authoritative.
 | `artifacts` | string[] | Paths to artifacts produced by the step. |
 | `pin` | bool | Whether this entry's `comment_ids` are injected verbatim (their ids are unioned into `pinned_comment_ids` during state enrichment). |
 | `result` | string \| null | Reported result (`approved`, `rejected`, ...). |
+| `dispatch` | Dispatch \| null | Routing decision emitted by this step (same shape as the top-level [Dispatch Object](#dispatch-object)); `null` for legacy entries that predate the field. Makes the history a replayable movement log. |
 
 ### Annotated Example
 
