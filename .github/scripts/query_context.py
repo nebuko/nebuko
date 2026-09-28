@@ -28,6 +28,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from features.select_history_comments.history import (
+    HistoryWindowConfig,
+    select_history,
+)
 from features.select_history_comments.select_history_comments import (
     select_history_comments,
 )
@@ -291,20 +295,24 @@ def _render_history_comment(comment: dict, *, verbatim: bool) -> str:
     return f"### {author} a écrit :\n{content}\n---\n"
 
 
-def _build_history_string(comments, state=None) -> str:
+def _build_history_string(comments, state=None, history_comment_count=None) -> str:
     """Build formatted history string from comments.
 
-    Pinned comments (per ``state.pinned_comment_ids`` or a ``pin=True`` history
-    entry) render their full body; every other comment renders a
-    bot-agent-summary when present, otherwise an excerpt capped by
-    ``HISTORY_EXCERPT_CHARS``. State sections (collapsed JSON) are stripped from
-    the visible history to reduce noise, but structured state is extracted
-    separately.
+    Only the last ``history_comment_count`` comments overall (default 5) are
+    injected, unioned with every pinned comment; a pinned comment inside the
+    window is de-duplicated (issue #683). Pinned comments (per
+    ``state.pinned_comment_ids`` or a ``pin=True`` history entry) render their
+    full body; every other comment renders a bot-agent-summary when present,
+    otherwise an excerpt capped by ``HISTORY_EXCERPT_CHARS``. State sections
+    (collapsed JSON) are stripped from the visible history to reduce noise, but
+    structured state is extracted separately.
 
     Args:
         comments: List of comment dicts from GitHub API.
         state: WorkflowState whose pinning decides verbatim vs. summary.
             ``None`` summarizes every comment.
+        history_comment_count: Raw ``history_comment_count`` workflow input
+            (``int``/``str``/``None``); ``None`` or invalid falls back to 5.
 
     Returns:
         Formatted history string.
@@ -313,8 +321,14 @@ def _build_history_string(comments, state=None) -> str:
         return "No previous comments"
 
     pinned_ids = select_history_comments(comments, state).verbatim_ids
+    selected = select_history(
+        comments,
+        pinned_ids,
+        HistoryWindowConfig(history_comment_count=history_comment_count),
+    ).all_comments()
+
     parts = []
-    for comment in comments:
+    for comment in selected:
         rendered = _render_history_comment(
             comment, verbatim=comment.get("id") in pinned_ids
         )
@@ -449,9 +463,14 @@ def main():
         skipped = len(comments) - len(filtered_comments)
         print(f"Filtered {skipped} comments based on inject_context settings", file=sys.stderr)
 
-    # Build history string from filtered comments; pinned comments stay verbatim,
-    # everything else is summarized/excerpted (issue #617).
-    history = _build_history_string(filtered_comments, prev_state)
+    # Build history string from filtered comments; only the last N comments are
+    # injected (default 5, issue #683), pinned comments stay verbatim and are
+    # always added on top, everything else is summarized/excerpted (issue #617).
+    history = _build_history_string(
+        filtered_comments,
+        prev_state,
+        history_comment_count=os.environ.get("HISTORY_COMMENT_COUNT"),
+    )
 
     # Build structured state context from latest workflow state (fetches pinned comment bodies)
     # NOTE: Intentionally passes UNFILTERED comments — _build_state_context scans ALL comments

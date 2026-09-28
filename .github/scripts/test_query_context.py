@@ -1296,6 +1296,95 @@ class TestBuildHistoryStringPinned:
         assert result.index("summarized-two") < result.index("pinned-three")
 
 
+class TestBuildHistoryStringWindow:
+    """Test the history_comment_count windowing in _build_history_string (issue #683)."""
+
+    @staticmethod
+    def _thread(total):
+        return [
+            {"id": i, "body": f"MARKER-{i}-END", "user": {"login": "u"}}
+            for i in range(1, total + 1)
+        ]
+
+    def test_default_keeps_last_five(self):
+        """Without an override, only the last 5 comments are injected."""
+        from query_context import _build_history_string
+
+        result = _build_history_string(self._thread(8), None)
+
+        for cid in (4, 5, 6, 7, 8):
+            assert f"MARKER-{cid}-END" in result
+        for cid in (1, 2, 3):
+            assert f"MARKER-{cid}-END" not in result
+
+    def test_explicit_count_bounds_window(self):
+        """An explicit count limits history to the last N comments."""
+        from query_context import _build_history_string
+
+        result = _build_history_string(self._thread(8), None, history_comment_count=2)
+
+        for cid in (7, 8):
+            assert f"MARKER-{cid}-END" in result
+        for cid in (1, 2, 3, 4, 5, 6):
+            assert f"MARKER-{cid}-END" not in result
+
+    def test_pinned_outside_window_always_included(self):
+        """A pinned comment older than the window is still injected."""
+        from query_context import _build_history_string
+        from workflow_state import WorkflowState
+
+        state = WorkflowState(pinned_comment_ids=[1])
+        result = _build_history_string(
+            self._thread(8), state, history_comment_count=2
+        )
+
+        assert "MARKER-1-END" in result
+        assert "MARKER-7-END" in result
+        assert "MARKER-8-END" in result
+        assert "MARKER-2-END" not in result
+
+    def test_zero_count_injects_pinned_only(self):
+        """A count of 0 injects only the pinned comments."""
+        from query_context import _build_history_string
+        from workflow_state import WorkflowState
+
+        state = WorkflowState(pinned_comment_ids=[1, 3])
+        result = _build_history_string(
+            self._thread(8), state, history_comment_count=0
+        )
+
+        assert "MARKER-1-END" in result
+        assert "MARKER-3-END" in result
+        for cid in (2, 4, 5, 6, 7, 8):
+            assert f"MARKER-{cid}-END" not in result
+
+    def test_invalid_count_falls_back_to_default(self):
+        """A non-numeric workflow value falls back to the default of 5."""
+        from query_context import _build_history_string
+
+        result = _build_history_string(self._thread(8), None, history_comment_count="abc")
+
+        for cid in (4, 5, 6, 7, 8):
+            assert f"MARKER-{cid}-END" in result
+        assert "MARKER-3-END" not in result
+
+    def test_bare_comments_without_ids_are_not_deduplicated(self):
+        """Legacy comment dicts lacking an id are all kept within the window."""
+        from query_context import _build_history_string
+
+        comments = [
+            {"body": "alpha", "user": {"login": "u"}},
+            {"body": "beta", "user": {"login": "u"}},
+            {"body": "gamma", "user": {"login": "u"}},
+        ]
+
+        result = _build_history_string(comments)
+
+        assert "alpha" in result
+        assert "beta" in result
+        assert "gamma" in result
+
+
 class TestHistoryRetentionIntegration:
     """End-to-end retention check for a long thread (issue #617, step 3).
 
