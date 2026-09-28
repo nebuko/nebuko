@@ -3,6 +3,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, model_validator
 
 from config import StepRef
+from ..dispatch.dispatch import Dispatch
 
 class HistoryEntry(BaseModel):
     """A summarized record of one workflow step."""
@@ -14,6 +15,10 @@ class HistoryEntry(BaseModel):
     # moment this step ran (issue #638). Makes the history a replayable
     # step-path log: after every run history[-1].position == WorkflowState.position.
     position: list[StepRef] = Field(default_factory=list)
+    # Routing decision emitted by THIS step (issue #685). Reuses the top-level
+    # Dispatch model so the ordered history becomes a self-contained,
+    # replayable movement log. None for legacy snapshots that predate the field.
+    dispatch: Optional[Dispatch] = None
     # GitHub comment IDs of this step's output. Multi-part agent messages are
     # posted as separate comments, so an entry may reference several IDs
     # (issue #504). Legacy snapshots store a scalar `comment_id`, coerced

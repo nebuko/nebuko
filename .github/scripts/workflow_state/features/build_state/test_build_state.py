@@ -3,7 +3,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from workflow_state import WorkflowState, build_state, go_next
+from workflow_state import WorkflowState, build_state, go_next, Dispatch
 from config import POSITION_STATE_VERSION
 
 class TestBuildState(unittest.TestCase):
@@ -300,3 +300,61 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.scaffold_branch)
+
+
+class TestHistoryEntryDispatch(unittest.TestCase):
+    """History entries record the dispatch decision emitted by their step (issue #685)."""
+
+    def test_step_dispatch_recorded_on_entry(self):
+        d = Dispatch(status="advance", task_hint="dev", complexity="high")
+        state = build_state(
+            None, workflow="w", step="plan", agent="genius", dispatch=d
+        )
+        self.assertIs(state.history[-1].dispatch, d)
+        self.assertIs(state.dispatch, d)
+
+    def test_entry_dispatch_defaults_to_none(self):
+        state = build_state(None, workflow="w", step="plan", agent="genius")
+        self.assertIsNone(state.history[-1].dispatch)
+
+    def test_each_entry_carries_its_own_dispatch(self):
+        first = build_state(
+            None,
+            workflow="w",
+            step="analyze",
+            agent="genius",
+            dispatch=Dispatch(status="advance", task_hint="ctx", complexity="high"),
+        )
+        second = build_state(
+            first,
+            workflow="w",
+            step="context",
+            agent="ctx",
+            dispatch=Dispatch(status="hold", reason="awaiting input"),
+        )
+        self.assertEqual(second.history[0].dispatch.status, "advance")
+        self.assertEqual(second.history[0].dispatch.task_hint, "ctx")
+        self.assertEqual(second.history[1].dispatch.status, "hold")
+        # top-level dispatch reflects only the most recent run
+        self.assertEqual(second.dispatch.status, "hold")
+        self.assertEqual(second.dispatch.reason, "awaiting input")
+
+    def test_history_dispatch_roundtrip(self):
+        d = Dispatch(status="loop", task_hint="dev", complexity="low", branch="rejected")
+        state = build_state(None, workflow="w", step="plan", agent="genius", dispatch=d)
+        restored = WorkflowState.model_validate_json(state.model_dump_json())
+        self.assertIsNotNone(restored.history[-1].dispatch)
+        self.assertEqual(restored.history[-1].dispatch.status, "loop")
+        self.assertEqual(restored.history[-1].dispatch.branch, "rejected")
+        self.assertEqual(restored.history[-1].dispatch, restored.dispatch)
+
+    def test_legacy_history_entry_without_dispatch_loads(self):
+        data = {
+            "version": 3,
+            "workflow": "w",
+            "step": "plan",
+            "agent": "genius",
+            "history": [{"step": "analyze", "agent": "genius", "summary": "ok"}],
+        }
+        state = WorkflowState.model_validate(data)
+        self.assertIsNone(state.history[0].dispatch)
