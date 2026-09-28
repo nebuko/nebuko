@@ -213,6 +213,15 @@ agents:
         self.assertTrue(cfg["drop_params"])
         self.assertEqual(cfg["api_key"], "test-key")
 
+    def test_llm_uses_brand_attribution(self):
+        """The assembled settings carry the Nebuko brand, not the SDK default."""
+        cfg = self._resolve()
+        self.assertEqual(cfg["openrouter_app_name"], "Nebuko")
+        self.assertEqual(
+            cfg["openrouter_site_url"], "https://github.com/nebuko/nebuko"
+        )
+        self.assertNotEqual(cfg["openrouter_app_name"], "OpenHands")
+
 
 class TestApiUrlEnvVarRouting(unittest.TestCase):
     """api_url as an env var name is resolved end-to-end by resolve_llm_config()."""
