@@ -6,9 +6,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[3]))
 from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
     ACTIONS,
+    COMMAND_REGISTRY,
     FLAGS_BY_ACTION,
     RESOURCE_BY_ACTION,
+    CommentIntent,
     WorkflowCommand,
+    classify_comment,
     parse_workflow_command,
 )
 
@@ -189,3 +192,61 @@ class TestParseMalformed:
         # ASCII-only so the command is treated as absent (issue #644 review).
         assert parse_workflow_command("/workflow delete comments --issue ²") is None
         assert parse_workflow_command("/workflow delete comments --issue 123 --from ²") is None
+
+
+class TestCommandRegistry:
+    def test_seeded_with_workflow_actions(self):
+        # Every canonical /workflow action is registered.
+        for action in ACTIONS:
+            assert action in COMMAND_REGISTRY
+
+    def test_registers_clean(self):
+        # `clean comments` is the bug trigger in issue #679 — it must be a
+        # recognized command so it can never reach the agent-trigger path.
+        assert "clean" in COMMAND_REGISTRY
+
+
+class TestClassifyComment:
+    def test_clean_is_command(self):
+        intent = classify_comment("/workflow clean comments")
+        assert intent == CommentIntent(
+            kind="command", command="clean", raw="/workflow clean comments"
+        )
+
+    def test_delete_is_command(self):
+        intent = classify_comment("/workflow delete comments --issue 123")
+        assert intent.kind == "command"
+        assert intent.command == "delete"
+
+    def test_run_is_command(self):
+        intent = classify_comment("/workflow run workflow --name spec-driven-impl")
+        assert intent.kind == "command"
+        assert intent.command == "run"
+
+    def test_mention_is_agent_trigger(self):
+        intent = classify_comment("@@ctx please look at this")
+        assert intent.kind == "agent_trigger"
+        assert intent.command is None
+
+    def test_machine_trigger_is_agent_trigger(self):
+        intent = classify_comment("<!-- bot-subtask-complete: 1 -->")
+        assert intent.kind == "agent_trigger"
+
+    def test_free_form_is_none(self):
+        assert classify_comment("this is just a normal comment").kind == "none"
+
+    def test_prose_mentioning_clean_is_not_command(self):
+        # A genuine free-form comment that merely contains the words must not
+        # be misclassified as a command (issue #679 over-matching guard).
+        assert classify_comment("we should clean comments later").kind != "command"
+
+    def test_clean_not_on_first_line_is_not_command(self):
+        assert classify_comment("hello\n/workflow clean comments").kind != "command"
+
+    def test_frozen(self):
+        intent = classify_comment("/workflow clean comments")
+        try:
+            intent.kind = "none"  # type: ignore[misc]
+            assert False, "frozen dataclass should reject assignment"
+        except Exception:
+            pass

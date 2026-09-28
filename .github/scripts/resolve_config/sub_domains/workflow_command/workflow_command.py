@@ -19,7 +19,7 @@ through to the normal cascade. Old positional forms (``/workflow default``,
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Literal, Optional, Set, Tuple
 
 __all__ = [
     "WorkflowCommand",
@@ -27,6 +27,10 @@ __all__ = [
     "ACTIONS",
     "RESOURCE_BY_ACTION",
     "FLAGS_BY_ACTION",
+    "COMMAND_REGISTRY",
+    "CommentIntent",
+    "CommentKind",
+    "classify_comment",
 ]
 
 
@@ -54,6 +58,24 @@ FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "resume": {"feedback"},
     "delete": {"issue"},
 }
+
+#: Single source of truth for recognized commands (issue #679). Maps a command
+#: name to its command class: ``"workflow"`` commands bootstrap the
+#: workflow/agent pipeline (``run``, ``resume``, ``force-step``); ``"local"``
+#: commands run only their deterministic script and start no agent
+#: (``delete``, ``clean``). Any name listed here is a first-class
+#: short-circuit — it classifies as a command and can never fall through to
+#: the agent-trigger path. A new command only needs to be registered here.
+COMMAND_REGISTRY: Dict[str, str] = {
+    "run": "workflow",
+    "resume": "workflow",
+    "force-step": "workflow",
+    "delete": "local",
+    "clean": "local",
+}
+
+#: Classification outcome for a single issue comment (issue #679).
+CommentKind = Literal["command", "agent_trigger", "none"]
 
 #: Required flags per action (absent ⇒ malformed ⇒ None).
 _REQUIRED_FLAGS: Dict[str, str] = {"run": "name", "force-step": "name"}
@@ -151,3 +173,49 @@ def _numeric_flags_valid(params: Dict[str, str], action: str) -> bool:
         for flag, value in params.items()
         if flag in numeric_flags
     )
+
+
+# @stub-protected: signature defined by architect — do not modify
+@dataclass(frozen=True)
+class CommentIntent:
+    """Immutable outcome of classifying a single issue comment (issue #679).
+
+    Downstream routing consumes this instead of re-deriving intent from the
+    raw text, so a recognized command is a first-class short-circuit that can
+    never reach the agent-trigger path.
+
+    Attributes:
+        kind: ``"command"`` for a recognized command; ``"agent_trigger"``
+            when the comment carries an explicit agent trigger (human
+            ``@@mention`` or CI machine token); ``"none"`` otherwise.
+        command: Normalised command name when ``kind == "command"``
+            (e.g. ``"clean"``), else ``None``.
+        raw: Original comment body, kept for logging/diagnostics.
+    """
+
+    kind: CommentKind  # @stub-protected
+    command: Optional[str]  # @stub-protected
+    raw: str  # @stub-protected
+
+
+# @stub-protected: signature defined by architect — do not modify
+def classify_comment(body: str) -> CommentIntent:
+    """Classify an issue comment into command / agent-trigger / none.
+
+    Normalises the first line and consults :data:`COMMAND_REGISTRY`; any
+    registered command (including ``clean comments``) is a ``"command"`` and
+    must short-circuit the agent-trigger path. Otherwise a body carrying an
+    explicit agent trigger (human ``@@mention`` or CI machine token) is an
+    ``"agent_trigger"``; anything else is ``"none"``.
+
+    Matching is on the command form at the start of the (trimmed) first line,
+    never a substring search, so prose that merely mentions "clean comments"
+    is not misclassified (issue #679).
+
+    Args:
+        body: Raw comment body.
+
+    Returns:
+        A frozen :class:`CommentIntent`.
+    """
+    raise NotImplementedError
