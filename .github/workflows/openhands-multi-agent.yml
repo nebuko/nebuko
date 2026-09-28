@@ -539,8 +539,8 @@ jobs:
 
                     # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
                     # Only applies to human-triggered comments (no bot marker present)
-                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@@debug' || true)
-                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@genius\|@ctx\|@dev\|@issue\|@issue-reviewer\|@@debug' || true)
+                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@@debug\|@@po' || true)
+                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@genius\|@ctx\|@dev\|@issue\|@issue-reviewer\|@@debug\|po' || true)
                     if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
                       echo "Human ping + agent ping detected. Skipping to let human orchestrate."
                       echo "SKIP_AGENT=true" >> $GITHUB_ENV
