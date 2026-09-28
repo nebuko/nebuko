@@ -26,7 +26,14 @@ from summarize_metrics import (
     AGENT_DISPLAY_NAMES,
     _merge_per_tool_dict,
     _format_tool_dict,
+    parse_iso_datetime,
+    parse_agent_role,
+    build_comment_record,
+    collect_issue_data,
+    human_metrics_config_from_env,
+    build_human_metrics_section,
 )
+from human_metrics import HumanMetricsAnalyzer, HumanMetricsConfig
 
 
 class TestMetricsRegex(unittest.TestCase):
@@ -1417,6 +1424,138 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
         result_str = "\n".join(generate_model_summary_table(agg))
         self.assertIn("Cost (USD)", result_str)
         self.assertIn("$0.2500", result_str)
+
+
+class TestParseHelpers(unittest.TestCase):
+    """Parse GitHub timestamps and agent-role markers."""
+
+    def test_parse_iso_datetime_handles_z_suffix(self):
+        parsed = parse_iso_datetime("2026-09-01T10:00:00Z")
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.year, 2026)
+
+    def test_parse_iso_datetime_returns_none_for_missing(self):
+        self.assertIsNone(parse_iso_datetime(None))
+        self.assertIsNone(parse_iso_datetime("not-a-date"))
+
+    def test_parse_agent_role_from_marker(self):
+        self.assertEqual(parse_agent_role("<!-- bot-agent-dev -->\nhi"), "dev")
+        self.assertIsNone(parse_agent_role("just a human comment"))
+
+
+class TestBuildCommentRecord(unittest.TestCase):
+    """Normalisation of GitHub comments into CommentRecords."""
+
+    def _comment(self, body, login="alice", created_at="2026-09-01T10:00:00Z"):
+        return {"body": body, "user": {"login": login}, "created_at": created_at}
+
+    def test_human_comment_is_not_bot(self):
+        record = build_comment_record(self._comment("please continue"))
+        self.assertFalse(record.author_is_bot)
+        self.assertEqual(record.author_login, "alice")
+        self.assertFalse(record.is_human_command)
+
+    def test_bot_marker_marks_comment_as_bot(self):
+        record = build_comment_record(
+            self._comment("<!-- bot-workflow-terminal -->\nagent output", login="alice")
+        )
+        self.assertTrue(record.author_is_bot)
+
+    def test_human_command_detected(self):
+        record = build_comment_record(self._comment("@@dev please fix"))
+        self.assertTrue(record.is_human_command)
+
+    def test_missing_created_at_returns_none(self):
+        self.assertIsNone(build_comment_record(self._comment("hi", created_at=None)))
+
+
+class TestCollectIssueData(unittest.TestCase):
+    """Aggregate comments and metrics into a pure IssueData input."""
+
+    def _comments(self):
+        return [
+            {"body": "spec go ahead", "user": {"login": "alice"},
+             "created_at": "2026-09-01T10:00:00Z"},
+            {"body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-dev -->\ndone",
+             "user": {"login": "alice"}, "created_at": "2026-09-01T10:01:00Z"},
+            {"body": "please fix this", "user": {"login": "alice"},
+             "created_at": "2026-09-01T10:02:00Z"},
+        ]
+
+    def test_records_comments_and_metrics(self):
+        metrics = [
+            Metrics(agent_role="dev", nb_tool_calls=4, agent_runtime_ms=1000.0,
+                    start_time="2026-09-01T10:01:00Z"),
+            Metrics(agent_role="review", nb_tool_calls=3, agent_runtime_ms=2000.0,
+                    start_time="2026-09-01T10:05:00Z"),
+        ]
+        data = collect_issue_data(
+            self._comments(), metrics, "issue body",
+            parse_iso_datetime("2026-09-01T11:00:00Z"),
+        )
+        self.assertEqual(len(data.comments), 3)
+        self.assertEqual(data.agent_tool_invocations, 7)
+        self.assertAlmostEqual(data.agent_time_spent_seconds, 3.0)
+        # earliest agent start wins
+        self.assertEqual(data.first_agent_start,
+                         parse_iso_datetime("2026-09-01T10:01:00Z"))
+
+    def test_no_metrics_leaves_counts_unavailable(self):
+        data = collect_issue_data(self._comments(), [], "body", None)
+        self.assertIsNone(data.agent_tool_invocations)
+        self.assertIsNone(data.agent_time_spent_seconds)
+        self.assertIsNone(data.first_agent_start)
+
+
+class TestHumanMetricsConfigFromEnv(unittest.TestCase):
+    """Env-driven configuration with defaults preserved."""
+
+    def test_defaults_when_env_absent(self):
+        with patch.dict(os.environ, {}, clear=True):
+            config = human_metrics_config_from_env()
+        self.assertEqual(config.reading_speed_wpm, 200)
+        self.assertEqual(config.human_logins, frozenset())
+
+    def test_reads_env_overrides(self):
+        env = {
+            "HUMAN_METRICS_READING_WPM": "250",
+            "HUMAN_METRICS_HUMAN_LOGINS": "alice, bob",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = human_metrics_config_from_env()
+        self.assertEqual(config.reading_speed_wpm, 250)
+        self.assertEqual(config.human_logins, frozenset({"alice", "bob"}))
+
+    def test_invalid_wpm_falls_back_to_default(self):
+        with patch.dict(os.environ, {"HUMAN_METRICS_READING_WPM": "fast"}, clear=True):
+            config = human_metrics_config_from_env()
+        self.assertEqual(config.reading_speed_wpm, 200)
+
+
+class TestBuildHumanMetricsSection(unittest.TestCase):
+    """End-to-end rendering of the human-metrics section."""
+
+    def test_section_maps_scenarios(self):
+        comments = [
+            {"body": "spec ready", "user": {"login": "alice"},
+             "created_at": "2026-09-01T10:00:00Z"},
+            {"body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-dev -->\nimpl",
+             "user": {"login": "alice"}, "created_at": "2026-09-01T10:01:00Z"},
+            {"body": "please change direction", "user": {"login": "alice"},
+             "created_at": "2026-09-01T10:02:00Z"},
+        ]
+        metrics = [Metrics(agent_role="dev", nb_tool_calls=5, agent_runtime_ms=60000.0,
+                           start_time="2026-09-01T10:01:00Z")]
+        with patch.dict(os.environ, {}, clear=True):
+            section = build_human_metrics_section(
+                comments, metrics, "issue body",
+                parse_iso_datetime("2026-09-01T10:30:00Z"),
+            )
+        self.assertIn("Human metrics", section)
+        self.assertIn("Human comments", section)
+        self.assertIn("| 2 |", section)  # two human comments
+        # one human intervention after the implementation turn
+        self.assertIn("| 1 |", section)
 
 
 if __name__ == "__main__":
