@@ -312,6 +312,14 @@ class TestValidateAgentRunConfig:
         )
         assert result.is_valid is True
 
+    def test_po_task_valid(self):
+        result = validate_agent_run_config('{"task": "po"}')
+        assert result.is_valid is True
+
+    def test_debug_task_valid(self):
+        result = validate_agent_run_config('{"task": "debug"}')
+        assert result.is_valid is True
+
     def test_missing_task(self):
         result = validate_agent_run_config('{"complexity": "high"}')
         assert result.is_valid is False

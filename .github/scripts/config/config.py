@@ -27,6 +27,24 @@ def load_config(path: str = CONFIG_DEFAULT_PATH):
     return _load_config(path)
 
 
+def load_agent_names(path: str = CONFIG_DEFAULT_PATH):
+    """Agent names declared in the layered agent config.
+
+    Convenience wrapper delegating to the feature module.
+
+    Args:
+        path: Path to the YAML config file. Defaults to CONFIG_DEFAULT_PATH.
+
+    Returns:
+        A ``frozenset`` of agent names, falling back to the canonical roster
+        when the config cannot be read.
+    """
+    from .features.load_agent_names.load_agent_names import (
+        load_agent_names as _load_agent_names,
+    )
+    return _load_agent_names(path)
+
+
 def load_workflow(path: str):
     """Load and validate a workflow definition YAML file.
 
