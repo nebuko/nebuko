@@ -21,6 +21,7 @@ read [architecture.md](./architecture.md) and
    | `OPENROUTER_API_KEY` | yes | LLM provider token (OpenRouter). |
    | `GH_PAT` | yes | GitHub PAT with `repo` scope — used for git push, issue/PR API calls, and posting comments. |
    | `LOCAL_VLLM_API_TOKEN` | optional | Only if you use a local vLLM provider. |
+   | `COMMANDCODE_API_KEY` | optional | Only if you point the agents at a CommandCode subscription ([subscription-plans.md](./subscription-plans.md)). |
 
 4. **A configuration file** — `agent-config.yaml` (see step 2 below) and agent
    prompts (step 3), committed to your repository.
@@ -105,6 +106,10 @@ agents:
 For the full schema (all fields, `${ref}` rules, sampling parameters), see
 [configuration.md](./configuration.md). You can start from this repository's
 [`agent-config.yaml`](../agent-config.yaml) as a reference.
+
+Using a subscription plan instead of a metered API key? See
+[subscription-plans.md](./subscription-plans.md) for the provider stanza, the
+`COMMANDCODE_API_KEY` secret, and a working example config.
 
 ---
 
