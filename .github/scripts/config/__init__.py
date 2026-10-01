@@ -7,6 +7,7 @@ from .sub_domains.llm_config.llm_config import LLMConfig
 from .sub_domains.agent_complexity_override.agent_complexity_override import AgentComplexityOverride
 from .sub_domains.agent_config.agent_config import AgentConfig
 from .sub_domains.app_config.app_config import AppConfig
+from .sub_domains.metrics.cost import MetricsCostConfig, ProviderCostPolicy
 
 # Workflow Config sub-domains
 from .sub_domains.workflow_condition.workflow_condition import WorkflowCondition
@@ -50,6 +51,8 @@ __all__ = [
     "AgentComplexityOverride",
     "AgentConfig",
     "AppConfig",
+    "MetricsCostConfig",
+    "ProviderCostPolicy",
     # Workflow Config entities
     "WorkflowCondition",
     "ScriptStepSpec",

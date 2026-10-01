@@ -8,21 +8,59 @@ from openhands.sdk.event.llm_convertible.observation import ObservationEvent
 
 import os
 
+from config import CONFIG_DEFAULT_PATH, load_config
+from config.sub_domains.metrics.cost import MetricsCostConfig
 from metrics_schema import Metrics
 
-from agent_script.sub_domains.metrics.cost import CostRates, SessionCost
+from agent_script.sub_domains.metrics.cost import (
+    CostRates,
+    SessionCost,
+    resolve_request_cost,
+)
 
 logger = get_logger(__name__)
 
 
+def _provider_cost_context(agent_cfg):
+    """Provider name and effective cost policy for the agent's provider.
+
+    Any config failure degrades to an empty policy — cost bookkeeping must never
+    abort metric collection.
+    """
+    try:
+        app_cfg = load_config(os.environ.get("AGENT_CONFIG_PATH", CONFIG_DEFAULT_PATH))
+    except Exception as exc:
+        logger.warning(f"Cost config unavailable, using defaults: {exc}")
+        return None, MetricsCostConfig()
+
+    provider_ref = getattr(getattr(agent_cfg, "model_ref", None), "provider_ref", None)
+    if provider_ref is None:
+        return None, app_cfg.metrics_cost
+    for name, provider in app_cfg.providers.items():
+        if provider == provider_ref:
+            return name, app_cfg.metrics_cost
+    return None, app_cfg.metrics_cost
+
+
 def _session_cost(combined_metrics, input_tokens, output_tokens, agent_cfg) -> float:
-    """Cost for the session: SDK-reported, else tokens × configured rates."""
+    """Cost for the session: provider-reported, else local/configured pricing."""
+    sdk_reported = float(getattr(combined_metrics, "accumulated_cost", 0.0) or 0.0)
+    provider, cost_config = _provider_cost_context(agent_cfg)
+    resolved = resolve_request_cost(
+        provider,
+        prompt_tokens=input_tokens,
+        completion_tokens=output_tokens,
+        provider_cost_usd=sdk_reported,
+        config=cost_config,
+    )
+    if resolved.source == "local_pricing":
+        return resolved.usd
+
     rates = None
     if agent_cfg is not None:
         rates = CostRates.from_prices(
             agent_cfg.model_ref.input_price, agent_cfg.model_ref.output_price
         )
-    sdk_reported = float(getattr(combined_metrics, "accumulated_cost", 0.0) or 0.0)
     return SessionCost(
         input_tokens=input_tokens,
         output_tokens=output_tokens,

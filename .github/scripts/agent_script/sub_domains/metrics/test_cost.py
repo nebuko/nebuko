@@ -1,14 +1,18 @@
-"""Tests for per-session cost accounting (issue #663)."""
+"""Tests for per-session cost accounting (issue #663, #714)."""
 
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 import pytest
 
 from agent_script.sub_domains.metrics.cost import (
     TOKENS_PER_PRICE_UNIT,
     CostRates,
+    ResolvedCost,
     SessionCost,
+    resolve_request_cost,
 )
+from config.sub_domains.metrics.cost import MetricsCostConfig, ProviderCostPolicy
 
 
 class TestCostRatesFromPrices:
@@ -125,3 +129,134 @@ class TestSessionCostHelper:
             agent_cfg=None,
         )
         assert cost == 0.0
+
+
+def _commandcode_config(**overrides) -> MetricsCostConfig:
+    policy = ProviderCostPolicy(
+        provider="commandcode",
+        input_cost_per_token=1.2e-07,
+        output_cost_per_token=1.8e-07,
+        subscription_backed=True,
+    )
+    return MetricsCostConfig(
+        provider_policies={"commandcode": policy}, **overrides
+    )
+
+
+class TestResolveRequestCost:
+    """resolve_request_cost: provider cost authoritative, local pricing selective."""
+
+    def test_provider_reported_cost_is_authoritative(self):
+        resolved = resolve_request_cost(
+            "commandcode",
+            prompt_tokens=1_000_000,
+            completion_tokens=1_000_000,
+            provider_cost_usd=0.42,
+            config=_commandcode_config(),
+        )
+        assert resolved == ResolvedCost(usd=0.42, source="provider")
+
+    def test_subscription_backed_zero_falls_back_to_local_pricing(self):
+        resolved = resolve_request_cost(
+            "commandcode",
+            prompt_tokens=1_000_000,
+            completion_tokens=1_000_000,
+            provider_cost_usd=0.0,
+            config=_commandcode_config(),
+        )
+        assert resolved.source == "local_pricing"
+        assert resolved.usd == pytest.approx(0.3)
+
+    def test_absent_provider_cost_triggers_local_pricing(self):
+        resolved = resolve_request_cost(
+            "commandcode",
+            prompt_tokens=1_000_000,
+            completion_tokens=0,
+            provider_cost_usd=None,
+            config=_commandcode_config(),
+        )
+        assert resolved.source == "local_pricing"
+        assert resolved.usd == pytest.approx(0.12)
+
+    def test_unknown_provider_preserves_zero(self):
+        resolved = resolve_request_cost(
+            "openrouter",
+            prompt_tokens=1_000_000,
+            completion_tokens=1_000_000,
+            provider_cost_usd=0.0,
+            config=_commandcode_config(),
+        )
+        assert resolved == ResolvedCost(usd=0.0, source="unknown")
+
+    def test_non_subscription_provider_is_not_priced_locally(self):
+        policy = ProviderCostPolicy(
+            provider="openrouter",
+            input_cost_per_token=1.0e-06,
+            output_cost_per_token=2.0e-06,
+            subscription_backed=False,
+        )
+        config = MetricsCostConfig(provider_policies={"openrouter": policy})
+        resolved = resolve_request_cost(
+            "openrouter",
+            prompt_tokens=1_000_000,
+            completion_tokens=1_000_000,
+            provider_cost_usd=0.0,
+            config=config,
+        )
+        assert resolved.source == "unknown"
+
+    def test_fallback_disabled_keeps_provider_value(self):
+        resolved = resolve_request_cost(
+            "commandcode",
+            prompt_tokens=1_000_000,
+            completion_tokens=1_000_000,
+            provider_cost_usd=0.0,
+            config=_commandcode_config(fallback_to_local_pricing=False),
+        )
+        assert resolved.source == "unknown"
+
+    def test_resolved_cost_is_frozen(self):
+        resolved = resolve_request_cost(
+            "commandcode",
+            prompt_tokens=1,
+            completion_tokens=1,
+            provider_cost_usd=0.5,
+            config=_commandcode_config(),
+        )
+        with pytest.raises(FrozenInstanceError):
+            resolved.usd = 0.0
+
+
+class TestSessionCostHelperCommandCode:
+    """End-to-end wiring: a $0 CommandCode run must not report $0 metrics."""
+
+    _CONFIG_PATH = Path(__file__).parents[5] / "agent-config-commandcode.yaml"
+
+    def _agent_cfg(self):
+        from config import load_config
+
+        return load_config(str(self._CONFIG_PATH))
+
+    def test_zero_sdk_cost_uses_provider_policy(self, monkeypatch):
+        from agent_script.sub_domains.metrics.metrics_collector import _session_cost
+
+        monkeypatch.setenv("AGENT_CONFIG_PATH", str(self._CONFIG_PATH))
+        cost = _session_cost(
+            _FakeCombinedMetrics(0.0),
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            agent_cfg=self._agent_cfg().agents["dev"],
+        )
+        assert cost == pytest.approx(0.3)
+
+    def test_provider_reported_cost_is_preferred(self, monkeypatch):
+        from agent_script.sub_domains.metrics.metrics_collector import _session_cost
+
+        monkeypatch.setenv("AGENT_CONFIG_PATH", str(self._CONFIG_PATH))
+        cost = _session_cost(
+            _FakeCombinedMetrics(0.5),
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            agent_cfg=self._agent_cfg().agents["dev"],
+        )
+        assert cost == pytest.approx(0.5)

@@ -4,6 +4,20 @@ providers:
     api_url: "https://api.commandcode.ai/provider/v1"
     api_token_env: "COMMANDCODE_API_KEY"
 
+# ── Metrics cost: local pricing for providers that do not propagate cost ──
+# CommandCode is subscription-backed and its model ids are absent from LiteLLM's
+# price map, so it reports no usable per-request cost and metrics collapse to $0.
+# The per-token rates below approximate the underlying model API rate
+# (deepseek-v4.1-flash reference) and are operator-tunable.
+metrics_cost:
+  fallback_to_local_pricing: true
+  provider_policies:
+    commandcode:
+      provider: "commandcode"
+      input_cost_per_token: 1.2e-07
+      output_cost_per_token: 1.8e-07
+      subscription_backed: true
+
 # ── LLMs: model paths referencing providers ──
 llms:
   deepseek-v4_1-flash:
