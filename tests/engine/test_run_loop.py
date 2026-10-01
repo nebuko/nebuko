@@ -8,6 +8,7 @@ whether to advance, stop for a human, or terminate.
 from __future__ import annotations
 
 import inspect
+import json
 
 import pytest
 
@@ -158,14 +159,6 @@ class TestRunLoop:
         assert "agent" not in outcome.phases
         assert outcome.exit_code == ExitCode.TERMINAL
 
-    def test_writes_the_state_for_the_next_run(self, tmp_path, monkeypatch):
-        engine = _engine(tmp_path)
-        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
-
-        engine.run()
-
-        assert (tmp_path / "runs" / "run-1" / "state.json").is_file()
-
     def test_records_an_unrecoverable_failure_as_the_error_exit_code(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
 
@@ -177,6 +170,51 @@ class TestRunLoop:
         outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.ERROR
+
+
+class TestStatePhase:
+    def _state(self):
+        from workflow_state.workflow_state import WorkflowState
+
+        return WorkflowState(
+            version=3, workflow="spec-driven-impl", step="implement", agent="dev"
+        )
+
+    def test_persists_the_agents_own_state_artifact(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        state = self._state()
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: {**_agent_result("done"), "state": state}
+        )
+
+        outcome = engine.run()
+
+        assert outcome.state == state
+        saved = json.loads((tmp_path / "runs" / "run-1" / "state.json").read_text())
+        assert (saved["workflow"], saved["step"], saved["agent"]) == (
+            "spec-driven-impl",
+            "implement",
+            "dev",
+        )
+
+    def test_falls_back_to_the_previous_state(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        previous = self._state()
+        engine.adapter.save_state(previous)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        outcome = engine.run()
+
+        assert outcome.state == previous
+
+    def test_never_synthesizes_a_state_without_an_artifact_or_history(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        outcome = engine.run()
+
+        assert outcome.state is None
+        assert not (tmp_path / "runs" / "run-1" / "state.json").exists()
 
 
 class TestEntryPoints:

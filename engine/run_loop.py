@@ -352,22 +352,37 @@ class Engine:
         return self.env.get("ROLE_NAME", "")
 
     def _build_state(self, agent_result: Any) -> WorkflowState | None:
+        """Return the agent's own state artifact, else the previous state.
+
+        The state is never synthesized here: the workflow/step/agent triple is
+        the agent run's own output (``agent_script`` emits ``workflow_state.json``
+        in the legacy ``WORKFLOW_STATE v1`` schema), and inventing it from a
+        routing decision would corrupt the version history. A run that produced
+        no state leaves the previous state untouched.
+        """
+        explicit = self._explicit_state(agent_result)
+        if explicit is not None:
+            return explicit
+        return self._previous_state()
+
+    @staticmethod
+    def _explicit_state(agent_result: Any) -> WorkflowState | None:
+        if not isinstance(agent_result, Mapping):
+            return None
+        raw = agent_result.get("state")
+        if raw is None:
+            return None
         ensure_import_path()
         from workflow_state.workflow_state import WorkflowState
 
-        if isinstance(agent_result, Mapping):
-            explicit = agent_result.get("state")
-            if isinstance(explicit, WorkflowState):
-                return explicit
-
-        previous = self._previous_state()
-        routing = self.route(agent_result)
-        return WorkflowState(
-            version=(previous.version + 1) if previous else 1,
-            workflow=previous.workflow if previous else "",
-            step=routing.agent or (previous.step if previous else ""),
-            agent=routing.agent or (previous.agent if previous else ""),
-        )
+        if isinstance(raw, WorkflowState):
+            return raw
+        if isinstance(raw, Mapping):
+            try:
+                return WorkflowState.model_validate(dict(raw))
+            except Exception:  # noqa: BLE001 - a malformed artifact is not fatal
+                return None
+        return None
 
     def _previous_state(self) -> WorkflowState | None:
         try:
