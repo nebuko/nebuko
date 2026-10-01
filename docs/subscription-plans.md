@@ -74,8 +74,10 @@ jobs:
 ```
 
 `COMMANDCODE_API_KEY` is an optional secret of the reusable workflow (like
-`OPENROUTER_API_KEY`); it is forwarded to the run as an environment variable,
-which is exactly what `api_token_env` resolves.
+`OPENROUTER_API_KEY`) — declared in
+[`openhands-multi-agent.yml`](../.github/workflows/openhands-multi-agent.yml)
+and forwarded to the run as an environment variable, which is exactly what
+`api_token_env` resolves.
 
 ### 4. Point the config at the subscription
 
@@ -111,7 +113,7 @@ Then reference the LLM from each agent exactly as in the full file. The
   curl https://api.commandcode.ai/provider/v1/chat/completions \
     -H "Authorization: Bearer $COMMANDCODE_API_KEY" \
     -H "Content-Type: application/json" \
-    -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"ping"}]}'
+    -d '{"model":"deepseek/deepseek-v4.1-flash","messages":[{"role":"user","content":"ping"}]}'
   ```
 
 ---
