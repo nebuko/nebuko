@@ -136,7 +136,12 @@ class HumanMetricsAnalyzer:
         if self._config.reading_speed_wpm <= 0:
             unavailable["reading_time_seconds"] = "reading speed must be greater than zero"
             return None
-        text = issue.body + " " + " ".join(c.body for c in issue.comments)
+        # Only the issue body and human-authored comments count: agent/bot
+        # comments are machine output ("logs") the human does not read, and
+        # they dwarf the human-visible text on agent-heavy threads.
+        text = issue.body + " " + " ".join(
+            c.body for c in issue.comments if self._is_human(c)
+        )
         words = len(text.split())
         return words / self._config.reading_speed_wpm * 60
 
@@ -309,7 +314,7 @@ class HumanMetricsRenderer:
         lines.append(
             "> _Human metrics are estimates/proxies derived from issue text and workflow "
             f"timestamps (reading speed: {self._config.reading_speed_wpm} wpm; scope: issue body "
-            "+ all comments). Agent time spent is a proxy for human effort avoided, not a "
+            "+ human comments). Agent time spent is a proxy for human effort avoided, not a "
             "measured saving._"
         )
         return "\n".join(lines)
