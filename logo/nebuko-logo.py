@@ -103,13 +103,16 @@ def build(uid, mode="dark"):
     w0, w1 = (4.2, 9.2) if compact else (3.0, 7.8)             # largeur du ruban : fine -> franche
     hwf = lambda t: (w0 + (w1 - w0) * min(t, 1.0) ** 1.25) / 2
     R_H  = 7.4 if compact else 6.3                             # rayon de l'anneau de validation humaine
-    R_H0 = 0.72 * R_H                                          # 1er prompt humain (début de spirale) : plus petit
+    R_H0 = 0.36 * R_H                                          # 1er prompt humain (début de spirale) : 2x plus petit
     tg = 0.62 if compact else 0.64                             # position de la 2e validation humaine
     pearls = [] if compact else [0.17, 0.35, 0.83]             # agents (anneaux bleus)
 
     at = lambda t: min(P, key=lambda q: abs(q[2] - t))
-    gate = at(tg)
-    cuts = [(gate[0], gate[1], R_H - 1.4)]                     # le fil est coupé sous chaque anneau
+    start, gate = P[0], at(tg)                                 # le 1er anneau se pose sur le début de la spirale
+    # fil coupé sous chaque anneau, entre le trou (0.42·r) et le bord extérieur : la coupe
+    # doit rester plus large que le trou pour que le fil ne réapparaisse pas dedans.
+    cuts = [(start[0], start[1], R_H0 * 0.78),
+            (gate[0], gate[1], R_H - 1.4)]
     blue_rings = []
     for t in pearls:
         p = at(t)
@@ -168,7 +171,7 @@ def build(uid, mode="dark"):
     # anneaux : MÊME forme pour les agents (bleu) et les humains (ambre)
     for px, py, outer in blue_rings:
         o += ring((px, py), outer, blue)
-    o += ring((0, 0), R_H0, amb)                               # 1er prompt humain (début de spirale)
+    o += ring((start[0], start[1]), R_H0, amb)                 # 1er prompt humain : centré sur le début de spirale
     o += ring((gate[0], gate[1]), R_H, amb)                    # validation humaine
 
     # boîte englobante (pour centrer / mettre à l'échelle)
