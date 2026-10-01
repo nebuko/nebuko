@@ -1,0 +1,64 @@
+{
+  "name": "bot_answer_without_dispatch",
+  "description": "A bot answer that carries @dev's own marker but no dispatch and no state: the resolver itself skips it (\"Bot comment without AGENT_RUN_CONFIG or dispatch\"), so neither guard runs.",
+  "provenance": "Recorded answer shape from the issue #590 run logs: an agent answer whose sentinel was missing/unparseable, which the resolve step reports as SKIP_AGENT=true.",
+  "payload": {
+    "action": "created",
+    "comment": {
+      "id": 5927119916,
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-dev -->\n<!-- workflow-continue -->\n*Developer answer*\n\n@@dev continue",
+      "created_at": "2026-10-01T08:10:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    "issue": {
+      "number": 590,
+      "title": "[engine] Stage A: port/adapter engine core",
+      "body": "Engine core body.",
+      "user": {
+        "login": "olivier-norture",
+        "type": "User"
+      },
+      "html_url": "https://github.com/olivier-norture/git-flow-ai/issues/590"
+    },
+    "repository": {
+      "full_name": "olivier-norture/git-flow-ai"
+    }
+  },
+  "history": [
+    {
+      "body": "@@dev continue",
+      "created_at": "2026-10-01T08:09:00Z",
+      "user": {
+        "login": "olivier-norture",
+        "type": "User"
+      }
+    }
+  ],
+  "env": {
+    "CIRCUIT_BREAKER_THRESHOLD": "25"
+  },
+  "expected": {
+    "trigger": {
+      "type": "issue_comment",
+      "author": "github-actions[bot]",
+      "number": 590
+    },
+    "resolved": {
+      "ROLE_NAME": null,
+      "WORKFLOW_NAME": null,
+      "WORKFLOW_STEP": null,
+      "WORKFLOW_POSITION_PATH": null,
+      "SKIP_AGENT": "true",
+      "REASON": "Bot comment without AGENT_RUN_CONFIG or dispatch"
+    },
+    "guard": null,
+    "prompt": {
+      "prompt": "",
+      "step_prompt": ""
+    },
+    "agent_ran": false
+  }
+}

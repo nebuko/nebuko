@@ -1,0 +1,76 @@
+{
+  "name": "human_issue_comment_dev_mention",
+  "description": "A human issue-comment that pings @dev directly; the resolver selects dev and no guard fires.",
+  "provenance": "Recorded issue_comment event shape (issue #590 workflow run logs): the human `@@dev ...` triggers observed on the thread, normalized to the GHA payload subset the engine reads.",
+  "payload": {
+    "action": "created",
+    "comment": {
+      "id": 5927119915,
+      "body": "@@dev fix the flaky test",
+      "created_at": "2026-10-01T07:47:47Z",
+      "user": {
+        "login": "olivier-norture",
+        "type": "User"
+      }
+    },
+    "issue": {
+      "number": 590,
+      "title": "[engine] Stage A: port/adapter engine core",
+      "body": "Engine core body.",
+      "user": {
+        "login": "olivier-norture",
+        "type": "User"
+      },
+      "html_url": "https://github.com/olivier-norture/git-flow-ai/issues/590"
+    },
+    "repository": {
+      "full_name": "olivier-norture/git-flow-ai"
+    }
+  },
+  "history": [
+    {
+      "body": "@@genius analyze the engine extraction",
+      "created_at": "2026-10-01T07:40:00Z",
+      "user": {
+        "login": "olivier-norture",
+        "type": "User"
+      }
+    },
+    {
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n<!-- bot-agent-summary -->\n*Genius answer*",
+      "created_at": "2026-10-01T07:41:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "env": {
+    "CIRCUIT_BREAKER_THRESHOLD": "25"
+  },
+  "expected": {
+    "trigger": {
+      "type": "issue_comment",
+      "author": "olivier-norture",
+      "number": 590
+    },
+    "resolved": {
+      "ROLE_NAME": "dev",
+      "WORKFLOW_NAME": "",
+      "WORKFLOW_STEP": "",
+      "WORKFLOW_POSITION_PATH": "",
+      "SKIP_AGENT": "false",
+      "REASON": null
+    },
+    "guard": {
+      "SKIP_AGENT": "false",
+      "AGENT_CALLS": "0",
+      "CIRCUIT_BREAKER_TRIPPED": "false"
+    },
+    "prompt": {
+      "prompt": ".agents/prompts/dev.md",
+      "step_prompt": ""
+    },
+    "agent_ran": true
+  }
+}

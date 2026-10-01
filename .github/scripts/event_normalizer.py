@@ -14,10 +14,102 @@ Output:
     Multi-line values use HEREDOC format (KEY<<EOF ... EOF).
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import sys
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
+    from engine.models import Trigger
+
+
+def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
+    """Pure payload -> :class:`Trigger` extraction for the engine seam.
+
+    ``normalize_event`` (and the CLI ``main()``) stay the GHA-facing wrappers;
+    this function carries the extraction semantics without touching the event
+    file or the environment.
+
+    The event is classified from the payload shape, mirroring the legacy
+    ``Normalize GitHub Event Data`` step (which branches on ``github.event_name``):
+    a ``comment`` key means ``issue_comment`` — or ``pull_request_review_comment``
+    when a ``pull_request`` key is present too — an ``issue`` key means ``issues``,
+    and an ``inputs`` key means a ``workflow_dispatch``/``workflow_call`` payload.
+    Anything else is rejected loudly rather than mislabelled as issue #0.
+
+    ``workflow_call`` payloads are deliberately labelled ``workflow_dispatch``:
+    this pure seam only receives the payload, so the legacy ``github.event_name``
+    split is not available, and both events share the same Trigger contract
+    (author from ``sender``, body from ``inputs.prompt_body``, number 0). No
+    consumer branches on the label — the engine routes on ``body``/``number`` —
+    so the collapse is behavior-neutral (issue #590 round-4, finding 4).
+
+    Args:
+        payload: Already-parsed GitHub event payload.
+
+    Returns:
+        The normalized Trigger.
+
+    Raises:
+        ValueError: when the payload matches no supported event shape.
+    """
+    from engine.models import Trigger
+
+    comment = payload.get("comment")
+    if comment is not None:
+        # GitHub may carry ``"user": null`` for ghost/deleted accounts, so the
+        # ``or {}`` guard is required (``.get`` alone only covers an absent key).
+        author = (comment.get("user") or {}).get("login", "")
+        body = comment.get("body", "") or ""
+        if payload.get("pull_request") is not None:
+            number = (payload.get("pull_request") or {}).get("number") or 0
+            return Trigger(
+                author=author,
+                body=body,
+                type="pull_request_review_comment",
+                number=number,
+                payload=payload,
+            )
+        number = (payload.get("issue") or {}).get("number") or 0
+        return Trigger(
+            author=author,
+            body=body,
+            type="issue_comment",
+            number=number,
+            payload=payload,
+        )
+
+    issue = payload.get("issue")
+    if issue is not None:
+        return Trigger(
+            author=(issue.get("user") or {}).get("login", ""),
+            body=issue.get("body", "") or "",
+            type="issue",
+            number=issue.get("number") or 0,
+            payload=payload,
+        )
+
+    inputs = payload.get("inputs")
+    if inputs is not None:
+        # workflow_call / workflow_dispatch carry their (possibly empty) inputs
+        # under ``inputs``; the legacy workflow_call branch reads ``prompt_body``
+        # and the triggering actor, which is the shape honoured here.
+        return Trigger(
+            author=(payload.get("sender") or {}).get("login", ""),
+            body=(inputs or {}).get("prompt_body", "") or "",
+            type="workflow_dispatch",
+            number=0,
+            payload=payload,
+        )
+
+    raise ValueError(
+        "normalize_trigger: unrecognized event payload — expected a 'comment' "
+        "(issue_comment/pull_request_review_comment), 'issue' (issues) or "
+        "'inputs' (workflow_dispatch/workflow_call) key"
+    )
 
 
 def normalize_event(
@@ -46,12 +138,12 @@ def normalize_event(
 
     if event_name == "issue_comment":
         trigger_body = event_data.get("comment", {}).get("body", "")
-        trigger_author = event_data.get("comment", {}).get("user", {}).get("login", "")
+        trigger_author = (event_data.get("comment", {}).get("user") or {}).get("login", "")
         target_number = issue_number
         event_type = "issue_comment"
     elif event_name == "issues":
         trigger_body = event_data.get("issue", {}).get("body", "")
-        trigger_author = event_data.get("issue", {}).get("user", {}).get("login", "")
+        trigger_author = (event_data.get("issue", {}).get("user") or {}).get("login", "")
         target_number = issue_number
         event_type = "issues"
     elif event_name == "workflow_call":
