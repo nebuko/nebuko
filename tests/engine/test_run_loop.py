@@ -147,6 +147,26 @@ class TestRunLoop:
         assert "*Dev answer*" in outcome.posted_body
         assert (tmp_path / "runs" / "run-1" / "journal.md").is_file()
 
+    def test_publish_neutralizes_agent_triggers_before_posting(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: _agent_result("ping @@genius and @@dev now"),
+        )
+
+        outcome = engine.run()
+
+        # The posted body must never carry a raw @@ token (issue #482), exactly
+        # as ``prepare_comment._write_output`` guarantees on the legacy path.
+        assert outcome.posted_body is not None
+        assert "@@genius" not in outcome.posted_body
+        assert "@@dev" not in outcome.posted_body
+        assert "@@\u200bgenius" in outcome.posted_body
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
+        assert "@@genius" not in journal
+        assert "@@dev" not in journal
+
     def test_never_invokes_the_agent_when_the_guards_trip(self, tmp_path, monkeypatch):
         trigger = _trigger(body=f"<!-- bot-workflow-terminal -->\n{BOT_AGENT_MARKER}\n@@dev continue")
         engine = _engine(tmp_path, trigger)

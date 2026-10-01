@@ -3,9 +3,6 @@
 ``PlatformAdapter`` is the port every host satisfies; ``HistoryProvider`` and
 ``Poster`` are the narrow callables the legacy scripts accept through the seam
 refactors. ``engine.run_loop`` depends on this module only — no mode branching.
-
-Stub step: skeleton only. Bodies are materialised by @@dev in the implement
-step.
 """
 
 from __future__ import annotations

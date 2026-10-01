@@ -2,9 +2,6 @@
 
 Leaf module of the ``engine`` package: the only external type it names is the
 reused ``workflow_state.workflow_state.WorkflowState`` — never re-declared here.
-
-Stub step: class skeletons only. Bodies are materialised by @@dev in the
-implement step.
 """
 
 from __future__ import annotations

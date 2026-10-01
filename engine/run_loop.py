@@ -343,13 +343,17 @@ class Engine:
 
     # @stub-protected
     def publish(self, agent_result: Any) -> str:
-        """Delegate to ``select_posted_body`` then ``adapter.post``."""
+        """Delegate to ``select_posted_body``, neutralize triggers, then post."""
         ensure_import_path()
-        from prepare_comment import select_posted_body
+        from prepare_comment import escape_agent_triggers, select_posted_body
 
         body = select_posted_body(_answer_of(agent_result), _final_message_of(agent_result))
-        self.adapter.post(body)
-        return body
+        # Same invariant as ``prepare_comment._write_output``: a posted comment
+        # must never carry a raw ``@@agent`` token, or it re-arms the very gate
+        # that started this run (issue #482).
+        escaped = escape_agent_triggers(body)
+        self.adapter.post(escaped)
+        return escaped
 
     # @stub-protected
     def persist(self, agent_result: Any) -> WorkflowState | None:

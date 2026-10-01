@@ -56,6 +56,43 @@ class TestEventNormalizer:
             590,
         )
 
+    def test_pull_request_review_comment_payload_becomes_a_trigger(self):
+        from event_normalizer import normalize_trigger
+
+        trigger = normalize_trigger(
+            {
+                "comment": {"body": "@@dev please fix", "user": {"login": "olivier-norture"}},
+                "pull_request": {"number": 703},
+            }
+        )
+
+        assert (trigger.author, trigger.body, trigger.type, trigger.number) == (
+            "olivier-norture",
+            "@@dev please fix",
+            "pull_request_review_comment",
+            703,
+        )
+
+    def test_workflow_payload_is_honoured_not_mislabelled_as_an_issue(self):
+        from event_normalizer import normalize_trigger
+
+        trigger = normalize_trigger(
+            {"inputs": {"prompt_body": "external caller"}, "sender": {"login": "ci"}}
+        )
+
+        assert (trigger.type, trigger.number, trigger.body, trigger.author) == (
+            "workflow_dispatch",
+            0,
+            "external caller",
+            "ci",
+        )
+
+    def test_unknown_payload_raises_instead_of_fabricating_an_issue(self):
+        from event_normalizer import normalize_trigger
+
+        with pytest.raises(ValueError):
+            normalize_trigger({"action": "created"})
+
 
 class TestFetchState:
     def test_extract_state_reads_the_latest_recorded_state(self):

@@ -4,9 +4,6 @@
 :func:`ensure_import_path` (``sys.path`` append of :data:`SCRIPTS_DIR`) unless
 the repository packaging already covers it — there is no ``pyproject.toml`` /
 uv package root today, so the bootstrap is required.
-
-Stub step: skeleton only. Bodies are materialised by @@dev in the implement
-step.
 """
 
 from __future__ import annotations

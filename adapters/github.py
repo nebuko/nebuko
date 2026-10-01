@@ -3,9 +3,6 @@
 Composes the existing ``gh``/REST clients behind the protocol;
 :meth:`GitHubAdapter.read_trigger` reads ``GITHUB_EVENT_PATH`` and delegates to
 ``event_normalizer.normalize_trigger``. No new HTTP code.
-
-Stub step: class skeleton only. Bodies are materialised by @@dev in the
-implement step.
 """
 
 from __future__ import annotations

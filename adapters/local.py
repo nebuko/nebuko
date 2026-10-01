@@ -5,9 +5,6 @@ Run directory ``runs/<run-id>/`` holds ``trigger.json``, ``journal.md``,
 the standard ``<!-- bot-workflow-terminal -->`` / ``<!-- bot-agent-* -->``
 markers, so ``loop_guard``, ``circuit_breaker`` and state extraction run
 **unchanged** against :meth:`LocalAdapter.load_history`.
-
-Stub step: class skeleton only. Bodies are materialised by @@dev in the
-implement step.
 """
 
 from __future__ import annotations

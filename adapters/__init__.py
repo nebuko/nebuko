@@ -2,9 +2,6 @@
 
 The single bootstrap location that wires a concrete adapter to the
 ``PlatformAdapter`` port, keeping adapter selection out of the engine.
-
-Stub step: skeleton only. Bodies are materialised by @@dev in the implement
-step.
 """
 
 from __future__ import annotations
