@@ -15,6 +15,25 @@ from .sub_domains.step_resolution.step_resolution import StepResolution
 STATE_MARKER_START = "<!-- WORKFLOW_STATE_START -->"
 STATE_MARKER_END = "<!-- WORKFLOW_STATE_END -->"
 
+class SoftRetryState(BaseModel):  # @stub-protected
+    """Per-step soft-kill retry accounting (issue #704).
+
+    The soft time-kill (the ~20 min wind-down) interrupts the running agent
+    before it finishes its step. The engine must re-run that step in place,
+    bounded by the ``MAX_SOFT_RETRIES`` workflow parameter, instead of
+    advancing. This model records, per step, how many soft retries have already
+    been consumed so the router can decide between retrying and halting for a
+    human.
+
+    Fields:
+        step: The step the counter applies to (None when no step has consumed
+            a retry yet).
+        attempts: Number of soft retries consumed for that step.
+    """
+
+    step: Optional[str] = None  # @stub-protected
+    attempts: int = 0  # @stub-protected
+
 class WorkflowState(BaseModel):
     """
     Structured workflow state embedded in GitHub comments.
@@ -47,6 +66,11 @@ class WorkflowState(BaseModel):
         position: Flat workflow step path, outermost-first; last ref = the
             step actually executed (issue #638). The flat ``workflow``/
             ``step`` fields keep leaf (v1) semantics.
+        soft_retry: Per-step soft-kill retry accounting (issue #704). Tracks
+            how many soft retries the current step has consumed so routing can
+            retry the step in place (bounded by ``MAX_SOFT_RETRIES``) instead
+            of advancing. Defaults to an empty counter, so legacy state blobs
+            without this key load unchanged.
     """
 
     version: int = 1
@@ -74,6 +98,9 @@ class WorkflowState(BaseModel):
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.
     position: list[StepRef] = Field(default_factory=list)
+    # Per-step soft-kill retry accounting (issue #704). default_factory keeps
+    # legacy blobs without this key loadable and byte-identical on read.
+    soft_retry: SoftRetryState = Field(default_factory=SoftRetryState)  # @stub-protected
 
     @model_validator(mode="before")
     @classmethod

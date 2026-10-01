@@ -376,6 +376,38 @@ def _resolve_dispatch_path(
     return config
 
 
+def resolve_soft_kill_route(
+    prev_state: "WorkflowState",
+    dispatch_obj: "Dispatch",
+    max_soft_retries: int,
+) -> Optional[dict]:  # @stub-protected
+    """Decide the retry-vs-halt route for a soft-killed step (issue #704).
+
+    A soft time-kill must not let the workflow advance: the interrupted step is
+    re-run in place while the per-step counter is within ``max_soft_retries``,
+    and the run halts for a human once the retries are exhausted.
+    ``_resolve_dispatch_path`` calls this before its normal workflow-next
+    resolution and returns the result as-is when it is not ``None``.
+
+    Args:
+        prev_state: WorkflowState from the trigger body; its flat
+            ``workflow``/``step`` name the step to re-run and ``soft_retry``
+            carries the retry count already consumed for that step.
+        dispatch_obj: Dispatch extracted from ``prev_state``; only
+            ``status == "soft_kill"`` triggers soft-kill handling.
+        max_soft_retries: ``MAX_SOFT_RETRIES`` workflow parameter — the number
+            of retries allowed per step before halting for a human.
+
+    Returns:
+        ``None`` when ``dispatch_obj`` is not a soft-kill error (fall through
+        to normal routing); otherwise the resolution config dict — a same-step
+        retry (re-running the step's agent) while retries remain, or a
+        ``{"SKIP_AGENT": "true", "REASON": ...}`` halt naming the step and the
+        exhausted attempt count.
+    """
+    raise NotImplementedError
+
+
 def _mount_chain_ref_resolver(workflows_dir: str, local_workflows_dir: Optional[str] = None) -> Callable[[str], Optional[WorkflowDefinition]]:
     """Build a ``resolve_position`` ref port over the real workflow loader.
 

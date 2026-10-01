@@ -13,6 +13,11 @@ on:
         required: false
         type: number
         default: 15
+      max_soft_retries:
+        description: 'Maximum soft-kill retries for the same step before halting the workflow for a human (issue #704)'
+        required: false
+        type: number
+        default: 2
       summarizer_threshold:
         description: 'Summarizer threshold — number of comments before summarizer triggers'
         required: false
@@ -229,6 +234,7 @@ jobs:
             - name: Resolve Agent Configuration
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                MAX_SOFT_RETRIES: ${{ inputs.max_soft_retries }}
               run: |
                   echo "Debug: Checking trigger body..."
                   PROMPT_BASE=""

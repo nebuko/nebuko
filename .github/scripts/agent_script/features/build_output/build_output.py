@@ -202,6 +202,22 @@ def _build_failure_summary(run_outcome: RunOutcome) -> str:  # @stub-protected
     return "\n".join(lines)
 
 
+def _soft_kill_dispatch() -> Dispatch:  # @stub-protected
+    """Build the soft-kill error dispatch for a gracefully timed-out run (#704).
+
+    A soft time-kill (the ~20 min wind-down) interrupts the running step
+    without completing it. The dispatch handed to the workflow engine must
+    carry the explicit error status ``soft_kill`` so the router re-runs the
+    interrupted step (bounded by ``MAX_SOFT_RETRIES``) instead of advancing to
+    the next one. ``build_output`` uses this in place of the agent's own
+    dispatch whenever the run outcome is ``OutcomeStatus.GRACEFULLY_TIMED_OUT``.
+
+    Returns:
+        A Dispatch with status ``soft_kill`` and the timeout reason.
+    """
+    raise NotImplementedError
+
+
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
     """Convert an AGENT_RUN_CONFIG JSON string to a Dispatch object.
 

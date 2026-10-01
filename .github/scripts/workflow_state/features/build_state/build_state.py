@@ -2,7 +2,7 @@ from typing import Optional, Any
 
 from config import POSITION_STATE_VERSION, StepRef, WorkflowPosition
 
-from ...workflow_state import WorkflowState
+from ...workflow_state import WorkflowState, SoftRetryState
 from ...sub_domains.issue_info.issue_info import IssueInfo
 from ...sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from ...sub_domains.history_entry.history_entry import HistoryEntry
@@ -190,6 +190,14 @@ def build_state(
         scaffold_branch if scaffold_branch is not None else base_scaffold_branch
     )
 
+    # Preserve per-step soft-kill retry accounting across transitions (issue
+    # #704). A pre-#704 state (or a legacy blob without the key) default-fills
+    # to an empty counter; the soft-kill path in build_output overwrites it
+    # with the incremented (or reset) value.
+    new_soft_retry = (
+        prev_state.soft_retry if prev_state is not None else SoftRetryState()
+    )
+
     # State shape version (issue #638, universalized in #646): position is
     # now written on every run — top-level runs carry the bare single ref —
     # so the state is always at least the v3 shape. ``max`` keeps the
@@ -222,4 +230,5 @@ def build_state(
         dispatch=dispatch,
         function_call=function_call,
         position=position_refs,
+        soft_retry=new_soft_retry,
     )
