@@ -19,6 +19,8 @@ Output:
     written to files under /tmp/agent_query and exposed via *_PATH variables.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -26,8 +28,15 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
+    from adapters.base import HistoryProvider
+    from engine.models import CommentEntry, Trigger
+
+
 from features.select_history_comments.history import (
     HistoryWindowConfig,
     select_history,
@@ -416,6 +425,105 @@ def _build_state_context(comments, repo: str) -> str:
             lines.append("---\n\n")
             return "\n".join(lines)
     return ""
+
+
+# ── Engine seam (issue #590, Stage A) ─────────────────────────────
+
+# Bot bodies carry one of the standard markers; the seam uses them to classify
+# injected ``CommentEntry`` history the same way ``_is_bot_comment`` classifies
+# GitHub API payloads (so ``inject_context`` filtering is unchanged).
+_BOT_MARKER_RE = re.compile(r"<!--\s*bot-(?:workflow-terminal|agent-[a-z0-9-]+)\s*-->")
+
+
+def _entry_to_comment(entry, index: int) -> dict:
+    """Coerce a normalized ``CommentEntry`` to the GitHub comment-dict shape.
+
+    The dict shape is what the history/state helpers already read, so the seam
+    reuses them verbatim. Comment ids are synthetic (1-based) — ``CommentEntry``
+    carries none, and only uniqueness matters for pinning/window selection.
+    """
+    author = getattr(entry, "author", "") or ""
+    body = getattr(entry, "body", "") or ""
+    is_bot = author == "bot" or bool(_BOT_MARKER_RE.search(body))
+    return {
+        "id": index + 1,
+        "body": body,
+        "created_at": getattr(entry, "created_at", "") or "",
+        "user": {"login": author, "type": "Bot" if is_bot else "User"},
+    }
+
+
+def _trigger_event_data(trigger, event_path: str | None) -> dict:
+    """Resolve the (title, body, author) triple for the rendered query.
+
+    ``--event-path`` wins when supplied (the legacy source). Otherwise the
+    values come from the trigger's raw payload — the issue fields a
+    comment-level trigger does not itself carry — falling back to the trigger.
+    """
+    if event_path:
+        return load_event_data(event_path)
+    payload = getattr(trigger, "payload", None) or {}
+    issue = payload.get("issue") or {}
+    return {
+        "title": issue.get("title", "") or "",
+        "body": issue.get("body", "") or getattr(trigger, "body", "") or "",
+        "author": (issue.get("user") or {}).get("login", "")
+        or getattr(trigger, "author", "")
+        or "",
+    }
+
+
+# @stub-protected
+def query_context(
+    trigger: Trigger,
+    *,
+    history: Sequence[CommentEntry] | None = None,
+    event_path: str | None = None,
+) -> str:
+    """Build the ready agent prompt from a normalized trigger.
+
+    Args:
+        trigger: Normalized trigger (replaces the ``--issue-number``-only entry).
+        history: Optional injected comment history; when ``None`` it is fetched
+            through the default provider (unchanged GHA behaviour).
+        event_path: Optional GitHub event JSON path (``--event-path`` retained).
+
+    Returns:
+        The rendered ready-prompt text.
+    """
+    repo_name = _resolve_repo_name()
+    if history is not None:
+        comments = [_entry_to_comment(entry, index) for index, entry in enumerate(history)]
+    else:
+        comments = get_issue_comments(repo_name, trigger.number)
+
+    event_data = _trigger_event_data(trigger, event_path)
+
+    prev_state = None
+    try:
+        prev_state = extract_state(comments)
+    except Exception as e:
+        print(f"Warning: Failed to extract state for inject_context: {e}", file=sys.stderr)
+
+    filtered_comments = _filter_comments_by_inject_context(comments, prev_state)
+    history_str = _build_history_string(
+        filtered_comments,
+        prev_state,
+        history_comment_count=os.environ.get("HISTORY_COMMENT_COUNT"),
+    )
+    # Unfiltered comments: the state block may live in a comment excluded from
+    # the history display by inject_context=False (see main()).
+    state_context = _build_state_context(comments, repo_name)
+
+    template_str = os.environ.get("ISSUE_TEMPLATE", DEFAULT_TEMPLATE)
+    return format_query_template(
+        title=event_data["title"],
+        body=event_data["body"],
+        author=event_data["author"],
+        history=history_str,
+        template_str=template_str,
+        state_context=state_context,
+    )
 
 
 def main():

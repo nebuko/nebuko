@@ -20,11 +20,17 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 from github_client import ensure_bot_marker
+
+# Injected REST seam for issue creation (issue #590, Stage A): local mode passes
+# a filesystem-writing callable instead of the GitHub REST path. The default
+# stays exactly the current ``GitHubClient.create_issue`` call.
+# @stub-protected
+CreateIssue = Callable[[str, str, List[str]], Optional[dict]]
 
 
 @dataclass
@@ -246,6 +252,8 @@ def create_sub_issues(
     client: GitHubClient,
     plan: SplitPlan,
     parent_number: int,
+    *,
+    create_issue: CreateIssue | None = None,
 ) -> List[Dict[str, Any]]:
     """Execute a split plan: create issues and link them as sub-issues.
     
@@ -257,6 +265,9 @@ def create_sub_issues(
         client: GitHub API client.
         plan: The split plan to execute.
         parent_number: Parent issue number.
+        create_issue: Optional injected creator callable (engine seam, issue #590).
+            When given, it replaces ``client.create_issue`` and the GitHub-only
+            sub-issue linking step is skipped (local mode has no REST client).
         
     Returns:
         List of dicts with "index", "number", and "dependencies" for each
@@ -268,6 +279,7 @@ def create_sub_issues(
     created: List[Dict[str, Any]] = []
     failed_tasks: List[Tuple[int, str, str]] = []  # (idx, title, error)
     total = len(plan.tasks)
+    creator = create_issue or client.create_issue
 
     for idx, task in enumerate(plan.tasks, start=1):
         prefixed_title = f"[Sub-task {idx}/{total}] {task.title}"
@@ -275,7 +287,7 @@ def create_sub_issues(
         print(f"[{idx}/{total}] Creating sub-issue: {prefixed_title}")
 
         try:
-            result = client.create_issue(prefixed_title, task.body, labels_with_parent)
+            result = creator(prefixed_title, task.body, labels_with_parent)
             if result is None:
                 raise ValueError(
                     f"Failed to create issue: API response missing required "
@@ -284,9 +296,10 @@ def create_sub_issues(
             issue_num = result["number"]
             issue_id = result["id"]
             print(f"  → Created issue #{issue_num} (id={issue_id})")
-            
-            client.add_sub_issue(parent_number, issue_id, position=idx)
-            print(f"  → Linked as sub-issue of #{parent_number} (position {idx})")
+
+            if create_issue is None:
+                client.add_sub_issue(parent_number, issue_id, position=idx)
+                print(f"  → Linked as sub-issue of #{parent_number} (position {idx})")
             
             created.append({
                 "index": idx,

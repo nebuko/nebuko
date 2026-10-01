@@ -18,14 +18,19 @@ Output:
     SKIP_AGENT=true or SKIP_AGENT=false to stdout.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import re
 import sys
-from typing import Optional
+from typing import TYPE_CHECKING, Mapping, Optional, Sequence
 
 from config import load_agent_names
+
+if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
+    from engine.models import CommentEntry
 
 _WORKFLOW_STATE_START = "<!-- WORKFLOW_STATE_START -->"
 _WORKFLOW_STATE_END = "<!-- WORKFLOW_STATE_END -->"
@@ -196,16 +201,35 @@ def detect_human_plus_agent_ping(trigger_body: str) -> bool:
     return len(agent_mentions) > 0 and len(human_mentions) > 0
 
 
-def check_loop_guard(trigger_body: str, current_agent: str) -> dict:
+def _entry_body(entry) -> str:
+    """Read a comment body from either an API dict or a normalized history entry."""
+    if isinstance(entry, Mapping):
+        return entry.get("body", "") or ""
+    return getattr(entry, "body", "") or ""
+
+
+def check_loop_guard(
+    trigger_body: str,
+    current_agent: str,
+    history: Sequence[CommentEntry] | None = None,
+) -> dict:
     """Run both loop guards and determine if agent should skip.
 
     Args:
         trigger_body: Raw trigger body text.
         current_agent: Current agent name being invoked.
+        history: Optional injected comment history (engine seam, issue #590);
+            when ``None`` the current trigger-body behaviour is unchanged.
 
     Returns:
         Dict with SKIP_AGENT (true/false) and optional REASON.
     """
+    # The trigger body is authoritative on the GHA path (the trigger *is* the
+    # latest comment). Marker-less hosts may hand an empty body while the
+    # thread still carries the last comment; only then does history stand in.
+    if not (trigger_body or "").strip() and history:
+        trigger_body = _entry_body(history[-1])
+
     # Guard 1: Same-agent loop detection
     if detect_same_agent_loop(trigger_body, current_agent):
         caller_match = re.search(r"<!-- bot-agent-([a-z][a-z-]*) -->", trigger_body)
