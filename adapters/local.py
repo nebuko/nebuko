@@ -12,7 +12,12 @@ implement step.
 
 from __future__ import annotations
 
+import json
+import re
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Sequence
+
+from engine.paths import ensure_import_path
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -22,6 +27,22 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
 
 __all__ = ["LocalAdapter"]
 
+TRIGGER_FILE = "trigger.json"
+JOURNAL_FILE = "journal.md"
+STATE_FILE = "state.json"
+LATEST_ANSWER_FILE = "latest_answer.md"
+CONSOLE_LOG_FILE = "console.log"
+TASKS_DIR = "tasks"
+
+# Each journal entry is introduced by this boundary line so posted bodies keep
+# their blank lines verbatim; the captured group is the entry timestamp.
+_JOURNAL_ENTRY_RE = re.compile(r"^<!-- journal-entry @ (.+?) -->$", re.MULTILINE)
+_BOT_AGENT_RE = re.compile(r"<!-- bot-agent-([a-z0-9\-]+) -->")
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 
 # @stub-protected
 class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
@@ -29,32 +50,119 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
     # @stub-protected
     def __init__(self, run_dir: Path, *, trigger: Trigger | None = None) -> None:
-        raise NotImplementedError
+        from pathlib import Path as _Path
+
+        self._run_dir = _Path(run_dir)
+        self._run_dir.mkdir(parents=True, exist_ok=True)
+        self._trigger = trigger
 
     # @stub-protected
     def read_trigger(self) -> Trigger:
-        raise NotImplementedError
+        if self._trigger is not None:
+            return self._trigger
+        from engine.models import Trigger
+
+        payload = json.loads((self._run_dir / TRIGGER_FILE).read_text(encoding="utf-8"))
+        return Trigger(**payload)
 
     # @stub-protected
     def load_history(self, *, limit: int | None = None) -> Sequence[CommentEntry]:
-        raise NotImplementedError
+        entries = self._read_journal()
+        if limit is not None:
+            entries = entries[-limit:] if limit > 0 else []
+        return entries
 
     # @stub-protected
     def post(self, body: str) -> str:
-        raise NotImplementedError
+        self._run_dir.mkdir(parents=True, exist_ok=True)
+        stored = self._ensure_terminal_marker(body)
+        journal = self._run_dir / JOURNAL_FILE
+        separator = "\n\n" if journal.is_file() and journal.stat().st_size > 0 else ""
+        with journal.open("a", encoding="utf-8") as handle:
+            handle.write(f"{separator}<!-- journal-entry @ {_utc_now_iso()} -->\n{stored}")
+        (self._run_dir / LATEST_ANSWER_FILE).write_text(stored, encoding="utf-8")
+        return str(len(self._read_journal()))
 
     # @stub-protected
     def load_state(self) -> WorkflowState | None:
-        raise NotImplementedError
+        path = self._run_dir / STATE_FILE
+        if not path.is_file():
+            return None
+        from workflow_state.workflow_state import WorkflowState
+
+        return WorkflowState.model_validate_json(path.read_text(encoding="utf-8"))
 
     # @stub-protected
     def save_state(self, state: WorkflowState) -> None:
-        raise NotImplementedError
+        (self._run_dir / STATE_FILE).write_text(
+            state.model_dump_json(), encoding="utf-8"
+        )
 
     # @stub-protected
     def create_issue(self, *, title: str, body: str, labels: Sequence[str] = ()) -> int:
-        raise NotImplementedError
+        tasks_dir = self._run_dir / TASKS_DIR
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        index = len(list(tasks_dir.glob("*.md"))) + 1
+        (tasks_dir / f"{index}.md").write_text(body, encoding="utf-8")
+        return index
 
     # @stub-protected
     def write_artifact(self, name: str, content: str) -> None:
-        raise NotImplementedError
+        path = self._run_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    # ── internals ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _ensure_terminal_marker(body: str) -> str:
+        ensure_import_path()
+        from github_client import ensure_bot_marker
+
+        return ensure_bot_marker(body)
+
+    def _read_journal(self) -> list[CommentEntry]:
+        from engine.models import CommentEntry
+
+        path = self._run_dir / JOURNAL_FILE
+        if not path.is_file():
+            return []
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            return []
+
+        parts = _JOURNAL_ENTRY_RE.split(text)
+        entries: list[CommentEntry] = []
+        for index in range(1, len(parts) - 1, 2):
+            body = parts[index + 1].lstrip("\n").rstrip("\n")
+            body = self._strip_injected_marker(body)
+            entries.append(
+                CommentEntry(
+                    author=self._entry_author(body),
+                    body=body,
+                    created_at=parts[index].strip(),
+                )
+            )
+        return entries
+
+    @staticmethod
+    def _strip_injected_marker(body: str) -> str:
+        """Drop the universal marker ``post`` injects on line 1.
+
+        History entries must round-trip to exactly the body handed to
+        :meth:`post`; consumers read the ``<!-- bot-agent-* -->`` markers the
+        bodies themselves carry, not the injected terminal marker.
+        """
+        ensure_import_path()
+        from github_client import BOT_MARKER
+
+        if body == BOT_MARKER:
+            return ""
+        if body.startswith(BOT_MARKER + "\n"):
+            return body[len(BOT_MARKER) + 1 :]
+        return body
+
+    @staticmethod
+    def _entry_author(body: str) -> str:
+        match = _BOT_AGENT_RE.search(body)
+        return match.group(1) if match else "bot"

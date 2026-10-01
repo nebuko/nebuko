@@ -6,6 +6,7 @@ history via the GitHub API client port.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Optional, Sequence
 
 import resolve_config
@@ -56,7 +57,9 @@ def extract_state(comments: Sequence[CommentEntry]) -> WorkflowState | None:
     Returns:
         Latest WorkflowState found in ``comments``, or ``None``.
     """
-    raise NotImplementedError
+    return extract_latest_state_from_comments(
+        [_as_comment_dict(comment) for comment in comments]
+    )
 
 
 # @stub-protected
@@ -70,4 +73,26 @@ def fetch_state(*, provider: HistoryProvider | None = None) -> WorkflowState | N
     Returns:
         Latest WorkflowState, or ``None``.
     """
-    raise NotImplementedError
+    if provider is None:
+        return _fetch_workflow_state_from_history(
+            _env_repo(), _env_issue_number()
+        )
+    return extract_state(provider())
+
+
+def _as_comment_dict(comment: CommentEntry | dict) -> dict:
+    """Coerce a normalized entry to the comment-dict shape state extraction reads."""
+    if isinstance(comment, dict):
+        return comment
+    return {"body": getattr(comment, "body", "") or ""}
+
+
+def _env_repo() -> str:
+    return os.environ.get("REPO_NAME") or os.environ.get("GITHUB_REPOSITORY") or ""
+
+
+def _env_issue_number() -> int:
+    try:
+        return int(os.environ.get("TARGET_NUMBER") or 0)
+    except ValueError:
+        return 0

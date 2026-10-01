@@ -4,24 +4,50 @@ Nine phases, in order, each emitting one ``[phase:<name>]`` log marker:
 ``normalize -> resolve_config -> guards -> prompt -> agent -> validate ->
 publish -> state -> route``. The engine orchestrates legacy outputs by
 reference to their existing types and contains no platform-mode branching.
-
-Stub step: class skeletons only. Bodies are materialised by @@dev in the
-implement step.
 """
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
+
+from engine.models import (
+    ExitCode,
+    RoutingDecision,
+    RunOutcome,
+    Trigger,
+    to_routing_decision,
+)
+from engine.paths import ensure_import_path
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
     from adapters.base import PlatformAdapter
-    from engine.models import CommentEntry, RoutingDecision, RunOutcome, Trigger
+    from engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
 
 __all__ = ["PHASES", "Engine", "main"]
+
+log = logging.getLogger(__name__)
+
+# ``resolved`` is the legacy ``resolve_config`` dict passed verbatim between
+# phases; the engine carries the trigger alongside it (under this namespaced
+# key) so ``build_prompt`` can render the user context without re-reading it.
+_TRIGGER_KEY = "ENGINE_TRIGGER"
+
+_USER_REQUEST_HEADER = "--- USER REQUEST / GITHUB CONTEXT ---"
+_STEP_HEADER = "## Current step prompt"
+
+_EXIT_CODE_BY_STATUS = {
+    "advance": ExitCode.ADVANCE,
+    "loop": ExitCode.ADVANCE,
+    "hold": ExitCode.HOLD,
+}
 
 
 # @stub-protected
@@ -38,6 +64,33 @@ PHASES: tuple[str, ...] = (
 )
 
 
+def _is_true(value: Any) -> bool:
+    return str(value).strip().lower() == "true"
+
+
+def _exit_code_for(routing: RoutingDecision) -> ExitCode:
+    return _EXIT_CODE_BY_STATUS.get(routing.status, ExitCode.ADVANCE)
+
+
+def _answer_of(agent_result: Any) -> str:
+    if isinstance(agent_result, str):
+        return agent_result
+    if isinstance(agent_result, Mapping):
+        for key in ("answer", "latest_answer", "final_message", "text"):
+            value = agent_result.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
+def _final_message_of(agent_result: Any) -> str:
+    if isinstance(agent_result, Mapping):
+        value = agent_result.get("final_message") or agent_result.get("text")
+        if value:
+            return str(value)
+    return ""
+
+
 # @stub-protected
 @dataclass(frozen=True)
 class Engine:
@@ -51,55 +104,349 @@ class Engine:
     # @stub-protected
     def run(self) -> RunOutcome:
         """End-to-end pipeline; always returns an outcome."""
-        raise NotImplementedError
+        phases: list[str] = []
+        prompt: str | None = None
+        posted_body: str | None = None
+        state: WorkflowState | None = None
+        try:
+            self._enter(phases, "normalize")
+            trigger = self.normalize()
+
+            self._enter(phases, "resolve_config")
+            resolved = self.resolve(trigger)
+            history: Sequence[CommentEntry] = list(
+                self.adapter.load_history(limit=self.history_limit)
+            )
+
+            self._enter(phases, "guards")
+            verdict = self.guard(trigger, history)
+            if _is_true(verdict.get("SKIP_AGENT")):
+                reason = str(verdict.get("REASON") or "agent skipped")
+                log.info("[phase:guards] skipping agent — %s", reason)
+                return RunOutcome(
+                    exit_code=ExitCode.TERMINAL,
+                    routing=RoutingDecision(status="hold", reason=reason),
+                    prompt=None,
+                    posted_body=None,
+                    state=None,
+                    phases=tuple(phases),
+                )
+
+            self._enter(phases, "prompt")
+            prompt = self.build_prompt(resolved, history)
+
+            self._enter(phases, "agent")
+            agent_result = self.invoke_agent(prompt)
+
+            self._enter(phases, "validate")
+            self.validate(agent_result)
+
+            self._enter(phases, "publish")
+            posted_body = self.publish(agent_result)
+
+            self._enter(phases, "state")
+            state = self.persist(agent_result)
+
+            self._enter(phases, "route")
+            routing = self.route(agent_result)
+        except Exception as exc:  # noqa: BLE001 - the driver never crashes the host
+            log.exception("[phase:error] %s", exc)
+            return RunOutcome(
+                exit_code=ExitCode.ERROR,
+                routing=RoutingDecision(status="hold", reason=str(exc)),
+                prompt=prompt,
+                posted_body=posted_body,
+                state=state,
+                phases=tuple(phases),
+            )
+
+        return RunOutcome(
+            exit_code=_exit_code_for(routing),
+            routing=routing,
+            prompt=prompt,
+            posted_body=posted_body,
+            state=state,
+            phases=tuple(phases),
+        )
+
+    @staticmethod
+    def _enter(phases: list[str], name: str) -> None:
+        phases.append(name)
+        log.info("[phase:%s]", name)
 
     # @stub-protected
     def normalize(self) -> Trigger:
         """Return the adapter's normalized trigger."""
-        raise NotImplementedError
+        return self.adapter.read_trigger()
 
     # @stub-protected
     def resolve(self, trigger: Trigger) -> Any:
         """Delegate to the legacy ``resolve_config`` result."""
-        raise NotImplementedError
+        ensure_import_path()
+        from resolve_config.resolve_config import resolve_config
+
+        resolved = resolve_config(
+            trigger_body=trigger.body,
+            prompt_base=str(self.repo_root / ".agents" / "prompts"),
+            workflows_dir=str(self.repo_root / "workflows"),
+            repo=self._repo(trigger),
+            issue_number=trigger.number or None,
+            debug=_is_true(self.env.get("CONFIG_DEBUG")),
+        )
+        resolved[_TRIGGER_KEY] = trigger
+        return resolved
 
     # @stub-protected
     def guard(self, trigger: Trigger, history: Sequence[CommentEntry]) -> Any:
         """Run the loop guard + circuit breaker against the injected history."""
-        raise NotImplementedError
+        ensure_import_path()
+        from circuit_breaker import check_circuit_breaker, circuit_breaker_warning
+        from loop_guard import check_loop_guard
+
+        verdict = dict(
+            check_loop_guard(
+                trigger.body, self._mentioned_agent(trigger.body), history=history
+            )
+        )
+        verdict.update(
+            check_circuit_breaker(
+                trigger.number,
+                self._threshold(),
+                repo=self._repo(trigger) or "",
+                dry_run=True,
+                history=history,
+            )
+        )
+        # The legacy job folds a tripped breaker into SKIP_AGENT and posts the
+        # warning itself (circuit_breaker.py runs non-dry-run there); the engine
+        # keeps that decision and publishes the warning through the adapter.
+        if _is_true(verdict.get("CIRCUIT_BREAKER_TRIPPED")):
+            verdict["SKIP_AGENT"] = "true"
+            verdict.setdefault(
+                "REASON",
+                f"Circuit breaker tripped ({verdict.get('AGENT_CALLS')} agent calls)",
+            )
+            self.adapter.post(
+                circuit_breaker_warning(
+                    int(verdict.get("AGENT_CALLS") or 0), self._threshold()
+                )
+            )
+        return verdict
 
     # @stub-protected
     def build_prompt(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
         """Build the agent prompt from the resolved config and history."""
-        raise NotImplementedError
+        sections = [self._base_prompt(resolved)]
+        step_prompt = self._step_prompt(resolved)
+        if step_prompt:
+            sections.append(f"{_STEP_HEADER}\n\n{step_prompt}")
+        sections.append(_USER_REQUEST_HEADER)
+        sections.append(self._render_context(resolved, history))
+        return "\n\n".join(section for section in sections if section)
 
     # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:
         """Delegate to the legacy ``agent_script.arun`` result."""
-        raise NotImplementedError
+        from engine.agent_runner import run_legacy_agent
+
+        return run_legacy_agent(prompt, repo_root=self.repo_root, env=self.env)
 
     # @stub-protected
     def validate(self, agent_result: Any) -> None:
         """Delegate to ``validate_output``."""
-        raise NotImplementedError
+        ensure_import_path()
+        from validate_output import validate_agent_output
+
+        answer = _answer_of(agent_result)
+        result = validate_agent_output(answer, self._role_of(agent_result))
+        if not result.is_valid:
+            raise ValueError("agent output failed validation: " + "; ".join(result.errors))
 
     # @stub-protected
     def publish(self, agent_result: Any) -> str:
         """Delegate to ``select_posted_body`` then ``adapter.post``."""
-        raise NotImplementedError
+        ensure_import_path()
+        from prepare_comment import select_posted_body
+
+        body = select_posted_body(_answer_of(agent_result), _final_message_of(agent_result))
+        self.adapter.post(body)
+        return body
 
     # @stub-protected
     def persist(self, agent_result: Any) -> WorkflowState | None:
         """Persist the next workflow state through the adapter."""
-        raise NotImplementedError
+        state = self._build_state(agent_result)
+        if state is None:
+            return None
+        self.adapter.save_state(state)
+        return state
 
     # @stub-protected
     def route(self, agent_result: Any) -> RoutingDecision:
         """Map the agent's dispatch payload to a :class:`RoutingDecision`."""
-        raise NotImplementedError
+        return to_routing_decision(self._dispatch_payload(agent_result))
+
+    # ── internals ────────────────────────────────────────────────────
+
+    def _repo(self, trigger: Trigger) -> str | None:
+        payload_repo = (trigger.payload or {}).get("repository") or {}
+        return payload_repo.get("full_name") or self.env.get("REPO_NAME") or None
+
+    def _threshold(self) -> int:
+        raw = self.env.get("CIRCUIT_BREAKER_THRESHOLD") or "8"
+        try:
+            return int(raw)
+        except ValueError:
+            return 8
+
+    def _mentioned_agent(self, body: str) -> str:
+        ensure_import_path()
+        from config import load_agent_names
+
+        names = sorted(load_agent_names(), key=len, reverse=True)
+        if not names:
+            return ""
+        pattern = re.compile(
+            r"@@(?:" + "|".join(re.escape(name) for name in names) + r")(?![A-Za-z0-9_-])"
+        )
+        match = pattern.search(body or "")
+        return match.group(0)[2:] if match else ""
+
+    def _base_prompt(self, resolved: Any) -> str:
+        location = self._get(resolved, "PROMPT_LOCATION")
+        if not location:
+            return ""
+        from pathlib import Path
+
+        path = Path(location)
+        if not path.is_absolute():
+            path = self.repo_root / path
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    def _step_prompt(self, resolved: Any) -> str:
+        from pathlib import Path
+
+        location = self._get(resolved, "STEP_PROMPT_FILE")
+        if not location:
+            return ""
+        path = Path(location)
+        if not path.is_absolute():
+            path = self.repo_root / path
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    def _render_context(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
+        trigger = self._get(resolved, _TRIGGER_KEY)
+        parts: list[str] = []
+        if isinstance(trigger, Trigger):
+            parts.append(f"**Author:** {trigger.author}")
+            parts.append(trigger.body)
+        task = self._get(resolved, "TASK")
+        if task:
+            parts.append(f"**Task:** {task}")
+        parts.append("## Recent thread\n\n" + _render_history(history))
+        return "\n\n".join(part for part in parts if part)
+
+    def _role_of(self, agent_result: Any) -> str:
+        if isinstance(agent_result, Mapping) and agent_result.get("role"):
+            return str(agent_result["role"])
+        return self.env.get("ROLE_NAME", "")
+
+    def _build_state(self, agent_result: Any) -> WorkflowState | None:
+        ensure_import_path()
+        from workflow_state.workflow_state import WorkflowState
+
+        if isinstance(agent_result, Mapping):
+            explicit = agent_result.get("state")
+            if isinstance(explicit, WorkflowState):
+                return explicit
+
+        previous = self._previous_state()
+        routing = self.route(agent_result)
+        return WorkflowState(
+            version=(previous.version + 1) if previous else 1,
+            workflow=previous.workflow if previous else "",
+            step=routing.agent or (previous.step if previous else ""),
+            agent=routing.agent or (previous.agent if previous else ""),
+        )
+
+    def _previous_state(self) -> WorkflowState | None:
+        try:
+            return self.adapter.load_state()
+        except Exception:  # noqa: BLE001 - a missing/corrupt state is not fatal
+            return None
+
+    def _dispatch_payload(self, agent_result: Any) -> dict[str, Any]:
+        if isinstance(agent_result, Mapping):
+            dispatch = agent_result.get("dispatch")
+            if isinstance(dispatch, Mapping):
+                return dict(dispatch)
+            if agent_result.get("status"):
+                return dict(agent_result)
+        return _dispatch_from_text(
+            _answer_of(agent_result) or _final_message_of(agent_result)
+        )
+
+    @staticmethod
+    def _get(resolved: Any, key: str) -> Any:
+        return resolved.get(key) if isinstance(resolved, Mapping) else None
+
+
+def _render_history(history: Sequence[CommentEntry]) -> str:
+    if not history:
+        return "_(no prior thread)_"
+    return "\n\n".join(
+        f"### {entry.author} — {entry.created_at}\n\n{entry.body}" for entry in history
+    )
+
+
+def _dispatch_from_text(text: str) -> dict[str, Any]:
+    """Recover the ``AGENT_RUN_CONFIG`` dispatch payload from rendered text."""
+    if not text:
+        return {}
+    ensure_import_path()
+    from validate_output import extract_dispatch
+
+    raw = extract_dispatch(text)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if isinstance(data, Mapping) and isinstance(data.get("dispatch"), Mapping):
+        return dict(data["dispatch"])
+    return dict(data) if isinstance(data, Mapping) else {}
 
 
 # @stub-protected
 def main(argv: Sequence[str] | None = None) -> int:
     """Select the adapter, run once, map ``RunOutcome.exit_code`` to the process code."""
-    raise NotImplementedError
+    import argparse
+
+    from adapters import build_adapter
+    from engine.paths import repo_root
+
+    parser = argparse.ArgumentParser(description="Run one orchestration engine step")
+    parser.add_argument(
+        "--adapter",
+        default=os.environ.get("ENGINE_ADAPTER", "github"),
+        choices=("github", "local"),
+    )
+    parser.add_argument("--run-dir", default=os.environ.get("ENGINE_RUN_DIR"))
+    parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    logging.basicConfig(level=logging.INFO)
+    kwargs: dict[str, Any] = {}
+    if args.adapter == "local":
+        if not args.run_dir:
+            parser.error("--run-dir is required for the local adapter")
+        from pathlib import Path
+
+        kwargs["run_dir"] = Path(args.run_dir)
+    else:
+        kwargs["repo"] = args.repo
+
+    adapter = build_adapter(args.adapter, **kwargs)
+    outcome = Engine(adapter=adapter, repo_root=repo_root(), env=dict(os.environ)).run()
+    return int(outcome.exit_code)

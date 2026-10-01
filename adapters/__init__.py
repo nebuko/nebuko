@@ -19,4 +19,12 @@ __all__ = ["PlatformAdapter", "build_adapter"]
 # @stub-protected
 def build_adapter(kind: str, **kwargs: Any) -> PlatformAdapter:
     """Select the adapter for ``kind`` (``"github"`` | ``"local"``) and forward ``kwargs``."""
-    raise NotImplementedError
+    if kind == "local":
+        from adapters.local import LocalAdapter
+
+        return LocalAdapter(**kwargs)
+    if kind == "github":
+        from adapters.github import GitHubAdapter
+
+        return GitHubAdapter(**kwargs)
+    raise ValueError(f"unknown adapter kind: {kind!r}")

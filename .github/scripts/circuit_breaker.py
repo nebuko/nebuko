@@ -21,7 +21,7 @@ import argparse
 import os
 import re
 import sys
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
 
 sys.path.insert(0, os.path.dirname(__file__))
 from github_client import get_issue_comments, post_comment
@@ -34,7 +34,8 @@ def count_bot_markers(comments):
     """Count bot-agent markers in comment list (excluding summary markers).
 
     Args:
-        comments: List of comment dicts from GitHub API.
+        comments: List of comment dicts from GitHub API, or normalized
+            ``CommentEntry``-shaped objects (engine seam, issue #590).
 
     Returns:
         Tuple of (bot_marker_count, summary_marker_count).
@@ -42,7 +43,7 @@ def count_bot_markers(comments):
     bot_count = 0
     summary_count = 0
     for comment in comments:
-        body = comment.get("body", "")
+        body = _comment_body(comment)
         # Count all bot-agent markers
         bot_matches = re.findall(r"<!-- bot-agent-", body)
         # Count summary markers specifically
@@ -50,6 +51,22 @@ def count_bot_markers(comments):
         bot_count += len(bot_matches)
         summary_count += len(summary_matches)
     return bot_count, summary_count
+
+
+def _comment_body(comment) -> str:
+    """Read a comment body from either an API dict or a normalized entry."""
+    if isinstance(comment, Mapping):
+        return comment.get("body", "") or ""
+    return getattr(comment, "body", "") or ""
+
+
+def circuit_breaker_warning(agent_calls: int, threshold: int) -> str:
+    """Build the warning comment posted once the breaker trips."""
+    return (
+        f"\n⚠️ **Circuit Breaker Activated**\n\n"
+        f"Agent call limit reached ({agent_calls}/{threshold}). "
+        f"No further agents will be triggered until a human intervenes.\n"
+    )
 
 
 def check_circuit_breaker(
@@ -81,7 +98,10 @@ def check_circuit_breaker(
             "BOT_MARKER_COUNT": "0",
         }
 
-    comments = get_issue_comments(repo, issue_number, gh_token, dry_run=dry_run)
+    if history is not None:
+        comments = list(history)
+    else:
+        comments = get_issue_comments(repo, issue_number, gh_token, dry_run=dry_run)
     bot_count, summary_count = count_bot_markers(comments)
 
     # Agent calls = (total bot markers - summary markers) / 2
@@ -98,11 +118,7 @@ def check_circuit_breaker(
 
     if agent_calls >= threshold and not dry_run:
         # Post warning comment
-        warning = (
-            f"\n⚠️ **Circuit Breaker Activated**\n\n"
-            f"Agent call limit reached ({agent_calls}/{threshold}). "
-            f"No further agents will be triggered until a human intervenes.\n"
-        )
+        warning = circuit_breaker_warning(agent_calls, threshold)
         try:
             post_comment(repo, issue_number, warning, gh_token)
         except Exception as e:

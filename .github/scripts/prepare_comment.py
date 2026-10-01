@@ -307,16 +307,24 @@ def _apply_ctx_collapse(cleaned: str) -> str:
     return cleaned if collapsed == cleaned else collapsed
 
 
-def _write_output(content: str) -> None:
-    """Write content to github_comment.md and set HAS_COMMENT env var.
+def _write_output(content: str, poster: Poster | None = None) -> None:
+    """Publish content, either through the injected poster or the GHA path.
 
     Content is passed through escape_agent_triggers() so no comment posted
-    from any code path can contain a raw @@ trigger token.
+    from any code path can contain a raw @@ trigger token. When a ``poster``
+    is injected (engine seam, issue #590) the body goes through it instead of
+    the peter-evans/comment hand-off file.
 
     Args:
-        content: The comment body text to write.
+        content: The comment body text to publish.
+        poster: Optional injected poster callable (engine seam, issue #590).
     """
     content = escape_agent_triggers(content)
+
+    if poster is not None:
+        poster(content)
+        return
+
     with open("github_comment.md", "w", encoding="utf-8") as f:
         f.write(content)
 
@@ -361,7 +369,7 @@ def prepare_comment(poster: Poster | None = None) -> bool:
             metrics_comment = extract_metrics(raw)
             fallback = extract_from_console_log(metrics_comment)
             if fallback:
-                _write_output(fallback)
+                _write_output(fallback, poster=poster)
                 return True
             error_msg = (
                 author_ping
@@ -370,7 +378,7 @@ def prepare_comment(poster: Poster | None = None) -> bool:
             )
             if metrics_comment:
                 error_msg += "\n\n" + metrics_comment
-            _write_output(error_msg)
+            _write_output(error_msg, poster=poster)
             return True
 
         # ── Latest-answer ETL (issue #522) ───────────────────────
@@ -393,7 +401,7 @@ def prepare_comment(poster: Poster | None = None) -> bool:
                     print(f"Using latest answer ({len(cleaned)} characters)", flush=True)
                     cleaned = _apply_ctx_collapse(cleaned)
                     cleaned = _truncate_at_boundary(cleaned)
-                    _write_output(cleaned)
+                    _write_output(cleaned, poster=poster)
                     return True
 
         # Normal path: extract metrics, clean, write
@@ -407,7 +415,7 @@ def prepare_comment(poster: Poster | None = None) -> bool:
             print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
             cleaned = _apply_ctx_collapse(cleaned)
             cleaned = _truncate_at_boundary(cleaned)
-            _write_output(cleaned)
+            _write_output(cleaned, poster=poster)
             return True
 
         # Content was empty after cleaning — fall through to console.log
@@ -415,7 +423,7 @@ def prepare_comment(poster: Poster | None = None) -> bool:
               "falling back to console.log", flush=True)
         fallback = extract_from_console_log(metrics_comment)
         if fallback:
-            _write_output(fallback)
+            _write_output(fallback, poster=poster)
             return True
 
         # Console.log also empty — crash message
@@ -426,14 +434,14 @@ def prepare_comment(poster: Poster | None = None) -> bool:
         )
         if metrics_comment:
             error_msg += "\n\n" + metrics_comment
-        _write_output(error_msg)
+        _write_output(error_msg, poster=poster)
         return True
 
     # ── Path B: console.log only (final_message.txt missing/empty) ─
     metrics_comment = ""
     fallback = extract_from_console_log(metrics_comment)
     if fallback:
-        _write_output(fallback)
+        _write_output(fallback, poster=poster)
         return True
 
     # ── Path C/D: No output at all ──────────────────────────────
@@ -442,7 +450,7 @@ def prepare_comment(poster: Poster | None = None) -> bool:
         + "> \u26a0\ufe0f The agent did not produce a final message. "
         + "Please check the full logs in the workflow run."
     )
-    _write_output(error_msg)
+    _write_output(error_msg, poster=poster)
     return True
 
 

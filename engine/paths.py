@@ -11,6 +11,7 @@ step.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 __all__ = ["SCRIPTS_DIR", "repo_root", "ensure_import_path"]
@@ -23,10 +24,12 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / ".github" / "scripts"
 # @stub-protected
 def repo_root() -> Path:
     """Absolute path of the repository root that contains ``engine/``."""
-    raise NotImplementedError
+    return Path(__file__).resolve().parents[1]
 
 
 # @stub-protected
 def ensure_import_path() -> None:
     """Append :data:`SCRIPTS_DIR` to ``sys.path`` (no-op when already present)."""
-    raise NotImplementedError
+    path = str(SCRIPTS_DIR)
+    if path not in sys.path:
+        sys.path.append(path)

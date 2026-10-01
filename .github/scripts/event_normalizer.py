@@ -39,8 +39,26 @@ def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
     Returns:
         The normalized Trigger.
     """
-    # @stub-protected
-    raise NotImplementedError
+    from engine.models import Trigger
+
+    comment = payload.get("comment")
+    if comment is not None:
+        return Trigger(
+            author=comment.get("user", {}).get("login", ""),
+            body=comment.get("body", "") or "",
+            type="issue_comment",
+            number=payload.get("issue", {}).get("number") or 0,
+            payload=payload,
+        )
+
+    issue = payload.get("issue") or {}
+    return Trigger(
+        author=issue.get("user", {}).get("login", ""),
+        body=issue.get("body", "") or "",
+        type="issue",
+        number=issue.get("number") or 0,
+        payload=payload,
+    )
 
 
 def normalize_event(

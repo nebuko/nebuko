@@ -22,6 +22,7 @@ __all__ = [
     "RoutingDecision",
     "ExitCode",
     "RunOutcome",
+    "to_routing_decision",
 ]
 
 
@@ -82,3 +83,20 @@ class RunOutcome:
     posted_body: str | None
     state: WorkflowState | None
     phases: tuple[str, ...]  # ordered "[phase:*]" markers actually emitted
+
+
+def to_routing_decision(args: Mapping[str, Any]) -> RoutingDecision:
+    """Normalize a ``dispatch_next``/``AGENT_RUN_CONFIG`` payload.
+
+    Tolerant of missing fields: an unknown/absent status is treated as a plain
+    ``advance`` so a hand-off is never silently dropped.
+    """
+    status = str(args.get("status") or "advance")
+    complexity = args.get("complexity") or "medium"
+    return RoutingDecision(
+        status=status,
+        agent=args.get("agent"),
+        complexity=str(complexity),
+        branch=args.get("branch"),
+        reason=args.get("reason"),
+    )
