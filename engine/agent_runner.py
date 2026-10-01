@@ -28,6 +28,10 @@ _LATEST_ANSWER_FILE = "latest_answer.md"
 _FINAL_MESSAGE_FILE = "final_message.txt"
 _STATE_FILE = "workflow_state.json"
 _CONSOLE_LOG_FILE = "console.log"
+_PROMPT_FILE = "final_prompt.md"
+# The entry point is staged under a name that cannot shadow the ``agent_script``
+# package (see :func:`_stage_entry_point`).
+_STAGED_ENTRY_FILE = "agent_script_entry.py"
 
 
 def run_legacy_agent(
@@ -48,14 +52,15 @@ def run_legacy_agent(
     if not script.is_file():
         raise FileNotFoundError(f"legacy agent entry point not found: {script}")
 
-    child_env = {**os.environ, **(env or {})}
+    child_env = _child_env(script, env)
     with tempfile.TemporaryDirectory(prefix="gfa-agent-") as workdir:
         work = Path(workdir)
-        prompt_file = work / "final_prompt.md"
+        prompt_file = work / _PROMPT_FILE
         prompt_file.write_text(prompt, encoding="utf-8")
+        staged = _stage_entry_point(script, work)
 
         completed = subprocess.run(
-            [sys.executable, str(script), str(prompt_file)],
+            [sys.executable, str(staged), str(prompt_file)],
             cwd=workdir,
             env=child_env,
             capture_output=True,
@@ -77,6 +82,28 @@ def run_legacy_agent(
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
+def _stage_entry_point(script: Path, work: Path) -> Path:
+    """Copy the entry point out of its package directory before running it.
+
+    The legacy host stages it the same way (``/tmp/agent_script.py``). Running it
+    in place puts ``.github/scripts/agent_script`` first on the child's
+    ``sys.path``, where ``agent_script.py`` shadows the ``agent_script`` package
+    and ``from agent_script import load_prompt`` fails.
+    """
+    staged = work / _STAGED_ENTRY_FILE
+    staged.write_bytes(script.read_bytes())
+    return staged
+
+
+def _child_env(script: Path, env: Mapping[str, str] | None) -> dict[str, str]:
+    """Environment for the child, importing ``.github/scripts`` like the host."""
+    child_env = {**os.environ, **(env or {})}
+    scripts_dir = str(script.parent.parent)
+    existing = child_env.get("PYTHONPATH")
+    child_env["PYTHONPATH"] = f"{scripts_dir}{os.pathsep}{existing}" if existing else scripts_dir
+    return child_env
 
 
 def _load_state(path: Path) -> Any:
