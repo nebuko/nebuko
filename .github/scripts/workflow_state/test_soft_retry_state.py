@@ -70,5 +70,104 @@ class TestBuildStateCarriesSoftRetry(unittest.TestCase):
         self.assertEqual(nxt.soft_retry.attempts, 1)
 
 
+class TestSoftRetryStateRecord(unittest.TestCase):
+    def test_record_starts_a_counter_for_a_new_step(self):
+        self.assertEqual(
+            SoftRetryState().record("implement"),
+            SoftRetryState(step="implement", attempts=1),
+        )
+
+    def test_record_advances_an_existing_counter(self):
+        counter = SoftRetryState(step="implement", attempts=1).record("implement")
+        self.assertEqual(counter, SoftRetryState(step="implement", attempts=2))
+
+    def test_record_restarts_for_a_different_step(self):
+        counter = SoftRetryState(step="review", attempts=5).record("implement")
+        self.assertEqual(counter, SoftRetryState(step="implement", attempts=1))
+
+    def test_record_does_not_mutate_the_receiver(self):
+        base = SoftRetryState(step="implement", attempts=1)
+        base.record("implement")
+        self.assertEqual(base, SoftRetryState(step="implement", attempts=1))
+
+
+class TestSoftRetryStateResetFor(unittest.TestCase):
+    def test_reset_for_a_new_step_zeroes_the_counter(self):
+        counter = SoftRetryState(step="implement", attempts=2).reset_for("review")
+        self.assertEqual(counter, SoftRetryState(step="review", attempts=0))
+
+    def test_reset_for_the_same_step_preserves_the_budget(self):
+        counter = SoftRetryState(step="implement", attempts=1).reset_for("implement")
+        self.assertEqual(counter, SoftRetryState(step="implement", attempts=1))
+
+
+class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
+    """`build_state` is the single writer of the counter (issue #704)."""
+
+    def test_retry_path_increments_the_counter(self):
+        prev = build_state(
+            None,
+            workflow="w",
+            step="implement",
+            agent="dev",
+            dispatch=Dispatch(status="soft_kill"),
+        )
+        nxt = build_state(
+            prev,
+            workflow="w",
+            step="implement",
+            agent="dev",
+            dispatch=Dispatch(status="soft_kill"),
+        )
+        self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=1))
+
+    def test_second_retry_increments_again(self):
+        prev = build_state(
+            None,
+            workflow="w",
+            step="implement",
+            agent="dev",
+            dispatch=Dispatch(status="soft_kill"),
+        ).model_copy(update={"soft_retry": SoftRetryState(step="implement", attempts=1)})
+        nxt = build_state(
+            prev,
+            workflow="w",
+            step="implement",
+            agent="dev",
+            dispatch=Dispatch(status="soft_kill"),
+        )
+        self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=2))
+
+    def test_advance_path_resets_the_counter_for_the_new_step(self):
+        prev = build_state(
+            None, workflow="w", step="implement", agent="dev"
+        ).model_copy(
+            update={
+                "soft_retry": SoftRetryState(step="implement", attempts=2),
+                "dispatch": Dispatch(status="advance"),
+            }
+        )
+        nxt = build_state(
+            prev,
+            workflow="w",
+            step="review",
+            agent="reviewer",
+            dispatch=Dispatch(status="advance"),
+        )
+        self.assertEqual(nxt.soft_retry, SoftRetryState(step="review", attempts=0))
+
+    def test_normal_transition_within_a_step_keeps_the_counter(self):
+        prev = build_state(
+            None, workflow="w", step="implement", agent="dev"
+        ).model_copy(
+            update={
+                "soft_retry": SoftRetryState(step="implement", attempts=1),
+                "dispatch": Dispatch(status="advance"),
+            }
+        )
+        nxt = build_state(prev, workflow="w", step="implement", agent="dev")
+        self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=1))
+
+
 if __name__ == "__main__":
     unittest.main()

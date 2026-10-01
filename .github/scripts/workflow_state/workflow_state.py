@@ -34,6 +34,47 @@ class SoftRetryState(BaseModel):  # @stub-protected
     step: Optional[str] = None  # @stub-protected
     attempts: int = 0  # @stub-protected
 
+    def record(self, step: str) -> "SoftRetryState":  # @stub-protected
+        """Return the counter advanced by one soft retry for ``step``.
+
+        Sole owner of the retry increment (issue #704). Called by
+        :func:`build_state` on the **retry path** — the previous run was
+        soft-killed, so this run is the retry that consumes one attempt. A
+        counter recorded for a different step is restarted at ``1`` for
+        ``step``.
+
+        Args:
+            step: Workflow step the retry is being consumed for.
+
+        Returns:
+            A new SoftRetryState with ``step`` set to ``step`` and ``attempts``
+            advanced by one.
+        """
+        if self.step == step:
+            return self.model_copy(update={"attempts": self.attempts + 1})
+        return SoftRetryState(step=step, attempts=1)
+
+    def reset_for(self, step: str) -> "SoftRetryState":  # @stub-protected
+        """Return the counter reset for a normal transition into ``step``.
+
+        Sole owner of the retry reset (issue #704). Called by
+        :func:`build_state` on the **advance path** — a normal (non-soft-kill)
+        transition that enters a different step. A counter already recorded for
+        ``step`` is returned untouched so an in-progress retry budget is not
+        wiped when the same step simply re-runs normally.
+
+        Args:
+            step: Workflow step being entered.
+
+        Returns:
+            ``self`` when the counter already applies to ``step``; otherwise a
+            fresh SoftRetryState for ``step`` with ``attempts == 0``.
+        """
+        if self.step == step:
+            return self
+        return SoftRetryState(step=step, attempts=0)
+
+
 class WorkflowState(BaseModel):
     """
     Structured workflow state embedded in GitHub comments.

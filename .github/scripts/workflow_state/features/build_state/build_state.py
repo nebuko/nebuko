@@ -191,10 +191,10 @@ def build_state(
     )
 
     # Preserve per-step soft-kill retry accounting across transitions (issue
-    # #704). A pre-#704 state (or a legacy blob without the key) default-fills
-    # to an empty counter; the soft-kill path in build_output overwrites it
-    # with the incremented (or reset) value.
-    new_soft_retry = (
+    # #704). The counter is default-filled from the previous state so a
+    # pre-#704 blob (or a legacy blob without the key) starts empty; the
+    # increment/reset is applied below once the effective step is known.
+    base_soft_retry = (
         prev_state.soft_retry if prev_state is not None else SoftRetryState()
     )
 
@@ -210,6 +210,25 @@ def build_state(
     # scalar step disagreed with their own history).
     effective_step = _fallback_field(step, prev_state, base_history, "step")
     effective_agent = _fallback_field(agent, prev_state, base_history, "agent")
+
+    # Per-step soft-kill retry accounting (issue #704). ``build_state`` is the
+    # single writer of the counter; every mutation goes through the
+    # ``SoftRetryState`` mutators so the increment/reset lifecycle has exactly
+    # one owner:
+    #   - retry path: the *previous* run was soft-killed, so this run is the
+    #     retry that consumes one attempt for its step (``record``);
+    #   - advance path: a normal transition into a different step resets the
+    #     counter for the new step (``reset_for``).
+    if (
+        prev_state is not None
+        and prev_state.dispatch is not None
+        and prev_state.dispatch.status == "soft_kill"
+    ):
+        new_soft_retry = base_soft_retry.record(effective_step)
+    elif base_soft_retry.step is not None and base_soft_retry.step != effective_step:
+        new_soft_retry = base_soft_retry.reset_for(effective_step)
+    else:
+        new_soft_retry = base_soft_retry
 
     return WorkflowState(
         version=state_version,

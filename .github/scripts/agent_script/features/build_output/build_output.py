@@ -215,7 +215,14 @@ def _soft_kill_dispatch() -> Dispatch:  # @stub-protected
     Returns:
         A Dispatch with status ``soft_kill`` and the timeout reason.
     """
-    raise NotImplementedError
+    return Dispatch(
+        status="soft_kill",
+        reason=(
+            "Soft time-kill: the run was interrupted by the wind-down timeout "
+            "before completing the step. Retry this step in place; halt for a "
+            "human once MAX_SOFT_RETRIES is exhausted."
+        ),
+    )
 
 
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
@@ -943,6 +950,16 @@ def build_output(
     # the next run in a long-lived process.
     clear_run(getattr(conversation, "id", None))
     clear_scaffold_branch_run(getattr(conversation, "id", None))
+
+    # ── Soft-kill error status (issue #704) ──────────────────────
+    # A gracefully timed-out run was interrupted mid-step, so it is an error
+    # outcome, not a completion. Override whatever dispatch the agent emitted
+    # with the explicit ``soft_kill`` status so the router retries this step in
+    # place (bounded by MAX_SOFT_RETRIES) instead of advancing to the next one.
+    # Applied before the human-gate intercept so a gated step still holds.
+    if is_graceful_timeout:
+        dispatch = _soft_kill_dispatch()
+        logger.info("Graceful timeout — dispatch overridden with soft_kill status")
 
     # ── Human gate intercept (issue #506) ────────────────────────
     # The trigger source is the sole authorization: a resume-triggered run

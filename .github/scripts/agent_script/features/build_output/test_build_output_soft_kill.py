@@ -4,7 +4,18 @@ A gracefully timed-out run must emit an explicit soft-kill error dispatch so
 the workflow retries the interrupted step instead of advancing.
 """
 
+import os
+import sys
 import unittest
+
+sys.path.insert(
+    0,
+    os.path.dirname(
+        os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+    ),
+)
 
 from build_output import _soft_kill_dispatch
 from workflow_state import Dispatch

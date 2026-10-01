@@ -11,7 +11,11 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from resolve_config.features.resolve_route.resolve_route import resolve_soft_kill_route
+from resolve_config.features.resolve_route.resolve_route import (
+    _resolve_dispatch_path,
+    resolve_max_soft_retries,
+    resolve_soft_kill_route,
+)
 from workflow_state import Dispatch, SoftRetryState, WorkflowState
 
 
@@ -67,6 +71,35 @@ class TestSoftKillRoute(unittest.TestCase):
         )
         self.assertNotEqual(result.get("SKIP_AGENT"), "true")
         self.assertEqual(result["config_step"], "review")
+
+
+class TestResolveMaxSoftRetries(unittest.TestCase):
+    """The single, validated read site for the retry budget (issue #704)."""
+
+    def test_reads_the_declared_value(self):
+        self.assertEqual(resolve_max_soft_retries({"MAX_SOFT_RETRIES": "3"}), 3)
+
+    def test_defaults_to_two_when_unset(self):
+        self.assertEqual(resolve_max_soft_retries({}), 2)
+
+    def test_defaults_when_malformed(self):
+        self.assertEqual(resolve_max_soft_retries({"MAX_SOFT_RETRIES": "many"}), 2)
+
+    def test_negative_is_clamped_to_zero(self):
+        self.assertEqual(resolve_max_soft_retries({"MAX_SOFT_RETRIES": "-1"}), 0)
+
+
+class TestDispatchPathSoftKillWiring(unittest.TestCase):
+    """`_resolve_dispatch_path` must consult the soft-kill router first."""
+
+    def test_soft_kill_dispatch_retries_in_place(self):
+        result = _resolve_dispatch_path(
+            _state(attempts=0),
+            Dispatch(status="soft_kill"),
+            "workflows",
+        )
+        self.assertEqual(result["config_step"], "implement")
+        self.assertEqual(result["task"], "dev")
 
 
 if __name__ == "__main__":
