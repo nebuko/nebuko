@@ -38,10 +38,11 @@ class SoftRetryState(BaseModel):  # @stub-protected
         """Return the counter advanced by one soft retry for ``step``.
 
         Sole owner of the retry increment (issue #704). Called by
-        :func:`build_state` on the **retry path** — the previous run was
-        soft-killed, so this run is the retry that consumes one attempt. A
-        counter recorded for a different step is restarted at ``1`` for
-        ``step``.
+        :func:`build_state` on the **engine-retry path** — the previous run was
+        soft-killed and this run was explicitly re-dispatched by the engine
+        (``soft_retry_attempt`` marker), so it is the retry that consumes one
+        attempt. A counter recorded for a different step is restarted at ``1``
+        for ``step``.
 
         Args:
             step: Workflow step the retry is being consumed for.

@@ -314,7 +314,9 @@ def apply_human_gate_intercept(
     on its own: an ``advance`` dispatch (or missing dispatch, which resolves
     to advance downstream) is overridden to ``hold`` unless the run was
     triggered by a human ``/workflow resume`` (``is_human_resume``). Loop,
-    hold, and terminate outcomes are never intercepted.
+    hold, and terminate outcomes are never intercepted. A ``soft_kill``
+    dispatch (issue #704) is treated like ``advance``: on a gated step the
+    gate wins and the run holds for a human instead of auto-retrying.
 
     Args:
         dispatch: Dispatch extracted from the agent output (may be None).
@@ -325,7 +327,7 @@ def apply_human_gate_intercept(
     Returns:
         The (possibly overridden) Dispatch.
     """
-    if dispatch is not None and dispatch.status != "advance":
+    if dispatch is not None and dispatch.status not in ("advance", "soft_kill"):
         return dispatch
     if is_human_resume:
         return dispatch
@@ -333,7 +335,7 @@ def apply_human_gate_intercept(
         return dispatch
     logger.info(
         f"Human gate: step '{workflow_step}' requires approval — "
-        f"intercepting advance as hold"
+        f"intercepting {(dispatch.status if dispatch else 'advance')} as hold"
     )
     if dispatch is None:
         dispatch = Dispatch()
@@ -966,6 +968,14 @@ def build_output(
     # (HUMAN_RESUME_INPUT present) passes; anything else on a gated step is
     # held for human review.
     is_human_resume = bool(os.environ.get("HUMAN_RESUME_INPUT", "").strip())
+    # Engine soft-kill retry marker (issue #704): emitted only by the
+    # soft-kill retry resolution. Forwarded to build_state so the per-step
+    # retry budget is consumed for genuine retries and never for a human or
+    # manual trigger (which carries no marker).
+    soft_retry_attempt = (
+        os.environ.get("SOFT_RETRY_ATTEMPT", "").strip().lower()
+        in ("true", "1", "yes")
+    )
     dispatch = apply_human_gate_intercept(
         dispatch,
         workflow_name=workflow_name,
@@ -1011,6 +1021,8 @@ def build_output(
         pin=pin,
         scaffold_branch=scaffold_branch,
         position=position,
+        soft_retry_attempt=soft_retry_attempt,
+        is_human_resume=is_human_resume,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 

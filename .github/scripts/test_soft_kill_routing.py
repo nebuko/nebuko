@@ -5,12 +5,15 @@ its per-step retry budget remains and halts the workflow for a human once the
 budget is exhausted — never advancing to the next step.
 """
 
+import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from resolve_config import resolve_config
 from resolve_config.features.resolve_route.resolve_route import (
     _resolve_dispatch_path,
     resolve_max_soft_retries,
@@ -42,6 +45,17 @@ class TestSoftKillRoute(unittest.TestCase):
         self.assertNotEqual(result.get("SKIP_AGENT"), "true")
         self.assertEqual(result["config_step"], "implement")
         self.assertEqual(result["task"], "dev")
+        # The emitted retry config must flag itself as an engine retry so
+        # build_state consumes exactly one budget attempt (issue #704).
+        self.assertEqual(result["config_soft_retry_attempt"], "true")
+
+    def test_retry_honors_the_dispatch_task_hint(self):
+        result = resolve_soft_kill_route(
+            _state(agent="dev"),
+            Dispatch(status="soft_kill", task_hint="review"),
+            max_soft_retries=2,
+        )
+        self.assertEqual(result["task"], "review")
 
     def test_second_retry_is_still_within_budget(self):
         result = resolve_soft_kill_route(
@@ -56,6 +70,8 @@ class TestSoftKillRoute(unittest.TestCase):
         )
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("implement", result["REASON"])
+        # A halt must tell the human how to take over.
+        self.assertIn("/workflow resume", result["REASON"])
 
     def test_zero_budget_halts_immediately(self):
         result = resolve_soft_kill_route(
@@ -100,6 +116,72 @@ class TestDispatchPathSoftKillWiring(unittest.TestCase):
         )
         self.assertEqual(result["config_step"], "implement")
         self.assertEqual(result["task"], "dev")
+
+
+class TestSoftKillResumeAfterHalt(unittest.TestCase):
+    """An exhausted soft-kill halt must be resumable by a human (issue #704).
+
+    Round-3 review: the halt stop-gap must not become a dead end — a human
+    ``/workflow resume`` on the halted step re-runs that same step.
+    """
+
+    _WORKFLOW_YAML = (
+        "name: dev-review-loop\n"
+        "description: dev review loop\n"
+        "trigger:\n"
+        "  agents: [dev]\n"
+        "steps:\n"
+        "  - name: implement\n"
+        "    agent: dev\n"
+        "    next: review\n"
+        "  - name: review\n"
+        "    agent: review\n"
+        "    next: null\n"
+    )
+
+    def _dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        os.makedirs(os.path.join(prompt_base, "dev"), exist_ok=True)
+        with open(os.path.join(prompt_base, "dev", "system.md"), "w") as handle:
+            handle.write("# dev")
+        with open(
+            os.path.join(workflows_dir, "dev-review-loop.yaml"), "w"
+        ) as handle:
+            handle.write(self._WORKFLOW_YAML)
+        return prompt_base, workflows_dir
+
+    def _resume_body(self, state):
+        state_json = json.dumps(
+            state.model_dump(mode="json", exclude={"pinned_content"})
+        )
+        return "\n".join(
+            [
+                "/workflow resume --feedback resumed by human",
+                "<details>",
+                "<summary>🤖 Workflow State (v1)</summary>",
+                "",
+                "```json",
+                "<!-- WORKFLOW_STATE_START -->",
+                state_json,
+                "<!-- WORKFLOW_STATE_END -->",
+                "```",
+                "",
+                "</details>",
+            ]
+        )
+
+    def test_resume_after_exhausted_soft_kill_reruns_the_step(self):
+        prompt_base, workflows_dir = self._dirs()
+        halted = _state(attempts=2)
+        halted.dispatch = Dispatch(status="soft_kill")
+        result = resolve_config(
+            self._resume_body(halted), prompt_base, workflows_dir, is_bot=False
+        )
+        self.assertNotEqual(result.get("SKIP_AGENT"), "true")
+        self.assertEqual(result["TASK"], "dev")
+        self.assertEqual(result["WORKFLOW_STEP"], "implement")
+        self.assertEqual(result["HUMAN_RESUME_INPUT"], "resumed by human")
 
 
 if __name__ == "__main__":

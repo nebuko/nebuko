@@ -70,6 +70,8 @@ def build_state(
     dispatch: Optional[Dispatch] = None,
     function_call: Optional[FunctionCall] = None,
     position: Optional[dict] = None,
+    soft_retry_attempt: bool = False,
+    is_human_resume: bool = False,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -111,6 +113,14 @@ def build_state(
             history entry and the state (``history[-1].position == position``
             invariant); a non-empty position also bumps the state version to
             POSITION_STATE_VERSION.
+        soft_retry_attempt: True only when this run is an *engine-issued*
+            soft-kill retry (the ``SOFT_RETRY_ATTEMPT`` marker emitted by
+            ``resolve_soft_kill_route``, issue #704). It is the single trigger
+            that consumes one ``SoftRetryState`` attempt for the step, so a
+            human/manual trigger never burns the budget.
+        is_human_resume: True when this run was started by an explicit human
+            ``/workflow resume``. An explicit human resume starts a fresh
+            per-step budget (``attempts=0``) since the human has taken over.
 
     Returns:
         A new WorkflowState instance.
@@ -215,15 +225,18 @@ def build_state(
     # single writer of the counter; every mutation goes through the
     # ``SoftRetryState`` mutators so the increment/reset lifecycle has exactly
     # one owner:
-    #   - retry path: the *previous* run was soft-killed, so this run is the
-    #     retry that consumes one attempt for its step (``record``);
+    #   - retry path: only an engine-issued retry (``soft_retry_attempt``,
+    #     emitted by ``resolve_soft_kill_route``) consumes one attempt for its
+    #     step (``record``). Gating on the explicit marker — rather than on the
+    #     previous dispatch status — keeps a human/manual trigger from burning
+    #     the budget (issue #704 review round 3).
+    #   - human-resume path: an explicit human resume takes over, so the step
+    #     restarts with a fresh budget (issue #704 review round 3).
     #   - advance path: a normal transition into a different step resets the
     #     counter for the new step (``reset_for``).
-    if (
-        prev_state is not None
-        and prev_state.dispatch is not None
-        and prev_state.dispatch.status == "soft_kill"
-    ):
+    if is_human_resume:
+        new_soft_retry = SoftRetryState(step=effective_step, attempts=0)
+    elif soft_retry_attempt:
         new_soft_retry = base_soft_retry.record(effective_step)
     elif base_soft_retry.step is not None and base_soft_retry.step != effective_step:
         new_soft_retry = base_soft_retry.reset_for(effective_step)

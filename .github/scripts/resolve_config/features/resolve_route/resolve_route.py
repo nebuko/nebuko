@@ -135,11 +135,12 @@ def _resolve_resume_path(
 ) -> dict:
     """Resolve config to re-run the currently held step after /workflow resume.
 
-    Validates that dispatch.status == "hold", looks up the current step in the
-    workflow YAML, then builds a config for the same step/agent (replaying so the
-    agent can process the human's response). Copies dispatch parameters from the
-    previously stored dispatch. Injects human input into current_context so the
-    agent prompt can reference it.
+    Validates that dispatch.status is ``hold`` (a human-gate hold) or
+    ``soft_kill`` (a retry-budget exhaustion halt, issue #704), looks up the
+    current step in the workflow YAML, then builds a config for the same
+    step/agent (replaying so the agent can process the human's response).
+    Copies dispatch parameters from the previously stored dispatch. Injects
+    human input into current_context so the agent prompt can reference it.
 
     Args:
         prev_state: WorkflowState containing the held workflow/step/agent.
@@ -153,8 +154,9 @@ def _resolve_resume_path(
     """
     dispatch = prev_state.dispatch
 
-    # Validate that this step is actually on hold
-    if dispatch is None or dispatch.status != "hold":
+    # Both a human-gate ``hold`` and a soft-kill exhaustion halt (issue #704)
+    # are resumable: an explicit human resume re-runs the interrupted step.
+    if dispatch is None or dispatch.status not in ("hold", "soft_kill"):
         return {
             "SKIP_AGENT": "true",
             "REASON": f"resume: step is not on hold (dispatch.status='{dispatch.status if dispatch else 'none'}')",
@@ -452,13 +454,18 @@ def resolve_soft_kill_route(
         normal routing). Otherwise one of:
 
         * **retry** — a same-step resolution config dict carrying at least
-          ``task=prev_state.agent`` (re-run the interrupted step's agent),
-          ``config_step=prev_state.step``, ``config_workflow=prev_state.workflow``
-          and the dispatch's LLM settings, while the retries consumed for the
-          step are below ``max_soft_retries``;
-        * **halt** — ``{"SKIP_AGENT": "true", "REASON": ...}`` naming the step
-          and the exhausted attempt count, once the budget is spent so a human
-          can resume (``/workflow resume``).
+          ``task=dispatch_obj.task_hint or prev_state.agent`` (re-run the
+          interrupted step's agent), ``config_step=prev_state.step``,
+          ``config_workflow=prev_state.workflow`` and the dispatch's LLM
+          settings, while the retries consumed for the step are below
+          ``max_soft_retries``. The dict also carries the
+          ``config_soft_retry_attempt="true"`` marker: it is the only signal
+          that tells the state writer this run is an *engine* retry, so the
+          per-step budget is consumed for retries and never for a human/manual
+          trigger;
+        * **halt** — ``{"SKIP_AGENT": "true", "REASON": ...}`` naming the step,
+          the exhausted attempt count and the ``/workflow resume`` command,
+          once the budget is spent so a human can resume.
 
         This is a **pure reader**: the counter is never mutated here. The
         increment/reset lifecycle is owned by the workflow-state writer
@@ -478,8 +485,10 @@ def resolve_soft_kill_route(
         # Same-step retry: clone the dispatch's LLM preferences onto the
         # interrupted step. Mirrors the normal dispatch config surface so
         # ``build_result`` treats the retry exactly like an in-place re-run.
+        # ``config_soft_retry_attempt`` marks the run as an engine retry so the
+        # state writer consumes exactly one per-step attempt for it.
         return {
-            "task": prev_state.agent or "",
+            "task": dispatch_obj.task_hint or prev_state.agent or "",
             "config_complexity": dispatch_obj.complexity or "medium",
             "config_reasoning": dispatch_obj.reasoning or "none",
             "config_temperature": str(dispatch_obj.temperature) if dispatch_obj.temperature is not None else "",
@@ -495,13 +504,15 @@ def resolve_soft_kill_route(
             "config_branch": dispatch_obj.branch or "",
             "config_parent_workflow": dispatch_obj.parent_workflow or "",
             "config_parent_workflow_step": dispatch_obj.parent_workflow_step or "",
+            "config_soft_retry_attempt": "true",
         }
 
     return {
         "SKIP_AGENT": "true",
         "REASON": (
             f"Soft time-kill: step '{step}' exhausted its retry budget "
-            f"({attempts}/{budget}); halting the workflow for a human to resume."
+            f"({attempts}/{budget}); halting the workflow for a human to resume "
+            f"with /workflow resume."
         ),
     }
 

@@ -334,6 +334,9 @@ jobs:
                   WORKFLOW_POSITION=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_POSITION=' | cut -d= -f2-)
                   WORKFLOW_POSITION_PATH=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_POSITION_PATH=' | cut -d= -f2-)
                   HUMAN_RESUME_INPUT=$(echo "$RESOLVE_OUTPUT" | grep '^HUMAN_RESUME_INPUT=' | cut -d= -f2-)
+                  # Engine soft-kill retry marker (issue #704): emitted only by
+                  # the soft-kill retry resolution; consumed by build_output.
+                  SOFT_RETRY_ATTEMPT=$(echo "$RESOLVE_OUTPUT" | grep '^SOFT_RETRY_ATTEMPT=' | cut -d= -f2-)
                   # Deterministic script step (issue #541): resolver emits the
                   # script execution contract instead of a task assignment.
                   RUN_SCRIPT=$(echo "$RESOLVE_OUTPUT" | grep '^RUN_SCRIPT=' | cut -d= -f2-)
@@ -412,6 +415,9 @@ jobs:
                   echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
                   echo "STEP_PROMPT_FILE=${STEP_PROMPT_FILE:-}" >> $GITHUB_ENV
                   echo "HUMAN_RESUME_INPUT=${HUMAN_RESUME_INPUT:-}" >> $GITHUB_ENV
+                  # Engine soft-kill retry marker (issue #704): "" for every run
+                  # except the soft-kill retry resolution.
+                  echo "SOFT_RETRY_ATTEMPT=${SOFT_RETRY_ATTEMPT:-}" >> $GITHUB_ENV
                   # Human gate (issue #506): reuse the exact workflows dir the
                   # resolver used (may be the .git-flow-ai-cache copy).
                   echo "WORKFLOWS_DIR=$WFLOWS_DIR" >> $GITHUB_ENV

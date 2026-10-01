@@ -102,9 +102,15 @@ class TestSoftRetryStateResetFor(unittest.TestCase):
 
 
 class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
-    """`build_state` is the single writer of the counter (issue #704)."""
+    """`build_state` is the single writer of the counter (issue #704).
 
-    def test_retry_path_increments_the_counter(self):
+    The counter is consumed only for an *engine-issued* retry, signalled by the
+    explicit ``soft_retry_attempt`` marker (``SOFT_RETRY_ATTEMPT`` env, emitted
+    by ``resolve_soft_kill_route``). A human/manual re-run of a soft-killed step
+    carries no marker and must not burn the budget (issue #704 review round 3).
+    """
+
+    def test_engine_retry_increments_the_counter(self):
         prev = build_state(
             None,
             workflow="w",
@@ -118,10 +124,11 @@ class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
             step="implement",
             agent="dev",
             dispatch=Dispatch(status="soft_kill"),
+            soft_retry_attempt=True,
         )
         self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=1))
 
-    def test_second_retry_increments_again(self):
+    def test_second_engine_retry_increments_again(self):
         prev = build_state(
             None,
             workflow="w",
@@ -135,8 +142,49 @@ class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
             step="implement",
             agent="dev",
             dispatch=Dispatch(status="soft_kill"),
+            soft_retry_attempt=True,
         )
         self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=2))
+
+    def test_human_trigger_after_soft_kill_does_not_consume_the_budget(self):
+        # A human/manual re-run of a soft-killed step (no engine marker) must
+        # not increment the counter, otherwise the budget silently drains and
+        # the step can never be rescued by a human.
+        prev = build_state(
+            None,
+            workflow="w",
+            step="implement",
+            agent="dev",
+            dispatch=Dispatch(status="soft_kill"),
+        ).model_copy(update={"soft_retry": SoftRetryState(step="implement", attempts=1)})
+        nxt = build_state(
+            prev,
+            workflow="w",
+            step="implement",
+            agent="dev",
+            dispatch=Dispatch(status="advance"),
+        )
+        self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=1))
+
+    def test_human_resume_resets_the_budget(self):
+        # An explicit human resume takes over: the step restarts with a fresh
+        # budget even though the previous vendor run was soft-killed.
+        prev = build_state(
+            None,
+            workflow="w",
+            step="implement",
+            agent="dev",
+            dispatch=Dispatch(status="soft_kill"),
+        ).model_copy(update={"soft_retry": SoftRetryState(step="implement", attempts=2)})
+        nxt = build_state(
+            prev,
+            workflow="w",
+            step="implement",
+            agent="dev",
+            dispatch=Dispatch(status="soft_kill"),
+            is_human_resume=True,
+        )
+        self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=0))
 
     def test_advance_path_resets_the_counter_for_the_new_step(self):
         prev = build_state(
