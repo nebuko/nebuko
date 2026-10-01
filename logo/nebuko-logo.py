@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """NEBUKO — spirale en O, v3
  - le fil est continu : plus aucun nœud bleu, seul le ruban dessine la spirale
- - les trois marqueurs ambre portent le sens : cible (début), losange (gate humain),
-   point plein (livrable final) — le point remplace l'ancienne pointe de flèche
+ - deux marqueurs ambre portent le sens : cible (début de l'issue) et losange
+   élancé (gate de validation humaine) — le fil s'affine jusqu'à la pointe, sans
+   point terminal
 Dépendances : pip install cairosvg uharfbuzz fonttools
 """
 import math, os
@@ -24,6 +25,8 @@ if not os.path.exists(FONT):
     urllib.request.urlretrieve(FONT_URL, FONT)
 
 BG, AMBER, G0, G1 = "#0F172A", "#F59E0B", "#5A3DF0", "#2F9BFF"
+DIAMOND_WX, DIAMOND_HY = 0.90, 1.30        # losange : facteurs demi-largeur / demi-hauteur (>1 = élancé)
+TAIL_TAPER = 0.50                          # fraction finale de la queue qui s'affine en pointe
 
 def f(v):
     return f"{v:.2f}".rstrip("0").rstrip(".")
@@ -41,15 +44,12 @@ def target(c, r, fill):
     return annulus(c, r, r * 0.72, fill) + f'<circle cx="{f(x)}" cy="{f(y)}" r="{f(r*0.26)}" fill="{fill}"/>'
 
 def diamond(c, r, fill):
-    """Losange plein (gate de validation humaine)."""
+    """Losange plein, plus haut que large (gate de validation humaine) : la diagonale
+    verticale est allongée pour une silhouette de gemme plutôt qu'un carré tourné."""
     x, y = c
-    return (f'<path fill="{fill}" d="M{f(x)} {f(y-r)}L{f(x+r)} {f(y)}'
-            f'L{f(x)} {f(y+r)}L{f(x-r)} {f(y)}Z"/>')
-
-def dot(c, r, fill):
-    """Point plein (livrable final)."""
-    x, y = c
-    return f'<circle cx="{f(x)}" cy="{f(y)}" r="{f(r)}" fill="{fill}"/>'
+    wx, hy = r * DIAMOND_WX, r * DIAMOND_HY
+    return (f'<path fill="{fill}" d="M{f(x)} {f(y-hy)}L{f(x+wx)} {f(y)}'
+            f'L{f(x)} {f(y+hy)}L{f(x-wx)} {f(y)}Z"/>')
 
 def bez_cmds(pts):
     """Catmull-Rom -> Béziers cubiques"""
@@ -67,7 +67,7 @@ def ribbon(seg, hwf):
     """Ruban à largeur variable, refermé en un seul contour."""
     if len(seg) < 3:
         return ""
-    k = max(1, len(seg) // 12)
+    k = max(1, len(seg) // 40)                                 # fin, pour que l'affinement de la queue reste lisse
     idx = list(range(0, len(seg), k))
     if idx[-1] != len(seg) - 1:
         idx.append(len(seg) - 1)
@@ -119,10 +119,17 @@ def build(uid, mode="dark"):
     compact = mode == "compact"
 
     w0, w1 = (4.2, 9.2) if compact else (3.0, 7.8)             # largeur du ruban : fine -> franche
-    hwf = lambda t: (w0 + (w1 - w0) * min(t, 1.0) ** 1.25) / 2
-    R_H     = 7.4 if compact else 6.3                          # demi-diagonale du losange (gate humain)
+
+    def hwf(t):
+        """Demi-largeur du ruban : t ∈ [0,1] parcourt la spirale (largeur croissante),
+        t ∈ ]1,2] la queue, dont la fin s'affine jusqu'à la pointe (plus de point terminal)."""
+        if t <= 1.0:
+            return (w0 + (w1 - w0) * t ** 1.25) / 2
+        u = t - 1.0
+        return (w1 / 2) * min(1.0, (1.0 - u) / TAIL_TAPER) ** 1.35
+
+    R_H     = 7.4 if compact else 6.3                          # demi-largeur du losange (gate humain)
     R_start = 0.60 * R_H                                       # rayon de la cible (début : l'issue)
-    R_end   = 1.15 * R_H                                       # rayon du point final (livrable), le plus grand
     P = geometry(compact)
     tg = 0.62 if compact else 0.64                             # position de la validation humaine
 
@@ -131,7 +138,7 @@ def build(uid, mode="dark"):
     # le fil est coupé sous les marqueurs : la coupe reste en deçà du bord du marqueur pour
     # qu'il ne réapparaisse ni dans le vide de la cible ni sur les flancs du losange.
     cuts = [(start[0], start[1], R_start * 0.90),
-            (gate[0], gate[1], R_H * 0.60)]
+            (gate[0], gate[1], R_H * 0.55)]
 
     if flat is None:
         defs = (f'<radialGradient id="{uid}s" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="34">'
@@ -162,9 +169,8 @@ def build(uid, mode="dark"):
         x += math.cos(h) * step
         y += math.sin(h) * step
         s_ += step
-        ext.append((x, y, 1.0))
+        ext.append((x, y, 1.0 + s_ / (S + L2)))                # t > 1 : la queue s'affine
     full = P + ext
-    Q = ext[-1]                                                # bout du fil = point final
 
     # morceaux de fil entre les marqueurs
     keep = [all(math.hypot(p[0] - cx_, p[1] - cy_) > tr for cx_, cy_, tr in cuts) for p in full]
@@ -181,16 +187,16 @@ def build(uid, mode="dark"):
     for r in runs:
         o += f'<path d="{ribbon(r, hwf)}" fill="{blue}"/>'
 
-    # marqueurs ambre : cible (début), losange (gate humain), point plein (fin = livrable)
+    # marqueurs ambre : cible (début de l'issue) et losange (gate humain)
     o += target((start[0], start[1]), R_start, amb)
     o += diamond((gate[0], gate[1]), R_H, amb)
-    o += dot((Q[0], Q[1]), R_end, amb)
 
-    # boîte englobante = encre réellement dessinée : contour du ruban + les trois marqueurs.
-    # C'est elle qu'on centre, pour que le logo entier (du point final à la spirale) soit centré.
+    # boîte englobante = encre réellement dessinée : contour du ruban + les deux marqueurs.
+    # C'est elle qu'on centre, pour que le logo entier (queue comprise) soit centré.
     ink = outline(full, hwf)
-    for mx, my, mr in ((start[0], start[1], R_start), (gate[0], gate[1], R_H), (Q[0], Q[1], R_end)):
-        ink += [(mx - mr, my - mr), (mx + mr, my + mr)]
+    for mx, my, mrx, mry in ((start[0], start[1], R_start, R_start),
+                             (gate[0], gate[1], R_H * DIAMOND_WX, R_H * DIAMOND_HY)):
+        ink += [(mx - mrx, my - mry), (mx + mrx, my + mry)]
     xs = [p[0] for p in ink]
     ys = [p[1] for p in ink]
     m = w1 / 2 + 1.5
