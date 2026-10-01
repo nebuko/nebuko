@@ -129,6 +129,11 @@ jobs:
             AGENT_SCRIPT_URL: .github/scripts/agent_script.py
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
         steps:
+            - name: Clean global git config
+              run:
+                git config --global --unset-all http.https://github.com/.extraheader || true
+                git config --global --unset-all credential.helper || true
+                
             - name: Checkout repository
               uses: actions/checkout@v5
               with:
