@@ -1,0 +1,77 @@
+# ── Providers: API endpoints + auth ──
+providers:
+  commandcode:
+    api_url: "https://api.commandcode.ai/provider/v1"
+    api_token_env: "COMMANDCODE_API_KEY"
+
+# ── LLMs: model paths referencing providers ──
+llms:
+  deepseek-v4_1-flash:
+    model_path: "deepseek/deepseek-v4.1-flash"
+    provider: "${providers.commandcode}"
+  
+  glm-5_3-flash:
+    model_path: "z-ai/glm-5.3-flash"
+    provider: "${providers.commandcode}"
+  
+# ── Agents: role → model + prompt + skills + tools ──
+# Tools: terminal, file_editor, task_tracker (SDK tools)
+#        think, finish (built-in defaults)
+agents:
+  genius:
+    model: "${llms.deepseek-v4_1-flash}"
+    temperature: 0.4
+    prompt_file: ".agents/prompts/genius.md"
+    skills: ["call-agent", "posting-contract"]
+    tools: ["think", "finish", "dispatch_next"]
+
+  dev:
+    model: "${llms.deepseek-v4_1-flash}"
+    temperature: 0.1
+    prompt_file: ".agents/prompts/dev.md"
+    skills: ["posting-contract"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch"]
+
+  ctx:
+    model: "${llms.deepseek-v4_1-flash}"
+    temperature: 0.1
+    prompt_file: ".agents/prompts/ctx.md"
+    skills: ["call-agent", "posting-contract"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
+
+  review:
+    model: "${llms.glm-5_3-flash}"
+    temperature: 0.4
+    prompt_file: ".agents/prompts/review.md"
+    skills: ["posting-contract"]
+    tools: ["think", "finish", "dispatch_next"]
+
+  issue:
+    model: "${llms.deepseek-v4_1-flash}"
+    prompt_file: ".agents/prompts/issue.md"
+    skills: ["call-agent", "posting-contract"]
+    tools: ["think", "finish", "dispatch_next"]
+
+  issue-reviewer:
+    model: "${llms.deepseek-v4_1-flash}"
+    prompt_file: ".agents/prompts/issue-reviewer.md"
+    skills: ["posting-contract"]
+    tools: ["think", "finish", "dispatch_next"]
+
+  summarize:
+    model: "${llms.deepseek-v4_1-flash}"
+    prompt_file: ".agents/prompts/summarize.md"
+    skills: ["posting-contract"]
+    tools: ["think", "finish", "dispatch_next"]
+
+  debug:
+    model: "${llms.deepseek-v4_1-flash}"
+    prompt_file: ".agents/prompts/debug.md"
+    skills: ["posting-contract"]
+    tools: ["terminal", "file_editor", "think", "finish", "dispatch_next"]
+
+  po:
+    model: "${llms.deepseek-v4_1-flash}"
+    prompt_file: ".agents/prompts/po.md"
+    skills: ["posting-contract"]
+    tools: ["think", "finish", "dispatch_next"]
