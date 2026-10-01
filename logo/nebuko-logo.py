@@ -81,9 +81,9 @@ def ribbon(seg, hwf, head=None):
     return d
 
 # ------------------------------------------------------------------ géométrie de la spirale
-def geometry(compact=False):
+def geometry(compact=False, r0=5.4):
     turns = 1.5 if compact else 1.75
-    R, r0 = 27.0, 5.4
+    R = 27.0
     th1 = -math.pi / 2                    # le fil finit en haut, cap à droite
     th0 = th1 - turns * 2 * math.pi
     n = 500
@@ -98,23 +98,24 @@ def geometry(compact=False):
 def build(uid, mode="dark"):
     flat = mode[5:] if mode.startswith("flat:") else None
     compact = mode == "compact"
-    P = geometry(compact)
 
     w0, w1 = (4.2, 9.2) if compact else (3.0, 7.8)             # largeur du ruban : fine -> franche
     hwf = lambda t: (w0 + (w1 - w0) * min(t, 1.0) ** 1.25) / 2
     R_H  = 7.4 if compact else 6.3                             # rayon de l'anneau de validation humaine
-    R_H0 = 0.36 * R_H                                          # 1er prompt humain (début de spirale) : 2x plus petit
+    R_H0 = 0.36 * R_H                                          # 1er prompt humain (centre de spirale) : 2x plus petit
+    # Le 1er anneau ambre marque le centre de la spirale : le ruban démarre à sa limite
+    # extérieure, donc son bord interne coïncide avec le rayon de l'anneau.
+    P = geometry(compact, R_H0 + hwf(0.0))
     tg = 0.62 if compact else 0.64                             # position de la 2e validation humaine
     # agents (anneaux bleus) : (position sur la spirale, facteur d'échelle du rayon).
     # Le dernier est le 5e cercle (bout de spirale) : il est agrandi.
     pearls = [] if compact else [(0.17, 1.0), (0.35, 1.0), (0.83, 1.4)]
 
     at = lambda t: min(P, key=lambda q: abs(q[2] - t))
-    start, gate = P[0], at(tg)                                 # le 1er anneau se pose sur le début de la spirale
+    gate = at(tg)                                              # 2e validation humaine
     # fil coupé sous chaque anneau, entre le trou (0.42·r) et le bord extérieur : la coupe
     # doit rester plus large que le trou pour que le fil ne réapparaisse pas dedans.
-    cuts = [(start[0], start[1], R_H0 * 0.78),
-            (gate[0], gate[1], R_H - 1.4)]
+    cuts = [(gate[0], gate[1], R_H - 1.4)]
     blue_rings = []
     for t, scale in pearls:
         p = at(t)
@@ -134,8 +135,9 @@ def build(uid, mode="dark"):
 
     o = ""
     if mode == "dark":
-        o += (f'<circle cx="0" cy="0" r="18" fill="url(#{uid}h)"/>'
-              f'<circle cx="{f(gate[0])}" cy="{f(gate[1])}" r="15" fill="url(#{uid}h)"/>')
+        halo = 2.4                                             # halo ambre ∝ rayon de l'anneau ambre
+        o += (f'<circle cx="0" cy="0" r="{f(halo * R_H0)}" fill="url(#{uid}h)"/>'
+              f'<circle cx="{f(gate[0])}" cy="{f(gate[1])}" r="{f(halo * R_H)}" fill="url(#{uid}h)"/>')
 
     # prolongement du fil : il se redresse puis part vers la droite, en montant
     K, pk = P[-1], P[-6]
@@ -173,7 +175,7 @@ def build(uid, mode="dark"):
     # anneaux : MÊME forme pour les agents (bleu) et les humains (ambre)
     for px, py, outer in blue_rings:
         o += ring((px, py), outer, blue)
-    o += ring((start[0], start[1]), R_H0, amb)                 # 1er prompt humain : centré sur le début de spirale
+    o += ring((0, 0), R_H0, amb)                               # 1er prompt humain : au centre de la spirale
     o += ring((gate[0], gate[1]), R_H, amb)                    # validation humaine
 
     # boîte englobante (pour centrer / mettre à l'échelle)
@@ -189,13 +191,12 @@ def build(uid, mode="dark"):
     return f"<defs>{defs}</defs>" + o, (min(xs) - m, min(ys) - m, max(xs) + m, max(ys) + m)
 
 # ------------------------------------------------------------------ mise en page
-def fit(inner, bbox, target=56):
+def fit(inner, bbox, target=56, anchor=None):
     x0, y0, x1, y1 = bbox
     s = target / max(x1 - x0, y1 - y0)
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    g = f'<g transform="translate(32 32) scale({f(s)}) translate({f(-cx)} {f(-cy)})">{inner}</g>'
-    hw, hh = (x1 - x0) / 2 * s, (y1 - y0) / 2 * s
-    return g, (32 - hw, 32 - hh, 32 + hw, 32 + hh)
+    ax, ay = anchor if anchor is not None else ((x0 + x1) / 2, (y0 + y1) / 2)
+    g = f'<g transform="translate(32 32) scale({f(s)}) translate({f(-ax)} {f(-ay)})">{inner}</g>'
+    return g, (32 + (x0 - ax) * s, 32 + (y0 - ay) * s, 32 + (x1 - ax) * s, 32 + (y1 - ay) * s)
 
 def svg(inner, vb, sz=8):
     x, y, w, h = vb
@@ -203,8 +204,10 @@ def svg(inner, vb, sz=8):
             f'width="{f(w*sz)}" height="{f(h*sz)}">{inner}</svg>')
 
 def mark_group(uid, mode, target=56):
+    # ancré sur le centre de la spirale (origine), pas sur la boîte englobante :
+    # la spirale est ainsi centrée dans l'image, l'anneau ambre se retrouvant au centre.
     inner, bb = build(uid, mode)
-    return fit(inner, bb, target)
+    return fit(inner, bb, target, (0, 0))
 
 def tile(uid, mode="dark", target=48, rx=14):
     g, _ = mark_group(uid + "m", mode, target)
@@ -242,19 +245,19 @@ def horizontal(uid, variant):
     word = {"dark": "#FFFFFF", "light": BG, "white": "#FFFFFF", "black": "#000000"}[variant]
     g, ink = mark_group(uid, mode, 56)
     d, l, r, cap = text_outline(FONT, "NEBUKO", 22.0 / 0.70, 0.03)
-    x0, base = ink[2] + 12 - l, 32 + cap / 2
+    x0, base = ink[2] + 12 - l, (ink[1] + ink[3]) / 2 + cap / 2
     txt = f'<path transform="translate({f(x0)} {f(base)})" d="{d}" fill="{word}"/>'
     w = ink[2] + 12 + (r - l) + 8 + 8
-    return svg(g + txt, (-8, -8, w, 80), 5)
+    return svg(g + txt, (-8, (ink[1] + ink[3]) / 2 - 40, w, 80), 5)
 
 # ------------------------------------------------------------------ fichiers
 files = {
     "mark-dark":  svg(mark_group("a", "dark", 56)[0], (-8, -8, 80, 80)),
-    "mark-light": svg(mark_group("b", "light", 60)[0], (0, 0, 64, 64)),
-    "mark-white": svg(mark_group("c", "flat:#FFFFFF", 60)[0], (0, 0, 64, 64)),
-    "mark-black": svg(mark_group("d", "flat:#000000", 60)[0], (0, 0, 64, 64)),
+    "mark-light": svg(mark_group("b", "light", 56)[0], (-8, -8, 80, 80)),
+    "mark-white": svg(mark_group("c", "flat:#FFFFFF", 56)[0], (-8, -8, 80, 80)),
+    "mark-black": svg(mark_group("d", "flat:#000000", 56)[0], (-8, -8, 80, 80)),
     "tile":            tile("t", "dark", 48),
-    "favicon-compact": tile("fc", "compact", 54),
+    "favicon-compact": tile("fc", "compact", 48),
     "logo-horizontal-dark":  horizontal("e", "dark"),
     "logo-horizontal-light": horizontal("g", "light"),
     "logo-horizontal-white": horizontal("h", "white"),
