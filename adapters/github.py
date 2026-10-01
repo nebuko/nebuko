@@ -47,7 +47,10 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         from pathlib import Path as _Path
 
         self._event_path = _Path(event_path) if event_path is not None else None
-        self._repo = repo
+        # Mirror ``run_loop.main``'s default so a bare ``GitHubAdapter()`` still
+        # resolves the repo from the runner environment instead of failing with
+        # an opaque ``None`` deep in the REST client.
+        self._repo = repo or os.environ.get("GITHUB_REPOSITORY") or None
         self._client = client
         self._trigger: Trigger | None = None
 
@@ -71,7 +74,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
     # @stub-protected
     def load_history(self, *, limit: int | None = None) -> Sequence[CommentEntry]:
-        comments = self._client_handle().get_issue_comments(self._repo, self._issue_number())
+        comments = self._client_handle().get_issue_comments(self._require_repo(), self._issue_number())
         entries = [self._to_entry(comment) for comment in comments]
         if limit is not None:
             entries = entries[-limit:] if limit > 0 else []
@@ -79,7 +82,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
     # @stub-protected
     def post(self, body: str) -> str:
-        result = self._client_handle().post_comment(self._repo, self._issue_number(), body)
+        result = self._client_handle().post_comment(self._require_repo(), self._issue_number(), body)
         if isinstance(result, dict):
             return str(result.get("html_url") or result.get("id") or "")
         return str(result or "")
@@ -100,7 +103,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     def create_issue(self, *, title: str, body: str, labels: Sequence[str] = ()) -> int:
         from issue_creation import GitHubClient
 
-        result = GitHubClient(self._repo or "").create_issue(title, body, list(labels))
+        result = GitHubClient(self._require_repo()).create_issue(title, body, list(labels))
         if not result:
             raise RuntimeError(f"Failed to create issue: {title!r}")
         return int(result["number"])
@@ -113,6 +116,13 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         path.write_text(content, encoding="utf-8")
 
     # ── internals ────────────────────────────────────────────────────
+
+    def _require_repo(self) -> str:
+        if not self._repo:
+            raise RuntimeError(
+                "GitHubAdapter requires a repository: pass repo=... or set GITHUB_REPOSITORY"
+            )
+        return self._repo
 
     def _client_handle(self) -> Any:
         return self._client if self._client is not None else _github_client()

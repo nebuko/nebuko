@@ -68,8 +68,41 @@ def _is_true(value: Any) -> bool:
     return str(value).strip().lower() == "true"
 
 
+def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
+    """The resolver's own skip verdict, which outranks both runtime guards.
+
+    The bash exits as soon as ``SKIP_AGENT=true`` comes back from
+    ``resolve_config`` (issue #458: a routine skip must never be flipped back
+    to a run), and only evaluates the guards/breaker on a resolved task. Returns
+    ``None`` when the resolver selected an agent, so the caller falls through to
+    the runtime guards.
+    """
+    if isinstance(resolved, Mapping) and _is_true(resolved.get("SKIP_AGENT")):
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": str(resolved.get("REASON") or "resolver skipped the agent"),
+        }
+    return None
+
+
 def _exit_code_for(routing: RoutingDecision) -> ExitCode:
     return _EXIT_CODE_BY_STATUS.get(routing.status, ExitCode.ADVANCE)
+
+
+# The bash guard reads the caller with ``sed -n 's/.*<!-- bot-agent-\([a-z]*\)
+# -->.*/\1/p'``: per line, last match wins, and only lowercase-letters names
+# match (``issue-reviewer`` therefore never counts as a caller).
+_CALLER_RE = re.compile(r"<!-- bot-agent-([a-z]*) -->")
+
+
+def _caller_agent(trigger_body: str) -> str:
+    """The caller marker the legacy guard-comparison reads from the body."""
+    found = [
+        matches[-1]
+        for line in (trigger_body or "").splitlines()
+        if (matches := _CALLER_RE.findall(line))
+    ]
+    return "\n".join(found)
 
 
 def _answer_of(agent_result: Any) -> str:
@@ -119,7 +152,10 @@ class Engine:
             )
 
             self._enter(phases, "guards")
-            verdict = self.guard(trigger, history)
+            # The bash short-circuits on the resolver's SKIP_AGENT before the
+            # loop guard and breaker ever run (issue #458); the circuit breaker
+            # is gated on ``SKIP_AGENT == 'false'`` in the job too.
+            verdict = _resolver_skip_verdict(resolved) or self.guard(trigger, history)
             if _is_true(verdict.get("SKIP_AGENT")):
                 reason = str(verdict.get("REASON") or "agent skipped")
                 log.info("[phase:guards] skipping agent — %s", reason)
@@ -198,16 +234,37 @@ class Engine:
 
     # @stub-protected
     def guard(self, trigger: Trigger, history: Sequence[CommentEntry]) -> Any:
-        """Run the loop guard + circuit breaker against the injected history."""
+        """Run the loop guard + circuit breaker against the injected history.
+
+        Mirrors the job's "Prevent all agent-trigger loops" block, which compares
+        the caller's ``<!-- bot-agent-* -->`` marker against the ``TASK`` the
+        resolve step exported. That triple is read back from the resolver when
+        the trigger carries no ``@@mention`` — a bot answer routes through the
+        workflow state, not a mention — which is a network-free workflow lookup
+        for every trigger ``run`` reaches this phase with (the resolver's own
+        skip verdict short-circuits earlier).
+        """
         ensure_import_path()
         from circuit_breaker import check_circuit_breaker, circuit_breaker_warning
-        from loop_guard import check_loop_guard
 
-        verdict = dict(
-            check_loop_guard(
-                trigger.body, self._mentioned_agent(trigger.body), history=history
-            )
+        body = trigger.body or ""
+        caller = _caller_agent(body)
+        # Only a body carrying a caller marker reaches the comparison, so that is
+        # exactly when the resolver's ``TASK`` is read back; every such trigger
+        # routes through a workflow state (a stray bot marker without a route is
+        # skipped by the resolver before this phase).
+        resolved: Any = self.resolve(trigger) if caller else None
+        task = str(self._get(resolved, "TASK") or "") or self._mentioned_agent(body)
+
+        verdict = self._loop_verdict(
+            body,
+            task,
+            self._get(resolved, "WORKFLOW_POSITION_PATH"),
+            self._get(resolved, "WORKFLOW_STEP"),
         )
+        if _is_true(verdict.get("SKIP_AGENT")):
+            return verdict
+
         verdict.update(
             check_circuit_breaker(
                 trigger.number,
@@ -232,6 +289,28 @@ class Engine:
                 )
             )
         return verdict
+
+    @staticmethod
+    def _loop_verdict(
+        body: str, task: str, position_path: Any, step: Any
+    ) -> dict[str, str]:
+        """The caller-vs-target half of the bash guard block, decision for decision."""
+        ensure_import_path()
+        from loop_guard import check_same_agent_advance, detect_human_plus_agent_ping
+
+        caller = _caller_agent(body)
+        if caller and task:
+            if caller == task:
+                return dict(
+                    check_same_agent_advance(body, str(position_path or ""), str(step or ""))
+                )
+            return {"SKIP_AGENT": "false"}
+        if not caller and task:
+            if detect_human_plus_agent_ping(body):
+                return {"SKIP_AGENT": "true", "REASON": "Human ping + agent ping detected"}
+            return {"SKIP_AGENT": "false"}
+        # No same-agent comparison applicable: keep the resolver's own decision.
+        return {"SKIP_AGENT": "false"}
 
     # @stub-protected
     def build_prompt(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
@@ -293,11 +372,14 @@ class Engine:
         return payload_repo.get("full_name") or self.env.get("REPO_NAME") or None
 
     def _threshold(self) -> int:
-        raw = self.env.get("CIRCUIT_BREAKER_THRESHOLD") or "8"
+        # The ``run-task`` job exports CIRCUIT_BREAKER_THRESHOLD with a 25
+        # default (``inputs.circuit_breaker_threshold || 25``); match it so a
+        # host that does not export the variable still breaks at the same count.
+        raw = self.env.get("CIRCUIT_BREAKER_THRESHOLD") or "25"
         try:
             return int(raw)
         except ValueError:
-            return 8
+            return 25
 
     def _mentioned_agent(self, body: str) -> str:
         ensure_import_path()

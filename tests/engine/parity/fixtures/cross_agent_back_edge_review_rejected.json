@@ -1,0 +1,68 @@
+{
+  "name": "cross_agent_back_edge_review_rejected",
+  "description": "A bot answer from @review whose dispatch routes `rejected` back to @dev at `dev-review-loop/implement`: a cross-agent back edge, which the guard must let through.",
+  "provenance": "Recorded answer shape from the issue #590 run logs (dev-review-loop review step rejected -> implement); the guard decision is the legacy block's.",
+  "payload": {
+    "action": "created",
+    "comment": {
+      "id": 5927119918,
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-review -->\n<!-- workflow-continue -->\n*Reviewer answer*\n\n<details><summary>Workflow State</summary>\n\n<!-- WORKFLOW_STATE_START -->\n{\"version\": 5, \"workflow\": \"dev-review-loop\", \"step\": \"review\", \"agent\": \"review\", \"phase\": \"review\", \"position\": [{\"workflow\": \"dev-review-loop\", \"step\": \"review\"}], \"history\": [], \"dispatch\": {\"status\": \"advance\", \"branch\": \"rejected\"}}\n<!-- WORKFLOW_STATE_END -->\n\n</details>",
+      "created_at": "2026-10-01T09:30:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    "issue": {
+      "number": 590,
+      "title": "[engine] Stage A: port/adapter engine core",
+      "body": "Engine core body.",
+      "user": {
+        "login": "olivier-norture",
+        "type": "User"
+      },
+      "html_url": "https://github.com/olivier-norture/git-flow-ai/issues/590"
+    },
+    "repository": {
+      "full_name": "olivier-norture/git-flow-ai"
+    }
+  },
+  "history": [
+    {
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-dev -->\n<!-- bot-agent-summary -->\n*Developer answer*",
+      "created_at": "2026-10-01T09:25:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "env": {
+    "CIRCUIT_BREAKER_THRESHOLD": "25"
+  },
+  "expected": {
+    "trigger": {
+      "type": "issue_comment",
+      "author": "github-actions[bot]",
+      "number": 590
+    },
+    "resolved": {
+      "ROLE_NAME": "dev",
+      "WORKFLOW_NAME": "dev-review-loop",
+      "WORKFLOW_STEP": "implement",
+      "WORKFLOW_POSITION_PATH": "dev-review-loop/implement",
+      "SKIP_AGENT": "false",
+      "REASON": null
+    },
+    "guard": {
+      "SKIP_AGENT": "false",
+      "AGENT_CALLS": "0",
+      "CIRCUIT_BREAKER_TRIPPED": "false"
+    },
+    "prompt": {
+      "prompt": ".agents/prompts/dev.md",
+      "step_prompt": ""
+    },
+    "agent_ran": true
+  }
+}

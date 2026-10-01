@@ -1,0 +1,108 @@
+{
+  "name": "circuit_breaker_tripped",
+  "description": "A human `@@dev` ping on a thread that has already burned through the agent-call budget: the breaker trips and the job posts the warning instead of running the agent.",
+  "provenance": "Recorded circuit-breaker shape from the issue #590 run logs (threshold overridden to 3 so the recorded threshold-25 arithmetic stays readable); the decision is the legacy `Check Circuit Breaker` block's.",
+  "payload": {
+    "action": "created",
+    "comment": {
+      "id": 5927119919,
+      "body": "@@dev continue",
+      "created_at": "2026-10-01T09:40:00Z",
+      "user": {
+        "login": "olivier-norture",
+        "type": "User"
+      }
+    },
+    "issue": {
+      "number": 590,
+      "title": "[engine] Stage A: port/adapter engine core",
+      "body": "Engine core body.",
+      "user": {
+        "login": "olivier-norture",
+        "type": "User"
+      },
+      "html_url": "https://github.com/olivier-norture/git-flow-ai/issues/590"
+    },
+    "repository": {
+      "full_name": "olivier-norture/git-flow-ai"
+    }
+  },
+  "history": [
+    {
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n<!-- bot-agent-summary -->\n*genius answer 0*",
+      "created_at": "2026-10-01T09:30:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-ctx -->\n<!-- bot-agent-summary -->\n*ctx answer 1*",
+      "created_at": "2026-10-01T09:31:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-dev -->\n<!-- bot-agent-summary -->\n*dev answer 2*",
+      "created_at": "2026-10-01T09:32:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-review -->\n<!-- bot-agent-summary -->\n*review answer 3*",
+      "created_at": "2026-10-01T09:33:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n<!-- bot-agent-summary -->\n*genius answer 4*",
+      "created_at": "2026-10-01T09:34:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-dev -->\n<!-- bot-agent-summary -->\n*dev answer 5*",
+      "created_at": "2026-10-01T09:35:00Z",
+      "user": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "env": {
+    "CIRCUIT_BREAKER_THRESHOLD": "3"
+  },
+  "expected": {
+    "trigger": {
+      "type": "issue_comment",
+      "author": "olivier-norture",
+      "number": 590
+    },
+    "resolved": {
+      "ROLE_NAME": "dev",
+      "WORKFLOW_NAME": "",
+      "WORKFLOW_STEP": "",
+      "WORKFLOW_POSITION_PATH": "",
+      "SKIP_AGENT": "false",
+      "REASON": null
+    },
+    "guard": {
+      "SKIP_AGENT": "true",
+      "AGENT_CALLS": "3",
+      "CIRCUIT_BREAKER_TRIPPED": "true"
+    },
+    "prompt": {
+      "prompt": ".agents/prompts/dev.md",
+      "step_prompt": ""
+    },
+    "agent_ran": false
+  }
+}

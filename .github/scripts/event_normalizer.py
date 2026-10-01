@@ -43,17 +43,19 @@ def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
 
     comment = payload.get("comment")
     if comment is not None:
+        # GitHub may carry ``"user": null`` for ghost/deleted accounts, so the
+        # ``or {}`` guard is required (``.get`` alone only covers an absent key).
         return Trigger(
-            author=comment.get("user", {}).get("login", ""),
+            author=(comment.get("user") or {}).get("login", ""),
             body=comment.get("body", "") or "",
             type="issue_comment",
-            number=payload.get("issue", {}).get("number") or 0,
+            number=(payload.get("issue") or {}).get("number") or 0,
             payload=payload,
         )
 
     issue = payload.get("issue") or {}
     return Trigger(
-        author=issue.get("user", {}).get("login", ""),
+        author=(issue.get("user") or {}).get("login", ""),
         body=issue.get("body", "") or "",
         type="issue",
         number=issue.get("number") or 0,
@@ -87,12 +89,12 @@ def normalize_event(
 
     if event_name == "issue_comment":
         trigger_body = event_data.get("comment", {}).get("body", "")
-        trigger_author = event_data.get("comment", {}).get("user", {}).get("login", "")
+        trigger_author = (event_data.get("comment", {}).get("user") or {}).get("login", "")
         target_number = issue_number
         event_type = "issue_comment"
     elif event_name == "issues":
         trigger_body = event_data.get("issue", {}).get("body", "")
-        trigger_author = event_data.get("issue", {}).get("user", {}).get("login", "")
+        trigger_author = (event_data.get("issue", {}).get("user") or {}).get("login", "")
         target_number = issue_number
         event_type = "issues"
     elif event_name == "workflow_call":
