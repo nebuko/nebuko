@@ -14,6 +14,7 @@ metric whose inputs are missing degrades to ``None`` with a reason in
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Mapping
@@ -33,6 +34,18 @@ def _ensure_aware_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _strip_non_rendered_markup(text: str) -> str:
+    """Drop HTML comments and ``<details>`` blocks that never render as prose.
+
+    Bot comments carry machine-only payloads (``<!-- bot-* -->`` markers,
+    ``agent-metrics`` JSON, the collapsed ``WORKFLOW_STATE`` dump) that a human
+    never reads but that dominate the word count. Removing them before counting
+    leaves only reader-visible text.
+    """
+    text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
+    return re.sub(r"<details>.*?</details>", " ", text, flags=re.DOTALL | re.IGNORECASE)
 
 
 # @stub-protected
@@ -136,13 +149,11 @@ class HumanMetricsAnalyzer:
         if self._config.reading_speed_wpm <= 0:
             unavailable["reading_time_seconds"] = "reading speed must be greater than zero"
             return None
-        # Only the issue body and human-authored comments count: agent/bot
-        # comments are machine output ("logs") the human does not read, and
-        # they dwarf the human-visible text on agent-heavy threads.
-        text = issue.body + " " + " ".join(
-            c.body for c in issue.comments if self._is_human(c)
-        )
-        words = len(text.split())
+        # Every comment counts — the human reads agent output too — but markup
+        # that never renders as prose (HTML comments, collapsed <details> blocks)
+        # is stripped first, as it otherwise dominates the word count.
+        raw_text = issue.body + " " + " ".join(c.body for c in issue.comments)
+        words = len(_strip_non_rendered_markup(raw_text).split())
         return words / self._config.reading_speed_wpm * 60
 
     def _wall_clock(self, issue: IssueData, unavailable: dict) -> float | None:
@@ -314,7 +325,7 @@ class HumanMetricsRenderer:
         lines.append(
             "> _Human metrics are estimates/proxies derived from issue text and workflow "
             f"timestamps (reading speed: {self._config.reading_speed_wpm} wpm; scope: issue body "
-            "+ human comments). Agent time spent is a proxy for human effort avoided, not a "
-            "measured saving._"
+            "+ all comments, non-rendered markup excluded). Agent time spent is a proxy for "
+            "human effort avoided, not a measured saving._"
         )
         return "\n".join(lines)

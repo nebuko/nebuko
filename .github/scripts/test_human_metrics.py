@@ -5,7 +5,7 @@ Covers the scenarios S1-S9 of the frozen spec:
 - S1 human comment count (any human comment counts, incl. gate approvals)
 - S2 human intervention count after the first implementation turn
 - S3 human command count vs. agent tool invocations
-- S4 reading-time estimate (configurable wpm; scope = body + human comments)
+- S4 reading-time estimate (configurable wpm; scope = body + all comments, non-rendered markup stripped)
 - S5 wall-clock duration (first agent start -> close)
 - S6 agent time spent (benefit proxy, no counterfactual baseline)
 - S7 human response latency (agent turn -> next human reply)
@@ -159,9 +159,9 @@ class TestCommandCounts(unittest.TestCase):
 
 
 class TestReadingTime(unittest.TestCase):
-    """S4: reading time = words(body + human comments) / reading_speed_wpm."""
+    """S4: reading time = words(body + all comments, markup stripped) / wpm."""
 
-    def test_reading_time_counts_body_and_human_comments_only(self):
+    def test_reading_time_counts_body_and_all_comments(self):
         analyzer = HumanMetricsAnalyzer(
             HumanMetricsConfig(reading_speed_wpm=200)
         )
@@ -172,16 +172,29 @@ class TestReadingTime(unittest.TestCase):
             ],
             body="hello world",
         )
-        # 2 (body) + 3 (human comment) = 5 words / 200 wpm * 60. The agent
-        # comment is machine output ("logs"), not human reading.
+        # 2 (body) + 3 + 4 = 9 words / 200 wpm * 60. Agent output counts too.
         self.assertAlmostEqual(
-            analyzer.analyze(issue).reading_time_seconds, 5 / 200 * 60
+            analyzer.analyze(issue).reading_time_seconds, 9 / 200 * 60
         )
 
-    def test_bot_only_thread_has_zero_human_words(self):
-        analyzer = HumanMetricsAnalyzer(HumanMetricsConfig())
-        issue = _issue([_agent("openhands", "lots of agent output here")])
-        self.assertEqual(analyzer.analyze(issue).reading_time_seconds, 0.0)
+    def test_reading_time_excludes_non_rendered_markup(self):
+        analyzer = HumanMetricsAnalyzer(
+            HumanMetricsConfig(reading_speed_wpm=200)
+        )
+        visible = "done"
+        noise = (
+            "<!-- bot-workflow-terminal -->\n"
+            "<!-- bot-agent-dev -->\n"
+            "<!-- agent-metrics: {\"input_tokens\": 42} -->\n"
+            "<details>\n<summary>Workflow State</summary>\n\n```json\n"
+            "<!-- WORKFLOW_STATE_START -->\n{\"history\": \"hidden metadata words\"}\n"
+            "<!-- WORKFLOW_STATE_END -->\n```\n\n</details>"
+        )
+        issue = _issue([_agent("openhands", f"{noise}\n{visible}", minutes=1)])
+        # 1 visible word / 200 wpm * 60; every markup payload is stripped.
+        self.assertAlmostEqual(
+            analyzer.analyze(issue).reading_time_seconds, 1 / 200 * 60
+        )
 
 
 class TestWallClock(unittest.TestCase):
