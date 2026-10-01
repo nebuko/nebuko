@@ -214,8 +214,8 @@ def clean_message(raw: str, metrics_comment: str) -> str:
 def extract_from_console_log(metrics_comment: str) -> str:
     """Parse console.log to extract agent message as a fallback.
 
-    Looks for "Message from Agent" blocks in the log output.
-    Falls back to the last 50 meaningful lines if no structured block found.
+    File-driven wrapper around :func:`console_log_fallback` (the shared body);
+    kept as the legacy entry point for callers that read the working directory.
 
     Args:
         metrics_comment: Preserved metrics comment to append if available.
@@ -229,6 +229,22 @@ def extract_from_console_log(metrics_comment: str) -> str:
     with open("console.log", "r", encoding="utf-8") as f:
         log_content = f.read()
 
+    return console_log_fallback(log_content, metrics_comment)
+
+
+def console_log_fallback(log_content: str, metrics_comment: str) -> str:
+    """Extract an agent message out of console output.
+
+    Looks for "Message from Agent" blocks in the log output.
+    Falls back to the last 50 meaningful lines if no structured block found.
+
+    Args:
+        log_content: Raw console output.
+        metrics_comment: Preserved metrics comment to append if available.
+
+    Returns:
+        Extracted message text from the console output.
+    """
     # Try to find the last "Message from Agent" block
     blocks = log_content.split(_CONSOLE_MARKER)
 
@@ -292,16 +308,22 @@ def escape_agent_triggers(content: str) -> str:
     return _AGENT_TRIGGER.sub(lambda m: m.group(0).replace("@@", "@@\u200b", 1), content)
 
 
-def _apply_ctx_collapse(cleaned: str) -> str:
+def _apply_ctx_collapse(cleaned: str, role_name: str | None = None) -> str:
     """Wrap ctx-report sections in <details> blocks (issue #557).
 
-    Only applied when ROLE_NAME is "ctx": the title + executive summary
+    Only applied when the role is "ctx": the title + executive summary
     (above the first ### heading) stay visible; FILES FOUND / RELEVANT
     SNIPPETS / EXTERNAL REFERENCES / OTHER FILES collapse by default.
     Non-ctx roles and bodies without any recognized heading pass through
     unchanged.
+
+    Args:
+        cleaned: The cleaned comment body.
+        role_name: Explicit role (engine seam, issue #590); ``None`` reads
+            ``ROLE_NAME`` from the environment, which is the GHA path.
     """
-    if os.environ.get("ROLE_NAME", "") != "ctx":
+    role = os.environ.get("ROLE_NAME", "") if role_name is None else role_name
+    if role != "ctx":
         return cleaned
     collapsed = collapse_sections(cleaned, CTX_SECTION_HEADINGS)
     return cleaned if collapsed == cleaned else collapsed
@@ -337,10 +359,135 @@ def _write_output(content: str, poster: Poster | None = None) -> None:
 # ── Main entry point ──────────────────────────────────────────────
 
 
+# Fallback bodies for the two crash paths (Path C / Path D). Kept as module
+# constants so the engine (issue #590) posts the exact same text as the GHA path.
+_CRASH_MESSAGE = (
+    "> \u26a0\ufe0f The agent crashed or timed out before producing output. "
+    "Please check the full logs in the workflow run."
+)
+_NO_FINAL_MESSAGE = (
+    "> \u26a0\ufe0f The agent did not produce a final message. "
+    "Please check the full logs in the workflow run."
+)
+
+
+def _with_metrics(text: str, metrics_comment: str) -> str:
+    return f"{text}\n\n{metrics_comment}" if metrics_comment else text
+
+
+def build_comment_body(
+    *,
+    latest_answer: str,
+    final_message: str,
+    console_log: str = "",
+    has_final_message: bool | None = None,
+    has_console_log: bool | None = None,
+    trigger_author: str = "",
+    role_name: str | None = None,
+) -> str:
+    """The four-path publish fallback chain over explicit inputs.
+
+    Single source of truth for the posted-comment body: the file-driven GHA
+    wrapper :func:`prepare_comment` and ``engine.run_loop.Engine`` both call
+    this, so a crashed or empty agent run posts the same structured fallback
+    message on either host instead of the engine forking a subset of the
+    semantics (issue #590).
+
+    Args:
+        latest_answer: Raw ``latest_answer.md`` content (the preferred body).
+        final_message: Raw ``final_message.txt`` content.
+        console_log: Raw ``console.log`` content.
+        has_final_message: Whether the ``final_message.txt`` artifact existed
+            with content. ``None`` derives it from ``final_message``.
+        has_console_log: Whether the ``console.log`` artifact existed with
+            content. ``None`` derives it from ``console_log``.
+        trigger_author: Author pinged on the crash paths (``TRIGGER_AUTHOR``).
+        role_name: Role for the ctx collapse; ``None`` reads the environment.
+
+    Returns:
+        The cleaned body to escape and publish.
+    """
+    if has_final_message is None:
+        has_final_message = bool(final_message)
+    if has_console_log is None:
+        has_console_log = bool(console_log)
+    author_ping = f"@{trigger_author} " if trigger_author else ""
+
+    def console_fallback(metrics_comment: str) -> str:
+        if not has_console_log:
+            return ""
+        return console_log_fallback(console_log, metrics_comment)
+
+    def finalized(cleaned: str) -> str:
+        return _truncate_at_boundary(_apply_ctx_collapse(cleaned, role_name))
+
+    # ── Path A: Structured final message ────────────────────────
+    if has_final_message:
+        raw = final_message.strip()
+
+        # Sentinel: agent ran but produced no final message
+        if raw.startswith("__NO_FINAL_MESSAGE__"):
+            print("Warning: No final message from agent (sentinel detected), falling back to console.log",
+                  flush=True)
+            metrics_comment = extract_metrics(raw)
+            fallback = console_fallback(metrics_comment)
+            if fallback:
+                return fallback
+            return _with_metrics(author_ping + _CRASH_MESSAGE, metrics_comment)
+
+        # ── Latest-answer ETL (issue #522) ───────────────────────
+        # The agent's latest full answer is the preferred posted body; the
+        # finish message (raw) is fallback only. Both sources feed the
+        # hand-off sentinel merge so dispatch/branching always reach the
+        # comment.
+        latest_raw = latest_answer
+        if latest_raw.strip():
+            body_raw = select_posted_body(latest_raw, raw)
+            if body_raw.strip():
+                body_metrics = extract_metrics(body_raw) or extract_metrics(raw)
+                cleaned = clean_message(body_raw, "")
+                if cleaned:
+                    merged_sentinel = merge_handoff_sentinels(latest_raw, raw)
+                    if merged_sentinel:
+                        cleaned += "\n\n" + merged_sentinel
+                    if body_metrics:
+                        cleaned += "\n\n" + body_metrics
+                    print(f"Using latest answer ({len(cleaned)} characters)", flush=True)
+                    return finalized(cleaned)
+
+        # Normal path: extract metrics, clean, write
+        metrics_comment = extract_metrics(raw)
+        cleaned = clean_message(raw, metrics_comment)
+
+        if cleaned:
+            # Latest-answer artifact empty/missing → finish message is the
+            # posted body: flag post-recall fallbacks for visibility (#558).
+            _warn_post_recall_fallback(metrics_comment)
+            print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
+            return finalized(cleaned)
+
+        # Content was empty after cleaning — fall through to console.log
+        print("Warning: final_message.txt has no meaningful content after cleaning, "
+              "falling back to console.log", flush=True)
+        fallback = console_fallback(metrics_comment)
+        if fallback:
+            return fallback
+        return _with_metrics(author_ping + _CRASH_MESSAGE, metrics_comment)
+
+    # ── Path B: console.log only (final message missing/empty) ──
+    fallback = console_fallback("")
+    if fallback:
+        return fallback
+
+    # ── Path C/D: No output at all ──────────────────────────────
+    return author_ping + _NO_FINAL_MESSAGE
+
+
 def prepare_comment(poster: Poster | None = None) -> bool:
     """Orchestrate comment preparation from final_message.txt or fallbacks.
 
-    Mirrors the four-path logic from the workflow YAML:
+    File-driven wrapper around :func:`build_comment_body`; mirrors the
+    four-path logic from the workflow YAML:
       Path A: Use final_message.txt (strip internal tags, write output)
       Path B: Parse console.log for "Message from Agent" blocks
       Path C: Agent crashed before producing output
@@ -354,104 +501,29 @@ def prepare_comment(poster: Poster | None = None) -> bool:
     Returns:
         True if github_comment.md was written successfully.
     """
-    trigger_author = os.environ.get("TRIGGER_AUTHOR", "")
-    author_ping = f"@{trigger_author} " if trigger_author else ""
-
-    # ── Path A: Structured final_message.txt ────────────────────
-    if os.path.isfile("final_message.txt") and os.path.getsize("final_message.txt") > 0:
-        with open("final_message.txt", "r", encoding="utf-8") as f:
-            raw = f.read().strip()
-
-        # Sentinel: agent ran but produced no final message
-        if raw.startswith("__NO_FINAL_MESSAGE__"):
-            print("Warning: No final message from agent (sentinel detected), falling back to console.log",
-                  flush=True)
-            metrics_comment = extract_metrics(raw)
-            fallback = extract_from_console_log(metrics_comment)
-            if fallback:
-                _write_output(fallback, poster=poster)
-                return True
-            error_msg = (
-                author_ping
-                + "> \u26a0\ufe0f The agent crashed or timed out before producing output. "
-                + "Please check the full logs in the workflow run."
-            )
-            if metrics_comment:
-                error_msg += "\n\n" + metrics_comment
-            _write_output(error_msg, poster=poster)
-            return True
-
-        # ── Latest-answer ETL (issue #522) ───────────────────────
-        # The agent's latest full answer is the preferred posted body;
-        # the finish message (raw) is fallback only. Both sources feed
-        # the hand-off sentinel merge so dispatch/branching always
-        # reach the comment.
-        latest_raw = _read_latest_answer()
-        if latest_raw.strip():
-            body_raw = select_posted_body(latest_raw, raw)
-            if body_raw.strip():
-                body_metrics = extract_metrics(body_raw) or extract_metrics(raw)
-                cleaned = clean_message(body_raw, "")
-                if cleaned:
-                    merged_sentinel = merge_handoff_sentinels(latest_raw, raw)
-                    if merged_sentinel:
-                        cleaned += "\n\n" + merged_sentinel
-                    if body_metrics:
-                        cleaned += "\n\n" + body_metrics
-                    print(f"Using latest answer ({len(cleaned)} characters)", flush=True)
-                    cleaned = _apply_ctx_collapse(cleaned)
-                    cleaned = _truncate_at_boundary(cleaned)
-                    _write_output(cleaned, poster=poster)
-                    return True
-
-        # Normal path: extract metrics, clean, write
-        metrics_comment = extract_metrics(raw)
-        cleaned = clean_message(raw, metrics_comment)
-
-        if cleaned:
-            # Latest-answer artifact empty/missing → finish message is the
-            # posted body: flag post-recall fallbacks for visibility (#558).
-            _warn_post_recall_fallback(metrics_comment)
-            print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
-            cleaned = _apply_ctx_collapse(cleaned)
-            cleaned = _truncate_at_boundary(cleaned)
-            _write_output(cleaned, poster=poster)
-            return True
-
-        # Content was empty after cleaning — fall through to console.log
-        print("Warning: final_message.txt has no meaningful content after cleaning, "
-              "falling back to console.log", flush=True)
-        fallback = extract_from_console_log(metrics_comment)
-        if fallback:
-            _write_output(fallback, poster=poster)
-            return True
-
-        # Console.log also empty — crash message
-        error_msg = (
-            author_ping
-            + "> \u26a0\ufe0f The agent crashed or timed out before producing output. "
-            + "Please check the full logs in the workflow run."
-        )
-        if metrics_comment:
-            error_msg += "\n\n" + metrics_comment
-        _write_output(error_msg, poster=poster)
-        return True
-
-    # ── Path B: console.log only (final_message.txt missing/empty) ─
-    metrics_comment = ""
-    fallback = extract_from_console_log(metrics_comment)
-    if fallback:
-        _write_output(fallback, poster=poster)
-        return True
-
-    # ── Path C/D: No output at all ──────────────────────────────
-    error_msg = (
-        author_ping
-        + "> \u26a0\ufe0f The agent did not produce a final message. "
-        + "Please check the full logs in the workflow run."
+    has_final_message = _artifact_has_content("final_message.txt")
+    has_console_log = _artifact_has_content("console.log")
+    body = build_comment_body(
+        latest_answer=_read_latest_answer(),
+        final_message=_read_artifact("final_message.txt") if has_final_message else "",
+        console_log=_read_artifact("console.log") if has_console_log else "",
+        has_final_message=has_final_message,
+        has_console_log=has_console_log,
+        trigger_author=os.environ.get("TRIGGER_AUTHOR", ""),
+        role_name=os.environ.get("ROLE_NAME", ""),
     )
-    _write_output(error_msg, poster=poster)
+    _write_output(body, poster=poster)
     return True
+
+
+def _artifact_has_content(path: str) -> bool:
+    """The legacy "exists and is not zero bytes" artifact test."""
+    return os.path.isfile(path) and os.path.getsize(path) > 0
+
+
+def _read_artifact(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
 
 
 if __name__ == "__main__":

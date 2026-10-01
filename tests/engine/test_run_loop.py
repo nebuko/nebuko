@@ -33,6 +33,24 @@ def _agent_result(answer: str, dispatch: dict | None = None) -> dict:
     return {"answer": answer, "dispatch": dispatch if dispatch is not None else {"status": "advance"}}
 
 
+def _stub_resolved(monkeypatch, resolved: dict) -> None:
+    """Pin the resolver's output for a guard-phase unit test.
+
+    ``resolve_config.resolve_config`` is the facade function, imported by
+    ``Engine.resolve`` from its submodule, so the patch targets the submodule
+    object (the package re-exports the function under the same name).
+    """
+    import sys
+
+    import resolve_config  # noqa: F401 - ensures the submodule is imported
+
+    monkeypatch.setattr(
+        sys.modules["resolve_config.resolve_config"],
+        "resolve_config",
+        lambda **_: resolved,
+    )
+
+
 class TestPhaseVocabulary:
     def test_phases_are_the_nine_documented_phases_in_order(self):
         assert PHASES == (
@@ -63,13 +81,33 @@ class TestGuardsPhase:
 
         assert str(verdict["SKIP_AGENT"]).lower() == "false"
 
-    def test_skips_a_same_agent_loop(self, tmp_path):
+    def test_skips_a_same_agent_loop(self, tmp_path, monkeypatch):
+        """The bash gate skips when the caller marker equals the resolver's TASK."""
         trigger = _trigger(body=f"<!-- bot-workflow-terminal -->\n{BOT_AGENT_MARKER}\n@@dev continue")
         engine = _engine(tmp_path, trigger)
+        # The bash compares ``CALLER_AGENT`` with ``TASK`` as the resolver
+        # exported it; stub that seam, not the guard's own comparison.
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "false", "TASK": "dev"})
 
         verdict = engine.guard(trigger, [])
 
         assert str(verdict["SKIP_AGENT"]).lower() == "true"
+
+    def test_makes_no_comparison_without_a_resolver_task(self, tmp_path, monkeypatch):
+        """A caller marker without a resolver ``TASK`` skips the comparison.
+
+        This mirrors the legacy replay in the parity net (``_legacy_guard``):
+        the bash leaves ``SKIP_AGENT`` at the resolver's value, and the driver
+        only ever reaches ``guard`` when that value is not ``true`` (``run``
+        short-circuits on the resolver's skip, exactly as the job does).
+        """
+        trigger = _trigger(body=f"<!-- bot-workflow-terminal -->\n{BOT_AGENT_MARKER}\n@@dev continue")
+        engine = _engine(tmp_path, trigger)
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "false", "TASK": ""})
+
+        verdict = engine.guard(trigger, [])
+
+        assert str(verdict["SKIP_AGENT"]).lower() == "false"
 
     def test_uses_the_injected_history_for_the_circuit_breaker(self, tmp_path):
         from engine.models import CommentEntry

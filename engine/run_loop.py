@@ -133,6 +133,14 @@ class Engine:
     repo_root: Path
     env: Mapping[str, str] = field(default_factory=dict)
     history_limit: int | None = None
+    # Per-run memo of the resolver output. ``guard`` needs the same resolved
+    # config the ``resolve_config`` phase already computed (it reads ``TASK``
+    # and the workflow position back out of it), and the legacy job resolves
+    # exactly once per run (issue #590 round-4, finding 3). Engine-internal, so
+    # it is excluded from ``__init__``/equality/repr.
+    _resolve_cache: dict[tuple[str, int], Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
 
     # @stub-protected
     def run(self) -> RunOutcome:
@@ -217,7 +225,12 @@ class Engine:
 
     # @stub-protected
     def resolve(self, trigger: Trigger) -> Any:
-        """Delegate to the legacy ``resolve_config`` result."""
+        """Delegate to the legacy ``resolve_config`` result (memoized per run)."""
+        key = (trigger.body, trigger.number)
+        cached = self._resolve_cache.get(key)
+        if cached is not None:
+            return cached
+
         ensure_import_path()
         from resolve_config.resolve_config import resolve_config
 
@@ -230,6 +243,7 @@ class Engine:
             debug=_is_true(self.env.get("CONFIG_DEBUG")),
         )
         resolved[_TRIGGER_KEY] = trigger
+        self._resolve_cache[key] = resolved
         return resolved
 
     # @stub-protected
@@ -243,6 +257,11 @@ class Engine:
         workflow state, not a mention — which is a network-free workflow lookup
         for every trigger ``run`` reaches this phase with (the resolver's own
         skip verdict short-circuits earlier).
+
+        Like the bash ``if [[ -n "$CALLER_AGENT" && -n "$TASK" ]]``, only the
+        resolver's ``TASK`` feeds the comparison: when it is empty the resolver's
+        own ``SKIP_AGENT`` decision stands, even if the body names an agent
+        (issue #458).
         """
         ensure_import_path()
         from circuit_breaker import check_circuit_breaker, circuit_breaker_warning
@@ -254,7 +273,7 @@ class Engine:
         # routes through a workflow state (a stray bot marker without a route is
         # skipped by the resolver before this phase).
         resolved: Any = self.resolve(trigger) if caller else None
-        task = str(self._get(resolved, "TASK") or "") or self._mentioned_agent(body)
+        task = str(self._get(resolved, "TASK") or "")
 
         verdict = self._loop_verdict(
             body,
@@ -343,11 +362,30 @@ class Engine:
 
     # @stub-protected
     def publish(self, agent_result: Any) -> str:
-        """Delegate to ``select_posted_body``, neutralize triggers, then post."""
-        ensure_import_path()
-        from prepare_comment import escape_agent_triggers, select_posted_body
+        """Run the legacy publish chain, then post through the adapter.
 
-        body = select_posted_body(_answer_of(agent_result), _final_message_of(agent_result))
+        The four-path fallback of the ``run-task`` job (final message ->
+        latest answer -> console.log -> crash notice) lives in
+        ``prepare_comment.build_comment_body``; calling that same function is
+        what keeps a run that produced no usable output posting the *same*
+        structured fallback on both hosts (issue #590 round-4, finding 1).
+        Only the sink differs here: the adapter's ``post``.
+        """
+        ensure_import_path()
+        from prepare_comment import build_comment_body, escape_agent_triggers
+
+        answer = _answer_of(agent_result)
+        final_message = _final_message_of(agent_result) or answer
+        console_log = self._console_log_of(agent_result)
+        body = build_comment_body(
+            latest_answer=answer,
+            final_message=final_message,
+            console_log=console_log,
+            has_final_message=bool(final_message),
+            has_console_log=bool(console_log),
+            trigger_author=self._trigger_author(),
+            role_name=self._role_of(agent_result),
+        )
         # Same invariant as ``prepare_comment._write_output``: a posted comment
         # must never carry a raw ``@@agent`` token, or it re-arms the very gate
         # that started this run (issue #482).
@@ -384,19 +422,6 @@ class Engine:
             return int(raw)
         except ValueError:
             return 25
-
-    def _mentioned_agent(self, body: str) -> str:
-        ensure_import_path()
-        from config import load_agent_names
-
-        names = sorted(load_agent_names(), key=len, reverse=True)
-        if not names:
-            return ""
-        pattern = re.compile(
-            r"@@(?:" + "|".join(re.escape(name) for name in names) + r")(?![A-Za-z0-9_-])"
-        )
-        match = pattern.search(body or "")
-        return match.group(0)[2:] if match else ""
 
     def _base_prompt(self, resolved: Any) -> str:
         location = self._get(resolved, "PROMPT_LOCATION")
@@ -436,6 +461,25 @@ class Engine:
         if isinstance(agent_result, Mapping) and agent_result.get("role"):
             return str(agent_result["role"])
         return self.env.get("ROLE_NAME", "")
+
+    @staticmethod
+    def _console_log_of(agent_result: Any) -> str:
+        """The run's captured console output, when the host recorded one."""
+        if isinstance(agent_result, Mapping):
+            value = agent_result.get("console_log") or agent_result.get("console")
+            if value:
+                return str(value)
+        return ""
+
+    def _trigger_author(self) -> str:
+        """Author pinged by the crash-path fallback bodies."""
+        author = self.env.get("TRIGGER_AUTHOR")
+        if author:
+            return author
+        try:
+            return self.adapter.read_trigger().author
+        except Exception:  # noqa: BLE001 - a missing event payload is not fatal here
+            return ""
 
     def _build_state(self, agent_result: Any) -> WorkflowState | None:
         """Return the agent's own state artifact, else the previous state.
