@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from config import load_agent_names
+from workflow_state.sub_domains.dispatch.dispatch import DISPATCH_STATUSES
 
 # Canonical sentinel: single-line HTML comment, no DOTALL.
 # [ \t] (not \s) keeps the match strictly within one line: a sentinel split
@@ -393,7 +394,11 @@ def validate_agent_run_config(json_str: str) -> ValidationResult:
     return result
 
 
-VALID_DISPATCH_STATUSES = {"advance", "loop", "hold", "terminate"}
+# Single source of truth for dispatch statuses (issue #704): reuse the
+# canonical set from the workflow-state model so this validator can never
+# drift from the statuses ``Dispatch`` actually accepts. ``soft_kill`` — the
+# soft time-kill error status — was the divergence that motivated this.
+VALID_DISPATCH_STATUSES = set(DISPATCH_STATUSES)
 
 
 def validate_dispatch(data: dict) -> ValidationResult:
