@@ -150,7 +150,10 @@ class TestCreateIssue:
         files = sorted((run_dir / "tasks").glob("*.md"))
 
         assert len(files) == 1
-        assert "do the thing" in files[0].read_text()
+        content = files[0].read_text()
+        assert "# Sub task" in content
+        assert "labels: split-plan" in content
+        assert "do the thing" in content
 
     def test_returns_monotonic_indices(self, adapter):
         first = adapter.create_issue(title="A", body="a")

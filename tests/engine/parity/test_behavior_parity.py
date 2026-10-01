@@ -161,6 +161,34 @@ def _legacy_resolve(body: str, number: int) -> dict:
     )
 
 
+def _legacy_loop_verdict(resolved: Mapping[str, Any], body: str) -> dict:
+    """The legacy loop-guard block (``openhands-multi-agent.yml`` 495-563).
+
+    Kept separate from ``Engine._loop_verdict`` so the two readings of the bash
+    guard can be compared directly — ``test_loop_verdict_matches_the_legacy_replay``
+    sweeps the branch space and fails loudly if either side drifts.
+    """
+    from loop_guard import check_same_agent_advance, detect_human_plus_agent_ping
+
+    caller = _legacy_caller(body)
+    task = resolved.get("TASK") or ""
+    if caller and task:
+        if caller == task:
+            return dict(
+                check_same_agent_advance(
+                    body,
+                    resolved.get("WORKFLOW_POSITION_PATH") or "",
+                    resolved.get("WORKFLOW_STEP") or "",
+                )
+            )
+        return {"SKIP_AGENT": "false"}
+    if not caller and task:
+        if detect_human_plus_agent_ping(body):
+            return {"SKIP_AGENT": "true", "REASON": "Human ping + agent ping detected"}
+        return {"SKIP_AGENT": "false"}
+    return {"SKIP_AGENT": "false"}
+
+
 def _legacy_guard(
     resolved: Mapping[str, Any],
     body: str,
@@ -168,30 +196,10 @@ def _legacy_guard(
     env: Mapping[str, str],
     history: Sequence[Any],
 ) -> dict:
-    """The job's loop-guard block plus its circuit-breaker block."""
+    """The job's loop-guard block (495-563) plus its circuit-breaker block (596-632)."""
     from circuit_breaker import check_circuit_breaker
-    from loop_guard import check_same_agent_advance, detect_human_plus_agent_ping
 
-    caller = _legacy_caller(body)
-    task = resolved.get("TASK") or ""
-    if caller and task:
-        if caller == task:
-            verdict = dict(
-                check_same_agent_advance(
-                    body,
-                    resolved.get("WORKFLOW_POSITION_PATH") or "",
-                    resolved.get("WORKFLOW_STEP") or "",
-                )
-            )
-        else:
-            verdict = {"SKIP_AGENT": "false"}
-    elif not caller and task:
-        if detect_human_plus_agent_ping(body):
-            verdict = {"SKIP_AGENT": "true", "REASON": "Human ping + agent ping detected"}
-        else:
-            verdict = {"SKIP_AGENT": "false"}
-    else:
-        verdict = {"SKIP_AGENT": "false"}
+    verdict = _legacy_loop_verdict(resolved, body)
 
     if verdict.get("SKIP_AGENT") == "true":
         return verdict
@@ -291,3 +299,39 @@ def test_run_end_to_end_reproduces_the_legacy_agent_gate(fixture, tmp_path, monk
         assert prompts == []
         assert outcome.posted_body is None
         assert outcome.exit_code is ExitCode.TERMINAL
+
+
+# ── loop-guard drift check (issue #590 round-4, finding 3) ──────────────────
+#
+# ``Engine._loop_verdict`` and ``_legacy_loop_verdict`` are two readings of the
+# same bash block (495-563). The recorded fixtures pin a handful of real inputs;
+# this sweeps the branch space so an edit to either reading fails loudly instead
+# of hiding behind a fixture that happens not to reach the branch.
+
+_LOOP_VERDICT_BODIES = (
+    "",
+    "please fix this",
+    "<!-- bot-agent-dev -->\n@@dev continue",
+    "<!-- bot-agent-dev -->\n@@genius continue",
+    "@@dev continue",
+    "@@genius continue",
+    "<!-- bot-agent-dev -->\n@@genius continue\n@@dev you too",
+    "<!-- bot-agent-dev -->\n<!-- bot-agent-genius -->\n@@dev go",
+)
+
+
+@pytest.mark.parametrize("body", _LOOP_VERDICT_BODIES)
+@pytest.mark.parametrize("task", ["dev", "genius", "issue-reviewer", ""])
+def test_loop_verdict_matches_the_legacy_replay(body, task):
+    """Drift check: ``Engine._loop_verdict`` ≡ the legacy replay, branch for branch."""
+    resolved = {
+        "TASK": task,
+        "WORKFLOW_POSITION_PATH": "spec-driven-impl/implement",
+        "WORKFLOW_STEP": "implement",
+    }
+
+    engine = Engine._loop_verdict(
+        body, task, resolved["WORKFLOW_POSITION_PATH"], resolved["WORKFLOW_STEP"]
+    )
+
+    assert engine == _legacy_loop_verdict(resolved, body)

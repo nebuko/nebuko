@@ -40,6 +40,13 @@ def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
     and an ``inputs`` key means a ``workflow_dispatch``/``workflow_call`` payload.
     Anything else is rejected loudly rather than mislabelled as issue #0.
 
+    ``workflow_call`` payloads are deliberately labelled ``workflow_dispatch``:
+    this pure seam only receives the payload, so the legacy ``github.event_name``
+    split is not available, and both events share the same Trigger contract
+    (author from ``sender``, body from ``inputs.prompt_body``, number 0). No
+    consumer branches on the label — the engine routes on ``body``/``number`` —
+    so the collapse is behavior-neutral (issue #590 round-4, finding 4).
+
     Args:
         payload: Already-parsed GitHub event payload.
 

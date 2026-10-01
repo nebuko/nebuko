@@ -7,6 +7,10 @@ surface is injected as a module-shaped stand-in in tests.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -125,3 +129,97 @@ class TestPost:
 
         assert "4242" in result
         assert ("post_comment", "olivier-norture/git-flow-ai", 590, "hello") in client.calls
+
+
+class TestImportBootstrap:
+    """The adapter bootstraps ``.github/scripts`` itself (round-4, finding 1).
+
+    ``tests/conftest.py`` seeds ``sys.path`` for the whole suite, which masked a
+    real bug: under the production ``python -m engine.run`` bootstrap only the
+    repository root is importable, so ``from event_normalizer import ...``
+    raised ``ModuleNotFoundError``. This exercises the adapter out-of-process
+    with only the repository root on ``PYTHONPATH``, i.e. no conftest seeding.
+    """
+
+    def test_read_trigger_bootstraps_the_legacy_path_without_conftest(self, tmp_path):
+        repo_root = Path(__file__).resolve().parents[2]
+        event_path = _event_file(tmp_path, ISSUE_COMMENT_PAYLOAD)
+        program = (
+            "from adapters.github import GitHubAdapter\n"
+            "adapter = GitHubAdapter(\n"
+            "    repo='olivier-norture/git-flow-ai',\n"
+            f"    event_path={str(event_path)!r},\n"
+            ")\n"
+            "trigger = adapter.read_trigger()\n"
+            "print(trigger.number, trigger.type)\n"
+        )
+        env = {**os.environ, "PYTHONPATH": str(repo_root)}
+        env.pop("GITHUB_EVENT_PATH", None)
+
+        result = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "590 issue_comment"
+
+    def test_state_methods_bootstrap_the_legacy_path_without_conftest(self, tmp_path):
+        """``load_state``/``save_state`` import legacy packages too (round-4, finding 1)."""
+        repo_root = Path(__file__).resolve().parents[2]
+        event_path = _event_file(tmp_path, ISSUE_COMMENT_PAYLOAD)
+        program = (
+            "from adapters.github import GitHubAdapter\n"
+            "class Client:\n"
+            "    def get_issue_comments(self, repo, number):\n"
+            "        return []\n"
+            f"adapter = GitHubAdapter(repo='x/y', event_path={str(event_path)!r}, client=Client())\n"
+            # Legacy imports only resolve after the adapter's bootstrap, exactly
+            # as in the production ``python -m engine.run`` ordering.
+            "from workflow_state.workflow_state import WorkflowState\n"
+            "adapter.read_trigger()\n"
+            "print(adapter.load_state())\n"
+            "adapter.save_state(WorkflowState(version=1, workflow='spec-driven-impl', "
+            "step='stub', agent='dev'))\n"
+        )
+        env = {**os.environ, "PYTHONPATH": str(repo_root), "RUNNER_TEMP": str(tmp_path)}
+        env.pop("GITHUB_EVENT_PATH", None)
+
+        result = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "None"
+        assert (tmp_path / "prev_workflow_state.json").is_file()
+
+
+class TestSaveState:
+    """``save_state`` is the hand-off write only (round-4, finding 6).
+
+    ``Engine.persist`` re-saves the *loaded* previous state when the agent
+    produced no artefact, so ``save_state`` must be side-effect free beyond the
+    hand-off file: ``WorkflowStateCodec.save_prev`` appends no history and posts
+    nothing, which is what makes that fallback safe.
+    """
+
+    def test_writes_only_the_handoff_file_and_posts_nothing(self, tmp_path, monkeypatch):
+        from workflow_state.workflow_state import WorkflowState
+
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+        client = FakeGhClient()
+        adapter = _adapter(tmp_path, client)
+
+        adapter.save_state(
+            WorkflowState(version=1, workflow="spec-driven-impl", step="stub", agent="dev")
+        )
+
+        assert (tmp_path / "prev_workflow_state.json").is_file()
+        assert client.calls == []

@@ -180,13 +180,44 @@ class Engine:
             prompt = self.build_prompt(resolved, history)
 
             self._enter(phases, "agent")
-            agent_result = self.invoke_agent(prompt)
+            failure_reason: str | None = None
+            try:
+                agent_result = self.invoke_agent(prompt)
+            except Exception as exc:  # noqa: BLE001 - never crash the host
+                log.exception("[phase:agent] agent invocation failed: %s", exc)
+                # The bash runs the agent behind ``| tee console.log``, so a
+                # non-zero exit never fails the step, and "Clean and Prepare
+                # Comment" is guarded by ``if: always()``. A crashed run still
+                # reaches ``prepare_comment`` and posts its structured
+                # fallback; mirror that with an empty result (no artefacts)
+                # instead of aborting silently (issue #590 round-4, finding 2).
+                agent_result = {}
+                failure_reason = str(exc)
 
             self._enter(phases, "validate")
-            self.validate(agent_result)
+            if failure_reason is None:
+                try:
+                    self.validate(agent_result)
+                except Exception as exc:  # noqa: BLE001 - publish, then error
+                    log.exception("[phase:validate] output validation failed: %s", exc)
+                    failure_reason = str(exc)
 
+            # Published even on failure: legacy always reaches ``prepare_comment``
+            # (``if: always()``), so the issue thread is never left silent. A
+            # validation failure keeps the agent's real artefacts, a crash falls
+            # back to the crash notice (finding 2).
             self._enter(phases, "publish")
             posted_body = self.publish(agent_result)
+
+            if failure_reason is not None:
+                return RunOutcome(
+                    exit_code=ExitCode.ERROR,
+                    routing=RoutingDecision(status="hold", reason=failure_reason),
+                    prompt=prompt,
+                    posted_body=posted_body,
+                    state=None,
+                    phases=tuple(phases),
+                )
 
             self._enter(phases, "state")
             state = self.persist(agent_result)
@@ -234,14 +265,19 @@ class Engine:
         ensure_import_path()
         from resolve_config.resolve_config import resolve_config
 
-        resolved = resolve_config(
-            trigger_body=trigger.body,
-            prompt_base=str(self.repo_root / ".agents" / "prompts"),
-            workflows_dir=str(self.repo_root / "workflows"),
-            repo=self._repo(trigger),
-            issue_number=trigger.number or None,
-            debug=_is_true(self.env.get("CONFIG_DEBUG")),
+        resolved = dict(
+            resolve_config(
+                trigger_body=trigger.body,
+                prompt_base=str(self.repo_root / ".agents" / "prompts"),
+                workflows_dir=str(self.repo_root / "workflows"),
+                repo=self._repo(trigger),
+                issue_number=trigger.number or None,
+                debug=_is_true(self.env.get("CONFIG_DEBUG")),
+            )
         )
+        # Copy before annotating: the resolver may hand back a cached/shared
+        # mapping, and the engine must not mutate another component's object
+        # (issue #590 round-4, finding 7).
         resolved[_TRIGGER_KEY] = trigger
         self._resolve_cache[key] = resolved
         return resolved
@@ -313,7 +349,19 @@ class Engine:
     def _loop_verdict(
         body: str, task: str, position_path: Any, step: Any
     ) -> dict[str, str]:
-        """The caller-vs-target half of the bash guard block, decision for decision."""
+        """The caller-vs-target half of the bash guard block, decision for decision.
+
+        Mirrors ``.github/workflows/openhands-multi-agent.yml`` lines 495-563
+        ("Prevent all agent-trigger loops"):
+
+        * ``500`` reads the caller marker; ``501`` gates on ``caller && task``;
+        * ``503`` same caller/target -> ``loop_guard.check_same_agent_advance``
+          (``505-538``), differing -> allow (``539-540``);
+        * ``543`` no caller but a task -> ``detect_human_plus_agent_ping`` (``552``)
+          skips, otherwise keep the resolver decision (``560-563``).
+
+        The circuit-breaker half (``596-632``) lives in :meth:`guard`.
+        """
         ensure_import_path()
         from loop_guard import check_same_agent_advance, detect_human_plus_agent_ping
 
@@ -368,7 +416,7 @@ class Engine:
         latest answer -> console.log -> crash notice) lives in
         ``prepare_comment.build_comment_body``; calling that same function is
         what keeps a run that produced no usable output posting the *same*
-        structured fallback on both hosts (issue #590 round-4, finding 1).
+        structured fallback on both hosts (issue #590 round-4, finding 2).
         Only the sink differs here: the adapter's ``post``.
         """
         ensure_import_path()

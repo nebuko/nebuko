@@ -229,6 +229,48 @@ class TestRunLoop:
 
         assert outcome.exit_code == ExitCode.ERROR
 
+    def test_posts_the_crash_fallback_when_the_agent_crashes(self, tmp_path, monkeypatch):
+        """A crashed agent still reaches publish (issue #590 round-4, finding 2).
+
+        The legacy job runs the agent behind ``| tee console.log`` (so a non-zero
+        exit never fails that step) and guards "Clean and Prepare Comment" with
+        ``if: always()``. With no artefacts on disk the chain lands on its
+        Path C/D fallback — the trigger-author ping plus the warning — and the
+        driver must leave that same notice on the thread instead of returning
+        silently.
+        """
+        engine = _engine(tmp_path)
+
+        def boom(self, prompt):
+            raise RuntimeError("agent transport exploded")
+
+        monkeypatch.setattr(Engine, "invoke_agent", boom)
+
+        outcome = engine.run()
+
+        assert "publish" in outcome.phases
+        assert outcome.posted_body is not None
+        assert outcome.posted_body.startswith("@olivier-norture")
+        assert "did not produce a final message" in outcome.posted_body
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
+        assert "did not produce a final message" in journal
+
+    def test_posts_the_agents_own_answer_when_validation_fails(self, tmp_path, monkeypatch):
+        """A rejected answer keeps the agent's text in the published body (finding 2)."""
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("*Dev answer*"))
+
+        def reject(self, agent_result):
+            raise ValueError("agent output failed validation: too short")
+
+        monkeypatch.setattr(Engine, "validate", reject)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.posted_body is not None
+        assert "*Dev answer*" in outcome.posted_body
+
 
 class TestStatePhase:
     def _state(self):

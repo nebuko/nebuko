@@ -43,6 +43,12 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     ) -> None:
         from pathlib import Path as _Path
 
+        # Bootstrap the legacy ``.github/scripts`` import path once, at adapter
+        # construction: every method below imports a legacy module, and the
+        # repository packaging does not cover that directory (issue #590
+        # round-4, finding 1). Doing it here keeps the methods themselves
+        # ordering-safe under the production ``python -m engine.run`` bootstrap.
+        ensure_import_path()
         self._event_path = _Path(event_path) if event_path is not None else None
         # Mirror ``run_loop.main``'s default so a bare ``GitHubAdapter()`` still
         # resolves the repo from the runner environment instead of failing with
@@ -55,9 +61,13 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     def read_trigger(self) -> Trigger:
         from pathlib import Path as _Path
 
+        # Must precede the legacy import: ``event_normalizer`` only resolves
+        # once ``.github/scripts`` is on ``sys.path`` (issue #590 round-4,
+        # finding 1 — ``__init__`` also bootstraps, this keeps the method
+        # correct on its own if it is ever called on a bare instance).
+        ensure_import_path()
         from event_normalizer import normalize_trigger
 
-        ensure_import_path()
         path = self._event_path
         if path is None:
             env_path = os.environ.get("GITHUB_EVENT_PATH")
