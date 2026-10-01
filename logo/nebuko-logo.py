@@ -102,7 +102,8 @@ def build(uid, mode="dark"):
 
     w0, w1 = (4.2, 9.2) if compact else (3.0, 7.8)             # largeur du ruban : fine -> franche
     hwf = lambda t: (w0 + (w1 - w0) * min(t, 1.0) ** 1.25) / 2
-    R_H = 7.4 if compact else 6.3                              # rayon des anneaux ambre
+    R_H  = 7.4 if compact else 6.3                             # rayon de l'anneau de validation humaine
+    R_H0 = 0.72 * R_H                                          # 1er prompt humain (début de spirale) : plus petit
     tg = 0.62 if compact else 0.64                             # position de la 2e validation humaine
     pearls = [] if compact else [0.17, 0.35, 0.83]             # agents (anneaux bleus)
 
@@ -167,7 +168,7 @@ def build(uid, mode="dark"):
     # anneaux : MÊME forme pour les agents (bleu) et les humains (ambre)
     for px, py, outer in blue_rings:
         o += ring((px, py), outer, blue)
-    o += ring((0, 0), R_H, amb)                                # 1er prompt humain
+    o += ring((0, 0), R_H0, amb)                               # 1er prompt humain (début de spirale)
     o += ring((gate[0], gate[1]), R_H, amb)                    # validation humaine
 
     # boîte englobante (pour centrer / mettre à l'échelle)
