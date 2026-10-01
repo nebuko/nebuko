@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from resolve_llm_config import (
+    normalize_base_url,
     normalize_reasoning_effort,
     resolve_api_url,
     resolve_llm_config,
@@ -68,6 +69,38 @@ class TestResolveApiUrl(unittest.TestCase):
         os.environ[self.ENV] = "not-a-url"
         with self.assertRaises(ValueError):
             resolve_api_url(self.ENV)
+
+
+class TestNormalizeBaseUrl(unittest.TestCase):
+    """Pure I/O tests for normalize_base_url() — issue #717."""
+
+    def test_bare_api_root_passes_through(self):
+        self.assertEqual(
+            normalize_base_url("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1",
+        )
+
+    def test_chat_completions_suffix_is_stripped(self):
+        self.assertEqual(
+            normalize_base_url("https://openrouter.ai/api/v1/chat/completions"),
+            "https://openrouter.ai/api/v1",
+        )
+
+    def test_trailing_slash_after_suffix_is_stripped(self):
+        self.assertEqual(
+            normalize_base_url("http://host:30080/v1/chat/completions/"),
+            "http://host:30080/v1",
+        )
+
+    def test_unrelated_route_is_untouched(self):
+        self.assertEqual(
+            normalize_base_url("https://host.example.com/v1/responses"),
+            "https://host.example.com/v1/responses",
+        )
+
+    def test_unset_url_passes_through(self):
+        self.assertIsNone(normalize_base_url(None))
+        self.assertEqual(normalize_base_url(""), "")
 
 
 class TestNormalizeReasoningEffort(unittest.TestCase):
@@ -281,6 +314,10 @@ agents:
         cfg = self._resolve(self.ENV)
         self.assertEqual(cfg["base_url"], "https://selfhosted.example.com/v1")
 
+    def test_chat_completions_suffix_in_config_url_is_stripped(self):
+        cfg = self._resolve("https://openrouter.ai/api/v1/chat/completions")
+        self.assertEqual(cfg["base_url"], "https://openrouter.ai/api/v1")
+
     def test_unset_env_var_fails_fast(self):
         with self.assertRaises(ValueError):
             self._resolve(self.ENV)
@@ -289,6 +326,59 @@ agents:
         os.environ[self.ENV] = "garbage"
         with self.assertRaises(ValueError):
             self._resolve(self.ENV)
+
+
+class TestMissingModelFailsLoudly(unittest.TestCase):
+    """An unresolved model must fail loudly, not 404 at the provider (issue #717)."""
+
+    CONFIG_TEMPLATE = """\
+providers:
+  test_provider:
+    api_url: "http://test/v1"
+    api_token_env: "TEST_LLM_API_KEY"
+llms:
+  test-model:
+    model_path: "test/test-model"
+    provider: ${providers.test_provider}
+    default_temperature: 0.7
+agents:
+  dev:
+    model: ${llms.test-model}
+    temperature: 0.7
+    prompt_file: "dev.md"
+"""
+
+    def setUp(self):
+        self._env_keys = ["TEST_LLM_API_KEY", "LLM_API_KEY", "LLM_MODEL", "AGENT_CONFIG_PATH", "ROLE_NAME"]
+        self._saved = {k: os.environ.get(k) for k in self._env_keys}
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        with open(self._config_path, "w") as f:
+            f.write(self.CONFIG_TEMPLATE)
+        os.environ["TEST_LLM_API_KEY"] = "test-key"
+        os.environ["LLM_API_KEY"] = "legacy-key"
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
+        os.environ.pop("LLM_MODEL", None)
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_unknown_role_without_llm_model_raises(self):
+        os.environ["ROLE_NAME"] = "unknown"
+        with self.assertRaises(ValueError) as ctx:
+            resolve_llm_config(None, "prompt")
+        self.assertIn("LLM_MODEL", str(ctx.exception))
+
+    def test_llm_model_env_is_the_documented_fallback(self):
+        os.environ["ROLE_NAME"] = "unknown"
+        os.environ["LLM_MODEL"] = "openrouter/anthropic/claude-sonnet-5"
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+        self.assertEqual(cfg["model"], "openrouter/anthropic/claude-sonnet-5")
 
 
 class TestComplexityOverrideRouting(unittest.TestCase):

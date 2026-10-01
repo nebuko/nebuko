@@ -65,6 +65,26 @@ def resolve_api_url(raw: str) -> str:
     return resolved
 
 
+# LiteLLM appends the route itself; a base URL that already carries it sends
+# requests to ``.../chat/completions/chat/completions`` → 404 (issue #717).
+_CHAT_COMPLETIONS_SUFFIX = "/chat/completions"
+
+
+def normalize_base_url(url: str | None) -> str | None:
+    """Return ``url`` without a redundant trailing ``/chat/completions``.
+
+    LiteLLM's OpenAI-compatible providers append ``/chat/completions`` to
+    ``base_url``; a value that already includes it produces a doubled path and a
+    ``404`` on the first request (issue #717).
+    """
+    if not url:
+        return url
+    trimmed = url.rstrip("/")
+    if trimmed.endswith(_CHAT_COMPLETIONS_SUFFIX):
+        trimmed = trimmed[: -len(_CHAT_COMPLETIONS_SUFFIX)]
+    return trimmed or url
+
+
 def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     """
     Resolve LLM configuration from layered sources.
@@ -132,11 +152,15 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     if api_key is None:
         api_key = os.getenv("LLM_API_KEY")
     if model is None:
-        model = os.getenv("LLM_MODEL", "gpt-5.5")
+        # No silent default: an unresolved model must fail loudly below rather
+        # than reach the provider as a bogus name and 404 (issue #717).
+        model = os.getenv("LLM_MODEL")
     if base_url is None:
         base_url = os.getenv("LLM_BASE_URL")
     if temperature is None and os.getenv("LLM_TEMPERATURE"):
         temperature = float(os.getenv("LLM_TEMPERATURE"))
+
+    base_url = normalize_base_url(base_url)
 
     # ── Per-invocation overrides ─────────────────────────────────
     config_model = os.getenv("CONFIG_MODEL")
@@ -164,6 +188,11 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     # ── Validation ───────────────────────────────────────────────
     if not api_key:
         raise ValueError("LLM_API_KEY environment variable is not set.")
+    if not model:
+        raise ValueError(
+            f"No LLM model resolved: agent role '{role_name}' has no entry in "
+            f"'{config_path}' and LLM_MODEL is unset."
+        )
 
     # ── Build base LLM config dict ───────────────────────────────
     llm_config = {

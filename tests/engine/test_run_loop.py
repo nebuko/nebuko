@@ -15,7 +15,7 @@ import pytest
 from adapters.local import LocalAdapter
 from engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
 from engine.paths import repo_root
-from engine.run_loop import PHASES, Engine, main
+from engine.run_loop import PHASES, Engine, main, resolved_env_overlay
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
 
@@ -315,6 +315,57 @@ class TestStatePhase:
 
         assert outcome.state is None
         assert not (tmp_path / "runs" / "run-1" / "state.json").exists()
+
+
+class TestAgentEnvHandoff:
+    """The engine hands the legacy child the resolution the bash job exported.
+
+    The bash agent step read ``ROLE_NAME`` (and friends) back from
+    ``$GITHUB_ENV``; without it the child cannot find its agent in
+    ``agent-config.yaml``, boots the SDK with no model, and 404s on the first
+    request (issue #717).
+    """
+
+    def test_carries_the_resolvers_role_name_to_the_child(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev", "TASK": "dev", "PROMPT_LOCATION": "/repo/dev.md"})
+
+        env = engine._agent_env()
+
+        assert env["ROLE_NAME"] == "dev"
+        assert env["PROMPT_LOCATION"] == "/repo/dev.md"
+
+    def test_overlay_drops_the_engine_only_trigger(self):
+        overlay = resolved_env_overlay({"ROLE_NAME": "dev", "ENGINE_TRIGGER": _trigger()})
+
+        assert overlay == {"ROLE_NAME": "dev"}
+
+    def test_anchors_a_relative_config_path_to_the_checkout(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": "agent-config.yaml"})
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+
+        env = engine._agent_env()
+
+        assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
+
+    def test_keeps_an_absolute_config_path(self, tmp_path, monkeypatch):
+        absolute = str(tmp_path / "agent-config.yaml")
+        engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": absolute})
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+
+        assert engine._agent_env()["AGENT_CONFIG_PATH"] == absolute
+
+    def test_ambient_env_survives_a_resolver_failure(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": "agent-config.yaml"})
+
+        def boom(self, resolved):
+            raise RuntimeError("resolver exploded")
+
+        monkeypatch.setattr(Engine, "resolve", boom)
+
+        env = engine._agent_env()
+
+        assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
 
 
 class TestEntryPoints:

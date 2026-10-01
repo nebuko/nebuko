@@ -124,6 +124,43 @@ def _final_message_of(agent_result: Any) -> str:
     return ""
 
 
+def resolved_env_overlay(resolved: Any) -> dict[str, str]:
+    """The resolver's output as the legacy job exported it (``$GITHUB_ENV``).
+
+    The bash ``run-task`` job copied the resolver's ``KEY=value`` output into
+    ``$GITHUB_ENV`` after ``resolve_config``, and the agent step read it back
+    from the environment — ``resolve_llm_config`` keys off ``ROLE_NAME`` to find
+    the agent's model/provider in ``agent-config.yaml`` (issue #717). The engine
+    resolves that config in-process, so it must reconstruct the same hand-off
+    for the legacy child.
+
+    ``Engine.resolve`` annotates the mapping with the engine-only
+    ``ENGINE_TRIGGER`` object; every other value is a string the job exported.
+    """
+    if not isinstance(resolved, Mapping):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in resolved.items()
+        if key != _TRIGGER_KEY and isinstance(value, str)
+    }
+
+
+def _anchor_config_path(env: dict[str, str], repo_root: "Path") -> dict[str, str]:
+    """Make ``AGENT_CONFIG_PATH`` absolute for the temp-cwd legacy child.
+
+    The legacy job ran the agent with the checkout as cwd, so a relative
+    ``AGENT_CONFIG_PATH`` resolved; the engine runs the child in a temp workdir,
+    where the same value misses the file and the agent boots with no model
+    (issue #717). The resolver's ``PROMPT_LOCATION`` is already absolute for the
+    same reason.
+    """
+    raw = env.get("AGENT_CONFIG_PATH")
+    if raw and not os.path.isabs(raw):
+        env["AGENT_CONFIG_PATH"] = os.path.join(str(repo_root), raw)
+    return env
+
+
 # @stub-protected
 @dataclass(frozen=True)
 class Engine:
@@ -392,10 +429,33 @@ class Engine:
 
     # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:
-        """Delegate to the legacy ``agent_script.arun`` result."""
+        """Delegate to the legacy ``agent_script.arun`` result.
+
+        The child receives the resolver's per-run hand-off (``ROLE_NAME``,
+        ``CONFIG_*``, ...) on top of the ambient environment, mirroring the
+        legacy ``$GITHUB_ENV`` export (issue #717).
+        """
         from engine.agent_runner import run_legacy_agent
 
-        return run_legacy_agent(prompt, repo_root=self.repo_root, env=self.env)
+        return run_legacy_agent(
+            prompt, repo_root=self.repo_root, env=self._agent_env()
+        )
+
+    def _agent_env(self) -> dict[str, str]:
+        """``self.env`` overlaid with the resolver's ``$GITHUB_ENV`` hand-off.
+
+        Without ``ROLE_NAME`` the legacy child cannot find its agent in
+        ``agent-config.yaml``, so it boots the SDK with no model and 404s on the
+        first request (issue #717). A resolver failure is not fatal here: the
+        agent still runs against the ambient environment.
+        """
+        try:
+            resolved = self.resolve(self.normalize())
+        except Exception:  # noqa: BLE001 - the ambient env still lets the agent run
+            log.warning("[phase:agent] no resolved config to hand the agent child")
+            return _anchor_config_path(dict(self.env), self.repo_root)
+        env = {**self.env, **resolved_env_overlay(resolved)}
+        return _anchor_config_path(env, self.repo_root)
 
     # @stub-protected
     def validate(self, agent_result: Any) -> None:
@@ -508,7 +568,9 @@ class Engine:
     def _role_of(self, agent_result: Any) -> str:
         if isinstance(agent_result, Mapping) and agent_result.get("role"):
             return str(agent_result["role"])
-        return self.env.get("ROLE_NAME", "")
+        # Same hand-off as the agent child: the resolver's ROLE_NAME, not the
+        # ambient environment (which never carries it on the engine host).
+        return self._agent_env().get("ROLE_NAME", "")
 
     @staticmethod
     def _console_log_of(agent_result: Any) -> str:
