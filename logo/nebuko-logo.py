@@ -105,7 +105,9 @@ def build(uid, mode="dark"):
     R_H  = 7.4 if compact else 6.3                             # rayon de l'anneau de validation humaine
     R_H0 = 0.36 * R_H                                          # 1er prompt humain (début de spirale) : 2x plus petit
     tg = 0.62 if compact else 0.64                             # position de la 2e validation humaine
-    pearls = [] if compact else [0.17, 0.35, 0.83]             # agents (anneaux bleus)
+    # agents (anneaux bleus) : (position sur la spirale, facteur d'échelle du rayon).
+    # Le dernier est le 5e cercle (bout de spirale) : il est agrandi.
+    pearls = [] if compact else [(0.17, 1.0), (0.35, 1.0), (0.83, 1.4)]
 
     at = lambda t: min(P, key=lambda q: abs(q[2] - t))
     start, gate = P[0], at(tg)                                 # le 1er anneau se pose sur le début de la spirale
@@ -114,9 +116,9 @@ def build(uid, mode="dark"):
     cuts = [(start[0], start[1], R_H0 * 0.78),
             (gate[0], gate[1], R_H - 1.4)]
     blue_rings = []
-    for t in pearls:
+    for t, scale in pearls:
         p = at(t)
-        outer = hwf(t) + 2.0
+        outer = (hwf(t) + 2.0) * scale
         blue_rings.append((p[0], p[1], outer))
         cuts.append((p[0], p[1], outer - 1.5))
 
