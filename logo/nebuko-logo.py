@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """NEBUKO — spirale en O, v3
  - le fil est continu : plus aucun nœud bleu, seul le ruban dessine la spirale
- - trois repères ambre racontent le parcours : le cercle plein au centre (le début),
-   la cible à la pointe du fil (la destination) et le losange élancé (la validation
-   humaine) — les trois partagent l'axe centre → destination
- - le fil s'affine jusqu'à la pointe, sans point terminal, et quelques points de sa
-   propre couleur jalonnent la spirale ; aucun halo
+ - trois repères ambre racontent le parcours : le cercle plein au centre (le début, d'où
+   le ruban sort), la cible à la pointe du fil (la destination) et le losange (la
+   validation humaine) — les trois partagent l'axe centre → destination
+ - le ruban prend sa pleine largeur en fin de spirale et se termine net, la cible venant
+   se souder à son extrémité ; quelques jalons de sa propre couleur ponctuent la spirale
 Dépendances : pip install cairosvg uharfbuzz fonttools
 """
 import math, os
@@ -27,11 +27,11 @@ if not os.path.exists(FONT):
     urllib.request.urlretrieve(FONT_URL, FONT)
 
 BG, AMBER, G0, G1 = "#0F172A", "#F59E0B", "#5A3DF0", "#2F9BFF"
-DIAMOND_WX, DIAMOND_HY = 0.90, 1.30        # losange : facteurs demi-largeur / demi-hauteur (>1 = élancé)
-TAIL_TAPER = 0.50                          # fraction finale de la queue qui s'affine en pointe
+DIAMOND_ELONG = 1.35                       # losange : demi-axe le long du fil / demi-axe en travers
 GATE_WINDOW = (0.55, 0.92)                 # fenêtre où l'on pose le losange sur le fil
-DOT_TS = (0.22, 0.50, 0.90)                # jalons bleus posés sur la spirale
-BEAD_R = 1.8                               # rayon d'un jalon = BEAD_R × demi-largeur du fil
+DOT_TS = (0.30, 0.55, 0.88)                # jalons bleus posés sur la spirale
+BEAD_R = 0.90                              # rayon d'un jalon = BEAD_R × demi-largeur du fil
+BEAD_GAP = 0.80                            # vide laissé autour d'un jalon (le ruban est interrompu)
 
 def f(v):
     return f"{v:.2f}".rstrip("0").rstrip(".")
@@ -48,13 +48,15 @@ def target(c, r, fill):
     x, y = c
     return annulus(c, r, r * 0.72, fill) + f'<circle cx="{f(x)}" cy="{f(y)}" r="{f(r*0.26)}" fill="{fill}"/>'
 
-def diamond(c, r, fill):
-    """Losange plein, plus haut que large (gate de validation humaine) : la diagonale
-    verticale est allongée pour une silhouette de gemme plutôt qu'un carré tourné."""
+def diamond(c, tangent, normal, across, along, fill):
+    """Losange plein posé sur le fil (gate de validation humaine). Il est aligné sur le
+    trajet : `across` en travers du fil (il le barre) et `along` le long du fil."""
     x, y = c
-    wx, hy = r * DIAMOND_WX, r * DIAMOND_HY
-    return (f'<path fill="{fill}" d="M{f(x)} {f(y-hy)}L{f(x+wx)} {f(y)}'
-            f'L{f(x)} {f(y+hy)}L{f(x-wx)} {f(y)}Z"/>')
+    tx, ty = tangent
+    nx, ny = normal
+    pts = ((x + nx * across, y + ny * across), (x + tx * along, y + ty * along),
+           (x - nx * across, y - ny * across), (x - tx * along, y - ty * along))
+    return f'<path fill="{fill}" d="M' + "L".join(f"{f(px)} {f(py)}" for px, py in pts) + 'Z"/>'
 
 def plain_dot(c, r, fill):
     """Disque plein : le point de départ et les jalons du fil (ni anneau, ni trou)."""
@@ -112,7 +114,7 @@ def outline(points, hwf):
 # ------------------------------------------------------------------ géométrie de la spirale
 def geometry(compact=False):
     turns = 1.5 if compact else 1.75
-    R, r0 = 27.0, 5.4
+    R, r0 = 27.0, 0.0                     # le fil part du centre : le ruban sort du disque ambre
     th1 = -math.pi / 2                    # le fil finit en haut, cap à droite
     th0 = th1 - turns * 2 * math.pi
     n = 500
@@ -132,15 +134,14 @@ def build(uid, mode="dark"):
 
     def hwf(t):
         """Demi-largeur du ruban : t ∈ [0,1] parcourt la spirale (largeur croissante),
-        t ∈ ]1,2] la queue, dont la fin s'affine jusqu'à la pointe (plus de point terminal)."""
+        t ∈ ]1,2] la queue, qui garde sa largeur maximale et se termine net."""
         if t <= 1.0:
             return (w0 + (w1 - w0) * t ** 1.25) / 2
-        u = t - 1.0
-        return (w1 / 2) * min(1.0, (1.0 - u) / TAIL_TAPER) ** 1.35
+        return w1 / 2
 
-    R_H    = 7.4 if compact else 6.3                           # demi-largeur du losange (validation humaine)
+    R_H    = 7.4 if compact else 6.3                           # repère ambre : rayon de référence
     R_dot  = 0.60 * R_H                                        # rayon du cercle plein du centre (le début)
-    R_dest = 0.62 * R_H                                        # rayon de la cible, posée sur la pointe du fil
+    R_dest = 0.98 * R_H                                        # rayon de la cible (la destination)
     P = geometry(compact)
     at = lambda t: min(P, key=lambda q: abs(q[2] - t))
 
@@ -157,19 +158,37 @@ def build(uid, mode="dark"):
         x += math.cos(h) * step
         y += math.sin(h) * step
         s_ += step
-        ext.append((x, y, 1.0 + s_ / (S + L2)))                # t > 1 : la queue s'affine
+        ext.append((x, y, 1.0 + s_ / (S + L2)))                # t > 1 : queue de largeur constante
     full = P + ext
     dest = ext[-1]                                             # pointe du fil : la destination
+    # la cible est centrée sur l'axe du fil, juste au-delà de sa pointe : son anneau vient
+    # coiffer le bout du ruban, qui se perd dessous (cible soudée à l'extrémité).
+    off = R_dest * 0.72 + 0.35
+    dst = (dest[0] + math.cos(phi) * off, dest[1] + math.sin(phi) * off)
 
     # le losange se pose là où le fil recoupe l'axe centre → destination, du côté opposé à
     # celle-ci : le début, le losange et la destination se retrouvent ainsi alignés.
     axis = lambda p: abs(p[0] * dest[1] - p[1] * dest[0])
     gate = min((p for p in P if GATE_WINDOW[0] <= p[2] <= GATE_WINDOW[1]), key=axis)
 
-    # le fil est coupé sous les marqueurs : la coupe reste en deçà du bord du marqueur pour
-    # qu'il ne réapparaisse ni dans le vide de la cible ni sur les flancs du losange.
-    cuts = [(gate[0], gate[1], R_H * 0.55),
-            (dest[0], dest[1], R_dest * 0.85)]
+    # repère local du fil au passage du losange : il est centré sur le trajet, son demi-axe
+    # en travers vaut la demi-largeur du fil (il le barre sans le déborder) et son demi-axe
+    # le long du fil l'étire en gemme.
+    i = P.index(gate)
+    g0, g1 = P[max(i - 3, 0)], P[min(i + 3, len(P) - 1)]
+    gx, gy = g1[0] - g0[0], g1[1] - g0[1]
+    gn = math.hypot(gx, gy) or 1.0
+    tangent, normal = (gx / gn, gy / gn), (-gy / gn, gx / gn)
+    across = hwf(gate[2])
+    along = across * DIAMOND_ELONG
+
+    # jalons posés sur la spirale, de la couleur du fil : un peu plus petits que lui et
+    # isolés par un vide pour qu'ils se lisent comme des étapes et non comme des bosses.
+    beads = [(at(t), hwf(t) * BEAD_R) for t in DOT_TS]
+
+    # le fil est coupé sous les marqueurs, pour qu'il ne réapparaisse pas dans leurs vides.
+    cuts = [(gate[0], gate[1], across)]
+    cuts += [(p[0], p[1], r + BEAD_GAP) for p, r in beads]
 
     if flat is None:
         defs = (f'<radialGradient id="{uid}s" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="34">'
@@ -193,22 +212,23 @@ def build(uid, mode="dark"):
     o = "".join(f'<path d="{ribbon(r, hwf)}" fill="{blue}"/>' for r in runs)
 
     # jalons posés sur la spirale, de la couleur du fil
-    beads = [(at(t), hwf(t) * BEAD_R) for t in DOT_TS]
     o += "".join(plain_dot((p[0], p[1]), r, blue) for p, r in beads)
 
     # repères ambre : le début (cercle plein au centre), la validation humaine (losange) et
-    # la destination (cible à la pointe du fil)
+    # la destination (cible centrée sur l'axe, soudée à la pointe du fil)
     o += plain_dot((0, 0), R_dot, amb)
-    o += diamond((gate[0], gate[1]), R_H, amb)
-    o += target((dest[0], dest[1]), R_dest, amb)
+    o += diamond((gate[0], gate[1]), tangent, normal, across, along, amb)
+    o += target(dst, R_dest, amb)
 
     # boîte englobante = encre réellement dessinée : contour du ruban, jalons et marqueurs.
     # C'est elle qu'on centre, pour que le logo entier (queue comprise) soit centré.
     ink = outline(full, hwf)
-    for mx, my, mrx, mry in ((0, 0, R_dot, R_dot),
-                             (gate[0], gate[1], R_H * DIAMOND_WX, R_H * DIAMOND_HY),
-                             (dest[0], dest[1], R_dest, R_dest)):
+    for mx, my, mrx, mry in ((0, 0, R_dot, R_dot), (dst[0], dst[1], R_dest, R_dest)):
         ink += [(mx - mrx, my - mry), (mx + mrx, my + mry)]
+    ink += [(gate[0] + normal[0] * across, gate[1] + normal[1] * across),
+            (gate[0] - normal[0] * across, gate[1] - normal[1] * across),
+            (gate[0] + tangent[0] * along, gate[1] + tangent[1] * along),
+            (gate[0] - tangent[0] * along, gate[1] - tangent[1] * along)]
     for p, r in beads:
         ink += [(p[0] - r, p[1] - r), (p[0] + r, p[1] + r)]
     xs = [p[0] for p in ink]
