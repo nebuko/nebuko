@@ -7,11 +7,11 @@ providers:
 # ── LLMs: model paths referencing providers ──
 llms:
   deepseek-v4_1-flash:
-    model_path: "deepseek/deepseek-v4.1-flash"
+    model_path: "openai/deepseek/deepseek-v4.1-flash"
     provider: "${providers.commandcode}"
   
   glm-5_3-flash:
-    model_path: "z-ai/glm-5.3-flash"
+    model_path: "openai/z-ai/glm-5.3-flash"
     provider: "${providers.commandcode}"
   
 # ── Agents: role → model + prompt + skills + tools ──
