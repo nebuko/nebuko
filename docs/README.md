@@ -20,6 +20,7 @@ For the high-level pitch and quick overview, see the root
 | [workflows.md](./workflows.md) | Users & contributors | Declarative workflow engine + all built-in workflows with step graphs. |
 | [agents-and-skills.md](./agents-and-skills.md) | Users & contributors | The 9 agents, the 5 skills, and the tool permission model. |
 | [configuration.md](./configuration.md) | Operators | Layered `agent-config.yaml`: providers → llms → agents, `${ref}` resolution. |
+| [subscription-plans.md](./subscription-plans.md) | Operators | Run agents on a subscription plan (CommandCode today; OpenCode Go planned). |
 | [features.md](./features.md) | Contributors | Deep dives: human commands, task decomposition, safety, metrics, execution layer, zero-copy. |
 | [reference.md](./reference.md) | Contributors | Machine contracts: dispatch sentinel, workflow grammar, state schema, env vars, markers. |
 | [default-workflow.md](./default-workflow.md) | Operators | Step-by-step reference of the GitHub Actions orchestrator (jobs, steps, data flow). |
@@ -37,7 +38,7 @@ is the product" + "how does it work"). Agent behavior contract: root
 
 - **New user:** getting-started → architecture → workflows
 - **Contributor:** architecture → architecture_code → features
-- **Operator:** configuration → reference → default-workflow
+- **Operator:** configuration → subscription-plans → reference → default-workflow
 
 All documents cross-reference each other; any of them can be a valid entry
 point.
