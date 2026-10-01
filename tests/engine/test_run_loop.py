@@ -15,7 +15,7 @@ import pytest
 from adapters.local import LocalAdapter
 from engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
 from engine.paths import repo_root
-from engine.run_loop import PHASES, Engine, main
+from engine.run_loop import PHASES, Engine, main, resolved_env_overlay
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
 
@@ -33,8 +33,8 @@ def _agent_result(answer: str, dispatch: dict | None = None) -> dict:
     return {"answer": answer, "dispatch": dispatch if dispatch is not None else {"status": "advance"}}
 
 
-def _stub_resolved(monkeypatch, resolved: dict) -> None:
-    """Pin the resolver's output for a guard-phase unit test.
+def _patch_resolver(monkeypatch, resolver) -> None:
+    """Replace the resolver facade with ``resolver`` for a unit test.
 
     ``resolve_config.resolve_config`` is the facade function, imported by
     ``Engine.resolve`` from its submodule, so the patch targets the submodule
@@ -45,10 +45,13 @@ def _stub_resolved(monkeypatch, resolved: dict) -> None:
     import resolve_config  # noqa: F401 - ensures the submodule is imported
 
     monkeypatch.setattr(
-        sys.modules["resolve_config.resolve_config"],
-        "resolve_config",
-        lambda **_: resolved,
+        sys.modules["resolve_config.resolve_config"], "resolve_config", resolver
     )
+
+
+def _stub_resolved(monkeypatch, resolved: dict) -> None:
+    """Pin the resolver's output for a guard-phase unit test."""
+    _patch_resolver(monkeypatch, lambda **_: resolved)
 
 
 class TestPhaseVocabulary:
@@ -315,6 +318,96 @@ class TestStatePhase:
 
         assert outcome.state is None
         assert not (tmp_path / "runs" / "run-1" / "state.json").exists()
+
+
+class TestAgentEnvHandoff:
+    """The engine hands the legacy child the resolution the bash job exported.
+
+    The bash agent step read ``ROLE_NAME`` (and friends) back from
+    ``$GITHUB_ENV``; without it the child cannot find its agent in
+    ``agent-config.yaml``, boots the SDK with no model, and 404s on the first
+    request (issue #717).
+    """
+
+    def test_carries_the_resolvers_role_name_to_the_child(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev", "TASK": "dev", "PROMPT_LOCATION": "/repo/dev.md"})
+
+        env = engine._agent_env()
+
+        assert env["ROLE_NAME"] == "dev"
+        assert env["PROMPT_LOCATION"] == "/repo/dev.md"
+
+    def test_overlay_drops_the_engine_only_trigger(self):
+        overlay = resolved_env_overlay({"ROLE_NAME": "dev", "ENGINE_TRIGGER": _trigger()})
+
+        assert overlay == {"ROLE_NAME": "dev"}
+
+    def test_overlay_stringifies_non_string_values(self):
+        """A non-string setting must survive the hand-off (issue #717 round 2)."""
+        overlay = resolved_env_overlay(
+            {"ROLE_NAME": "dev", "CONFIG_TEMPERATURE": 0.7, "ENGINE_TRIGGER": _trigger()}
+        )
+
+        assert overlay == {"ROLE_NAME": "dev", "CONFIG_TEMPERATURE": "0.7"}
+
+    def test_a_config_error_is_fatal(self, tmp_path, monkeypatch):
+        """A rejected config must fail loudly, not boot the child modelless."""
+        engine = _engine(tmp_path)
+
+        def reject(self, trigger):
+            raise ValueError("No LLM model resolved")
+
+        monkeypatch.setattr(Engine, "resolve", reject)
+
+        with pytest.raises(ValueError, match="No LLM model resolved"):
+            engine._agent_env()
+
+    def test_run_reuses_its_resolution_for_the_handoff(self, tmp_path, monkeypatch):
+        """The child gets the very mapping the run routed on (issue #717 round 2)."""
+        engine = _engine(tmp_path)
+        calls: list[int] = []
+
+        def resolver(**_):
+            calls.append(1)
+            return {"ROLE_NAME": "dev", "TASK": "dev", "PROMPT_LOCATION": "/repo/dev.md"}
+
+        _patch_resolver(monkeypatch, resolver)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        engine.run()
+
+        assert calls == [1]
+        assert engine._agent_env()["ROLE_NAME"] == "dev"
+        assert engine._role_of({}) == "dev"
+        assert calls == [1]
+
+    def test_anchors_a_relative_config_path_to_the_checkout(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": "agent-config.yaml"})
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+
+        env = engine._agent_env()
+
+        assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
+
+    def test_keeps_an_absolute_config_path(self, tmp_path, monkeypatch):
+        absolute = str(tmp_path / "agent-config.yaml")
+        engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": absolute})
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+
+        assert engine._agent_env()["AGENT_CONFIG_PATH"] == absolute
+
+    def test_ambient_env_survives_a_resolver_failure(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": "agent-config.yaml"})
+
+        def boom(self, resolved):
+            raise RuntimeError("resolver exploded")
+
+        monkeypatch.setattr(Engine, "resolve", boom)
+
+        env = engine._agent_env()
+
+        assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
 
 
 class TestEntryPoints:
