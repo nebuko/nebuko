@@ -1,0 +1,282 @@
+name: OpenHands Multi-Agent Router
+
+on:
+  workflow_call:
+    inputs:
+      agent_config_path:
+        description: 'Path to the layered YAML config file (providers → llms → agents)'
+        required: false
+        type: string
+        default: 'agent-config.yaml'
+      circuit_breaker_threshold:
+        description: 'Circuit breaker threshold'
+        required: false
+        type: number
+        default: 15
+      summarizer_threshold:
+        description: 'Summarizer threshold — number of comments before summarizer triggers'
+        required: false
+        type: number
+        default: 100
+      pin_comment:
+        description: 'When true, pin every agent step output comment for verbatim context injection (issue #617)'
+        required: false
+        type: boolean
+        default: false
+      history_comment_count:
+        description: 'Number of most recent issue comments injected into each agent call (pinned comments are always added on top)'
+        required: false
+        type: number
+        default: 5
+      python_version:
+        description: 'Python version'
+        required: false
+        type: string
+        default: '3.13'
+      enable_uv_cache:
+        description: 'Enable uv cache'
+        required: false
+        type: boolean
+        default: true
+      prompt_body:
+        description: 'The prompt/body text for the agent to process (required for external callers)'
+        required: false
+        type: string
+        default: ''
+      runs_on:
+        description: 'Runner label for workflow jobs (default: ubuntu-latest; e.g. "self-hosted" to use your own runners)'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      CALLER_AUTH:
+        description: 'When "on", only OWNER/MEMBER/COLLABORATOR authors can trigger the workflow from issues/comments'
+        required: false
+        type: string
+        default: 'off'
+    secrets:
+      COMMANDCODE_API_KEY:
+        description: 'API key for Command Code LLM provider (optional - only needed if you want to use it as provider)'
+        required: false
+      OPENROUTER_API_KEY:
+        description: 'Default API key for the LLM provider (used as fallback)'
+        required: false
+      LOCAL_VLLM_API_TOKEN:
+        description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
+        required: false
+      GH_PAT:
+        description: 'GitHub Personal Access Token for API access'
+        required: true
+
+permissions:
+    contents: write
+    pull-requests: write
+    issues: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'issues' && format('-issue-{0}', github.event.issue.number) || format('-run-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+    run-task:
+        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+        if: |
+          github.event.action != 'closed' &&
+          (
+            github.event_name == 'workflow_call' ||
+            (github.event_name == 'issues' &&
+             (inputs.CALLER_AUTH == 'off' ||
+              contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                       github.event.issue.user.author_association)) &&
+             !startsWith(github.event.issue.body, '<!-- bot-agent-') &&
+             !startsWith(github.event.issue.body, '<!-- bot-workflow-terminal -->') &&
+             (contains(github.event.issue.body, '@@genius') ||
+              contains(github.event.issue.body, '@@ctx') ||
+              contains(github.event.issue.body, '@@dev') ||
+              contains(github.event.issue.body, '@@review') ||
+              contains(github.event.issue.body, '@@issue') ||
+              contains(github.event.issue.body, '@@issue-reviewer') ||
+              contains(github.event.issue.body, '@@debug') ||
+              contains(github.event.issue.body, '@@po') ||
+              contains(github.event.issue.body, '@@summarize') ||
+              contains(github.event.issue.body, '/workflow'))) ||
+            (github.event_name == 'issue_comment' &&
+             (inputs.CALLER_AUTH == 'off' ||
+              contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                       github.event.comment.user.author_association)) &&
+             ((!startsWith(github.event.comment.body, '<!-- bot-agent-') &&
+               !startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
+               (contains(github.event.comment.body, '@@genius') ||
+                contains(github.event.comment.body, '@@ctx') ||
+                contains(github.event.comment.body, '@@dev') ||
+                contains(github.event.comment.body, '@@review') ||
+                contains(github.event.comment.body, '@@issue') ||
+                contains(github.event.comment.body, '@@issue-reviewer') ||
+                contains(github.event.comment.body, '@@debug') ||
+                contains(github.event.comment.body, '@@po') ||
+                contains(github.event.comment.body, '@@summarize') ||
+                contains(github.event.comment.body, '/workflow'))) ||
+              contains(github.event.comment.body, '"function_call"') ||
+              contains(github.event.comment.body, '<!-- workflow-continue -->') ||
+              contains(github.event.comment.body, '<!-- bot-summarizer-trigger -->') ||
+              contains(github.event.comment.body, '<!-- bot-subtask-complete') ||
+              contains(github.event.comment.body, '<!-- bot-trigger:')))
+          )
+        env:
+            BOT_MARKER: "<!-- bot-workflow-terminal -->"
+            CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 25 }}
+            PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
+            ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
+            AGENT_SCRIPT_URL: .github/scripts/agent_script.py
+            AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+              with:
+                persist-credentials: false
+
+            - name: Set up Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "${{ env.PYTHON_VERSION || '3.13' }}"
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@v7
+              with:
+                  enable-cache: ${{ env.ENABLE_UV_CACHE != 'false' }}
+
+            - name: Install OpenHands dependencies
+              run: |
+                  # Nettoie l'en-tête global potentiellement corrompu
+                  git config --global --unset-all http.https://github.com/.extraheader || true
+
+                  # Génère le header d'authentification avec la BONNE variable (GH_TOKEN)
+                  ENCODED=$(echo -n "x-access-token:${GH_TOKEN}" | base64 -w 0)
+                  git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $ENCODED"
+
+                  # Nettoie le cache de uv pour forcer une réinitialisation propre
+                  uv cache clean
+
+                  # Installation des packages
+                  uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
+                  uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            # Stage B (issue #713): the orchestration that used to live in ~30
+            # bash steps (normalize → resolve_config → guards → prompt → agent →
+            # validate → publish → state → route) is now the single Stage A
+            # engine. This job only wires the GitHub host and invokes it once.
+            - name: Run orchestration engine
+              run: uv run python -m engine.run
+              env:
+                ENGINE_ADAPTER: github
+                GFA_SOURCE: github
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+                GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
+                LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+                LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+                COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+                LLM_BASE_URL: ${{ env.LLM_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
+                PIN_COMMENT: ${{ inputs.pin_comment }}
+                HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
+                PROMPT_BODY: ${{ inputs.prompt_body }}
+
+    summarize-metrics:
+        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+        if: |
+          github.event_name == 'issues' &&
+          github.event.action == 'closed' &&
+          github.event.issue.pull_request == null
+        steps:
+            - name: Clean global git config
+              run:
+                git config --global --unset-all http.https://github.com/.extraheader || true
+                git config --global --unset-all credential.helper || true
+
+            - name: Checkout repository
+              uses: actions/checkout@v5
+              with:
+                persist-credentials: false
+
+            - name: Check if git-flow-ai cache is needed
+              id: check_gfa
+              run: |
+                if [ ! -d ".git-flow-ai-cache/.github/scripts" ]; then
+                  echo "needed=true" >> $GITHUB_OUTPUT
+                fi
+
+            - name: Checkout git-flow-ai repo (reusable workflow mode)
+              if: steps.check_gfa.outputs.needed == 'true'
+              uses: actions/checkout@v5
+              with:
+                repository: olivier-norture/git-flow-ai
+                path: .git-flow-ai-cache
+                token: ${{ secrets.GH_PAT }}
+                persist-credentials: false
+
+            - name: Setup Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: '3.13'
+
+            - name: Summarize agent metrics
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+                  GITHUB_REPOSITORY: ${{ github.repository }}
+                  ISSUE_NUMBER: ${{ github.event.issue.number }}
+              run: |
+                if [ -f ".git-flow-ai-cache/.github/scripts/summarize_metrics.py" ]; then
+                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/summarize_metrics.py"
+                else
+                  SCRIPT_PATH=".github/scripts/summarize_metrics.py"
+                fi
+                python "$SCRIPT_PATH"
+
+    subtask-completion-notifier:
+        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+        if: |
+          github.event_name == 'issues' &&
+          github.event.action == 'closed' &&
+          startsWith(github.event.issue.title, '[Sub-task')
+        steps:
+            - name: Notify parent issue of sub-task completion
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+                  REPOSITORY: ${{ github.repository }}
+                  ISSUE_NUMBER: ${{ github.event.issue.number }}
+                  ISSUE_TITLE: ${{ github.event.issue.title }}
+              run: |
+                set -euo pipefail
+
+                # Extract 1-based index from title: [Sub-task N/M]
+                INDEX=$(echo "$ISSUE_TITLE" | grep -oP '\[Sub-task \K[0-9]+')
+                ZERO_INDEX=$((INDEX - 1))
+
+                # Resolve parent from parent-{N} label
+                PARENT_NUMBER=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  "https://api.github.com/repos/$REPOSITORY/issues/$ISSUE_NUMBER/labels" \
+                  | jq -r '.[] | select(.name | startswith("parent-")) | .name' \
+                  | head -1 \
+                  | sed 's/parent-//')
+
+                if [ -z "$PARENT_NUMBER" ] || [ "$PARENT_NUMBER" = "null" ]; then
+                  echo "ERROR: Could not resolve parent issue number for sub-task #$ISSUE_NUMBER"
+                  echo "Labels on this issue:"
+                  curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                    "https://api.github.com/repos/$REPOSITORY/issues/$ISSUE_NUMBER/labels" | jq .
+                  exit 1
+                fi
+
+                echo "Sub-task #$ISSUE_NUMBER (index $ZERO_INDEX) completed. Notifying parent #$PARENT_NUMBER"
+
+                HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+                  -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  "https://api.github.com/repos/$REPOSITORY/issues/$PARENT_NUMBER/comments" \
+                  -d "{\"body\": \"<!-- bot-workflow-terminal --> <!-- bot-subtask-complete: $ZERO_INDEX -->\"}")
+                if [ "$HTTP_STATUS" != "201" ]; then
+                  echo "ERROR: Failed to post comment to parent #$PARENT_NUMBER (HTTP $HTTP_STATUS)"
+                  exit 1
+                fi
+                echo "Successfully posted completion notification to parent #$PARENT_NUMBER"
