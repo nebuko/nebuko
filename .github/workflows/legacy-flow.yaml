@@ -1,0 +1,1140 @@
+name: OpenHands Multi-Agent Router
+
+on:
+  workflow_call:
+    inputs:
+      agent_config_path:
+        description: 'Path to the layered YAML config file (providers → llms → agents)'
+        required: false
+        type: string
+        default: 'agent-config.yaml'
+      circuit_breaker_threshold:
+        description: 'Circuit breaker threshold'
+        required: false
+        type: number
+        default: 15
+      summarizer_threshold:
+        description: 'Summarizer threshold — number of comments before summarizer triggers'
+        required: false
+        type: number
+        default: 100
+      pin_comment:
+        description: 'When true, pin every agent step output comment for verbatim context injection (issue #617)'
+        required: false
+        type: boolean
+        default: false
+      history_comment_count:
+        description: 'Number of most recent issue comments injected into each agent call (pinned comments are always added on top)'
+        required: false
+        type: number
+        default: 5
+      python_version:
+        description: 'Python version'
+        required: false
+        type: string
+        default: '3.13'
+      enable_uv_cache:
+        description: 'Enable uv cache'
+        required: false
+        type: boolean
+        default: true
+      prompt_body:
+        description: 'The prompt/body text for the agent to process (required for external callers)'
+        required: false
+        type: string
+        default: ''
+      runs_on:
+        description: 'Runner label for workflow jobs (default: ubuntu-latest; e.g. "self-hosted" to use your own runners)'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      CALLER_AUTH:
+        description: 'When "on", only OWNER/MEMBER/COLLABORATOR authors can trigger the workflow from issues/comments'
+        required: false
+        type: string
+        default: 'off'
+    secrets:
+      COMMANDCODE_API_KEY:
+        description: 'API key for Command Code LLM provider (optional - only needed if you want to use it as provider)'
+        required: false
+      OPENROUTER_API_KEY:
+        description: 'Default API key for the LLM provider (used as fallback)'
+        required: false
+      LOCAL_VLLM_API_TOKEN:
+        description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
+        required: false
+      GH_PAT:
+        description: 'GitHub Personal Access Token for API access'
+        required: true
+
+permissions:
+    contents: write
+    pull-requests: write
+    issues: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'issues' && format('-issue-{0}', github.event.issue.number) || format('-run-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+    run-task:
+        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+        if: |
+          github.event.action != 'closed' &&
+          (
+            github.event_name == 'workflow_call' ||
+            (github.event_name == 'issues' &&
+             (inputs.CALLER_AUTH == 'off' ||
+              contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                       github.event.issue.user.author_association)) &&
+             !startsWith(github.event.issue.body, '<!-- bot-agent-') &&
+             !startsWith(github.event.issue.body, '<!-- bot-workflow-terminal -->') &&
+             (contains(github.event.issue.body, '@@genius') ||
+              contains(github.event.issue.body, '@@ctx') ||
+              contains(github.event.issue.body, '@@dev') ||
+              contains(github.event.issue.body, '@@review') ||
+              contains(github.event.issue.body, '@@issue') ||
+              contains(github.event.issue.body, '@@issue-reviewer') ||
+              contains(github.event.issue.body, '@@debug') ||
+              contains(github.event.issue.body, '@@po') ||
+              contains(github.event.issue.body, '@@summarize') ||
+              contains(github.event.issue.body, '/workflow'))) ||
+            (github.event_name == 'issue_comment' &&
+             (inputs.CALLER_AUTH == 'off' ||
+              contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                       github.event.comment.user.author_association)) &&
+             ((!startsWith(github.event.comment.body, '<!-- bot-agent-') &&
+               !startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
+               (contains(github.event.comment.body, '@@genius') ||
+                contains(github.event.comment.body, '@@ctx') ||
+                contains(github.event.comment.body, '@@dev') ||
+                contains(github.event.comment.body, '@@review') ||
+                contains(github.event.comment.body, '@@issue') ||
+                contains(github.event.comment.body, '@@issue-reviewer') ||
+                contains(github.event.comment.body, '@@debug') ||
+                contains(github.event.comment.body, '@@po') ||
+                contains(github.event.comment.body, '@@summarize') ||
+                contains(github.event.comment.body, '/workflow'))) ||
+              contains(github.event.comment.body, '"function_call"') ||
+              contains(github.event.comment.body, '<!-- workflow-continue -->') ||
+              contains(github.event.comment.body, '<!-- bot-summarizer-trigger -->') ||
+              contains(github.event.comment.body, '<!-- bot-subtask-complete') ||
+              contains(github.event.comment.body, '<!-- bot-trigger:')))
+          )
+        env:
+            BOT_MARKER: "<!-- bot-workflow-terminal -->"
+            CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 25 }}
+            PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
+            ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
+            AGENT_SCRIPT_URL: .github/scripts/agent_script.py
+            AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
+        steps:
+            - name: Clean global git config
+              run:
+                git config --global --unset-all http.https://github.com/.extraheader || true
+                git config --global --unset-all credential.helper || true
+
+            - name: Checkout repository
+              uses: actions/checkout@v5
+              with:
+                persist-credentials: false
+
+            - name: Check if git-flow-ai checkout is needed
+              id: check_gfa
+              shell: bash
+              run: |
+                if [ -f ".agents/prompts/genius.md" ]; then
+                  echo "needed=false" >> $GITHUB_OUTPUT
+                else
+                  echo "needed=true" >> $GITHUB_OUTPUT
+                fi
+
+            - name: Checkout git-flow-ai repo (reusable workflow mode)
+              if: steps.check_gfa.outputs.needed == 'true'
+              uses: actions/checkout@v5
+              with:
+                repository: olivier-norture/git-flow-ai
+                path: .git-flow-ai-cache
+                token: ${{ secrets.GH_PAT }}
+
+            - name: Normalize GitHub Event Data
+              run: |
+                EVENT_PATH="$GITHUB_EVENT_PATH"
+                
+                # Normalize based on event type
+                if [[ "${{ github.event_name }}" == "issue_comment" ]]; then
+                  TARGET_NUMBER="${{ github.event.issue.number }}"
+                  TRIGGER_BODY=$(jq -r '.comment.body // ""' "$EVENT_PATH")
+                  TRIGGER_AUTHOR=$(jq -r '.comment.user.login // ""' "$EVENT_PATH")
+                  EVENT_TYPE="issue_comment"
+                elif [[ "${{ github.event_name }}" == "issues" ]]; then
+                  TARGET_NUMBER="${{ github.event.issue.number }}"
+                  TRIGGER_BODY=$(jq -r '.issue.body // ""' "$EVENT_PATH")
+                  TRIGGER_AUTHOR=$(jq -r '.issue.user.login // ""' "$EVENT_PATH")
+                  EVENT_TYPE="issues"
+                elif [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+                  TARGET_NUMBER=0
+                  TRIGGER_BODY="${{ inputs.prompt_body }}"
+                  TRIGGER_AUTHOR="${{ github.triggering_actor || github.actor }}"
+                  EVENT_TYPE="workflow_call"
+                else
+                  echo "Unknown event type: ${{ github.event_name }}"
+                  exit 1
+                fi
+
+                # Use a custom delimiter to handle multi-line strings
+                {
+                  echo "TRIGGER_BODY<<EOF"
+                  echo "$TRIGGER_BODY"
+                  echo "EOF"
+                } >> "$GITHUB_ENV"
+
+                # Simple variables can remain as is, provided they contain no newlines
+                echo "TARGET_NUMBER=$TARGET_NUMBER" >> $GITHUB_ENV
+                echo "TRIGGER_AUTHOR=$TRIGGER_AUTHOR" >> $GITHUB_ENV
+                echo "EVENT_TYPE=$EVENT_TYPE" >> $GITHUB_ENV
+                echo "ISSUE_URL=${{ github.event.issue.html_url }}" >> $GITHUB_ENV
+                echo "REPO_NAME=${{ github.repository }}" >> $GITHUB_ENV
+                echo "Normalized event: $EVENT_TYPE -> TARGET_NUMBER=$TARGET_NUMBER"
+
+            - name: Set up Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "${{ env.PYTHON_VERSION || '3.13' }}"
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@v7
+              with:
+                  enable-cache: ${{ env.ENABLE_UV_CACHE != 'false' }}
+
+            - name: Install OpenHands dependencies
+              run: |
+                  # Nettoie l'en-tête global potentiellement corrompu
+                  git config --global --unset-all http.https://github.com/.extraheader || true
+
+                  # Génère le header d'authentification avec la BONNE variable (GH_TOKEN)
+                  ENCODED=$(echo -n "x-access-token:${GH_TOKEN}" | base64 -w 0)
+                  git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $ENCODED"
+
+                  # Nettoie le cache de uv pour forcer une réinitialisation propre
+                  uv cache clean
+
+                  # Installation des packages
+                  uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
+                  uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              
+
+            - name: Resolve Agent Configuration
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  echo "Debug: Checking trigger body..."
+                  PROMPT_BASE=""
+
+                  # Determine prompt and script locations by checking which path exists
+                  if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/.agents/prompts" ]; then
+                    PROMPT_BASE="$GITHUB_WORKSPACE/.git-flow-ai-cache/.agents/prompts"
+                    echo "AGENT_SCRIPT_URL=$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts/agent_script.py" >> $GITHUB_ENV
+                  else
+                    PROMPT_BASE=".agents/prompts"
+                    echo "AGENT_SCRIPT_URL=.github/scripts/agent_script.py" >> $GITHUB_ENV
+                  fi
+
+                  # Determine script and workflow paths
+                  SCRIPTS_DIR=""
+                  WFLOWS_DIR=""
+                  LOCAL_WFLOWS_DIR="$GITHUB_WORKSPACE/workflows"
+                  if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows" ]; then
+                    SCRIPTS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts"
+                    WFLOWS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows"
+                  else
+                    SCRIPTS_DIR="$GITHUB_WORKSPACE/.github/scripts"
+                    WFLOWS_DIR="$LOCAL_WFLOWS_DIR"
+                  fi
+                  # Consumer-local workflows dir (issue #529): takes precedence
+                  # over the built-in dir when both contain the same name.
+                  # Only passed when it differs from the base dir (a no-op
+                  # otherwise).
+                  LOCAL_WFLOWS_ARG=""
+                  if [ -d "$LOCAL_WFLOWS_DIR" ] && [ "$LOCAL_WFLOWS_DIR" != "$WFLOWS_DIR" ]; then
+                    LOCAL_WFLOWS_ARG="--local-workflows-dir $LOCAL_WFLOWS_DIR"
+                  fi
+
+                  # Single source of truth for script locations (issue #466)
+                  echo "GIT_FLOW_AI_SCRIPTS=$SCRIPTS_DIR" >> $GITHUB_ENV
+
+                  # Step 1-5: Resolve agent configuration using Python resolver
+                  # Handles: AGENT_RUN_CONFIG sentinel JSON, force-next-step, @@mention, dispatch, workflow routing
+                  if [ ! -f "$SCRIPTS_DIR/resolve_config.py" ]; then
+                    echo "ERROR: resolve_config.py not found at $SCRIPTS_DIR/resolve_config.py"
+                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                    exit 1
+                  fi
+
+                  set -o pipefail
+                  PYTHONPATH="$SCRIPTS_DIR" python3 "$SCRIPTS_DIR/resolve_config.py" \
+                    --trigger-body - \
+                    --prompt-base "$PROMPT_BASE" \
+                    --workflows-dir "$WFLOWS_DIR" \
+                    $LOCAL_WFLOWS_ARG \
+                    --repo "$REPO_NAME" \
+                    --issue-number "$TARGET_NUMBER" \
+                    <<< "$TRIGGER_BODY" 2>&1 | tee /tmp/resolve_config_output.txt
+                  RESOLVE_EXIT_CODE=$?
+                  set +o pipefail
+                  RESOLVE_OUTPUT=$(cat /tmp/resolve_config_output.txt)
+
+                  if [ $RESOLVE_EXIT_CODE -ne 0 ]; then
+                    STDERR_CONTENT=$(cat /tmp/resolve_config_stderr.txt 2>/dev/null || echo "stderr unavailable")
+                    echo "WARNING: resolve_config.py exited with code $RESOLVE_EXIT_CODE"
+                    echo "STDERR: $STDERR_CONTENT"
+                    # Check if we got partial output despite the error
+                    if ! echo "$RESOLVE_OUTPUT" | grep -q '^TASK='; then
+                      echo "No valid output from resolver. Skipping agent."
+                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                      exit 1
+                    fi
+                  fi
+
+                  echo "Resolve output: $RESOLVE_OUTPUT"
+
+                  # Parse KEY=value output
+                  SKIP_AGENT=$(echo "$RESOLVE_OUTPUT" | grep '^SKIP_AGENT=' | cut -d= -f2-)
+                  TASK=$(echo "$RESOLVE_OUTPUT" | grep '^TASK=' | cut -d= -f2-)
+                  ROLE_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^ROLE_NAME=' | cut -d= -f2-)
+                  PROMPT_LOCATION=$(echo "$RESOLVE_OUTPUT" | grep '^PROMPT_LOCATION=' | cut -d= -f2-)
+                  AGENT_SELECTED=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_SELECTED=' | cut -d= -f2-)
+                  COMPLEXITY=$(echo "$RESOLVE_OUTPUT" | grep '^COMPLEXITY=' | cut -d= -f2-)
+                  LLM_REASONING=$(echo "$RESOLVE_OUTPUT" | grep '^LLM_REASONING=' | cut -d= -f2-)
+                  AGENT_ROUND=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_ROUND=' | cut -d= -f2-)
+                  AGENT_SKILLS=$(echo "$RESOLVE_OUTPUT" | grep '^AGENT_SKILLS=' | cut -d= -f2-)
+                  STEP_SKILLS=$(echo "$RESOLVE_OUTPUT" | grep '^STEP_SKILLS=' | cut -d= -f2-)
+                  STEP_PROMPT_FILE=$(echo "$RESOLVE_OUTPUT" | grep '^STEP_PROMPT_FILE=' | cut -d= -f2-)
+                  CONFIG_MODEL=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_MODEL=' | cut -d= -f2-)
+                  CONFIG_TEMPERATURE=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TEMPERATURE=' | cut -d= -f2-)
+                  CONFIG_TOP_P=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TOP_P=' | cut -d= -f2-)
+                  CONFIG_TOP_K=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_TOP_K=' | cut -d= -f2-)
+                  CONFIG_REPETITION_PENALTY=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_REPETITION_PENALTY=' | cut -d= -f2-)
+                  CONFIG_DEBUG=$(echo "$RESOLVE_OUTPUT" | grep '^CONFIG_DEBUG=' | cut -d= -f2-)
+                  WORKFLOW_NAME=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NAME=' | cut -d= -f2-)
+                  WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_STEP=' | cut -d= -f2-)
+                  WORKFLOW_NEXT=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_NEXT=' | cut -d= -f2-)
+                  PARENT_WORKFLOW=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW=' | cut -d= -f2-)
+                  PARENT_WORKFLOW_STEP=$(echo "$RESOLVE_OUTPUT" | grep '^PARENT_WORKFLOW_STEP=' | cut -d= -f2-)
+                  # v2 mount-chain position (issue #618): full chain (JSON) +
+                  # a flat outermost-first path the same-agent guard compares.
+                  WORKFLOW_POSITION=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_POSITION=' | cut -d= -f2-)
+                  WORKFLOW_POSITION_PATH=$(echo "$RESOLVE_OUTPUT" | grep '^WORKFLOW_POSITION_PATH=' | cut -d= -f2-)
+                  HUMAN_RESUME_INPUT=$(echo "$RESOLVE_OUTPUT" | grep '^HUMAN_RESUME_INPUT=' | cut -d= -f2-)
+                  # Deterministic script step (issue #541): resolver emits the
+                  # script execution contract instead of a task assignment.
+                  RUN_SCRIPT=$(echo "$RESOLVE_OUTPUT" | grep '^RUN_SCRIPT=' | cut -d= -f2-)
+                  SCRIPT_PATH=$(echo "$RESOLVE_OUTPUT" | grep '^SCRIPT_PATH=' | cut -d= -f2-)
+                  SCRIPT_ARGS=$(echo "$RESOLVE_OUTPUT" | grep '^SCRIPT_ARGS=' | cut -d= -f2-)
+                  SCRIPT_TIMEOUT_MINUTES=$(echo "$RESOLVE_OUTPUT" | grep '^SCRIPT_TIMEOUT_MINUTES=' | cut -d= -f2-)
+                  # Deterministic comment deletion (issue #644): resolver emits
+                  # the delete contract instead of a task assignment.
+                  DELETE_COMMENTS=$(echo "$RESOLVE_OUTPUT" | grep '^DELETE_COMMENTS=' | cut -d= -f2-)
+                  DELETE_COMMENTS_ISSUE=$(echo "$RESOLVE_OUTPUT" | grep '^DELETE_COMMENTS_ISSUE=' | cut -d= -f2-)
+
+                  # Handle skip
+                  if [ "$SKIP_AGENT" = "true" ]; then
+                    # Script step (issue #541): the resolver marks it as a skip
+                    # (no agent runs). SKIP_AGENT stays true so the whole
+                    # agent-specific section (ack, query context, agent run) is
+                    # naturally excluded; no REASON is exported, so the
+                    # "Workflow stopped" skip comment never fires. The posting
+                    # pipeline picks the run up via its RUN_SCRIPT guard, and
+                    # the executor advances the workflow state so the next step
+                    # fires exactly like after an agent run.
+                    if [ "$RUN_SCRIPT" = "true" ]; then
+                      echo "Script step resolved — running ${SCRIPT_PATH} (no agent)"
+                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                      echo "RUN_SCRIPT=true" >> $GITHUB_ENV
+                      echo "TASK=" >> $GITHUB_ENV
+                      echo "ROLE_NAME=${ROLE_NAME:-script}" >> $GITHUB_ENV
+                      echo "WORKFLOW_NAME=${WORKFLOW_NAME:-}" >> $GITHUB_ENV
+                      echo "WORKFLOW_STEP=${WORKFLOW_STEP:-}" >> $GITHUB_ENV
+                      echo "WORKFLOW_POSITION=${WORKFLOW_POSITION:-}" >> $GITHUB_ENV
+                      echo "WORKFLOW_POSITION_PATH=${WORKFLOW_POSITION_PATH:-}" >> $GITHUB_ENV
+                      echo "SCRIPT_PATH=${SCRIPT_PATH}" >> $GITHUB_ENV
+                      echo "SCRIPT_ARGS=${SCRIPT_ARGS}" >> $GITHUB_ENV
+                      echo "SCRIPT_TIMEOUT_MINUTES=${SCRIPT_TIMEOUT_MINUTES:-30}" >> $GITHUB_ENV
+                      exit 0
+                    fi
+                    # Delete-comments command (issue #644, simplified #674): a
+                    # human-only, deterministic batch deletion, outside agent
+                    # scope. Like the script step it runs no agent (SKIP_AGENT
+                    # stays true) and it is a terminal action: it posts no
+                    # comment, so nothing downstream of the delete step runs.
+                    if [ "$DELETE_COMMENTS" = "true" ]; then
+                      echo "Delete comments resolved — running delete_comments.py (no agent)"
+                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                      echo "DELETE_COMMENTS=true" >> $GITHUB_ENV
+                      echo "DELETE_COMMENTS_ISSUE=${DELETE_COMMENTS_ISSUE}" >> $GITHUB_ENV
+                      echo "ROLE_NAME=${ROLE_NAME:-script}" >> $GITHUB_ENV
+                      exit 0
+                    fi
+                    REASON=$(echo "$RESOLVE_OUTPUT" | grep '^REASON=' | cut -d= -f2-)
+                    echo "Skipping agent: ${REASON:-no reason provided}"
+                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                    echo "REASON=${REASON:-no reason provided}" >> $GITHUB_ENV
+                    exit 0
+                  fi
+
+                  # Parse explicit PR override: "@@review PR #NNN" (not handled by resolve_config.py)
+                  CONFIG_PR_NUMBER=""
+                  if [ "$ROLE_NAME" = "review" ]; then
+                    CONFIG_PR_NUMBER=$(echo "$TRIGGER_BODY" | sed -n 's/.*@@review\s\+PR\s\+#\([0-9]\{1,\}\).*/\1/p')
+                  fi
+
+                  # Export core variables
+                  echo "TASK=$TASK" >> $GITHUB_ENV
+                  echo "PROMPT_LOCATION=$PROMPT_LOCATION" >> $GITHUB_ENV
+                  echo "ROLE_NAME=$ROLE_NAME" >> $GITHUB_ENV
+                  echo "AGENT_SELECTED=$AGENT_SELECTED" >> $GITHUB_ENV
+                  echo "COMPLEXITY=$COMPLEXITY" >> $GITHUB_ENV
+                  echo "WORKFLOW_NAME=$WORKFLOW_NAME" >> $GITHUB_ENV
+                  echo "WORKFLOW_STEP=$WORKFLOW_STEP" >> $GITHUB_ENV
+                  echo "WORKFLOW_NEXT=$WORKFLOW_NEXT" >> $GITHUB_ENV
+                  echo "PARENT_WORKFLOW=$PARENT_WORKFLOW" >> $GITHUB_ENV
+                  echo "PARENT_WORKFLOW_STEP=$PARENT_WORKFLOW_STEP" >> $GITHUB_ENV
+                  echo "WORKFLOW_POSITION=${WORKFLOW_POSITION:-}" >> $GITHUB_ENV
+                  echo "WORKFLOW_POSITION_PATH=${WORKFLOW_POSITION_PATH:-}" >> $GITHUB_ENV
+                  echo "STEP_SKILLS=$STEP_SKILLS" >> $GITHUB_ENV
+                  echo "STEP_PROMPT_FILE=${STEP_PROMPT_FILE:-}" >> $GITHUB_ENV
+                  echo "HUMAN_RESUME_INPUT=${HUMAN_RESUME_INPUT:-}" >> $GITHUB_ENV
+                  # Human gate (issue #506): reuse the exact workflows dir the
+                  # resolver used (may be the .git-flow-ai-cache copy).
+                  echo "WORKFLOWS_DIR=$WFLOWS_DIR" >> $GITHUB_ENV
+
+                  # Step 6: Export reasoning level for agent_script.py
+                  echo "LLM_REASONING=${LLM_REASONING}" >> $GITHUB_ENV
+
+                  # Step 7: Export round counter for agent context
+                  if [ -n "$AGENT_ROUND" ]; then
+                      echo "AGENT_ROUND=${AGENT_ROUND}" >> $GITHUB_ENV
+                  else
+                      echo "AGENT_ROUND=" >> $GITHUB_ENV
+                  fi
+
+                  # Step 8: Load skill files and concatenate content
+                  # Merge per-roster skills (agent-config.yaml) into AGENT_SKILLS so
+                  # every run of that agent carries them (issue #478).
+                  if [ -n "$ROLE_NAME" ] && [ -f "$AGENT_CONFIG_PATH" ]; then
+                    ROSTER_SKILLS=$(PYTHONPATH="$SCRIPTS_DIR" python3 -c "from config import load_config; agent = load_config('${AGENT_CONFIG_PATH}').agents.get('${ROLE_NAME}'); print(','.join(agent.skills) if agent else '')" 2>/dev/null || echo "")
+                    if [ -n "$ROSTER_SKILLS" ]; then
+                      if [ -n "$AGENT_SKILLS" ]; then
+                        AGENT_SKILLS="${AGENT_SKILLS},${ROSTER_SKILLS}"
+                      else
+                        AGENT_SKILLS="$ROSTER_SKILLS"
+                      fi
+                    fi
+                  fi
+                  ALL_SKILLS="${AGENT_SKILLS}"
+                  if [ -n "${STEP_SKILLS}" ]; then
+                    if [ -n "$ALL_SKILLS" ]; then
+                      ALL_SKILLS="${ALL_SKILLS},${STEP_SKILLS}"
+                    else
+                      ALL_SKILLS="${STEP_SKILLS}"
+                    fi
+                  fi
+
+                  echo "AGENT_SKILLS=${ALL_SKILLS}" >> $GITHUB_ENV
+
+                  if [ -n "$ALL_SKILLS" ]; then
+                    SKILLS_DIR=""
+                    if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/skills" ]; then
+                      SKILLS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/skills"
+                    elif [ -d "skills" ]; then
+                      SKILLS_DIR="skills"
+                    fi
+
+                    if [ -n "$SKILLS_DIR" ]; then
+                      > /tmp/skill_context.md
+                      IFS=',' read -ra SKILL_NAMES <<< "$(echo "$ALL_SKILLS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')"
+                      for skill_name in "${SKILL_NAMES[@]}"; do
+                        skill_file="${SKILLS_DIR}/${skill_name}.md"
+                        if [ -f "$skill_file" ]; then
+                          printf -- "--- Skill: %s ---\n%s\n" "$skill_name" "$(cat "$skill_file")" >> /tmp/skill_context.md
+                        else
+                          echo "Warning: Skill file not found: $skill_file"
+                        fi
+                      done
+                      if [ -s /tmp/skill_context.md ]; then
+                        echo "SKILL_CONTEXT_FILE=/tmp/skill_context.md" >> $GITHUB_ENV
+                      else
+                        echo "SKILL_CONTEXT_FILE=" >> $GITHUB_ENV
+                      fi
+                    else
+                      echo "SKILL_CONTEXT_FILE=" >> $GITHUB_ENV
+                    fi
+                  else
+                    echo "SKILL_CONTEXT_FILE=" >> $GITHUB_ENV
+                  fi
+
+                  # Step 9: Export per-invocation overrides for agent_script.py
+                  echo "CONFIG_MODEL=${CONFIG_MODEL}" >> $GITHUB_ENV
+                  echo "CONFIG_TEMPERATURE=${CONFIG_TEMPERATURE}" >> $GITHUB_ENV
+                  echo "CONFIG_TOP_P=${CONFIG_TOP_P}" >> $GITHUB_ENV
+                  echo "CONFIG_TOP_K=${CONFIG_TOP_K}" >> $GITHUB_ENV
+                  echo "CONFIG_REPETITION_PENALTY=${CONFIG_REPETITION_PENALTY}" >> $GITHUB_ENV
+                  echo "CONFIG_DEBUG=${CONFIG_DEBUG}" >> $GITHUB_ENV
+                  # Pin output comments for verbatim context injection (issue #617).
+                  # Consumed by build_output via the PIN_COMMENT env var.
+                  echo "PIN_COMMENT=${{ inputs.pin_comment }}" >> $GITHUB_ENV
+                  echo "CONFIG_PR_NUMBER=${CONFIG_PR_NUMBER}" >> $GITHUB_ENV
+
+                  echo "Resolved agent: ROLE_NAME=$ROLE_NAME MODEL=from-config COMPLEXITY=${COMPLEXITY}"
+
+            - name: Prevent all agent-trigger loops & human ping guard
+              run: |
+                  # Guard 1: Block same-agent loops, allow cross-agent calls.
+                  # Only applies when the resolver selected a task; when TASK is
+                  # empty (resolver requested a skip), never override SKIP_AGENT
+                  # (issue #458: empty TASK made the equality test compare against
+                  # "" and flipped SKIP_AGENT=true back to false, producing
+                  # empty-role ack comments and self-retriggering runs).
+                  CALLER_AGENT=$(echo "$TRIGGER_BODY" | sed -n 's/.*<!-- bot-agent-\([a-z]*\) -->.*/\1/p')
+                  if [[ -n "$CALLER_AGENT" && -n "$TASK" ]]; then
+                      TARGET_AGENT="$TASK"
+                      if [[ "$CALLER_AGENT" == "$TARGET_AGENT" ]]; then
+                        # Same-agent trigger: position-aware advance check
+                        # (issue #618). v2 states carry the full mount-chain
+                        # path (WORKFLOW_POSITION_PATH) — identical path is a
+                        # true self loop, a different path is a legitimate
+                        # advance (``step_1`` -> ``step_2`` re-enters the same
+                        # leaf, so the flat step alone cannot tell them apart).
+                        # Legacy v1 states fall back to the flat-step compare.
+                        GUARD_OUTPUT="$(printf '%s' "$TRIGGER_BODY" | python3 -c '
+                  import os, sys
+                  scripts_dir = os.environ.get("GIT_FLOW_AI_SCRIPTS") or ".github/scripts"
+                  if not os.path.isdir(scripts_dir) and os.path.isdir(".git-flow-ai-cache/.github/scripts"):
+                      scripts_dir = ".git-flow-ai-cache/.github/scripts"
+                  sys.path.insert(0, scripts_dir)
+                  from loop_guard import check_same_agent_advance
+                  body = sys.stdin.read()
+                  result = check_same_agent_advance(
+                      body,
+                      sys.argv[1],
+                      sys.argv[2],
+                  )
+                  print(result["SKIP_AGENT"])
+                  print(result["REASON"])
+                  ' "${WORKFLOW_POSITION_PATH:-}" "${WORKFLOW_STEP:-}" 2>/dev/null)"
+                        GUARD_SKIP="$(printf '%s' "$GUARD_OUTPUT" | sed -n '1p')"
+                        GUARD_REASON="$(printf '%s' "$GUARD_OUTPUT" | sed -n '2p')"
+                        if [[ -z "$GUARD_SKIP" ]]; then
+                          # Guard module unavailable — legacy behavior: skip.
+                          echo "Same-agent guard unavailable; skipping defensively."
+                          echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                          exit 0
+                        fi
+                        echo "$GUARD_REASON"
+                        echo "SKIP_AGENT=$GUARD_SKIP" >> $GITHUB_ENV
+                        exit 0
+                      else
+                        echo "Cross-agent call ($CALLER_AGENT -> $TARGET_AGENT). Allowing."
+                        echo "SKIP_AGENT=false" >> $GITHUB_ENV
+                        exit 0
+                      fi
+                  elif [[ -z "$CALLER_AGENT" && -n "$TASK" ]]; then
+                    # No bot marker, resolver selected a task.
+                    echo "No bot marker — performing human-ping guard check."
+
+                    # Guard 2: If human is pinged alongside agent, skip (let human orchestrate)
+                    # Only applies to human-triggered comments (no bot marker present)
+                    HAS_AGENT_PING=$(echo "$TRIGGER_BODY" | grep -c '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@@debug\|@@po' || true)
+                    HAS_HUMAN_PING=$(echo "$TRIGGER_BODY" | grep -o '@[a-zA-Z0-9_-]\+' | grep -vc '@@genius\|@@ctx\|@@dev\|@@issue\|@@issue-reviewer\|@genius\|@ctx\|@dev\|@issue\|@issue-reviewer\|@@debug\|po' || true)
+                    if [[ "$HAS_AGENT_PING" -gt 0 && "$HAS_HUMAN_PING" -gt 0 ]]; then
+                      echo "Human ping + agent ping detected. Skipping to let human orchestrate."
+                      echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                      exit 0
+                    fi
+                  else
+                    # Either no bot marker and resolver skipped, or a bot marker
+                    # is present but resolver produced no task — keep the resolver
+                    # decision unchanged.
+                    echo "No same-agent comparison applicable (caller='$CALLER_AGENT', task='$TASK'). Keeping resolver decision."
+                  fi
+
+                  echo "SKIP_AGENT=${SKIP_AGENT:-false}" >> $GITHUB_ENV
+
+            # Only posted when the resolver produced a skip REASON (terminal
+            # step / resolution failure). Routine guard skips (same-agent loop,
+            # human ping) do not export REASON and remain silent as before.
+            - name: Post Terminal Workflow Skip Comment
+              if: env.SKIP_AGENT == 'true' && env.REASON != '' && env.TARGET_NUMBER != '0'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ env.TARGET_NUMBER }}
+                token: ${{ secrets.GH_PAT }}
+                tag: "${{ env.BOT_MARKER }}"
+                mode: create-or-update
+                body: |
+                  ${{ env.BOT_MARKER }}
+                  ⏹️ **Workflow stopped** — no agent was run for this trigger.
+
+                  **Reason:** ${{ env.REASON }}
+
+                  This comment intentionally carries no workflow state and does not trigger further agent runs.
+                  To continue, reply with an explicit trigger (e.g. `@@ genius`).
+
+                  🔗 [View workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            - name: Check Circuit Breaker
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                REPO_NAME="${{ github.repository }}"
+                TARGET_NUMBER="${{ env.TARGET_NUMBER }}"
+                ISSUE_AUTHOR="${{ env.TRIGGER_AUTHOR }}"
+                
+                # Fetch all comments on the issue
+                COMMENT_HISTORY=$(gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments \
+                  --jq '.[] | .body' | tr -d '\r')
+                
+                # Count bot markers, excluding summary markers (which are not agent calls)
+                BOT_MARKER_COUNT=$(echo "$COMMENT_HISTORY" | grep -c '<!-- bot-agent-' || true)
+                SUMMARY_MARKER_COUNT=$(echo "$COMMENT_HISTORY" | grep -c '<!-- bot-agent-summary -->' || true)
+                AGENT_CALLS=$(( (BOT_MARKER_COUNT - SUMMARY_MARKER_COUNT) / 2 ))
+                
+                echo "Agent calls detected: $AGENT_CALLS (threshold: $CIRCUIT_BREAKER_THRESHOLD)"
+                
+                if [[ "$AGENT_CALLS" -ge "$CIRCUIT_BREAKER_THRESHOLD" ]]; then
+                    echo "CIRCUIT_BREAKER_TRIPPED=true" >> $GITHUB_ENV
+                    echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                    
+                    # Build circuit breaker comment line by line
+                    {
+                      echo "${{ env.BOT_MARKER }}"
+                      echo "<!-- bot-agent-genius -->"
+                      echo ""
+                      echo "🚨 **Circuit Breaker Tripped** — Agent Loop Threshold Reached"
+                      echo ""
+                      echo "This issue has triggered $AGENT_CALLS agent calls (threshold: $CIRCUIT_BREAKER_THRESHOLD)."
+                      echo "Further automated agent execution has been **halted** to prevent an infinite loop."
+                      echo ""
+                      echo "👉 **Action Required:** @$ISSUE_AUTHOR please review the conversation and decide next steps:"
+                      echo "- If the task is complete, close this issue."
+                      echo "- If more work is needed, reset the conversation by posting \`@@ genius reset\` (or manually close/reopen)."
+                      echo ""
+                      echo "🔗 [View workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+                    } > /tmp/circuit_breaker_comment.md
+                    
+                    # Post the comment
+                    gh api /repos/$REPO_NAME/issues/$TARGET_NUMBER/comments \
+                      -f body=@/tmp/circuit_breaker_comment.md
+                else
+                    echo "CIRCUIT_BREAKER_TRIPPED=false" >> $GITHUB_ENV
+                fi
+
+            - name: Check Summarizer Gate
+              id: summarize_gate
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                SUMMARIZER_THRESHOLD: ${{ inputs.summarizer_threshold || 100 }}
+              run: |
+                echo "::group::[Step] Check Summarizer Gate"
+                REPO_NAME="${{ github.repository }}"
+                ISSUE_NUMBER="${{ env.TARGET_NUMBER }}"
+
+                # Count non-bot-user comments
+                COMMENT_COUNT=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                  --jq 'length')
+
+                echo "Comment count: $COMMENT_COUNT (threshold: $SUMMARIZER_THRESHOLD)"
+
+                # Check if summary already exists (capture full body via jq array indexing)
+                SUMMARY_EXISTS=$(gh api /repos/$REPO_NAME/issues/$ISSUE_NUMBER/comments \
+                  --jq -r '[.[] | select(.body | contains("<!-- bot-agent-summary -->"))][0].body // empty' || true)
+
+                echo "Summarizer threshold: $SUMMARIZER_THRESHOLD"
+
+                # Trigger summarizer if threshold exceeded AND no existing summary
+                if [ "$COMMENT_COUNT" -ge "$SUMMARIZER_THRESHOLD" ] && [ -z "$SUMMARY_EXISTS" ]; then
+                  echo "Threshold exceeded. Summarizer will run next."
+                  echo "SUMMARIZER_NEEDED=true" >> $GITHUB_OUTPUT
+                  echo "SKIP_AGENT=true" >> $GITHUB_ENV
+                else
+                  echo "No summarizer action needed (count=$COMMENT_COUNT, exists=${SUMMARY_EXISTS:+yes}:${SUMMARY_EXISTS:-no})"
+                  echo "SUMMARIZER_NEEDED=false" >> $GITHUB_OUTPUT
+                fi
+
+                echo "::endgroup::"
+
+            - name: Post Summarizer Trigger Comment
+              if: steps.summarize_gate.outputs.SUMMARIZER_NEEDED == 'true'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ env.TARGET_NUMBER }}
+                token: ${{ secrets.GH_PAT }}
+                body: |
+                  ${{ env.BOT_MARKER }}
+                  <!-- bot-summarizer-trigger -->
+                tag: "<!-- bot-agent-summary -->"
+                mode: replace
+
+            - name: Post Acknowledgment Comment
+              id: ack_comment
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ env.TARGET_NUMBER }}
+                token: ${{ secrets.GH_PAT }}
+                tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
+                mode: replace
+                body: |
+                  ${{ env.BOT_MARKER }}
+                  <!-- bot-agent-${{ env.ROLE_NAME }} -->
+                  🤖 **${{ env.ROLE_NAME }} agent started** — [View workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            - name: Save acknowledgment comment ID
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              run: echo "ACK_COMMENT_ID=${{ steps.ack_comment.outputs.comment-id }}" >> $GITHUB_ENV
+
+            - name: Save acknowledgment comment GraphQL node ID
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              run: |
+                NODE_ID=$(gh api "/repos/${{ github.repository }}/issues/comments/${{ env.ACK_COMMENT_ID }}" --jq '.node_id')
+                echo "ACK_COMMENT_NODE_ID=$NODE_ID" >> $GITHUB_ENV
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+
+            - name: Prepare Agent Query Context
+              if: env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0'
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+                # Number of most recent comments injected into the prompt (issue
+                # #683); pinned comments are always added on top. Empty (direct
+                # triggers) or invalid values fall back to 5 in query_context.py.
+                HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
+              run: |
+                SCRIPT_PATH="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}/query_context.py"
+                if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/query_context.py" ]; then
+                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/query_context.py"
+                fi
+              
+                python3 $SCRIPT_PATH \
+                  --issue-number ${{ github.event.issue.number }} \
+                  --output-file /tmp/ready_prompt.md \
+                  --event-path ${{ github.event_path }} >> $GITHUB_ENV
+
+            - name: Configure git to use GH_PAT for workflow file access
+              if: env.SKIP_AGENT == 'false'
+              run: |
+                git config --local --unset http.https://github.com/.extraheader || true
+                git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git
+
+            - name: Run Script Step
+              if: always() && !cancelled() && env.RUN_SCRIPT == 'true'
+              timeout-minutes: 60
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+              run: |
+                echo "::group::[Step] Run Script Step (issue #541)"
+                echo "Running $SCRIPT_PATH args='$SCRIPT_ARGS' timeout=${SCRIPT_TIMEOUT_MINUTES}m"
+                SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
+                if [ ! -f "$SCRIPTS/features/run_script/run_script.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/features/run_script/run_script.py" ]; then
+                  SCRIPTS=".git-flow-ai-cache/.github/scripts"
+                fi
+                python3 "$SCRIPTS/features/run_script/run_script.py"
+                echo "::endgroup::"
+
+            - name: Delete Comments
+              if: always() && !cancelled() && env.DELETE_COMMENTS == 'true'
+              timeout-minutes: 30
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+                DELETE_COMMENTS_REPO: ${{ github.repository }}
+              run: |
+                echo "::group::[Step] Delete Comments (issue #644)"
+                SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
+                if [ ! -f "$SCRIPTS/features/delete_comments/delete_comments.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/features/delete_comments/delete_comments.py" ]; then
+                  SCRIPTS=".git-flow-ai-cache/.github/scripts"
+                fi
+                python3 "$SCRIPTS/features/delete_comments/delete_comments.py"
+                echo "::endgroup::"
+
+            - name: Run OpenHands Agent
+              if: env.SKIP_AGENT == 'false' && env.RUN_SCRIPT != 'true'
+              id: openhands_agent
+              timeout-minutes: 30
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+                AGENT_CONFIG_PATH: ${{ env.AGENT_CONFIG_PATH || inputs.agent_config_path || 'agent-config.yaml' }}
+                LLM_API_KEY: ${{ env.LLM_API_KEY || secrets.OPENROUTER_API_KEY }}
+                LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
+                COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+                LLM_BASE_URL: ${{ env.LLM_BASE_URL || env.API_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
+                LLM_REASONING: ${{ env.LLM_REASONING }}
+                COMPLEXITY: ${{ env.COMPLEXITY }}
+                CONFIG_MODEL: ${{ env.CONFIG_MODEL }}
+                CONFIG_TEMPERATURE: ${{ env.CONFIG_TEMPERATURE }}
+              run: |
+                echo "Running agent as [@$ROLE_NAME] using prompt: $PROMPT_LOCATION"
+                if [[ "$AGENT_SCRIPT_URL" =~ ^https?:// ]]; then
+                  curl -sSL "$AGENT_SCRIPT_URL" -o /tmp/agent_script.py
+                    AGENT_SCRIPT_PATH="/tmp/agent_script.py"
+                else
+                    AGENT_SCRIPT_PATH="$AGENT_SCRIPT_URL"
+                fi
+
+                FINAL_PROMPT_FILE="/tmp/final_prompt.md"
+
+                cat "$PROMPT_LOCATION" > $FINAL_PROMPT_FILE
+
+                # Inject prominent directive for dev agent: extract the latest @@dev mention
+                # from the query (which embeds comment history) so the active instruction appears first.
+                if [ "$ROLE_NAME" = "dev" ]; then
+                    DEV_DIRECTIVE=$(grep -oP '(?<=@@dev\b).*' "$AGENT_QUERY_PATH" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' | head -c 500 || echo "")
+                    if [ -n "$DEV_DIRECTIVE" ]; then
+                        echo -e "\n\n### 🔴 DIRECTIVE FOR @@DEV\n${DEV_DIRECTIVE}\n" >> $FINAL_PROMPT_FILE
+                    fi
+                fi
+
+                # Inject the standing step instruction from workflow.yaml (issue #551).
+                if [ -n "$STEP_PROMPT_FILE" ] && [ -s "$STEP_PROMPT_FILE" ]; then
+                    echo -e "\n\n### 🔴 STEP INSTRUCTION (from workflow.yaml)\n$(cat "$STEP_PROMPT_FILE")\n" >> $FINAL_PROMPT_FILE
+                fi
+
+                echo -e "\n\n--- USER REQUEST / GITHUB CONTEXT ---\n" >> $FINAL_PROMPT_FILE
+                cat "$AGENT_QUERY_PATH" >> $FINAL_PROMPT_FILE
+
+                # Inject git diff for review agent
+                if [ "$ROLE_NAME" = "review" ]; then
+                    echo -e "\n\n--- GIT DIFF ---\n" >> $FINAL_PROMPT_FILE
+
+                    # --- Enhanced PR Discovery for Review Agent ---
+                    # Priority 1 > 2 > 3 (first match wins)
+                    ISSUE_NUMBER="${{ env.TARGET_NUMBER }}"
+                    PR_NUMBER=""
+
+                    # 1. HIGHEST PRIORITY: Explicit PR number from AGENT_RUN_CONFIG sentinel JSON (dev agent hand-off)
+                    #    or from human override syntax "@@review PR #NNN"
+                    if [ -n "${{ env.CONFIG_PR_NUMBER }}" ] && [ "${{ env.CONFIG_PR_NUMBER }}" != "null" ]; then
+                      PR_NUMBER="${{ env.CONFIG_PR_NUMBER }}"
+                      echo "PR discovered via explicit pr_number: #$PR_NUMBER"
+                    fi
+
+                    # 2. Fallback: Query GitHub API for open PRs referencing this issue
+                    if [ -z "$PR_NUMBER" ] && [ "$ISSUE_NUMBER" != "0" ] && [ -n "$ISSUE_NUMBER" ]; then
+                      PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --search "is:pr #$ISSUE_NUMBER" --json number --jq '.[0].number' 2>/dev/null || echo "")
+                      echo "PR discovered via API ($ISSUE_NUMBER): ${PR_NUMBER:-none}"
+                    fi
+
+                    # 3. Final fallback: Regex scan of comment history for "PR #<digits>" pattern
+                    if [ -z "$PR_NUMBER" ]; then
+                      PR_NUMBER=$(grep -oP 'PR #\K\d+' "$AGENT_QUERY_PATH" 2>/dev/null | tail -1 || echo "")
+                      echo "PR discovered via regex fallback: ${PR_NUMBER:-none}"
+                    fi
+
+                    # 4. Inject diff or failure marker
+                    if [ -n "$PR_NUMBER" ]; then
+                        gh pr diff "$PR_NUMBER" --repo "${{ github.repository }}" >> $FINAL_PROMPT_FILE 2>/dev/null || echo "(no diff available for PR#$PR_NUMBER)" >> $FINAL_PROMPT_FILE
+                    else
+                        echo "(no PR found linked to issue#$ISSUE_NUMBER)" >> $FINAL_PROMPT_FILE
+                    fi
+                fi
+                # Set PR metadata env vars for agent_script.py (populates WorkflowState.pull_request)
+                # PR_NUMBER may be set by the review agent block above, or via CONFIG_PR_NUMBER
+                PR_ENV="${PR_NUMBER:-${{ env.CONFIG_PR_NUMBER }}}"
+                if [ -n "$PR_ENV" ] && [ "$PR_ENV" != "null" ]; then
+                    export PR_NUMBER="$PR_ENV"
+                    export PR_URL="https://github.com/${{ github.repository }}/pull/$PR_NUMBER"
+                    export PR_TITLE=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json title --jq '.title' 2>/dev/null || echo "")
+                    export PR_AUTHOR=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json author --jq '.author.login' 2>/dev/null || echo "")
+                fi
+                # 2. Maintenant on ne passe qu'un seul argument au script !
+                # 2>&1 fusionne stderr dans stdout, stdbuf désactive le buffering pour une écriture immédiate
+                stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE" 2>&1 | tee console.log
+
+            - name: Clean and Prepare Comment
+              if: always() && !cancelled() && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true')
+              run: |
+                SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
+                if [ ! -f "$SCRIPTS/prepare_comment.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/prepare_comment.py" ]; then
+                  SCRIPTS=".git-flow-ai-cache/.github/scripts"
+                fi
+                python3 "$SCRIPTS/prepare_comment.py"
+
+            - name: Add bot marker and workflow state to comment
+              if: always() && !cancelled() && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true')
+              shell: python
+              run: |
+                import os
+                import json
+                import sys
+
+                scripts_dir = os.environ.get("GIT_FLOW_AI_SCRIPTS") or ".github/scripts"
+                if not os.path.isdir(scripts_dir) and os.path.isdir(".git-flow-ai-cache/.github/scripts"):
+                    scripts_dir = ".git-flow-ai-cache/.github/scripts"
+                sys.path.insert(0, scripts_dir)
+
+                role = os.environ.get("ROLE_NAME", "unknown")
+                marker = f"<!-- bot-agent-{role} -->"
+                agent_display_names = {
+                    "genius": "Genius", "ctx": "Ctx", "dev": "Developer",
+                    "review": "Reviewer", "issue": "Issue",
+                    "issue-reviewer": "Issue Reviewer", "summarize": "Summarizer",
+                }
+                display_name = agent_display_names.get(role, role.capitalize())
+
+                # Graceful degradation (issue #466): if prepare_comment.py failed,
+                # there is nothing to publish. Exit 0 without setting HAS_COMMENT
+                # so downstream posting steps are cleanly skipped.
+                if not os.path.isfile("github_comment.md") or os.path.getsize("github_comment.md") == 0:
+                    print("Warning: github_comment.md missing or empty — skipping comment.", flush=True)
+                    sys.exit(0)
+
+                with open("github_comment.md", "r", encoding="utf-8") as f:
+                    content = f.read()
+
+                # Remove legacy metrics comment — metrics are now in the workflow state
+                # Preserve for backward compat during transition: keep it in the body
+                # but the authoritative source is the state JSON section.
+
+                # Prepend collapsed workflow state section if available
+                # (issue #478: the bot marker MUST stay on line 1 so bot
+                # detection is exact; the state section follows it).
+                state_section = ""
+                add_continue_token = True
+                state_file = "workflow_state.json"
+                if os.path.isfile(state_file) and os.path.getsize(state_file) > 0:
+                    try:
+                        from workflow_state import WorkflowState, format_collapsed_section
+                        with open(state_file, "r", encoding="utf-8") as sf:
+                            state = WorkflowState.model_validate(json.load(sf))
+                        state_section = format_collapsed_section(state)
+                        # Only emit the continue token when the resolved outcome
+                        # keeps the flow alive; hold/terminate end it (issue #478).
+                        dispatch_status = state.dispatch.status if state.dispatch else "advance"
+                        add_continue_token = dispatch_status in ("advance", "loop")
+                    except Exception as e:
+                        print(f"Warning: Failed to load workflow state: {e}", flush=True)
+
+                # Deterministic continuation token (issue #478): the next CI run
+                # fires on this hidden marker instead of relying on stray @@ in
+                # the agent prose.
+                continue_token = "<!-- workflow-continue -->\n" if add_continue_token else ""
+                prefix = ("${{ env.BOT_MARKER }}\n" + marker + "\n" + continue_token +
+                          state_section + "\n*" + display_name + " answer*\n\n")
+                with open("github_comment.md", "w", encoding="utf-8") as f:
+                    f.write(prefix + content)
+
+            - name: Post Agent Comment to GitHub
+              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true') && env.TARGET_NUMBER != '0'
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                issue-number: ${{ env.TARGET_NUMBER }}
+                body-path: ./github_comment.md
+                token: ${{ secrets.GH_PAT }}
+                tag: "<!-- bot-agent-${{ env.ROLE_NAME }} -->"
+                mode: create
+
+            - name: Minimize acknowledgment comment
+              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ACK_COMMENT_ID != '' && env.ACK_COMMENT_NODE_ID != ''
+              run: |
+                echo "Minimizing comment $ACK_COMMENT_ID (node: $ACK_COMMENT_NODE_ID)..."
+                gh api graphql -f query='
+                  mutation($subjectId: ID!) {
+                    minimizeComment(input: {subjectId: $subjectId, classifier: OUTDATED}) {
+                      minimizedComment { minimizedReason }
+                    }
+                  }' -f subjectId="$ACK_COMMENT_NODE_ID"
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+
+            - name: Process Split Plan (Issue Decomposition)
+              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && env.SKIP_AGENT == 'false' && env.TARGET_NUMBER != '0' && env.ROLE_NAME == 'genius'
+              run: |
+                SPLIT_PLAN=""
+
+                # Priority 1: Check for pre-extracted split_plan.json (issue #231 fix)
+                # The agent_script.py now extracts <splitPlan> before message splitting,
+                # so it survives multi-part message fragmentation.
+                if [ -f "split_plan.json" ]; then
+                  SPLIT_PLAN=$(jq -c '.' split_plan.json 2>/dev/null || echo "")
+                  echo "Found split_plan.json (pre-extracted by agent_script.py)"
+                fi
+
+                # Priority 2: Fallback to parsing github_comment.md (single-part messages)
+                if [ -z "$SPLIT_PLAN" ] && [ -f "./github_comment.md" ]; then
+                  SPLIT_PLAN=$(sed -n '/<splitPlan>/,/<\/splitPlan>/p' ./github_comment.md | sed '1s/.*<splitPlan>//; $s/<\/splitPlan>.*//' | tr -d '\n' | jq -c '.' 2>/dev/null || echo "")
+                fi
+
+                if [ -z "$SPLIT_PLAN" ]; then
+                  echo "No split plan found in agent output."
+                  exit 0
+                fi
+
+                echo "Split plan detected. Writing to plan file..."
+                echo "$SPLIT_PLAN" | jq '.' > /tmp/split_plan.json
+
+                AUTO_TRIGGER=$(echo "$SPLIT_PLAN" | jq -r '.auto_trigger // true')
+                echo "Split plan contains $TASK_COUNT tasks, auto_trigger=$AUTO_TRIGGER"
+
+                SCRIPT_PATH="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}/issue_creation.py"
+                if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/issue_creation.py" ]; then
+                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/issue_creation.py"
+                fi
+
+                if [ ! -f "$SCRIPT_PATH" ]; then
+                  echo "ERROR: issue_creation.py not found at $SCRIPT_PATH"
+                  exit 1
+                fi
+
+                TRIGGER_FLAG="--no-trigger"
+                if [ "$AUTO_TRIGGER" = "true" ]; then
+                  TRIGGER_FLAG=""
+                fi
+
+                echo "Creating sub-issues..."
+                python "$SCRIPT_PATH" create \
+                  --repo "${{ github.repository }}" \
+                  --parent "${{ env.TARGET_NUMBER }}" \
+                  --plan /tmp/split_plan.json \
+                  $TRIGGER_FLAG
+
+                echo "Sub-issues created successfully."
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+
+            - name: Post Additional Message Parts
+              if: always() && !cancelled() && env.HAS_COMMENT == 'true' && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true') && env.TARGET_NUMBER != '0' && hashFiles('final_message_parts_count.txt') != ''
+              run: |
+                PARTS_COUNT=$(cat final_message_parts_count.txt)
+                echo "Found $PARTS_COUNT message parts, posting parts 2 through $PARTS_COUNT"
+                for i in $(seq 2 "$PARTS_COUNT"); do
+                  PART_FILE="final_message_part_${i}.txt"
+                  if [ -f "$PART_FILE" ]; then
+                    echo "Posting part $i..."
+                    # Fragments of a bot message must carry the universal bot
+                    # marker plus the agent marker on line 1 so stray @@ in
+                    # prose cannot re-fire the CI gate (issue #478).
+                    {
+                      echo "${{ env.BOT_MARKER }}"
+                      echo "<!-- bot-agent-${ROLE_NAME:-unknown} -->"
+                      cat "$PART_FILE"
+                    } | gh issue comment "${{ github.event.issue.number }}" \
+                      --body-file - \
+                      --repo "${{ github.repository }}"
+                  else
+                    echo "Warning: $PART_FILE not found, skipping"
+                  fi
+                done
+              env:
+                GH_TOKEN: ${{ secrets.GH_PAT }}
+
+            - name: Upload logs as artifact
+              uses: actions/upload-artifact@v4
+              if: always() && env.SKIP_AGENT == 'false'
+              with:
+                  name: openhands-task-logs
+                  path: |
+                      *.log
+                      output/
+                  retention-days: 7
+
+    summarize-metrics:
+        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+        if: |
+          github.event_name == 'issues' &&
+          github.event.action == 'closed' &&
+          github.event.issue.pull_request == null
+        steps:
+            - name: Clean global git config
+              run:
+                git config --global --unset-all http.https://github.com/.extraheader || true
+                git config --global --unset-all credential.helper || true
+
+            - name: Checkout repository
+              uses: actions/checkout@v5
+              with:
+                persist-credentials: false
+
+            - name: Check if git-flow-ai cache is needed
+              id: check_gfa
+              run: |
+                if [ ! -d ".git-flow-ai-cache/.github/scripts" ]; then
+                  echo "needed=true" >> $GITHUB_OUTPUT
+                fi
+
+            - name: Checkout git-flow-ai repo (reusable workflow mode)
+              if: steps.check_gfa.outputs.needed == 'true'
+              uses: actions/checkout@v5
+              with:
+                repository: olivier-norture/git-flow-ai
+                path: .git-flow-ai-cache
+                token: ${{ secrets.GH_PAT }}
+                persist-credentials: false
+
+            - name: Setup Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: '3.13'
+
+            - name: Summarize agent metrics
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+                  GITHUB_REPOSITORY: ${{ github.repository }}gg
+                  ISSUE_NUMBER: ${{ github.event.issue.number }}
+              run: |
+                if [ -f ".git-flow-ai-cache/.github/scripts/summarize_metrics.py" ]; then
+                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/summarize_metrics.py"
+                else
+                  SCRIPT_PATH=".github/scripts/summarize_metrics.py"
+                fi
+                python "$SCRIPT_PATH"
+
+    subtask-completion-notifier:
+        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+        if: |
+          github.event_name == 'issues' &&
+          github.event.action == 'closed' &&
+          startsWith(github.event.issue.title, '[Sub-task')
+        steps:
+            - name: Notify parent issue of sub-task completion
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+                  REPOSITORY: ${{ github.repository }}
+                  ISSUE_NUMBER: ${{ github.event.issue.number }}
+                  ISSUE_TITLE: ${{ github.event.issue.title }}
+              run: |
+                set -euo pipefail
+
+                # Extract 1-based index from title: [Sub-task N/M]
+                INDEX=$(echo "$ISSUE_TITLE" | grep -oP '\[Sub-task \K[0-9]+')
+                ZERO_INDEX=$((INDEX - 1))
+
+                # Resolve parent from parent-{N} label
+                PARENT_NUMBER=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  "https://api.github.com/repos/$REPOSITORY/issues/$ISSUE_NUMBER/labels" \
+                  | jq -r '.[] | select(.name | startswith("parent-")) | .name' \
+                  | head -1 \
+                  | sed 's/parent-//')
+
+                if [ -z "$PARENT_NUMBER" ] || [ "$PARENT_NUMBER" = "null" ]; then
+                  echo "ERROR: Could not resolve parent issue number for sub-task #$ISSUE_NUMBER"
+                  echo "Labels on this issue:"
+                  curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                    "https://api.github.com/repos/$REPOSITORY/issues/$ISSUE_NUMBER/labels" | jq .
+                  exit 1
+                fi
+
+                echo "Sub-task #$ISSUE_NUMBER (index $ZERO_INDEX) completed. Notifying parent #$PARENT_NUMBER"
+
+                HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+                  -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  "https://api.github.com/repos/$REPOSITORY/issues/$PARENT_NUMBER/comments" \
+                  -d "{\"body\": \"<!-- bot-workflow-terminal --> <!-- bot-subtask-complete: $ZERO_INDEX -->\"}")
+                if [ "$HTTP_STATUS" != "201" ]; then
+                  echo "ERROR: Failed to post comment to parent #$PARENT_NUMBER (HTTP $HTTP_STATUS)"
+                  exit 1
+                fi
+                echo "Successfully posted completion notification to parent #$PARENT_NUMBER"
