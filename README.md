@@ -80,4 +80,6 @@ One layered file, `agent-config.yaml`, in three layers — `[docs/configuration.
 
 Cross-references resolve with `${ref}` (`${llms.qwen-3-6-27b}`). Sampling parameters cascade per-invocation > per-agent > per-LLM, and a `complexity` field auto-adjusts temperature (`low` 0.0 → `high` 0.3, never decreasing the agent's floor). Adding an agent is a ~5-line stanza — no workflow changes needed. If `agent-config.yaml` is absent, the workflow falls back to the legacy env-var approach.
 
+Already paying for a coding subscription? You can point the agents at **CommandCode** (and, later, **OpenCode Go**) instead of a metered API key — see [docs/subscription-plans.md](docs/subscription-plans.md).
+
 For the machine contracts (`AGENT_RUN_CONFIG` sentinel, dispatch statuses, workflow grammar, state schema) see [docs/reference.md](docs/reference.md); for the full agent roster and tool permissions see [docs/agents-and-skills.md](docs/agents-and-skills.md).

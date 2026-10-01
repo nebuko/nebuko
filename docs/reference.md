@@ -286,6 +286,7 @@ Variables the orchestrator sets/consumes per run:
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables debug-mode routing (recover) and verbose logs. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |
+| `COMMANDCODE_API_KEY` | repo secret (optional) | CommandCode subscription token — see [subscription-plans.md](./subscription-plans.md). |
 | `GH_PAT` | repo secret | GitHub PAT used for git push and API calls. |
 
 `event_normalizer.py` emits `KEY=value` pairs (multi-line values use HEREDOC
