@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """NEBUKO — spirale en O, v3
- - tous les nœuds (ambre et bleus) = même forme : un anneau avec UN seul trou vide
- - la flèche est fondue dans le ruban : un seul tracé, pas de pointe posée dessus
+ - le fil est continu : plus aucun nœud bleu, seul le ruban dessine la spirale
+ - les trois marqueurs ambre portent le sens : cible (début), losange (gate humain),
+   point plein (livrable final) — le point remplace l'ancienne pointe de flèche
 Dépendances : pip install cairosvg uharfbuzz fonttools
 """
 import math, os
@@ -28,12 +29,27 @@ def f(v):
     return f"{v:.2f}".rstrip("0").rstrip(".")
 
 # ------------------------------------------------------------------ briques SVG
-def ring(c, r, fill, k=0.42):
-    """Anneau avec un seul trou vide (rayon du trou = k * r). Identique pour l'ambre et le bleu."""
+def annulus(c, r, ri, fill):
+    """Disque évidé : rayon extérieur r, rayon intérieur ri."""
     x, y = c
-    ri = r * k
     return (f'<path fill="{fill}" fill-rule="evenodd" d="M{f(x-r)} {f(y)}a{f(r)} {f(r)} 0 1 0 {f(2*r)} 0a{f(r)} {f(r)} 0 1 0 {f(-2*r)} 0Z'
             f'M{f(x-ri)} {f(y)}a{f(ri)} {f(ri)} 0 1 0 {f(2*ri)} 0a{f(ri)} {f(ri)} 0 1 0 {f(-2*ri)} 0Z"/>')
+
+def target(c, r, fill):
+    """Cible : anneau extérieur + point central, séparés par un vide (début de la spirale)."""
+    x, y = c
+    return annulus(c, r, r * 0.72, fill) + f'<circle cx="{f(x)}" cy="{f(y)}" r="{f(r*0.26)}" fill="{fill}"/>'
+
+def diamond(c, r, fill):
+    """Losange plein (gate de validation humaine)."""
+    x, y = c
+    return (f'<path fill="{fill}" d="M{f(x)} {f(y-r)}L{f(x+r)} {f(y)}'
+            f'L{f(x)} {f(y+r)}L{f(x-r)} {f(y)}Z"/>')
+
+def dot(c, r, fill):
+    """Point plein (livrable final)."""
+    x, y = c
+    return f'<circle cx="{f(x)}" cy="{f(y)}" r="{f(r)}" fill="{fill}"/>'
 
 def bez_cmds(pts):
     """Catmull-Rom -> Béziers cubiques"""
@@ -47,16 +63,15 @@ def bez_cmds(pts):
         d += f"C{f(c1[0])} {f(c1[1])} {f(c2[0])} {f(c2[1])} {f(p2[0])} {f(p2[1])}"
     return d
 
-def ribbon(seg, hwf, head=None):
-    """Ruban à largeur variable. Si head=(largeur, longueur, recul) est fourni, la pointe de
-    flèche est dessinée DANS LE MÊME CONTOUR que le ruban : un seul tracé, aucune couture."""
+def ribbon(seg, hwf):
+    """Ruban à largeur variable, refermé en un seul contour."""
     if len(seg) < 3:
         return ""
     k = max(1, len(seg) // 12)
     idx = list(range(0, len(seg), k))
     if idx[-1] != len(seg) - 1:
         idx.append(len(seg) - 1)
-    Lp, Rp, last = [], [], None
+    Lp, Rp = [], []
     for i in idx:
         x, y, t = seg[i]
         j0, j1 = max(i - 2, 0), min(i + 2, len(seg) - 1)
@@ -67,16 +82,8 @@ def ribbon(seg, hwf, head=None):
         h = hwf(t)
         Lp.append((x + nx * h, y + ny * h))
         Rp.append((x - nx * h, y - ny * h))
-        last = (x, y, ux, uy, nx, ny)
     Rr = Rp[::-1]
     d = f"M{f(Lp[0][0])} {f(Lp[0][1])}" + bez_cmds(Lp)
-    if head:
-        wh, lh, back = head
-        x, y, ux, uy, nx, ny = last
-        c1 = (x - ux * back + nx * wh / 2, y - uy * back + ny * wh / 2)   # barbe gauche
-        tip = (x + ux * lh, y + uy * lh)                                  # pointe
-        c2 = (x - ux * back - nx * wh / 2, y - uy * back - ny * wh / 2)   # barbe droite
-        d += "".join(f"L{f(px)} {f(py)}" for px, py in (c1, tip, c2))
     d += f"L{f(Rr[0][0])} {f(Rr[0][1])}" + bez_cmds(Rr) + "Z"
     return d
 
@@ -113,26 +120,18 @@ def build(uid, mode="dark"):
 
     w0, w1 = (4.2, 9.2) if compact else (3.0, 7.8)             # largeur du ruban : fine -> franche
     hwf = lambda t: (w0 + (w1 - w0) * min(t, 1.0) ** 1.25) / 2
-    R_H  = 7.4 if compact else 6.3                             # rayon de l'anneau de validation humaine
-    R_H0 = 0.36 * R_H                                          # 1er prompt humain (début de spirale) : 2x plus petit
+    R_H     = 7.4 if compact else 6.3                          # demi-diagonale du losange (gate humain)
+    R_start = 0.60 * R_H                                       # rayon de la cible (début : l'issue)
+    R_end   = 1.15 * R_H                                       # rayon du point final (livrable), le plus grand
     P = geometry(compact)
-    tg = 0.62 if compact else 0.64                             # position de la 2e validation humaine
-    # agents (anneaux bleus) : (position sur la spirale, facteur d'échelle du rayon).
-    # Le dernier est le 5e cercle (bout de spirale) : il est agrandi.
-    pearls = [] if compact else [(0.17, 1.0), (0.35, 1.0), (0.83, 1.4)]
+    tg = 0.62 if compact else 0.64                             # position de la validation humaine
 
     at = lambda t: min(P, key=lambda q: abs(q[2] - t))
-    start, gate = P[0], at(tg)                                 # le 1er anneau se pose au début de la spirale
-    # fil coupé sous chaque anneau, entre le trou (0.42·r) et le bord extérieur : la coupe
-    # doit rester plus large que le trou pour que le fil ne réapparaisse pas dedans.
-    cuts = [(start[0], start[1], R_H0 * 0.78),
-            (gate[0], gate[1], R_H - 1.4)]
-    blue_rings = []
-    for t, scale in pearls:
-        p = at(t)
-        outer = (hwf(t) + 2.0) * scale
-        blue_rings.append((p[0], p[1], outer))
-        cuts.append((p[0], p[1], outer - 1.5))
+    start, gate = P[0], at(tg)                                 # les marqueurs se posent sur le fil
+    # le fil est coupé sous les marqueurs : la coupe reste en deçà du bord du marqueur pour
+    # qu'il ne réapparaisse ni dans le vide de la cible ni sur les flancs du losange.
+    cuts = [(start[0], start[1], R_start * 0.90),
+            (gate[0], gate[1], R_H * 0.60)]
 
     if flat is None:
         defs = (f'<radialGradient id="{uid}s" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="34">'
@@ -146,8 +145,8 @@ def build(uid, mode="dark"):
 
     o = ""
     if mode == "dark":
-        halo = 2.4                                             # halo ambre ∝ rayon de l'anneau ambre
-        o += (f'<circle cx="{f(start[0])}" cy="{f(start[1])}" r="{f(halo * R_H0)}" fill="url(#{uid}h)"/>'
+        halo = 2.4                                             # halo ambre ∝ rayon du marqueur
+        o += (f'<circle cx="{f(start[0])}" cy="{f(start[1])}" r="{f(halo * R_start)}" fill="url(#{uid}h)"/>'
               f'<circle cx="{f(gate[0])}" cy="{f(gate[1])}" r="{f(halo * R_H)}" fill="url(#{uid}h)"/>')
 
     # prolongement du fil : il se redresse puis part vers la droite, en montant
@@ -165,8 +164,9 @@ def build(uid, mode="dark"):
         s_ += step
         ext.append((x, y, 1.0))
     full = P + ext
+    Q = ext[-1]                                                # bout du fil = point final
 
-    # morceaux de fil entre les anneaux
+    # morceaux de fil entre les marqueurs
     keep = [all(math.hypot(p[0] - cx_, p[1] - cy_) > tr for cx_, cy_, tr in cuts) for p in full]
     runs, cur = [], []
     for p, k_ in zip(full, keep):
@@ -178,29 +178,19 @@ def build(uid, mode="dark"):
     if cur:
         runs.append(cur)
 
-    wh, lh, back = w1 * 2.2, 15.0, 2.2                         # taille de la pointe
-    for i, r in enumerate(runs):
-        head = (wh, lh, back) if i == len(runs) - 1 else None  # le dernier morceau porte la flèche
-        o += f'<path d="{ribbon(r, hwf, head)}" fill="{blue}"/>'
+    for r in runs:
+        o += f'<path d="{ribbon(r, hwf)}" fill="{blue}"/>'
 
-    # anneaux : MÊME forme pour les agents (bleu) et les humains (ambre)
-    for px, py, outer in blue_rings:
-        o += ring((px, py), outer, blue)
-    o += ring((start[0], start[1]), R_H0, amb)                 # 1er prompt humain : au début de la spirale
-    o += ring((gate[0], gate[1]), R_H, amb)                    # validation humaine
+    # marqueurs ambre : cible (début), losange (gate humain), point plein (fin = livrable)
+    o += target((start[0], start[1]), R_start, amb)
+    o += diamond((gate[0], gate[1]), R_H, amb)
+    o += dot((Q[0], Q[1]), R_end, amb)
 
-    # boîte englobante (pour centrer / mettre à l'échelle)
-    Q = ext[-1]
-    ux, uy = math.cos(phi), math.sin(phi)
-    nx, ny = -uy, ux
-    hp = [(Q[0] - ux * back + nx * wh / 2, Q[1] - uy * back + ny * wh / 2),
-          (Q[0] + ux * lh, Q[1] + uy * lh),
-          (Q[0] - ux * back - nx * wh / 2, Q[1] - uy * back - ny * wh / 2)]
-    # boîte englobante = encre réellement dessinée : contour du ruban, pointe et anneaux.
-    # C'est elle qu'on centre, pour que le logo entier (de la pointe à la spirale) soit centré.
-    ink = outline(full, hwf) + hp
-    for rx, ry, rr in blue_rings + [(start[0], start[1], R_H0), (gate[0], gate[1], R_H)]:
-        ink += [(rx - rr, ry - rr), (rx + rr, ry + rr)]
+    # boîte englobante = encre réellement dessinée : contour du ruban + les trois marqueurs.
+    # C'est elle qu'on centre, pour que le logo entier (du point final à la spirale) soit centré.
+    ink = outline(full, hwf)
+    for mx, my, mr in ((start[0], start[1], R_start), (gate[0], gate[1], R_H), (Q[0], Q[1], R_end)):
+        ink += [(mx - mr, my - mr), (mx + mr, my + mr)]
     xs = [p[0] for p in ink]
     ys = [p[1] for p in ink]
     m = w1 / 2 + 1.5
