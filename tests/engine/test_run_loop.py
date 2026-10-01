@@ -1,0 +1,201 @@
+"""Spec-scenario tests for the typed driver (issue #590, plan section 3.5).
+
+The driver is the typed form of the 15-step ``run-task`` bash job: nine phases,
+one ``[phase:<name>]`` log marker each, and an exit code that tells the host
+whether to advance, stop for a human, or terminate.
+"""
+
+from __future__ import annotations
+
+import inspect
+
+import pytest
+
+from adapters.local import LocalAdapter
+from engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
+from engine.paths import repo_root
+from engine.run_loop import PHASES, Engine, main
+
+BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
+
+
+def _trigger(body: str = "@@dev fix it", number: int = 590) -> Trigger:
+    return Trigger(author="olivier-norture", body=body, type="issue_comment", number=number)
+
+
+def _engine(tmp_path, trigger=None, *, name: str = "run-1", env=None) -> Engine:
+    adapter = LocalAdapter(tmp_path / "runs" / name, trigger=trigger or _trigger())
+    return Engine(adapter=adapter, repo_root=repo_root(), env=dict(env or {"CIRCUIT_BREAKER_THRESHOLD": "3"}))
+
+
+def _agent_result(answer: str, dispatch: dict | None = None) -> dict:
+    return {"answer": answer, "dispatch": dispatch if dispatch is not None else {"status": "advance"}}
+
+
+class TestPhaseVocabulary:
+    def test_phases_are_the_nine_documented_phases_in_order(self):
+        assert PHASES == (
+            "normalize",
+            "resolve_config",
+            "guards",
+            "prompt",
+            "agent",
+            "validate",
+            "publish",
+            "state",
+            "route",
+        )
+
+
+class TestNormalizePhase:
+    def test_returns_the_adapter_trigger(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        assert engine.normalize() == _trigger()
+
+
+class TestGuardsPhase:
+    def test_accepts_a_plain_human_trigger(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        verdict = engine.guard(_trigger(), [])
+
+        assert str(verdict["SKIP_AGENT"]).lower() == "false"
+
+    def test_skips_a_same_agent_loop(self, tmp_path):
+        trigger = _trigger(body=f"<!-- bot-workflow-terminal -->\n{BOT_AGENT_MARKER}\n@@dev continue")
+        engine = _engine(tmp_path, trigger)
+
+        verdict = engine.guard(trigger, [])
+
+        assert str(verdict["SKIP_AGENT"]).lower() == "true"
+
+    def test_uses_the_injected_history_for_the_circuit_breaker(self, tmp_path):
+        from engine.models import CommentEntry
+
+        engine = _engine(tmp_path)
+        history = [
+            CommentEntry(author="bot", body=f"{BOT_AGENT_MARKER}\ncall {index}", created_at="2026-10-01T07:47:47Z")
+            for index in range(6)
+        ]
+
+        verdict = engine.guard(_trigger(), history)
+
+        assert str(verdict["CIRCUIT_BREAKER_TRIPPED"]).lower() == "true"
+
+
+class TestRoutePhase:
+    def test_maps_the_dispatch_payload(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        decision = engine.route({"dispatch": {"status": "advance", "agent": "ctx", "complexity": "high"}})
+
+        assert isinstance(decision, RoutingDecision)
+        assert (decision.status, decision.agent, decision.complexity) == ("advance", "ctx", "high")
+
+    def test_maps_a_human_gate_hold(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        decision = engine.route({"dispatch": {"status": "hold", "reason": "await approval"}})
+
+        assert decision.status == "hold"
+
+
+class TestRunLoop:
+    def test_emits_every_phase_marker_in_order(self, tmp_path, monkeypatch, caplog):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        with caplog.at_level("INFO"):
+            outcome = engine.run()
+
+        assert isinstance(outcome, RunOutcome)
+        assert tuple(outcome.phases) == PHASES
+        for phase in PHASES:
+            assert f"[phase:{phase}]" in caplog.text
+
+    def test_advances_on_an_advance_dispatch(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.routing.status == "advance"
+
+    def test_holds_for_a_human_gate(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: _agent_result("proposal", {"status": "hold", "reason": "await approval"}),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.HOLD
+        assert outcome.routing.status == "hold"
+
+    def test_publishes_the_agent_answer(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("*Dev answer*"))
+
+        outcome = engine.run()
+
+        assert outcome.posted_body is not None
+        assert "*Dev answer*" in outcome.posted_body
+        assert (tmp_path / "runs" / "run-1" / "journal.md").is_file()
+
+    def test_never_invokes_the_agent_when_the_guards_trip(self, tmp_path, monkeypatch):
+        trigger = _trigger(body=f"<!-- bot-workflow-terminal -->\n{BOT_AGENT_MARKER}\n@@dev continue")
+        engine = _engine(tmp_path, trigger)
+        invoked = []
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: invoked.append(prompt))
+
+        outcome = engine.run()
+
+        assert invoked == []
+        assert "agent" not in outcome.phases
+        assert outcome.exit_code == ExitCode.TERMINAL
+
+    def test_writes_the_state_for_the_next_run(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        engine.run()
+
+        assert (tmp_path / "runs" / "run-1" / "state.json").is_file()
+
+    def test_records_an_unrecoverable_failure_as_the_error_exit_code(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+
+        def boom(self, prompt):
+            raise RuntimeError("agent transport exploded")
+
+        monkeypatch.setattr(Engine, "invoke_agent", boom)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ERROR
+
+
+class TestEntryPoints:
+    def test_main_takes_an_argv_sequence(self):
+        assert list(inspect.signature(main).parameters) == ["argv"]
+
+    def test_run_module_reexports_main(self):
+        from engine.run import main as run_main
+
+        assert run_main is main
+
+    def test_module_entry_point_reexports_main(self):
+        import engine.__main__ as entry_point
+
+        assert entry_point.main is main
+
+    def test_package_reexports_the_engine_surface(self):
+        import engine
+
+        assert engine.main is main
+        assert engine.Engine is Engine
+        assert tuple(engine.PHASES) == PHASES

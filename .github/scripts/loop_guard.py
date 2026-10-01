@@ -18,14 +18,19 @@ Output:
     SKIP_AGENT=true or SKIP_AGENT=false to stdout.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import re
 import sys
-from typing import Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from config import load_agent_names
+
+if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
+    from engine.models import CommentEntry
 
 _WORKFLOW_STATE_START = "<!-- WORKFLOW_STATE_START -->"
 _WORKFLOW_STATE_END = "<!-- WORKFLOW_STATE_END -->"
@@ -196,12 +201,18 @@ def detect_human_plus_agent_ping(trigger_body: str) -> bool:
     return len(agent_mentions) > 0 and len(human_mentions) > 0
 
 
-def check_loop_guard(trigger_body: str, current_agent: str) -> dict:
+def check_loop_guard(
+    trigger_body: str,
+    current_agent: str,
+    history: Sequence[CommentEntry] | None = None,
+) -> dict:
     """Run both loop guards and determine if agent should skip.
 
     Args:
         trigger_body: Raw trigger body text.
         current_agent: Current agent name being invoked.
+        history: Optional injected comment history (engine seam, issue #590);
+            when ``None`` the current trigger-body behaviour is unchanged.
 
     Returns:
         Dict with SKIP_AGENT (true/false) and optional REASON.

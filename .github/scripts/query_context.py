@@ -19,6 +19,8 @@ Output:
     written to files under /tmp/agent_query and exposed via *_PATH variables.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -26,8 +28,15 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
+    from adapters.base import HistoryProvider
+    from engine.models import CommentEntry, Trigger
+
+
 from features.select_history_comments.history import (
     HistoryWindowConfig,
     select_history,
@@ -416,6 +425,30 @@ def _build_state_context(comments, repo: str) -> str:
             lines.append("---\n\n")
             return "\n".join(lines)
     return ""
+
+
+# ── Engine seam (issue #590, Stage A) ─────────────────────────────
+
+
+# @stub-protected
+def query_context(
+    trigger: Trigger,
+    *,
+    history: Sequence[CommentEntry] | None = None,
+    event_path: str | None = None,
+) -> str:
+    """Build the ready agent prompt from a normalized trigger.
+
+    Args:
+        trigger: Normalized trigger (replaces the ``--issue-number``-only entry).
+        history: Optional injected comment history; when ``None`` it is fetched
+            through the default provider (unchanged GHA behaviour).
+        event_path: Optional GitHub event JSON path (``--event-path`` retained).
+
+    Returns:
+        The rendered ready-prompt text.
+    """
+    raise NotImplementedError
 
 
 def main():

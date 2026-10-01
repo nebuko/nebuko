@@ -20,11 +20,17 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 from github_client import ensure_bot_marker
+
+# Injected REST seam for issue creation (issue #590, Stage A): local mode passes
+# a filesystem-writing callable instead of the GitHub REST path. The default
+# stays exactly the current ``GitHubClient.create_issue`` call.
+# @stub-protected
+CreateIssue = Callable[[str, str, List[str]], Optional[dict]]
 
 
 @dataclass
@@ -246,6 +252,8 @@ def create_sub_issues(
     client: GitHubClient,
     plan: SplitPlan,
     parent_number: int,
+    *,
+    create_issue: CreateIssue | None = None,
 ) -> List[Dict[str, Any]]:
     """Execute a split plan: create issues and link them as sub-issues.
     

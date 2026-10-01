@@ -15,13 +15,19 @@ Output:
     CIRCUIT_BREAKER_TRIPPED=true/false to stdout.
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import re
 import sys
+from typing import TYPE_CHECKING, Sequence
 
 sys.path.insert(0, os.path.dirname(__file__))
 from github_client import get_issue_comments, post_comment
+
+if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
+    from engine.models import CommentEntry
 
 
 def count_bot_markers(comments):
@@ -52,6 +58,7 @@ def check_circuit_breaker(
     repo: str = "",
     gh_token: str = "",
     dry_run: bool = False,
+    history: Sequence[CommentEntry] | None = None,
 ) -> dict:
     """Evaluate circuit breaker condition.
 
@@ -61,6 +68,8 @@ def check_circuit_breaker(
         repo: Repository owner/repo string.
         gh_token: GitHub token for API access.
         dry_run: If True, don't actually call GitHub API.
+        history: Optional injected comment history (engine seam, issue #590);
+            when ``None`` the current REST fetch is used unchanged.
 
     Returns:
         Dict with CIRCUIT_BREAKER_TRIPPED and related env vars.

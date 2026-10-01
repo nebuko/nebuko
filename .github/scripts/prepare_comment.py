@@ -15,13 +15,19 @@ Handles multiple paths mirroring the workflow logic:
   Path D: final_message.txt doesn't exist
 """
 
+from __future__ import annotations
+
 import os
 import re
 import sys
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from validate_output import AGENT_RUN_CONFIG_PATTERN, strip_agent_run_config
 from workflow_state.features.comment.to_git_comment import collapse_sections
+
+if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
+    from adapters.base import Poster
 
 # ── Regex patterns (all DOTALL for multi-line safety) ─────────────
 
@@ -323,7 +329,7 @@ def _write_output(content: str) -> None:
 # ── Main entry point ──────────────────────────────────────────────
 
 
-def prepare_comment() -> bool:
+def prepare_comment(poster: Poster | None = None) -> bool:
     """Orchestrate comment preparation from final_message.txt or fallbacks.
 
     Mirrors the four-path logic from the workflow YAML:
@@ -331,6 +337,11 @@ def prepare_comment() -> bool:
       Path B: Parse console.log for "Message from Agent" blocks
       Path C: Agent crashed before producing output
       Path D: final_message.txt doesn't exist
+
+    Args:
+        poster: Optional injected poster callable (engine seam, issue #590).
+            ``None`` keeps the current default path. ``select_posted_body``
+            remains untouched.
 
     Returns:
         True if github_comment.md was written successfully.

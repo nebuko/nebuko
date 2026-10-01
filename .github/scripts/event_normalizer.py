@@ -14,10 +14,33 @@ Output:
     Multi-line values use HEREDOC format (KEY<<EOF ... EOF).
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import sys
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
+    from engine.models import Trigger
+
+
+def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
+    """Pure payload -> :class:`Trigger` extraction for the engine seam.
+
+    ``normalize_event`` (and the CLI ``main()``) stay the GHA-facing wrappers;
+    this function carries the extraction semantics without touching the event
+    file or the environment.
+
+    Args:
+        payload: Already-parsed GitHub event payload.
+
+    Returns:
+        The normalized Trigger.
+    """
+    # @stub-protected
+    raise NotImplementedError
 
 
 def normalize_event(
