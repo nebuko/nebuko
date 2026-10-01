@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   agent:
-    uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+    uses: ./.github/workflows/openhands-multi-agent.legacy.yml
     with:
       runs_on: "self-hosted"
       agent_config_path: "agent-config-commandcode.yaml"
