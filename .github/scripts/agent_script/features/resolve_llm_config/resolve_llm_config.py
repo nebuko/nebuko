@@ -160,8 +160,6 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     if temperature is None and os.getenv("LLM_TEMPERATURE"):
         temperature = float(os.getenv("LLM_TEMPERATURE"))
 
-    base_url = normalize_base_url(base_url)
-
     # ── Per-invocation overrides ─────────────────────────────────
     config_model = os.getenv("CONFIG_MODEL")
     if config_model:
@@ -193,6 +191,10 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
             f"No LLM model resolved: agent role '{role_name}' has no entry in "
             f"'{config_path}' and LLM_MODEL is unset."
         )
+
+    # Normalize last: every source (config, env fallback, override) has been
+    # folded into ``base_url`` by now, so the suffix strip covers them all.
+    base_url = normalize_base_url(base_url)
 
     # ── Build base LLM config dict ───────────────────────────────
     llm_config = {

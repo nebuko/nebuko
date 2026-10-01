@@ -40,6 +40,11 @@ log = logging.getLogger(__name__)
 # key) so ``build_prompt`` can render the user context without re-reading it.
 _TRIGGER_KEY = "ENGINE_TRIGGER"
 
+# Key into ``Engine._run_resolved`` for the mapping the ``resolve_config`` phase
+# produced. It is the single hand-off source the agent child and the routing
+# phases read, so the resolver's output is never recomputed mid-run.
+_RUN_RESOLVED_KEY = "resolved"
+
 _USER_REQUEST_HEADER = "--- USER REQUEST / GITHUB CONTEXT ---"
 _STEP_HEADER = "## Current step prompt"
 
@@ -135,14 +140,16 @@ def resolved_env_overlay(resolved: Any) -> dict[str, str]:
     for the legacy child.
 
     ``Engine.resolve`` annotates the mapping with the engine-only
-    ``ENGINE_TRIGGER`` object; every other value is a string the job exported.
+    ``ENGINE_TRIGGER`` object. Every other value is stringified the way the job
+    interpolated it into ``$GITHUB_ENV`` — dropping non-strings silently would
+    drop a real setting (issue #717 round 2).
     """
     if not isinstance(resolved, Mapping):
         return {}
     return {
         str(key): str(value)
         for key, value in resolved.items()
-        if key != _TRIGGER_KEY and isinstance(value, str)
+        if key != _TRIGGER_KEY
     }
 
 
@@ -178,6 +185,14 @@ class Engine:
     _resolve_cache: dict[tuple[str, int], Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # The resolver mapping ``run`` computed in the ``resolve_config`` phase, kept
+    # for the rest of the run (issue #717 round 2). ``invoke_agent`` and
+    # ``_role_of`` read this single hand-off instead of re-resolving, so routing
+    # can never diverge from the config the child actually runs with.
+    # Engine-internal, so it is excluded from ``__init__``/equality/repr.
+    _run_resolved: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
 
     # @stub-protected
     def run(self) -> RunOutcome:
@@ -192,6 +207,7 @@ class Engine:
 
             self._enter(phases, "resolve_config")
             resolved = self.resolve(trigger)
+            self._run_resolved[_RUN_RESOLVED_KEY] = resolved
             history: Sequence[CommentEntry] = list(
                 self.adapter.load_history(limit=self.history_limit)
             )
@@ -446,16 +462,42 @@ class Engine:
 
         Without ``ROLE_NAME`` the legacy child cannot find its agent in
         ``agent-config.yaml``, so it boots the SDK with no model and 404s on the
-        first request (issue #717). A resolver failure is not fatal here: the
-        agent still runs against the ambient environment.
+        first request (issue #717). The hand-off is the mapping the run already
+        resolved; a configuration error is fatal so the child never boots
+        modelless, while an unexpected failure falls back to the ambient
+        environment.
         """
-        try:
-            resolved = self.resolve(self.normalize())
-        except Exception:  # noqa: BLE001 - the ambient env still lets the agent run
-            log.warning("[phase:agent] no resolved config to hand the agent child")
-            return _anchor_config_path(dict(self.env), self.repo_root)
-        env = {**self.env, **resolved_env_overlay(resolved)}
+        env = {**self.env, **resolved_env_overlay(self._handoff_config())}
         return _anchor_config_path(env, self.repo_root)
+
+    def _handoff_config(self) -> Any:
+        """The resolver mapping the run routes on and hands to the agent child.
+
+        ``run`` stores it in the ``resolve_config`` phase; a direct call outside
+        the run flow (routing, unit tests) resolves it here.
+        """
+        remembered = self._run_resolved.get(_RUN_RESOLVED_KEY)
+        if remembered is not None:
+            return remembered
+        return self._resolve_for_handoff()
+
+    def _resolve_for_handoff(self) -> Any:
+        """Resolve the hand-off for a call that has no stored run mapping."""
+        try:
+            return self.resolve(self.normalize())
+        except ValueError:
+            # A config error means the child has no model/provider to run with.
+            # Swallowing it booted the agent modelless, so the real cause
+            # surfaced as a provider 404 (issue #717 round 2).
+            log.error("[phase:agent] resolver rejected the config", exc_info=True)
+            raise
+        except Exception as exc:  # noqa: BLE001 - the ambient env still lets the agent run
+            log.warning(
+                "[phase:agent] no resolved config to hand the agent child: %s",
+                exc,
+                exc_info=True,
+            )
+            return {}
 
     # @stub-protected
     def validate(self, agent_result: Any) -> None:
@@ -570,7 +612,7 @@ class Engine:
             return str(agent_result["role"])
         # Same hand-off as the agent child: the resolver's ROLE_NAME, not the
         # ambient environment (which never carries it on the engine host).
-        return self._agent_env().get("ROLE_NAME", "")
+        return str(self._get(self._handoff_config(), "ROLE_NAME") or "")
 
     @staticmethod
     def _console_log_of(agent_result: Any) -> str:

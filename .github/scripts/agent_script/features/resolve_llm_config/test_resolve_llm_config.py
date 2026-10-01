@@ -328,6 +328,53 @@ agents:
             self._resolve(self.ENV)
 
 
+class TestBaseUrlNormalizedAfterFallbacks(unittest.TestCase):
+    """The env-fallback base_url is normalized too, not only the config URL.
+
+    ``base_url`` is normalized once, after every source has been folded in, so
+    the ``/chat/completions`` route is stripped no matter which layer supplied
+    it (issue #717 round 2).
+    """
+
+    def setUp(self):
+        self._env_keys = [
+            "LLM_API_KEY",
+            "LLM_MODEL",
+            "LLM_BASE_URL",
+            "AGENT_CONFIG_PATH",
+            "ROLE_NAME",
+        ]
+        self._saved = {k: os.environ.get(k) for k in self._env_keys}
+        os.environ["LLM_API_KEY"] = "test-key"
+        os.environ["LLM_MODEL"] = "test/model"
+        os.environ["ROLE_NAME"] = "dev"
+        # Point at a missing config so ``base_url`` comes from the env fallback.
+        os.environ["AGENT_CONFIG_PATH"] = os.path.join(
+            tempfile.gettempdir(), "does-not-exist-717.yaml"
+        )
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_chat_completions_suffix_in_llm_base_url_is_stripped(self):
+        os.environ["LLM_BASE_URL"] = "http://litellm:4000/v1/chat/completions"
+
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+
+        self.assertEqual(cfg["base_url"], "http://litellm:4000/v1")
+
+    def test_bare_llm_base_url_passes_through(self):
+        os.environ["LLM_BASE_URL"] = "http://litellm:4000/v1"
+
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+
+        self.assertEqual(cfg["base_url"], "http://litellm:4000/v1")
+
+
 class TestMissingModelFailsLoudly(unittest.TestCase):
     """An unresolved model must fail loudly, not 404 at the provider (issue #717)."""
 
