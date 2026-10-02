@@ -32,9 +32,21 @@ class TokenTelemetry:
     # @stub-protected: signature defined by architect — do not modify
     def time_to_first_token(self) -> float | None:
         """Seconds between request start and first token, or ``None`` when unobservable."""
-        raise NotImplementedError
+        if self.first_token_at is None:
+            return None
+        return self.first_token_at - self.request_started_at
 
     # @stub-protected: signature defined by architect — do not modify
     def tokens_per_second(self) -> float | None:
-        """Generation throughput in tokens/second, or ``None`` when unobservable."""
-        raise NotImplementedError
+        """Generation throughput in tokens/second, or ``None`` when unobservable.
+
+        Throughput is measured over the generation window only (first token →
+        final token); input prefill time is deliberately excluded so the value
+        reflects decode speed rather than a prefill-diluted average.
+        """
+        if self.first_token_at is None or self.completion_tokens <= 0:
+            return None
+        generation_seconds = self.request_finished_at - self.first_token_at
+        if generation_seconds <= 0:
+            return None
+        return self.completion_tokens / generation_seconds
