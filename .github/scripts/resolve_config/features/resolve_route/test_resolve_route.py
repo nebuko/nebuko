@@ -425,6 +425,24 @@ class TestGatePrecedenceOverFunctionCall:
         )
         assert result.get("WORKFLOW_STEP") != "stub"
 
+    def test_no_forward_step_without_dispatch_continues_workflow(self, tmp_path):
+        # A no-op hand-off (callee owns no forward step) with **no** dispatch
+        # object must fall through to `_resolve_workflow_next_step`, continuing
+        # the workflow from the current step rather than re-entering a
+        # consumed one.
+        result = self._resolve(
+            tmp_path,
+            {
+                "version": 1,
+                "workflow": "spec-driven-impl",
+                "step": "implement",
+                "agent": "dev",
+                "function_call": {"agent_name": "ctx"},
+            },
+        )
+        assert result["TASK"] == "review"
+        assert result["WORKFLOW_STEP"] == "review"
+
     def _resolve_real_workflow(self, tmp_path, state):
         import json as _json
 
