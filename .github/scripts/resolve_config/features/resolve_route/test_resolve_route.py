@@ -424,3 +424,43 @@ class TestGatePrecedenceOverFunctionCall:
             },
         )
         assert result.get("WORKFLOW_STEP") != "stub"
+
+    def _resolve_real_workflow(self, tmp_path, state):
+        import json as _json
+
+        from resolve_config import resolve_config
+        from resolve_workflow import TASK_TO_PROMPT
+
+        prompt_base = tmp_path / "prompts"
+        prompt_base.mkdir()
+        for name in TASK_TO_PROMPT.values():
+            (prompt_base / name).write_text("# prompt")
+        workflows_dir = str(Path(__file__).resolve().parents[5] / "workflows")
+        block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        body = "<!-- bot-workflow-terminal -->\n" + block
+        return resolve_config(body, str(prompt_base), workflows_dir, is_bot=True)
+
+    def test_reported_loop_rerouted_to_gate_on_the_real_workflow(self, tmp_path):
+        # End-to-end repro of the reported #733 loop against the shipped
+        # workflows/spec-driven-impl.yaml (not the synthetic copy above):
+        # review@stub_review approved and handed off to `dev`. Forward-only
+        # callee resolution plus gate precedence must land on the human gate,
+        # never back on the consumed `dev@stub` step.
+        result = self._resolve_real_workflow(
+            tmp_path,
+            {
+                "version": 1,
+                "workflow": "spec-driven-impl",
+                "step": "stub_review",
+                "agent": "review",
+                "dispatch": {"status": "advance", "task_hint": "dev"},
+                "function_call": {"agent_name": "dev"},
+            },
+        )
+        assert result["TASK"] == "genius"
+        assert result["WORKFLOW_STEP"] == "stub_approval"
+
