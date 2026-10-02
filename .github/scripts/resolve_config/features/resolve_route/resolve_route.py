@@ -7,8 +7,9 @@ path the next agent takes and produce the resolved config dict.
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Literal, Mapping, Optional
 
 from config import (
     WorkflowDefinition,
@@ -51,6 +52,7 @@ __all__ = [
     "MAX_LOOP_COUNT",
     "resolve_next_agent_from_workflow",
     "count_consecutive_same_agent",
+    "HandoffDecision",
     "_resolve_function_call_path",
     "_resolve_machine_trigger_path",
 ]
@@ -554,6 +556,20 @@ def _mount_chain_ref_resolver(workflows_dir: str, local_workflows_dir: Optional[
             pass
         return wf
     return resolve_ref
+
+
+@dataclass(frozen=True)
+class HandoffDecision:
+    """Single explicit outcome of 'where does the next invocation go', precedence applied."""
+
+    target_agent: str
+    target_step: str
+    reason_code: Literal["dispatch", "function_call", "gate_hold"]
+
+    # @stub-protected: signature defined by architect — do not modify
+    def to_config(self) -> dict[str, str]:
+        """Resolver config mapping: {'task': target_agent, 'step': target_step}."""
+        raise NotImplementedError
 
 
 def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None, exclude_step: Optional[str] = None) -> str:

@@ -280,3 +280,147 @@ class TestWorkflowCommandPrecedence:
         config = _resolve_human_path("/workflow run workflow --name foo", None, None, str(base), workflow_command=self._run_cmd("foo"))
         assert config["task"] == "dev"
         assert "config_skip_reason" not in config
+
+
+# ---------------------------------------------------------------------------
+# Object Design Contract for issue #733: explicit routing precedence
+# (gate > function_call; forward-only cross-agent hand-off).
+#
+# Stub step (stub-only): these behaviour-pinning spec tests are RED against the
+# current resolver. They turn GREEN when the `implement` step makes
+# `_resolve_callee_step` forward-only and rewires the cascade at
+# `resolve_config.resolve_config` to consult the gate before `function_call`.
+# No production routing behaviour changes in this step.
+# ---------------------------------------------------------------------------
+
+_GATED_HANDOFF_WF_YAML = (
+    "name: spec-driven-impl\n"
+    "description: test\n"
+    "trigger:\n"
+    "  agents: [genius]\n"
+    "steps:\n"
+    "  - name: stub\n"
+    "    agent: dev\n"
+    "    next: stub_review\n"
+    "  - name: stub_review\n"
+    "    agent: review\n"
+    "    next: stub_approval\n"
+    "  - name: stub_approval\n"
+    "    agent: genius\n"
+    "    human_gate: true\n"
+    "    next: implement\n"
+    "  - name: implement\n"
+    "    agent: dev\n"
+    "    next: review\n"
+    "  - name: review\n"
+    "    agent: review\n"
+    "    next: null\n"
+)
+
+
+class TestHandoffDecisionContract:
+    """The frozen `HandoffDecision` value object (issue #733 Object Design)."""
+
+    def test_carries_the_resolved_target_and_reason(self):
+        from resolve_config.features.resolve_route.resolve_route import HandoffDecision
+
+        decision = HandoffDecision(
+            target_agent="genius", target_step="stub_approval", reason_code="gate_hold"
+        )
+        assert (decision.target_agent, decision.target_step, decision.reason_code) == (
+            "genius",
+            "stub_approval",
+            "gate_hold",
+        )
+
+    def test_to_config_maps_task_and_step(self):
+        from resolve_config.features.resolve_route.resolve_route import HandoffDecision
+
+        decision = HandoffDecision(
+            target_agent="dev", target_step="implement", reason_code="function_call"
+        )
+        assert decision.to_config() == {"task": "dev", "step": "implement"}
+
+
+class TestForwardOnlyCalleeResolution:
+    """A cross-agent hand-off may only target a *forward* step (issue #733)."""
+
+    def _workflows_dir(self, tmp_path):
+        (tmp_path / "spec-driven-impl.yaml").write_text(_GATED_HANDOFF_WF_YAML)
+        return str(tmp_path)
+
+    def test_never_re_enters_an_already_consumed_step(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_callee_step
+
+        resolved = _resolve_callee_step(
+            "spec-driven-impl", "stub_review", "dev", self._workflows_dir(tmp_path)
+        )
+        # `stub` sits *before* the current position and is already consumed.
+        assert resolved != "stub"
+        assert resolved == "implement"
+
+
+class TestGatePrecedenceOverFunctionCall:
+    """A human gate outranks an agent `function_call` (issue #733)."""
+
+    @staticmethod
+    def _dirs(tmp_path):
+        from resolve_workflow import TASK_TO_PROMPT
+
+        prompt_base = tmp_path / "prompts"
+        workflows_dir = tmp_path / "workflows"
+        prompt_base.mkdir()
+        workflows_dir.mkdir()
+        for name in TASK_TO_PROMPT.values():
+            (prompt_base / name).write_text("# prompt")
+        (workflows_dir / "spec-driven-impl.yaml").write_text(_GATED_HANDOFF_WF_YAML)
+        return str(prompt_base), str(workflows_dir)
+
+    def _resolve(self, tmp_path, state):
+        import json as _json
+
+        from resolve_config import resolve_config
+
+        block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        prompt_base, workflows_dir = self._dirs(tmp_path)
+        body = "<!-- bot-workflow-terminal -->\n" + block
+        return resolve_config(body, prompt_base, workflows_dir, is_bot=True)
+
+    def test_function_call_across_a_gate_resolves_to_the_gate(self, tmp_path):
+        # `stub_review` (review) approved and carries a hand-off to `dev`; its
+        # workflow successor is `stub_approval` (genius, human_gate). The gate
+        # must win — the call must not jump it to a consumed `stub` step.
+        result = self._resolve(
+            tmp_path,
+            {
+                "version": 1,
+                "workflow": "spec-driven-impl",
+                "step": "stub_review",
+                "agent": "review",
+                "dispatch": {"status": "advance", "task_hint": "dev"},
+                "function_call": {"agent_name": "dev"},
+            },
+        )
+        assert result["SKIP_AGENT"] == "false"
+        assert result["TASK"] == "genius"
+        assert result["WORKFLOW_STEP"] == "stub_approval"
+
+    def test_function_call_without_a_forward_step_is_a_no_op(self, tmp_path):
+        # A hand-off from the last step has no forward callee step; it must not
+        # re-enter a consumed step (the loop this contract kills).
+        result = self._resolve(
+            tmp_path,
+            {
+                "version": 1,
+                "workflow": "spec-driven-impl",
+                "step": "review",
+                "agent": "review",
+                "dispatch": {"status": "advance", "task_hint": "dev"},
+                "function_call": {"agent_name": "dev"},
+            },
+        )
+        assert result.get("WORKFLOW_STEP") != "stub"
