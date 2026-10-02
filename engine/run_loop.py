@@ -49,6 +49,24 @@ _RUN_RESOLVED_KEY = "resolved"
 _USER_REQUEST_HEADER = "--- USER REQUEST / GITHUB CONTEXT ---"
 _STEP_HEADER = "## Current step prompt"
 
+# Role label for the state comment's announcement line; mirrors the dropped
+# legacy step (``legacy-flow.yaml:900-906``).
+_ROLE_DISPLAY_NAMES = {
+    "genius": "Genius",
+    "ctx": "Ctx",
+    "dev": "Developer",
+    "review": "Reviewer",
+    "issue": "Issue",
+    "issue-reviewer": "Issue Reviewer",
+    "summarize": "Summarizer",
+}
+
+
+def _display_name_for(role: str) -> str:
+    """Human-readable role label for the pre-agent comment (legacy mapping)."""
+    return _ROLE_DISPLAY_NAMES.get(role, role.capitalize())
+
+
 _EXIT_CODE_BY_STATUS = {
     "advance": ExitCode.ADVANCE,
     "loop": ExitCode.ADVANCE,
@@ -229,6 +247,13 @@ class Engine:
                     state=None,
                     phases=tuple(phases),
                 )
+
+            # Restore the legacy state-comment step (issue #727): the durable
+            # state travels in its own comment before the agent runs, so the
+            # thread carries it even when the agent crashes later.
+            start_state = self._run_start_state()
+            if start_state is not None:
+                self.notify(start_state)
 
             self._enter(phases, "prompt")
             prompt = self.build_prompt(resolved, history)
@@ -453,7 +478,22 @@ class Engine:
         Wired into ``PHASES`` between ``guards`` (where the step/agent decision
         is resolved) and ``prompt``/``agent`` — never after ``publish``.
         """
-        raise NotImplementedError
+        from engine.comment_composer import CommentComposer
+
+        ensure_import_path()
+        from prepare_comment import escape_agent_triggers
+
+        role = state.agent or self._role_of({})
+        body = CommentComposer().compose_run_start(
+            state,
+            caller_marker=f"<!-- bot-agent-{role} -->",
+            display_name=_display_name_for(role),
+        )
+        # Same invariant as ``publish``: an LLM-authored history summary can
+        # carry a raw ``@@agent`` token that would re-arm the gate (issue #482).
+        escaped = escape_agent_triggers(body)
+        self.adapter.post(escaped)
+        return escaped
 
     # Non-protected internal (not part of the frozen anchor): builds the
     # run-start state the caller feeds into :meth:`notify`, from the
@@ -467,7 +507,47 @@ class Engine:
         ``dispatch`` status feeds the composer's continue token. Returns
         ``None`` when no resolution is available to post yet.
         """
-        raise NotImplementedError
+        resolved = self._handoff_config()
+        workflow = str(self._get(resolved, "WORKFLOW_NAME") or "")
+        step = str(self._get(resolved, "WORKFLOW_STEP") or "")
+        agent = str(self._get(resolved, "ROLE_NAME") or "")
+        if not (workflow or step or agent):
+            return None
+
+        previous = self._previous_state()
+        ensure_import_path()
+        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
+        from workflow_state.workflow_state import WorkflowState
+
+        return WorkflowState(
+            version=(previous.version + 1) if previous else 1,
+            workflow=workflow,
+            step=step,
+            agent=agent,
+            phase=previous.phase if previous else "",
+            history=list(previous.history) if previous else [],
+            issue=previous.issue if previous else None,
+            position=self._start_position(resolved),
+            dispatch=Dispatch(status="advance"),
+        )
+
+    @staticmethod
+    def _start_position(resolved: Any) -> Any:
+        """Coerce the resolver's ``WORKFLOW_POSITION`` JSON into typed refs.
+
+        The resolver serializes the position block (``to_state_dict`` shape);
+        :class:`WorkflowState`'s validator accepts it verbatim, so the raw
+        parsed value is forwarded and a malformed value degrades to no position.
+        """
+        raw = Engine._get(resolved, "WORKFLOW_POSITION")
+        if isinstance(raw, (list, dict)):
+            return raw
+        if not isinstance(raw, str) or not raw:
+            return []
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return []
 
     # @stub-protected
     def build_prompt(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
