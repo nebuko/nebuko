@@ -1,6 +1,7 @@
 """Tests for the output validation utility (validate_output.py)."""
 
 import json
+import unittest
 
 from validate_output import (
     ExtractResult,
@@ -514,19 +515,19 @@ class LLMConfig(BaseModel):
         assert result.is_valid is True
 
 
-class TestValidateDispatchStatuses:
+class TestValidateDispatchStatuses(unittest.TestCase):
     """The validator must accept every status the Dispatch model accepts (#704)."""
 
     def test_accepts_soft_kill_error_status(self):
         result = validate_dispatch({"status": "soft_kill"})
-        assert result.is_valid is True
+        self.assertTrue(result.is_valid)
 
     def test_rejects_unknown_status(self):
         result = validate_dispatch({"status": "definitely_not_a_status"})
-        assert result.is_valid is False
-        assert any("definitely_not_a_status" in e for e in result.errors)
+        self.assertFalse(result.is_valid)
+        self.assertTrue(any("definitely_not_a_status" in e for e in result.errors))
 
     def test_valid_statuses_track_canonical_set(self):
         # Guards the single-source-of-truth wiring: no duplicated literal may
         # drift from workflow_state.DISPATCH_STATUSES.
-        assert VALID_DISPATCH_STATUSES == set(DISPATCH_STATUSES)
+        self.assertEqual(VALID_DISPATCH_STATUSES, set(DISPATCH_STATUSES))
