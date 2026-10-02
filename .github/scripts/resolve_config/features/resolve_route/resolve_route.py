@@ -54,6 +54,7 @@ __all__ = [
     "count_consecutive_same_agent",
     "HandoffDecision",
     "_resolve_function_call_path",
+    "_resolve_handoff_decision",
     "_resolve_machine_trigger_path",
 ]
 
@@ -570,7 +571,7 @@ class HandoffDecision:
     # @stub-protected: signature defined by architect — do not modify
     def to_config(self) -> dict[str, str]:
         """Resolver config mapping: {'task': target_agent, 'step': target_step}."""
-        raise NotImplementedError
+        return {"task": self.target_agent, "step": self.target_step}
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -592,15 +593,16 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
          ``dev`` hand-off from ``scaffold`` must resolve to the mounted
          ``dev-review-loop / implement`` leaf, never the already-consumed
          ``scaffold`` (the #617 dead-end).
-      3. Fallback: the first step owned by ``callee`` **within the current
-         workflow only**, excluding the already-consumed step. The old
-         implementation scanned only the parent's top-level steps, which is
-         exactly how ``scaffold`` got re-selected. A mount-step ``current``
-         whose position could not be resolved to a *foreign* leaf skips the
-         fallback entirely (review non-blocking item 5): silently degrading
-         to a top-level agent-step scan could re-select another mount step
-         owned by the callee and re-enter the wrong sub-workflow — failing
-         empty (the run skips with a reason) is strictly safer.
+      3. Fallback: the first step owned by ``callee`` **within the forward
+         suffix of the current workflow only** (issue #733) — the old
+         first-match scan could return a step declared *before* the current
+         position, re-entering a consumed step (the `stub_review` → `dev`
+         loop). A mount-step ``current`` whose position could not be
+         resolved to a *foreign* leaf skips the fallback entirely (review
+         non-blocking item 5): silently degrading to a top-level agent-step
+         scan could re-select another mount step owned by the callee and
+         re-enter the wrong sub-workflow — failing empty (the run skips with
+         a reason) is strictly safer.
     Empty string when the workflow cannot be loaded or owns no step for
     the callee.
     """
@@ -633,15 +635,106 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
             file=sys.stderr,
         )
         return ""
-    for step in getattr(workflow, "steps", None) or []:
+    steps = list(getattr(workflow, "steps", None) or [])
+    current_index = next(
+        (i for i, step in enumerate(steps) if getattr(step, "name", "") == (current_step or "")),
+        None,
+    )
+    if current_index is None:
+        # No anchor in the workflow: there is no forward suffix, so a
+        # cross-agent hand-off must fail empty rather than guess a step.
+        return ""
+    # Forward-only fallback (issue #733): a consumed step (at or before the
+    # current position) must never be re-entered — the exact loop the old
+    # first-match scan produced after `stub_review` handed off to `dev`.
+    for step in steps[current_index + 1:]:
         if (
             getattr(step, "agent", None) == callee
             and getattr(step, "name", "")
-            and step.name != (current_step or "")
             and step.name != (exclude_step or "")
         ):
             return step.name
     return ""
+
+
+def _workflow_successor(
+    wf_name: str,
+    current_step: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> Optional[Mapping[str, Any]]:
+    """Workflow-defined successor of ``current_step``, or None (issue #733)."""
+    if not (wf_name and current_step):
+        return None
+    try:
+        return resolve_next_from_workflow(
+            wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir
+        )
+    except Exception:
+        return None
+
+
+def _is_human_gate_step(
+    wf_name: str,
+    step_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> bool:
+    """True when ``step_name`` is declared ``human_gate: true`` (issue #733)."""
+    if not (wf_name and step_name):
+        return False
+    try:
+        workflow = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)
+    except Exception:
+        return False
+    step = _find_step(workflow, step_name)
+    return bool(step is not None and getattr(step, "human_gate", False))
+
+
+def _resolve_handoff_decision(
+    prev_state: "WorkflowState",
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> HandoffDecision:
+    """Classify a cross-agent ``function_call`` as an explicit decision (issue #733).
+
+    Applies the two routing invariants in precedence order:
+
+    1. **Gate precedence (security boundary).** When the workflow successor
+       of the current step is ``human_gate: true`` it outranks the
+       agent-originated hand-off: the decision targets the *gated* step with
+       ``reason_code='gate_hold'`` so no call can route around a human gate.
+    2. **Forward-only hand-off (correctness).** Otherwise the callee's step
+       is resolved only from the forward suffix of the workflow (via
+       :func:`_resolve_callee_step`); a consumed step is never re-entered.
+       When the callee owns no forward step the hand-off is a no-op and the
+       decision falls back to workflow continuation (``reason_code='dispatch'``).
+
+    A call with no active workflow keeps its standalone hand-off semantics
+    (``reason_code='function_call'`` with an empty target step).
+    """
+    function_call = getattr(prev_state, "function_call", None)
+    callee = (getattr(function_call, "agent_name", "") or "").strip()
+    wf_name = (getattr(prev_state, "workflow", "") or "") if prev_state is not None else ""
+    if not wf_name:
+        return HandoffDecision(callee, "", "function_call")
+    current_step = (getattr(prev_state, "step", "") or "") if prev_state is not None else ""
+    successor = _workflow_successor(wf_name, current_step, workflows_dir, local_workflows_dir)
+    if successor and _is_human_gate_step(
+        wf_name, successor.get("step", ""), workflows_dir, local_workflows_dir
+    ):
+        return HandoffDecision(
+            successor.get("task", ""), successor.get("step", ""), "gate_hold"
+        )
+    target_step = _resolve_callee_step(
+        wf_name, current_step, callee, workflows_dir, local_workflows_dir
+    )
+    if not target_step:
+        # No forward step for the callee: never re-enter a consumed step, and
+        # never carry a bare workflow context (an empty step would make the
+        # result builder default back to the workflow entry step).
+        return HandoffDecision("", "", "dispatch")
+    return HandoffDecision(callee, target_step, "function_call")
 
 
 # Bound on mount-chain descent (issue #618 review fix): a circular mount

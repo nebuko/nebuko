@@ -30,6 +30,7 @@ from .features.resolve_route.resolve_route import (
     _resolve_resume_path,
     _resolve_dispatch_path,
     _resolve_function_call_path,
+    _resolve_handoff_decision,
     _resolve_machine_trigger_path,
     _resolve_human_path,
     _resolve_bot_fallback_path,
@@ -256,7 +257,25 @@ def resolve_config(
         # clears the field, so a re-trigger no-ops. A *self* hand-off is
         # neutralized here (issue #618, defect 2b): routing falls through to
         # the dispatch / workflow-next path below.
-        config = _resolve_function_call_path(prev_state.function_call, workflows_dir, prev_state, local_workflows_dir=local_workflows_dir)
+        handoff = _resolve_handoff_decision(
+            prev_state, workflows_dir, local_workflows_dir=local_workflows_dir
+        )
+        if handoff.reason_code in ("gate_hold", "dispatch"):
+            # Gate precedence (issue #733): a `human_gate` successor outranks
+            # the hand-off. No forward step for the callee (`dispatch`) is a
+            # no-op. In both cases continue the workflow so the gated/successor
+            # step runs and no consumed step is re-entered.
+            config = (
+                _resolve_dispatch_path(
+                    prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir
+                )
+                if dispatch_obj
+                else _resolve_workflow_next_step(
+                    prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir
+                )
+            )
+        else:
+            config = _resolve_function_call_path(prev_state.function_call, workflows_dir, prev_state, local_workflows_dir=local_workflows_dir)
     elif extract_machine_trigger(trigger_body):
         # CI-posted machine trigger token (bot-subtask-complete /
         # bot-summarizer-trigger / bot-trigger) — replaces the legacy
