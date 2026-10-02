@@ -42,6 +42,10 @@ class Metrics:
         review_fix_requests: Number of times review asked dev to fix something.
         dispatch_recall_count: Number of recall turns injected because the agent
             ended without calling dispatch_next (issue #524).
+        tokens_per_second: Derived generation throughput in tokens/second, or
+            None when it could not be observed (issue #722).
+        time_to_first_token: Derived seconds between request start and first
+            token, or None when it could not be observed (issue #722).
         error: Optional error message if metrics collection failed.
     """
 
@@ -65,6 +69,8 @@ class Metrics:
     tokens_per_tool: Dict[str, Dict[str, int]] = field(default_factory=dict)
     review_fix_requests: int = 0
     dispatch_recall_count: int = 0
+    tokens_per_second: float | None = None
+    time_to_first_token: float | None = None
     error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
