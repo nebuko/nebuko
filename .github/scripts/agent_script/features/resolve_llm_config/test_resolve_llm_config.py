@@ -676,6 +676,44 @@ class TestRegisterDeclaredModelPricing(unittest.TestCase):
         register_declared_model_pricing(self._make_llm_config(3.0, None))
         self.assertNotIn(self.MODEL, litellm.model_cost)
 
+    def test_warns_once_when_priced_by_neither_source(self):
+        from agent_script.sub_domains.metrics.cost import UnpricedModelWarner
+        from resolve_llm_config import register_declared_model_pricing
+
+        config = self._make_llm_config(None, None)
+        warner = UnpricedModelWarner()
+        with self.assertLogs(
+            "agent_script.sub_domains.metrics.cost", level="WARNING"
+        ) as captured:
+            register_declared_model_pricing(config, warner=warner)
+            register_declared_model_pricing(config, warner=warner)
+        naming = [r for r in captured.records if self.MODEL in r.getMessage()]
+        self.assertEqual(len(naming), 1)
+
+    def test_no_warning_when_litellm_already_prices_the_model(self):
+        import litellm
+
+        from agent_script.sub_domains.metrics.cost import UnpricedModelWarner
+        from resolve_llm_config import register_declared_model_pricing
+
+        litellm.model_cost[self.MODEL] = {
+            "input_cost_per_token": 1.0e-6,
+            "output_cost_per_token": 2.0e-6,
+        }
+        with self.assertNoLogs("agent_script.sub_domains.metrics.cost", level="WARNING"):
+            register_declared_model_pricing(
+                self._make_llm_config(None, None), warner=UnpricedModelWarner()
+            )
+
+    def test_no_warning_when_declared_prices_exist(self):
+        from agent_script.sub_domains.metrics.cost import UnpricedModelWarner
+        from resolve_llm_config import register_declared_model_pricing
+
+        with self.assertNoLogs("agent_script.sub_domains.metrics.cost", level="WARNING"):
+            register_declared_model_pricing(
+                self._make_llm_config(3.0, 15.0), warner=UnpricedModelWarner()
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ from agent_script.sub_domains.metrics.cost import (
     LitellmCostMapInjector,
     ModelRate,
     SessionCost,
+    UnpricedModelWarner,
 )
 
 
@@ -180,3 +181,97 @@ class TestLitellmCostMapInjector:
         entry = litellm.model_cost[self.MODEL]
         assert entry["input_cost_per_token"] == pytest.approx(3.0e-6)
         assert entry["output_cost_per_token"] == pytest.approx(15.0e-6)
+
+
+class TestLitellmCostMapInjectorPrecedence:
+    """inject: litellm's own non-zero entries stay authoritative (issue #721)."""
+
+    MODEL = "openai/issue721-precedence-model"
+
+    def setup_method(self):
+        import litellm
+
+        litellm.model_cost.pop(self.MODEL, None)
+
+    def test_declared_rate_does_not_clobber_litellm_entry(self):
+        import litellm
+
+        litellm.model_cost[self.MODEL] = {
+            "input_cost_per_token": 1.0e-6,
+            "output_cost_per_token": 2.0e-6,
+        }
+        LitellmCostMapInjector(
+            rates=(ModelRate.from_per_1m(self.MODEL, 3.0, 15.0),)
+        ).inject()
+        entry = litellm.model_cost[self.MODEL]
+        assert entry["input_cost_per_token"] == pytest.approx(1.0e-6)
+        assert entry["output_cost_per_token"] == pytest.approx(2.0e-6)
+
+    def test_incomplete_pair_does_not_price_the_model(self):
+        import litellm
+
+        incomplete = ModelRate(
+            model=self.MODEL,
+            input_cost_per_token=3.0e-6,
+            output_cost_per_token=None,
+        )
+        LitellmCostMapInjector(rates=(incomplete,)).inject()
+        assert self.MODEL not in litellm.model_cost
+
+
+class TestUnpricedModelWarner:
+    """UnpricedModelWarner.warn_once: one warning per model, process lifetime."""
+
+    LOGGER = "agent_script.sub_domains.metrics.cost"
+
+    def test_warns_once_per_model(self, caplog):
+        import logging
+
+        warner = UnpricedModelWarner()
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER):
+            first = warner.warn_once("openai/unpriced-a")
+            second = warner.warn_once("openai/unpriced-a")
+            other = warner.warn_once("openai/unpriced-b")
+        assert (first, second, other) == (True, False, True)
+        messages = [record.getMessage() for record in caplog.records]
+        assert sum("openai/unpriced-a" in message for message in messages) == 1
+        assert sum("openai/unpriced-b" in message for message in messages) == 1
+
+
+class TestDeclaredPricingEndToEnd:
+    """Declared prices make litellm report a non-zero cost (issue #721).
+
+    The existing accounting path reads litellm's figure unchanged, so a
+    CommandCode-style model with declared prices yields a non-zero
+    ``total_cost_usd`` instead of the historic silent ``0``.
+    """
+
+    MODEL = "openai/issue721-e2e-model"
+
+    def setup_method(self):
+        import litellm
+
+        litellm.model_cost.pop(self.MODEL, None)
+
+    def test_declared_prices_yield_non_zero_session_cost(self):
+        import litellm
+
+        from agent_script.sub_domains.metrics.metrics_collector import _session_cost
+
+        LitellmCostMapInjector(
+            rates=(ModelRate.from_per_1m(self.MODEL, 3.0, 15.0),)
+        ).inject()
+        # The SDK telemetry reports litellm's response_cost for these tokens.
+        prompt, completion = litellm.cost_per_token(
+            model=self.MODEL,
+            prompt_tokens=1_000_000,
+            completion_tokens=1_000_000,
+        )
+        cost = _session_cost(
+            _FakeCombinedMetrics(prompt + completion),
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            agent_cfg=None,
+        )
+        assert cost == pytest.approx(18.0)
+        assert cost > 0.0

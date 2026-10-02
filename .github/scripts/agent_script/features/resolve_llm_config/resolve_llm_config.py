@@ -5,7 +5,14 @@ from typing import TYPE_CHECKING
 
 from openhands.sdk import get_logger
 
-from agent_script.sub_domains.metrics.cost import CostRates
+from agent_script.sub_domains.metrics.cost import (
+    UNPRICED_MODEL_WARNER,
+    CostRates,
+    LitellmCostMapInjector,
+    ModelRate,
+    UnpricedModelWarner,
+    litellm_prices_model,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from config import LLMConfig
@@ -242,6 +249,9 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
                 f"(input={agent_cfg.model_ref.input_price}, "
                 f"output={agent_cfg.model_ref.output_price} per M tokens)"
             )
+        # Make litellm price a model it does not know (e.g. CommandCode) from
+        # the same declared pair, so the SDK reports a non-zero response_cost.
+        register_declared_model_pricing(agent_cfg.model_ref)
 
     # ── Thinking parameters (litellm_extra_body) ─────────────────
     # Qwen3.x flexible thinking rides chat_template_kwargs, not the
@@ -308,7 +318,9 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
 
 
 # @stub-protected: signature defined by architect — do not modify
-def register_declared_model_pricing(config: "LLMConfig") -> None:
+def register_declared_model_pricing(
+    config: "LLMConfig", warner: UnpricedModelWarner | None = None
+) -> None:
     """Register the model's declared per-1M prices into litellm's cost map.
 
     Called from the resolution path before the SDK ``LLM`` is constructed, so
@@ -317,4 +329,10 @@ def register_declared_model_pricing(config: "LLMConfig") -> None:
     by neither litellm nor config logs a single warning naming it, so a
     silently-zero cost cannot go unnoticed.
     """
-    raise NotImplementedError
+    model = config.model_path
+    if config.input_price is not None and config.output_price is not None:
+        rate = ModelRate.from_per_1m(model, config.input_price, config.output_price)
+        LitellmCostMapInjector(rates=(rate,)).inject()
+    if litellm_prices_model(model):
+        return
+    (warner if warner is not None else UNPRICED_MODEL_WARNER).warn_once(model)
