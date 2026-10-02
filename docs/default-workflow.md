@@ -180,6 +180,11 @@ Conditional on `SUMMARIZER_NEEDED=true`. Posts a comment tagged with `<!-- bot-a
 
 Posts a temporary "🤖 **{role} agent started**" comment that will be minimized later once the real answer is posted. The comment is tagged with `<!-- bot-agent-{role} -->`.
 
+> **Engine path (issue #720):** when the run is driven by the engine, this
+> comment is posted by the engine itself (`Engine.notify_agent_started()`, see
+> [architecture.md — The Orchestration Loop](./architecture.md#the-orchestration-loop)),
+> so an engine-driven workflow file carries no such bash step.
+
 ---
 
 ### Step 14: Save Acknowledgment Comment Node ID
