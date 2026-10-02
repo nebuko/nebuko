@@ -12,10 +12,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from engine.paths import ensure_import_path
+
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from workflow_state.workflow_state import WorkflowState
 
-__all__ = ["CommentComposer"]
+__all__ = ["CommentComposer", "CONTINUE_TOKEN"]
+
+# The deterministic continuation token (issue #478): the next CI run fires on
+# this hidden marker instead of relying on stray ``@@`` tokens in agent prose.
+CONTINUE_TOKEN = "<!-- workflow-continue -->\n"
+
+# The dispatch statuses that keep the flow alive and therefore carry the token.
+_LIVE_STATUSES = ("advance", "loop")
 
 
 class CommentComposer:
@@ -33,7 +42,7 @@ class CommentComposer:
     # @stub-protected: signature defined by architect — do not modify
     def __init__(self, bot_marker: str = BOT_MARKER) -> None:
         """Inject the line-1 terminal marker (test seam); default ``BOT_MARKER``."""
-        raise NotImplementedError
+        self.bot_marker = bot_marker
 
     # @stub-protected: signature defined by architect — do not modify
     def continue_token(self, state: "WorkflowState") -> str:
@@ -43,7 +52,8 @@ class CommentComposer:
         is absent or its status is ``advance``/``loop``; empty for every other
         status, so a ``hold``/``terminate`` ends the flow (issue #478).
         """
-        raise NotImplementedError
+        status = state.dispatch.status if state.dispatch else "advance"
+        return CONTINUE_TOKEN if status in _LIVE_STATUSES else ""
 
     # @stub-protected: signature defined by architect — do not modify
     def compose_run_start(
@@ -60,4 +70,16 @@ class CommentComposer:
         (``format_collapsed_section``), and finally the role announcement line
         ``*<display_name> processing*``.
         """
-        raise NotImplementedError
+        ensure_import_path()
+        from workflow_state.features.comment.to_git_comment import (
+            format_collapsed_section,
+        )
+
+        section = format_collapsed_section(state)
+        return (
+            f"{self.bot_marker}\n"
+            f"{caller_marker}\n"
+            f"{self.continue_token(state)}"
+            f"{section}"
+            f"*{display_name} processing*\n"
+        )
