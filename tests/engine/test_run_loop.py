@@ -13,11 +13,23 @@ import json
 import pytest
 
 from adapters.local import LocalAdapter
+from config import AgentStartNotice
 from engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
 from engine.paths import repo_root
 from engine.run_loop import PHASES, Engine, main, resolved_env_overlay
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
+
+# The GitHub host surface the removed bash acknowledgment step read (issue #720).
+RUN_ID = "36979038271"
+RUN_URL = f"https://github.com/olivier-norture/git-flow-ai/actions/runs/{RUN_ID}"
+RUN_ENV = {
+    "CIRCUIT_BREAKER_THRESHOLD": "3",
+    "GITHUB_SERVER_URL": "https://github.com",
+    "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
+    "GITHUB_RUN_ID": RUN_ID,
+}
+ACK_LINE = f"🤖 **dev agent started** — [View workflow run logs]({RUN_URL})"
 
 
 def _trigger(body: str = "@@dev fix it", number: int = 590) -> Trigger:
@@ -408,6 +420,117 @@ class TestAgentEnvHandoff:
         env = engine._agent_env()
 
         assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
+
+
+class TestAgentStartAcknowledgment:
+    """The engine posts the acknowledgment the cutover dropped (issue #720).
+
+    The monolith's ``Post Acknowledgment Comment`` step was not ported, so a run
+    went silent between the trigger and the final answer. The engine now owns
+    that emission; these tests read the local adapter's journal, which records
+    every posted body in order.
+    """
+
+    def _journal(self, tmp_path, name: str = "run-1") -> str:
+        return (tmp_path / "runs" / name / "journal.md").read_text(encoding="utf-8")
+
+    def _run(self, tmp_path, monkeypatch, *, trigger=None, env=None, answer: str = "*Dev answer*"):
+        engine = _engine(tmp_path, trigger, env=RUN_ENV if env is None else env)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result(answer))
+        return engine.run()
+
+    def test_posts_the_acknowledgment_linking_to_the_run(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+
+        assert ACK_LINE in self._journal(tmp_path)
+
+    def test_tags_the_acknowledgment_with_the_caller_marker(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+
+        assert BOT_AGENT_MARKER in self._journal(tmp_path)
+
+    def test_posts_the_acknowledgment_before_the_agent_answer(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+
+        journal = self._journal(tmp_path)
+        assert journal.index(ACK_LINE) < journal.index("*Dev answer*")
+
+    def test_posts_exactly_one_acknowledgment_per_run(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+
+        assert self._journal(tmp_path).count("agent started") == 1
+
+    def test_skips_the_acknowledgment_without_an_issue_number(self, tmp_path, monkeypatch):
+        outcome = self._run(tmp_path, monkeypatch, trigger=_trigger(number=0))
+
+        assert "agent started" not in self._journal(tmp_path)
+        assert outcome.exit_code == ExitCode.ADVANCE
+
+    def test_a_failing_acknowledgment_never_aborts_the_run(self, tmp_path, monkeypatch):
+        real_post = LocalAdapter.post
+
+        def flaky_post(self, body):
+            if "agent started" in body:
+                raise RuntimeError("github unreachable")
+            return real_post(self, body)
+
+        monkeypatch.setattr(LocalAdapter, "post", flaky_post)
+
+        outcome = self._run(tmp_path, monkeypatch)
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body is not None
+        assert "*Dev answer*" in outcome.posted_body
+
+    def test_notify_posts_a_hand_built_notice_through_the_adapter(self, tmp_path):
+        engine = _engine(tmp_path, env=RUN_ENV)
+
+        engine.notify_agent_started(
+            AgentStartNotice(agent="dev", role="dev", run_url=RUN_URL, issue_number=720)
+        )
+
+        assert ACK_LINE in self._journal(tmp_path)
+
+    def test_notify_is_a_silent_no_op_without_an_issue_number(self, tmp_path):
+        engine = _engine(tmp_path, env=RUN_ENV)
+
+        engine.notify_agent_started(AgentStartNotice(agent="dev", role="dev", run_url=RUN_URL))
+
+        assert not (tmp_path / "runs" / "run-1" / "journal.md").exists()
+
+    def test_builds_the_notice_from_the_resolved_role(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, _trigger(number=720), env=RUN_ENV)
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "genius"})
+
+        notice = engine._agent_start_notice(_trigger(number=720))
+
+        assert notice == AgentStartNotice(
+            agent="genius", role="genius", run_url=RUN_URL, issue_number=720
+        )
+
+    def test_links_the_run_from_the_github_env(self, tmp_path):
+        engine = _engine(tmp_path, env=RUN_ENV)
+        trigger = Trigger(
+            author="olivier-norture",
+            body="@@dev go",
+            type="issue_comment",
+            number=720,
+            payload={"repository": {"full_name": "someone/fork"}},
+        )
+
+        assert engine._run_url(trigger) == RUN_URL
+
+    def test_falls_back_to_the_event_repository(self, tmp_path):
+        engine = _engine(tmp_path, env={"GITHUB_RUN_ID": "7"})
+        trigger = Trigger(
+            author="olivier-norture",
+            body="@@dev go",
+            type="issue_comment",
+            number=720,
+            payload={"repository": {"full_name": "someone/fork"}},
+        )
+
+        assert engine._run_url(trigger) == "https://github.com/someone/fork/actions/runs/7"
 
 
 class TestEntryPoints:

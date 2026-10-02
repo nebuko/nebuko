@@ -28,6 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
     from adapters.base import PlatformAdapter
+    from config import AgentStartNotice
     from engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
 
@@ -233,6 +234,7 @@ class Engine:
             prompt = self.build_prompt(resolved, history)
 
             self._enter(phases, "agent")
+            self.notify_agent_started(self._agent_start_notice(trigger))
             failure_reason: str | None = None
             try:
                 agent_result = self.invoke_agent(prompt)
@@ -444,6 +446,25 @@ class Engine:
         return "\n\n".join(section for section in sections if section)
 
     # @stub-protected
+    def notify_agent_started(self, notice: AgentStartNotice) -> None:
+        """Post the acknowledgment comment for this run's agent.
+
+        The cutover dropped the monolith's ``Post Acknowledgment Comment`` step,
+        so runs went silent between the trigger and the final answer
+        (issue #720). This is the single emitter: the notice is posted once for
+        every agent start, whichever workflow file drives the run. A missing
+        issue number or a failed post is logged and swallowed — the
+        acknowledgment is informational and must never abort the run.
+        """
+        if notice.issue_number is None:
+            log.warning("[phase:agent] no issue number; skipping agent-start notice")
+            return
+        try:
+            self.adapter.post(notice.render())
+        except Exception as exc:  # noqa: BLE001 - a notice must not abort a run
+            log.warning("[phase:agent] agent-start notice failed: %s", exc)
+
+    # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:
         """Delegate to the legacy ``agent_script.arun`` result.
 
@@ -562,6 +583,35 @@ class Engine:
     def _repo(self, trigger: Trigger) -> str | None:
         payload_repo = (trigger.payload or {}).get("repository") or {}
         return payload_repo.get("full_name") or self.env.get("REPO_NAME") or None
+
+    def _agent_start_notice(self, trigger: Trigger) -> AgentStartNotice:
+        """Build the acknowledgment for this run's agent.
+
+        The role comes from the resolver hand-off already stored by the
+        ``resolve_config`` phase, so it matches the role the child will run as.
+        """
+        ensure_import_path()
+        from config import AgentStartNotice
+
+        role = self._role_of({})
+        return AgentStartNotice(
+            agent=role,
+            role=role,
+            run_url=self._run_url(trigger),
+            issue_number=trigger.number or None,
+        )
+
+    def _run_url(self, trigger: Trigger) -> str:
+        """Link back to the workflow run hosting this agent (legacy ``run_id``).
+
+        Read from the environment like the removed bash step did, so the notice
+        works wherever the engine boots — including a locally simulated run,
+        where the URL is simply not resolvable on github.com.
+        """
+        server = self.env.get("GITHUB_SERVER_URL") or "https://github.com"
+        repo = self.env.get("GITHUB_REPOSITORY") or self._repo(trigger) or ""
+        run_id = self.env.get("GITHUB_RUN_ID") or ""
+        return f"{server}/{repo}/actions/runs/{run_id}"
 
     def _threshold(self) -> int:
         # The ``run-task`` job exports CIRCUIT_BREAKER_THRESHOLD with a 25
