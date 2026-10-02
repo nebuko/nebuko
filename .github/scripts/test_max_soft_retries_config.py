@@ -13,7 +13,7 @@ import yaml
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _WORKFLOW = os.path.join(
-    _REPO_ROOT, ".github", "workflows", "openhands-multi-agent.yml"
+    _REPO_ROOT, ".github", "workflows", "legacy-flow.yaml"
 )
 
 
