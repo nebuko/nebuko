@@ -435,25 +435,35 @@ class Engine:
         return {"SKIP_AGENT": "false"}
 
     # @stub-protected: signature defined by architect — do not modify
-    def notify(self) -> str | None:
+    def notify(self, state: WorkflowState) -> str:
         """Post the early workflow-state comment for a run start (issue #727).
 
         Restores the legacy ``Add bot marker and workflow state to comment``
-        step (``legacy-flow.yaml:865-927``) on the engine side: the run-start
-        state is framed by :class:`engine.comment_composer.CommentComposer`
-        (bot marker on line 1, caller marker, continue token, collapsed state
-        section, role line) and posted through the adapter *before* the agent
-        runs, so the durable state transport is visible immediately. Returns
-        the posted body, or ``None`` when a pre-post condition is not met.
+        step (``legacy-flow.yaml:865-927``) on the engine side: ``state`` is
+        framed by :class:`engine.comment_composer.CommentComposer` (bot marker
+        on line 1, caller marker, continue token, collapsed state section, role
+        line) and posted through the adapter *before* the agent runs, so the
+        durable state transport is visible immediately. Returns the posted body.
+
+        Every posted body passes through ``escape_agent_triggers`` before
+        ``adapter.post`` (issue #482): the state's ``history`` summaries are
+        LLM-authored prose and can carry a raw ``@@agent`` token, which would
+        re-arm the very gate that started the run.
+
+        Wired into ``PHASES`` between ``guards`` (where the step/agent decision
+        is resolved) and ``prompt``/``agent`` — never after ``publish``.
         """
         raise NotImplementedError
 
-    # @stub-protected: signature defined by architect — do not modify
+    # Non-protected internal (not part of the frozen anchor): builds the
+    # run-start state the caller feeds into :meth:`notify`, from the
+    # ``resolve_config``/``guards`` resolution and the loaded prior state.
     def _run_start_state(self) -> WorkflowState | None:
-        """Build the run-start :class:`WorkflowState` posted by :meth:`notify`.
+        """Build the run-start :class:`WorkflowState` handed to :meth:`notify`.
 
         The pre-agent state carries the resolution the ``resolve_config`` phase
-        produced (selected workflow/step/agent, ``position``, ``issue``); its
+        produced (selected workflow/step/agent, ``position``, ``issue``) plus
+        the prior ``history`` carried forward from the loaded state; its
         ``dispatch`` status feeds the composer's continue token. Returns
         ``None`` when no resolution is available to post yet.
         """

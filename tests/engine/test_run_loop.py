@@ -585,6 +585,35 @@ class TestEarlyWorkflowStateComment:
 
         assert "<!-- workflow-continue -->" in self._state_comment(tmp_path)
 
+    def test_escapes_agent_triggers_in_the_state_comment(self, tmp_path, monkeypatch):
+        """A raw ``@@agent`` token in the state must not reach the posted body.
+
+        Per issue #482 an unescaped ``@@agent`` token in a posted comment
+        re-arms the very gate that started the run, and the state's ``history``
+        summaries are LLM-authored prose. ``notify`` therefore runs the composed
+        body through ``escape_agent_triggers`` before ``adapter.post``.
+        """
+        from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+        from workflow_state.workflow_state import WorkflowState
+
+        previous = WorkflowState(
+            version=6,
+            workflow="spec-driven-impl",
+            step="implement",
+            agent="dev",
+            history=[
+                HistoryEntry(step="implement", agent="dev", summary="ping @@dev then continue")
+            ],
+        )
+        engine = _engine(tmp_path, env=RUN_ENV)
+        engine.adapter.save_state(previous)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("*Dev answer*"))
+        engine.run()
+
+        state_comment = self._state_comment(tmp_path)
+        assert "@@dev" not in state_comment
+        assert "@@\u200bdev" in state_comment
+
 
 class TestEntryPoints:
     def test_main_takes_an_argv_sequence(self):
