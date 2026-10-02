@@ -2,7 +2,7 @@ from typing import Optional, Any
 
 from config import POSITION_STATE_VERSION, StepRef, WorkflowPosition
 
-from ...workflow_state import WorkflowState
+from ...workflow_state import WorkflowState, SoftRetryState
 from ...sub_domains.issue_info.issue_info import IssueInfo
 from ...sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from ...sub_domains.history_entry.history_entry import HistoryEntry
@@ -70,6 +70,8 @@ def build_state(
     dispatch: Optional[Dispatch] = None,
     function_call: Optional[FunctionCall] = None,
     position: Optional[dict] = None,
+    soft_retry_attempt: bool = False,
+    is_human_resume: bool = False,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -111,6 +113,14 @@ def build_state(
             history entry and the state (``history[-1].position == position``
             invariant); a non-empty position also bumps the state version to
             POSITION_STATE_VERSION.
+        soft_retry_attempt: True only when this run is an *engine-issued*
+            soft-kill retry (the ``SOFT_RETRY_ATTEMPT`` marker emitted by
+            ``resolve_soft_kill_route``, issue #704). It is the single trigger
+            that consumes one ``SoftRetryState`` attempt for the step, so a
+            human/manual trigger never burns the budget.
+        is_human_resume: True when this run was started by an explicit human
+            ``/workflow resume``. An explicit human resume starts a fresh
+            per-step budget (``attempts=0``) since the human has taken over.
 
     Returns:
         A new WorkflowState instance.
@@ -190,6 +200,14 @@ def build_state(
         scaffold_branch if scaffold_branch is not None else base_scaffold_branch
     )
 
+    # Preserve per-step soft-kill retry accounting across transitions (issue
+    # #704). The counter is default-filled from the previous state so a
+    # pre-#704 blob (or a legacy blob without the key) starts empty; the
+    # increment/reset is applied below once the effective step is known.
+    base_soft_retry = (
+        prev_state.soft_retry if prev_state is not None else SoftRetryState()
+    )
+
     # State shape version (issue #638, universalized in #646): position is
     # now written on every run — top-level runs carry the bare single ref —
     # so the state is always at least the v3 shape. ``max`` keeps the
@@ -202,6 +220,28 @@ def build_state(
     # scalar step disagreed with their own history).
     effective_step = _fallback_field(step, prev_state, base_history, "step")
     effective_agent = _fallback_field(agent, prev_state, base_history, "agent")
+
+    # Per-step soft-kill retry accounting (issue #704). ``build_state`` is the
+    # single writer of the counter; every mutation goes through the
+    # ``SoftRetryState`` mutators so the increment/reset lifecycle has exactly
+    # one owner:
+    #   - retry path: only an engine-issued retry (``soft_retry_attempt``,
+    #     emitted by ``resolve_soft_kill_route``) consumes one attempt for its
+    #     step (``record``). Gating on the explicit marker — rather than on the
+    #     previous dispatch status — keeps a human/manual trigger from burning
+    #     the budget (issue #704 review round 3).
+    #   - human-resume path: an explicit human resume takes over, so the step
+    #     restarts with a fresh budget (issue #704 review round 3).
+    #   - advance path: a normal transition into a different step resets the
+    #     counter for the new step (``reset_for``).
+    if is_human_resume:
+        new_soft_retry = SoftRetryState(step=effective_step, attempts=0)
+    elif soft_retry_attempt:
+        new_soft_retry = base_soft_retry.record(effective_step)
+    elif base_soft_retry.step is not None and base_soft_retry.step != effective_step:
+        new_soft_retry = base_soft_retry.reset_for(effective_step)
+    else:
+        new_soft_retry = base_soft_retry
 
     return WorkflowState(
         version=state_version,
@@ -222,4 +262,5 @@ def build_state(
         dispatch=dispatch,
         function_call=function_call,
         position=position_refs,
+        soft_retry=new_soft_retry,
     )

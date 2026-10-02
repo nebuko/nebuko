@@ -37,6 +37,7 @@ from .sub_domains.function_call.features.extract_function_call.extract_function_
 # Facade — import from the module directly to avoid circular import with this package
 from .workflow_state import (
     WorkflowState,
+    SoftRetryState,
     STATE_MARKER_START,
     STATE_MARKER_END,
     to_json,
@@ -65,6 +66,7 @@ __all__ = [
     "extract_function_call",
     # Facade
     "WorkflowState",
+    "SoftRetryState",
     "STATE_MARKER_START",
     "STATE_MARKER_END",
     "to_json",

@@ -202,6 +202,29 @@ def _build_failure_summary(run_outcome: RunOutcome) -> str:  # @stub-protected
     return "\n".join(lines)
 
 
+def _soft_kill_dispatch() -> Dispatch:  # @stub-protected
+    """Build the soft-kill error dispatch for a gracefully timed-out run (#704).
+
+    A soft time-kill (the ~20 min wind-down) interrupts the running step
+    without completing it. The dispatch handed to the workflow engine must
+    carry the explicit error status ``soft_kill`` so the router re-runs the
+    interrupted step (bounded by ``MAX_SOFT_RETRIES``) instead of advancing to
+    the next one. ``build_output`` uses this in place of the agent's own
+    dispatch whenever the run outcome is ``OutcomeStatus.GRACEFULLY_TIMED_OUT``.
+
+    Returns:
+        A Dispatch with status ``soft_kill`` and the timeout reason.
+    """
+    return Dispatch(
+        status="soft_kill",
+        reason=(
+            "Soft time-kill: the run was interrupted by the wind-down timeout "
+            "before completing the step. Retry this step in place; halt for a "
+            "human once MAX_SOFT_RETRIES is exhausted."
+        ),
+    )
+
+
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
     """Convert an AGENT_RUN_CONFIG JSON string to a Dispatch object.
 
@@ -291,7 +314,9 @@ def apply_human_gate_intercept(
     on its own: an ``advance`` dispatch (or missing dispatch, which resolves
     to advance downstream) is overridden to ``hold`` unless the run was
     triggered by a human ``/workflow resume`` (``is_human_resume``). Loop,
-    hold, and terminate outcomes are never intercepted.
+    hold, and terminate outcomes are never intercepted. A ``soft_kill``
+    dispatch (issue #704) is treated like ``advance``: on a gated step the
+    gate wins and the run holds for a human instead of auto-retrying.
 
     Args:
         dispatch: Dispatch extracted from the agent output (may be None).
@@ -302,7 +327,7 @@ def apply_human_gate_intercept(
     Returns:
         The (possibly overridden) Dispatch.
     """
-    if dispatch is not None and dispatch.status != "advance":
+    if dispatch is not None and dispatch.status not in ("advance", "soft_kill"):
         return dispatch
     if is_human_resume:
         return dispatch
@@ -310,7 +335,7 @@ def apply_human_gate_intercept(
         return dispatch
     logger.info(
         f"Human gate: step '{workflow_step}' requires approval — "
-        f"intercepting advance as hold"
+        f"intercepting {(dispatch.status if dispatch else 'advance')} as hold"
     )
     if dispatch is None:
         dispatch = Dispatch()
@@ -928,11 +953,29 @@ def build_output(
     clear_run(getattr(conversation, "id", None))
     clear_scaffold_branch_run(getattr(conversation, "id", None))
 
+    # ── Soft-kill error status (issue #704) ──────────────────────
+    # A gracefully timed-out run was interrupted mid-step, so it is an error
+    # outcome, not a completion. Override whatever dispatch the agent emitted
+    # with the explicit ``soft_kill`` status so the router retries this step in
+    # place (bounded by MAX_SOFT_RETRIES) instead of advancing to the next one.
+    # Applied before the human-gate intercept so a gated step still holds.
+    if is_graceful_timeout:
+        dispatch = _soft_kill_dispatch()
+        logger.info("Graceful timeout — dispatch overridden with soft_kill status")
+
     # ── Human gate intercept (issue #506) ────────────────────────
     # The trigger source is the sole authorization: a resume-triggered run
     # (HUMAN_RESUME_INPUT present) passes; anything else on a gated step is
     # held for human review.
     is_human_resume = bool(os.environ.get("HUMAN_RESUME_INPUT", "").strip())
+    # Engine soft-kill retry marker (issue #704): emitted only by the
+    # soft-kill retry resolution. Forwarded to build_state so the per-step
+    # retry budget is consumed for genuine retries and never for a human or
+    # manual trigger (which carries no marker).
+    soft_retry_attempt = (
+        os.environ.get("SOFT_RETRY_ATTEMPT", "").strip().lower()
+        in ("true", "1", "yes")
+    )
     dispatch = apply_human_gate_intercept(
         dispatch,
         workflow_name=workflow_name,
@@ -978,6 +1021,8 @@ def build_output(
         pin=pin,
         scaffold_branch=scaffold_branch,
         position=position,
+        soft_retry_attempt=soft_retry_attempt,
+        is_human_resume=is_human_resume,
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 

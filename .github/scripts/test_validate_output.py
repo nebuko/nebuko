@@ -1,6 +1,7 @@
 """Tests for the output validation utility (validate_output.py)."""
 
 import json
+import unittest
 
 from validate_output import (
     ExtractResult,
@@ -11,10 +12,13 @@ from validate_output import (
     has_agent_run_config_marker,
     has_unterminated_agent_run_config,
     strip_agent_run_config,
+    validate_dispatch,
     validate_agent_run_config,
     validate_forbidden_sections,
     validate_agent_output,
+    VALID_DISPATCH_STATUSES,
 )
+from workflow_state.sub_domains.dispatch.dispatch import DISPATCH_STATUSES
 
 
 # The exact #511 payload shape: sentinel line-broken across two lines and
@@ -509,3 +513,21 @@ class LLMConfig(BaseModel):
     def test_empty_text(self):
         result = validate_agent_output("", "dev")
         assert result.is_valid is True
+
+
+class TestValidateDispatchStatuses(unittest.TestCase):
+    """The validator must accept every status the Dispatch model accepts (#704)."""
+
+    def test_accepts_soft_kill_error_status(self):
+        result = validate_dispatch({"status": "soft_kill"})
+        self.assertTrue(result.is_valid)
+
+    def test_rejects_unknown_status(self):
+        result = validate_dispatch({"status": "definitely_not_a_status"})
+        self.assertFalse(result.is_valid)
+        self.assertTrue(any("definitely_not_a_status" in e for e in result.errors))
+
+    def test_valid_statuses_track_canonical_set(self):
+        # Guards the single-source-of-truth wiring: no duplicated literal may
+        # drift from workflow_state.DISPATCH_STATUSES.
+        self.assertEqual(VALID_DISPATCH_STATUSES, set(DISPATCH_STATUSES))

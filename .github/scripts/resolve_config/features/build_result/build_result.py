@@ -181,6 +181,11 @@ def _build_result(
         # parent pairs so every run posts a non-None position).
         "MATCHED_RULE": matched_rule,
         "HUMAN_RESUME_INPUT": config.get("config_human_resume_input", ""),
+        # Engine soft-kill retry marker (issue #704): set only by
+        # ``resolve_soft_kill_route``'s retry config. ``build_output`` forwards
+        # it to ``build_state`` so the per-step budget is consumed for genuine
+        # retries and never for a human/manual trigger.
+        "SOFT_RETRY_ATTEMPT": config.get("config_soft_retry_attempt", ""),
         "SKIP_AGENT": "false",
     }
     result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")
