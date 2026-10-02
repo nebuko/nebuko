@@ -558,6 +558,7 @@ def _mount_chain_ref_resolver(workflows_dir: str, local_workflows_dir: Optional[
     return resolve_ref
 
 
+# @stub-protected
 @dataclass(frozen=True)
 class HandoffDecision:
     """Single explicit outcome of 'where does the next invocation go', precedence applied."""
@@ -572,6 +573,7 @@ class HandoffDecision:
         raise NotImplementedError
 
 
+# @stub-protected: signature defined by architect — do not modify
 def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None, exclude_step: Optional[str] = None) -> str:
     """Resolve the workflow step that ``callee`` should run (issue #507).
 
