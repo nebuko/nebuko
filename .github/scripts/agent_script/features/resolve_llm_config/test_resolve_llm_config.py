@@ -624,5 +624,58 @@ agents:
             self.assertIn(key, LLM.model_fields)
 
 
+class TestRegisterDeclaredModelPricing(unittest.TestCase):
+    """Declared per-1M prices become litellm cost-map entries (issue #721)."""
+
+    MODEL = "openai/issue721-declared-model"
+
+    def setUp(self):
+        import litellm
+
+        litellm.model_cost.pop(self.MODEL, None)
+
+    def _make_llm_config(self, input_price, output_price):
+        from config import LLMConfig, ProviderConfig
+
+        return LLMConfig(
+            model_path=self.MODEL,
+            provider=ProviderConfig(
+                api_url="http://test/v1", api_token_env="TEST_LLM_API_KEY"
+            ),
+            input_price=input_price,
+            output_price=output_price,
+        )
+
+    def test_declared_prices_let_litellm_price_the_model(self):
+        import litellm
+
+        from resolve_llm_config import register_declared_model_pricing
+
+        register_declared_model_pricing(self._make_llm_config(3.0, 15.0))
+        prompt, completion = litellm.cost_per_token(
+            model=self.MODEL,
+            prompt_tokens=1_000_000,
+            completion_tokens=1_000_000,
+        )
+        self.assertAlmostEqual(prompt, 3.0)
+        self.assertAlmostEqual(completion, 15.0)
+
+    def test_undeclared_prices_leave_the_model_unpriced(self):
+        import litellm
+
+        from resolve_llm_config import register_declared_model_pricing
+
+        register_declared_model_pricing(self._make_llm_config(None, None))
+        self.assertNotIn(self.MODEL, litellm.model_cost)
+
+    def test_partial_prices_do_not_price_the_model(self):
+        import litellm
+
+        from resolve_llm_config import register_declared_model_pricing
+
+        register_declared_model_pricing(self._make_llm_config(3.0, None))
+        self.assertNotIn(self.MODEL, litellm.model_cost)
+
+
 if __name__ == "__main__":
     unittest.main()

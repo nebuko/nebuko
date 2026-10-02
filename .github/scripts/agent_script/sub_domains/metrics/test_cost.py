@@ -7,6 +7,8 @@ import pytest
 from agent_script.sub_domains.metrics.cost import (
     TOKENS_PER_PRICE_UNIT,
     CostRates,
+    LitellmCostMapInjector,
+    ModelRate,
     SessionCost,
 )
 
@@ -125,3 +127,56 @@ class TestSessionCostHelper:
             agent_cfg=None,
         )
         assert cost == 0.0
+
+
+class TestModelRateFromPer1m:
+    """ModelRate.from_per_1m: per-million prices → per-token rates."""
+
+    def test_normalizes_per_million_to_per_token(self):
+        rate = ModelRate.from_per_1m("openai/deepseek-v4.1-flash", 0.12, 0.18)
+        assert rate.model == "openai/deepseek-v4.1-flash"
+        assert rate.input_cost_per_token == pytest.approx(0.12e-6)
+        assert rate.output_cost_per_token == pytest.approx(0.18e-6)
+
+    def test_rate_is_immutable(self):
+        rate = ModelRate.from_per_1m("m", 1.0, 2.0)
+        with pytest.raises(FrozenInstanceError):
+            rate.model = "other"
+
+
+class TestLitellmCostMapInjector:
+    """LitellmCostMapInjector.inject: declared rates land in litellm's cost map."""
+
+    MODEL = "openai/issue721-injector-model"
+
+    def setup_method(self):
+        import litellm
+
+        litellm.model_cost.pop(self.MODEL, None)
+
+    def test_inject_makes_litellm_price_the_model(self):
+        import litellm
+
+        LitellmCostMapInjector(
+            rates=(ModelRate.from_per_1m(self.MODEL, 3.0, 15.0),)
+        ).inject()
+        # 1M prompt + 1M completion tokens at $3/M and $15/M.
+        prompt, completion = litellm.cost_per_token(
+            model=self.MODEL,
+            prompt_tokens=1_000_000,
+            completion_tokens=1_000_000,
+        )
+        assert prompt == pytest.approx(3.0)
+        assert completion == pytest.approx(15.0)
+
+    def test_inject_is_idempotent(self):
+        import litellm
+
+        injector = LitellmCostMapInjector(
+            rates=(ModelRate.from_per_1m(self.MODEL, 3.0, 15.0),)
+        )
+        injector.inject()
+        injector.inject()
+        entry = litellm.model_cost[self.MODEL]
+        assert entry["input_cost_per_token"] == pytest.approx(3.0e-6)
+        assert entry["output_cost_per_token"] == pytest.approx(15.0e-6)

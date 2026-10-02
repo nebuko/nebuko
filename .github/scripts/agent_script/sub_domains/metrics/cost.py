@@ -66,3 +66,46 @@ class SessionCost:
             self.input_tokens * self.rates.input_per_token
             + self.output_tokens * self.rates.output_per_token
         )
+
+
+@dataclass(frozen=True)
+class ModelRate:
+    """Per-token USD rates for one model, derived from declared per-million prices.
+
+    litellm cannot price a model absent from its cost map (e.g. a CommandCode
+    model name), so the operator declares the per-million-token prices in the
+    model config and this value object carries the normalized per-token view.
+    """
+
+    model: str
+    input_cost_per_token: float
+    output_cost_per_token: float
+
+    # @stub-protected: signature defined by architect — do not modify
+    @classmethod
+    def from_per_1m(
+        cls,
+        model: str,
+        input_per_1m_tokens: float,
+        output_per_1m_tokens: float,
+    ) -> "ModelRate":
+        """Build a per-token rate triple from a declared per-million price pair."""
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class LitellmCostMapInjector:
+    """Register operator-declared rates into litellm's supported custom cost map.
+
+    The single place declared prices enter litellm: each ``ModelRate`` is
+    registered so litellm itself prices the model and reports a non-zero
+    ``response_cost`` — accounting keeps reading litellm's figure unchanged.
+    Injection is idempotent, so it is safe to call more than once.
+    """
+
+    rates: tuple[ModelRate, ...]
+
+    # @stub-protected: signature defined by architect — do not modify
+    def inject(self) -> None:
+        """Register every rate into litellm's custom cost map."""
+        raise NotImplementedError

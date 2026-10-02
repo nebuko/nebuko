@@ -1,10 +1,14 @@
 """Resolve LLM config feature — config file parsing, env fallback, and override handling."""
 
 import os
+from typing import TYPE_CHECKING
 
 from openhands.sdk import get_logger
 
 from agent_script.sub_domains.metrics.cost import CostRates
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from config import LLMConfig
 
 logger = get_logger(__name__)
 
@@ -301,3 +305,16 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         llm_config["max_output_tokens"] = agent_cfg.model_ref.max_output_tokens
 
     return (llm_config, prompt, agent_cfg)
+
+
+# @stub-protected: signature defined by architect — do not modify
+def register_declared_model_pricing(config: "LLMConfig") -> None:
+    """Register the model's declared per-1M prices into litellm's cost map.
+
+    Called from the resolution path before the SDK ``LLM`` is constructed, so
+    litellm prices models it does not know (e.g. CommandCode) from the
+    operator-declared ``input_price`` / ``output_price`` pair. A model priced
+    by neither litellm nor config logs a single warning naming it, so a
+    silently-zero cost cannot go unnoticed.
+    """
+    raise NotImplementedError
