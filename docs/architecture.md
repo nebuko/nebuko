@@ -87,6 +87,14 @@ Each trigger runs the following sequence inside the `run-task` job:
    step (or ends the run). If a `<splitPlan>` was emitted, the
    **Process Split Plan** step creates sub-issues.
 
+**Agent-start acknowledgment (issue #720).** Just before the agent is executed,
+the engine posts the `🤖 **{role} agent started** — [View workflow run logs](…)`
+comment through the platform adapter — `Engine.notify_agent_started()` renders
+an `AgentStartNotice` and posts it, tagged `<!-- bot-agent-{role} -->` exactly
+like the monolith's `Post Acknowledgment Comment` step did. The notice is
+**engine-owned**: an engine-driven workflow file must not run its own ack step
+(that double-posts), and a failed notice is logged, never fatal to the run.
+
 ---
 
 ## State Management
