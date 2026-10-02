@@ -663,17 +663,25 @@ class TestRegisterDeclaredModelPricing(unittest.TestCase):
     def test_undeclared_prices_leave_the_model_unpriced(self):
         import litellm
 
+        from agent_script.sub_domains.metrics.cost import UnpricedModelWarner
         from resolve_llm_config import register_declared_model_pricing
 
-        register_declared_model_pricing(self._make_llm_config(None, None))
+        with self.assertLogs("agent_script.sub_domains.metrics.cost", level="WARNING"):
+            register_declared_model_pricing(
+                self._make_llm_config(None, None), warner=UnpricedModelWarner()
+            )
         self.assertNotIn(self.MODEL, litellm.model_cost)
 
     def test_partial_prices_do_not_price_the_model(self):
         import litellm
 
+        from agent_script.sub_domains.metrics.cost import UnpricedModelWarner
         from resolve_llm_config import register_declared_model_pricing
 
-        register_declared_model_pricing(self._make_llm_config(3.0, None))
+        with self.assertLogs("agent_script.sub_domains.metrics.cost", level="WARNING"):
+            register_declared_model_pricing(
+                self._make_llm_config(3.0, None), warner=UnpricedModelWarner()
+            )
         self.assertNotIn(self.MODEL, litellm.model_cost)
 
     def test_warns_once_when_priced_by_neither_source(self):
@@ -713,6 +721,120 @@ class TestRegisterDeclaredModelPricing(unittest.TestCase):
             register_declared_model_pricing(
                 self._make_llm_config(3.0, 15.0), warner=UnpricedModelWarner()
             )
+
+    def test_no_warning_for_litellm_free_model(self):
+        """A $0 free-tier litellm entry counts as priced — no spurious warning."""
+        import litellm
+
+        from agent_script.sub_domains.metrics.cost import UnpricedModelWarner
+        from resolve_llm_config import register_declared_model_pricing
+
+        litellm.model_cost[self.MODEL] = {
+            "input_cost_per_token": 0.0,
+            "output_cost_per_token": 0.0,
+        }
+        with self.assertNoLogs("agent_script.sub_domains.metrics.cost", level="WARNING"):
+            register_declared_model_pricing(
+                self._make_llm_config(None, None), warner=UnpricedModelWarner()
+            )
+
+
+class TestUnpricedModelWarningWiring(unittest.TestCase):
+    """resolve_llm_config() itself wires the one-time unpriced-model warning.
+
+    The registration helper is unit-tested above; these drive the real
+    resolution path so a model the config leaves unpriced actually reaches the
+    warning seam, and a declared model is registered with litellm (issue #721).
+    """
+
+    MODEL = "openai/issue721-wiring-model"
+    CONFIG_TEMPLATE = """\
+providers:
+  test_provider:
+    api_url: "http://test/v1"
+    api_token_env: "TEST_LLM_API_KEY"
+llms:
+  test-model:
+    model_path: "@MODEL@"
+    provider: ${providers.test_provider}
+    default_temperature: 0.7
+    input_price: @INPUT_PRICE@
+    output_price: @OUTPUT_PRICE@
+agents:
+  dev:
+    model: ${llms.test-model}
+    temperature: 0.7
+    prompt_file: "dev.md"
+"""
+
+    def setUp(self):
+        import litellm
+
+        from agent_script.sub_domains.metrics.cost import UNPRICED_MODEL_WARNER
+
+        self._env_keys = ["TEST_LLM_API_KEY", "AGENT_CONFIG_PATH", "ROLE_NAME"]
+        self._saved = {k: os.environ.get(k) for k in self._env_keys}
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        os.environ["TEST_LLM_API_KEY"] = "test-key"
+        os.environ["ROLE_NAME"] = "dev"
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
+        litellm.model_cost.pop(self.MODEL, None)
+        # The call site uses the process-wide warner; clear its memory of this
+        # model so each test observes fresh one-time semantics.
+        UNPRICED_MODEL_WARNER._warned.discard(self.MODEL)
+
+    def tearDown(self):
+        import litellm
+
+        litellm.model_cost.pop(self.MODEL, None)
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _resolve(self, input_price: str, output_price: str):
+        with open(self._config_path, "w") as f:
+            f.write(
+                self.CONFIG_TEMPLATE
+                .replace("@MODEL@", self.MODEL)
+                .replace("@INPUT_PRICE@", input_price)
+                .replace("@OUTPUT_PRICE@", output_price)
+            )
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+        return cfg
+
+    def test_unpriced_model_warns_through_resolution_path(self):
+        with self.assertLogs(
+            "agent_script.sub_domains.metrics.cost", level="WARNING"
+        ) as captured:
+            self._resolve("null", "null")
+        naming = [r for r in captured.records if self.MODEL in r.getMessage()]
+        self.assertEqual(len(naming), 1)
+
+    def test_unpriced_model_warns_once_across_resolutions(self):
+        with self.assertLogs(
+            "agent_script.sub_domains.metrics.cost", level="WARNING"
+        ) as captured:
+            self._resolve("null", "null")
+            self._resolve("null", "null")
+        naming = [r for r in captured.records if self.MODEL in r.getMessage()]
+        self.assertEqual(len(naming), 1)
+
+    def test_declared_prices_register_with_litellm_without_warning(self):
+        import litellm
+
+        with self.assertNoLogs("agent_script.sub_domains.metrics.cost", level="WARNING"):
+            cfg = self._resolve("3.0", "15.0")
+        self.assertIn(self.MODEL, litellm.model_cost)
+        self.assertAlmostEqual(cfg["input_cost_per_token"], 3.0e-6)
+        prompt, completion = litellm.cost_per_token(
+            model=self.MODEL, prompt_tokens=1_000_000, completion_tokens=1_000_000
+        )
+        self.assertAlmostEqual(prompt, 3.0)
+        self.assertAlmostEqual(completion, 15.0)
 
 
 if __name__ == "__main__":

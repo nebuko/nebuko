@@ -11,6 +11,8 @@ from agent_script.sub_domains.metrics.cost import (
     ModelRate,
     SessionCost,
     UnpricedModelWarner,
+    litellm_knows_model,
+    litellm_prices_model,
 )
 
 
@@ -217,6 +219,42 @@ class TestLitellmCostMapInjectorPrecedence:
         )
         LitellmCostMapInjector(rates=(incomplete,)).inject()
         assert self.MODEL not in litellm.model_cost
+
+
+class TestLitellmModelPredicates:
+    """litellm_knows_model (any entry) vs litellm_prices_model (non-zero cost).
+
+    A free-tier entry (``$0``) is *known* yet not *priced*; splitting the two
+    predicates keeps a legitimate free model from being misreported as unpriced
+    while still letting a declared rate override a zero entry.
+    """
+
+    MODEL = "openai/issue721-free-tier-model"
+
+    def setup_method(self):
+        import litellm
+
+        litellm.model_cost[self.MODEL] = {
+            "input_cost_per_token": 0.0,
+            "output_cost_per_token": 0.0,
+        }
+
+    def teardown_method(self):
+        import litellm
+
+        litellm.model_cost.pop(self.MODEL, None)
+
+    def test_free_tier_entry_is_known(self):
+        assert litellm_knows_model(self.MODEL) is True
+
+    def test_free_tier_entry_is_not_non_zero_priced(self):
+        assert litellm_prices_model(self.MODEL) is False
+
+    def test_absent_model_is_unknown(self):
+        import litellm
+
+        litellm.model_cost.pop(self.MODEL, None)
+        assert litellm_knows_model(self.MODEL) is False
 
 
 class TestUnpricedModelWarner:

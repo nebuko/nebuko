@@ -107,6 +107,17 @@ class ModelRate:
         )
 
 
+def litellm_knows_model(model: str) -> bool:
+    """Whether litellm has *any* cost entry for *model*.
+
+    Any entry counts as priced — a legitimate ``$0`` (free-tier) entry is still
+    known, so such a model is not misreported as unpriced. Use
+    :func:`litellm_prices_model` instead when the question is whether a declared
+    rate may override litellm's own figure.
+    """
+    return litellm.model_cost.get(model) is not None
+
+
 def litellm_prices_model(model: str) -> bool:
     """Whether litellm can already price *model* with a non-zero per-token cost."""
     entry = litellm.model_cost.get(model)

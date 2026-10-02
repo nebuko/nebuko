@@ -11,7 +11,7 @@ from agent_script.sub_domains.metrics.cost import (
     LitellmCostMapInjector,
     ModelRate,
     UnpricedModelWarner,
-    litellm_prices_model,
+    litellm_knows_model,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -249,8 +249,10 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
                 f"(input={agent_cfg.model_ref.input_price}, "
                 f"output={agent_cfg.model_ref.output_price} per M tokens)"
             )
-        # Make litellm price a model it does not know (e.g. CommandCode) from
-        # the same declared pair, so the SDK reports a non-zero response_cost.
+        # Unconditional w.r.t. declared prices: register whatever the model
+        # config declares and let the registration emit the one-time
+        # unpriced-model warning when neither litellm nor config can price it
+        # (CommandCode path, issue #721).
         register_declared_model_pricing(agent_cfg.model_ref)
 
     # ── Thinking parameters (litellm_extra_body) ─────────────────
@@ -333,6 +335,6 @@ def register_declared_model_pricing(
     if config.input_price is not None and config.output_price is not None:
         rate = ModelRate.from_per_1m(model, config.input_price, config.output_price)
         LitellmCostMapInjector(rates=(rate,)).inject()
-    if litellm_prices_model(model):
+    if litellm_knows_model(model):
         return
     (warner if warner is not None else UNPRICED_MODEL_WARNER).warn_once(model)
