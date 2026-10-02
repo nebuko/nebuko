@@ -15,6 +15,67 @@ from .sub_domains.step_resolution.step_resolution import StepResolution
 STATE_MARKER_START = "<!-- WORKFLOW_STATE_START -->"
 STATE_MARKER_END = "<!-- WORKFLOW_STATE_END -->"
 
+class SoftRetryState(BaseModel):  # @stub-protected
+    """Per-step soft-kill retry accounting (issue #704).
+
+    The soft time-kill (the ~20 min wind-down) interrupts the running agent
+    before it finishes its step. The engine must re-run that step in place,
+    bounded by the ``MAX_SOFT_RETRIES`` workflow parameter, instead of
+    advancing. This model records, per step, how many soft retries have already
+    been consumed so the router can decide between retrying and halting for a
+    human.
+
+    Fields:
+        step: The step the counter applies to (None when no step has consumed
+            a retry yet).
+        attempts: Number of soft retries consumed for that step.
+    """
+
+    step: Optional[str] = None  # @stub-protected
+    attempts: int = 0  # @stub-protected
+
+    def record(self, step: str) -> "SoftRetryState":  # @stub-protected
+        """Return the counter advanced by one soft retry for ``step``.
+
+        Sole owner of the retry increment (issue #704). Called by
+        :func:`build_state` on the **engine-retry path** — the previous run was
+        soft-killed and this run was explicitly re-dispatched by the engine
+        (``soft_retry_attempt`` marker), so it is the retry that consumes one
+        attempt. A counter recorded for a different step is restarted at ``1``
+        for ``step``.
+
+        Args:
+            step: Workflow step the retry is being consumed for.
+
+        Returns:
+            A new SoftRetryState with ``step`` set to ``step`` and ``attempts``
+            advanced by one.
+        """
+        if self.step == step:
+            return self.model_copy(update={"attempts": self.attempts + 1})
+        return SoftRetryState(step=step, attempts=1)
+
+    def reset_for(self, step: str) -> "SoftRetryState":  # @stub-protected
+        """Return the counter reset for a normal transition into ``step``.
+
+        Sole owner of the retry reset (issue #704). Called by
+        :func:`build_state` on the **advance path** — a normal (non-soft-kill)
+        transition that enters a different step. A counter already recorded for
+        ``step`` is returned untouched so an in-progress retry budget is not
+        wiped when the same step simply re-runs normally.
+
+        Args:
+            step: Workflow step being entered.
+
+        Returns:
+            ``self`` when the counter already applies to ``step``; otherwise a
+            fresh SoftRetryState for ``step`` with ``attempts == 0``.
+        """
+        if self.step == step:
+            return self
+        return SoftRetryState(step=step, attempts=0)
+
+
 class WorkflowState(BaseModel):
     """
     Structured workflow state embedded in GitHub comments.
@@ -47,6 +108,11 @@ class WorkflowState(BaseModel):
         position: Flat workflow step path, outermost-first; last ref = the
             step actually executed (issue #638). The flat ``workflow``/
             ``step`` fields keep leaf (v1) semantics.
+        soft_retry: Per-step soft-kill retry accounting (issue #704). Tracks
+            how many soft retries the current step has consumed so routing can
+            retry the step in place (bounded by ``MAX_SOFT_RETRIES``) instead
+            of advancing. Defaults to an empty counter, so legacy state blobs
+            without this key load unchanged.
     """
 
     version: int = 1
@@ -74,6 +140,9 @@ class WorkflowState(BaseModel):
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.
     position: list[StepRef] = Field(default_factory=list)
+    # Per-step soft-kill retry accounting (issue #704). default_factory keeps
+    # legacy blobs without this key loadable and byte-identical on read.
+    soft_retry: SoftRetryState = Field(default_factory=SoftRetryState)  # @stub-protected
 
     @model_validator(mode="before")
     @classmethod

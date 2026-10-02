@@ -378,6 +378,37 @@ class TestHumanGateIntercept(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "advance")
 
+    def test_gate_step_soft_kill_non_resume_becomes_hold(self):
+        """A soft_kill retry on a human_gate step holds instead of auto-retrying."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir}
+            dispatch = Dispatch(status="soft_kill")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "wf", "implement", False)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "hold")
+        self.assertEqual(result.reason, "human_gate:implement")
+
+    def test_gate_step_soft_kill_resume_bypasses(self):
+        """A /workflow resume on a gated step passes its soft_kill retry through."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir}
+            dispatch = Dispatch(status="soft_kill")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "wf", "implement", True)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "soft_kill")
+
     def test_loop_not_intercepted(self):
         """loop outcomes are never intercepted by the gate."""
         with tempfile.TemporaryDirectory() as tmpdir:
