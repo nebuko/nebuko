@@ -434,6 +434,31 @@ class Engine:
         # No same-agent comparison applicable: keep the resolver's own decision.
         return {"SKIP_AGENT": "false"}
 
+    # @stub-protected: signature defined by architect — do not modify
+    def notify(self) -> str | None:
+        """Post the early workflow-state comment for a run start (issue #727).
+
+        Restores the legacy ``Add bot marker and workflow state to comment``
+        step (``legacy-flow.yaml:865-927``) on the engine side: the run-start
+        state is framed by :class:`engine.comment_composer.CommentComposer`
+        (bot marker on line 1, caller marker, continue token, collapsed state
+        section, role line) and posted through the adapter *before* the agent
+        runs, so the durable state transport is visible immediately. Returns
+        the posted body, or ``None`` when a pre-post condition is not met.
+        """
+        raise NotImplementedError
+
+    # @stub-protected: signature defined by architect — do not modify
+    def _run_start_state(self) -> WorkflowState | None:
+        """Build the run-start :class:`WorkflowState` posted by :meth:`notify`.
+
+        The pre-agent state carries the resolution the ``resolve_config`` phase
+        produced (selected workflow/step/agent, ``position``, ``issue``); its
+        ``dispatch`` status feeds the composer's continue token. Returns
+        ``None`` when no resolution is available to post yet.
+        """
+        raise NotImplementedError
+
     # @stub-protected
     def build_prompt(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
         """Build the agent prompt from the resolved config and history."""

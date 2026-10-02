@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 
 import pytest
 
@@ -19,6 +20,7 @@ from engine.paths import repo_root
 from engine.run_loop import PHASES, Engine, main, resolved_env_overlay
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
+WORKFLOW_STATE_MARKER = "<!-- WORKFLOW_STATE_START -->"
 
 # The GitHub host surface the removed bash acknowledgment step read (issue #720).
 RUN_ID = "36979038271"
@@ -531,6 +533,57 @@ class TestAgentStartAcknowledgment:
         )
 
         assert engine._run_url(trigger) == "https://github.com/someone/fork/actions/runs/7"
+
+
+class TestEarlyWorkflowStateComment:
+    """The engine emits the workflow state before the agent runs (issue #727).
+
+    The cutover left ``WORKFLOW_STATE_START/END`` out of every comment because
+    ``publish`` posts only the agent answer. The state must travel in its own
+    comment, posted before the agent runs — exactly the legacy GHA step the
+    cutover dropped. These tests read the local adapter's journal, which records
+    every posted body in order.
+    """
+
+    _ENTRY_RE = re.compile(r"^<!-- journal-entry @ .+? -->$", re.MULTILINE)
+
+    def _bodies(self, tmp_path, name: str = "run-1") -> list[str]:
+        text = (tmp_path / "runs" / name / "journal.md").read_text(encoding="utf-8")
+        return [part.lstrip("\n").rstrip("\n") for part in self._ENTRY_RE.split(text)[1:]]
+
+    def _state_comment(self, tmp_path) -> str:
+        return next(body for body in self._bodies(tmp_path) if WORKFLOW_STATE_MARKER in body)
+
+    def _run(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, env=RUN_ENV)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("*Dev answer*"))
+        return engine.run()
+
+    def test_posts_the_state_before_the_agent_answer(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+
+        bodies = self._bodies(tmp_path)
+        state_index = next(i for i, body in enumerate(bodies) if WORKFLOW_STATE_MARKER in body)
+        answer_index = next(i for i, body in enumerate(bodies) if "*Dev answer*" in body)
+
+        assert state_index < answer_index
+
+    def test_puts_the_bot_marker_on_the_state_comment_first_line(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+
+        assert self._state_comment(tmp_path).splitlines()[0] == "<!-- bot-workflow-terminal -->"
+
+    def test_the_answer_comment_carries_no_state(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+
+        answer = next(body for body in self._bodies(tmp_path) if "*Dev answer*" in body)
+
+        assert WORKFLOW_STATE_MARKER not in answer
+
+    def test_carries_the_continue_token_for_an_advancing_run(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+
+        assert "<!-- workflow-continue -->" in self._state_comment(tmp_path)
 
 
 class TestEntryPoints:
