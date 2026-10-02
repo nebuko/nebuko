@@ -330,6 +330,11 @@ def register_declared_model_pricing(
     operator-declared ``input_price`` / ``output_price`` pair. A model priced
     by neither litellm nor config logs a single warning naming it, so a
     silently-zero cost cannot go unnoticed.
+
+    ``warner`` defaults to the process-wide ``UNPRICED_MODEL_WARNER`` singleton
+    (Object Design Contract v2, item (D)) so the one-time warning survives
+    repeated resolutions; tests inject a fresh ``UnpricedModelWarner`` for
+    isolation.
     """
     model = config.model_path
     if config.input_price is not None and config.output_price is not None:
