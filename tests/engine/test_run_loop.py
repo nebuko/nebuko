@@ -424,6 +424,53 @@ class TestAgentEnvHandoff:
         assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
 
 
+class TestRunLogArtifacts:
+    """A run stages its logs in the adapter's artifact dir (issue #743).
+
+    The agent child runs in a throwaway temp directory, so the SDK file log and
+    the captured console output must be pointed at a host-owned staging dir the
+    workflow uploads as the ``nebuko-task-logs`` artifact.
+    """
+
+    def test_the_agent_child_is_pointed_at_the_artifact_dir(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, env={"LOG_TO_FILE": "true"})
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+
+        env = engine._agent_env()
+
+        staging = engine.adapter.artifact_dir().resolve()
+        assert env["LOG_TO_FILE"] == "true"
+        assert env["LOG_DIR"] == str(staging)
+
+    def test_publish_stages_the_console_log(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        result = {**_agent_result("done"), "console_log": "[phase:normalize] ok\n"}
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: result)
+
+        engine.run()
+
+        staged = engine.adapter.artifact_dir() / "console.log"
+        assert staged.read_text(encoding="utf-8") == "[phase:normalize] ok\n"
+
+    def test_a_staging_failure_never_aborts_the_run(self, tmp_path, monkeypatch, caplog):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("*Dev answer*"))
+
+        from engine.artifacts import RunArtifactStager
+
+        def boom(self, console_log):
+            raise OSError("read-only artifact dir")
+
+        monkeypatch.setattr(RunArtifactStager, "bundle", boom)
+
+        with caplog.at_level("WARNING"):
+            outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body is not None
+        assert "could not stage run logs" in caplog.text
+
+
 class TestAgentStartAcknowledgment:
     """The engine posts the acknowledgment the cutover dropped (issue #720).
 

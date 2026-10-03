@@ -22,6 +22,7 @@ PORT_METHODS = (
     "load_state",
     "save_state",
     "create_issue",
+    "artifact_dir",
     "write_artifact",
 )
 
