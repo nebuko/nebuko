@@ -1,11 +1,12 @@
-"""Compose the early, pre-agent workflow-state comment (issue #727).
+"""Compose the agent-answer comment with its workflow state (issue #736).
 
 The Stage B cutover dropped the legacy comment-assembly step
-(``.github/workflows/legacy-flow.yaml:865-927``): comments are now posted by
-the engine, and the ``WORKFLOW_STATE_START/END`` block never reached them, so
-every run stopped carrying its durable state. This module owns the shape of the
-*early* comment — the notice posted after the step/agent decision is resolved
-and before the agent runs — so that transport is restored in one place.
+(``.github/workflows/legacy-flow.yaml:877-960``), so comments posted by the
+engine no longer carried the ``WORKFLOW_STATE_START/END`` block. A first
+restoration (issue #727) posted that block as a separate, pre-agent notice —
+the wrong position: the state belongs on the *answer* comment, which is also
+the run's authoritative output (its ``dispatch`` drives the next step). This
+module owns the shape of the answer header so transport lives in one place.
 """
 
 from __future__ import annotations
@@ -28,13 +29,13 @@ _LIVE_STATUSES = ("advance", "loop")
 
 
 class CommentComposer:
-    """Compose the early, pre-agent workflow-state comment body.
+    """Compose the agent-answer comment body that carries the workflow state.
 
     Single owner of the ordering/format invariants the legacy GHA step
-    assembled inline (``legacy-flow.yaml:865-927``): the bot marker on line 1
+    assembled inline (``legacy-flow.yaml:877-960``): the bot marker on line 1
     (issue #478), then the caller marker, the optional continue token
-    (``advance``/``loop`` only), the collapsed workflow-state section, and the
-    role announcement line.
+    (``advance``/``loop`` only), the collapsed workflow-state section, the
+    ``*<role> answer*`` line and finally the answer text.
     """
 
     BOT_MARKER: str = "<!-- bot-workflow-terminal -->"
@@ -56,30 +57,43 @@ class CommentComposer:
         return CONTINUE_TOKEN if status in _LIVE_STATUSES else ""
 
     # @stub-protected: signature defined by architect — do not modify
-    def compose_run_start(
+    # (issue #736 supersedes the #727 ``compose_run_start`` placement: the
+    # header now frames the answer and takes the answer ``body``.)
+    def compose_answer(
         self,
-        state: "WorkflowState",
+        state: "WorkflowState | None",
         *,
         caller_marker: str,
         display_name: str,
+        body: str,
     ) -> str:
-        """Build the early state-comment body for a run start.
+        """Frame an agent answer with the workflow-state header (issue #736).
 
-        The body puts :attr:`BOT_MARKER` on line 1, then ``caller_marker``, the
-        :meth:`continue_token` output, the collapsed state section
-        (``format_collapsed_section``), and finally the role announcement line
-        ``*<display_name> processing*``.
+        Mirrors the legacy "Add bot marker and workflow state to comment" step
+        (``legacy-flow.yaml:877-960``): :attr:`BOT_MARKER` on line 1, then
+        ``caller_marker``, the :meth:`continue_token` output, the collapsed
+        state section (``format_collapsed_section``), the
+        ``*<display_name> answer*`` line, and finally the answer ``body``.
+
+        A ``None`` state — the agent emitted no ``workflow_state.json``, so the
+        run's output is not authoritative — keeps the marker, caller and token
+        but omits the section, exactly like the legacy step (which defaulted
+        the token on and skipped only the section).
         """
-        ensure_import_path()
-        from workflow_state.features.comment.to_git_comment import (
-            format_collapsed_section,
-        )
+        section = ""
+        if state is not None:
+            ensure_import_path()
+            from workflow_state.features.comment.to_git_comment import (
+                format_collapsed_section,
+            )
 
-        section = format_collapsed_section(state)
+            section = format_collapsed_section(state)
+        token = CONTINUE_TOKEN if state is None else self.continue_token(state)
         return (
             f"{self.bot_marker}\n"
             f"{caller_marker}\n"
-            f"{self.continue_token(state)}"
+            f"{token}"
             f"{section}"
-            f"*{display_name} processing*\n"
+            f"\n*{display_name} answer*\n\n"
+            f"{body}"
         )
