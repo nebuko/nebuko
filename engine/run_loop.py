@@ -123,6 +123,22 @@ def _answer_of(agent_result: Any) -> str:
     return ""
 
 
+def _posted_answer_of(agent_result: Any) -> str:
+    """The body to post: the engine's captured deliverable when present.
+
+    Routing and validation keep reading :func:`_answer_of` (the legacy
+    ``latest_answer.md``), because they scan it for the ``AGENT_RUN_CONFIG``
+    sentinel; the capture only decides what the issue comment shows, so a
+    terminal routing note can never clobber the agent's real answer there
+    (issue #740).
+    """
+    if isinstance(agent_result, Mapping):
+        value = agent_result.get("deliverable")
+        if value:
+            return str(value)
+    return _answer_of(agent_result)
+
+
 def _final_message_of(agent_result: Any) -> str:
     if isinstance(agent_result, Mapping):
         value = agent_result.get("final_message") or agent_result.get("text")
@@ -472,17 +488,31 @@ class Engine:
 
     # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:
-        """Delegate to the legacy ``agent_script.arun`` result.
+        """Run the agent through the engine's in-process seam.
 
-        The child receives the resolver's per-run hand-off (``ROLE_NAME``,
-        ``CONFIG_*``, ...) on top of the ambient environment, mirroring the
-        legacy ``$GITHUB_ENV`` export (issue #717).
+        The engine hosts the conversation so it can capture the agent's real
+        deliverable before the terminal control turns run (issue #740). The
+        legacy subprocess seam is the fallback for a host where the in-process
+        assembly cannot start. Both receive the resolver's per-run hand-off
+        (``ROLE_NAME``, ``CONFIG_*``, ...) on top of the ambient environment,
+        mirroring the legacy ``$GITHUB_ENV`` export (issue #717).
         """
-        from engine.agent_runner import run_legacy_agent
-
-        return run_legacy_agent(
-            prompt, repo_root=self.repo_root, env=self._agent_env()
+        from engine.agent_runner import (
+            EngineAgentUnavailable,
+            run_engine_agent,
+            run_legacy_agent,
         )
+
+        env = self._agent_env()
+        try:
+            return run_engine_agent(prompt, repo_root=self.repo_root, env=env)
+        except EngineAgentUnavailable as exc:
+            log.warning(
+                "[phase:agent] in-process agent seam unavailable (%s); "
+                "falling back to the legacy subprocess",
+                exc,
+            )
+            return run_legacy_agent(prompt, repo_root=self.repo_root, env=env)
 
     def _agent_env(self) -> dict[str, str]:
         """``self.env`` overlaid with the resolver's ``$GITHUB_ENV`` hand-off.
@@ -573,7 +603,7 @@ class Engine:
         ensure_import_path()
         from prepare_comment import build_comment_body, escape_agent_triggers
 
-        answer = _answer_of(agent_result)
+        answer = _posted_answer_of(agent_result)
         final_message = _final_message_of(agent_result) or answer
         console_log = self._console_log_of(agent_result)
         self._stage_run_logs(console_log)
