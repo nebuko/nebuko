@@ -186,6 +186,19 @@ jobs:
                 PIN_COMMENT: ${{ inputs.pin_comment }}
                 HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
                 PROMPT_BODY: ${{ inputs.prompt_body }}
+                # The engine stages its full SDK file log (app.log) and captured
+                # console.log here; the step below uploads them (issue #743).
+                # runner.temp is absolute and outside the agent's temp workdir.
+                LOG_TO_FILE: "true"
+                LOG_DIR: ${{ runner.temp }}/nebuko-task-logs
+
+            - name: Upload OpenHands logs as artifact
+              uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                name: nebuko-task-logs
+                path: ${{ runner.temp }}/nebuko-task-logs
+                retention-days: 7
 
     summarize-metrics:
         runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}

@@ -59,6 +59,11 @@ class PlatformAdapter(Protocol):
         ...
 
     # @stub-protected
+    def artifact_dir(self) -> Path:
+        """The host directory where a run's artifacts are staged."""
+        ...
+
+    # @stub-protected
     def write_artifact(self, name: str, content: str) -> None:
         """Write a run artifact (``latest_answer.md``, ``console.log``, ...)."""
         ...
