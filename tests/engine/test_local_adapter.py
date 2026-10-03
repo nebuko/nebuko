@@ -42,6 +42,9 @@ class TestRunDirLayout:
     def test_init_creates_the_run_directory(self, adapter, run_dir):
         assert run_dir.is_dir()
 
+    def test_artifact_dir_is_the_run_directory(self, adapter, run_dir):
+        assert adapter.artifact_dir() == run_dir
+
     def test_write_artifact_writes_latest_answer(self, adapter, run_dir):
         adapter.write_artifact(LATEST_ANSWER_FILE, "the answer")
 

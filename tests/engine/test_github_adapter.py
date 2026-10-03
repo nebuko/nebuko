@@ -131,6 +131,25 @@ class TestPost:
         assert ("post_comment", "olivier-norture/git-flow-ai", 590, "hello") in client.calls
 
 
+class TestArtifacts:
+    """Run logs are staged under ``$RUNNER_TEMP`` for the CI artifact (issue #743)."""
+
+    def test_artifact_dir_is_the_named_staging_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+        adapter = _adapter(tmp_path, FakeGhClient())
+
+        assert adapter.artifact_dir() == tmp_path / "nebuko-task-logs"
+
+    def test_write_artifact_creates_the_staging_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+        adapter = _adapter(tmp_path, FakeGhClient())
+
+        adapter.write_artifact("console.log", "log line\n")
+
+        staged = tmp_path / "nebuko-task-logs" / "console.log"
+        assert staged.read_text() == "log line\n"
+
+
 class TestImportBootstrap:
     """The adapter bootstraps ``.github/scripts`` itself (round-4, finding 1).
 

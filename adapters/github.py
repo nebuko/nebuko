@@ -21,6 +21,10 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
 
 __all__ = ["GitHubAdapter"]
 
+# Staging directory uploaded as the ``nebuko-task-logs`` CI artifact. Kept in
+# sync with the upload-artifact step in ``nebuko-workflow.yaml`` (issue #743).
+ARTIFACT_DIR_NAME = "nebuko-task-logs"
+
 
 def _github_client() -> Any:
     ensure_import_path()
@@ -116,11 +120,17 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return int(result["number"])
 
     # @stub-protected
-    def write_artifact(self, name: str, content: str) -> None:
+    def artifact_dir(self) -> Path:
         from pathlib import Path as _Path
 
-        path = _Path(os.environ.get("RUNNER_TEMP", "/tmp")) / name
-        path.write_text(content, encoding="utf-8")
+        base = _Path(os.environ.get("RUNNER_TEMP", "/tmp"))
+        return base / ARTIFACT_DIR_NAME
+
+    # @stub-protected
+    def write_artifact(self, name: str, content: str) -> None:
+        directory = self.artifact_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_text(content, encoding="utf-8")
 
     # ── internals ────────────────────────────────────────────────────
 

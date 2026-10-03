@@ -29,6 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
 
     from adapters.base import PlatformAdapter
     from config import AgentStartNotice
+    from engine.artifacts import RunArtifactStager
     from engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
 
@@ -494,7 +495,28 @@ class Engine:
         environment.
         """
         env = {**self.env, **resolved_env_overlay(self._handoff_config())}
+        env.update(self._artifacts().child_log_env())
         return _anchor_config_path(env, self.repo_root)
+
+    def _artifacts(self) -> RunArtifactStager:
+        """The per-run log stager over this run's host artifact directory."""
+        from engine.artifacts import RunArtifactStager
+
+        return RunArtifactStager(self.adapter.artifact_dir())
+
+    def _stage_run_logs(self, console_log: str) -> None:
+        """Stage ``console.log`` for the CI artifact; never abort the run.
+
+        Mirrors the legacy ``| tee console.log``: a run that cannot persist its
+        logs must still publish its comment, and the upload step's ``if: always()``
+        tolerates a missing directory (issue #743).
+        """
+        try:
+            staged = self._artifacts().bundle(console_log)
+        except Exception as exc:  # noqa: BLE001 - log staging is best-effort
+            log.warning("[phase:publish] could not stage run logs: %s", exc)
+            return
+        log.info("[phase:publish] staged run logs in %s", staged.staging_dir)
 
     def _handoff_config(self) -> Any:
         """The resolver mapping the run routes on and hands to the agent child.
@@ -554,6 +576,7 @@ class Engine:
         answer = _answer_of(agent_result)
         final_message = _final_message_of(agent_result) or answer
         console_log = self._console_log_of(agent_result)
+        self._stage_run_logs(console_log)
         body = build_comment_body(
             latest_answer=answer,
             final_message=final_message,

@@ -113,8 +113,13 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return index
 
     # @stub-protected
+    def artifact_dir(self) -> Path:
+        """The run directory doubles as the local host's artifact staging area."""
+        return self._run_dir
+
+    # @stub-protected
     def write_artifact(self, name: str, content: str) -> None:
-        path = self._run_dir / name
+        path = self.artifact_dir() / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
