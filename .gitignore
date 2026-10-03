@@ -2,3 +2,4 @@ console.log
 __pycache__/
 openhands-task-logs/
 output/
+.pytest_cache
