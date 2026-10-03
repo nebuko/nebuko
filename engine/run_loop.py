@@ -49,24 +49,6 @@ _RUN_RESOLVED_KEY = "resolved"
 _USER_REQUEST_HEADER = "--- USER REQUEST / GITHUB CONTEXT ---"
 _STEP_HEADER = "## Current step prompt"
 
-# Role label for the answer comment's announcement line; mirrors the dropped
-# legacy step (``legacy-flow.yaml:900-906``).
-_ROLE_DISPLAY_NAMES = {
-    "genius": "Genius",
-    "ctx": "Ctx",
-    "dev": "Developer",
-    "review": "Reviewer",
-    "issue": "Issue",
-    "issue-reviewer": "Issue Reviewer",
-    "summarize": "Summarizer",
-}
-
-
-def _display_name_for(role: str) -> str:
-    """Human-readable role label for the answer header (legacy mapping)."""
-    return _ROLE_DISPLAY_NAMES.get(role, role.capitalize())
-
-
 _EXIT_CODE_BY_STATUS = {
     "advance": ExitCode.ADVANCE,
     "loop": ExitCode.ADVANCE,
@@ -457,30 +439,6 @@ class Engine:
         # No same-agent comparison applicable: keep the resolver's own decision.
         return {"SKIP_AGENT": "false"}
 
-    # Non-protected internal (not part of the frozen anchor): frames the
-    # agent's answer with the legacy workflow-state header so ``publish`` can
-    # escape and post one body.
-    def _frame_answer(self, agent_result: Any, body: str) -> str:
-        """Prepend the caller marker, continue token and state section (issue #736).
-
-        Restores the dropped ``Add bot marker and workflow state to comment``
-        step (``legacy-flow.yaml:877-960``) on the *answer* comment. The state
-        comes from the agent's own ``workflow_state.json`` artifact
-        (:meth:`_explicit_state`), so the posted section is the run's real
-        output and its ``dispatch`` decides whether the continue token keeps the
-        flow alive. An agent that emitted no state gets the marker/token header
-        but no section, exactly like the legacy step when the file was absent.
-        """
-        from engine.comment_composer import CommentComposer
-
-        role = self._role_of(agent_result) or "unknown"
-        return CommentComposer().compose_answer(
-            self._explicit_state(agent_result),
-            caller_marker=f"<!-- bot-agent-{role} -->",
-            display_name=_display_name_for(role),
-            body=body,
-        )
-
     # @stub-protected
     def build_prompt(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
         """Build the agent prompt from the resolved config and history."""
@@ -604,12 +562,12 @@ class Engine:
             has_console_log=bool(console_log),
             trigger_author=self._trigger_author(),
             role_name=self._role_of(agent_result),
+            state=self._explicit_state(agent_result),
         )
-        framed = self._frame_answer(agent_result, body)
         # Same invariant as ``prepare_comment._write_output``: a posted comment
         # must never carry a raw ``@@agent`` token, or it re-arms the very gate
         # that started this run (issue #482).
-        escaped = escape_agent_triggers(framed)
+        escaped = escape_agent_triggers(body)
         self.adapter.post(escaped)
         return escaped
 
