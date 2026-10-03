@@ -5,11 +5,15 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+for _root in (os.path.dirname(__file__), REPO_ROOT):
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
 from prepare_comment import (
     LATEST_ANSWER_FILE,
     _truncate_at_boundary,
     _write_output,
+    build_comment_body,
     clean_message,
     escape_agent_triggers,
     extract_metrics,
@@ -17,6 +21,16 @@ from prepare_comment import (
     prepare_comment,
     select_posted_body,
 )
+
+# ``build_comment_body`` prepends the answer-comment header (issue #736); the
+# body assertions below compare against the headerless body.
+_HEADER_TERMINATOR = " answer*\n\n"
+
+
+def _strip_answer_header(comment: str) -> str:
+    """Return ``comment`` with the answer-comment header removed (issue #736)."""
+    marker = comment.find(_HEADER_TERMINATOR)
+    return comment[marker + len(_HEADER_TERMINATOR):] if marker != -1 else comment
 
 
 class TestExtractMetrics(unittest.TestCase):
@@ -500,7 +514,7 @@ class TestPrepareCommentCtxCollapse(TestPrepareCommentIntegration):
         os.environ["ROLE_NAME"] = "ctx"
         self._write("final_message.txt", self.CTX_REPORT)
         prepare_comment()
-        result = self._read("github_comment.md")
+        result = _strip_answer_header(self._read("github_comment.md"))
         self.assertEqual(result.count("<details>"), 4)
         self.assertIn(
             "<summary>FILES FOUND — 3 files covering the posting pipeline.</summary>",
@@ -525,7 +539,91 @@ class TestPrepareCommentCtxCollapse(TestPrepareCommentIntegration):
         plain = "Just a short answer, no sections."
         self._write("final_message.txt", plain)
         prepare_comment()
-        self.assertEqual(self._read("github_comment.md"), plain)
+        self.assertEqual(_strip_answer_header(self._read("github_comment.md")), plain)
+
+
+class TestBuildCommentBodyHeader(unittest.TestCase):
+    """The agent-answer comment carries the workflow state (issue #736).
+
+    The Stage B cutover dropped the legacy comment-assembly step
+    (``legacy-flow.yaml:877-960``). ``build_comment_body`` restores it on the
+    *agent-answer* comment: the bot marker on line 1 (issue #478), the caller
+    marker, a deterministic continue token while the flow stays alive, the
+    collapsed state section, the role answer line and finally the answer text.
+    """
+
+    BOT_MARKER = "<!-- bot-workflow-terminal -->"
+    CONTINUE_TOKEN = "<!-- workflow-continue -->\n"
+    ANSWER = "Implemented the step."
+
+    @staticmethod
+    def _state(status=None, **overrides):
+        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
+        from workflow_state.workflow_state import WorkflowState
+
+        dispatch = None if status is None else Dispatch(status=status)
+        return WorkflowState(
+            version=7,
+            workflow="spec-driven-impl",
+            step="stub",
+            agent="dev",
+            dispatch=dispatch,
+            **overrides,
+        )
+
+    def _body(self, *, state=..., status="advance", role_name="dev"):
+        resolved = self._state(status) if state is ... else state
+        return build_comment_body(
+            latest_answer=self.ANSWER,
+            final_message=self.ANSWER,
+            role_name=role_name,
+            state=resolved,
+        )
+
+    def test_puts_the_bot_marker_on_the_first_line(self):
+        self.assertEqual(self._body().splitlines()[0], self.BOT_MARKER)
+
+    def test_embeds_the_collapsed_state_section(self):
+        from workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
+
+        body = self._body()
+
+        self.assertIn(STATE_MARKER_START, body)
+        self.assertIn(STATE_MARKER_END, body)
+        self.assertIn('"step": "stub"', body)
+
+    def test_orders_marker_token_state_role_line_and_answer(self):
+        body = self._body()
+
+        self.assertIn("<!-- bot-agent-dev -->", body)
+        self.assertIn("*Developer answer*", body)
+        self.assertLess(body.index("<!-- bot-agent-dev -->"), body.index(self.CONTINUE_TOKEN))
+        self.assertLess(body.index(self.CONTINUE_TOKEN), body.index("*Developer answer*"))
+        self.assertLess(body.index("*Developer answer*"), body.index(self.ANSWER))
+
+    def test_carries_the_continue_token_for_an_advancing_run(self):
+        self.assertIn(self.CONTINUE_TOKEN, self._body(status="advance"))
+
+    def test_carries_the_continue_token_for_a_looping_run(self):
+        self.assertIn(self.CONTINUE_TOKEN, self._body(status="loop"))
+
+    def test_omits_the_token_when_the_flow_ends(self):
+        self.assertNotIn(self.CONTINUE_TOKEN, self._body(status="hold"))
+
+    def test_omits_the_token_for_a_terminate(self):
+        self.assertNotIn(self.CONTINUE_TOKEN, self._body(status="terminate"))
+
+    def test_omits_the_token_for_a_soft_kill(self):
+        self.assertNotIn(self.CONTINUE_TOKEN, self._body(status="soft_kill"))
+
+    def test_keeps_the_header_but_omits_the_section_without_a_state(self):
+        body = self._body(state=None)
+
+        self.assertEqual(body.splitlines()[0], self.BOT_MARKER)
+        self.assertIn("<!-- bot-agent-dev -->", body)
+        self.assertIn(self.CONTINUE_TOKEN, body)
+        self.assertNotIn("<!-- WORKFLOW_STATE_START -->", body)
+        self.assertIn(self.ANSWER, body)
 
 
 if __name__ == "__main__":

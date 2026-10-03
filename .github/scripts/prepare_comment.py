@@ -17,6 +17,7 @@ Handles multiple paths mirroring the workflow logic:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -24,10 +25,14 @@ from typing import TYPE_CHECKING
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from validate_output import AGENT_RUN_CONFIG_PATTERN, strip_agent_run_config
-from workflow_state.features.comment.to_git_comment import collapse_sections
+from workflow_state.features.comment.to_git_comment import (
+    collapse_sections,
+    format_collapsed_section,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
     from adapters.base import Poster
+    from workflow_state.workflow_state import WorkflowState
 
 # ── Regex patterns (all DOTALL for multi-line safety) ─────────────
 
@@ -68,6 +73,10 @@ CTX_SECTION_HEADINGS = [
 # the agent's latest full answer, preferred over the finish message as the
 # posted-comment body.
 LATEST_ANSWER_FILE = "latest_answer.md"
+
+# Artifact written by the agent child (build_output.py): the run's authoritative
+# WorkflowState, whose collapsed form is the "answer" comment's state section.
+WORKFLOW_STATE_FILE = "workflow_state.json"
 
 
 # ── Latest-answer ETL (issue #522) ───────────────────────────────
@@ -375,7 +384,67 @@ def _with_metrics(text: str, metrics_comment: str) -> str:
     return f"{text}\n\n{metrics_comment}" if metrics_comment else text
 
 
-def build_comment_body(
+# ── Answer-comment header (issue #736) ───────────────────────────
+#
+# The run's WorkflowState belongs on the agent's *answer* comment: it is the
+# run's authoritative output and its ``dispatch`` drives routing. These
+# constants/helpers restore the legacy "Add bot marker and workflow state to
+# comment" step (legacy-flow.yaml:877-960) inside the shared body builder, so
+# both hosts frame the exact same comment.
+
+# The bot marker MUST stay on line 1 (issue #478) so bot detection is exact.
+BOT_MARKER = "<!-- bot-workflow-terminal -->"
+
+# Deterministic continuation token (issue #478): the next CI run fires on this
+# hidden marker rather than on stray ``@@`` tokens in agent prose.
+CONTINUE_TOKEN = "<!-- workflow-continue -->\n"
+
+# Dispatch statuses that keep the flow alive and therefore carry the token.
+_LIVE_STATUSES = ("advance", "loop")
+
+# Role label for the answer header's announcement line (legacy mapping).
+_ROLE_DISPLAY_NAMES = {
+    "genius": "Genius",
+    "ctx": "Ctx",
+    "dev": "Developer",
+    "review": "Reviewer",
+    "issue": "Issue",
+    "issue-reviewer": "Issue Reviewer",
+    "summarize": "Summarizer",
+}
+
+
+def _display_name_for(role: str) -> str:
+    """Human-readable role label for the answer header (legacy mapping)."""
+    return _ROLE_DISPLAY_NAMES.get(role, role.capitalize())
+
+
+def _continue_token(state: WorkflowState) -> str:
+    """The continue token for live dispatches; empty for hold/terminate."""
+    status = state.dispatch.status if state.dispatch else "advance"
+    return CONTINUE_TOKEN if status in _LIVE_STATUSES else ""
+
+
+def _format_answer_header(role_name: str | None, state: WorkflowState | None) -> str:
+    """Build the marker/token/state header prepended to the answer (issue #736).
+
+    A run that emitted no state still gets the bot marker, caller marker and
+    continue token (matching the legacy step when the file was absent); only the
+    collapsed state section is omitted.
+    """
+    role = (role_name or "").strip() or "unknown"
+    token = CONTINUE_TOKEN if state is None else _continue_token(state)
+    section = "" if state is None else format_collapsed_section(state)
+    return (
+        f"{BOT_MARKER}\n"
+        f"<!-- bot-agent-{role} -->\n"
+        f"{token}"
+        f"{section}"
+        f"\n*{_display_name_for(role)} answer*\n\n"
+    )
+
+
+def _select_fallback_body(
     *,
     latest_answer: str,
     final_message: str,
@@ -387,11 +456,9 @@ def build_comment_body(
 ) -> str:
     """The four-path publish fallback chain over explicit inputs.
 
-    Single source of truth for the posted-comment body: the file-driven GHA
-    wrapper :func:`prepare_comment` and ``engine.run_loop.Engine`` both call
-    this, so a crashed or empty agent run posts the same structured fallback
-    message on either host instead of the engine forking a subset of the
-    semantics (issue #590).
+    Backs :func:`build_comment_body`: a crashed or empty agent run posts the
+    same structured fallback message on either host instead of the engine
+    forking a subset of the semantics (issue #590).
 
     Args:
         latest_answer: Raw ``latest_answer.md`` content (the preferred body).
@@ -405,7 +472,7 @@ def build_comment_body(
         role_name: Role for the ctx collapse; ``None`` reads the environment.
 
     Returns:
-        The cleaned body to escape and publish.
+        The cleaned body, without the answer-comment header.
     """
     if has_final_message is None:
         has_final_message = bool(final_message)
@@ -483,6 +550,74 @@ def build_comment_body(
     return author_ping + _NO_FINAL_MESSAGE
 
 
+def build_comment_body(
+    *,
+    latest_answer: str,
+    final_message: str,
+    console_log: str = "",
+    has_final_message: bool | None = None,
+    has_console_log: bool | None = None,
+    trigger_author: str = "",
+    role_name: str | None = None,
+    state: WorkflowState | None = None,
+) -> str:
+    """The posted-comment body: answer-comment header + fallback body.
+
+    Single source of truth for the posted comment: :func:`prepare_comment` (GHA)
+    and ``engine.run_loop.Engine.publish`` both call this, so the same comment
+    is framed on either host (issue #590). The workflow-state header (issue
+    #736) is prepended here because it frames *whatever* the run produced —
+    latest answer, final message, console fallback or crash notice — exactly as
+    the legacy "Add bot marker and workflow state to comment" step did
+    (``legacy-flow.yaml:877-960``).
+
+    Args:
+        latest_answer: Raw ``latest_answer.md`` content (the preferred body).
+        final_message: Raw ``final_message.txt`` content.
+        console_log: Raw ``console.log`` content.
+        has_final_message: Whether the ``final_message.txt`` artifact existed
+            with content. ``None`` derives it from ``final_message``.
+        has_console_log: Whether the ``console.log`` artifact existed with
+            content. ``None`` derives it from ``console_log``.
+        trigger_author: Author pinged on the crash paths (``TRIGGER_AUTHOR``).
+        role_name: Answer-comment role; also drives the ctx body collapse.
+            ``None`` reads ``ROLE_NAME`` from the environment (GHA path).
+        state: The agent's ``workflow_state.json`` artifact, or ``None`` when
+            the run emitted none. ``None`` still emits the marker/token header
+            but omits the collapsed state section.
+
+    Returns:
+        The framed body to escape and publish.
+    """
+    return _format_answer_header(role_name, state) + _select_fallback_body(
+        latest_answer=latest_answer,
+        final_message=final_message,
+        console_log=console_log,
+        has_final_message=has_final_message,
+        has_console_log=has_console_log,
+        trigger_author=trigger_author,
+        role_name=role_name,
+    )
+
+
+def _read_workflow_state() -> WorkflowState | None:
+    """Load the agent's ``workflow_state.json`` artifact, when present.
+
+    Graceful degradation mirrors the legacy step: a missing, empty or malformed
+    file yields ``None`` so the answer still posts its marker/token header
+    without a state section (issue #736).
+    """
+    if not _artifact_has_content(WORKFLOW_STATE_FILE):
+        return None
+    try:
+        from workflow_state.workflow_state import WorkflowState
+
+        return WorkflowState.model_validate(json.loads(_read_artifact(WORKFLOW_STATE_FILE)))
+    except Exception as exc:  # noqa: BLE001 - a bad artifact must not block posting
+        print(f"Warning: could not parse {WORKFLOW_STATE_FILE}: {exc}", flush=True)
+        return None
+
+
 def prepare_comment(poster: Poster | None = None) -> bool:
     """Orchestrate comment preparation from final_message.txt or fallbacks.
 
@@ -511,6 +646,7 @@ def prepare_comment(poster: Poster | None = None) -> bool:
         has_console_log=has_console_log,
         trigger_author=os.environ.get("TRIGGER_AUTHOR", ""),
         role_name=os.environ.get("ROLE_NAME", ""),
+        state=_read_workflow_state(),
     )
     _write_output(body, poster=poster)
     return True
