@@ -31,7 +31,9 @@ class AnswerSnapshot:
     """The substantive agent answer frozen at the end-tool boundary.
 
     Attributes:
-        text: The deliverable registered just before the end tool ran.
+        text: The deliverable frozen at the boundary — the last standalone agent
+            message registered before it, or, when the deliverable shared the
+            end-tool turn itself, that turn's own thought (the #555 case).
         event_index: Zero-based position of the end-tool turn in the stream.
         end_tool: The ``finish`` / ``dispatch_next`` turn that froze the answer.
     """
@@ -49,8 +51,11 @@ class AnswerCapture:
     * an agent ``MessageEvent`` (a standalone text turn) registers/replaces the
       current substantive answer;
     * a ``finish`` / ``dispatch_next`` ``ActionEvent`` is the end-tool boundary —
-      it freezes the registered answer and its own turn text is **never**
-      adopted;
+      it freezes the answer. The deliverable may share that turn (an assistant
+      response with both text and a tool call emits no ``MessageEvent`` — the
+      #555 case), so the boundary turn's own thought is used **only** when no
+      standalone message registered first. A later control turn's note (a
+      trailing ``finish``) can never overwrite it;
     * every other event (user turns, tool-call turns) is ignored.
 
     The **first** end-tool trigger wins, so an engine-injected recall turn can
@@ -77,7 +82,9 @@ class AnswerCapture:
         end_tool = _end_tool_of(event, self._end_tools)
         if end_tool is not None:
             self._snapshot = AnswerSnapshot(
-                text=self._current, event_index=index, end_tool=end_tool
+                text=self._current or _action_thought_text(event),
+                event_index=index,
+                end_tool=end_tool,
             )
             return
 
@@ -93,10 +100,10 @@ class AnswerCapture:
     def deliverable(self, end_tool_answer: str = "") -> str:
         """Return the captured deliverable.
 
-        ``end_tool_answer`` (the legacy ``latest_answer.md``) is used **only**
-        when nothing substantive was registered — the last-resort merge that
-        keeps a run whose whole answer lived on the end-tool turn (the #555
-        shared-turn case) working.
+        Prefers the answer frozen at the boundary; ``end_tool_answer`` (the
+        legacy ``latest_answer.md``) is used **only** when nothing at all was
+        registered, so a run whose whole output lived on the control turn still
+        posts something (the last-resort merge, G5).
         """
         if self._snapshot is not None and self._snapshot.text:
             return self._snapshot.text
@@ -109,6 +116,16 @@ def _end_tool_of(event: object, end_tools: frozenset[str]) -> str | None:
     """The end-tool name when ``event`` is a control-plane turn, else ``None``."""
     tool_name = getattr(event, "tool_name", None)
     return tool_name if tool_name in end_tools else None
+
+
+def _action_thought_text(event: object) -> str:
+    """The turn text of a control-plane tool call.
+
+    An assistant response that carries both text and a tool call surfaces the
+    text here (``ActionEvent.thought``) rather than as a ``MessageEvent``, so
+    the end-tool turn is the only place a shared-turn deliverable can be read.
+    """
+    return _content_text(getattr(event, "thought", None)).strip()
 
 
 def _message_text(event: object) -> str:

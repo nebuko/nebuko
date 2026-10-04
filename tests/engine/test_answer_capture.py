@@ -67,15 +67,31 @@ class TestDeliverableSelection:
         )
         assert capture.deliverable() == "final deliverable"
 
-    def test_answer_on_the_end_tool_turn_is_the_last_resort_fallback(self):
-        """#555: the whole answer can live on the end-tool turn (no message)."""
+    def test_answer_sharing_the_end_tool_turn_is_captured(self):
+        """#555: an assistant response with text + a tool call emits no
+        MessageEvent, so the end-tool turn's own thought is the deliverable."""
         capture = _capture(_action_event("dispatch_next", "deliverable on the tool turn"))
-        assert capture.deliverable("legacy fallback") == "legacy fallback"
+        assert capture.deliverable("legacy fallback") == "deliverable on the tool turn"
+
+    def test_shared_turn_deliverable_survives_a_trailing_finish_note(self):
+        """#738/#555: the deliverable shares the dispatch_next turn; a later
+        finish note must not clobber it (legacy latest-wins would)."""
+        capture = _capture(
+            _action_event("dispatch_next", "Full proposal"),
+            _action_event("finish", "short note"),
+        )
+        assert capture.deliverable("short note") == "Full proposal"
+
+    def test_registered_message_wins_over_the_boundary_turn_text(self):
+        capture = _capture(
+            _msg_event("standalone deliverable"), _action_event("finish", "note")
+        )
+        assert capture.deliverable("legacy") == "standalone deliverable"
 
     def test_empty_stream_returns_the_end_tool_answer(self):
         assert _capture().deliverable("legacy") == "legacy"
 
-    def test_finish_only_run_falls_back_to_the_end_tool_answer(self):
+    def test_finish_only_run_posts_the_finish_text(self):
         capture = _capture(_action_event("finish", "status note"))
         assert capture.deliverable("status note") == "status note"
 

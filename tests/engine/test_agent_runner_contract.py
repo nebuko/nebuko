@@ -128,20 +128,28 @@ def _agent_message(text: str) -> object:
     return MessageEvent(llm_message=Message(role="assistant", content=text), source="agent")
 
 
-def _finish_turn(text: str) -> object:
+def _end_tool_turn(tool_name: str, text: str) -> object:
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
     return ActionEvent(
         source="agent",
-        tool_name="finish",
+        tool_name=tool_name,
         thought=[TextContent(text=text)],
-        tool_call_id="tc-finish",
+        tool_call_id=f"tc-{tool_name}",
         tool_call=MessageToolCall(
-            id="tc-finish", name="finish", arguments="{}", origin="completion"
+            id=f"tc-{tool_name}", name=tool_name, arguments="{}", origin="completion"
         ),
         llm_response_id="r1",
     )
+
+
+def _finish_turn(text: str) -> object:
+    return _end_tool_turn("finish", text)
+
+
+def _dispatch_turn(text: str) -> object:
+    return _end_tool_turn("dispatch_next", text)
 
 
 def _install_fake_pipeline(
@@ -203,20 +211,26 @@ def test_run_engine_agent_returns_the_captured_deliverable(monkeypatch, tmp_path
     assert result["state"].agent == "dev"
 
 
-def test_run_engine_agent_keeps_the_legacy_answer_when_it_already_wins(
+def test_run_engine_agent_recovers_a_deliverable_sharing_the_end_tool_turn(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """A run whose only text is the end-tool fallback keeps it (the #555 case)."""
+    """#555/#738: the deliverable shares the ``dispatch_next`` turn, so it is not
+    a ``MessageEvent``; the legacy ``latest_answer.md`` holds the trailing
+    ``finish`` note. The capture recovers the shared-turn deliverable."""
     repo_root = tmp_path / "checkout"
     _write_entry_point(repo_root)
     _install_fake_pipeline(
-        monkeypatch, events=[_finish_turn("deliverable on the tool turn")], latest_answer="deliverable"
+        monkeypatch,
+        events=[_dispatch_turn("Full proposal"), _finish_turn("short note")],
+        latest_answer="short note",
     )
 
     result = run_engine_agent("prompt", repo_root=repo_root)
 
-    assert result["deliverable"] == "deliverable"
-    assert result["answer"] == "deliverable"
+    assert result["deliverable"] == "Full proposal"
+    # ``answer`` stays the legacy value: routing/validation parse the dispatch
+    # sentinel out of it (issue #740 must not reroute a run).
+    assert result["answer"] == "short note"
 
 
 def test_run_engine_agent_propagates_a_run_failure(monkeypatch, tmp_path: Path) -> None:
