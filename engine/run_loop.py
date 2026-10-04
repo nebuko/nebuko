@@ -170,6 +170,33 @@ def _anchor_config_path(env: dict[str, str], repo_root: "Path") -> dict[str, str
     return env
 
 
+def _backfill_workflow_identity(
+    env: dict[str, str], state: WorkflowState | None
+) -> dict[str, str]:
+    """Restore the workflow identity the resolver drops on a bare human mention.
+
+    ``@@agent``/``/workflow`` mentions route through the resolver's human path,
+    which does not carry the active workflow/step/position (those live only in
+    the trigger's state block). ``build_state`` then records a history entry with
+    an empty ``step`` and no ``position`` even though it keeps the top-level leaf
+    via its own fallback (issue #739). Filling the gap from the state the run
+    already resolved keeps the appended entry addressable.
+    """
+    if state is None:
+        return env
+    if not env.get("WORKFLOW_NAME") and state.workflow:
+        env["WORKFLOW_NAME"] = state.workflow
+    if not env.get("WORKFLOW_STEP") and state.step:
+        env["WORKFLOW_STEP"] = state.step
+    if not env.get("WORKFLOW_POSITION") and state.position:
+        ensure_import_path()
+        from config import WorkflowPosition
+
+        position = WorkflowPosition(refs=list(state.position))
+        env["WORKFLOW_POSITION"] = json.dumps(position.to_state_dict())
+    return env
+
+
 # @stub-protected
 @dataclass(frozen=True)
 class Engine:
@@ -193,6 +220,13 @@ class Engine:
     # can never diverge from the config the child actually runs with.
     # Engine-internal, so it is excluded from ``__init__``/equality/repr.
     _run_resolved: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
+    # The previous state the ``agent`` phase seeded for the child (issue #739),
+    # held for ``_agent_env`` to restore the workflow identity the resolver drops
+    # on a bare human mention. ``None`` until ``_seed_previous_state`` has run.
+    # Engine-internal, so it is excluded from ``__init__``/equality/repr.
+    _seeded_prev_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
 
@@ -235,6 +269,13 @@ class Engine:
             # legacy "Add bot marker and workflow state to comment" step
             # prepended the header there, and the run's authoritative state is
             # the agent's own output, which is not known before it runs.
+
+            # Seed the pre-agent hand-off (issue #739). The legacy
+            # ``query_context`` step wrote the resolved state to
+            # ``$RUNNER_TEMP`` before the agent ran; the refactor dropped it,
+            # so on a fresh runner the child starts from scratch and resets
+            # ``history`` to a single entry (issue #726).
+            self._seed_previous_state(history)
 
             self._enter(phases, "prompt")
             prompt = self.build_prompt(resolved, history)
@@ -495,8 +536,43 @@ class Engine:
         environment.
         """
         env = {**self.env, **resolved_env_overlay(self._handoff_config())}
+        env = _backfill_workflow_identity(env, self._seeded_prev_state.get("state"))
         env.update(self._artifacts().child_log_env())
         return _anchor_config_path(env, self.repo_root)
+
+    def _seed_previous_state(
+        self, history: Sequence[CommentEntry]
+    ) -> WorkflowState | None:
+        """Persist the previous state for the agent child (issues #671/#726/#739).
+
+        The child carries ``version`` and ``history`` forward by reading
+        ``$RUNNER_TEMP/prev_workflow_state.json``; the pre-refactor
+        ``query_context`` step wrote it before the agent ran. The engine's own
+        write happens *after* the agent, so without this seeding the child sees a
+        stale file from a previous job (persistent runner) or nothing at all
+        (fresh runner), and ``build_state`` resets ``history`` to a single entry
+        (issue #726). The state is re-extracted from the history the run already
+        loaded, so no extra API call is made.
+        """
+        state = self._state_from_history(history)
+        self._seeded_prev_state["state"] = state
+        if state is not None:
+            self.adapter.save_state(state)
+        return state
+
+    @staticmethod
+    def _state_from_history(
+        history: Sequence[CommentEntry],
+    ) -> WorkflowState | None:
+        """Extract the latest posted state from ``history`` (``None`` on miss)."""
+        ensure_import_path()
+        from resolve_config.features.fetch_state.fetch_state import extract_state
+
+        try:
+            return extract_state(history)
+        except Exception:  # noqa: BLE001 - a corrupt comment must not abort the run
+            log.warning("[phase:prompt] could not extract the previous state")
+            return None
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""

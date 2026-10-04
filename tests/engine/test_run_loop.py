@@ -17,7 +17,13 @@ from adapters.local import LocalAdapter
 from config import AgentStartNotice
 from engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
 from engine.paths import repo_root
-from engine.run_loop import PHASES, Engine, main, resolved_env_overlay
+from engine.run_loop import (
+    PHASES,
+    Engine,
+    _backfill_workflow_identity,
+    main,
+    resolved_env_overlay,
+)
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
 WORKFLOW_STATE_MARKER = "<!-- WORKFLOW_STATE_START -->"
@@ -334,6 +340,123 @@ class TestStatePhase:
         assert not (tmp_path / "runs" / "run-1" / "state.json").exists()
 
 
+class TestPreviousStateHandoff:
+    """The engine seeds the pre-agent state hand-off the refactor dropped.
+
+    The legacy ``query_context`` step wrote the resolved state to
+    ``$RUNNER_TEMP/prev_workflow_state.json`` before the agent ran. Without it
+    the child starts from an empty state and resets ``history`` to a single
+    entry (issues #726/#739).
+    """
+
+    @staticmethod
+    def _posted_state(*, history_len: int = 2):
+        """A posted bot comment carrying a state block with ``history_len`` entries."""
+        from config import StepRef
+        from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+        from workflow_state.workflow_state import (
+            STATE_MARKER_END,
+            STATE_MARKER_START,
+            WorkflowState,
+        )
+
+        entries = [
+            HistoryEntry(step=f"step_{index}", agent="genius", summary=f"s{index}")
+            for index in range(history_len)
+        ]
+        state = WorkflowState(
+            version=3,
+            workflow="spec-driven-impl",
+            step="plan",
+            agent="genius",
+            position=[StepRef(workflow="spec-driven-impl", step="plan")],
+            history=entries,
+        )
+        body = (
+            "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n"
+            f"{STATE_MARKER_START}\n{state.model_dump_json()}\n{STATE_MARKER_END}"
+        )
+        return state, body
+
+    def test_seeds_the_child_handoff_with_the_latest_posted_state(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        _, body = self._posted_state(history_len=2)
+        engine.adapter.post(body)
+        seen: dict = {}
+
+        def invoke(self, prompt):
+            seen["state"] = self.adapter.load_state()
+            return _agent_result("done")
+
+        monkeypatch.setattr(Engine, "invoke_agent", invoke)
+
+        engine.run()
+
+        assert seen["state"] is not None
+        assert len(seen["state"].history) == 2
+        assert (seen["state"].workflow, seen["state"].step) == (
+            "spec-driven-impl",
+            "plan",
+        )
+
+    def test_writes_no_handoff_when_the_thread_has_no_state(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        seen: dict = {}
+
+        def invoke(self, prompt):
+            seen["state"] = self.adapter.load_state()
+            return _agent_result("done")
+
+        monkeypatch.setattr(Engine, "invoke_agent", invoke)
+
+        engine.run()
+
+        assert seen["state"] is None
+
+
+class TestWorkflowIdentityBackfill:
+    """A bare human mention loses the workflow position in the resolver.
+
+    ``build_state`` then appends a history entry with an empty ``step`` and no
+    ``position`` (issue #739). The engine restores it from the state the run
+    already resolved so the entry stays addressable.
+    """
+
+    @staticmethod
+    def _state():
+        from config import StepRef
+        from workflow_state.workflow_state import WorkflowState
+
+        return WorkflowState(
+            version=3,
+            workflow="spec-driven-impl",
+            step="plan",
+            agent="genius",
+            position=[StepRef(workflow="spec-driven-impl", step="plan")],
+        )
+
+    def test_fills_missing_identity_from_the_previous_state(self):
+        env = _backfill_workflow_identity({}, self._state())
+
+        assert env["WORKFLOW_NAME"] == "spec-driven-impl"
+        assert env["WORKFLOW_STEP"] == "plan"
+        assert json.loads(env["WORKFLOW_POSITION"])["refs"] == [
+            {"workflow": "spec-driven-impl", "step": "plan"}
+        ]
+
+    def test_keeps_the_resolvers_own_identity(self):
+        env = _backfill_workflow_identity(
+            {"WORKFLOW_NAME": "dev-review-loop", "WORKFLOW_STEP": "implement"},
+            self._state(),
+        )
+
+        assert env["WORKFLOW_NAME"] == "dev-review-loop"
+        assert env["WORKFLOW_STEP"] == "implement"
+
+    def test_is_a_no_op_without_a_previous_state(self):
+        assert _backfill_workflow_identity({"A": "b"}, None) == {"A": "b"}
+
+
 class TestAgentEnvHandoff:
     """The engine hands the legacy child the resolution the bash job exported.
 
@@ -395,6 +518,24 @@ class TestAgentEnvHandoff:
         assert engine._agent_env()["ROLE_NAME"] == "dev"
         assert engine._role_of({}) == "dev"
         assert calls == [1]
+
+    def test_backfills_the_workflow_identity_dropped_by_a_bare_mention(self, tmp_path, monkeypatch):
+        """The child rebuilds the position from the seeded state (issue #739)."""
+        engine = _engine(tmp_path)
+        _, body = TestPreviousStateHandoff._posted_state(history_len=1)
+        engine.adapter.post(body)
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "genius", "TASK": "genius"})
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        engine.run()
+
+        env = engine._agent_env()
+        assert env["WORKFLOW_NAME"] == "spec-driven-impl"
+        assert env["WORKFLOW_STEP"] == "plan"
+        assert json.loads(env["WORKFLOW_POSITION"])["refs"][-1] == {
+            "workflow": "spec-driven-impl",
+            "step": "plan",
+        }
 
     def test_anchors_a_relative_config_path_to_the_checkout(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": "agent-config.yaml"})
