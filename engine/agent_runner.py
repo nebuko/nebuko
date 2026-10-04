@@ -7,10 +7,11 @@ normalize its output artefacts into the mapping the driver's
 
 Two seams exist:
 
-* :func:`run_engine_agent` runs that assembly **in-process** so the engine can
-  observe the conversation's ordered turn stream and capture the agent's real
-  deliverable before the terminal control turns clobber it (issue #740,
-  Option B). It is the preferred seam.
+* :func:`run_engine_agent` hosts that assembly **in-process** (via
+  :class:`~engine.agent_host.InProcessAgentHost`) so the engine can observe the
+  conversation's ordered turn stream and capture the agent's real deliverable
+  before the terminal control turns clobber it (issue #740, Option B). It is the
+  preferred seam.
 * :func:`run_legacy_agent` keeps the original subprocess boundary as a fallback
   for a host where the in-process assembly cannot start.
 
@@ -21,8 +22,6 @@ platform-free: swapping the adapter never touches the agent runtime, and hosts
 
 from __future__ import annotations
 
-import contextlib
-import io
 import logging
 import os
 import subprocess
@@ -30,16 +29,13 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterator, Mapping
+from typing import Any, Mapping
 
-from engine.answer_capture import AnswerCapture
 from engine.paths import ensure_import_path
 
 __all__ = ["EngineAgentUnavailable", "run_engine_agent", "run_legacy_agent"]
 
 log = logging.getLogger(__name__)
-
-_MISSING = object()
 
 _AGENT_SCRIPT = Path(".github") / "scripts" / "agent_script" / "agent_script.py"
 _LATEST_ANSWER_FILE = "latest_answer.md"
@@ -112,40 +108,25 @@ def run_engine_agent(
 ) -> dict[str, Any]:
     """Run the agent assembly in-process and capture the real deliverable.
 
-    Hosting the conversation lets the engine observe the ordered event stream
-    and freeze the agent's substantive answer at the first end-tool boundary
-    (issue #740): :class:`~engine.answer_capture.AnswerCapture` supersedes the
-    legacy latest-wins ``latest_answer.md``, whose terminal control turn would
-    otherwise clobber the deliverable.
+    The in-process hosting lives in
+    :class:`~engine.agent_host.InProcessAgentHost`; the driver keeps this seam so
+    routing/validation (which read the dispatch sentinel out of the legacy
+    ``answer``) are unchanged while the posted body prefers the captured
+    ``deliverable`` (issue #740).
 
     Args:
         prompt: The assembled agent prompt.
         repo_root: Checkout holding ``.github/scripts/agent_script``.
         env: Extra environment for the run (LLM config, role, ...).
 
-    Returns:
-        The mapping :func:`run_legacy_agent` returns, plus a ``deliverable``
-        key holding the captured answer. ``answer`` keeps its legacy value so
-        routing/validation (which read the dispatch sentinel out of it) are
-        unchanged; only the posted body prefers ``deliverable``.
-
     Raises:
         EngineAgentUnavailable: Setup failed before the run began.
     """
-    script = Path(repo_root) / _AGENT_SCRIPT
-    if not script.is_file():
-        raise EngineAgentUnavailable(f"legacy agent entry point not found: {script}")
+    from engine.agent_host import InProcessAgentHost
 
-    ensure_import_path()
-    pipeline = _load_pipeline()
-
-    with tempfile.TemporaryDirectory(prefix="gfa-agent-") as workdir:
-        work = Path(workdir)
-        with _applied_env(_child_env(script, env)), contextlib.chdir(workdir):
-            with _capture_console() as console:
-                conversation = _run_pipeline(pipeline, prompt)
-                console_log = console.getvalue()
-        return _capture_artifacts(work, conversation, console_log)
+    return InProcessAgentHost(
+        repo_root=repo_root, load_pipeline=_load_pipeline, env=env
+    ).run(prompt)
 
 
 def _load_pipeline() -> SimpleNamespace:
@@ -169,82 +150,6 @@ def _load_pipeline() -> SimpleNamespace:
         resolve_llm_config=resolve_llm_config,
         run_agent=run_agent,
     )
-
-
-def _run_pipeline(pipeline: SimpleNamespace, prompt: str) -> Any:
-    """Drive the legacy steps (resolve -> run -> metrics -> build) in-process."""
-    args = SimpleNamespace(prompt_location=None)
-    llm_config, resolved_prompt, agent_cfg = pipeline.resolve_llm_config(args, prompt)
-    conversation = pipeline.run_agent(
-        llm_config, resolved_prompt, args, agent_cfg=agent_cfg
-    )
-    metrics = pipeline.collect_and_save_metrics(conversation, agent_cfg)
-    pipeline.build_output(
-        conversation, metrics, args, prev_state=pipeline.load_prev_state_or_recover()
-    )
-    return conversation
-
-
-def _capture_artifacts(
-    work: Path, conversation: Any, console_log: str
-) -> dict[str, Any]:
-    """Read the run artefacts back, adding the captured deliverable.
-
-    ``answer`` stays the legacy ``latest_answer.md`` value: routing and
-    validation read the ``AGENT_RUN_CONFIG`` sentinel out of it, and a captured
-    deliverable may legitimately carry that sentinel on a different turn. The
-    posted body is the new ``deliverable`` key (issue #740).
-    """
-    capture = AnswerCapture()
-    for event in getattr(getattr(conversation, "state", None), "events", None) or []:
-        capture.on_event(event)
-
-    raw_answer = _read_text(work / _LATEST_ANSWER_FILE)
-    deliverable = capture.deliverable(raw_answer)
-    snapshot = capture.snapshot
-    if deliverable != raw_answer:
-        log.info(
-            "[phase:agent] captured deliverable at the %s boundary (%d chars, "
-            "latest_answer.md was %d)",
-            snapshot.end_tool if snapshot else "none",
-            len(deliverable),
-            len(raw_answer),
-        )
-    return {
-        "answer": raw_answer,
-        "deliverable": deliverable,
-        "final_message": _read_text(work / _FINAL_MESSAGE_FILE),
-        "state": _load_state(work / _STATE_FILE),
-        "console_log": console_log or _read_text(work / _CONSOLE_LOG_FILE),
-    }
-
-
-@contextlib.contextmanager
-def _capture_console() -> Iterator[io.StringIO]:
-    """Capture in-process stdout/stderr, mirroring the legacy child's tee."""
-    buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
-        yield buffer
-
-
-@contextlib.contextmanager
-def _applied_env(overlay: Mapping[str, str]) -> Iterator[None]:
-    """Install ``overlay`` into ``os.environ`` for the duration of the block.
-
-    The in-process assembly reads configuration from ``os.environ`` (there is
-    no child process to hand an env mapping to), so the run's env is applied
-    around it and the previous values restored afterwards.
-    """
-    saved = {key: os.environ.get(key, _MISSING) for key in overlay}
-    os.environ.update(overlay)
-    try:
-        yield
-    finally:
-        for key, previous in saved.items():
-            if previous is _MISSING:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = previous  # type: ignore[assignment]
 
 
 def _read_text(path: Path) -> str:
