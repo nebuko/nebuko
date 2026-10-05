@@ -322,6 +322,29 @@ class TestStagePrevState:
         assert engine.stage_prev_state() is None
         assert WorkflowStateCodec().load_prev().status == "absent"
 
+    def test_removes_a_stale_handoff_without_a_previous_state(self, tmp_path, monkeypatch):
+        """A stale file from a previous job must not survive a fresh start.
+
+        ``$RUNNER_TEMP`` is emptied per job only on ephemeral runners; on a
+        reused runner the previous job's ``prev_workflow_state.json`` would
+        otherwise be adopted, so ``stage_prev_state`` deletes it (issue #739).
+        """
+        from engine.paths import repo_root
+        from engine.run_loop import Engine
+        from workflow_state.state_codec import WorkflowStateCodec
+
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+        previous, _ = _state_comment(history_len=2)
+        WorkflowStateCodec().save_prev(previous)
+        assert WorkflowStateCodec().load_prev().status == "ok"
+        adapter = _adapter(tmp_path, FakeGhClient())
+        engine = Engine(adapter=adapter, repo_root=repo_root(), env={})
+
+        assert engine.stage_prev_state() is None
+
+        assert not (tmp_path / "prev_workflow_state.json").exists()
+        assert WorkflowStateCodec().load_prev().status == "absent"
+
 
 class TestHistoryIncrementRegression:
     """The seeded hand-off makes the child's history increment (issues #726/#739).

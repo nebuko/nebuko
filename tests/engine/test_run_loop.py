@@ -462,6 +462,28 @@ class TestChildIdentityEnv:
 
         assert (env["REPO_NAME"], env["TARGET_NUMBER"]) == ("other/repo", "1")
 
+    def test_empty_values_are_filled_not_left(self):
+        """An empty ``REPO_NAME``/``TARGET_NUMBER`` is absent, not a value.
+
+        ``$GITHUB_ENV`` interpolation can write an empty string; ``setdefault``
+        would keep it and the child's comment recovery would silently return
+        nothing (issue #739).
+        """
+        trigger = Trigger(
+            author="olivier-norture",
+            body="@@dev fix it",
+            type="issue_comment",
+            number=590,
+            payload={"repository": {"full_name": "olivier-norture/git-flow-ai"}},
+        )
+
+        env = _ensure_child_identity({"REPO_NAME": "", "TARGET_NUMBER": ""}, trigger)
+
+        assert (env["REPO_NAME"], env["TARGET_NUMBER"]) == (
+            "olivier-norture/git-flow-ai",
+            "590",
+        )
+
     def test_a_missing_repo_is_fatal(self):
         with pytest.raises(ValueError, match="no repository"):
             _ensure_child_identity({"TARGET_NUMBER": "590"}, _trigger())

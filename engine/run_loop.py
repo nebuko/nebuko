@@ -204,9 +204,11 @@ def _ensure_child_identity(
 
     When the ``$RUNNER_TEMP`` hand-off is absent, the legacy child recovers the
     previous state from the issue comments, and that fallback needs both
-    variables in its environment (issues #671/#739). An existing value wins — the
+    variables in its environment (issues #671/#739). A non-empty value wins — the
     ``run-task`` job exports both through ``$GITHUB_ENV`` — and the trigger is
     the fallback so the child still recovers on a host that does not export them.
+    An empty value (for example an unset ``GITHUB_REPOSITORY`` interpolated to
+    ``""``) is treated as absent and filled, never left as written.
 
     An undeterminable identity is fatal rather than defaulted to an empty string:
     the child's comment-based recovery silently returns nothing on a missing
@@ -221,7 +223,8 @@ def _ensure_child_identity(
             "no repository for the agent child's state recovery: set REPO_NAME or "
             "GITHUB_REPOSITORY, or carry it in the trigger payload"
         )
-    env.setdefault("REPO_NAME", str(repo))
+    if not env.get("REPO_NAME"):
+        env["REPO_NAME"] = str(repo)
 
     number = env.get("TARGET_NUMBER") or (
         str(trigger.number) if trigger is not None and trigger.number else ""
@@ -231,8 +234,28 @@ def _ensure_child_identity(
             "no issue number for the agent child's state recovery: set "
             "TARGET_NUMBER, or carry the number on the trigger"
         )
-    env.setdefault("TARGET_NUMBER", number)
+    if not env.get("TARGET_NUMBER"):
+        env["TARGET_NUMBER"] = number
     return env
+
+
+def _clear_prev_state_handoff() -> None:
+    """Remove the pre-agent hand-off the child would otherwise read.
+
+    The legacy ``query_context`` step deleted ``$RUNNER_TEMP/
+    prev_workflow_state.json`` when the thread carried no state, so a run never
+    adopted a previous job's file. An ephemeral runner gets an empty
+    ``RUNNER_TEMP``, but a self-hosted or reused runner keeps the file, so the
+    engine must delete it explicitly (issue #739).
+    """
+    ensure_import_path()
+    from workflow_state.state_codec import HANDOFF_FILENAME
+
+    path = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), HANDOFF_FILENAME)
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 
 
 # @stub-protected
@@ -608,13 +631,16 @@ class Engine:
         stale file from a previous job (persistent runner) or nothing at all
         (fresh runner), and ``build_state`` resets ``history`` to a single entry
         (issue #726). The state comes from the adapter's own persistence — the
-        latest posted state on GitHub, the run store locally — and a genuine
-        fresh start (no previous state) writes nothing.
+        latest posted state on GitHub, the run store locally. A genuine fresh
+        start (no previous state) removes any stale hand-off so the child cannot
+        adopt it (issue #739).
         """
         state = self._previous_state()
         self._seeded_prev_state["state"] = state
         if state is not None:
             self.adapter.save_state(state)
+        else:
+            _clear_prev_state_handoff()
         return state
 
     def _artifacts(self) -> RunArtifactStager:
