@@ -1,0 +1,14 @@
+name: l3-duplicate-ids
+description: "L3: two steps share the name 'dup'"
+trigger:
+  agents: [genius]
+steps:
+  - name: dup
+    agent: genius
+    next: done
+  - name: done
+    agent: dev
+    next: null
+  - name: dup
+    agent: review
+    next: null
