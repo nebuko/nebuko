@@ -7,11 +7,13 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
+from config import BrandIdentity  # noqa: E402
 from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
     ACTIONS,
     COMMAND_REGISTRY,
     FLAGS_BY_ACTION,
     RESOURCE_BY_ACTION,
+    CommandGrammar,
     CommentIntent,
     WorkflowCommand,
     classify_comment,
@@ -292,3 +294,58 @@ class TestClassifyComment:
         )
         with pytest.raises(FrozenInstanceError):
             intent.kind = "none"  # type: ignore[misc]
+
+
+class TestCommandGrammar:
+    """The command prefix is owned by CommandGrammar, sourced from brand (issue #749)."""
+
+    def test_brand_command_name_defaults_to_nebuko(self):
+        assert BrandIdentity().command_name == "nebuko"
+
+    def test_frozen(self):
+        grammar = CommandGrammar(primary="nebuko")
+        with pytest.raises(FrozenInstanceError):
+            grammar.primary = "workflow"  # type: ignore[misc]
+
+    def test_pattern_matches_brand_prefix(self):
+        grammar = CommandGrammar(primary=BrandIdentity().command_name)
+        match = grammar.pattern().match("/nebuko run workflow --name spec-driven-impl")
+        assert match is not None
+        assert match.group(1) == "run workflow --name spec-driven-impl"
+
+    def test_pattern_rejects_near_prefix(self):
+        pattern = CommandGrammar(primary="nebuko").pattern()
+        assert pattern.match("/nebukox run workflow") is None
+
+    def test_pattern_rejects_legacy_prefix(self):
+        pattern = CommandGrammar(primary="nebuko").pattern()
+        assert pattern.match("/workflow run workflow") is None
+
+
+class TestNebukoPrefix:
+    """The parser recognises /nebuko and drops the legacy /workflow prefix (issue #749)."""
+
+    def test_nebuko_run_parses(self):
+        cmd = parse_workflow_command("/nebuko run workflow --name spec-driven-impl")
+        assert cmd == WorkflowCommand(
+            action="run", resource="workflow", params={"name": "spec-driven-impl"}
+        )
+
+    def test_nebuko_bare_resume_parses(self):
+        cmd = parse_workflow_command("/nebuko resume")
+        assert cmd == WorkflowCommand(action="resume", resource=None, params={})
+
+    def test_legacy_workflow_prefix_is_no_longer_a_command(self):
+        cmd = parse_workflow_command("/workflow run workflow --name spec-driven-impl")
+        assert cmd is None
+
+    def test_near_prefix_is_not_a_command(self):
+        assert parse_workflow_command("/nebukox run workflow --name x") is None
+
+    def test_classify_nebuko_clean_is_command(self):
+        intent = classify_comment("/nebuko clean comments")
+        assert intent.kind == "command"
+        assert intent.command == "clean"
+
+    def test_classify_legacy_workflow_clean_is_not_command(self):
+        assert classify_comment("/workflow clean comments").kind == "none"

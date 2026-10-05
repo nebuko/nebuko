@@ -28,6 +28,7 @@ from typing import Dict, List, Literal, Optional, Set, Tuple
 
 __all__ = [
     "WorkflowCommand",
+    "CommandGrammar",
     "parse_workflow_command",
     "ACTIONS",
     "RESOURCE_BY_ACTION",
@@ -106,6 +107,24 @@ _NUMERIC_FLAGS_BY_ACTION: Dict[str, Set[str]] = {
 #: a malformed ``/workflow clean`` prefix would over-match and be treated as a
 #: recognized command.
 _GRAMMAR_ALIASES: Dict[str, str] = {"clean": "delete"}
+
+# @stub-protected: signature defined by architect — do not modify
+@dataclass(frozen=True)
+class CommandGrammar:
+    """Single source of truth for the slash-command prefix (issue #749).
+
+    Owns the prefix that opens a command line and builds the anchor regex that
+    :func:`parse_workflow_command` matches against. ``primary`` is sourced from
+    ``BrandIdentity.command_name`` so the command name is defined exactly once.
+    """
+
+    primary: str  # @stub-protected
+
+    # @stub-protected: signature defined by architect — do not modify
+    def pattern(self) -> re.Pattern[str]:
+        """Anchor regex matching ``/{primary} <rest>`` at the start of a line."""
+        raise NotImplementedError
+
 
 _WORKFLOW_CMD_RE = re.compile(r"^/workflow\s+(.*)$")
 
