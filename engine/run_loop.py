@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
@@ -975,6 +976,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Select the adapter, run once, map ``RunOutcome.exit_code`` to the process code."""
     import argparse
 
+    raw_args = list(argv) if argv is not None else sys.argv[1:]
+    if raw_args and raw_args[0] == "lint":
+        from engine.lint_cli import main as lint_main
+
+        return lint_main(raw_args[1:])
+
     from adapters import build_adapter
     from engine.paths import repo_root
 
@@ -986,7 +993,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--run-dir", default=os.environ.get("ENGINE_RUN_DIR"))
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(raw_args)
 
     logging.basicConfig(level=logging.INFO)
     kwargs: dict[str, Any] = {}
