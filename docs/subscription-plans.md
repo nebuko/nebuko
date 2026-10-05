@@ -65,7 +65,7 @@ it to the reusable workflow:
 ```yaml
 jobs:
   agent:
-    uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+    uses: olivier-norture/git-flow-ai/.github/workflows/nebuko-workflow.yaml@main
     with:
       agent_config_path: "agent-config-commandcode.yaml"
     secrets:
@@ -75,7 +75,7 @@ jobs:
 
 `COMMANDCODE_API_KEY` is an optional secret of the reusable workflow (like
 `OPENROUTER_API_KEY`) — declared in
-[`openhands-multi-agent.yml`](../.github/workflows/openhands-multi-agent.yml)
+[`nebuko-workflow.yaml`](../.github/workflows/nebuko-workflow.yaml)
 and forwarded to the run as an environment variable, which is exactly what
 `api_token_env` resolves.
 

@@ -1,7 +1,7 @@
-# Default Workflow — `openhands-multi-agent.yml`
+# Default Workflow — `nebuko-workflow.yaml`
 
 > **Purpose:** Technical reference for AI agents to understand the current behavior before refactoring.  
-> **File:** `.github/workflows/openhands-multi-agent.yml` (~964 lines)  
+> **File:** `.github/workflows/nebuko-workflow.yaml` (~303 lines)  
 > **Role:** Central orchestrator — routes GitHub events to the appropriate AI agent based on mention patterns and configuration.
 
 ---

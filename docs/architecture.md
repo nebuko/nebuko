@@ -27,7 +27,7 @@ state store.
 └────────────┘   └──────────────────────────────────────────────────────────────────────┘   └──────────────┘
 ```
 
-The orchestrator is `.github/workflows/openhands-multi-agent.yml` — a reusable
+The orchestrator is `.github/workflows/nebuko-workflow.yaml` — a reusable
 workflow (consumer file: [`workflow.yaml`](../workflow.yaml)) with three jobs:
 `run-task` (the agent pipeline, ~24 steps), `summarize-metrics` (runs on issue
 close), and `subtask-completion-notifier` (notifies a parent issue when a
