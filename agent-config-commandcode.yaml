@@ -15,6 +15,11 @@ llms:
   glm-5_3-flash:
     model_path: "openai/z-ai/glm-5.3-flash"
     provider: "${providers.commandcode}"
+  glm-5_3:
+    model_path: "openrouter/@preset/glm-5-3"
+    provider: "${providers.openrouter}"
+    thinking_enabled: true
+    preserve_thinking: true
   claude-sonnet-5:
     model_path: "openrouter/anthropic/claude-sonnet-5.5"
     provider: "${providers.openrouter}"
@@ -24,11 +29,14 @@ llms:
 #        think, finish (built-in defaults)
 agents:
   genius:
-    model: "${llms.claude-sonnet-5}"
+    model: "${llms.glm-5_3}"
     temperature: 0.4
     prompt_file: ".agents/prompts/genius.md"
     skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
+    complexity_overrides:
+      - high:
+        model: ${llms.claude-sonnet-5}
 
   dev:
     model: "${llms.deepseek-v4_1-flash}"
