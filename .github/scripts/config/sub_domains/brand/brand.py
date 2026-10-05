@@ -9,3 +9,5 @@ class BrandIdentity(BaseModel):
     app_name: str = "Nebuko"
     site_url: HttpUrl = "https://github.com/nebuko/nebuko"
     app_url: HttpUrl = "https://github.com/nebuko/nebuko"
+    # Single source of truth for the slash-command prefix (issue #749).
+    command_name: str = "nebuko"

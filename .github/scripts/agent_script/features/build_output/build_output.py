@@ -313,7 +313,7 @@ def apply_human_gate_intercept(
     A step marked ``human_gate: true`` in the workflow YAML may never advance
     on its own: an ``advance`` dispatch (or missing dispatch, which resolves
     to advance downstream) is overridden to ``hold`` unless the run was
-    triggered by a human ``/workflow resume`` (``is_human_resume``). Loop,
+    triggered by a human ``/nebuko resume`` (``is_human_resume``). Loop,
     hold, and terminate outcomes are never intercepted. A ``soft_kill``
     dispatch (issue #704) is treated like ``advance``: on a gated step the
     gate wins and the run holds for a human instead of auto-retrying.
@@ -322,7 +322,7 @@ def apply_human_gate_intercept(
         dispatch: Dispatch extracted from the agent output (may be None).
         workflow_name: Active workflow name (WORKFLOW_NAME env).
         workflow_step: Step just executed (WORKFLOW_STEP env).
-        is_human_resume: True when the run was triggered by /workflow resume.
+        is_human_resume: True when the run was triggered by /nebuko resume.
 
     Returns:
         The (possibly overridden) Dispatch.

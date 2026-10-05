@@ -192,7 +192,7 @@ def _backfill_workflow_identity(
 ) -> dict[str, str]:
     """Restore the workflow identity the resolver drops on a bare human mention.
 
-    ``@@agent``/``/workflow`` mentions route through the resolver's human path,
+    ``@@agent``/``/nebuko`` mentions route through the resolver's human path,
     which does not carry the active workflow/step/position (those live only in
     the trigger's state block). ``build_state`` then records a history entry with
     an empty ``step`` and no ``position`` even though it keeps the top-level leaf

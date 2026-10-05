@@ -19,7 +19,7 @@ class TriggerCommands:
     Attributes:
         is_bot: True if the trigger body looks like a bot comment.
         mention_agent: Last @@mention agent name, or None.
-        workflow_command: Parsed /workflow <action> <resource> --flag value
+        workflow_command: Parsed /nebuko <action> <resource> --flag value
             command, or None when the first line does not parse as one.
         debug: True if DEBUG=true was found in the body.
     """

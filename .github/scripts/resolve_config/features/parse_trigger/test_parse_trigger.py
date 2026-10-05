@@ -181,19 +181,19 @@ class TestNormalizeResumeInput:
 
 class TestExtractDebugFlag:
     def test_debug_true(self):
-        assert extract_debug_flag("/workflow default DEBUG=true") is True
+        assert extract_debug_flag("/nebuko default DEBUG=true") is True
 
     def test_case_insensitive(self):
         assert extract_debug_flag("debug = True") is True
 
     def test_debug_false(self):
-        assert extract_debug_flag("/workflow default DEBUG=false") is False
+        assert extract_debug_flag("/nebuko default DEBUG=false") is False
 
 
 class TestBuildTriggerCommands:
     def test_bundles_all_fields(self):
         body = (
-            "/workflow run workflow --name default\n"
+            "/nebuko run workflow --name default\n"
             "<!-- bot-agent-dev -->\n@@dev fix it\nDEBUG=true"
         )
         tc = build_trigger_commands(body)

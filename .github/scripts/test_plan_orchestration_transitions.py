@@ -1,7 +1,7 @@
 """End-to-end transition spec for the plan-orchestration chain (issue #671).
 
 Reproduces the ``scaffold -> sub_impl/step_1 -> step_2`` hops of issue #648
-that stalled and had to be unstuck with a manual ``/workflow resume``. Every
+that stalled and had to be unstuck with a manual ``/nebuko resume``. Every
 hop must resolve to the runnable leaf on its own, and consecutive hops must
 carry distinct positions so the loop guard can tell them apart (issue #617 /
 #671).

@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - litellm ships with the SDK
     litellm = None
 
 #: Single source of truth for the recovery command (issue #668).
-RESUME_COMMAND = "/workflow resume"  # @stub-protected
+RESUME_COMMAND = "/nebuko resume"  # @stub-protected
 
 #: Raw-text fragments that identify an unreachable endpoint when the typed
 #: exception is hidden behind provider wrapping (litellm / vLLM).

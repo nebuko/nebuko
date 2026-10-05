@@ -42,8 +42,8 @@ from config import is_self_function_call
 def _delete_comments_env(issue_param: Optional[str], issue_number: Optional[int]):
     """Resolve an agent-free comment-removal command to its env contract.
 
-    Serves ``/workflow delete comments`` (issue #644) and its registry alias
-    ``/workflow clean comments`` (issues #674/#679): both run the deterministic
+    Serves ``/nebuko delete comments`` (issue #644) and its registry alias
+    ``/nebuko clean comments`` (issues #674/#679): both run the deterministic
     deletion step and no agent, so this returns the full env dict directly (the
     same shape ``_build_result`` would emit) instead of a config routed through
     the workflow machinery. ``issue_param`` is the optional ``--issue`` value;
@@ -84,14 +84,14 @@ def resolve_config(
     2. Bot detection (if not pre-determined).
     3. If no state in body, fetch from issue comment history.
     4. Route based on what was found (human commands take precedence):
-       - /workflow resume [--feedback <text>] → _resolve_resume_path / next step.
-       - /workflow force-step step --name <step> → _resolve_human_path (regardless of state).
-       - /workflow delete comments [--issue <n>] [--from <id>] (human) →
+       - /nebuko resume [--feedback <text>] → _resolve_resume_path / next step.
+       - /nebuko force-step step --name <step> → _resolve_human_path (regardless of state).
+       - /nebuko delete comments [--issue <n>] [--from <id>] (human) →
          _delete_comments_env (self-contained contract; no agent runs).
-       - /workflow clean comments [--issue <n>] (human) → same agent-free
+       - /nebuko clean comments [--issue <n>] (human) → same agent-free
          comment-maintenance contract, matched via classify_comment
          (issues #674/#679).
-       - /workflow command by human → _resolve_human_path.
+       - /nebuko command by human → _resolve_human_path.
        - Human @@mention, or CI plain-mention trigger (universal bot marker
          + mention-only body, e.g. sub-task completion notification) →
          _resolve_human_path (parity between the two: the mention wins over
@@ -135,7 +135,7 @@ def resolve_config(
     if os.environ.get("DEBUG") or debug:
         print(f"DEBUG prev_state: {prev_state}", file=sys.stderr)
 
-    # /workflow delete comments is a sole deterministic command, outside the
+    # /nebuko delete comments is a sole deterministic command, outside the
     # agent/workflow machinery: resolve it straight to its env contract and
     # return (issue #644). Bot-posted commands are ignored (human-only).
     if wf_cmd is not None and wf_cmd.action == "delete" and not is_bot:
@@ -143,11 +143,11 @@ def resolve_config(
         if delete_env is not None:
             return delete_env
 
-    # /workflow clean comments — registry alias of the agent-free comment
+    # /nebuko clean comments — registry alias of the agent-free comment
     # maintenance path (issues #674/#679). `clean` is a registered local
-    # command but is not part of the core /workflow grammar (ACTIONS), so it is
+    # command but is not part of the core /nebuko grammar (ACTIONS), so it is
     # matched via the comment classifier. This short-circuit must run *before*
-    # the agent-trigger cascade below, otherwise `/workflow clean comments`
+    # the agent-trigger cascade below, otherwise `/nebuko clean comments`
     # falls through and boots ctx/genius (issue #590). Human-only, like delete.
     # Flags are forwarded just as for `delete`, so `--issue <n>` targets that
     # issue rather than silently falling back to the invoking issue.
@@ -190,7 +190,7 @@ def resolve_config(
         and prev_state.dispatch
         and prev_state.dispatch.status in ("hold", "soft_kill")
     ):
-        # /workflow resume — re-run the held step with human input. A
+        # /nebuko resume — re-run the held step with human input. A
         # soft-kill exhaustion halt (issue #704) is resumable exactly like a
         # human-gate hold: the explicit human resume overrides the pending
         # soft_kill status and re-runs the interrupted step.
@@ -205,7 +205,7 @@ def resolve_config(
         and prev_state.workflow
         and prev_state.dispatch is None
     ):
-        # /workflow resume with no dispatch — advance to next step, carrying
+        # /nebuko resume with no dispatch — advance to next step, carrying
         # human input forward (issue #420: resolution-only state). A bare
         # resume maps to the BARE_RESUME_INPUT sentinel so the human_gate
         # interceptor (issue #506) treats this run as human-triggered.
@@ -213,7 +213,7 @@ def resolve_config(
         config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir)
         config["config_human_resume_input"] = human_input
     elif wf_cmd is not None and wf_cmd.action == "force-step":
-        # Human explicit step jump (/workflow force-step step --name <step>) —
+        # Human explicit step jump (/nebuko force-step step --name <step>) —
         # takes priority over auto-dispatch. Must go through _resolve_human_path
         # for validation/error handling. prompt_base lets the force-step branch
         # resolve sub-workflow targets (issue #599).
@@ -223,7 +223,7 @@ def resolve_config(
             workflow_command=wf_cmd,
         )
     elif wf_cmd is not None and wf_cmd.action == "run" and not is_bot:
-        # Human /workflow run workflow --name <name> override — use human path
+        # Human /nebuko run workflow --name <name> override — use human path
         # to honor the command.
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir, prev_state,

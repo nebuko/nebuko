@@ -21,7 +21,7 @@ ISSUE_COMMENT_PAYLOAD = {
     "action": "created",
     "comment": {
         "id": 5927119915,
-        "body": "/workflow run workflow --name spec-driven-impl",
+        "body": "/nebuko run workflow --name spec-driven-impl",
         "created_at": "2026-10-01T07:47:47Z",
         "user": {"login": "olivier-norture"},
     },
@@ -75,7 +75,7 @@ class TestReadTrigger:
         assert isinstance(trigger, Trigger)
         assert (trigger.author, trigger.body, trigger.type, trigger.number) == (
             "olivier-norture",
-            "/workflow run workflow --name spec-driven-impl",
+            "/nebuko run workflow --name spec-driven-impl",
             "issue_comment",
             590,
         )

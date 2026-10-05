@@ -99,7 +99,7 @@ graph-level invariants below are checked offline by
 | `steps[].conditions[].next` | condition | string/null | yes | Target step for that result. |
 | `steps[].skill` | step | string[] | no | Skills attached to the step prompt (files in `skills/`). |
 | `steps[].prompt` | step | string | no | Standing instruction injected into this step's agent context (multi-line YAML blocks supported). See [workflows.md](./workflows.md#step-instructions-prompt). |
-| `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts the agent's `advance` and holds the workflow until a human releases it with `/workflow resume` (see [workflows.md](./workflows.md#human-gates)). |
+| `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts the agent's `advance` and holds the workflow until a human releases it with `/nebuko resume` (see [workflows.md](./workflows.md#human-gates)). |
 
 Minimal valid workflow:
 

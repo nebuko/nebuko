@@ -119,7 +119,7 @@ def build_state(
             that consumes one ``SoftRetryState`` attempt for the step, so a
             human/manual trigger never burns the budget.
         is_human_resume: True when this run was started by an explicit human
-            ``/workflow resume``. An explicit human resume starts a fresh
+            ``/nebuko resume``. An explicit human resume starts a fresh
             per-step budget (``attempts=0``) since the human has taken over.
 
     Returns:

@@ -2,7 +2,7 @@
 
 Value object + parser for the explicit first-line command grammar::
 
-    /workflow <action> [<resource>] [--flag value]*
+    /nebuko <action> [<resource>] [--flag value]*
 
 Canonical actions (issue #635):
   - ``run``        resource ``workflow`` — start/switch a workflow; ``--name`` required
@@ -13,21 +13,24 @@ Canonical actions (issue #635):
   - ``clean``      resource ``comments`` — local maintenance command (issue #679);
                    runs its script and starts no agent
 
-Only the ``/workflow``-prefixed form is recognized as a command; a bare
+Only the ``/nebuko``-prefixed form is recognized as a command; a bare
 ``clean comments`` line is not one (issue #679).
 
 Malformed input (unknown action, wrong/missing resource, unknown or
 duplicate flag, missing required flag) yields ``None`` so routing falls
-through to the normal cascade. Old positional forms (``/workflow default``,
-``/workflow force-next-step <step>``) deliberately do not parse.
+through to the normal cascade. Old positional forms (``/nebuko default``,
+``/nebuko force-next-step <step>``) deliberately do not parse.
 """
 
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional, Set, Tuple
 
+from config import brand
+
 __all__ = [
     "WorkflowCommand",
+    "CommandGrammar",
     "parse_workflow_command",
     "ACTIONS",
     "RESOURCE_BY_ACTION",
@@ -42,7 +45,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class WorkflowCommand:
-    """Immutable parsed /workflow <action> <resource> --flag value command."""
+    """Immutable parsed /nebuko <action> <resource> --flag value command."""
 
     action: str  # "run" | "resume" | "force-step" | "delete" | "clean"
     resource: Optional[str]  # "workflow" | "step" | "comments" | None (resume)
@@ -73,9 +76,9 @@ CommentKind = Literal["command", "agent_trigger", "none"]
 CommandClass = Literal["workflow", "local"]
 
 #: Single source of truth for recognized commands (issue #679). Maps a command
-#: name to its command class. Only the ``/workflow``-prefixed form is
+#: name to its command class. Only the ``/nebuko``-prefixed form is
 #: recognized as a command — the real-world trigger payload is
-#: ``/workflow clean comments`` (issue #590), never a bare ``clean comments``.
+#: ``/nebuko clean comments`` (issue #590), never a bare ``clean comments``.
 #: Any name listed here is a first-class short-circuit: it classifies as a
 #: command and can never fall through to the agent-trigger path. A new command
 #: only needs to be registered here.
@@ -103,11 +106,35 @@ _NUMERIC_FLAGS_BY_ACTION: Dict[str, Set[str]] = {
 #: Registry-local commands that reuse a core action's grammar (issue #679).
 #: ``clean`` is a registry alias of ``delete comments`` — same resource and
 #: flags — so its invocation is validated exactly like ``delete``. Without this
-#: a malformed ``/workflow clean`` prefix would over-match and be treated as a
+#: a malformed ``/nebuko clean`` prefix would over-match and be treated as a
 #: recognized command.
 _GRAMMAR_ALIASES: Dict[str, str] = {"clean": "delete"}
 
-_WORKFLOW_CMD_RE = re.compile(r"^/workflow\s+(.*)$")
+# @stub-protected: signature defined by architect — do not modify
+@dataclass(frozen=True)
+class CommandGrammar:
+    """Single source of truth for the slash-command prefix (issue #749).
+
+    Owns the prefix that opens a command line and builds the anchor regex that
+    :func:`parse_workflow_command` matches against. ``primary`` is sourced from
+    ``BrandIdentity.command_name`` so the command name is defined exactly once.
+    """
+
+    primary: str  # @stub-protected
+
+    # @stub-protected: signature defined by architect — do not modify
+    def pattern(self) -> re.Pattern[str]:
+        """Anchor regex matching ``/{primary} <rest>`` at the start of a line."""
+        return re.compile(rf"^/{self.primary}\s+(.*)$")
+
+
+#: Process-wide grammar and compiled anchor, sourced from the brand
+#: identity so the slash-command prefix is defined exactly once (issue #749).
+#: The GitHub Actions trigger gates cannot import Python and hard-code the
+#: same prefix in the workflow YAML.
+COMMAND_GRAMMAR = CommandGrammar(primary=brand().command_name)
+
+_COMMAND_RE = COMMAND_GRAMMAR.pattern()
 
 
 def _parse_flags(tokens: List[str], action: str) -> Optional[Dict[str, str]]:
@@ -141,12 +168,12 @@ def _parse_flags(tokens: List[str], action: str) -> Optional[Dict[str, str]]:
 
 
 def parse_workflow_command(trigger_body: str) -> Optional[WorkflowCommand]:
-    """First-line /workflow command → WorkflowCommand; None if absent/malformed.
+    """First-line /nebuko command → WorkflowCommand; None if absent/malformed.
 
     # @stub-protected
     """
     first_line = trigger_body.split("\n", 1)[0].strip()
-    match = _WORKFLOW_CMD_RE.match(first_line)
+    match = _COMMAND_RE.match(first_line)
     if not match:
         return None
     tokens = match.group(1).split()
@@ -242,15 +269,15 @@ def classify_comment(body: str) -> CommentIntent:
 
     Delegates to :func:`parse_workflow_command`, so a comment is a ``"command"``
     only when it is a **well-formed** registered command (including
-    ``/workflow clean comments``): malformed invocations — unknown action,
+    ``/nebuko clean comments``): malformed invocations — unknown action,
     wrong/missing resource, unknown flag — parse to ``None`` and fall through to
     ``"none"`` rather than over-matching. A recognized command must
     short-circuit the agent-trigger path. Otherwise a body carrying an explicit
     agent trigger (human ``@@mention`` or CI machine token) is an
     ``"agent_trigger"``; anything else is ``"none"``.
 
-    Only the ``/workflow``-prefixed form is recognized as a command — the
-    real-world trigger payload for issue #679 is ``/workflow clean comments``
+    Only the ``/nebuko``-prefixed form is recognized as a command — the
+    real-world trigger payload for issue #679 is ``/nebuko clean comments``
     (issue #590), not a bare ``clean comments``. Matching is on the command
     form at the start of the (trimmed) first line, never a substring search,
     so prose that merely mentions "clean comments" is not misclassified.
