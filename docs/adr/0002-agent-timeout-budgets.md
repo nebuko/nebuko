@@ -28,7 +28,7 @@ Two relevant facts from the SDK research (openhands-sdk v1.49.4):
 
 Every 30-minute cycle that hits the soft kill is a **forced thinking point**: the agent must pause, checkpoint, and prepare for continuation. The next run resumes from a **fresh session** via the existing recovery-log pipeline (tool-call trace + posted hand-off summary in history), which avoids the "lost in deep exploration" context-bloat failure mode. Worst-case work is never lost: the deterministic `ensure_pr()` fallback guarantees a WIP checkpoint even if the LLM wind-down is uncooperative.
 
-All knobs remain env-overridable (`AGENT_SOFT_TIMEOUT_MINUTES`, `WIND_DOWN_TIMEOUT_MINUTES`); the 20/10 values are set explicitly on the agent step in `.github/workflows/openhands-multi-agent.yml` and are the operating defaults for this repo. The library-level fallback in `timeout_budget.py` stays at 110/8 as a generic safety net for other deployments.
+All knobs remain env-overridable (`AGENT_SOFT_TIMEOUT_MINUTES`, `WIND_DOWN_TIMEOUT_MINUTES`); the 20/10 values are set explicitly on the agent step in `.github/workflows/nebuko-workflow.yaml` and are the operating defaults for this repo. The library-level fallback in `timeout_budget.py` stays at 110/8 as a generic safety net for other deployments.
 
 ## 3. Alternatives considered and rejected
 

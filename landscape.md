@@ -95,7 +95,7 @@ Small is beautiful: an agent facing a huge task can decompose it into **sub-issu
 | Split-task sub-issues (`splitPlan`) | GitHub App installation as primary setup |
 | Complexity-based temperature, model override | Managed workflow marketplace |
 
-The core is open source (AGPL v3), self-hosted, and runnable with your own LLM key. The release philosophy is thin, end-to-end slices, each genuinely working, built in public.
+The core is open source (Apache-2.0), self-hosted, and runnable with your own LLM key (a move to AGPL v3 for the core is under discussion — see issue #475). The release philosophy is thin, end-to-end slices, each genuinely working, built in public.
 
 ---
 

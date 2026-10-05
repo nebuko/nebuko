@@ -52,7 +52,7 @@ Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use y
    ```yaml
    jobs:
      agent:
-       uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+       uses: olivier-norture/git-flow-ai/.github/workflows/nebuko-workflow.yaml@main
        with:
          agent_config_path: "agent-config.yaml"
        secrets:
