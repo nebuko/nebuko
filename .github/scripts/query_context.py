@@ -630,7 +630,7 @@ def main():
         print("Injected recovery log into agent query context", file=sys.stderr)
 
     # Append human resume input if present (workflow was paused, human provided input)
-    # The BARE_RESUME_INPUT sentinel marks a bare /workflow resume (no feedback
+    # The BARE_RESUME_INPUT sentinel marks a bare /nebuko resume (no feedback
     # text); it is an authorization signal for human_gate steps only (issue
     # #506) and must not leak into the prompt as human feedback.
     try:

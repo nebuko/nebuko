@@ -4,7 +4,7 @@ Reproduces Anomaly A of issue #648: entering the branch-mounted child
 ``tmp_impl/workflow.yaml`` resolved a leaf with an EMPTY step name
 (CI log: ``WORKFLOW_NAME='tmp_impl/workflow.yaml'``, ``WORKFLOW_STEP=''``,
 ``WORKFLOW_NEXT=''``), so the ``scaffold -> sub_impl`` hop stalled and needed
-a manual ``/workflow resume``. The descent must always land on the runnable
+a manual ``/nebuko resume``. The descent must always land on the runnable
 terminal leaf and never on the mount node (issue #671).
 """
 

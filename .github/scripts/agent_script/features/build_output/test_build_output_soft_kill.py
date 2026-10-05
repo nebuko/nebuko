@@ -145,7 +145,7 @@ class TestBuildOutputSoftKill(unittest.TestCase):
         self._write_gated_workflow("gated")
         with patch.dict(
             os.environ,
-            {"WORKFLOW_NAME": "gated", "HUMAN_RESUME_INPUT": "/workflow resume"},
+            {"WORKFLOW_NAME": "gated", "HUMAN_RESUME_INPUT": "/nebuko resume"},
             clear=False,
         ):
             state = self._build(_timed_out())["workflow_state"]

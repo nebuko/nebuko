@@ -22,16 +22,16 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 | Command | Effect |
 |---------|--------|
 | `@@<agent>` | Run the named agent directly (`genius`, `ctx`, `dev`, `review`, ...). If the agent matches a workflow's `trigger.agents`, that workflow's first step runs. |
-| `/workflow <name>` | Start (or switch to) the named workflow, regardless of current state. |
-| `/workflow resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. |
-| `/workflow force-next-step <step>` | Jump directly to `<step>` of the active workflow, regardless of state. |
-| `/workflow delete comments [--issue <id>] [--from <comment-id>]` | Human-only batch deletion of issue comments. `--issue <id>` selects the target issue (mandatory on the CLI surface; auto-filled with the invoking issue when the command is posted in that issue). Optional `--from <comment-id>` deletes that comment **and every later one**; omit it to delete **all** comments. Terminal command: it runs the deterministic deletion step and no agent. Requires `GH_PAT` with `issues:write`. |
-| `/workflow clean comments` | Alias of `/workflow delete comments` (issue #679). Terminal; runs the deterministic deletion step and no agent. |
+| `/nebuko <name>` | Start (or switch to) the named workflow, regardless of current state. |
+| `/nebuko resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. |
+| `/nebuko force-next-step <step>` | Jump directly to `<step>` of the active workflow, regardless of state. |
+| `/nebuko delete comments [--issue <id>] [--from <comment-id>]` | Human-only batch deletion of issue comments. `--issue <id>` selects the target issue (mandatory on the CLI surface; auto-filled with the invoking issue when the command is posted in that issue). Optional `--from <comment-id>` deletes that comment **and every later one**; omit it to delete **all** comments. Terminal command: it runs the deterministic deletion step and no agent. Requires `GH_PAT` with `issues:write`. |
+| `/nebuko clean comments` | Alias of `/nebuko delete comments` (issue #679). Terminal; runs the deterministic deletion step and no agent. |
 | `DEBUG=true` | Routes to the debug/recovery path instead of normal routing. |
 
 **Precedence:** human commands always override state-based routing (see the
 cascade in [architecture.md — Routing Cascade](./architecture.md#routing-cascade)):
-`resume` > `force-next-step` > `delete comments` > `/workflow <name>` >
+`resume` > `force-next-step` > `delete comments` > `/nebuko <name>` >
 `@@mention` > dispatch-based routing > next-step > bot fallback. This guarantee
 exists so explicit human intent is never absorbed by an active workflow's
 `dispatch` object. `delete comments` is a **terminal** human command: it runs

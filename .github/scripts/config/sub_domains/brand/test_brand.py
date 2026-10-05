@@ -19,3 +19,7 @@ class TestBrandIdentity:
     def test_brand_accessor_returns_singleton(self):
         assert brand() is BRAND
         assert brand().app_name == "Nebuko"
+
+    def test_command_name_defaults_to_nebuko(self):
+        # Slash-command prefix source of truth (issue #749).
+        assert BrandIdentity().command_name == "nebuko"

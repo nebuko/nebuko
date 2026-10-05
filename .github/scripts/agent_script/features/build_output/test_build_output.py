@@ -349,7 +349,7 @@ class TestHumanGateIntercept(unittest.TestCase):
         self.assertEqual(result.reason, "human_gate:implement")
 
     def test_gate_step_advance_resume_bypasses(self):
-        """A /workflow resume run bypasses the gate and passes advance through."""
+        """A /nebuko resume run bypasses the gate and passes advance through."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -395,7 +395,7 @@ class TestHumanGateIntercept(unittest.TestCase):
         self.assertEqual(result.reason, "human_gate:implement")
 
     def test_gate_step_soft_kill_resume_bypasses(self):
-        """A /workflow resume on a gated step passes its soft_kill retry through."""
+        """A /nebuko resume on a gated step passes its soft_kill retry through."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,

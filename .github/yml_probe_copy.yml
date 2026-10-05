@@ -60,6 +60,9 @@ concurrency:
 jobs:
     run-task:
         runs-on: self-hosted
+        # The '/nebuko' trigger prefix must match BrandIdentity.command_name
+        # (.github/scripts/config/sub_domains/brand/brand.py); GitHub Actions
+        # cannot import Python, so the value is duplicated here (issue #749).
         if: |
           github.event.action != 'closed' &&
           (
@@ -73,7 +76,7 @@ jobs:
               contains(github.event.issue.body, '@@issue-reviewer') ||
               contains(github.event.issue.body, '@@debug') ||
               contains(github.event.issue.body, '@@summarize') ||
-              contains(github.event.issue.body, '/workflow'))) ||
+              contains(github.event.issue.body, '/nebuko'))) ||
             (github.event_name == 'issue_comment' &&
              (contains(github.event.comment.body, '@@genius') ||
               contains(github.event.comment.body, '@@ctx') ||
@@ -83,7 +86,7 @@ jobs:
               contains(github.event.comment.body, '@@issue-reviewer') ||
               contains(github.event.issue.body, '@@debug') ||
               contains(github.event.comment.body, '@@summarize') ||
-              contains(github.event.comment.body, '/workflow')))
+              contains(github.event.comment.body, '/nebuko')))
           )
         env:
             CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 25 }}

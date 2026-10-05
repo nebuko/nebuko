@@ -15,7 +15,7 @@ from agent_script.features.run_agent.run_failure import (
 class TestRunFailureModel(unittest.TestCase):
     def test_resume_command_constant(self):
         # Single source of truth for the recovery command.
-        self.assertEqual(RESUME_COMMAND, "/workflow resume")
+        self.assertEqual(RESUME_COMMAND, "/nebuko resume")
 
     def test_kind_values_are_stable_strings(self):
         self.assertEqual(RunFailureKind.LLM_UNREACHABLE.value, "llm_unreachable")

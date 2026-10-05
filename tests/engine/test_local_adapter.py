@@ -61,7 +61,7 @@ class TestReadTrigger:
         assert adapter.read_trigger() == _trigger()
 
     def test_reads_trigger_json_when_present(self, run_dir):
-        payload = {"author": "olivier-norture", "body": "/workflow run workflow", "type": "issue_comment", "number": 590}
+        payload = {"author": "olivier-norture", "body": "/nebuko run workflow", "type": "issue_comment", "number": 590}
         run_dir.mkdir(parents=True)
         (run_dir / TRIGGER_FILE).write_text(json.dumps(payload))
 

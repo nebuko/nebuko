@@ -163,11 +163,11 @@ When invoked in the `spec_approval` or `stub_approval` step of the spec-driven w
 Steps defined with `human_gate: true` are a **security boundary**, not a routing choice. You do not control it and cannot bypass it:
 
 * When you emit `advance` on a gated step during a normal (automated) run, the engine **intercepts** the dispatch and records `hold`. The workflow stops there; your output stays posted for human review. This is expected behavior — not an error.
-* You will be **re-invoked on the same step** after the human runs `/workflow resume`. Their message arrives in a `## Human Resume Input` section of your context.
+* You will be **re-invoked on the same step** after the human runs `/nebuko resume`. Their message arrives in a `## Human Resume Input` section of your context.
 * On that re-run, act on the human's input:
   - If they **approved** (e.g. "approved", "lgtm"), emit `advance` immediately — no rework needed.
   - If they requested **changes**, make the revisions first, then emit `advance` once satisfied.
-* Emitting `loop` or re-running automatically will eventually re-trigger the gate: only the human's `/workflow resume` can release a gated step.
+* Emitting `loop` or re-running automatically will eventually re-trigger the gate: only the human's `/nebuko resume` can release a gated step.
 
 ## 4.6. Plan Orchestration Mode (Dynamic Plan Workflow)
 

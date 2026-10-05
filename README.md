@@ -64,7 +64,7 @@ Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use y
 
 3. **Add secrets**: `OPENROUTER_API_KEY` (your LLM key) and `GH_PAT` (a PAT with `repo` and `workflow` scopes).
 
-4. **Start using**: comment `/workflow default` on an issue, or mention `@@genius`, `@@ctx`, `@@dev` or `@@review` directly.
+4. **Start using**: comment `/nebuko default` on an issue, or mention `@@genius`, `@@ctx`, `@@dev` or `@@review` directly.
 
 > 💡 **Zero-copy setup**: workflows, prompts and scripts are fetched from the git-flow-ai repo on every run — you only need `agent-config.yaml` locally. Define custom workflows by adding a local `workflows/` directory (local files take precedence).
 

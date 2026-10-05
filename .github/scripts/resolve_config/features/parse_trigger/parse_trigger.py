@@ -204,7 +204,7 @@ def extract_machine_trigger(trigger_body: str) -> Optional[Tuple[str, Optional[s
     return None
 
 
-#: Sentinel value for a bare `/workflow resume` (no feedback text). A bare
+#: Sentinel value for a bare `/nebuko resume` (no feedback text). A bare
 #: resume still carries the authorization signal for human_gate steps
 #: (issue #506) — HUMAN_RESUME_INPUT must be non-empty so the gate
 #: interceptor recognizes the run as human-triggered.
@@ -212,7 +212,7 @@ BARE_RESUME_INPUT = "__resumed__"
 
 
 def normalize_resume_input(resume_text: Optional[str]) -> str:
-    """Map raw /workflow resume text to the HUMAN_RESUME_INPUT value.
+    """Map raw /nebuko resume text to the HUMAN_RESUME_INPUT value.
 
     A bare resume (None or blank text) yields the BARE_RESUME_INPUT sentinel;
     otherwise the stripped human text is returned unchanged.
@@ -234,7 +234,7 @@ def extract_debug_flag(trigger_body: str) -> bool:
     """Extract DEBUG=true flag from trigger body.
 
     Looks for 'DEBUG=true' (case-insensitive) anywhere in the comment body,
-    including as part of /workflow commands like '/workflow default DEBUG=true'.
+    including as part of /nebuko commands like '/nebuko default DEBUG=true'.
 
     Args:
         trigger_body: Raw trigger body text.
