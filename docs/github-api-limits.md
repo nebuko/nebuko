@@ -124,7 +124,7 @@ The table below maps each limit to the code or workflow that consumes it.
 
 | Limit | Affected Component | File / Location | Notes |
 |-------|-------------------|-----------------|-------|
-| 5,000 req/h rate limit | All API calls | `.github/scripts/summarize_metrics.py`, `.github/scripts/agent_script.py`, `.github/workflows/openhands-multi-agent.yml` | Each agent run does several API calls (fetch comments, post comment, update check runs). With 5 agents, a single issue round could consume 5–15 requests. |
+| 5,000 req/h rate limit | All API calls | `.github/scripts/summarize_metrics.py`, `.github/scripts/agent_script.py`, `.github/workflows/nebuko-workflow.yaml` | Each agent run does several API calls (fetch comments, post comment, update check runs). With 5 agents, a single issue round could consume 5–15 requests. |
 | Comment splitting (65,536 chars) | Multi-part message posting | `agent_script.py` (lines 355–403) | Splits at 10,000 chars. Safe. |
 | Max comments per issue (~30,000) | Long-running issues | N/A (structural) | Unlikely to be reached in practice. |
 | Pagination (100 per page) | Fetching comments | `summarize_metrics.py` (lines 29–60) | Correctly uses `per_page=100` with pagination. |

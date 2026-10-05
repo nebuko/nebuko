@@ -86,7 +86,7 @@ Added 2026-09-22 in response to the challenge of this ADR (issue #630), which qu
 
 **Integration risk notes.**
 
-- **Unpinned SDK install.** CI installs `openhands-sdk` and `openhands-tools` from `git+https://github.com/OpenHands/software-agent-sdk.git@main` with no ref pin (`.github/workflows/openhands-multi-agent.yml`, L209–210). Any upstream commit can break the build. Recorded as a known risk tied to the Python-SDK choice; pinning to a fixed commit SHA / version tag is a follow-up action (see §5).
+- **Unpinned SDK install.** CI installs `openhands-sdk` and `openhands-tools` from `git+https://github.com/OpenHands/software-agent-sdk.git@main` with no ref pin (`.github/workflows/nebuko-workflow.yaml`, L168–169). Any upstream commit can break the build. Recorded as a known risk tied to the Python-SDK choice; pinning to a fixed commit SHA / version tag is a follow-up action (see §5).
 - **TS client status.** The OpenHands TypeScript client is explicitly **alpha** ("not stable, API may change significantly without notice"); its standalone `OpenHands/typescript-client` repo was **archived** (2026-08-30) and the client now lives under `clients/typescript` in `software-agent-sdk` with an early-testing disclaimer. This is the basis for rejecting TypeScript *now* — not in principle.
 
 ## 3. Consequences

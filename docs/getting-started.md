@@ -48,7 +48,7 @@ permissions:
 
 jobs:
   agent:
-    uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+    uses: olivier-norture/git-flow-ai/.github/workflows/nebuko-workflow.yaml@main
     with:
       agent_config_path: "agent-config.yaml"
       circuit_breaker_threshold: 15
@@ -182,7 +182,7 @@ Set the `CALLER_AUTH` input to `on` to gate the trigger on the author's
 repository association:
 
 ```yaml
-- uses: olivier-norture/git-flow-ai/.github/workflows/openhands-multi-agent.yml@main
+- uses: olivier-norture/git-flow-ai/.github/workflows/nebuko-workflow.yaml@main
   with:
     CALLER_AUTH: on
 ```
