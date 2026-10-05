@@ -934,6 +934,43 @@ class TestWorkflowStateAnswerComment:
         assert "@@\u200bdev" in answer
 
 
+class TestCapturedDeliverableComment:
+    """The posted comment is the engine-captured deliverable (issue #740).
+
+    A terminal ``finish``/``dispatch_next`` turn carries routing metadata, not
+    the deliverable, so ``publish`` frames the ``deliverable`` key. Routing and
+    validation keep reading the legacy ``answer`` (the dispatch sentinel is
+    parsed from it), so the capture can never reroute a run.
+    """
+
+    _ROUTING_NOTE = "*Dev answer* routing note"
+    _DELIVERABLE = "*Dev answer* the full deliverable"
+
+    def test_posts_the_captured_deliverable(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, env=RUN_ENV)
+        result = {"answer": self._ROUTING_NOTE, "deliverable": self._DELIVERABLE}
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: result)
+
+        outcome = engine.run()
+
+        assert self._DELIVERABLE in outcome.posted_body
+        assert self._ROUTING_NOTE not in outcome.posted_body
+
+    def test_keeps_routing_on_the_legacy_answer(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, env=RUN_ENV)
+        result = {
+            "answer": self._ROUTING_NOTE
+            + '\n<!-- AGENT_RUN_CONFIG {"task": "dev", "dispatch": {"status": "hold"}} -->',
+            "deliverable": self._DELIVERABLE,
+        }
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: result)
+
+        outcome = engine.run()
+
+        assert outcome.routing.status == "hold"
+        assert outcome.exit_code == ExitCode.HOLD
+
+
 class TestEntryPoints:
     def test_main_takes_an_argv_sequence(self):
         assert list(inspect.signature(main).parameters) == ["argv"]
