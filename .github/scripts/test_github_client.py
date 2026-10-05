@@ -82,14 +82,41 @@ class TestGetIssueComments:
             {"id": "1", "body": "Hello", "user": {"login": "user1"}},
             {"id": "2", "body": "World", "user": {"login": "user2"}},
         ]
+        # ``gh api --paginate --slurp`` wraps the page(s) in an outer array.
         mock_run.return_value = MagicMock(
-            returncode=0, stdout=json.dumps(comments)
+            returncode=0, stdout=json.dumps([comments])
         )
 
         result = get_issue_comments("owner/repo", 42)
         assert len(result) == 2
         assert result[0]["body"] == "Hello"
         mock_run.assert_called_once()
+
+    @patch("github_client.subprocess.run")
+    def test_paginates_the_fetch(self, mock_run):
+        """Regression (issue #750): an unpaginated fetch returns only the oldest
+        page, so any ``comments[-N:]`` "last N" slice picks the wrong end."""
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps([[]]))
+
+        result = get_issue_comments("owner/repo", 42)
+
+        assert result == []
+        args = mock_run.call_args[0][0]
+        assert "--paginate" in args
+        assert "--slurp" in args
+
+    @patch("github_client.subprocess.run")
+    def test_flattens_all_pages_preserving_order(self, mock_run):
+        page1 = [{"id": "1", "body": "oldest"}, {"id": "2", "body": "older"}]
+        page2 = [{"id": "3", "body": "newer"}, {"id": "4", "body": "newest"}]
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout=json.dumps([page1, page2])
+        )
+
+        result = get_issue_comments("owner/repo", 42)
+
+        assert [c["id"] for c in result] == ["1", "2", "3", "4"]
+        assert result[-1]["body"] == "newest"
 
     @patch("github_client.subprocess.run")
     def test_handles_api_error(self, mock_run):
