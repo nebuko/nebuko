@@ -72,6 +72,19 @@ def _resolve_token(token: Optional[str]) -> Optional[str]:
     return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
 
 
+def _flatten_pages(parsed):
+    """Flatten the outer page array produced by ``gh api --paginate --slurp``.
+
+    ``--slurp`` wraps each page in an outer array (``[[page1], [page2]]``);
+    a flat list (a single-page/unpaginated response) is returned unchanged.
+    """
+    if not isinstance(parsed, list):
+        return []
+    if parsed and isinstance(parsed[0], list):
+        return [comment for page in parsed for comment in page]
+    return parsed
+
+
 def get_issue_comments(
     repo: str,
     issue_number: int,
@@ -79,6 +92,11 @@ def get_issue_comments(
     dry_run: bool = False,
 ) -> List[dict]:
     """Fetch all comments from an issue via gh CLI.
+
+    Paginates so the whole thread is returned in API order (oldest first).
+    Without pagination only the first page (~30 comments) is fetched, which
+    makes any ``comments[-N:]`` "last N" slice select the wrong end of the
+    thread (issue #750).
 
     Args:
         repo: Repository in format owner/repo.
@@ -100,9 +118,9 @@ def get_issue_comments(
     result = _run(
         [
             "api",
+            "--paginate",
+            "--slurp",
             f"/repos/{repo}/issues/{issue_number}/comments",
-            "--jq",
-            ".",
         ],
         dry_run=dry_run,
         env=env,
@@ -116,7 +134,7 @@ def get_issue_comments(
         return []
 
     try:
-        return json.loads(result.stdout)
+        return _flatten_pages(json.loads(result.stdout))
     except json.JSONDecodeError as e:
         print(f"Failed to parse comments JSON: {e}", file=sys.stderr)
         return []
