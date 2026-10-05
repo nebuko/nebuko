@@ -170,6 +170,94 @@ def _anchor_config_path(env: dict[str, str], repo_root: "Path") -> dict[str, str
     return env
 
 
+def _backfill_workflow_identity(
+    env: dict[str, str], state: WorkflowState | None
+) -> dict[str, str]:
+    """Restore the workflow identity the resolver drops on a bare human mention.
+
+    ``@@agent``/``/workflow`` mentions route through the resolver's human path,
+    which does not carry the active workflow/step/position (those live only in
+    the trigger's state block). ``build_state`` then records a history entry with
+    an empty ``step`` and no ``position`` even though it keeps the top-level leaf
+    via its own fallback (issue #739). Filling the gap from the state the run
+    already resolved keeps the appended entry addressable.
+    """
+    if state is None:
+        return env
+    if not env.get("WORKFLOW_NAME") and state.workflow:
+        env["WORKFLOW_NAME"] = state.workflow
+    if not env.get("WORKFLOW_STEP") and state.step:
+        env["WORKFLOW_STEP"] = state.step
+    if not env.get("WORKFLOW_POSITION") and state.position:
+        ensure_import_path()
+        from config import WorkflowPosition
+
+        position = WorkflowPosition(refs=list(state.position))
+        env["WORKFLOW_POSITION"] = json.dumps(position.to_state_dict())
+    return env
+
+
+def _ensure_child_identity(
+    env: dict[str, str], trigger: Trigger | None
+) -> dict[str, str]:
+    """Seed ``REPO_NAME``/``TARGET_NUMBER`` for the child's state recovery.
+
+    When the ``$RUNNER_TEMP`` hand-off is absent, the legacy child recovers the
+    previous state from the issue comments, and that fallback needs both
+    variables in its environment (issues #671/#739). A non-empty value wins — the
+    ``run-task`` job exports both through ``$GITHUB_ENV`` — and the trigger is
+    the fallback so the child still recovers on a host that does not export them.
+    An empty value (for example an unset ``GITHUB_REPOSITORY`` interpolated to
+    ``""``) is treated as absent and filled, never left as written.
+
+    An undeterminable identity is fatal rather than defaulted to an empty string:
+    the child's comment-based recovery silently returns nothing on a missing
+    value, which resets ``history`` to a single entry (issue #739).
+    """
+    repo = env.get("REPO_NAME") or env.get("GITHUB_REPOSITORY")
+    if not repo and trigger is not None:
+        payload_repo = (trigger.payload or {}).get("repository") or {}
+        repo = payload_repo.get("full_name")
+    if not repo:
+        raise ValueError(
+            "no repository for the agent child's state recovery: set REPO_NAME or "
+            "GITHUB_REPOSITORY, or carry it in the trigger payload"
+        )
+    if not env.get("REPO_NAME"):
+        env["REPO_NAME"] = str(repo)
+
+    number = env.get("TARGET_NUMBER") or (
+        str(trigger.number) if trigger is not None and trigger.number else ""
+    )
+    if not number:
+        raise ValueError(
+            "no issue number for the agent child's state recovery: set "
+            "TARGET_NUMBER, or carry the number on the trigger"
+        )
+    if not env.get("TARGET_NUMBER"):
+        env["TARGET_NUMBER"] = number
+    return env
+
+
+def _clear_prev_state_handoff() -> None:
+    """Remove the pre-agent hand-off the child would otherwise read.
+
+    The legacy ``query_context`` step deleted ``$RUNNER_TEMP/
+    prev_workflow_state.json`` when the thread carried no state, so a run never
+    adopted a previous job's file. An ephemeral runner gets an empty
+    ``RUNNER_TEMP``, but a self-hosted or reused runner keeps the file, so the
+    engine must delete it explicitly (issue #739).
+    """
+    ensure_import_path()
+    from workflow_state.state_codec import HANDOFF_FILENAME
+
+    path = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), HANDOFF_FILENAME)
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
 # @stub-protected
 @dataclass(frozen=True)
 class Engine:
@@ -193,6 +281,13 @@ class Engine:
     # can never diverge from the config the child actually runs with.
     # Engine-internal, so it is excluded from ``__init__``/equality/repr.
     _run_resolved: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
+    # The previous state ``stage_prev_state`` seeded for the child (issue #739),
+    # held for ``_agent_env`` to restore the workflow identity the resolver drops
+    # on a bare human mention. ``None`` until ``stage_prev_state`` has run.
+    # Engine-internal, so it is excluded from ``__init__``/equality/repr.
+    _seeded_prev_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
 
@@ -240,6 +335,12 @@ class Engine:
             prompt = self.build_prompt(resolved, history)
 
             self._enter(phases, "agent")
+            # Seed the pre-agent hand-off (issue #739): the legacy
+            # ``query_context`` step wrote the resolved state to ``$RUNNER_TEMP``
+            # before the agent ran; the refactor dropped it, so on a fresh runner
+            # the child starts from scratch and resets ``history`` to a single
+            # entry (issue #726).
+            self.stage_prev_state()
             self.notify_agent_started(self._agent_start_notice(trigger))
             failure_reason: str | None = None
             try:
@@ -493,10 +594,54 @@ class Engine:
         resolved; a configuration error is fatal so the child never boots
         modelless, while an unexpected failure falls back to the ambient
         environment.
+
+        The child then gets the workflow identity the resolver drops on a bare
+        human mention (from the seeded previous state) and the ``REPO_NAME``/
+        ``TARGET_NUMBER`` its comment-based state recovery needs (issue #739).
         """
         env = {**self.env, **resolved_env_overlay(self._handoff_config())}
+        env = _backfill_workflow_identity(env, self._seeded_prev_state.get("state"))
+        env = _ensure_child_identity(env, self._active_trigger())
         env.update(self._artifacts().child_log_env())
         return _anchor_config_path(env, self.repo_root)
+
+    def _active_trigger(self) -> Trigger | None:
+        """The trigger the resolver annotated the hand-off with, if any.
+
+        Falls back to the adapter's own trigger so the child identity still
+        resolves when the hand-off carries no trigger (for example a resolver
+        failure); a host that cannot read a trigger degrades to the ambient env.
+        """
+        trigger = self._get(self._handoff_config(), _TRIGGER_KEY)
+        if isinstance(trigger, Trigger):
+            return trigger
+        try:
+            return self.normalize()
+        except Exception:  # noqa: BLE001 - identity seeding degrades to self.env
+            return None
+
+    # @stub-protected
+    def stage_prev_state(self) -> WorkflowState | None:
+        """Write the previous state to the pre-agent hand-off (issues #671/#726/#739).
+
+        The child carries ``version`` and ``history`` forward by reading
+        ``$RUNNER_TEMP/prev_workflow_state.json``; the pre-refactor
+        ``query_context`` step wrote it before the agent ran. The engine's own
+        write happens *after* the agent, so without this seeding the child sees a
+        stale file from a previous job (persistent runner) or nothing at all
+        (fresh runner), and ``build_state`` resets ``history`` to a single entry
+        (issue #726). The state comes from the adapter's own persistence — the
+        latest posted state on GitHub, the run store locally. A genuine fresh
+        start (no previous state) removes any stale hand-off so the child cannot
+        adopt it (issue #739).
+        """
+        state = self._previous_state()
+        self._seeded_prev_state["state"] = state
+        if state is not None:
+            self.adapter.save_state(state)
+        else:
+            _clear_prev_state_handoff()
+        return state
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""

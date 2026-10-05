@@ -242,3 +242,153 @@ class TestSaveState:
 
         assert (tmp_path / "prev_workflow_state.json").is_file()
         assert client.calls == []
+
+
+def _state_comment(*, history_len: int = 2):
+    """A posted bot comment carrying a state block with ``history_len`` entries."""
+    from config import StepRef
+    from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+    from workflow_state.workflow_state import (
+        STATE_MARKER_END,
+        STATE_MARKER_START,
+        WorkflowState,
+    )
+
+    entries = [
+        HistoryEntry(step=f"step_{index}", agent="genius", summary=f"s{index}")
+        for index in range(history_len)
+    ]
+    state = WorkflowState(
+        version=7,
+        workflow="spec-driven-impl",
+        step="plan",
+        agent="genius",
+        position=[StepRef(workflow="spec-driven-impl", step="plan")],
+        history=entries,
+    )
+    body = (
+        "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n"
+        f"{STATE_MARKER_START}\n{state.model_dump_json()}\n{STATE_MARKER_END}"
+    )
+    return state, body
+
+
+class TestStagePrevState:
+    """``Engine.stage_prev_state`` seeds the pre-agent hand-off (issue #739).
+
+    The refactor left the engine's only state write in ``persist`` — *after* the
+    agent — so the child read an absent (fresh runner) or stale (persistent
+    runner) ``$RUNNER_TEMP`` hand-off and ``build_state`` reset ``history`` to a
+    single entry (issues #726/#739). The engine now writes the latest posted
+    state through the same codec the child reads it back with.
+    """
+
+    def test_stages_the_latest_posted_state_into_the_handoff(self, tmp_path, monkeypatch):
+        from engine.paths import repo_root
+        from engine.run_loop import Engine
+        from workflow_state.state_codec import WorkflowStateCodec
+
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+        previous, body = _state_comment(history_len=3)
+        comments = [
+            {"body": "<!-- bot-workflow-terminal -->\nolder", "user": {"login": "x"}},
+            {"body": body, "user": {"login": "x"}},
+        ]
+        adapter = _adapter(tmp_path, FakeGhClient(comments=comments))
+        engine = Engine(adapter=adapter, repo_root=repo_root(), env={})
+
+        staged = engine.stage_prev_state()
+
+        assert staged is not None
+        load = WorkflowStateCodec().load_prev()
+        assert load.status == "ok"
+        assert load.state is not None
+        assert (load.state.version, load.state.workflow, load.state.step) == (
+            previous.version,
+            previous.workflow,
+            previous.step,
+        )
+        assert [entry.step for entry in load.state.history] == ["step_0", "step_1", "step_2"]
+
+    def test_writes_no_handoff_without_a_previous_state(self, tmp_path, monkeypatch):
+        from engine.paths import repo_root
+        from engine.run_loop import Engine
+        from workflow_state.state_codec import WorkflowStateCodec
+
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+        adapter = _adapter(tmp_path, FakeGhClient())
+        engine = Engine(adapter=adapter, repo_root=repo_root(), env={})
+
+        assert engine.stage_prev_state() is None
+        assert WorkflowStateCodec().load_prev().status == "absent"
+
+    def test_removes_a_stale_handoff_without_a_previous_state(self, tmp_path, monkeypatch):
+        """A stale file from a previous job must not survive a fresh start.
+
+        ``$RUNNER_TEMP`` is emptied per job only on ephemeral runners; on a
+        reused runner the previous job's ``prev_workflow_state.json`` would
+        otherwise be adopted, so ``stage_prev_state`` deletes it (issue #739).
+        """
+        from engine.paths import repo_root
+        from engine.run_loop import Engine
+        from workflow_state.state_codec import WorkflowStateCodec
+
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+        previous, _ = _state_comment(history_len=2)
+        WorkflowStateCodec().save_prev(previous)
+        assert WorkflowStateCodec().load_prev().status == "ok"
+        adapter = _adapter(tmp_path, FakeGhClient())
+        engine = Engine(adapter=adapter, repo_root=repo_root(), env={})
+
+        assert engine.stage_prev_state() is None
+
+        assert not (tmp_path / "prev_workflow_state.json").exists()
+        assert WorkflowStateCodec().load_prev().status == "absent"
+
+
+class TestHistoryIncrementRegression:
+    """The seeded hand-off makes the child's history increment (issues #726/#739).
+
+    End-to-end over the real seams the child uses: ``stage_prev_state`` writes
+    the codec hand-off, the codec reads it back, and ``build_state`` advances it.
+    """
+
+    def test_the_recovered_state_advances_the_childs_history(self, tmp_path, monkeypatch):
+        from engine.paths import repo_root
+        from engine.run_loop import Engine
+        from workflow_state.features.build_state.build_state import build_state
+        from workflow_state.state_codec import WorkflowStateCodec
+
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+        previous, body = _state_comment(history_len=3)
+        adapter = _adapter(
+            tmp_path, FakeGhClient(comments=[{"body": body, "user": {"login": "x"}}])
+        )
+        engine = Engine(adapter=adapter, repo_root=repo_root(), env={})
+
+        engine.stage_prev_state()
+        recovered = WorkflowStateCodec().load_prev()
+
+        assert recovered.status == "ok"
+        new_state = build_state(
+            recovered.state,
+            workflow="spec-driven-impl",
+            step="stub",
+            agent="dev",
+            summary="stub posted",
+        )
+
+        assert new_state.version == previous.version + 1
+        assert len(new_state.history) == len(previous.history) + 1
+        assert (new_state.workflow, new_state.step) == ("spec-driven-impl", "stub")
+        assert new_state.history[-1].step == "stub"
+
+    def test_without_a_handoff_the_child_resets_the_history(self):
+        """The pre-fix shape from #739: ``build_state(prev_state=None)``."""
+        from workflow_state.features.build_state.build_state import build_state
+
+        state = build_state(None, workflow="", step="", agent="genius", summary="s")
+
+        assert state.version == 3
+        assert len(state.history) == 1
+        assert state.history[0].step == ""

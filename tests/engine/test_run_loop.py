@@ -17,7 +17,14 @@ from adapters.local import LocalAdapter
 from config import AgentStartNotice
 from engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
 from engine.paths import repo_root
-from engine.run_loop import PHASES, Engine, main, resolved_env_overlay
+from engine.run_loop import (
+    PHASES,
+    Engine,
+    _backfill_workflow_identity,
+    _ensure_child_identity,
+    main,
+    resolved_env_overlay,
+)
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
 WORKFLOW_STATE_MARKER = "<!-- WORKFLOW_STATE_START -->"
@@ -40,7 +47,15 @@ def _trigger(body: str = "@@dev fix it", number: int = 590) -> Trigger:
 
 def _engine(tmp_path, trigger=None, *, name: str = "run-1", env=None) -> Engine:
     adapter = LocalAdapter(tmp_path / "runs" / name, trigger=trigger or _trigger())
-    return Engine(adapter=adapter, repo_root=repo_root(), env=dict(env or {"CIRCUIT_BREAKER_THRESHOLD": "3"}))
+    # Production runs with ``dict(os.environ)``, where GitHub Actions always sets
+    # ``GITHUB_REPOSITORY``; the fixture mirrors that so the child-identity seed
+    # (issue #739) resolves for every run-flow test.
+    base_env = {
+        "CIRCUIT_BREAKER_THRESHOLD": "3",
+        "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
+    }
+    base_env.update(env or {})
+    return Engine(adapter=adapter, repo_root=repo_root(), env=base_env)
 
 
 def _agent_result(answer: str, dispatch: dict | None = None) -> dict:
@@ -334,6 +349,206 @@ class TestStatePhase:
         assert not (tmp_path / "runs" / "run-1" / "state.json").exists()
 
 
+class TestPreviousStateHandoff:
+    """The engine seeds the pre-agent state hand-off the refactor dropped.
+
+    The legacy ``query_context`` step wrote the resolved state to
+    ``$RUNNER_TEMP/prev_workflow_state.json`` before the agent ran. Without it
+    the child starts from an empty state and resets ``history`` to a single
+    entry (issues #726/#739). ``Engine.stage_prev_state`` restores the write from
+    the adapter's own persistence; the codec-level regression against the real
+    GitHub seam lives in ``test_github_adapter.TestStagePrevState``.
+    """
+
+    @staticmethod
+    def _previous_state(*, history_len: int = 2):
+        """A previous state carrying ``history_len`` history entries."""
+        from config import StepRef
+        from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+        from workflow_state.workflow_state import WorkflowState
+
+        entries = [
+            HistoryEntry(step=f"step_{index}", agent="genius", summary=f"s{index}")
+            for index in range(history_len)
+        ]
+        return WorkflowState(
+            version=3,
+            workflow="spec-driven-impl",
+            step="plan",
+            agent="genius",
+            position=[StepRef(workflow="spec-driven-impl", step="plan")],
+            history=entries,
+        )
+
+    def test_run_stages_the_previous_state_before_invoking_the_agent(
+        self, tmp_path, monkeypatch
+    ):
+        engine = _engine(tmp_path)
+        engine.adapter.save_state(self._previous_state(history_len=2))
+        seen: dict = {}
+
+        def invoke(self, prompt):
+            seen["state"] = self.adapter.load_state()
+            return _agent_result("done")
+
+        monkeypatch.setattr(Engine, "invoke_agent", invoke)
+
+        engine.run()
+
+        assert seen["state"] is not None
+        assert len(seen["state"].history) == 2
+        assert (seen["state"].workflow, seen["state"].step) == (
+            "spec-driven-impl",
+            "plan",
+        )
+
+    def test_writes_no_handoff_when_there_is_no_previous_state(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        seen: dict = {}
+
+        def invoke(self, prompt):
+            seen["state"] = self.adapter.load_state()
+            return _agent_result("done")
+
+        monkeypatch.setattr(Engine, "invoke_agent", invoke)
+
+        engine.run()
+
+        assert seen["state"] is None
+
+
+class TestChildIdentityEnv:
+    """The child's comment-based state recovery needs repo + issue (issue #739).
+
+    ``load_prev_state_or_recover`` falls back to ``REPO_NAME``/``TARGET_NUMBER``
+    when the ``$RUNNER_TEMP`` hand-off is missing; ``_ensure_child_identity``
+    seeds both and fails loudly when neither source carries them, rather than
+    writing an empty value that makes the recovery silently return nothing.
+    """
+
+    def test_fills_the_issue_number_from_the_trigger(self):
+        env = _ensure_child_identity({"GITHUB_REPOSITORY": "o/r"}, _trigger())
+
+        assert env["TARGET_NUMBER"] == "590"
+
+    def test_fills_the_repo_from_the_trigger_payload(self):
+        trigger = Trigger(
+            author="olivier-norture",
+            body="@@dev fix it",
+            type="issue_comment",
+            number=590,
+            payload={"repository": {"full_name": "olivier-norture/git-flow-ai"}},
+        )
+
+        env = _ensure_child_identity({"TARGET_NUMBER": "1"}, trigger)
+
+        assert env["REPO_NAME"] == "olivier-norture/git-flow-ai"
+
+    def test_fills_the_repo_from_the_repository_environment(self):
+        env = _ensure_child_identity(
+            {
+                "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
+                "TARGET_NUMBER": "590",
+            },
+            None,
+        )
+
+        assert env["REPO_NAME"] == "olivier-norture/git-flow-ai"
+
+    def test_an_existing_value_wins(self):
+        env = _ensure_child_identity(
+            {"REPO_NAME": "other/repo", "TARGET_NUMBER": "1"}, _trigger()
+        )
+
+        assert (env["REPO_NAME"], env["TARGET_NUMBER"]) == ("other/repo", "1")
+
+    def test_empty_values_are_filled_not_left(self):
+        """An empty ``REPO_NAME``/``TARGET_NUMBER`` is absent, not a value.
+
+        ``$GITHUB_ENV`` interpolation can write an empty string; ``setdefault``
+        would keep it and the child's comment recovery would silently return
+        nothing (issue #739).
+        """
+        trigger = Trigger(
+            author="olivier-norture",
+            body="@@dev fix it",
+            type="issue_comment",
+            number=590,
+            payload={"repository": {"full_name": "olivier-norture/git-flow-ai"}},
+        )
+
+        env = _ensure_child_identity({"REPO_NAME": "", "TARGET_NUMBER": ""}, trigger)
+
+        assert (env["REPO_NAME"], env["TARGET_NUMBER"]) == (
+            "olivier-norture/git-flow-ai",
+            "590",
+        )
+
+    def test_a_missing_repo_is_fatal(self):
+        with pytest.raises(ValueError, match="no repository"):
+            _ensure_child_identity({"TARGET_NUMBER": "590"}, _trigger())
+
+    def test_a_missing_issue_number_is_fatal(self):
+        with pytest.raises(ValueError, match="no issue number"):
+            _ensure_child_identity({"GITHUB_REPOSITORY": "o/r"}, None)
+
+    def test_run_hands_the_child_the_repo_and_issue(self, tmp_path, monkeypatch):
+        engine = _engine(
+            tmp_path, env={"GITHUB_REPOSITORY": "olivier-norture/git-flow-ai"}
+        )
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        engine.run()
+
+        env = engine._agent_env()
+        assert env["REPO_NAME"] == "olivier-norture/git-flow-ai"
+        assert env["TARGET_NUMBER"] == "590"
+
+
+class TestWorkflowIdentityBackfill:
+    """A bare human mention loses the workflow position in the resolver.
+
+    ``build_state`` then appends a history entry with an empty ``step`` and no
+    ``position`` (issue #739). The engine restores it from the state the run
+    already resolved so the entry stays addressable.
+    """
+
+    @staticmethod
+    def _state():
+        from config import StepRef
+        from workflow_state.workflow_state import WorkflowState
+
+        return WorkflowState(
+            version=3,
+            workflow="spec-driven-impl",
+            step="plan",
+            agent="genius",
+            position=[StepRef(workflow="spec-driven-impl", step="plan")],
+        )
+
+    def test_fills_missing_identity_from_the_previous_state(self):
+        env = _backfill_workflow_identity({}, self._state())
+
+        assert env["WORKFLOW_NAME"] == "spec-driven-impl"
+        assert env["WORKFLOW_STEP"] == "plan"
+        assert json.loads(env["WORKFLOW_POSITION"])["refs"] == [
+            {"workflow": "spec-driven-impl", "step": "plan"}
+        ]
+
+    def test_keeps_the_resolvers_own_identity(self):
+        env = _backfill_workflow_identity(
+            {"WORKFLOW_NAME": "dev-review-loop", "WORKFLOW_STEP": "implement"},
+            self._state(),
+        )
+
+        assert env["WORKFLOW_NAME"] == "dev-review-loop"
+        assert env["WORKFLOW_STEP"] == "implement"
+
+    def test_is_a_no_op_without_a_previous_state(self):
+        assert _backfill_workflow_identity({"A": "b"}, None) == {"A": "b"}
+
+
 class TestAgentEnvHandoff:
     """The engine hands the legacy child the resolution the bash job exported.
 
@@ -351,6 +566,30 @@ class TestAgentEnvHandoff:
 
         assert env["ROLE_NAME"] == "dev"
         assert env["PROMPT_LOCATION"] == "/repo/dev.md"
+
+    def test_a_dispatch_trigger_hands_the_workflow_identity_to_the_child(
+        self, tmp_path, monkeypatch
+    ):
+        """Plan step 3: the resolver's workflow/step reach the child (issue #739).
+
+        The child rebuilds the history entry's ``step`` from ``WORKFLOW_STEP``,
+        so a dispatch-triggered run must carry both that and ``WORKFLOW_NAME``.
+        """
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "ROLE_NAME": "dev",
+                "TASK": "dev",
+                "WORKFLOW_NAME": "spec-driven-impl",
+                "WORKFLOW_STEP": "implement",
+            },
+        )
+
+        env = engine._agent_env()
+
+        assert env["WORKFLOW_NAME"] == "spec-driven-impl"
+        assert env["WORKFLOW_STEP"] == "implement"
 
     def test_overlay_drops_the_engine_only_trigger(self):
         overlay = resolved_env_overlay({"ROLE_NAME": "dev", "ENGINE_TRIGGER": _trigger()})
@@ -395,6 +634,23 @@ class TestAgentEnvHandoff:
         assert engine._agent_env()["ROLE_NAME"] == "dev"
         assert engine._role_of({}) == "dev"
         assert calls == [1]
+
+    def test_backfills_the_workflow_identity_dropped_by_a_bare_mention(self, tmp_path, monkeypatch):
+        """The child rebuilds the position from the seeded state (issue #739)."""
+        engine = _engine(tmp_path)
+        engine.adapter.save_state(TestPreviousStateHandoff._previous_state(history_len=1))
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "genius", "TASK": "genius"})
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        engine.run()
+
+        env = engine._agent_env()
+        assert env["WORKFLOW_NAME"] == "spec-driven-impl"
+        assert env["WORKFLOW_STEP"] == "plan"
+        assert json.loads(env["WORKFLOW_POSITION"])["refs"][-1] == {
+            "workflow": "spec-driven-impl",
+            "step": "plan",
+        }
 
     def test_anchors_a_relative_config_path_to_the_checkout(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": "agent-config.yaml"})
@@ -570,7 +826,9 @@ class TestAgentStartAcknowledgment:
         assert engine._run_url(trigger) == RUN_URL
 
     def test_falls_back_to_the_event_repository(self, tmp_path):
-        engine = _engine(tmp_path, env={"GITHUB_RUN_ID": "7"})
+        # Explicitly clear the repository the fixture seeds so the event payload
+        # is the only source (the fallback under test).
+        engine = _engine(tmp_path, env={"GITHUB_RUN_ID": "7", "GITHUB_REPOSITORY": ""})
         trigger = Trigger(
             author="olivier-norture",
             body="@@dev go",
