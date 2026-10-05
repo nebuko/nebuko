@@ -1,0 +1,11 @@
+name: l1-dangling-next
+description: "L1: 'analyze' points at a step that does not exist"
+trigger:
+  agents: [genius]
+steps:
+  - name: analyze
+    agent: genius
+    next: ghost
+  - name: review
+    agent: review
+    next: null

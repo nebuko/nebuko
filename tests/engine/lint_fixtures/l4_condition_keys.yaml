@@ -1,0 +1,16 @@
+name: l4-condition-keys
+description: "L4: 'gate' declares on_result 'approved' twice; the second is dead"
+trigger:
+  agents: [genius]
+steps:
+  - name: gate
+    agent: genius
+    next: done
+    conditions:
+      - on_result: approved
+        next: done
+      - on_result: approved
+        next: done
+  - name: done
+    agent: dev
+    next: null

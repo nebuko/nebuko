@@ -154,7 +154,7 @@ def _write_step_prompt_file(prompt: str | None) -> str:
     return path
 
 
-def _match_condition(
+def match_condition(
     step: WorkflowStep,
     branch_key: str,
 ) -> Optional[str]:
@@ -162,6 +162,9 @@ def _match_condition(
 
     Exact-match on ``on_result`` first, then ``default``; None when the
     branch is not covered by the step's conditions (or it has none).
+
+    Public since issue #751: the offline workflow linter imports this so its
+    condition rules can never drift from the runtime's actual routing.
     """
     if not branch_key or not step.conditions:
         return None
@@ -174,7 +177,7 @@ def _match_condition(
     return None
 
 
-def _branch_key_for(
+def branch_key_for(
     step: WorkflowStep,
     branch_key: str,
 ) -> Optional[str]:
@@ -185,14 +188,14 @@ def _branch_key_for(
     """
     if not branch_key or not step.conditions:
         return None
-    if _match_condition(step, branch_key) is not None:
+    if match_condition(step, branch_key) is not None:
         return branch_key
     if any(c.on_result == "default" for c in step.conditions):
         return "default"
     return None
 
 
-def _is_terminal_step(step: WorkflowStep) -> bool:
+def is_terminal_step(step: WorkflowStep) -> bool:
     """Check if a step is terminal (no next step, no conditions)."""
     if step.next is None and not step.conditions:
         return True
@@ -203,6 +206,14 @@ def _is_terminal_step(step: WorkflowStep) -> bool:
                 return False
         return True
     return False
+
+
+# Back-compat private aliases (issue #751): the offline linter imports the
+# public names above while the legacy call sites keep using the underscore
+# forms, so the traversal semantics live in exactly one place.
+_match_condition = match_condition
+_branch_key_for = branch_key_for
+_is_terminal_step = is_terminal_step
 
 
 def _scaffold_child_reference(current_step: WorkflowStep) -> Optional[str]:
