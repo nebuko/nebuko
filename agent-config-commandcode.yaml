@@ -34,9 +34,9 @@ agents:
     prompt_file: ".agents/prompts/genius.md"
     skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
-    complexity_overrides:
-      - high:
-        model: ${llms.claude-sonnet-5}
+    # complexity_overrides:
+    #   - high:
+    #     model: ${llms.claude-sonnet-5}
 
   dev:
     model: "${llms.deepseek-v4_1-flash}"
