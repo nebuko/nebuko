@@ -171,8 +171,8 @@ class TestResolveConfig:
     def test_workflow_routing_integration(self):
         """When workflow is specified, resolve_workflow handles routing."""
         prompt_base, workflows_dir = self._setup_dirs()
-        # /workflow without a valid workflow file and no @@mention → SKIP_AGENT
-        body = "/workflow run workflow --name nonexistent\nPlease analyze this issue."
+        # /nebuko without a valid workflow file and no @@mention → SKIP_AGENT
+        body = "/nebuko run workflow --name nonexistent\nPlease analyze this issue."
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -275,7 +275,7 @@ class TestCIBotMentionRouting:
 
 
 class TestResolveConfigWithWorkflowCommand:
-    """Test resolve_config with /workflow command."""
+    """Test resolve_config with /nebuko command."""
 
     def _setup_dirs_with_workflows(self):
         """Create temp dirs with actual workflow files."""
@@ -313,7 +313,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_default_resolves_genius(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow run workflow --name default\nPlease analyze this issue."
+        body = "/nebuko run workflow --name default\nPlease analyze this issue."
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -324,7 +324,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_review_only_resolves_review(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow run workflow --name review-only\nReview my PR please."
+        body = "/nebuko run workflow --name review-only\nReview my PR please."
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -334,7 +334,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_nonexistent_falls_through_mentions(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow run workflow --name nonexistent\n@@genius help me"
+        body = "/nebuko run workflow --name nonexistent\n@@genius help me"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -347,7 +347,7 @@ class TestResolveConfigWithWorkflowCommand:
     def test_workflow_malformed_name_falls_through_mentions(self):
         """Workflow names with special chars are rejected and fall through."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow run workflow --name ../etc/passwd\n@@dev help"
+        body = "/nebuko run workflow --name ../etc/passwd\n@@dev help"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -370,7 +370,7 @@ class TestResolveConfigWithWorkflowCommand:
                 "    agent: review\n"
                 "    next: null\n"
             )
-        body = "/workflow run workflow --name empty-agents\n@@ctx gather context"
+        body = "/nebuko run workflow --name empty-agents\n@@ctx gather context"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -389,7 +389,7 @@ class TestResolveConfigWithWorkflowCommand:
         assert result["SKIP_AGENT"] == "true"
 
     def test_workflow_not_on_first_line_falls_through_mention(self):
-        """When /workflow not on first line but @@mention present, use mention."""
+        """When /nebuko not on first line but @@mention present, use mention."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
         body = "Some intro text\n/workflow run workflow --name default\n@@dev please help"
 
@@ -401,11 +401,11 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_command_takes_precedence_over_mention(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow run workflow --name default\n@@review please also review"
+        body = "/nebuko run workflow --name default\n@@review please also review"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
-        # /workflow takes priority over @@mention
+        # /nebuko takes priority over @@mention
         assert result["TASK"] == "genius"
         assert result["WORKFLOW_NAME"] == "default"
 
@@ -415,7 +415,7 @@ class TestResolveConfigWithWorkflowCommand:
 
         result = resolve_config(body, prompt_base, workflows_dir)
 
-        # Bot comments should skip even with /workflow
+        # Bot comments should skip even with /nebuko
         assert result["SKIP_AGENT"] == "true"
 
     def test_step_skills_passed_through_from_workflow(self):
@@ -452,7 +452,7 @@ class TestResolveConfigWithWorkflowCommand:
     def test_step_skills_empty_when_not_defined(self):
         """STEP_SKILLS is empty when workflow step has no skill field."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "/workflow run workflow --name default\nPlease analyze this issue."
+        body = "/nebuko run workflow --name default\nPlease analyze this issue."
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -523,7 +523,7 @@ class TestCountConsecutiveSameAgent(unittest.TestCase):
 
 
 class TestForceNextStepIntegration(unittest.TestCase):
-    """Integration tests for /workflow force-next-step command."""
+    """Integration tests for /nebuko force-next-step command."""
 
     @staticmethod
     def _default_workflow_yaml():
@@ -582,45 +582,45 @@ class TestForceNextStepIntegration(unittest.TestCase):
 
     def test_force_next_step_auto_advance(self):
         state_json = self._build_state_json(workflow="default", step="implement")
-        result = self._resolve_with_state("/workflow force-step step --name review", state_json)
+        result = self._resolve_with_state("/nebuko force-step step --name review", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["TASK"], "review")
 
     def test_force_next_step_with_explicit_target(self):
         state_json = self._build_state_json(workflow="default", step="analyze")
-        result = self._resolve_with_state("/workflow force-step step --name implement", state_json)
+        result = self._resolve_with_state("/nebuko force-step step --name implement", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["TASK"], "dev")
 
     def test_force_next_step_no_workflow_state(self):
         prompt_base, workflows_dir = self._setup_dirs()
         result = resolve_config(
-            "/workflow force-step step --name context", prompt_base, workflows_dir, is_bot=False
+            "/nebuko force-step step --name context", prompt_base, workflows_dir, is_bot=False
         )
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("no workflow state found", result["REASON"])
 
     def test_force_next_step_invalid_target_step(self):
         state_json = self._build_state_json(workflow="default", step="analyze")
-        result = self._resolve_with_state("/workflow force-step step --name nonexistent", state_json)
+        result = self._resolve_with_state("/nebuko force-step step --name nonexistent", state_json)
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("not found", result["REASON"])
 
     def test_force_next_step_path_traversal_workflow_name(self):
         state_json = self._build_state_json(workflow="../etc/passwd", step="hack")
-        result = self._resolve_with_state("/workflow force-step step --name context", state_json)
+        result = self._resolve_with_state("/nebuko force-step step --name context", state_json)
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("invalid workflow name", result["REASON"])
 
     def test_force_next_step_path_traversal_target_step(self):
         state_json = self._build_state_json(workflow="default", step="analyze")
-        result = self._resolve_with_state("/workflow force-step step --name ../../etc/passwd", state_json)
+        result = self._resolve_with_state("/nebuko force-step step --name ../../etc/passwd", state_json)
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("invalid target step", result["REASON"])
 
     def test_force_next_step_invalid_workflow_file(self):
         state_json = self._build_state_json(workflow="nonexistent_workflow", step="analyze")
-        result = self._resolve_with_state("/workflow force-step step --name context", state_json)
+        result = self._resolve_with_state("/nebuko force-step step --name context", state_json)
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("not found", result["REASON"])
 
@@ -628,7 +628,7 @@ class TestForceNextStepIntegration(unittest.TestCase):
         # The new grammar requires an explicit --name, so an unknown current
         # step no longer matters (issue #635 removed the auto-advance arm).
         state_json = self._build_state_json(workflow="default", step="nonexistent_step")
-        result = self._resolve_with_state("/workflow force-step step --name context", state_json)
+        result = self._resolve_with_state("/nebuko force-step step --name context", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["TASK"], "ctx")
 
@@ -637,13 +637,13 @@ class TestForceNextStepIntegration(unittest.TestCase):
         # Downstream resolve_workflow.py may reject if parent workflow YAML
         # doesn't exist — that's separate from force-next-step logic.
         state_json = self._build_state_json(workflow="default", step="implement")
-        result = self._resolve_with_state("/workflow force-step step --name review", state_json)
+        result = self._resolve_with_state("/nebuko force-step step --name review", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["WORKFLOW_NAME"], "default")
 
     def test_force_next_step_jumps_to_context(self):
         state_json = self._build_state_json(workflow="default", step="analyze")
-        result = self._resolve_with_state("/workflow force-step step --name context", state_json)
+        result = self._resolve_with_state("/nebuko force-step step --name context", state_json)
         self.assertEqual(result["SKIP_AGENT"], "false")
         self.assertEqual(result["TASK"], "ctx")
 
@@ -681,7 +681,7 @@ class TestForceNextStepIntegration(unittest.TestCase):
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
         result = resolve_config(
-            "/workflow force-step step --name context\n\n" + state_block,
+            "/nebuko force-step step --name context\n\n" + state_block,
             prompt_base,
             workflows_dir,
             is_bot=False,
@@ -691,7 +691,7 @@ class TestForceNextStepIntegration(unittest.TestCase):
 
 
 class TestDeleteCommentsCommand(unittest.TestCase):
-    """Human `/workflow delete comments` arm (issue #644).
+    """Human `/nebuko delete comments` arm (issue #644).
 
     The command is human-only and emits the ``DELETE_COMMENTS`` env contract
     with no agent selected. ``--issue`` is optional on the issue surface and
@@ -714,7 +714,7 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         )
 
     def test_explicit_issue_emits_contract(self):
-        result = self._resolve("/workflow delete comments --issue 123")
+        result = self._resolve("/nebuko delete comments --issue 123")
         self.assertEqual(result["DELETE_COMMENTS"], "true")
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "123")
         self.assertNotIn("DELETE_COMMENTS_FROM", result)
@@ -723,13 +723,13 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         self.assertEqual(result["TASK"], "Delete comments on issue 123")
 
     def test_issue_defaults_to_invoking_issue(self):
-        result = self._resolve("/workflow delete comments", issue_number=456)
+        result = self._resolve("/nebuko delete comments", issue_number=456)
         self.assertEqual(result["DELETE_COMMENTS"], "true")
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "456")
 
     def test_explicit_issue_wins_over_invoking_issue(self):
         result = self._resolve(
-            "/workflow delete comments --issue 789", issue_number=456
+            "/nebuko delete comments --issue 789", issue_number=456
         )
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "789")
 
@@ -737,29 +737,29 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         # `--from` support was removed in issue #674: the whole issue is
         # deleted, so the flag is now unknown and the command is malformed.
         result = self._resolve(
-            "/workflow delete comments --issue 123 --from 5811583860"
+            "/nebuko delete comments --issue 123 --from 5811583860"
         )
         self.assertNotIn("DELETE_COMMENTS", result)
 
     def test_non_numeric_issue_treated_as_absent(self):
-        result = self._resolve("/workflow delete comments --issue abc", issue_number=456)
+        result = self._resolve("/nebuko delete comments --issue abc", issue_number=456)
         self.assertNotIn("DELETE_COMMENTS", result)
         self.assertEqual(result["SKIP_AGENT"], "true")
 
     def test_no_issue_and_no_invoking_issue_treated_as_absent(self):
         # Neither --issue nor an invoking issue number: command is absent.
-        result = self._resolve("/workflow delete comments")
+        result = self._resolve("/nebuko delete comments")
         self.assertNotIn("DELETE_COMMENTS", result)
 
     def test_non_numeric_from_treated_as_absent(self):
-        result = self._resolve("/workflow delete comments --from abc", issue_number=456)
+        result = self._resolve("/nebuko delete comments --from abc", issue_number=456)
         self.assertNotIn("DELETE_COMMENTS", result)
         self.assertEqual(result["SKIP_AGENT"], "true")
 
     def test_unicode_digit_issue_treated_as_absent(self):
         # '²' passes str.isdigit() but int() rejects it; the command must be
         # treated as absent rather than crashing the resolver (issue #644 review).
-        result = self._resolve("/workflow delete comments --issue ²", issue_number=456)
+        result = self._resolve("/nebuko delete comments --issue ²", issue_number=456)
         self.assertNotIn("DELETE_COMMENTS", result)
         self.assertEqual(result["SKIP_AGENT"], "true")
 
@@ -771,12 +771,12 @@ class TestDeleteCommentsCommand(unittest.TestCase):
 
 
 class TestCleanCommentsCommand(unittest.TestCase):
-    """`/workflow clean comments` — the agent-free alias (issue #679).
+    """`/nebuko clean comments` — the agent-free alias (issue #679).
 
-    The real-world bug (issue #590) is that ``/workflow clean comments`` used
+    The real-world bug (issue #590) is that ``/nebuko clean comments`` used
     to fall through the human-command cascade and boot ctx/genius. It is now a
     recognized local command that resolves to the same deterministic
-    comment-removal contract as ``/workflow delete comments`` and starts no
+    comment-removal contract as ``/nebuko delete comments`` and starts no
     agent, even when an active workflow dispatch is present.
     """
 
@@ -805,7 +805,7 @@ class TestCleanCommentsCommand(unittest.TestCase):
         )
 
     def test_clean_defaults_to_invoking_issue(self):
-        result = self._resolve("/workflow clean comments", issue_number=590)
+        result = self._resolve("/nebuko clean comments", issue_number=590)
         self.assertEqual(result["DELETE_COMMENTS"], "true")
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "590")
         self.assertEqual(result["SKIP_AGENT"], "true")
@@ -815,7 +815,7 @@ class TestCleanCommentsCommand(unittest.TestCase):
     def test_clean_ignores_active_dispatch(self):
         # Regression #590: an active dispatch must NOT absorb the command and
         # boot an agent; the local command still short-circuits.
-        body = "/workflow clean comments\n\n" + self._state_block(
+        body = "/nebuko clean comments\n\n" + self._state_block(
             {"status": "advance", "task_hint": "dev", "complexity": "high"}
         )
         result = self._resolve(body, issue_number=590)
@@ -827,13 +827,13 @@ class TestCleanCommentsCommand(unittest.TestCase):
         # Review fix (issue #679): `--issue` must be forwarded, exactly as for
         # the `delete` alias, instead of silently defaulting to the invoking
         # issue.
-        result = self._resolve("/workflow clean comments --issue 123")
+        result = self._resolve("/nebuko clean comments --issue 123")
         self.assertEqual(result["DELETE_COMMENTS"], "true")
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "123")
 
     def test_clean_explicit_issue_wins_over_invoking_issue(self):
         result = self._resolve(
-            "/workflow clean comments --issue 789", issue_number=456
+            "/nebuko clean comments --issue 789", issue_number=456
         )
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "789")
 
@@ -841,10 +841,10 @@ class TestCleanCommentsCommand(unittest.TestCase):
         # Review fix (issue #679): a malformed `clean` invocation must not be
         # treated as a command (which would destructively delete comments).
         for body in (
-            "/workflow clean",
-            "/workflow clean files",
-            "/workflow clean comments --unknown x",
-            "/workflow clean comments --issue abc",
+            "/nebuko clean",
+            "/nebuko clean files",
+            "/nebuko clean comments --unknown x",
+            "/nebuko clean comments --issue abc",
         ):
             with self.subTest(body=body):
                 result = self._resolve(body, issue_number=590)
@@ -947,7 +947,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             self._subparent_workflow_yaml(), self._child_workflow_yaml()
         )
         result = self._resolve(
-            "/workflow force-step step --name subtask",
+            "/nebuko force-step step --name subtask",
             self._state(step="analyze"),
             prompt_base,
             workflows_dir,
@@ -969,7 +969,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             self._subparent_workflow_yaml(), self._child_workflow_yaml()
         )
         result = self._resolve(
-            "/workflow force-step step --name finalize",
+            "/nebuko force-step step --name finalize",
             self._state(step="analyze"),
             prompt_base,
             workflows_dir,
@@ -985,7 +985,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             self._subparent_workflow_yaml(sub_ref="does_not_exist"), child_yaml=None
         )
         result = self._resolve(
-            "/workflow force-step step --name subtask",
+            "/nebuko force-step step --name subtask",
             self._state(step="analyze"),
             prompt_base,
             workflows_dir,
@@ -1009,7 +1009,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             child_name="badchild",
         )
         result = self._resolve(
-            "/workflow force-step step --name subtask",
+            "/nebuko force-step step --name subtask",
             self._state(step="analyze"),
             prompt_base,
             workflows_dir,
@@ -1041,7 +1041,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             script_parent, child_yaml=None, parent_name="scriptparent"
         )
         result = self._resolve(
-            "/workflow force-step step --name run_check",
+            "/nebuko force-step step --name run_check",
             self._state(workflow="scriptparent", step="analyze"),
             prompt_base,
             workflows_dir,
@@ -1128,7 +1128,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
 
         with patch("resolve_config.get_issue_comments", return_value=comments):
             result = resolve_config(
-                "/workflow force-step step --name context",
+                "/nebuko force-step step --name context",
                 prompt_base,
                 workflows_dir,
                 is_bot=False,
@@ -1149,7 +1149,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
 
         with patch("resolve_config.get_issue_comments", return_value=comments):
             result = resolve_config(
-                "/workflow force-step step --name context",
+                "/nebuko force-step step --name context",
                 prompt_base,
                 workflows_dir,
                 is_bot=False,
@@ -1165,7 +1165,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_dirs()
 
         result = resolve_config(
-            "/workflow force-step step --name context",
+            "/nebuko force-step step --name context",
             prompt_base,
             workflows_dir,
             is_bot=False,
@@ -1894,7 +1894,7 @@ class TestForceNextStepWithWorkflowDriven(unittest.TestCase):
         """force-next-step works correctly when there's no agentRunConfig (human command)."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json("default", "analyze", "genius")
-        body = "/workflow force-step step --name context\n\n" + state_json
+        body = "/nebuko force-step step --name context\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         # Auto-advance: analyze.next = context → agent ctx
         self.assertEqual(result["TASK"], "ctx")
@@ -1904,7 +1904,7 @@ class TestForceNextStepWithWorkflowDriven(unittest.TestCase):
         """force-next-step with explicit target overrides normal workflow progression."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json("default", "analyze", "genius")
-        body = "/workflow force-step step --name implement\n\n" + state_json
+        body = "/nebuko force-step step --name implement\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         # Explicit target "implement" → agent dev (bypasses normal analyze→context flow)
         self.assertEqual(result["TASK"], "dev")
@@ -1912,7 +1912,7 @@ class TestForceNextStepWithWorkflowDriven(unittest.TestCase):
 
 
 class TestHumanWorkflowOverridePrecedence(unittest.TestCase):
-    """Human /workflow command takes precedence over workflow state."""
+    """Human /nebuko command takes precedence over workflow state."""
 
     def _setup_dirs(self):
         prompt_base = tempfile.mkdtemp()
@@ -1936,25 +1936,25 @@ class TestHumanWorkflowOverridePrecedence(unittest.TestCase):
         return prompt_base, workflows_dir
 
     def test_workflow_command_precedence_over_workflow_state(self):
-        """/workflow command takes precedence even when workflow state exists."""
+        """/nebuko command takes precedence even when workflow state exists."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + '{"version": 1, "workflow": "default", "step": "analyze", "agent": "genius"}'
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
-        body = "/workflow run workflow --name review-only\n\n" + state_json
+        body = "/nebuko run workflow --name review-only\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
-        # /workflow review-only should take precedence and resolve to first agent of review-only
+        # /nebuko review-only should take precedence and resolve to first agent of review-only
         self.assertEqual(result["ROLE_NAME"], "review")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
     def test_workflow_command_precedence_over_mention(self):
-        """/workflow command takes precedence over @@mention."""
+        """/nebuko command takes precedence over @@mention."""
         prompt_base, workflows_dir = self._setup_dirs()
-        body = "/workflow run workflow --name default\n@@dev please implement something"
+        body = "/nebuko run workflow --name default\n@@dev please implement something"
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
-        # /workflow default triggers the workflow — genius is the trigger agent
+        # /nebuko default triggers the workflow — genius is the trigger agent
         self.assertEqual(result["ROLE_NAME"], "genius")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
@@ -2036,7 +2036,7 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
 
 
 class TestResumeIntegration(unittest.TestCase):
-    """Integration tests for /workflow resume command."""
+    """Integration tests for /nebuko resume command."""
 
     @staticmethod
     def _setup_prompt_base():
@@ -2121,7 +2121,7 @@ class TestResumeIntegration(unittest.TestCase):
                 workflow="default", step="implement", agent="dev",
                 dispatch_status="hold", complexity="high", reasoning="deep",
             )
-            body = self._build_trigger_body_with_state("/workflow resume --feedback Yes, approved.", state_json)
+            body = self._build_trigger_body_with_state("/nebuko resume --feedback Yes, approved.", state_json)
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
@@ -2145,7 +2145,7 @@ class TestResumeIntegration(unittest.TestCase):
                 workflow="default", step="implement", agent="dev",
                 dispatch_status="hold", complexity="medium",
             )
-            body = self._build_trigger_body_with_state("/workflow resume", state_json)
+            body = self._build_trigger_body_with_state("/nebuko resume", state_json)
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
@@ -2165,7 +2165,7 @@ class TestResumeIntegration(unittest.TestCase):
                 workflow="default", step="plan", agent="genius",
                 dispatch_status="advance",
             )
-            body = self._build_trigger_body_with_state("/workflow resume", state_json)
+            body = self._build_trigger_body_with_state("/nebuko resume", state_json)
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
@@ -2187,7 +2187,7 @@ class TestResumeIntegration(unittest.TestCase):
                 dispatch_status="hold", complexity="low",
             )
             body = self._build_trigger_body_with_state(
-                "/workflow resume --feedback Looks good, let me double-check.", state_json
+                "/nebuko resume --feedback Looks good, let me double-check.", state_json
             )
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
@@ -2204,7 +2204,7 @@ class TestResumeIntegration(unittest.TestCase):
                 workflow="../evil", step="plan", agent="genius",
                 dispatch_status="hold",
             )
-            body = self._build_trigger_body_with_state("/workflow resume", state_json)
+            body = self._build_trigger_body_with_state("/nebuko resume", state_json)
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
@@ -2237,7 +2237,7 @@ class TestResumeIntegration(unittest.TestCase):
                 },
             }
             state_json = json.dumps(data)
-            body = self._build_trigger_body_with_state("/workflow resume --feedback OK", state_json)
+            body = self._build_trigger_body_with_state("/nebuko resume --feedback OK", state_json)
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
@@ -2254,7 +2254,7 @@ class TestResumeIntegration(unittest.TestCase):
             with open(wf_path, "w") as f:
                 f.write(self._default_workflow_yaml())
 
-            body = "/workflow resume"
+            body = "/nebuko resume"
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
@@ -2311,7 +2311,7 @@ class TestResumeIntegration(unittest.TestCase):
         """Resume with no dispatch should advance to next step, not SKIP_AGENT.
 
         Reproduces issue #420: when an agent posts WorkflowState with resolution
-        but no dispatch, issuing /workflow resume should advance to the next step
+        but no dispatch, issuing /nebuko resume should advance to the next step
         defined in the workflow YAML (not skip with 'step is not on hold').
         """
         prompt_base = self._setup_prompt_base()
@@ -2325,7 +2325,7 @@ class TestResumeIntegration(unittest.TestCase):
                 resolution={"task": "genius", "next_step": "context"},
             )
             body = self._build_trigger_body_with_state(
-                "/workflow resume --feedback Here is my feedback.", state_json
+                "/nebuko resume --feedback Here is my feedback.", state_json
             )
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
@@ -2338,7 +2338,7 @@ class TestResumeIntegration(unittest.TestCase):
         """Resume with no dispatch using spec-driven workflow (exact issue #420 scenario).
 
         PO agent completes spec step, posts resolution.next_step='spec_approval'
-        with no dispatch. User issues /workflow resume with answers. Expected:
+        with no dispatch. User issues /nebuko resume with answers. Expected:
         advance to spec_approval step with genius agent.
         """
         prompt_base = self._setup_prompt_base()
@@ -2362,7 +2362,7 @@ class TestResumeIntegration(unittest.TestCase):
                 },
             )
             body = self._build_trigger_body_with_state(
-                "/workflow resume --feedback 1. Yes 2. No 3. Use REST API.", state_json
+                "/nebuko resume --feedback 1. Yes 2. No 3. Use REST API.", state_json
             )
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
@@ -2441,19 +2441,19 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "false")
 
     def test_force_next_step_with_dispatch_in_body(self):
-        """/workflow force-next-step with embedded dispatch must honor the command."""
+        """/nebuko force-next-step with embedded dispatch must honor the command."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
-        body = "/workflow force-step step --name implement\n\n" + state_json
+        body = "/nebuko force-step step --name implement\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
     def test_workflow_override_with_dispatch_in_body(self):
-        """/workflow command with embedded dispatch must honor the override."""
+        """/nebuko command with embedded dispatch must honor the override."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
-        body = "/workflow run workflow --name default\n\n" + state_json
+        body = "/nebuko run workflow --name default\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["ROLE_NAME"], "genius")
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -2469,17 +2469,17 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "false")
 
     def test_force_next_with_trailing_text_and_dispatch(self):
-        """/workflow force-step with dispatch must still work."""
+        """/nebuko force-step with dispatch must still work."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json_with_dispatch("default", "analyze", "genius")
-        body = "/workflow force-step step --name implement\n\n" + state_json
+        body = "/nebuko force-step step --name implement\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
 
 class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
-    """Plain /workflow trigger on a workflow whose first step mounts a sub-workflow
+    """Plain /nebuko trigger on a workflow whose first step mounts a sub-workflow
     whose first step is itself a sub-workflow reference (three-level nesting,
     issue #609: plan-orchestration -> tmp-impl -> dev-review-loop shape).
 
@@ -2543,9 +2543,9 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
         return prompt_base, workflows_dir
 
     def test_plain_trigger_descends_to_innermost_leaf(self):
-        """A plain /workflow trigger on a nested-first-step workflow descends to the leaf."""
+        """A plain /nebuko trigger on a nested-first-step workflow descends to the leaf."""
         prompt_base, workflows_dir = self._setup_nested_dirs()
-        body = "/workflow run workflow --name parent-wf\n\nstart the nested plan"
+        body = "/nebuko run workflow --name parent-wf\n\nstart the nested plan"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -2559,7 +2559,7 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
     def test_plain_trigger_outer_parent_pair_survives(self):
         """The outermost parent pair survives the nested descent into the flat state."""
         prompt_base, workflows_dir = self._setup_nested_dirs()
-        body = "/workflow run workflow --name parent-wf\n\nstart the nested plan"
+        body = "/nebuko run workflow --name parent-wf\n\nstart the nested plan"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -2571,7 +2571,7 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_nested_dirs()
         # Triggering mid-wf directly: parent-wf is out of the picture, so the
         # recorded pair is the intermediate level's reference step.
-        body = "/workflow run workflow --name mid-wf\n\nstart the loop"
+        body = "/nebuko run workflow --name mid-wf\n\nstart the loop"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -2636,7 +2636,7 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
         result = resolve_config(
-            "/workflow force-step step --name step_1\n\n" + state_json,
+            "/nebuko force-step step --name step_1\n\n" + state_json,
             prompt_base,
             workflows_dir,
             is_bot=False,

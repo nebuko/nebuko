@@ -168,12 +168,12 @@ every agent via the `skills:` list in `agent-config.yaml` — no per-prompt edit
 ```
 trigger body
 │
-├─ /workflow resume ────────────────► held step re-run with human input,
+├─ /nebuko resume ──────────────────► held step re-run with human input,
 │                                     or advance if no active dispatch
-├─ /workflow force-next-step <step> ► jump to that step (regardless of state)
-├─ /workflow delete comments ───────► deterministic comment deletion
-│  /workflow clean comments          (alias; terminal, no agent runs)
-├─ /workflow <name> ────────────────► start/switch to workflow <name>
+├─ /nebuko force-next-step <step>   ► jump to that step (regardless of state)
+├─ /nebuko delete comments ─────────► deterministic comment deletion
+│  /nebuko clean comments            (alias; terminal, no agent runs)
+├─ /nebuko <name> ──────────────────► start/switch to workflow <name>
 ├─ @@mention (human, or plain-mention CI trigger)
 │                                    ► run the mentioned agent
 ├─ state + dispatch ────────────────► dispatch-based routing
@@ -195,7 +195,7 @@ A security boundary applies **before** the workflow state is posted: when the
 `build_output.py`) overrides the agent's `advance` dispatch to `hold`
 (reason `human_gate:<step>`), so every subsequent trigger sees a held
 workflow and the chain stops. The override is skipped when the completing run
-was itself triggered by `/workflow resume` — the human's resume is the
+was itself triggered by `/nebuko resume` — the human's resume is the
 authorization that releases the gate. `terminate` is never intercepted, and
 `loop` retries are not intercepted (the gate fires on step transitions). See
 [workflows.md — Human Gates](./workflows.md#human-gates).
@@ -226,7 +226,7 @@ branch if declared, otherwise the declared `next`. A failing script still
 **advances** in v1 (does not hold or terminate) — the successor, usually an
 agent, receives the raw failure output. Raw script output is wrapped in a
 fenced code block in the posted comment so trigger-like strings in the output
-(`@@agent`, `/workflow`) stay inert. Scripts must live in the repo
+(`@@agent`, `/nebuko`) stay inert. Scripts must live in the repo
 (repo-relative path, no leading `/` or `..` segment); they run in the same
 CI job with the job's full environment and permissions — same trust level as
 the workflow YAML itself. Secret scrubbing / sandboxed execution are deferred

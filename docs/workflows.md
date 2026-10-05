@@ -43,7 +43,7 @@ steps:
 - `human_gate: true` marks a step as a **security boundary**: the workflow is
   held after that step until a human releases it (see [Human Gates](#human-gates)).
 - Workflows can be started by an `@@mention` (matching `trigger.agents`), a
-  `/workflow <name>` command, or a `dispatch` field pointing at them. Human
+  `/nebuko <name>` command, or a `dispatch` field pointing at them. Human
   commands override state-based routing — see the routing cascade in
   [architecture.md](./architecture.md#routing-cascade).
 
@@ -99,7 +99,7 @@ Mechanics:
 1. The gated step's agent finishes and emits `advance`. The engine intercepts
    the dispatch and records `hold` (reason `human_gate:<step>`). The workflow
    stops; the step's output stays posted on the issue for human review.
-2. A human reviews the output and runs `/workflow resume [optional feedback]`.
+2. A human reviews the output and runs `/nebuko resume [optional feedback]`.
    This re-runs the gated step with the human's text injected into the agent's
    context.
 3. On that re-run the gate does **not** fire again — the human's resume is the
@@ -354,7 +354,7 @@ Rules:
 
 - `name` must match the filename (without `.yaml`).
 - Start by typing `@@<trigger agent>` in an issue, or use
-  `/workflow my-workflow` to force it on an existing issue.
+  `/nebuko my-workflow` to force it on an existing issue.
 - Local files take precedence over remotely fetched workflows of the same name
   (zero-copy fetch — see [features.md](./features.md#remote-workflows-zero-copy)).
 

@@ -71,7 +71,7 @@ class TestSoftKillRoute(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("implement", result["REASON"])
         # A halt must tell the human how to take over.
-        self.assertIn("/workflow resume", result["REASON"])
+        self.assertIn("/nebuko resume", result["REASON"])
 
     def test_zero_budget_halts_immediately(self):
         result = resolve_soft_kill_route(
@@ -122,7 +122,7 @@ class TestSoftKillResumeAfterHalt(unittest.TestCase):
     """An exhausted soft-kill halt must be resumable by a human (issue #704).
 
     Round-3 review: the halt stop-gap must not become a dead end — a human
-    ``/workflow resume`` on the halted step re-runs that same step.
+    ``/nebuko resume`` on the halted step re-runs that same step.
     """
 
     _WORKFLOW_YAML = (
@@ -157,7 +157,7 @@ class TestSoftKillResumeAfterHalt(unittest.TestCase):
         )
         return "\n".join(
             [
-                "/workflow resume --feedback resumed by human",
+                "/nebuko resume --feedback resumed by human",
                 "<details>",
                 "<summary>🤖 Workflow State (v1)</summary>",
                 "",

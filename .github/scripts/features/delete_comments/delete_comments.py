@@ -1,6 +1,6 @@
 """Deterministic issue-comment deletion (issue #644, simplified #674).
 
-Human-only ``/workflow delete comments --issue <n>``: a sole command executed
+Human-only ``/nebuko delete comments --issue <n>``: a sole command executed
 outside agent scope — no agent, no LLM, no workflow routing, no comment
 posting. It deletes every comment on the target issue via the ``gh`` CLI and
 nothing else.

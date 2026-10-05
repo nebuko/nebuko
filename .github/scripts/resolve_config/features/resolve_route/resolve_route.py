@@ -136,7 +136,7 @@ def _resolve_resume_path(
     local_workflows_dir: Optional[str] = None,
     human_input: str = "",
 ) -> dict:
-    """Resolve config to re-run the currently held step after /workflow resume.
+    """Resolve config to re-run the currently held step after /nebuko resume.
 
     Validates that dispatch.status is ``hold`` (a human-gate hold) or
     ``soft_kill`` (a retry-budget exhaustion halt, issue #704), looks up the
@@ -147,7 +147,7 @@ def _resolve_resume_path(
 
     Args:
         prev_state: WorkflowState containing the held workflow/step/agent.
-        trigger_body: Raw trigger body containing the /workflow resume command.
+        trigger_body: Raw trigger body containing the /nebuko resume command.
         workflows_dir: Path to workflows directory.
         local_workflows_dir: Optional consumer-local dir with precedence
             over ``workflows_dir`` (issue #529).
@@ -467,7 +467,7 @@ def resolve_soft_kill_route(
           per-step budget is consumed for retries and never for a human/manual
           trigger;
         * **halt** — ``{"SKIP_AGENT": "true", "REASON": ...}`` naming the step,
-          the exhausted attempt count and the ``/workflow resume`` command,
+          the exhausted attempt count and the ``/nebuko resume`` command,
           once the budget is spent so a human can resume.
 
         This is a **pure reader**: the counter is never mutated here. The
@@ -515,7 +515,7 @@ def resolve_soft_kill_route(
         "REASON": (
             f"Soft time-kill: step '{step}' exhausted its retry budget "
             f"({attempts}/{budget}); halting the workflow for a human to resume "
-            f"with /workflow resume."
+            f"with /nebuko resume."
         ),
     }
 
@@ -1111,7 +1111,7 @@ def _resolve_human_path(
 ) -> dict:
     """Resolve config for a human-triggered comment.
 
-    Handles /workflow force-step, /workflow run, and @@mentions.
+    Handles /nebuko force-step, /nebuko run, and @@mentions.
     Falls back to fetching workflow state from comment history when needed.
 
     Args:
@@ -1136,7 +1136,7 @@ def _resolve_human_path(
     Returns:
         Config dict with task and config_* variables, or SKIP_AGENT dict.
     """
-    # /workflow force-step step --name <step> (human only). The flag grammar
+    # /nebuko force-step step --name <step> (human only). The flag grammar
     # makes --name required, so the legacy bare-command auto-advance arm is
     # gone (issue #635).
     wf_cmd = workflow_command
@@ -1205,7 +1205,7 @@ def _resolve_human_path(
             config_workflow=config_workflow, fs_state=fs_state,
         )
 
-    # /workflow run workflow --name <name> (human only)
+    # /nebuko run workflow --name <name> (human only)
     wf_name = (
         wf_cmd.params["name"]
         if wf_cmd is not None and wf_cmd.action == "run"
@@ -1255,7 +1255,7 @@ def _resolve_human_path(
             # Multi-dir miss: the exception message enumerates every path
             # searched (issue #529).
             print(f"Warning: {e}, falling back to @@mention", file=sys.stderr)
-            wf_fail_reason = f"/workflow '{wf_name}': {e}"
+            wf_fail_reason = f"/nebuko '{wf_name}': {e}"
         except ValueError as e:
             # A schema-invalid file (local override or built-in) still wins —
             # fail loudly instead of silently falling back to another file of
@@ -1265,10 +1265,10 @@ def _resolve_human_path(
                 f"no silent fallback to another directory",
                 file=sys.stderr,
             )
-            wf_fail_reason = f"/workflow '{wf_name}': schema-invalid ({e})"
+            wf_fail_reason = f"/nebuko '{wf_name}': schema-invalid ({e})"
 
     if not wf_resolved:
-        # Fall through to @@mention if /workflow was invalid/unresolvable.
+        # Fall through to @@mention if /nebuko was invalid/unresolvable.
         # pinned_task covers CI plain-mention triggers whose bot marker would
         # otherwise make extract_mention_agent return None (issue #478).
         task = pinned_task or extract_mention_agent(trigger_body) or ""
@@ -1304,7 +1304,7 @@ def _resolve_human_path(
             "config_parent_workflow_step", ""
         ),
     }
-    # Diagnostic for the terminal skip comment when /workflow failed and no
+    # Diagnostic for the terminal skip comment when /nebuko failed and no
     # mention fallback produced a task (issue #529).
     if wf_fail_reason and not task:
         result["config_skip_reason"] = wf_fail_reason

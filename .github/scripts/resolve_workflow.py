@@ -1200,7 +1200,7 @@ def resolve_sub_workflow_entry(
     """Public entry point for sub-workflow entry resolution.
 
     Delegates to :func:`_resolve_sub_workflow_entry` (same contract) so that
-    other resolution paths (e.g. ``/workflow force-next-step``, issue #599)
+    other resolution paths (e.g. ``/nebuko force-next-step``, issue #599)
     can force-enter a sub-workflow step with exactly the same child-loading
     and parent-reference logic as the normal happy path. ``scaffold_branch``
     enables fetch-on-miss for branch-mounted children (issue #604).

@@ -96,7 +96,7 @@ def _build_result(
 
     task = config.get("task", "")
     if not task:
-        # Enriched reason: carries /workflow failure detail (name + searched
+        # Enriched reason: carries /nebuko failure detail (name + searched
         # directories) when available (issue #529).
         skip_reason = config.get("config_skip_reason") or "No valid task found"
         return {"SKIP_AGENT": "true", "REASON": skip_reason}

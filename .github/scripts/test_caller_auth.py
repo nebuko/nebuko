@@ -36,7 +36,7 @@ def matches_existing_gates(body, event_name):
         or "<!-- bot-trigger:" in body
     ):
         return True
-    return "@@genius" in body or "/workflow" in body
+    return "@@genius" in body or "/nebuko" in body
 
 
 def trigger_starts(event_name, author_association, caller_auth, body=ISSUE_BODY, action="opened"):
