@@ -381,7 +381,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_not_on_first_line_ignored(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "Some intro text\n/workflow run workflow --name default"
+        body = "Some intro text\n/nebuko run workflow --name default"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -391,7 +391,7 @@ class TestResolveConfigWithWorkflowCommand:
     def test_workflow_not_on_first_line_falls_through_mention(self):
         """When /nebuko not on first line but @@mention present, use mention."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "Some intro text\n/workflow run workflow --name default\n@@dev please help"
+        body = "Some intro text\n/nebuko run workflow --name default\n@@dev please help"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -411,7 +411,7 @@ class TestResolveConfigWithWorkflowCommand:
 
     def test_workflow_bot_comment_skips(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        body = "<!-- bot-agent-dev -->\n/workflow run workflow --name default"
+        body = "<!-- bot-agent-dev -->\n/nebuko run workflow --name default"
 
         result = resolve_config(body, prompt_base, workflows_dir)
 
@@ -765,7 +765,7 @@ class TestDeleteCommentsCommand(unittest.TestCase):
 
     def test_bot_trigger_does_not_route_to_delete(self):
         result = self._resolve(
-            "<!-- bot-workflow-terminal -->\n/workflow delete comments --issue 123"
+            "<!-- bot-workflow-terminal -->\n/nebuko delete comments --issue 123"
         )
         self.assertNotIn("DELETE_COMMENTS", result)
 
@@ -852,7 +852,7 @@ class TestCleanCommentsCommand(unittest.TestCase):
 
     def test_bot_clean_is_ignored(self):
         result = self._resolve(
-            "<!-- bot-workflow-terminal -->\n/workflow clean comments",
+            "<!-- bot-workflow-terminal -->\n/nebuko clean comments",
             issue_number=590,
         )
         self.assertNotIn("DELETE_COMMENTS", result)
@@ -866,7 +866,7 @@ class TestCleanCommentsCommand(unittest.TestCase):
         self.assertNotIn("DELETE_COMMENTS", result)
 
     def test_clean_not_on_first_line_is_not_a_command(self):
-        result = self._resolve("hello\n/workflow clean comments", issue_number=590)
+        result = self._resolve("hello\n/nebuko clean comments", issue_number=590)
         self.assertNotIn("DELETE_COMMENTS", result)
 
 
