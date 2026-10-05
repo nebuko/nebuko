@@ -197,6 +197,29 @@ def _backfill_workflow_identity(
     return env
 
 
+def _ensure_child_identity(
+    env: dict[str, str], trigger: Trigger | None
+) -> dict[str, str]:
+    """Seed ``REPO_NAME``/``TARGET_NUMBER`` for the child's state recovery.
+
+    When the ``$RUNNER_TEMP`` hand-off is absent, the legacy child recovers the
+    previous state from the issue comments, and that fallback needs both
+    variables in its environment (issues #671/#739). An existing value wins — the
+    ``run-task`` job exports both through ``$GITHUB_ENV`` — and the trigger is
+    the fallback so the child still recovers on a host that does not export them.
+    Never defaults to an empty string.
+    """
+    repo = env.get("REPO_NAME") or env.get("GITHUB_REPOSITORY")
+    if not repo and trigger is not None:
+        payload_repo = (trigger.payload or {}).get("repository") or {}
+        repo = payload_repo.get("full_name")
+    if repo:
+        env.setdefault("REPO_NAME", str(repo))
+    if not env.get("TARGET_NUMBER") and trigger is not None and trigger.number:
+        env["TARGET_NUMBER"] = str(trigger.number)
+    return env
+
+
 # @stub-protected
 @dataclass(frozen=True)
 class Engine:
@@ -222,9 +245,9 @@ class Engine:
     _run_resolved: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
-    # The previous state the ``agent`` phase seeded for the child (issue #739),
+    # The previous state ``stage_prev_state`` seeded for the child (issue #739),
     # held for ``_agent_env`` to restore the workflow identity the resolver drops
-    # on a bare human mention. ``None`` until ``_seed_previous_state`` has run.
+    # on a bare human mention. ``None`` until ``stage_prev_state`` has run.
     # Engine-internal, so it is excluded from ``__init__``/equality/repr.
     _seeded_prev_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
@@ -270,17 +293,16 @@ class Engine:
             # prepended the header there, and the run's authoritative state is
             # the agent's own output, which is not known before it runs.
 
-            # Seed the pre-agent hand-off (issue #739). The legacy
-            # ``query_context`` step wrote the resolved state to
-            # ``$RUNNER_TEMP`` before the agent ran; the refactor dropped it,
-            # so on a fresh runner the child starts from scratch and resets
-            # ``history`` to a single entry (issue #726).
-            self._seed_previous_state(history)
-
             self._enter(phases, "prompt")
             prompt = self.build_prompt(resolved, history)
 
             self._enter(phases, "agent")
+            # Seed the pre-agent hand-off (issue #739): the legacy
+            # ``query_context`` step wrote the resolved state to ``$RUNNER_TEMP``
+            # before the agent ran; the refactor dropped it, so on a fresh runner
+            # the child starts from scratch and resets ``history`` to a single
+            # entry (issue #726).
+            self.stage_prev_state()
             self.notify_agent_started(self._agent_start_notice(trigger))
             failure_reason: str | None = None
             try:
@@ -534,16 +556,25 @@ class Engine:
         resolved; a configuration error is fatal so the child never boots
         modelless, while an unexpected failure falls back to the ambient
         environment.
+
+        The child then gets the workflow identity the resolver drops on a bare
+        human mention (from the seeded previous state) and the ``REPO_NAME``/
+        ``TARGET_NUMBER`` its comment-based state recovery needs (issue #739).
         """
         env = {**self.env, **resolved_env_overlay(self._handoff_config())}
         env = _backfill_workflow_identity(env, self._seeded_prev_state.get("state"))
+        env = _ensure_child_identity(env, self._active_trigger())
         env.update(self._artifacts().child_log_env())
         return _anchor_config_path(env, self.repo_root)
 
-    def _seed_previous_state(
-        self, history: Sequence[CommentEntry]
-    ) -> WorkflowState | None:
-        """Persist the previous state for the agent child (issues #671/#726/#739).
+    def _active_trigger(self) -> Trigger | None:
+        """The trigger the resolver annotated the hand-off with, if any."""
+        trigger = self._get(self._handoff_config(), _TRIGGER_KEY)
+        return trigger if isinstance(trigger, Trigger) else None
+
+    # @stub-protected
+    def stage_prev_state(self) -> WorkflowState | None:
+        """Write the previous state to the pre-agent hand-off (issues #671/#726/#739).
 
         The child carries ``version`` and ``history`` forward by reading
         ``$RUNNER_TEMP/prev_workflow_state.json``; the pre-refactor
@@ -551,28 +582,15 @@ class Engine:
         write happens *after* the agent, so without this seeding the child sees a
         stale file from a previous job (persistent runner) or nothing at all
         (fresh runner), and ``build_state`` resets ``history`` to a single entry
-        (issue #726). The state is re-extracted from the history the run already
-        loaded, so no extra API call is made.
+        (issue #726). The state comes from the adapter's own persistence — the
+        latest posted state on GitHub, the run store locally — and a genuine
+        fresh start (no previous state) writes nothing.
         """
-        state = self._state_from_history(history)
+        state = self._previous_state()
         self._seeded_prev_state["state"] = state
         if state is not None:
             self.adapter.save_state(state)
         return state
-
-    @staticmethod
-    def _state_from_history(
-        history: Sequence[CommentEntry],
-    ) -> WorkflowState | None:
-        """Extract the latest posted state from ``history`` (``None`` on miss)."""
-        ensure_import_path()
-        from resolve_config.features.fetch_state.fetch_state import extract_state
-
-        try:
-            return extract_state(history)
-        except Exception:  # noqa: BLE001 - a corrupt comment must not abort the run
-            log.warning("[phase:prompt] could not extract the previous state")
-            return None
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""
