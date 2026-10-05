@@ -57,7 +57,7 @@ agents:
     temperature: 0.4
     prompt_file: ".agents/prompts/review.md"
     skills: ["posting-contract"]
-    tools: ["think", "finish", "dispatch_next"]
+    tools: ["think", "finish", "dispatch_next", "terminal"]
 
   issue:
     model: "${llms.deepseek-v4_1-flash}"
