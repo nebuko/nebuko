@@ -207,16 +207,31 @@ def _ensure_child_identity(
     variables in its environment (issues #671/#739). An existing value wins — the
     ``run-task`` job exports both through ``$GITHUB_ENV`` — and the trigger is
     the fallback so the child still recovers on a host that does not export them.
-    Never defaults to an empty string.
+
+    An undeterminable identity is fatal rather than defaulted to an empty string:
+    the child's comment-based recovery silently returns nothing on a missing
+    value, which resets ``history`` to a single entry (issue #739).
     """
     repo = env.get("REPO_NAME") or env.get("GITHUB_REPOSITORY")
     if not repo and trigger is not None:
         payload_repo = (trigger.payload or {}).get("repository") or {}
         repo = payload_repo.get("full_name")
-    if repo:
-        env.setdefault("REPO_NAME", str(repo))
-    if not env.get("TARGET_NUMBER") and trigger is not None and trigger.number:
-        env["TARGET_NUMBER"] = str(trigger.number)
+    if not repo:
+        raise ValueError(
+            "no repository for the agent child's state recovery: set REPO_NAME or "
+            "GITHUB_REPOSITORY, or carry it in the trigger payload"
+        )
+    env.setdefault("REPO_NAME", str(repo))
+
+    number = env.get("TARGET_NUMBER") or (
+        str(trigger.number) if trigger is not None and trigger.number else ""
+    )
+    if not number:
+        raise ValueError(
+            "no issue number for the agent child's state recovery: set "
+            "TARGET_NUMBER, or carry the number on the trigger"
+        )
+    env.setdefault("TARGET_NUMBER", number)
     return env
 
 
@@ -568,9 +583,19 @@ class Engine:
         return _anchor_config_path(env, self.repo_root)
 
     def _active_trigger(self) -> Trigger | None:
-        """The trigger the resolver annotated the hand-off with, if any."""
+        """The trigger the resolver annotated the hand-off with, if any.
+
+        Falls back to the adapter's own trigger so the child identity still
+        resolves when the hand-off carries no trigger (for example a resolver
+        failure); a host that cannot read a trigger degrades to the ambient env.
+        """
         trigger = self._get(self._handoff_config(), _TRIGGER_KEY)
-        return trigger if isinstance(trigger, Trigger) else None
+        if isinstance(trigger, Trigger):
+            return trigger
+        try:
+            return self.normalize()
+        except Exception:  # noqa: BLE001 - identity seeding degrades to self.env
+            return None
 
     # @stub-protected
     def stage_prev_state(self) -> WorkflowState | None:

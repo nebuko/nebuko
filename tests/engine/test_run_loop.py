@@ -47,7 +47,15 @@ def _trigger(body: str = "@@dev fix it", number: int = 590) -> Trigger:
 
 def _engine(tmp_path, trigger=None, *, name: str = "run-1", env=None) -> Engine:
     adapter = LocalAdapter(tmp_path / "runs" / name, trigger=trigger or _trigger())
-    return Engine(adapter=adapter, repo_root=repo_root(), env=dict(env or {"CIRCUIT_BREAKER_THRESHOLD": "3"}))
+    # Production runs with ``dict(os.environ)``, where GitHub Actions always sets
+    # ``GITHUB_REPOSITORY``; the fixture mirrors that so the child-identity seed
+    # (issue #739) resolves for every run-flow test.
+    base_env = {
+        "CIRCUIT_BREAKER_THRESHOLD": "3",
+        "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
+    }
+    base_env.update(env or {})
+    return Engine(adapter=adapter, repo_root=repo_root(), env=base_env)
 
 
 def _agent_result(answer: str, dispatch: dict | None = None) -> dict:
@@ -414,15 +422,35 @@ class TestChildIdentityEnv:
 
     ``load_prev_state_or_recover`` falls back to ``REPO_NAME``/``TARGET_NUMBER``
     when the ``$RUNNER_TEMP`` hand-off is missing; ``_ensure_child_identity``
-    seeds both without ever writing an empty value.
+    seeds both and fails loudly when neither source carries them, rather than
+    writing an empty value that makes the recovery silently return nothing.
     """
 
     def test_fills_the_issue_number_from_the_trigger(self):
-        assert _ensure_child_identity({}, _trigger())["TARGET_NUMBER"] == "590"
+        env = _ensure_child_identity({"GITHUB_REPOSITORY": "o/r"}, _trigger())
+
+        assert env["TARGET_NUMBER"] == "590"
+
+    def test_fills_the_repo_from_the_trigger_payload(self):
+        trigger = Trigger(
+            author="olivier-norture",
+            body="@@dev fix it",
+            type="issue_comment",
+            number=590,
+            payload={"repository": {"full_name": "olivier-norture/git-flow-ai"}},
+        )
+
+        env = _ensure_child_identity({"TARGET_NUMBER": "1"}, trigger)
+
+        assert env["REPO_NAME"] == "olivier-norture/git-flow-ai"
 
     def test_fills_the_repo_from_the_repository_environment(self):
         env = _ensure_child_identity(
-            {"GITHUB_REPOSITORY": "olivier-norture/git-flow-ai"}, None
+            {
+                "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
+                "TARGET_NUMBER": "590",
+            },
+            None,
         )
 
         assert env["REPO_NAME"] == "olivier-norture/git-flow-ai"
@@ -434,11 +462,13 @@ class TestChildIdentityEnv:
 
         assert (env["REPO_NAME"], env["TARGET_NUMBER"]) == ("other/repo", "1")
 
-    def test_never_writes_an_empty_value(self):
-        env = _ensure_child_identity({}, None)
+    def test_a_missing_repo_is_fatal(self):
+        with pytest.raises(ValueError, match="no repository"):
+            _ensure_child_identity({"TARGET_NUMBER": "590"}, _trigger())
 
-        assert "REPO_NAME" not in env
-        assert "TARGET_NUMBER" not in env
+    def test_a_missing_issue_number_is_fatal(self):
+        with pytest.raises(ValueError, match="no issue number"):
+            _ensure_child_identity({"GITHUB_REPOSITORY": "o/r"}, None)
 
     def test_run_hands_the_child_the_repo_and_issue(self, tmp_path, monkeypatch):
         engine = _engine(
@@ -514,6 +544,30 @@ class TestAgentEnvHandoff:
 
         assert env["ROLE_NAME"] == "dev"
         assert env["PROMPT_LOCATION"] == "/repo/dev.md"
+
+    def test_a_dispatch_trigger_hands_the_workflow_identity_to_the_child(
+        self, tmp_path, monkeypatch
+    ):
+        """Plan step 3: the resolver's workflow/step reach the child (issue #739).
+
+        The child rebuilds the history entry's ``step`` from ``WORKFLOW_STEP``,
+        so a dispatch-triggered run must carry both that and ``WORKFLOW_NAME``.
+        """
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "ROLE_NAME": "dev",
+                "TASK": "dev",
+                "WORKFLOW_NAME": "spec-driven-impl",
+                "WORKFLOW_STEP": "implement",
+            },
+        )
+
+        env = engine._agent_env()
+
+        assert env["WORKFLOW_NAME"] == "spec-driven-impl"
+        assert env["WORKFLOW_STEP"] == "implement"
 
     def test_overlay_drops_the_engine_only_trigger(self):
         overlay = resolved_env_overlay({"ROLE_NAME": "dev", "ENGINE_TRIGGER": _trigger()})
@@ -750,7 +804,9 @@ class TestAgentStartAcknowledgment:
         assert engine._run_url(trigger) == RUN_URL
 
     def test_falls_back_to_the_event_repository(self, tmp_path):
-        engine = _engine(tmp_path, env={"GITHUB_RUN_ID": "7"})
+        # Explicitly clear the repository the fixture seeds so the event payload
+        # is the only source (the fallback under test).
+        engine = _engine(tmp_path, env={"GITHUB_RUN_ID": "7", "GITHUB_REPOSITORY": ""})
         trigger = Trigger(
             author="olivier-norture",
             body="@@dev go",
