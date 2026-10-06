@@ -5,9 +5,9 @@ The engine's ``publish`` phase used to re-import the legacy bridge
 ...``, after the in-process agent run had already executed in the same
 interpreter. The live run raised ``ModuleNotFoundError`` there.
 
-``engine.run_loop._load_bridge_module`` loads the legacy modules by absolute
+``nebuko.engine.run_loop._load_bridge_module`` loads the legacy modules by absolute
 path (``importlib.util.spec_from_file_location`` against
-``engine.paths.LIB_DIR``), so the resolution is independent of ``sys.path``
+``nebuko.engine.paths.LIB_DIR``), so the resolution is independent of ``sys.path``
 and ``sys.modules`` — and ``Engine.preflight()`` resolves the bridge before the
 agent runs, so a broken checkout fails fast instead of mid-run.
 """
@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from adapters.local import LocalAdapter
-from engine.models import Trigger
-from engine.paths import LIB_DIR, repo_root
-from engine import run_loop
-from engine.run_loop import Engine
+from nebuko.adapters.local import LocalAdapter
+from nebuko.engine.models import Trigger
+from nebuko.engine.paths import LIB_DIR, repo_root
+from nebuko.engine import run_loop
+from nebuko.engine.run_loop import Engine
 
 
 @pytest.fixture

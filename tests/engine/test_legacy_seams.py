@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from engine.models import CommentEntry, Trigger
+from nebuko.engine.models import CommentEntry, Trigger
 from workflow_state.workflow_state import WorkflowState, to_git_comment
 
 CREATED_AT = "2026-10-01T07:47:47Z"

@@ -3,3 +3,7 @@ __pycache__/
 openhands-task-logs/
 output/
 .pytest_cache
+latest_answer.md
+*.egg-info/
+build/
+dist/

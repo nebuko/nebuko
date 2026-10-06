@@ -13,11 +13,11 @@ import re
 
 import pytest
 
-from adapters.local import LocalAdapter
+from nebuko.adapters.local import LocalAdapter
 from config import AgentStartNotice
-from engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
-from engine.paths import repo_root
-from engine.run_loop import (
+from nebuko.engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
+from nebuko.engine.paths import repo_root
+from nebuko.engine.run_loop import (
     PHASES,
     Engine,
     _backfill_workflow_identity,
@@ -149,7 +149,7 @@ class TestGuardsPhase:
         assert str(verdict["SKIP_AGENT"]).lower() == "false"
 
     def test_uses_the_injected_history_for_the_circuit_breaker(self, tmp_path):
-        from engine.models import CommentEntry
+        from nebuko.engine.models import CommentEntry
 
         engine = _engine(tmp_path)
         history = [
@@ -572,7 +572,9 @@ class TestAgentEnvHandoff:
         env = engine._agent_env()
 
         assert env["ROLE_NAME"] == "dev"
-        assert env["PROMPT_LOCATION"] == "/repo/dev.md"
+        # The resolver's pick is re-resolved through the layered prompt lookup
+        # (issue #741), so the child receives the shipped file's absolute path.
+        assert env["PROMPT_LOCATION"] == str(repo_root() / "defaults" / "prompts" / "dev.md")
 
     def test_a_dispatch_trigger_hands_the_workflow_identity_to_the_child(
         self, tmp_path, monkeypatch
@@ -665,7 +667,9 @@ class TestAgentEnvHandoff:
 
         env = engine._agent_env()
 
-        assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
+        assert env["AGENT_CONFIG_PATH"] == str(
+            repo_root() / "defaults" / "agents" / "agent-config.yaml"
+        )
 
     def test_keeps_an_absolute_config_path(self, tmp_path, monkeypatch):
         absolute = str(tmp_path / "agent-config.yaml")
@@ -684,7 +688,9 @@ class TestAgentEnvHandoff:
 
         env = engine._agent_env()
 
-        assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
+        assert env["AGENT_CONFIG_PATH"] == str(
+            repo_root() / "defaults" / "agents" / "agent-config.yaml"
+        )
 
 
 class TestRunLogArtifacts:
@@ -719,7 +725,7 @@ class TestRunLogArtifacts:
         engine = _engine(tmp_path)
         monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("*Dev answer*"))
 
-        from engine.artifacts import RunArtifactStager
+        from nebuko.engine.artifacts import RunArtifactStager
 
         def boom(self, console_log):
             raise OSError("read-only artifact dir")
@@ -1023,17 +1029,17 @@ class TestEntryPoints:
         assert list(inspect.signature(main).parameters) == ["argv"]
 
     def test_run_module_reexports_main(self):
-        from engine.run import main as run_main
+        from nebuko.engine.run import main as run_main
 
         assert run_main is main
 
     def test_module_entry_point_reexports_main(self):
-        import engine.__main__ as entry_point
+        import nebuko.engine.__main__ as entry_point
 
         assert entry_point.main is main
 
     def test_package_reexports_the_engine_surface(self):
-        import engine
+        from nebuko import engine
 
         assert engine.main is main
         assert engine.Engine is Engine
