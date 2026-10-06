@@ -5,6 +5,7 @@ or real git mutations in unit tests.
 """
 
 import os
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,9 @@ from agent_script.features.ensure_pr.ensure_pr import (
     _default_base,
     _find_pr_for_branch,
     _issue_number_from_env,
+    _repo_root,
+    _run_gh,
+    _run_git,
     ensure_pr,
 )
 
@@ -139,6 +143,58 @@ class TestHelpers(unittest.TestCase):
             return_value="",
         ):
             self.assertIsNone(_find_pr_for_branch("feature/x"))
+
+    def test_repo_root_reads_gfa_repo_root(self):
+        with patch.dict("os.environ", {"GFA_REPO_ROOT": "/real/checkout"}):
+            self.assertEqual(_repo_root(), "/real/checkout")
+
+    def test_repo_root_absent_or_blank_is_none(self):
+        # Absent or blank ⇒ inherit the process cwd (previous behaviour).
+        saved = os.environ.pop("GFA_REPO_ROOT", None)
+        try:
+            self.assertIsNone(_repo_root())
+            os.environ["GFA_REPO_ROOT"] = "   "
+            self.assertIsNone(_repo_root())
+        finally:
+            os.environ.pop("GFA_REPO_ROOT", None)
+            if saved is not None:
+                os.environ["GFA_REPO_ROOT"] = saved
+
+    def test_run_git_runs_in_the_repo_root(self):
+        """#766: git must target the checkout, not the host's temporary cwd."""
+        fake = subprocess.CompletedProcess(["git", "remote"], 0, "origin\n", "")
+        with patch.object(subprocess, "run", return_value=fake) as run_mock, patch.dict(
+            "os.environ", {"GFA_REPO_ROOT": "/real/checkout"}
+        ):
+            self.assertEqual(_run_git(["remote"]), "origin")
+        self.assertEqual(run_mock.call_args.kwargs["cwd"], "/real/checkout")
+
+    def test_run_gh_runs_in_the_repo_root(self):
+        fake = subprocess.CompletedProcess(["gh", "pr", "list"], 0, "url\n", "")
+        with patch.object(subprocess, "run", return_value=fake) as run_mock, patch.dict(
+            "os.environ", {"GFA_REPO_ROOT": "/real/checkout"}
+        ):
+            self.assertEqual(_run_gh(["pr", "list"]), "url")
+        self.assertEqual(run_mock.call_args.kwargs["cwd"], "/real/checkout")
+
+    def test_run_git_inherits_cwd_without_repo_root(self):
+        saved = os.environ.pop("GFA_REPO_ROOT", None)
+        fake = subprocess.CompletedProcess(["git", "remote"], 0, "origin\n", "")
+        try:
+            with patch.object(subprocess, "run", return_value=fake) as run_mock:
+                _run_git(["remote"])
+            self.assertIsNone(run_mock.call_args.kwargs["cwd"])
+        finally:
+            if saved is not None:
+                os.environ["GFA_REPO_ROOT"] = saved
+
+    def test_run_git_honours_an_explicit_cwd(self):
+        fake = subprocess.CompletedProcess(["git", "remote"], 0, "origin\n", "")
+        with patch.object(subprocess, "run", return_value=fake) as run_mock, patch.dict(
+            "os.environ", {"GFA_REPO_ROOT": "/real/checkout"}
+        ):
+            _run_git(["remote"], cwd="/explicit")
+        self.assertEqual(run_mock.call_args.kwargs["cwd"], "/explicit")
 
 
 class TestEnsurePr(unittest.TestCase):

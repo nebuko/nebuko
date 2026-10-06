@@ -159,6 +159,7 @@ def run_agent(
     prompt: str,
     args=None,
     agent_cfg=None,
+    workspace=None,
 ) -> Conversation:
     """
     Create an agent, start a conversation, send a prompt, and run the agent.
@@ -169,13 +170,19 @@ def run_agent(
         args: Parsed argparse namespace (unused, retained for compatibility).
         agent_cfg: Optional AgentConfig object for tool resolution.
                    If None, default tool list is used.
+        workspace: Checkout the agent must operate on. The in-process engine host
+                   runs under a temporary cwd, so it passes the real repo root
+                   explicitly (issue #766); when omitted, ``GFA_REPO_ROOT`` is
+                   preferred over the ambient cwd.
 
     Returns:
         The completed Conversation object.
     """
     llm = LLM(**llm_config)
 
-    cwd = os.getcwd()
+    cwd = os.fspath(workspace) if workspace is not None else (
+        os.environ.get("GFA_REPO_ROOT") or os.getcwd()
+    )
 
     role_name = os.environ.get("ROLE_NAME", "unknown")
 

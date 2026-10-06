@@ -24,10 +24,29 @@ logger = get_logger(__name__)
 DEFAULT_TIMEOUT = 120
 
 
-def _run_git(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> str:
+def _repo_root() -> Optional[str]:
+    """Checkout the git/gh commands must run in, or ``None`` for the process cwd.
+
+    The in-process engine host runs the whole assembly under a temporary cwd
+    (issue #740), so a bare ``git remote`` fails with "not a git repository".
+    ``GFA_REPO_ROOT`` — exported by the engine's agent seam — pins git/gh to the
+    real checkout so the wind-down can still commit, push and open the PR
+    (issue #766).
+    """
+    root = os.environ.get("GFA_REPO_ROOT", "").strip()
+    return root or None
+
+
+def _run_git(
+    args: list[str], timeout: int = DEFAULT_TIMEOUT, cwd: Optional[str] = None
+) -> str:
     """Run a git command via subprocess with a timeout. Returns stdout."""
     result = subprocess.run(
-        ["git"] + args, capture_output=True, text=True, timeout=timeout
+        ["git"] + args,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=cwd if cwd is not None else _repo_root(),
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -36,10 +55,16 @@ def _run_git(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> str:
     return result.stdout.strip()
 
 
-def _run_gh(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> str:
+def _run_gh(
+    args: list[str], timeout: int = DEFAULT_TIMEOUT, cwd: Optional[str] = None
+) -> str:
     """Run a gh CLI command via subprocess. Returns stdout."""
     result = subprocess.run(
-        ["gh"] + args, capture_output=True, text=True, timeout=timeout
+        ["gh"] + args,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=cwd if cwd is not None else _repo_root(),
     )
     if result.returncode != 0:
         raise RuntimeError(
