@@ -1,6 +1,6 @@
 # Architecture
 
-High-level system architecture of git-flow-ai: how a GitHub event becomes an
+High-level system architecture of nebuko: how a GitHub event becomes an
 agent run, the 9-agent model, the orchestration loop, state management, and
 the routing cascade. For the internal DDD package layout, see
 [architecture_code.md](./architecture_code.md). For step-by-step details of
@@ -10,7 +10,7 @@ the GitHub Actions job, see [default-workflow.md](./default-workflow.md).
 
 ## System Overview
 
-git-flow-ai is a multi-agent AI orchestration system built on GitHub Actions +
+nebuko is a multi-agent AI orchestration system built on GitHub Actions +
 the OpenHands SDK. All collaboration happens inside GitHub issues: agents post
 comments, persist state in those comments, and trigger each other through
 dispatch sentinels. There is no server or database — the issue thread *is* the

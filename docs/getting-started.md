@@ -1,6 +1,6 @@
 # Getting Started
 
-Set up git-flow-ai in your repository and run your first multi-agent workflow.
+Set up nebuko in your repository and run your first multi-agent workflow.
 This page assumes you know basic GitHub Actions; for the underlying concepts,
 read [architecture.md](./architecture.md) and
 [workflows.md](./workflows.md).
@@ -33,7 +33,7 @@ read [architecture.md](./architecture.md) and
 Copy the consumer file into `.github/workflows/workflow.yaml`:
 
 ```yaml
-name: AI Dev Workflow (git-flow-ai)
+name: AI Dev Workflow (nebuko)
 
 on:
   issues:
@@ -48,7 +48,7 @@ permissions:
 
 jobs:
   agent:
-    uses: olivier-norture/git-flow-ai/.github/workflows/nebuko-workflow.yaml@main
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
     with:
       agent_config_path: "agent-config.yaml"
       circuit_breaker_threshold: 15
@@ -182,7 +182,7 @@ Set the `CALLER_AUTH` input to `on` to gate the trigger on the author's
 repository association:
 
 ```yaml
-- uses: olivier-norture/git-flow-ai/.github/workflows/nebuko-workflow.yaml@main
+- uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
   with:
     CALLER_AUTH: on
 ```

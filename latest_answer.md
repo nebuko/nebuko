@@ -9,7 +9,7 @@
    - **State layer:** `StepResolution`/`WorkflowState` shapes confirmed; synthetic dispatch `{status: advance, branch: pass|fail}` feeds existing `conditions[]` routing unchanged.
 4. ✅ **PR #552 description updated** with shipped scope + ordered remaining work so the next run resumes without re-analysis.
 
-**Current state:** branch `feature/issue-541-script-step-stub` at `06ba633`, in sync with origin; [PR #552](https://github.com/olivier-norture/git-flow-ai/pull/552) OPEN. No code changes started yet this run.
+**Current state:** branch `feature/issue-541-script-step-stub` at `06ba633`, in sync with origin; [PR #552](https://github.com/nebuko/nebuko/pull/552) OPEN. No code changes started yet this run.
 
 **Blocking point:** none hard — the run's time budget was exhausted in the mapping phase, before the first edit. Schema is **locked** (nested no-kind `script: {path, args, timeout_minutes}`); do not re-shape it.
 

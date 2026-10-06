@@ -1,6 +1,6 @@
 # Documentation
 
-git-flow-ai is a **multi-agent AI orchestration system** built on GitHub
+nebuko is a **multi-agent AI orchestration system** built on GitHub
 Actions + the OpenHands SDK. Nine specialized agents (planner, context
 collector, developer, reviewer, and more) collaborate inside your GitHub
 issues — posting comments, persisting state, and handing off work through
