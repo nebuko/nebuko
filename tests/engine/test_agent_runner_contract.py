@@ -30,7 +30,9 @@ from nebuko.engine.agent_runner import (
 from nebuko.engine.paths import ensure_import_path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ENTRY_POINT = Path("engine") / "lib" / "agent_script" / "agent_script.py"
+ENTRY_POINT = (
+    Path("src") / "nebuko" / "engine" / "lib" / "agent_script" / "agent_script.py"
+)
 
 
 def _stub_entry_point(script: Path) -> None:
@@ -103,7 +105,9 @@ def test_artifact_names_match_the_legacy_readers() -> None:
 
     assert _LATEST_ANSWER_FILE == prepare_comment.LATEST_ANSWER_FILE
 
-    build_output = REPO_ROOT / "engine/lib/agent_script/features/build_output/build_output.py"
+    build_output = (
+        REPO_ROOT / "src/nebuko/engine/lib/agent_script/features/build_output/build_output.py"
+    )
     build_output_source = build_output.read_text(encoding="utf-8")
     assert f'"{_FINAL_MESSAGE_FILE}"' in build_output_source
     assert f'"{_STATE_FILE}"' in build_output_source
@@ -119,7 +123,9 @@ def test_child_env_pins_gfa_repo_root(tmp_path: Path) -> None:
     env = _child_env(script, {"GFA_REPO_ROOT": "ignored-by-caller"})
 
     assert env["GFA_REPO_ROOT"] == str(tmp_path / "checkout")
-    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(tmp_path / "checkout" / "engine" / "lib")
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(
+        tmp_path / "checkout" / "src" / "nebuko" / "engine" / "lib"
+    )
 
 
 def test_child_env_honours_an_explicit_repo_root(tmp_path: Path) -> None:

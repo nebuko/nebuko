@@ -25,7 +25,13 @@ from nebuko.engine.models import (
     Trigger,
     to_routing_decision,
 )
-from nebuko.engine.paths import LIB_DIR, ensure_import_path
+from nebuko.engine.paths import (
+    ConfigKind,
+    LIB_DIR,
+    NebukoPaths,
+    ensure_import_path,
+    repo_root,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -246,16 +252,44 @@ def resolved_env_overlay(resolved: Any) -> dict[str, str]:
 def _anchor_config_path(env: dict[str, str], repo_root: "Path") -> dict[str, str]:
     """Make ``AGENT_CONFIG_PATH`` absolute for the temp-cwd legacy child.
 
-    The legacy job ran the agent with the checkout as cwd, so a relative
-    ``AGENT_CONFIG_PATH`` resolved; the engine runs the child in a temp workdir,
-    where the same value misses the file and the agent boots with no model
-    (issue #717). The resolver's ``PROMPT_LOCATION`` is already absolute for the
-    same reason.
+    ``AGENT_CONFIG_PATH`` is a *name* now (issue #741), resolved through the
+    layered ``.nebuko/agents`` → ``defaults/agents`` lookup. The legacy job ran
+    the agent with the checkout as cwd, so a relative path resolved; the engine
+    runs the child in a temp workdir, where the same value misses the file and
+    the agent boots with no model (issue #717). The resolver's
+    ``PROMPT_LOCATION`` is already absolute for the same reason.
     """
     raw = env.get("AGENT_CONFIG_PATH")
-    if raw and not os.path.isabs(raw):
+    if not raw or os.path.isabs(raw):
+        return env
+    try:
+        env["AGENT_CONFIG_PATH"] = str(
+            NebukoPaths.discover(repo_root).resolve(ConfigKind.AGENT_CONFIG, raw)
+        )
+    except (FileNotFoundError, NotADirectoryError):
+        # Not a shipped config: keep the legacy repo-root-relative semantics.
         env["AGENT_CONFIG_PATH"] = os.path.join(str(repo_root), raw)
     return env
+
+
+def _apply_prompt_layer(resolved: dict[str, str], paths: NebukoPaths) -> None:
+    """Re-resolve the resolver's prompt picks through the layered lookup.
+
+    ``resolve_config`` builds ``PROMPT_LOCATION`` / ``STEP_PROMPT_FILE`` from a
+    single ``prompt_base``, so a user prompt in ``.nebuko/prompts/`` would shadow
+    the whole shipped prompt directory. Rewriting the two fields per file keeps
+    the documented layering (user file wins, shipped file still reachable).
+    """
+    for key in ("PROMPT_LOCATION", "STEP_PROMPT_FILE"):
+        location = resolved.get(key)
+        if not location:
+            continue
+        try:
+            resolved[key] = str(
+                paths.resolve(ConfigKind.PROMPT, os.path.basename(location))
+            )
+        except FileNotFoundError:
+            continue
 
 
 def _backfill_workflow_identity(
@@ -581,16 +615,22 @@ class Engine:
         ensure_import_path()
         from resolve_config.resolve_config import resolve_config
 
+        paths = NebukoPaths.discover(self.repo_root)
+        workflows_roots = paths.search_roots(ConfigKind.WORKFLOW)
         resolved = dict(
             resolve_config(
                 trigger_body=trigger.body,
-                prompt_base=str(self.repo_root / ".agents" / "prompts"),
-                workflows_dir=str(self.repo_root / "workflows"),
+                prompt_base=str(paths.directory(ConfigKind.PROMPT)),
+                workflows_dir=str(workflows_roots[-1]),
+                local_workflows_dir=(
+                    str(workflows_roots[0]) if len(workflows_roots) > 1 else None
+                ),
                 repo=self._repo(trigger),
                 issue_number=trigger.number or None,
                 debug=_is_true(self.env.get("CONFIG_DEBUG")),
             )
         )
+        _apply_prompt_layer(resolved, paths)
         # Copy before annotating: the resolver may hand back a cached/shared
         # mapping, and the engine must not mutate another component's object
         # (issue #590 round-4, finding 7).
@@ -1145,7 +1185,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return lint_main(raw_args[1:])
 
     from nebuko.adapters import build_adapter
-    from nebuko.engine.paths import repo_root
 
     parser = argparse.ArgumentParser(description="Run one orchestration engine step")
     parser.add_argument(

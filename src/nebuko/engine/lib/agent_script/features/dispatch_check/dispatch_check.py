@@ -89,12 +89,10 @@ def _agent_roster_names() -> frozenset:
     if _config_names_cache is not None:
         return _config_names_cache
     try:
-        import pathlib
-
+        import default_paths
         from config import load_config
 
-        config_path = pathlib.Path(__file__).resolve().parents[3].parent.parent / "agent-config.yaml"
-        config = load_config(str(config_path))
+        config = load_config(default_paths.agent_config_file())
         _config_names_cache = frozenset(config.agents.keys())
     except Exception as exc:  # noqa: BLE001 - validation must be non-fatal
         logger.debug(f"Could not load agent roster for dispatch validation: {exc}")

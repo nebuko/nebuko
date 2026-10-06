@@ -572,7 +572,9 @@ class TestAgentEnvHandoff:
         env = engine._agent_env()
 
         assert env["ROLE_NAME"] == "dev"
-        assert env["PROMPT_LOCATION"] == "/repo/dev.md"
+        # The resolver's pick is re-resolved through the layered prompt lookup
+        # (issue #741), so the child receives the shipped file's absolute path.
+        assert env["PROMPT_LOCATION"] == str(repo_root() / "defaults" / "prompts" / "dev.md")
 
     def test_a_dispatch_trigger_hands_the_workflow_identity_to_the_child(
         self, tmp_path, monkeypatch
@@ -665,7 +667,9 @@ class TestAgentEnvHandoff:
 
         env = engine._agent_env()
 
-        assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
+        assert env["AGENT_CONFIG_PATH"] == str(
+            repo_root() / "defaults" / "agents" / "agent-config.yaml"
+        )
 
     def test_keeps_an_absolute_config_path(self, tmp_path, monkeypatch):
         absolute = str(tmp_path / "agent-config.yaml")
@@ -684,7 +688,9 @@ class TestAgentEnvHandoff:
 
         env = engine._agent_env()
 
-        assert env["AGENT_CONFIG_PATH"] == str(repo_root() / "agent-config.yaml")
+        assert env["AGENT_CONFIG_PATH"] == str(
+            repo_root() / "defaults" / "agents" / "agent-config.yaml"
+        )
 
 
 class TestRunLogArtifacts:
@@ -1033,7 +1039,7 @@ class TestEntryPoints:
         assert entry_point.main is main
 
     def test_package_reexports_the_engine_surface(self):
-        import nebuko.engine
+        from nebuko import engine
 
         assert engine.main is main
         assert engine.Engine is Engine

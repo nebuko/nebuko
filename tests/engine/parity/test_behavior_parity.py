@@ -33,8 +33,8 @@ from nebuko.engine.run_loop import Engine
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 REPO_ROOT = repo_root()
-WORKFLOWS_DIR = REPO_ROOT / "workflows"
-PROMPT_BASE = REPO_ROOT / ".agents" / "prompts"
+WORKFLOWS_DIR = REPO_ROOT / "defaults" / "workflows"
+PROMPT_BASE = REPO_ROOT / "defaults" / "prompts"
 
 # The subset of the resolver's output the legacy job copies into its env and the
 # downstream steps key off.

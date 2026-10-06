@@ -1,4 +1,4 @@
-"""CLI-contract tests for ``python -m engine lint`` (issue #751).
+"""CLI-contract tests for ``python -m nebuko.engine lint`` (issue #751).
 
 The linter rules are pinned in ``test_lint.py``; these tests cover the command
 surface the plan fixes — argument handling, the 0/1/2 exit-code contract, the
@@ -64,11 +64,14 @@ def test_run_loop_main_dispatches_the_lint_subcommand():
 
 
 def test_module_entrypoint_end_to_end():
+    import os
+
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "engine",
+            "nebuko.engine",
             "lint",
             "--strict",
             _fixture("l2_unreachable.yaml"),
@@ -76,6 +79,7 @@ def test_module_entrypoint_end_to_end():
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        env=env,
     )
     assert result.returncode == 1, result.stderr
     assert "L2-unreachable-step" in result.stdout

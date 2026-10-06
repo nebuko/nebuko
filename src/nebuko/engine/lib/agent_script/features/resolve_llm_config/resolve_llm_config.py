@@ -110,7 +110,9 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     Raises:
         ValueError: If no API key can be resolved.
     """
-    config_path = os.getenv("AGENT_CONFIG_PATH", "agent-config.yaml")
+    import default_paths
+
+    config_path = default_paths.agent_config_file()
     role_name = os.environ.get("ROLE_NAME", "unknown")
 
     api_key = None

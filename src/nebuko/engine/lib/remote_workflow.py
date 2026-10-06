@@ -77,8 +77,14 @@ def _find_workflow_file(repo_path: str, workflow_name: Optional[str]) -> str:
     if workflow_name:
         candidates.append(str(Path(repo_path) / workflow_name))
         candidates.append(str(Path(repo_path) / "workflows" / workflow_name))
+        candidates.append(str(Path(repo_path) / ".nebuko" / "workflows" / workflow_name))
+        candidates.append(
+            str(Path(repo_path) / "defaults" / "workflows" / workflow_name)
+        )
     else:
+        candidates.append(str(Path(repo_path) / ".nebuko" / "workflows" / "default.yaml"))
         candidates.append(str(Path(repo_path) / "workflows" / "default.yaml"))
+        candidates.append(str(Path(repo_path) / "defaults" / "workflows" / "default.yaml"))
         candidates.append(str(Path(repo_path) / "default.yaml"))
 
     for candidate in candidates:

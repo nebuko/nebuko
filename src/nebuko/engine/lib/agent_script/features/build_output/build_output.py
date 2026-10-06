@@ -316,7 +316,9 @@ def _load_gated_step_def(
     if not workflow_name or not workflow_step:
         return False
     try:
-        workflows_dir = os.environ.get("WORKFLOWS_DIR", "workflows")
+        import default_paths
+
+        workflows_dir = default_paths.config_dir("workflows", "WORKFLOWS_DIR")
         ref = resolve_workflow_reference(workflow_name, workflows_dir)
         wf_def = load_workflow(str(ref))
     except Exception as e:

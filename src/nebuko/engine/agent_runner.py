@@ -37,7 +37,7 @@ __all__ = ["EngineAgentUnavailable", "run_engine_agent", "run_legacy_agent"]
 
 log = logging.getLogger(__name__)
 
-_AGENT_SCRIPT = Path("engine") / "lib" / "agent_script" / "agent_script.py"
+_AGENT_SCRIPT = Path("src") / "nebuko" / "engine" / "lib" / "agent_script" / "agent_script.py"
 _LATEST_ANSWER_FILE = "latest_answer.md"
 _FINAL_MESSAGE_FILE = "final_message.txt"
 _STATE_FILE = "workflow_state.json"
@@ -180,7 +180,7 @@ def _child_env(
     # The agent run may execute under a temporary cwd (the in-process host, issue
     # #740/#766); ``GFA_REPO_ROOT`` pins git/gh to the real checkout so the
     # wind-down's ``ensure_pr`` can still commit and push.
-    child_env["GFA_REPO_ROOT"] = str(repo_root or script.parents[3])
+    child_env["GFA_REPO_ROOT"] = str(repo_root or script.parents[5])
     return child_env
 
 

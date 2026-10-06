@@ -116,6 +116,21 @@ class NebukoPaths:
         return _dedupe(roots)
 
     # @stub-protected
+    def directory(self, kind: ConfigKind) -> Path:
+        """Highest-priority directory that exists for ``kind``.
+
+        The engine's prompt lookup takes a single base directory, so it uses
+        this instead of :meth:`search_roots` (which always returns both layers,
+        existing or not, for per-file workflow resolution). When neither layer
+        exists the shipped defaults directory is returned, so callers still get
+        a usable path.
+        """
+        for root in self.search_roots(kind):
+            if root.is_dir():
+                return root
+        return self.defaults_dir / kind.value
+
+    # @stub-protected
     def resolve(self, kind: ConfigKind, name: str) -> Path:
         """Return the highest-priority existing ``kind/name``, else raise."""
         roots = self.search_roots(kind)

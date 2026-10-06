@@ -178,7 +178,7 @@ class TestImportBootstrap:
             "trigger = adapter.read_trigger()\n"
             "print(trigger.number, trigger.type)\n"
         )
-        env = {**os.environ, "PYTHONPATH": str(repo_root)}
+        env = {**os.environ, "PYTHONPATH": str(repo_root / "src")}
         env.pop("GITHUB_EVENT_PATH", None)
 
         result = subprocess.run(
@@ -210,7 +210,7 @@ class TestImportBootstrap:
             "adapter.save_state(WorkflowState(version=1, workflow='spec-driven-impl', "
             "step='stub', agent='dev'))\n"
         )
-        env = {**os.environ, "PYTHONPATH": str(repo_root), "RUNNER_TEMP": str(tmp_path)}
+        env = {**os.environ, "PYTHONPATH": str(repo_root / "src"), "RUNNER_TEMP": str(tmp_path)}
         env.pop("GITHUB_EVENT_PATH", None)
 
         result = subprocess.run(

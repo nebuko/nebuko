@@ -310,6 +310,8 @@ def resolve_config(
 
 
 def main():
+    import default_paths
+
     parser = argparse.ArgumentParser(
         description="Resolve agent configuration from trigger body"
     )
@@ -320,12 +322,12 @@ def main():
     )
     parser.add_argument(
         "--prompt-base",
-        default=".agents/prompts",
+        default=default_paths.config_dir("prompts", "PROMPT_BASE"),
         help="Path to prompt files directory",
     )
     parser.add_argument(
         "--workflows-dir",
-        default="workflows",
+        default=default_paths.config_dir("workflows", "WORKFLOWS_DIR"),
         help="Path to workflows directory",
     )
     parser.add_argument(

@@ -100,7 +100,7 @@
       "CIRCUIT_BREAKER_TRIPPED": "true"
     },
     "prompt": {
-      "prompt": ".agents/prompts/dev.md",
+      "prompt": "defaults/prompts/dev.md",
       "step_prompt": ""
     },
     "agent_ran": false
