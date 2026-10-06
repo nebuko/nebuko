@@ -1018,6 +1018,8 @@ class Engine:
         parts: list[str] = []
         if isinstance(trigger, Trigger):
             parts.append(f"**Author:** {trigger.author}")
+            if trigger.issue_body and trigger.type != "issue":
+                parts.append(f"**Issue body:**\n{trigger.issue_body}")
             parts.append(trigger.body)
         task = self._get(resolved, "TASK")
         if task:

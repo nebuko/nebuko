@@ -23,7 +23,14 @@ class TestTrigger:
             "type",
             "number",
             "payload",
+            "issue_body",
         ]
+
+    def test_issue_body_defaults_to_empty(self):
+        assert _trigger().issue_body == ""
+
+    def test_issue_body_accepts_the_issue_record_body(self):
+        assert _trigger(issue_body="the real task").issue_body == "the real task"
 
     def test_is_frozen(self):
         with pytest.raises(dataclasses.FrozenInstanceError):
