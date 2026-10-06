@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from engine.lint import LintIssue, WorkflowLinter
+from nebuko.engine.lint import LintIssue, WorkflowLinter
 
 FIXTURES = Path(__file__).parent / "lint_fixtures"
 

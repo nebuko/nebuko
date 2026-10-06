@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.local import LocalAdapter
-from engine.models import ExitCode, Trigger
-from engine.paths import repo_root
-from engine.run_loop import Engine
+from nebuko.adapters.local import LocalAdapter
+from nebuko.engine.models import ExitCode, Trigger
+from nebuko.engine.paths import repo_root
+from nebuko.engine.run_loop import Engine
 
 
 def _trigger(body: str = "@@dev continue", number: int = 766) -> Trigger:

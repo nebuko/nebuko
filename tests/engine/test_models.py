@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from engine.models import CommentEntry, ExitCode, RoutingDecision, RunOutcome, Trigger
+from nebuko.engine.models import CommentEntry, ExitCode, RoutingDecision, RunOutcome, Trigger
 
 
 def _trigger(**overrides):

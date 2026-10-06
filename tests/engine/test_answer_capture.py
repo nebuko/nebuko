@@ -8,7 +8,7 @@ module stays importable without the SDK.
 
 from __future__ import annotations
 
-from engine.answer_capture import AnswerCapture, AnswerSnapshot
+from nebuko.engine.answer_capture import AnswerCapture, AnswerSnapshot
 
 
 def _msg_event(text: str, *, source: str = "agent") -> object:

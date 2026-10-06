@@ -16,10 +16,12 @@ from typing import Any
 
 import pytest
 
-from engine.agent_host import InProcessAgentHost
-from engine.agent_runner import EngineAgentUnavailable
+from nebuko.engine.agent_host import InProcessAgentHost
+from nebuko.engine.agent_runner import EngineAgentUnavailable
 
-ENTRY_POINT = Path("engine") / "lib" / "agent_script" / "agent_script.py"
+ENTRY_POINT = (
+    Path("src") / "nebuko" / "engine" / "lib" / "agent_script" / "agent_script.py"
+)
 
 
 def _write_entry_point(repo_root: Path) -> None:

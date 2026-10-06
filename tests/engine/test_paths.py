@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import sys
 
-from engine.paths import LIB_DIR, ensure_import_path, repo_root
+from nebuko.engine.paths import LIB_DIR, ensure_import_path, repo_root
 
 
 class TestRepoRoot:
     def test_points_at_the_checkout_that_holds_the_engine_package(self):
         root = repo_root()
-        assert (root / "engine" / "__init__.py").is_file()
-        assert (root / "adapters" / "base.py").is_file()
+        assert (root / "src" / "nebuko" / "engine" / "__init__.py").is_file()
+        assert (root / "src" / "nebuko" / "adapters" / "base.py").is_file()
 
     def test_is_independent_of_the_current_working_directory(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        assert (repo_root() / "engine" / "__init__.py").is_file()
+        assert (repo_root() / "src" / "nebuko" / "engine" / "__init__.py").is_file()
 
 
 class TestLibDir:

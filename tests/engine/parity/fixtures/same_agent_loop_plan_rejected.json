@@ -60,7 +60,7 @@
       "CIRCUIT_BREAKER_TRIPPED": null
     },
     "prompt": {
-      "prompt": ".agents/prompts/genius.md",
+      "prompt": "defaults/prompts/genius.md",
       "step_prompt": ""
     },
     "agent_ran": false
