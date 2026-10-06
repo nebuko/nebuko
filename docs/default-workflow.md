@@ -68,7 +68,7 @@ Determines whether the repository already has nebuko embedded. If the prompt fil
 **Input:** `needed` from Step 2.  
 **Output:** nebuko repository cloned at `.nebuko-cache/` (conditional).
 
-Only runs when `needed=true`. Clones `nebuko/nebuko` into `.nebuko-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed nebuko directly. The "Resolve Agent Configuration" step exports `GIT_FLOW_AI_SCRIPTS` as the single source of truth for script locations (cache-aware), consumed by all subsequent script invocations.
+Only runs when `needed=true`. Clones `nebuko/nebuko` into `.nebuko-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed nebuko directly. The orchestration engine resolves script locations from the embedded `engine/lib/` tree, falling back to the `.nebuko-cache/` clone.
 
 ---
 

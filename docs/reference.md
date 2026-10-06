@@ -23,7 +23,7 @@ into rendered GitHub comments. A sentinel split across lines never matches.
 ### Canonical Contract (`AgentRunConfig`)
 
 The payload is validated by the canonical model `AgentRunConfig`
-(`.github/scripts/config/sub_domains/agent_run_config/agent_run_config.py`),
+(`engine/lib/config/sub_domains/agent_run_config/agent_run_config.py`),
 shared by the validator and the routing helpers. Two invariants hold:
 
 1. **At least one action is required** — one of `task`, `dispatch` or

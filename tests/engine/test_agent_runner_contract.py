@@ -119,7 +119,7 @@ def test_child_env_pins_gfa_repo_root(tmp_path: Path) -> None:
     env = _child_env(script, {"GFA_REPO_ROOT": "ignored-by-caller"})
 
     assert env["GFA_REPO_ROOT"] == str(tmp_path / "checkout")
-    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(tmp_path / "checkout" / ".github" / "scripts")
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(tmp_path / "checkout" / "engine" / "lib")
 
 
 def test_child_env_honours_an_explicit_repo_root(tmp_path: Path) -> None:

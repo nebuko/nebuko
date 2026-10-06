@@ -25,7 +25,7 @@ from engine.models import (
     Trigger,
     to_routing_decision,
 )
-from engine.paths import SCRIPTS_DIR, ensure_import_path
+from engine.paths import LIB_DIR, ensure_import_path
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -116,7 +116,7 @@ class PhaseResult:
     error: str | None = None
 
 
-# Legacy bridge modules live directly under ``SCRIPTS_DIR`` and are imported by
+# Legacy bridge modules live directly under ``LIB_DIR`` and are imported by
 # name throughout the old assembly. Resolving them by absolute path keeps the
 # engine control plane working even when the in-process agent run has mutated
 # ``sys.path`` / ``sys.modules`` (issue #766).
@@ -128,16 +128,16 @@ def _load_bridge_module(name: str) -> ModuleType:
     """Import a legacy bridge module by absolute path, independent of the import env.
 
     Uses :func:`importlib.util.spec_from_file_location` against
-    :data:`engine.paths.SCRIPTS_DIR` so a poisoned ``sys.modules`` entry or a
-    ``sys.path`` that lost ``SCRIPTS_DIR`` cannot hide ``prepare_comment`` /
-    ``validate_output``. ``SCRIPTS_DIR`` is re-registered first so the module's
+    :data:`engine.paths.LIB_DIR` so a poisoned ``sys.modules`` entry or a
+    ``sys.path`` that lost ``LIB_DIR`` cannot hide ``prepare_comment`` /
+    ``validate_output``. ``LIB_DIR`` is re-registered first so the module's
     own top-level imports (``config``, ``workflow_state`` …) resolve.
     """
     cached = _BRIDGE_CACHE.get(name)
     if cached is not None:
         return cached
     ensure_import_path()
-    path = SCRIPTS_DIR / f"{name}.py"
+    path = LIB_DIR / f"{name}.py"
     if not path.is_file():
         raise ModuleNotFoundError(
             f"legacy bridge module not found: {path}", name=name
