@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from event_normalizer import normalize_event
+from event_normalizer import normalize_event, normalize_trigger
 
 
 class TestNormalizeEvent:
@@ -143,3 +143,41 @@ class TestNormalizeEvent:
             normalize_event(path, "unknown_event")
 
         os.unlink(path)
+
+
+class TestNormalizeTriggerIssueBody:
+    """The issue body travels on the Trigger for every payload shape."""
+
+    def test_issue_comment_carries_the_issue_body(self):
+        trigger = normalize_trigger(
+            {
+                "comment": {"body": "/nebuko run workflow", "user": {"login": "alice"}},
+                "issue": {"number": 42, "body": "the real task description"},
+            }
+        )
+
+        assert trigger.issue_body == "the real task description"
+
+    def test_issues_event_issue_body_matches_the_trigger_body(self):
+        trigger = normalize_trigger(
+            {"issue": {"number": 42, "body": "make it so", "user": {"login": "bob"}}}
+        )
+
+        assert trigger.issue_body == trigger.body == "make it so"
+
+    def test_payload_without_an_issue_defaults_to_empty(self):
+        trigger = normalize_trigger(
+            {"inputs": {"prompt_body": "external caller"}, "sender": {"login": "ci"}}
+        )
+
+        assert trigger.issue_body == ""
+
+    def test_null_issue_body_defaults_to_empty(self):
+        trigger = normalize_trigger(
+            {
+                "comment": {"body": "@@dev fix", "user": {"login": "alice"}},
+                "issue": {"number": 42, "body": None},
+            }
+        )
+
+        assert trigger.issue_body == ""
