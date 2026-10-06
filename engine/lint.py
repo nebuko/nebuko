@@ -1,6 +1,6 @@
 """Offline, graph-level linter for workflow YAML (issue #751).
 
-The Pydantic loader (``.github/scripts/config/features/load_workflow``) enforces
+The Pydantic loader (``engine/lib/config/features/load_workflow``) enforces
 the *field-level* shape of a workflow — types, required keys, enums. It cannot
 see the *graph-level* defects that only emerge once the whole step graph is
 assembled: a dangling ``next`` target, a step unreachable from the entry, a
@@ -9,7 +9,7 @@ step. Those defects surface today only at run time, mid-workflow.
 
 This module owns the offline pass that reports them all at once. It is a pure,
 read-only consumer of the loaded models and reuses the runtime traversal
-semantics from ``.github/scripts/resolve_workflow.py`` (``match_condition``,
+semantics from ``engine/lib/resolve_workflow.py`` (``match_condition``,
 ``branch_key_for``, ``is_terminal_step``) so a lint rule can never drift from the
 engine's actual routing behaviour.
 """
@@ -70,7 +70,7 @@ class _WorkflowGraph:
 
 
 def _ensure_runtime() -> None:
-    """Make the legacy ``.github/scripts`` package importable (idempotent)."""
+    """Make the legacy ``engine/lib`` package importable (idempotent)."""
     from engine.paths import ensure_import_path
 
     ensure_import_path()

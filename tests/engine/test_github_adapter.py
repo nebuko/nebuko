@@ -151,7 +151,7 @@ class TestArtifacts:
 
 
 class TestImportBootstrap:
-    """The adapter bootstraps ``.github/scripts`` itself (round-4, finding 1).
+    """The adapter bootstraps ``engine/lib`` itself (round-4, finding 1).
 
     ``tests/conftest.py`` seeds ``sys.path`` for the whole suite, which masked a
     real bug: under the production ``python -m engine.run`` bootstrap only the

@@ -1,10 +1,10 @@
 """In-process agent host for the engine (issue #740; #590 Stage A).
 
-The engine hosts the legacy ``.github/scripts/agent_script`` assembly *in-process*
+The engine hosts the legacy ``engine/lib/agent_script`` assembly *in-process*
 so it can observe the conversation's ordered turn stream and freeze the agent's
 real deliverable at the first end-tool boundary
 (:class:`~engine.answer_capture.AnswerCapture` — Option B of issue #740). The
-frozen ``.github/scripts`` package is only imported, never edited, so the capture
+frozen ``engine/lib`` package is only imported, never edited, so the capture
 stays engine-only.
 
 :func:`engine.agent_runner.run_legacy_agent` keeps the subprocess boundary as the

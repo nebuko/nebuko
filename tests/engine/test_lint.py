@@ -1,6 +1,6 @@
 """Spec-scenario tests for the workflow graph linter (issue #751).
 
-The Pydantic loader (``.github/scripts/config/features/load_workflow``) validates
+The Pydantic loader (``engine/lib/config/features/load_workflow``) validates
 each workflow's field-level shape but cannot see graph-level defects — dangling
 ``next`` targets, unreachable steps, dead condition keys, unresumable human
 gates, graphs with no terminal step. These scenarios pin the ``WorkflowLinter``

@@ -1,7 +1,7 @@
 """Agent-invocation seam for the engine (issue #590, Stage A; #740).
 
 The engine does not own an LLM runtime: both seams reuse the *existing*
-``.github/scripts/agent_script`` assembly — the same one the GHA path runs — and
+``engine/lib/agent_script`` assembly — the same one the GHA path runs — and
 normalize its output artefacts into the mapping the driver's
 ``validate``/``publish``/``route`` phases consume.
 
@@ -37,7 +37,7 @@ __all__ = ["EngineAgentUnavailable", "run_engine_agent", "run_legacy_agent"]
 
 log = logging.getLogger(__name__)
 
-_AGENT_SCRIPT = Path(".github") / "scripts" / "agent_script" / "agent_script.py"
+_AGENT_SCRIPT = Path("engine") / "lib" / "agent_script" / "agent_script.py"
 _LATEST_ANSWER_FILE = "latest_answer.md"
 _FINAL_MESSAGE_FILE = "final_message.txt"
 _STATE_FILE = "workflow_state.json"
@@ -55,7 +55,7 @@ def run_legacy_agent(
 
     Args:
         prompt: The assembled agent prompt (written to a temp file).
-        repo_root: Checkout holding ``.github/scripts/agent_script``.
+        repo_root: Checkout holding ``engine/lib/agent_script``.
         env: Extra environment for the child (LLM config, role, ...).
 
     Returns:
@@ -116,7 +116,7 @@ def run_engine_agent(
 
     Args:
         prompt: The assembled agent prompt.
-        repo_root: Checkout holding ``.github/scripts/agent_script``.
+        repo_root: Checkout holding ``engine/lib/agent_script``.
         env: Extra environment for the run (LLM config, role, ...).
 
     Raises:
@@ -160,7 +160,7 @@ def _stage_entry_point(script: Path, work: Path) -> Path:
     """Copy the entry point out of its package directory before running it.
 
     The legacy host stages it the same way (``/tmp/agent_script.py``). Running it
-    in place puts ``.github/scripts/agent_script`` first on the child's
+    in place puts ``engine/lib/agent_script`` first on the child's
     ``sys.path``, where ``agent_script.py`` shadows the ``agent_script`` package
     and ``from agent_script import load_prompt`` fails.
     """
@@ -172,7 +172,7 @@ def _stage_entry_point(script: Path, work: Path) -> Path:
 def _child_env(
     script: Path, env: Mapping[str, str] | None, *, repo_root: Path | None = None
 ) -> dict[str, str]:
-    """Environment for the child, importing ``.github/scripts`` like the host."""
+    """Environment for the child, importing ``engine/lib`` like the host."""
     child_env = {**os.environ, **(env or {})}
     scripts_dir = str(script.parent.parent)
     existing = child_env.get("PYTHONPATH")

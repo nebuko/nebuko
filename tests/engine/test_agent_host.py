@@ -19,7 +19,7 @@ import pytest
 from engine.agent_host import InProcessAgentHost
 from engine.agent_runner import EngineAgentUnavailable
 
-ENTRY_POINT = Path(".github") / "scripts" / "agent_script" / "agent_script.py"
+ENTRY_POINT = Path("engine") / "lib" / "agent_script" / "agent_script.py"
 
 
 def _write_entry_point(repo_root: Path) -> None:

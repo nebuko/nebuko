@@ -80,7 +80,7 @@ jobs:
     run-task:
         runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
         # The '/nebuko' trigger prefix must match BrandIdentity.command_name
-        # (.github/scripts/config/sub_domains/brand/brand.py); GitHub Actions
+        # (engine/lib/config/sub_domains/brand/brand.py); GitHub Actions
         # cannot import Python, so the value is duplicated here (issue #749).
         if: |
           github.event.action != 'closed' &&
@@ -129,7 +129,7 @@ jobs:
             CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 25 }}
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
-            AGENT_SCRIPT_URL: .github/scripts/agent_script.py
+            AGENT_SCRIPT_URL: engine/lib/agent_script.py
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
         steps:
             - name: Clean global git config
@@ -223,7 +223,7 @@ jobs:
             - name: Check if nebuko cache is needed
               id: check_nebuko
               run: |
-                if [ ! -d ".nebuko-cache/.github/scripts" ]; then
+                if [ ! -d ".nebuko-cache/engine/lib" ]; then
                   echo "needed=true" >> $GITHUB_OUTPUT
                 fi
 
@@ -248,10 +248,10 @@ jobs:
                   GITHUB_REPOSITORY: ${{ github.repository }}
                   ISSUE_NUMBER: ${{ github.event.issue.number }}
               run: |
-                if [ -f ".nebuko-cache/.github/scripts/summarize_metrics.py" ]; then
-                  SCRIPT_PATH=".nebuko-cache/.github/scripts/summarize_metrics.py"
+                if [ -f ".nebuko-cache/engine/lib/summarize_metrics.py" ]; then
+                  SCRIPT_PATH=".nebuko-cache/engine/lib/summarize_metrics.py"
                 else
-                  SCRIPT_PATH=".github/scripts/summarize_metrics.py"
+                  SCRIPT_PATH="engine/lib/summarize_metrics.py"
                 fi
                 python "$SCRIPT_PATH"
 

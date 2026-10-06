@@ -10,7 +10,7 @@ environment-variable catalog, and the bot marker conventions.
 
 Agents communicate hand-offs using a single-line HTML-comment sentinel that
 carries a compact JSON payload. The canonical matching pattern is defined in
-`.github/scripts/validate_output.py`; all consumers (output building, comment
+`engine/lib/validate_output.py`; all consumers (output building, comment
 preparation) reuse it from there.
 
 ```
@@ -39,7 +39,7 @@ the `callback` return address, and the routing-precedence cascade.
 ### Dispatch Object
 
 The current dispatch contract (see
-`.github/scripts/workflow_state/sub_domains/dispatch/dispatch.py`):
+`engine/lib/workflow_state/sub_domains/dispatch/dispatch.py`):
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -172,7 +172,7 @@ JSON section between two markers:
 <!-- WORKFLOW_STATE_END -->
 ```
 
-Model: `.github/scripts/workflow_state/workflow_state.py`
+Model: `engine/lib/workflow_state/workflow_state.py`
 (`WorkflowState`, Pydantic `BaseModel`). Every agent step produces a fresh
 full-snapshot state (no delta updates); the last state found in a comment body
 is authoritative.
