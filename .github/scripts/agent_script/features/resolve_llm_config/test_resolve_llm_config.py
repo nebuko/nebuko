@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from resolve_llm_config import (
+    LLM_TIMEOUT_S,
     normalize_base_url,
     normalize_reasoning_effort,
     resolve_api_url,
@@ -245,6 +246,26 @@ agents:
         self.assertEqual(cfg["usage_id"], "agent_script")
         self.assertTrue(cfg["drop_params"])
         self.assertEqual(cfg["api_key"], "test-key")
+
+    def test_llm_timeout_raised_to_900(self):
+        """300s aborts a high-reasoning turn mid-think; 900s gives headroom (#775)."""
+        cfg = self._resolve(reasoning="xhigh")
+        self.assertEqual(cfg["timeout"], LLM_TIMEOUT_S)
+        self.assertEqual(LLM_TIMEOUT_S, 900)
+
+    def test_streaming_requested(self):
+        """Streaming keeps the request warm across the long reasoning phase (#775)."""
+        cfg = self._resolve(reasoning="xhigh")
+        self.assertIs(cfg["stream"], True)
+
+    def test_sdk_derives_stream_idle_timeout_from_llm_timeout(self):
+        """The stream idle guard must match the raised LLM timeout (#775)."""
+        from openhands.sdk import LLM
+
+        llm = LLM(**self._resolve(reasoning="xhigh"))
+
+        self.assertEqual(llm.timeout, LLM_TIMEOUT_S)
+        self.assertEqual(llm.stream_idle_timeout, float(LLM_TIMEOUT_S))
 
     def test_llm_uses_brand_attribution(self):
         """The assembled settings carry the Nebuko brand, not the SDK default."""
