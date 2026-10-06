@@ -280,6 +280,9 @@ agents:
 ```
 
 Precedence is per-invocation (`CONFIG_*` / `AGENT_RUN_CONFIG`) > tier override
-> per-agent > per-LLM. Temperature remains a **floor** (`max`), so a tier never
-lowers it below the base agent temperature, and `reasoning` only applies while
-thinking is enabled for the LLM.
+> per-agent > per-LLM. A tier `temperature` **replaces** the agent's base
+temperature, and the per-tier floor from
+[Dynamic Complexity-Based Temperature](#dynamic-complexity-based-temperature)
+is then applied on top with `max()`; so a `high` override of `0.1` still
+resolves to `0.3`. `reasoning` only applies while thinking is enabled for the
+resolved model.

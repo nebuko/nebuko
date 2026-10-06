@@ -439,14 +439,36 @@ providers:
   high_provider:
     api_url: "http://high/v1"
     api_token_env: "HIGH_LLM_API_KEY"
+  low_provider:
+    api_url: "http://low/v1"
+    api_token_env: "LOW_LLM_API_KEY"
 llms:
   base-model:
     model_path: "test/base-model"
     provider: ${providers.base_provider}
     default_temperature: 0.7
+    input_price: 2.0
+    output_price: 8.0
+    thinking_enabled: true
+    preserve_thinking: true
+    thinking_token_budget: 4096
+    max_output_tokens: 8192
+    stop_sequences: ["<base-stop>"]
   high-model:
     model_path: "test/high-model"
     provider: ${providers.high_provider}
+    input_price: 10.0
+    output_price: 40.0
+    thinking_enabled: true
+    preserve_thinking: false
+    thinking_token_budget: 65536
+    max_output_tokens: 32768
+    stop_sequences: ["<high-stop>"]
+  low-model:
+    model_path: "test/low-model"
+    provider: ${providers.low_provider}
+    thinking_enabled: false
+    max_output_tokens: 2048
 agents:
   dev:
     model: ${llms.base-model}
@@ -454,7 +476,9 @@ agents:
     prompt_file: "dev.md"
     complexity_overrides:
       low:
+        model: ${llms.low-model}
         temperature: 0.0
+        reasoning: "xhigh"
       high:
         model: ${llms.high-model}
         temperature: 0.9
@@ -467,6 +491,7 @@ agents:
             "LLM_REASONING",
             "BASE_LLM_API_KEY",
             "HIGH_LLM_API_KEY",
+            "LOW_LLM_API_KEY",
             "LLM_MODEL",
             "CONFIG_MODEL",
             "CONFIG_COMPLEXITY",
@@ -483,6 +508,7 @@ agents:
             f.write(self.CONFIG_TEMPLATE)
         os.environ["BASE_LLM_API_KEY"] = "base-key"
         os.environ["HIGH_LLM_API_KEY"] = "high-key"
+        os.environ["LOW_LLM_API_KEY"] = "low-key"
         os.environ["ROLE_NAME"] = "dev"
         os.environ["AGENT_CONFIG_PATH"] = self._config_path
         for k in (
@@ -548,6 +574,46 @@ agents:
     def test_override_top_p_wins_over_base(self):
         cfg = self._resolve(complexity="high")
         self.assertEqual(cfg["litellm_extra_body"]["top_p"], 0.8)
+
+    def test_low_tier_model_override(self):
+        cfg = self._resolve(complexity="low")
+        self.assertEqual(cfg["model"], "test/low-model")
+        self.assertEqual(cfg["base_url"], "http://low/v1")
+        self.assertEqual(cfg["api_key"], "low-key")
+
+    def test_low_tier_non_thinking_swap_suppresses_reasoning(self):
+        """A swap to a non-thinking model must drop enable_thinking and reasoning."""
+        cfg = self._resolve(complexity="low")
+        kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
+        self.assertIs(kwargs["enable_thinking"], False)
+        self.assertNotIn("reasoning_effort", kwargs)
+
+    def test_high_tier_thinking_params_follow_swapped_model(self):
+        cfg = self._resolve(complexity="high")
+        kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
+        self.assertIs(kwargs["enable_thinking"], True)
+        self.assertIs(kwargs["preserve_thinking"], False)
+        self.assertEqual(cfg["litellm_extra_body"]["thinking_token_budget"], 65536)
+
+    def test_high_tier_pricing_follows_swapped_model(self):
+        cfg = self._resolve(complexity="high")
+        self.assertAlmostEqual(cfg["input_cost_per_token"], 10.0e-6)
+        self.assertAlmostEqual(cfg["output_cost_per_token"], 40.0e-6)
+
+    def test_high_tier_max_output_tokens_follows_swapped_model(self):
+        cfg = self._resolve(complexity="high")
+        self.assertEqual(cfg["max_output_tokens"], 32768)
+
+    def test_high_tier_stop_sequences_follow_swapped_model(self):
+        cfg = self._resolve(complexity="high")
+        self.assertEqual(cfg["litellm_extra_body"]["stop"], ["<high-stop>"])
+
+    def test_medium_tier_keeps_base_model_attributes(self):
+        cfg = self._resolve(complexity="medium")
+        self.assertAlmostEqual(cfg["input_cost_per_token"], 2.0e-6)
+        self.assertEqual(cfg["max_output_tokens"], 8192)
+        self.assertEqual(cfg["litellm_extra_body"]["stop"], ["<base-stop>"])
+        self.assertEqual(cfg["litellm_extra_body"]["thinking_token_budget"], 4096)
 
 
 class TestPriceForwarding(unittest.TestCase):
