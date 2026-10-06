@@ -28,7 +28,7 @@ llms:
     provider: "${providers.openrouter}"
     thinking_enabled: true
     preserve_thinking: true
-    reasoning: "high"
+    # reasoning: "high"
   
 # ── Agents: role → model + prompt + skills + tools ──
 # Tools: terminal, file_editor, task_tracker (SDK tools)
