@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nebuko"
+version = "0.0.0"
+description = "Nebuko — multi-agent GitHub workflow engine (formerly git-flow-ai)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "pyyaml>=6",
+    "pydantic>=2",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+# The agent runtime is installed by CI / the dev shell; kept optional so the
+# library (engine + adapters) can be imported without pulling the SDK.
+runtime = [
+    "litellm",
+    "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk",
+    "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools",
+]
+
+[project.scripts]
+nebuko = "nebuko.engine.run_loop:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "src/nebuko/engine/lib"]
+testpaths = ["tests"]

@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Mapping
 
+from pydantic import BaseModel, ConfigDict
+
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from workflow_state.workflow_state import WorkflowState
 
@@ -19,8 +21,23 @@ __all__ = [
     "RoutingDecision",
     "ExitCode",
     "RunOutcome",
+    "NebukoManifest",
     "to_routing_decision",
 ]
+
+
+# @stub-protected
+class NebukoManifest(BaseModel):
+    """Parsed ``.nebuko/nebuko.yaml``: optional per-repo path overrides.
+
+    Paths are resolved relative to the repo root. Both fields are optional, so an
+    absent or empty manifest keeps the fixed ``<kind>/`` subfolders.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    skills_dir: str | None = None
+    default_workflow: str | None = None
 
 
 # @stub-protected

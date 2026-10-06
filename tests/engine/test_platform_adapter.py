@@ -10,10 +10,10 @@ import dataclasses
 
 import pytest
 
-from adapters import build_adapter
-from adapters.base import HistoryProvider, PlatformAdapter, Poster
-from adapters.github import GitHubAdapter
-from adapters.local import LocalAdapter
+from nebuko.adapters import build_adapter
+from nebuko.adapters.base import HistoryProvider, PlatformAdapter, Poster
+from nebuko.adapters.github import GitHubAdapter
+from nebuko.adapters.local import LocalAdapter
 
 PORT_METHODS = (
     "read_trigger",
@@ -39,7 +39,7 @@ class TestPlatformAdapterProtocol:
         assert issubclass(GitHubAdapter, PlatformAdapter)
 
     def test_base_module_exports_the_seam_callables(self):
-        import adapters.base as base
+        import nebuko.adapters.base as base
 
         assert set(base.__all__) == {"HistoryProvider", "Poster", "PlatformAdapter"}
         assert Poster is not None
@@ -64,7 +64,7 @@ class TestAdapterContract:
     """Only data classes cross the port, so adapters must not leak filesystem objects."""
 
     def test_local_adapter_returns_model_instances(self, tmp_path):
-        from engine.models import Trigger
+        from nebuko.engine.models import Trigger
 
         adapter = LocalAdapter(
             tmp_path / "runs" / "run-1",

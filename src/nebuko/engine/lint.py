@@ -71,7 +71,7 @@ class _WorkflowGraph:
 
 def _ensure_runtime() -> None:
     """Make the legacy ``engine/lib`` package importable (idempotent)."""
-    from engine.paths import ensure_import_path
+    from nebuko.engine.paths import ensure_import_path
 
     ensure_import_path()
 

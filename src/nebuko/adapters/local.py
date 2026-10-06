@@ -14,12 +14,12 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Sequence
 
-from engine.paths import ensure_import_path
+from nebuko.engine.paths import ensure_import_path
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
-    from engine.models import CommentEntry, Trigger
+    from nebuko.engine.models import CommentEntry, Trigger
     from workflow_state.workflow_state import WorkflowState
 
 __all__ = ["LocalAdapter"]
@@ -57,7 +57,7 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     def read_trigger(self) -> Trigger:
         if self._trigger is not None:
             return self._trigger
-        from engine.models import Trigger
+        from nebuko.engine.models import Trigger
 
         payload = json.loads((self._run_dir / TRIGGER_FILE).read_text(encoding="utf-8"))
         return Trigger(**payload)
@@ -133,7 +133,7 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return ensure_bot_marker(body)
 
     def _read_journal(self) -> list[CommentEntry]:
-        from engine.models import CommentEntry
+        from nebuko.engine.models import CommentEntry
 
         path = self._run_dir / JOURNAL_FILE
         if not path.is_file():

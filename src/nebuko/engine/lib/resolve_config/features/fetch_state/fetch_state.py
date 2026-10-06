@@ -13,8 +13,8 @@ import resolve_config
 from workflow_state import extract_latest_state_from_comments
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
-    from adapters.base import HistoryProvider
-    from engine.models import CommentEntry
+    from nebuko.adapters.base import HistoryProvider
+    from nebuko.engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
 
 __all__ = ["_fetch_workflow_state_from_history", "extract_state", "fetch_state"]

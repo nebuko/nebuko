@@ -2,7 +2,7 @@
 
 ``PlatformAdapter`` is the port every host satisfies; ``HistoryProvider`` and
 ``Poster`` are the narrow callables the legacy scripts accept through the seam
-refactors. ``engine.run_loop`` depends on this module only — no mode branching.
+refactors. ``nebuko.engine.run_loop`` depends on this module only — no mode branching.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Protocol, Sequence, runtime_checkable
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
-    from engine.models import CommentEntry, Trigger
+    from nebuko.engine.models import CommentEntry, Trigger
     from workflow_state.workflow_state import WorkflowState
 
 __all__ = ["HistoryProvider", "Poster", "PlatformAdapter"]

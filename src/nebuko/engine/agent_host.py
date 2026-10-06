@@ -3,11 +3,11 @@
 The engine hosts the legacy ``engine/lib/agent_script`` assembly *in-process*
 so it can observe the conversation's ordered turn stream and freeze the agent's
 real deliverable at the first end-tool boundary
-(:class:`~engine.answer_capture.AnswerCapture` — Option B of issue #740). The
+(:class:`~nebuko.engine.answer_capture.AnswerCapture` — Option B of issue #740). The
 frozen ``engine/lib`` package is only imported, never edited, so the capture
 stays engine-only.
 
-:func:`engine.agent_runner.run_legacy_agent` keeps the subprocess boundary as the
+:func:`nebuko.engine.agent_runner.run_legacy_agent` keeps the subprocess boundary as the
 fallback for a host where this assembly cannot start; both seams reuse the same
 legacy assembly and normalize its artefacts into the mapping the driver's
 ``validate``/``publish``/``route`` phases consume.
@@ -24,7 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Iterator, Mapping
 
-from engine.agent_runner import (
+from nebuko.engine.agent_runner import (
     EngineAgentUnavailable,
     _AGENT_SCRIPT,
     _CONSOLE_LOG_FILE,
@@ -35,8 +35,8 @@ from engine.agent_runner import (
     _load_state,
     _read_text,
 )
-from engine.answer_capture import AnswerCapture
-from engine.paths import ensure_import_path
+from nebuko.engine.answer_capture import AnswerCapture
+from nebuko.engine.paths import ensure_import_path
 
 __all__ = ["InProcessAgentHost"]
 
@@ -50,7 +50,7 @@ class InProcessAgentHost:
 
     Hosting the run lets the engine observe the conversation's ordered event
     stream and freeze the agent's substantive answer at the first end-tool
-    boundary (issue #740): :class:`~engine.answer_capture.AnswerCapture`
+    boundary (issue #740): :class:`~nebuko.engine.answer_capture.AnswerCapture`
     supersedes the legacy latest-wins ``latest_answer.md``, whose terminal
     control turn would otherwise clobber the deliverable.
     """
@@ -69,7 +69,7 @@ class InProcessAgentHost:
     def run(self, prompt: str) -> dict[str, Any]:
         """Run ``prompt`` in-process and read the run artefacts back.
 
-        Returns the mapping :func:`engine.agent_runner.run_legacy_agent` returns,
+        Returns the mapping :func:`nebuko.engine.agent_runner.run_legacy_agent` returns,
         plus a ``deliverable`` key holding the captured answer. ``answer`` keeps
         its legacy value so routing/validation — which read the dispatch sentinel
         out of it — are unchanged; only the posted body prefers ``deliverable``.

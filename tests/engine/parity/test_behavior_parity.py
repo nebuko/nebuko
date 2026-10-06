@@ -25,11 +25,11 @@ from typing import Any, Mapping, Sequence
 
 import pytest
 
-from adapters.base import PlatformAdapter
-from adapters.local import LocalAdapter
-from engine.models import ExitCode
-from engine.paths import repo_root
-from engine.run_loop import Engine
+from nebuko.adapters.base import PlatformAdapter
+from nebuko.adapters.local import LocalAdapter
+from nebuko.engine.models import ExitCode
+from nebuko.engine.paths import repo_root
+from nebuko.engine.run_loop import Engine
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 REPO_ROOT = repo_root()

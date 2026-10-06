@@ -12,8 +12,8 @@ from datetime import datetime
 
 import pytest
 
-from adapters.local import LocalAdapter
-from engine.models import Trigger
+from nebuko.adapters.local import LocalAdapter
+from nebuko.engine.models import Trigger
 from workflow_state.workflow_state import WorkflowState
 
 TRIGGER_FILE = "trigger.json"

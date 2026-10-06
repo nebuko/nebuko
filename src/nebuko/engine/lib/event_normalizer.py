@@ -23,7 +23,7 @@ import sys
 from typing import TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
-    from engine.models import Trigger
+    from nebuko.engine.models import Trigger
 
 
 def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
@@ -56,7 +56,7 @@ def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
     Raises:
         ValueError: when the payload matches no supported event shape.
     """
-    from engine.models import Trigger
+    from nebuko.engine.models import Trigger
 
     comment = payload.get("comment")
     if comment is not None:

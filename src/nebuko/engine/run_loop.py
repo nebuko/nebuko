@@ -18,22 +18,22 @@ from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
-from engine.models import (
+from nebuko.engine.models import (
     ExitCode,
     RoutingDecision,
     RunOutcome,
     Trigger,
     to_routing_decision,
 )
-from engine.paths import LIB_DIR, ensure_import_path
+from nebuko.engine.paths import LIB_DIR, ensure_import_path
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
-    from adapters.base import PlatformAdapter
+    from nebuko.adapters.base import PlatformAdapter
     from config import AgentStartNotice
-    from engine.artifacts import RunArtifactStager
-    from engine.models import CommentEntry
+    from nebuko.engine.artifacts import RunArtifactStager
+    from nebuko.engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
 
 __all__ = ["PHASES", "Engine", "PhaseResult", "main"]
@@ -128,7 +128,7 @@ def _load_bridge_module(name: str) -> ModuleType:
     """Import a legacy bridge module by absolute path, independent of the import env.
 
     Uses :func:`importlib.util.spec_from_file_location` against
-    :data:`engine.paths.LIB_DIR` so a poisoned ``sys.modules`` entry or a
+    :data:`nebuko.engine.paths.LIB_DIR` so a poisoned ``sys.modules`` entry or a
     ``sys.path`` that lost ``LIB_DIR`` cannot hide ``prepare_comment`` /
     ``validate_output``. ``LIB_DIR`` is re-registered first so the module's
     own top-level imports (``config``, ``workflow_state`` …) resolve.
@@ -736,7 +736,7 @@ class Engine:
         (``ROLE_NAME``, ``CONFIG_*``, ...) on top of the ambient environment,
         mirroring the legacy ``$GITHUB_ENV`` export (issue #717).
         """
-        from engine.agent_runner import (
+        from nebuko.engine.agent_runner import (
             EngineAgentUnavailable,
             run_engine_agent,
             run_legacy_agent,
@@ -813,7 +813,7 @@ class Engine:
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""
-        from engine.artifacts import RunArtifactStager
+        from nebuko.engine.artifacts import RunArtifactStager
 
         return RunArtifactStager(self.adapter.artifact_dir())
 
@@ -1140,12 +1140,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     if raw_args and raw_args[0] == "lint":
-        from engine.lint_cli import main as lint_main
+        from nebuko.engine.lint_cli import main as lint_main
 
         return lint_main(raw_args[1:])
 
-    from adapters import build_adapter
-    from engine.paths import repo_root
+    from nebuko.adapters import build_adapter
+    from nebuko.engine.paths import repo_root
 
     parser = argparse.ArgumentParser(description="Run one orchestration engine step")
     parser.add_argument(

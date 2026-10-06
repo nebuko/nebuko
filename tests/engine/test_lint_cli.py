@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from engine.lint_cli import main
-from engine.run_loop import main as run_loop_main
+from nebuko.engine.lint_cli import main
+from nebuko.engine.run_loop import main as run_loop_main
 
 FIXTURES = Path(__file__).parent / "lint_fixtures"
 REPO_ROOT = Path(__file__).resolve().parents[2]

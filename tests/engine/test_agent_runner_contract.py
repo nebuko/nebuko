@@ -1,6 +1,6 @@
 """Real-code-path coverage for the legacy agent seam (issue #590, review round 3).
 
-The driver does not own an LLM runtime: :func:`engine.agent_runner.run_legacy_agent`
+The driver does not own an LLM runtime: :func:`nebuko.engine.agent_runner.run_legacy_agent`
 spawns the *actual* ``engine/lib/agent_script/agent_script.py``. These tests
 exercise that seam for real — entry point, child cwd, ``PYTHONPATH`` and artefact
 names — without ever reaching the LLM (the real script is driven into its own
@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from engine.agent_runner import (
+from nebuko.engine.agent_runner import (
     EngineAgentUnavailable,
     _FINAL_MESSAGE_FILE,
     _LATEST_ANSWER_FILE,
@@ -27,7 +27,7 @@ from engine.agent_runner import (
     run_engine_agent,
     run_legacy_agent,
 )
-from engine.paths import ensure_import_path
+from nebuko.engine.paths import ensure_import_path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRY_POINT = Path("engine") / "lib" / "agent_script" / "agent_script.py"
@@ -182,7 +182,7 @@ def _install_fake_pipeline(
     run_agent=None,
 ) -> None:
     """Replace the legacy assembly with fakes that write real artefact files."""
-    from engine import agent_runner
+    from nebuko.engine import agent_runner
 
     def _build_output(conversation, metrics, args, prev_state=None):
         Path("latest_answer.md").write_text(latest_answer, encoding="utf-8")
@@ -272,10 +272,10 @@ def test_run_engine_agent_propagates_a_run_failure(monkeypatch, tmp_path: Path) 
 
 
 def _engine(tmp_path: Path):
-    from adapters.local import LocalAdapter
-    from engine.models import Trigger
-    from engine.paths import repo_root as _repo_root
-    from engine.run_loop import Engine
+    from nebuko.adapters.local import LocalAdapter
+    from nebuko.engine.models import Trigger
+    from nebuko.engine.paths import repo_root as _repo_root
+    from nebuko.engine.run_loop import Engine
 
     trigger = Trigger(author="olivier-norture", body="@@dev", type="issue_comment", number=740)
     adapter = LocalAdapter(tmp_path / "run", trigger=trigger)
@@ -283,8 +283,8 @@ def _engine(tmp_path: Path):
 
 
 def test_invoke_agent_prefers_the_in_process_seam(monkeypatch, tmp_path: Path) -> None:
-    from engine import agent_runner
-    from engine.run_loop import Engine
+    from nebuko.engine import agent_runner
+    from nebuko.engine.run_loop import Engine
 
     monkeypatch.setattr(Engine, "_agent_env", lambda self: {})
     monkeypatch.setattr(
@@ -299,8 +299,8 @@ def test_invoke_agent_prefers_the_in_process_seam(monkeypatch, tmp_path: Path) -
 def test_invoke_agent_falls_back_when_the_seam_is_unavailable(
     monkeypatch, tmp_path: Path
 ) -> None:
-    from engine import agent_runner
-    from engine.run_loop import Engine
+    from nebuko.engine import agent_runner
+    from nebuko.engine.run_loop import Engine
 
     def _unavailable(prompt, *, repo_root, env):
         raise EngineAgentUnavailable("no legacy assembly")

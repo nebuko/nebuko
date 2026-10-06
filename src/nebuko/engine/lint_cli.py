@@ -1,6 +1,6 @@
 """``python -m engine lint`` — the offline workflow-YAML lint command (issue #751).
 
-Kept separate from ``engine.lint`` (the pure rule engine) and ``engine.run_loop``
+Kept separate from ``nebuko.engine.lint`` (the pure rule engine) and ``nebuko.engine.run_loop``
 (the adapter-driven runner) so each module keeps a single responsibility. The
 exit-code contract is the CI interface: ``0`` clean (or warnings only), ``1`` at
 least one error, ``2`` usage or load failure.
@@ -17,7 +17,7 @@ from typing import Iterable, Sequence
 
 import yaml
 
-from engine.lint import LintIssue, WorkflowLinter
+from nebuko.engine.lint import LintIssue, WorkflowLinter
 
 EXIT_OK = 0
 EXIT_ERRORS = 1

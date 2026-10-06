@@ -1,6 +1,6 @@
 """Per-run log staging for the CI artifacts (issue #743, #779).
 
-The new-engine host runs the legacy agent behind :mod:`engine.agent_runner` in a
+The new-engine host runs the legacy agent behind :mod:`nebuko.engine.agent_runner` in a
 throwaway temp directory, so the ``console.log`` the bash job captured with
 ``| tee`` and the OpenHands SDK's on-disk ``app.log`` would both vanish when that
 directory is removed. :class:`RunArtifactStager` owns one host-provided staging

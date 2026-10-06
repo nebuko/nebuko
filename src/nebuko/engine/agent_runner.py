@@ -8,7 +8,7 @@ normalize its output artefacts into the mapping the driver's
 Two seams exist:
 
 * :func:`run_engine_agent` hosts that assembly **in-process** (via
-  :class:`~engine.agent_host.InProcessAgentHost`) so the engine can observe the
+  :class:`~nebuko.engine.agent_host.InProcessAgentHost`) so the engine can observe the
   conversation's ordered turn stream and capture the agent's real deliverable
   before the terminal control turns clobber it (issue #740, Option B). It is the
   preferred seam.
@@ -31,7 +31,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from engine.paths import ensure_import_path
+from nebuko.engine.paths import ensure_import_path
 
 __all__ = ["EngineAgentUnavailable", "run_engine_agent", "run_legacy_agent"]
 
@@ -109,7 +109,7 @@ def run_engine_agent(
     """Run the agent assembly in-process and capture the real deliverable.
 
     The in-process hosting lives in
-    :class:`~engine.agent_host.InProcessAgentHost`; the driver keeps this seam so
+    :class:`~nebuko.engine.agent_host.InProcessAgentHost`; the driver keeps this seam so
     routing/validation (which read the dispatch sentinel out of the legacy
     ``answer``) are unchanged while the posted body prefers the captured
     ``deliverable`` (issue #740).
@@ -122,7 +122,7 @@ def run_engine_agent(
     Raises:
         EngineAgentUnavailable: Setup failed before the run began.
     """
-    from engine.agent_host import InProcessAgentHost
+    from nebuko.engine.agent_host import InProcessAgentHost
 
     return InProcessAgentHost(
         repo_root=repo_root, load_pipeline=_load_pipeline, env=env

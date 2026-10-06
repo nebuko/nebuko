@@ -16,8 +16,8 @@ from typing import Any
 
 import pytest
 
-from engine.agent_host import InProcessAgentHost
-from engine.agent_runner import EngineAgentUnavailable
+from nebuko.engine.agent_host import InProcessAgentHost
+from nebuko.engine.agent_runner import EngineAgentUnavailable
 
 ENTRY_POINT = Path("engine") / "lib" / "agent_script" / "agent_script.py"
 

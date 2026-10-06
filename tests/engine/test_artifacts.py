@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from adapters.github import ARTIFACT_DIR_NAME
-from engine.artifacts import (
+from nebuko.adapters.github import ARTIFACT_DIR_NAME
+from nebuko.engine.artifacts import (
     APP_LOG_FILE,
     CONSOLE_LOG_FILE,
     ArtifactFile,

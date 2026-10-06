@@ -31,7 +31,7 @@ from workflow_state.features.comment.to_git_comment import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
-    from adapters.base import Poster
+    from nebuko.adapters.base import Poster
     from workflow_state.workflow_state import WorkflowState
 
 # ── Regex patterns (all DOTALL for multi-line safety) ─────────────
@@ -564,7 +564,7 @@ def build_comment_body(
     """The posted-comment body: answer-comment header + fallback body.
 
     Single source of truth for the posted comment: :func:`prepare_comment` (GHA)
-    and ``engine.run_loop.Engine.publish`` both call this, so the same comment
+    and ``nebuko.engine.run_loop.Engine.publish`` both call this, so the same comment
     is framed on either host (issue #590). The workflow-state header (issue
     #736) is prepended here because it frames *whatever* the run produced —
     latest answer, final message, console fallback or crash notice — exactly as

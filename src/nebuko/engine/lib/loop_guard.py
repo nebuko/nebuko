@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Mapping, Optional, Sequence
 from config import load_agent_names
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
-    from engine.models import CommentEntry
+    from nebuko.engine.models import CommentEntry
 
 _WORKFLOW_STATE_START = "<!-- WORKFLOW_STATE_START -->"
 _WORKFLOW_STATE_END = "<!-- WORKFLOW_STATE_END -->"

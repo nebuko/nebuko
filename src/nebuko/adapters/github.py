@@ -11,12 +11,12 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Sequence
 
-from engine.paths import ensure_import_path
+from nebuko.engine.paths import ensure_import_path
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
-    from engine.models import CommentEntry, Trigger
+    from nebuko.engine.models import CommentEntry, Trigger
     from workflow_state.workflow_state import WorkflowState
 
 __all__ = ["GitHubAdapter"]
@@ -52,7 +52,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         # construction: every method below imports a legacy module, and the
         # repository packaging does not cover that directory (issue #590
         # round-4, finding 1). Doing it here keeps the methods themselves
-        # ordering-safe under the production ``python -m engine.run`` bootstrap.
+        # ordering-safe under the production ``python -m nebuko.engine.run`` bootstrap.
         ensure_import_path()
         self._event_path = _Path(event_path) if event_path is not None else None
         # Mirror ``run_loop.main``'s default so a bare ``GitHubAdapter()`` still
@@ -153,7 +153,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
     @staticmethod
     def _to_entry(comment: dict[str, Any]) -> CommentEntry:
-        from engine.models import CommentEntry
+        from nebuko.engine.models import CommentEntry
 
         return CommentEntry(
             author=(comment.get("user") or {}).get("login", ""),

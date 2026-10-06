@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from adapters.github import GitHubAdapter
-from engine.models import Trigger
+from nebuko.adapters.github import GitHubAdapter
+from nebuko.engine.models import Trigger
 
 ISSUE_COMMENT_PAYLOAD = {
     "action": "created",
@@ -160,7 +160,7 @@ class TestImportBootstrap:
     """The adapter bootstraps ``engine/lib`` itself (round-4, finding 1).
 
     ``tests/conftest.py`` seeds ``sys.path`` for the whole suite, which masked a
-    real bug: under the production ``python -m engine.run`` bootstrap only the
+    real bug: under the production ``python -m nebuko.engine.run`` bootstrap only the
     repository root is importable, so ``from event_normalizer import ...``
     raised ``ModuleNotFoundError``. This exercises the adapter out-of-process
     with only the repository root on ``PYTHONPATH``, i.e. no conftest seeding.
@@ -170,7 +170,7 @@ class TestImportBootstrap:
         repo_root = Path(__file__).resolve().parents[2]
         event_path = _event_file(tmp_path, ISSUE_COMMENT_PAYLOAD)
         program = (
-            "from adapters.github import GitHubAdapter\n"
+            "from nebuko.adapters.github import GitHubAdapter\n"
             "adapter = GitHubAdapter(\n"
             "    repo='olivier-norture/git-flow-ai',\n"
             f"    event_path={str(event_path)!r},\n"
@@ -197,13 +197,13 @@ class TestImportBootstrap:
         repo_root = Path(__file__).resolve().parents[2]
         event_path = _event_file(tmp_path, ISSUE_COMMENT_PAYLOAD)
         program = (
-            "from adapters.github import GitHubAdapter\n"
+            "from nebuko.adapters.github import GitHubAdapter\n"
             "class Client:\n"
             "    def get_issue_comments(self, repo, number):\n"
             "        return []\n"
             f"adapter = GitHubAdapter(repo='x/y', event_path={str(event_path)!r}, client=Client())\n"
             # Legacy imports only resolve after the adapter's bootstrap, exactly
-            # as in the production ``python -m engine.run`` ordering.
+            # as in the production ``python -m nebuko.engine.run`` ordering.
             "from workflow_state.workflow_state import WorkflowState\n"
             "adapter.read_trigger()\n"
             "print(adapter.load_state())\n"
@@ -290,8 +290,8 @@ class TestStagePrevState:
     """
 
     def test_stages_the_latest_posted_state_into_the_handoff(self, tmp_path, monkeypatch):
-        from engine.paths import repo_root
-        from engine.run_loop import Engine
+        from nebuko.engine.paths import repo_root
+        from nebuko.engine.run_loop import Engine
         from workflow_state.state_codec import WorkflowStateCodec
 
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
@@ -317,8 +317,8 @@ class TestStagePrevState:
         assert [entry.step for entry in load.state.history] == ["step_0", "step_1", "step_2"]
 
     def test_writes_no_handoff_without_a_previous_state(self, tmp_path, monkeypatch):
-        from engine.paths import repo_root
-        from engine.run_loop import Engine
+        from nebuko.engine.paths import repo_root
+        from nebuko.engine.run_loop import Engine
         from workflow_state.state_codec import WorkflowStateCodec
 
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
@@ -335,8 +335,8 @@ class TestStagePrevState:
         reused runner the previous job's ``prev_workflow_state.json`` would
         otherwise be adopted, so ``stage_prev_state`` deletes it (issue #739).
         """
-        from engine.paths import repo_root
-        from engine.run_loop import Engine
+        from nebuko.engine.paths import repo_root
+        from nebuko.engine.run_loop import Engine
         from workflow_state.state_codec import WorkflowStateCodec
 
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
@@ -360,8 +360,8 @@ class TestHistoryIncrementRegression:
     """
 
     def test_the_recovered_state_advances_the_childs_history(self, tmp_path, monkeypatch):
-        from engine.paths import repo_root
-        from engine.run_loop import Engine
+        from nebuko.engine.paths import repo_root
+        from nebuko.engine.run_loop import Engine
         from workflow_state.features.build_state.build_state import build_state
         from workflow_state.state_codec import WorkflowStateCodec
 

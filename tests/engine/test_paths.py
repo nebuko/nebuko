@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from engine.paths import LIB_DIR, ensure_import_path, repo_root
+from nebuko.engine.paths import LIB_DIR, ensure_import_path, repo_root
 
 
 class TestRepoRoot:
