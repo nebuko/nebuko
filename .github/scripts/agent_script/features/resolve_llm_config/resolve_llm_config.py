@@ -113,6 +113,10 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     temperature = None
     agent_cfg = None
     api_url_raw = None
+    tier_override = None
+    effective_ref = None
+
+    config_complexity = os.getenv("CONFIG_COMPLEXITY", "").lower()
 
     # ── Layered config file ──────────────────────────────────────
     if os.path.isfile(config_path):
@@ -123,11 +127,22 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
             agent_cfg = cfg.agents.get(role_name)
             api_url_raw = None
             if agent_cfg:
-                model = agent_cfg.model_ref.model_path
-                provider = agent_cfg.model_ref.provider_ref
+                if config_complexity in ("low", "medium", "high"):
+                    tier_override = agent_cfg.complexity_overrides.get(config_complexity)
+                effective_ref = (
+                    tier_override.model_ref
+                    if tier_override and tier_override.model_ref
+                    else agent_cfg.model_ref
+                )
+                model = effective_ref.model_path
+                provider = effective_ref.provider_ref
                 api_key = os.environ.get(provider.api_token_env)
                 api_url_raw = provider.api_url
                 temperature = agent_cfg.temperature
+                if tier_override is not None and tier_override.model_ref is not None:
+                    logger.info(
+                        f"Complexity tier override: {config_complexity} -> {model}"
+                    )
             else:
                 logger.warning(
                     f"Agent role '{role_name}' not found in config; "
@@ -171,9 +186,10 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         temperature = float(config_temperature)
         logger.info(f"CONFIG_TEMPERATURE override: {temperature}")
     else:
-        config_complexity = os.getenv("CONFIG_COMPLEXITY", "").lower()
         complexity_temperature_map = {"low": 0.0, "medium": 0.1, "high": 0.3}
         if config_complexity in complexity_temperature_map:
+            if tier_override is not None and tier_override.temperature is not None:
+                temperature = tier_override.temperature
             complexity_temp = complexity_temperature_map[config_complexity]
             if temperature is not None:
                 temperature = max(temperature, complexity_temp)
@@ -226,17 +242,17 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     # set — the SDK ignores custom pricing when only one key is present — and
     # keys are omitted entirely when unset so LiteLLM's built-in model-map
     # pricing still applies.
-    if agent_cfg is not None:
+    if effective_ref is not None:
         rates = CostRates.from_prices(
-            agent_cfg.model_ref.input_price, agent_cfg.model_ref.output_price
+            effective_ref.input_price, effective_ref.output_price
         )
         if rates is not None:
             llm_config["input_cost_per_token"] = rates.input_per_token
             llm_config["output_cost_per_token"] = rates.output_per_token
             logger.info(
                 f"Per-token pricing set from config prices "
-                f"(input={agent_cfg.model_ref.input_price}, "
-                f"output={agent_cfg.model_ref.output_price} per M tokens)"
+                f"(input={effective_ref.input_price}, "
+                f"output={effective_ref.output_price} per M tokens)"
             )
 
     # ── Thinking parameters (litellm_extra_body) ─────────────────
@@ -245,14 +261,16 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     litellm_extra_body = {}
     chat_template_kwargs = {}
 
-    if agent_cfg and agent_cfg.model_ref.thinking_enabled is not None:
-        chat_template_kwargs["enable_thinking"] = agent_cfg.model_ref.thinking_enabled
-    if agent_cfg and agent_cfg.model_ref.preserve_thinking is not None:
-        chat_template_kwargs["preserve_thinking"] = agent_cfg.model_ref.preserve_thinking
+    if effective_ref and effective_ref.thinking_enabled is not None:
+        chat_template_kwargs["enable_thinking"] = effective_ref.thinking_enabled
+    if effective_ref and effective_ref.preserve_thinking is not None:
+        chat_template_kwargs["preserve_thinking"] = effective_ref.preserve_thinking
 
     # Reasoning effort: ``none``/unset omits the param so the model default
     # (xhigh) applies; only emitted while thinking is on.
     llm_reasoning = os.getenv("LLM_REASONING", "none")
+    if llm_reasoning in ("", "none") and tier_override and tier_override.reasoning:
+        llm_reasoning = tier_override.reasoning
     reasoning_effort = normalize_reasoning_effort(llm_reasoning)
     thinking_on = chat_template_kwargs.get("enable_thinking", True)
     if reasoning_effort and thinking_on:
@@ -262,11 +280,12 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     if chat_template_kwargs:
         litellm_extra_body["chat_template_kwargs"] = chat_template_kwargs
 
-    if agent_cfg and agent_cfg.model_ref.thinking_token_budget is not None:
-        litellm_extra_body["thinking_token_budget"] = agent_cfg.model_ref.thinking_token_budget
+    if effective_ref and effective_ref.thinking_token_budget is not None:
+        litellm_extra_body["thinking_token_budget"] = effective_ref.thinking_token_budget
 
     # ── Sampling parameter overrides ─────────────────────────────
-    # Priority: per-invocation override > per-agent override > per-LLM config
+    # Priority: per-invocation override > complexity tier override
+    #           > per-agent override > per-LLM config
     sampling_params = [
         ("top_p", os.getenv("CONFIG_TOP_P")),
         ("top_k", os.getenv("CONFIG_TOP_K")),
@@ -277,9 +296,11 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     for param_name, config_val in sampling_params:
         if config_val is not None and str(config_val).strip():
             litellm_extra_body[param_name] = float(config_val)
+        elif tier_override is not None and getattr(tier_override, param_name, None) is not None:
+            litellm_extra_body[param_name] = float(getattr(tier_override, param_name))
         elif agent_cfg:
             agent_val = getattr(agent_cfg, param_name, None)
-            llm_val = getattr(agent_cfg.model_ref, param_name, None)
+            llm_val = getattr(effective_ref, param_name, None) if effective_ref else None
             val = agent_val if agent_val is not None else llm_val
             if val is not None:
                 litellm_extra_body[param_name] = val
@@ -287,7 +308,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     # ── Stop sequences ───────────────────────────────────────────
     if agent_cfg:
         agent_stop = getattr(agent_cfg, "stop_sequences", None)
-        llm_stop = getattr(agent_cfg.model_ref, "stop_sequences", None)
+        llm_stop = getattr(effective_ref, "stop_sequences", None) if effective_ref else None
         stop_seq = agent_stop if agent_stop else llm_stop
         if stop_seq:
             litellm_extra_body["stop"] = stop_seq
@@ -297,7 +318,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         logger.info(f"Thinking parameters: {litellm_extra_body}")
 
     # ── Max output tokens ────────────────────────────────────────
-    if agent_cfg and agent_cfg.model_ref.max_output_tokens is not None:
-        llm_config["max_output_tokens"] = agent_cfg.model_ref.max_output_tokens
+    if effective_ref and effective_ref.max_output_tokens is not None:
+        llm_config["max_output_tokens"] = effective_ref.max_output_tokens
 
     return (llm_config, prompt, agent_cfg)
