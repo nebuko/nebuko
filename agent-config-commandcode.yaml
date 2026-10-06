@@ -23,13 +23,19 @@ llms:
   claude-sonnet-5:
     model_path: "openrouter/anthropic/claude-sonnet-5.5"
     provider: "${providers.openrouter}"
+  mimo-2_6-pro:
+    model_path: "openrouter/xiaomi/mimo-v2.6-pro"
+    provider: "${provider.openrouter}"
+    thinking_enabled: true
+    preserve_thinking: true
+    reasoning: "high"
   
 # ── Agents: role → model + prompt + skills + tools ──
 # Tools: terminal, file_editor, task_tracker (SDK tools)
 #        think, finish (built-in defaults)
 agents:
   genius:
-    model: "${llms.deepseek-v4_1-flash}"
+    model: "${llms.mimo-2_6-pro}"
     temperature: 0.4
     prompt_file: ".agents/prompts/genius.md"
     skills: ["call-agent", "posting-contract"]
