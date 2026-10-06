@@ -310,12 +310,15 @@ If the agent's response was split into multiple parts (to stay within GitHub's ~
 
 ---
 
-### Step 24: Upload Logs as Artifact
+### Step 24: Upload Logs as Artifacts (unzipped)
 
-**Input:** `*.log` files, `output/` directory.  
-**Output:** GitHub Actions artifact named `openhands-task-logs` (7-day retention).
+**Input:** the staged `console.log` and `app.log` files under `${{ runner.temp }}/nebuko-task-logs`.  
+**Output:** two GitHub Actions artifacts named `console.log` and `app.log` (7-day retention).
 
-Always uploads logs for debugging purposes. Uses `actions/upload-artifact@v4`.
+Each log is uploaded as its **own unzipped artifact** via
+`actions/upload-artifact@v7` with `archive: false` (issue #779), so it can be
+fetched raw with a browser or an authenticated `curl` — no zip, no unzip step.
+(The artifact is named after the file; `name:` is ignored under `archive: false`.)
 
 ---
 

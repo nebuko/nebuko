@@ -21,8 +21,9 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
 
 __all__ = ["GitHubAdapter"]
 
-# Staging directory uploaded as the ``nebuko-task-logs`` CI artifact. Kept in
-# sync with the upload-artifact step in ``nebuko-workflow.yaml`` (issue #743).
+# Staging directory whose files are uploaded as per-file unzipped CI artifacts
+# (``console.log``, ``app.log``). Kept in sync with the upload-artifact steps in
+# ``nebuko-workflow.yaml`` (issues #743, #779).
 ARTIFACT_DIR_NAME = "nebuko-task-logs"
 
 
