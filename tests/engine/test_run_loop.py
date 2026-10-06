@@ -14,7 +14,7 @@ import re
 import pytest
 
 from nebuko.adapters.local import LocalAdapter
-from config import AgentStartNotice
+from config import AgentStartNotice, brand
 from nebuko.engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
 from nebuko.engine.paths import repo_root
 from nebuko.engine.run_loop import (
@@ -39,7 +39,7 @@ RUN_ENV = {
     "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
     "GITHUB_RUN_ID": RUN_ID,
 }
-ACK_LINE = f"🤖 **dev agent started** — [View workflow run logs]({RUN_URL})"
+ACK_LINE = f"{brand().logo_mark()} **dev agent started** — [View workflow run logs]({RUN_URL})"
 
 
 def _trigger(body: str = "@@dev fix it", number: int = 590, issue_body: str = "") -> Trigger:

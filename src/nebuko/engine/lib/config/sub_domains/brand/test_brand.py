@@ -23,3 +23,33 @@ class TestBrandIdentity:
     def test_command_name_defaults_to_nebuko(self):
         # Slash-command prefix source of truth (issue #749).
         assert BrandIdentity().command_name == "nebuko"
+
+
+class TestLogoMark:
+    """``logo_mark()`` is the single source of truth for the comment logo (issue #778)."""
+
+    def test_is_single_line(self):
+        assert "\n" not in BrandIdentity().logo_mark()
+
+    def test_fallback_img_is_light_themed_and_app_named(self):
+        mark = BrandIdentity().logo_mark()
+        assert 'src="https://raw.githubusercontent.com/nebuko/nebuko/main/logo/final/mark-light.svg"' in mark
+        assert 'alt="Nebuko"' in mark
+        assert 'width="16"' in mark
+        assert 'height="16"' in mark
+
+    def test_dark_source_is_prefers_color_scheme_dark(self):
+        mark = BrandIdentity().logo_mark()
+        assert (
+            '<source srcset="https://raw.githubusercontent.com/nebuko/nebuko/main/logo/final/mark-dark.svg"'
+            ' media="(prefers-color-scheme: dark)">' in mark
+        )
+
+    def test_size_is_field_driven(self):
+        mark = BrandIdentity(comment_logo_size=24).logo_mark()
+        assert 'width="24"' in mark
+        assert 'height="24"' in mark
+
+    def test_alt_text_follows_app_name(self):
+        mark = BrandIdentity(app_name="Acme").logo_mark()
+        assert 'alt="Acme"' in mark

@@ -88,10 +88,20 @@ Each trigger runs the following sequence inside the `run-task` job:
    **Process Split Plan** step creates sub-issues.
 
 **Agent-start acknowledgment (issue #720).** Just before the agent is executed,
-the engine posts the `🤖 **{role} agent started** — [View workflow run logs](…)`
-comment through the platform adapter — `Engine.notify_agent_started()` renders
-an `AgentStartNotice` and posts it, tagged `<!-- bot-agent-{role} -->` exactly
-like the monolith's `Post Acknowledgment Comment` step did. The notice is
+the engine posts the theme-adaptive Nebuko logo mark (issue #778) followed by
+`**{role} agent started** — [View workflow run logs](…)` — the logo is a
+single-line `<picture>` fragment whose `<source>` serves dark-theme viewers
+`mark-dark.svg` and whose `<img>` fallback serves light-theme viewers
+`mark-light.svg` (`alt="Nebuko"`, 16×16):
+
+```html
+<picture><source srcset="https://raw.githubusercontent.com/nebuko/nebuko/main/logo/final/mark-dark.svg" media="(prefers-color-scheme: dark)"><img src="https://raw.githubusercontent.com/nebuko/nebuko/main/logo/final/mark-light.svg" alt="Nebuko" width="16" height="16"></picture> **{role} agent started** — [View workflow run logs](…)
+```
+
+The comment is posted through the platform adapter —
+`Engine.notify_agent_started()` renders an `AgentStartNotice` and posts it,
+tagged `<!-- bot-agent-{role} -->` exactly like the monolith's
+`Post Acknowledgment Comment` step did. The notice is
 **engine-owned**: an engine-driven workflow file must not run its own ack step
 (that double-posts), and a failed notice is logged, never fatal to the run.
 
