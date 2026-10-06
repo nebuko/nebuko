@@ -1,6 +1,6 @@
 # Reference
 
-Machine-readable contracts used by git-flow-ai: the `AGENT_RUN_CONFIG` dispatch
+Machine-readable contracts used by nebuko: the `AGENT_RUN_CONFIG` dispatch
 sentinel, the workflow YAML grammar, the `WORKFLOW_STATE` v1 JSON schema, the
 environment-variable catalog, and the bot marker conventions.
 
@@ -76,7 +76,7 @@ loops.
 ## Workflow YAML Grammar
 
 Workflows are first-class YAML definitions in `workflows/` (local) or fetched
-from the git-flow-ai repo (zero-copy). See [workflows.md](./workflows.md). The
+from the nebuko repo (zero-copy). See [workflows.md](./workflows.md). The
 graph-level invariants below are checked offline by
 [`python -m engine lint`](./lint.md).
 

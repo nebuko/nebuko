@@ -90,9 +90,9 @@ def _commit_pending_changes() -> str:
     _run_git(
         [
             "-c",
-            "user.name=git-flow-ai",
+            "user.name=nebuko",
             "-c",
-            "user.email=git-flow-ai@users.noreply.github.com",
+            "user.email=nebuko@users.noreply.github.com",
             "commit",
             "-m",
             "WIP checkpoint — automatic commit from graceful agent interruption\n\n"

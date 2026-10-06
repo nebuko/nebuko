@@ -54,21 +54,21 @@ Standard `actions/checkout@v5` to clone the target repository.
 
 ---
 
-### Step 2: Check if git-flow-ai Checkout is Needed
+### Step 2: Check if nebuko Checkout is Needed
 
 **Input:** Filesystem presence of `.agents/prompts/genius.md`.  
 **Output:** `needed` output (`true` or `false`).
 
-Determines whether the repository already has git-flow-ai embedded. If the prompt file exists, the repo is self-hosting the tooling. If not, the git-flow-ai repo must be checked out separately (for reusable workflow mode).
+Determines whether the repository already has nebuko embedded. If the prompt file exists, the repo is self-hosting the tooling. If not, the nebuko repo must be checked out separately (for reusable workflow mode).
 
 ---
 
-### Step 3: Checkout git-flow-ai Repo (Reusable Workflow Mode)
+### Step 3: Checkout nebuko Repo (Reusable Workflow Mode)
 
 **Input:** `needed` from Step 2.  
-**Output:** git-flow-ai repository cloned at `.git-flow-ai-cache/` (conditional).
+**Output:** nebuko repository cloned at `.nebuko-cache/` (conditional).
 
-Only runs when `needed=true`. Clones `olivier-norture/git-flow-ai` into `.git-flow-ai-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed git-flow-ai directly. The "Resolve Agent Configuration" step exports `GIT_FLOW_AI_SCRIPTS` as the single source of truth for script locations (cache-aware), consumed by all subsequent script invocations.
+Only runs when `needed=true`. Clones `nebuko/nebuko` into `.nebuko-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed nebuko directly. The "Resolve Agent Configuration" step exports `GIT_FLOW_AI_SCRIPTS` as the single source of truth for script locations (cache-aware), consumed by all subsequent script invocations.
 
 ---
 
@@ -325,7 +325,7 @@ Always uploads logs for debugging purposes. Uses `actions/upload-artifact@v4`.
 **Purpose:** Aggregates metrics from all agent runs on the now-closed issue and posts a summary comment.
 
 ### Steps:
-1. Checkout repository (with git-flow-ai cache if needed).
+1. Checkout repository (with nebuko cache if needed).
 2. Setup Python.
 3. Run `summarize_metrics.py` which scans all comments on the issue, extracts workflow states, and computes aggregate metrics.
 

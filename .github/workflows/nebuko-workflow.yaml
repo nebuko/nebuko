@@ -220,19 +220,20 @@ jobs:
               with:
                 persist-credentials: false
 
-            - name: Check if git-flow-ai cache is needed
-              id: check_gfa
+            - name: Check if nebuko cache is needed
+              id: check_nebuko
               run: |
-                if [ ! -d ".git-flow-ai-cache/.github/scripts" ]; then
+                if [ ! -d ".nebuko-cache/.github/scripts" ]; then
                   echo "needed=true" >> $GITHUB_OUTPUT
                 fi
 
-            - name: Checkout git-flow-ai repo (reusable workflow mode)
-              if: steps.check_gfa.outputs.needed == 'true'
+            - name: Checkout nebuko repo (reusable workflow mode)
+              if: steps.check_nebuko.outputs.needed == 'true'
               uses: actions/checkout@v5
               with:
-                repository: olivier-norture/git-flow-ai
-                path: .git-flow-ai-cache
+                repository: ${{ job.workflow_repository }}
+                ref: ${{ job.workflow_sha }}
+                path: .nebuko-cache
                 token: ${{ secrets.GH_PAT }}
                 persist-credentials: false
 
@@ -247,8 +248,8 @@ jobs:
                   GITHUB_REPOSITORY: ${{ github.repository }}
                   ISSUE_NUMBER: ${{ github.event.issue.number }}
               run: |
-                if [ -f ".git-flow-ai-cache/.github/scripts/summarize_metrics.py" ]; then
-                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/summarize_metrics.py"
+                if [ -f ".nebuko-cache/.github/scripts/summarize_metrics.py" ]; then
+                  SCRIPT_PATH=".nebuko-cache/.github/scripts/summarize_metrics.py"
                 else
                   SCRIPT_PATH=".github/scripts/summarize_metrics.py"
                 fi

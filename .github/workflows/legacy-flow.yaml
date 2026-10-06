@@ -147,8 +147,8 @@ jobs:
               with:
                 persist-credentials: false
 
-            - name: Check if git-flow-ai checkout is needed
-              id: check_gfa
+            - name: Check if nebuko checkout is needed
+              id: check_nebuko
               shell: bash
               run: |
                 if [ -f ".agents/prompts/genius.md" ]; then
@@ -157,13 +157,15 @@ jobs:
                   echo "needed=true" >> $GITHUB_OUTPUT
                 fi
 
-            - name: Checkout git-flow-ai repo (reusable workflow mode)
-              if: steps.check_gfa.outputs.needed == 'true'
+            - name: Checkout nebuko repo (reusable workflow mode)
+              if: steps.check_nebuko.outputs.needed == 'true'
               uses: actions/checkout@v5
               with:
-                repository: olivier-norture/git-flow-ai
-                path: .git-flow-ai-cache
+                repository: ${{ job.workflow_repository }}
+                ref: ${{ job.workflow_sha }}
+                path: .nebuko-cache
                 token: ${{ secrets.GH_PAT }}
+                persist-credentials: false
 
             - name: Normalize GitHub Event Data
               run: |
@@ -243,9 +245,9 @@ jobs:
                   PROMPT_BASE=""
 
                   # Determine prompt and script locations by checking which path exists
-                  if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/.agents/prompts" ]; then
-                    PROMPT_BASE="$GITHUB_WORKSPACE/.git-flow-ai-cache/.agents/prompts"
-                    echo "AGENT_SCRIPT_URL=$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts/agent_script.py" >> $GITHUB_ENV
+                  if [ -d "$GITHUB_WORKSPACE/.nebuko-cache/.agents/prompts" ]; then
+                    PROMPT_BASE="$GITHUB_WORKSPACE/.nebuko-cache/.agents/prompts"
+                    echo "AGENT_SCRIPT_URL=$GITHUB_WORKSPACE/.nebuko-cache/.github/scripts/agent_script.py" >> $GITHUB_ENV
                   else
                     PROMPT_BASE=".agents/prompts"
                     echo "AGENT_SCRIPT_URL=.github/scripts/agent_script.py" >> $GITHUB_ENV
@@ -255,9 +257,9 @@ jobs:
                   SCRIPTS_DIR=""
                   WFLOWS_DIR=""
                   LOCAL_WFLOWS_DIR="$GITHUB_WORKSPACE/workflows"
-                  if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows" ]; then
-                    SCRIPTS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/.github/scripts"
-                    WFLOWS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/workflows"
+                  if [ -d "$GITHUB_WORKSPACE/.nebuko-cache/workflows" ]; then
+                    SCRIPTS_DIR="$GITHUB_WORKSPACE/.nebuko-cache/.github/scripts"
+                    WFLOWS_DIR="$GITHUB_WORKSPACE/.nebuko-cache/workflows"
                   else
                     SCRIPTS_DIR="$GITHUB_WORKSPACE/.github/scripts"
                     WFLOWS_DIR="$LOCAL_WFLOWS_DIR"
@@ -422,7 +424,7 @@ jobs:
                   # except the soft-kill retry resolution.
                   echo "SOFT_RETRY_ATTEMPT=${SOFT_RETRY_ATTEMPT:-}" >> $GITHUB_ENV
                   # Human gate (issue #506): reuse the exact workflows dir the
-                  # resolver used (may be the .git-flow-ai-cache copy).
+                  # resolver used (may be the .nebuko-cache copy).
                   echo "WORKFLOWS_DIR=$WFLOWS_DIR" >> $GITHUB_ENV
 
                   # Step 6: Export reasoning level for agent_script.py
@@ -461,8 +463,8 @@ jobs:
 
                   if [ -n "$ALL_SKILLS" ]; then
                     SKILLS_DIR=""
-                    if [ -d "$GITHUB_WORKSPACE/.git-flow-ai-cache/skills" ]; then
-                      SKILLS_DIR="$GITHUB_WORKSPACE/.git-flow-ai-cache/skills"
+                    if [ -d "$GITHUB_WORKSPACE/.nebuko-cache/skills" ]; then
+                      SKILLS_DIR="$GITHUB_WORKSPACE/.nebuko-cache/skills"
                     elif [ -d "skills" ]; then
                       SKILLS_DIR="skills"
                     fi
@@ -526,8 +528,8 @@ jobs:
                         GUARD_OUTPUT="$(printf '%s' "$TRIGGER_BODY" | python3 -c '
                   import os, sys
                   scripts_dir = os.environ.get("GIT_FLOW_AI_SCRIPTS") or ".github/scripts"
-                  if not os.path.isdir(scripts_dir) and os.path.isdir(".git-flow-ai-cache/.github/scripts"):
-                      scripts_dir = ".git-flow-ai-cache/.github/scripts"
+                  if not os.path.isdir(scripts_dir) and os.path.isdir(".nebuko-cache/.github/scripts"):
+                      scripts_dir = ".nebuko-cache/.github/scripts"
                   sys.path.insert(0, scripts_dir)
                   from loop_guard import check_same_agent_advance
                   body = sys.stdin.read()
@@ -730,8 +732,8 @@ jobs:
                 HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
               run: |
                 SCRIPT_PATH="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}/query_context.py"
-                if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/query_context.py" ]; then
-                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/query_context.py"
+                if [ ! -f "$SCRIPT_PATH" ] && [ -f ".nebuko-cache/.github/scripts/query_context.py" ]; then
+                  SCRIPT_PATH=".nebuko-cache/.github/scripts/query_context.py"
                 fi
               
                 python3 $SCRIPT_PATH \
@@ -754,8 +756,8 @@ jobs:
                 echo "::group::[Step] Run Script Step (issue #541)"
                 echo "Running $SCRIPT_PATH args='$SCRIPT_ARGS' timeout=${SCRIPT_TIMEOUT_MINUTES}m"
                 SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
-                if [ ! -f "$SCRIPTS/features/run_script/run_script.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/features/run_script/run_script.py" ]; then
-                  SCRIPTS=".git-flow-ai-cache/.github/scripts"
+                if [ ! -f "$SCRIPTS/features/run_script/run_script.py" ] && [ -f ".nebuko-cache/.github/scripts/features/run_script/run_script.py" ]; then
+                  SCRIPTS=".nebuko-cache/.github/scripts"
                 fi
                 python3 "$SCRIPTS/features/run_script/run_script.py"
                 echo "::endgroup::"
@@ -769,8 +771,8 @@ jobs:
               run: |
                 echo "::group::[Step] Delete Comments (issue #644)"
                 SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
-                if [ ! -f "$SCRIPTS/features/delete_comments/delete_comments.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/features/delete_comments/delete_comments.py" ]; then
-                  SCRIPTS=".git-flow-ai-cache/.github/scripts"
+                if [ ! -f "$SCRIPTS/features/delete_comments/delete_comments.py" ] && [ -f ".nebuko-cache/.github/scripts/features/delete_comments/delete_comments.py" ]; then
+                  SCRIPTS=".nebuko-cache/.github/scripts"
                 fi
                 python3 "$SCRIPTS/features/delete_comments/delete_comments.py"
                 echo "::endgroup::"
@@ -872,8 +874,8 @@ jobs:
               if: always() && !cancelled() && (env.SKIP_AGENT == 'false' || env.RUN_SCRIPT == 'true')
               run: |
                 SCRIPTS="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}"
-                if [ ! -f "$SCRIPTS/prepare_comment.py" ] && [ -f ".git-flow-ai-cache/.github/scripts/prepare_comment.py" ]; then
-                  SCRIPTS=".git-flow-ai-cache/.github/scripts"
+                if [ ! -f "$SCRIPTS/prepare_comment.py" ] && [ -f ".nebuko-cache/.github/scripts/prepare_comment.py" ]; then
+                  SCRIPTS=".nebuko-cache/.github/scripts"
                 fi
                 python3 "$SCRIPTS/prepare_comment.py"
 
@@ -886,8 +888,8 @@ jobs:
                 import sys
 
                 scripts_dir = os.environ.get("GIT_FLOW_AI_SCRIPTS") or ".github/scripts"
-                if not os.path.isdir(scripts_dir) and os.path.isdir(".git-flow-ai-cache/.github/scripts"):
-                    scripts_dir = ".git-flow-ai-cache/.github/scripts"
+                if not os.path.isdir(scripts_dir) and os.path.isdir(".nebuko-cache/.github/scripts"):
+                    scripts_dir = ".nebuko-cache/.github/scripts"
                 sys.path.insert(0, scripts_dir)
 
                 role = os.environ.get("ROLE_NAME", "unknown")
@@ -994,8 +996,8 @@ jobs:
                 echo "Split plan contains $TASK_COUNT tasks, auto_trigger=$AUTO_TRIGGER"
 
                 SCRIPT_PATH="${GIT_FLOW_AI_SCRIPTS:-.github/scripts}/issue_creation.py"
-                if [ ! -f "$SCRIPT_PATH" ] && [ -f ".git-flow-ai-cache/.github/scripts/issue_creation.py" ]; then
-                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/issue_creation.py"
+                if [ ! -f "$SCRIPT_PATH" ] && [ -f ".nebuko-cache/.github/scripts/issue_creation.py" ]; then
+                  SCRIPT_PATH=".nebuko-cache/.github/scripts/issue_creation.py"
                 fi
 
                 if [ ! -f "$SCRIPT_PATH" ]; then
@@ -1072,19 +1074,20 @@ jobs:
               with:
                 persist-credentials: false
 
-            - name: Check if git-flow-ai cache is needed
-              id: check_gfa
+            - name: Check if nebuko cache is needed
+              id: check_nebuko
               run: |
-                if [ ! -d ".git-flow-ai-cache/.github/scripts" ]; then
+                if [ ! -d ".nebuko-cache/.github/scripts" ]; then
                   echo "needed=true" >> $GITHUB_OUTPUT
                 fi
 
-            - name: Checkout git-flow-ai repo (reusable workflow mode)
-              if: steps.check_gfa.outputs.needed == 'true'
+            - name: Checkout nebuko repo (reusable workflow mode)
+              if: steps.check_nebuko.outputs.needed == 'true'
               uses: actions/checkout@v5
               with:
-                repository: olivier-norture/git-flow-ai
-                path: .git-flow-ai-cache
+                repository: ${{ job.workflow_repository }}
+                ref: ${{ job.workflow_sha }}
+                path: .nebuko-cache
                 token: ${{ secrets.GH_PAT }}
                 persist-credentials: false
 
@@ -1099,8 +1102,8 @@ jobs:
                   GITHUB_REPOSITORY: ${{ github.repository }}gg
                   ISSUE_NUMBER: ${{ github.event.issue.number }}
               run: |
-                if [ -f ".git-flow-ai-cache/.github/scripts/summarize_metrics.py" ]; then
-                  SCRIPT_PATH=".git-flow-ai-cache/.github/scripts/summarize_metrics.py"
+                if [ -f ".nebuko-cache/.github/scripts/summarize_metrics.py" ]; then
+                  SCRIPT_PATH=".nebuko-cache/.github/scripts/summarize_metrics.py"
                 else
                   SCRIPT_PATH=".github/scripts/summarize_metrics.py"
                 fi

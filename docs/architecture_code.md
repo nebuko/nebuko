@@ -11,7 +11,7 @@ The `workflow_state` module uses a **DDD package-by-feature** architecture. Doma
 
 This replaces the previous monolithic `state_manager.py` module, which contained all entities, behaviors, and utilities in a single file (~500 lines).
 
-**Reference:** PR #335 ([split feature per folder](https://github.com/olivier-norture/git-flow-ai/pull/335))
+**Reference:** PR #335 ([split feature per folder](https://github.com/nebuko/nebuko/pull/335))
 
 ### Directory Structure
 

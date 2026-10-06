@@ -1,4 +1,4 @@
-name: AI Dev Workflow (git-flow-ai)
+name: AI Dev Workflow
 
 on:
   issues:

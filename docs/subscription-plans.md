@@ -1,6 +1,6 @@
 # Subscription Plans (CommandCode, OpenCode Go)
 
-Run git-flow-ai on a **subscription plan** instead of a metered API key. If you
+Run nebuko on a **subscription plan** instead of a metered API key. If you
 already pay for a coding subscription, pointing the agents at it lowers the
 barrier to adoption — the same economics that make Claude Code attractive: a
 flat monthly fee instead of per-token billing.
@@ -65,7 +65,7 @@ it to the reusable workflow:
 ```yaml
 jobs:
   agent:
-    uses: olivier-norture/git-flow-ai/.github/workflows/nebuko-workflow.yaml@main
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
     with:
       agent_config_path: "agent-config-commandcode.yaml"
     secrets:

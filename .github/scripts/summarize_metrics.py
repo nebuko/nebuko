@@ -52,7 +52,7 @@ def fetch_comments(repo, issue_number, token, per_page=100):
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"token {token}")
         req.add_header("Accept", "application/vnd.github.v3+json")
-        req.add_header("User-Agent", "git-flow-ai-metrics-summarizer")
+        req.add_header("User-Agent", "nebuko-metrics-summarizer")
 
         try:
             with urllib.request.urlopen(req) as response:
@@ -79,7 +79,7 @@ def fetch_issue(repo, issue_number, token):
     req = urllib.request.Request(url)
     req.add_header("Authorization", f"token {token}")
     req.add_header("Accept", "application/vnd.github.v3+json")
-    req.add_header("User-Agent", "git-flow-ai-metrics-summarizer")
+    req.add_header("User-Agent", "nebuko-metrics-summarizer")
 
     try:
         with urllib.request.urlopen(req) as response:
@@ -523,7 +523,7 @@ def post_comment(repo, issue_number, token, body):
     req.add_header("Authorization", f"token {token}")
     req.add_header("Accept", "application/vnd.github.v3+json")
     req.add_header("Content-Type", "application/json")
-    req.add_header("User-Agent", "git-flow-ai-metrics-summarizer")
+    req.add_header("User-Agent", "nebuko-metrics-summarizer")
 
     try:
         with urllib.request.urlopen(req) as response:
