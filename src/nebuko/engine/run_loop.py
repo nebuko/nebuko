@@ -1184,6 +1184,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return lint_main(raw_args[1:])
 
+    if raw_args and raw_args[0] == "lint-config":
+        from nebuko.engine.config_lint_cli import main as lint_config_main
+
+        return lint_config_main(raw_args[1:])
+
     from nebuko.adapters import build_adapter
 
     parser = argparse.ArgumentParser(description="Run one orchestration engine step")
