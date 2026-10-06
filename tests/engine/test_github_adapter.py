@@ -25,7 +25,12 @@ ISSUE_COMMENT_PAYLOAD = {
         "created_at": "2026-10-01T07:47:47Z",
         "user": {"login": "olivier-norture"},
     },
-    "issue": {"number": 590, "title": "[engine] Stage A", "user": {"login": "olivier-norture"}},
+    "issue": {
+        "number": 590,
+        "title": "[engine] Stage A",
+        "body": "Carry the issue body into the workflow-run context.",
+        "user": {"login": "olivier-norture"},
+    },
     "repository": {"full_name": "olivier-norture/git-flow-ai"},
 }
 
@@ -79,6 +84,7 @@ class TestReadTrigger:
             "issue_comment",
             590,
         )
+        assert trigger.issue_body == ISSUE_COMMENT_PAYLOAD["issue"]["body"]
 
     def test_defaults_to_the_github_event_path_environment_variable(self, tmp_path, monkeypatch):
         path = _event_file(tmp_path, ISSUE_COMMENT_PAYLOAD)

@@ -22,6 +22,7 @@ from engine.run_loop import (
     Engine,
     _backfill_workflow_identity,
     _ensure_child_identity,
+    _TRIGGER_KEY,
     main,
     resolved_env_overlay,
 )
@@ -41,8 +42,14 @@ RUN_ENV = {
 ACK_LINE = f"🤖 **dev agent started** — [View workflow run logs]({RUN_URL})"
 
 
-def _trigger(body: str = "@@dev fix it", number: int = 590) -> Trigger:
-    return Trigger(author="olivier-norture", body=body, type="issue_comment", number=number)
+def _trigger(body: str = "@@dev fix it", number: int = 590, issue_body: str = "") -> Trigger:
+    return Trigger(
+        author="olivier-norture",
+        body=body,
+        type="issue_comment",
+        number=number,
+        issue_body=issue_body,
+    )
 
 
 def _engine(tmp_path, trigger=None, *, name: str = "run-1", env=None) -> Engine:
@@ -969,6 +976,46 @@ class TestCapturedDeliverableComment:
 
         assert outcome.routing.status == "hold"
         assert outcome.exit_code == ExitCode.HOLD
+
+
+class TestIssueBodyContext:
+    """The issue body reaches the rendered workflow-run context (issue #768)."""
+
+    def _rendered(self, tmp_path, trigger) -> str:
+        engine = _engine(tmp_path, trigger=trigger)
+        return engine._render_context({_TRIGGER_KEY: trigger}, [])
+
+    def test_issue_comment_renders_the_issue_body_before_the_comment(self, tmp_path):
+        trigger = _trigger(body="/nebuko run workflow", issue_body="the real task")
+
+        rendered = self._rendered(tmp_path, trigger)
+
+        assert "**Issue body:**\nthe real task" in rendered
+        assert rendered.index("**Issue body:**") < rendered.index("/nebuko run workflow")
+
+    def test_issue_trigger_does_not_duplicate_the_issue_body(self, tmp_path):
+        trigger = Trigger(
+            author="olivier-norture",
+            body="make it so",
+            type="issue",
+            number=590,
+            issue_body="make it so",
+        )
+
+        rendered = self._rendered(tmp_path, trigger)
+
+        assert "**Issue body:**" not in rendered
+        assert rendered.count("make it so") == 1
+
+    def test_empty_issue_body_leaves_the_context_unchanged(self, tmp_path):
+        rendered = self._rendered(tmp_path, _trigger())
+
+        assert "**Issue body:**" not in rendered
+        assert rendered == (
+            "**Author:** olivier-norture\n\n"
+            "@@dev fix it\n\n"
+            "## Recent thread\n\n_(no prior thread)_"
+        )
 
 
 class TestEntryPoints:

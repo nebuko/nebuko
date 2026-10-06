@@ -80,16 +80,19 @@ def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
             type="issue_comment",
             number=number,
             payload=payload,
+            issue_body=(payload.get("issue") or {}).get("body") or "",
         )
 
     issue = payload.get("issue")
     if issue is not None:
+        issue_body = issue.get("body", "") or ""
         return Trigger(
             author=(issue.get("user") or {}).get("login", ""),
-            body=issue.get("body", "") or "",
+            body=issue_body,
             type="issue",
             number=issue.get("number") or 0,
             payload=payload,
+            issue_body=issue_body,
         )
 
     inputs = payload.get("inputs")

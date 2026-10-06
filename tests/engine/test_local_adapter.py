@@ -67,6 +67,13 @@ class TestReadTrigger:
 
         assert LocalAdapter(run_dir).read_trigger() == Trigger(**payload)
 
+    def test_trigger_json_without_issue_body_uses_the_default(self, run_dir):
+        payload = {"author": "olivier-norture", "body": "/nebuko run workflow", "type": "issue_comment", "number": 590}
+        run_dir.mkdir(parents=True)
+        (run_dir / TRIGGER_FILE).write_text(json.dumps(payload))
+
+        assert LocalAdapter(run_dir).read_trigger().issue_body == ""
+
 
 class TestJournal:
     def test_post_appends_a_terminal_marker(self, adapter, run_dir):

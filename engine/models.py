@@ -35,6 +35,8 @@ class Trigger:
     number: int
     # raw event, for legacy resolvers that still read event JSON
     payload: Mapping[str, Any] = field(default_factory=dict)
+    # body of the issue this event belongs to ("" when unavailable)
+    issue_body: str = ""
 
 
 # @stub-protected
