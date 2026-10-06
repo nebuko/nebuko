@@ -1,18 +1,30 @@
-"""Spec-scenario tests for per-run log staging (issue #743).
+"""Spec-scenario tests for per-run log staging (issues #743, #779).
 
 The new-engine host runs the legacy agent in a throwaway temp directory, so the
 run's ``console.log`` and the OpenHands SDK's on-disk ``app.log`` must be staged
-in a host-owned directory the workflow can upload as the ``nebuko-task-logs``
-artifact.
+in a host-owned directory the workflow uploads — each file as its own *unzipped*
+artifact (issue #779) so a run's logs can be fetched raw, without any unzip.
 """
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 import pytest
+import yaml
 
-from engine.artifacts import CONSOLE_LOG_FILE, RunArtifactStager, RunArtifacts
+from adapters.github import ARTIFACT_DIR_NAME
+from engine.artifacts import (
+    APP_LOG_FILE,
+    CONSOLE_LOG_FILE,
+    ArtifactFile,
+    RunArtifactStager,
+    RunArtifacts,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW_YAML = REPO_ROOT / ".github" / "workflows" / "nebuko-workflow.yaml"
 
 
 class TestRunArtifactStager:
@@ -47,6 +59,80 @@ class TestRunArtifactStager:
         assert artifacts.staging_dir == staging.resolve()
         assert artifacts.console_log == "console output"
         assert (staging / CONSOLE_LOG_FILE).read_text(encoding="utf-8") == "console output"
+
+    def test_artifact_files_lists_the_per_file_upload_manifest(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+
+        files = RunArtifactStager(staging).artifact_files()
+
+        assert files == (
+            ArtifactFile(name=CONSOLE_LOG_FILE, path=staging.resolve() / CONSOLE_LOG_FILE),
+            ArtifactFile(name=APP_LOG_FILE, path=staging.resolve() / APP_LOG_FILE),
+        )
+        assert all(artifact.path.is_absolute() for artifact in files)
+
+    def test_bundle_populates_the_per_file_manifest(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+
+        artifacts = RunArtifactStager(staging).bundle("console output")
+
+        assert artifacts.files == RunArtifactStager(staging).artifact_files()
+
+
+class TestArtifactFile:
+    def test_is_immutable(self, tmp_path):
+        artifact = ArtifactFile(name=CONSOLE_LOG_FILE, path=tmp_path / CONSOLE_LOG_FILE)
+
+        with pytest.raises(FrozenInstanceError):
+            artifact.name = APP_LOG_FILE  # type: ignore[misc]
+
+    def test_is_hashable_by_value(self):
+        artifact = ArtifactFile(name=CONSOLE_LOG_FILE, path=Path("/tmp/console.log"))
+
+        assert artifact == ArtifactFile(name=CONSOLE_LOG_FILE, path=Path("/tmp/console.log"))
+
+
+class TestWorkflowUploadContract:
+    """Every upload step stays in lock-step with the manifest (issue #779).
+
+    The engine (staging), the workflow YAML (upload) and the debug prompt
+    (download) share one contract; this pins the YAML half so the upload steps
+    cannot drift from ``RunArtifactStager.artifact_files``.
+    """
+
+    def _upload_steps(self) -> list[dict]:
+        workflow = yaml.safe_load(WORKFLOW_YAML.read_text(encoding="utf-8"))
+        steps: list[dict] = []
+
+        def _walk(node: object) -> None:
+            if isinstance(node, dict):
+                uses = node.get("uses")
+                if isinstance(uses, str) and uses.startswith("actions/upload-artifact"):
+                    steps.append(node)
+                for value in node.values():
+                    _walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    _walk(item)
+
+        _walk(workflow)
+        return steps
+
+    def test_each_upload_is_unzipped_and_matches_the_manifest(self, tmp_path):
+        manifest = {f.name for f in RunArtifactStager(tmp_path).artifact_files()}
+        steps = self._upload_steps()
+
+        assert steps, "expected at least one actions/upload-artifact step"
+        uploaded: set[str] = set()
+        for step in steps:
+            assert step["with"]["archive"] is False
+            assert step.get("if") == "always()"
+            uploaded.add(Path(step["with"]["path"]).name)
+        assert uploaded == manifest
+
+    def test_steps_upload_from_the_adapter_staging_dir(self):
+        for step in self._upload_steps():
+            assert f"/{ARTIFACT_DIR_NAME}/" in step["with"]["path"]
 
 
 class TestRunArtifacts:

@@ -164,7 +164,7 @@ You'll see a sequence of comments on the issue:
 Where to look when something goes wrong:
 
 - **GHA run logs** — the run for the triggering event, job `run-task`.
-- **Run artifacts** — each run uploads its console logs as an artifact.
+- **Run artifacts** — each run publishes `console.log` and `app.log` as separate unzipped artifacts (direct fetch, no unzip).
 - **Metrics** — every agent comment embeds an `<!-- agent-metrics: ... -->`
   block; on issue close, `summarize-metrics` posts an aggregated table.
   Details in [features.md — Metrics](./features.md#metrics--summarization).

@@ -189,17 +189,33 @@ jobs:
                 HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
                 PROMPT_BODY: ${{ inputs.prompt_body }}
                 # The engine stages its full SDK file log (app.log) and captured
-                # console.log here; the step below uploads them (issue #743).
+                # console.log here; the steps below upload each as its own
+                # unzipped artifact so a run's logs can be fetched raw, no unzip
+                # (issues #743, #779).
                 # runner.temp is absolute and outside the agent's temp workdir.
                 LOG_TO_FILE: "true"
                 LOG_DIR: ${{ runner.temp }}/nebuko-task-logs
 
-            - name: Upload OpenHands logs as artifact
-              uses: actions/upload-artifact@v4
+            # One unzipped artifact per staged log (issue #779). Under
+            # ``archive: false`` each upload takes a single file and the artifact
+            # is named after that file, so the debug tooling fetches ``console.log``
+            # / ``app.log`` directly instead of downloading and extracting a zip.
+            - name: Upload console.log artifact
+              uses: actions/upload-artifact@v7
               if: always()
               with:
-                name: nebuko-task-logs
-                path: ${{ runner.temp }}/nebuko-task-logs
+                path: ${{ runner.temp }}/nebuko-task-logs/console.log
+                archive: false
+                if-no-files-found: ignore
+                retention-days: 7
+
+            - name: Upload app.log artifact
+              uses: actions/upload-artifact@v7
+              if: always()
+              with:
+                path: ${{ runner.temp }}/nebuko-task-logs/app.log
+                archive: false
+                if-no-files-found: ignore
                 retention-days: 7
 
     summarize-metrics:
