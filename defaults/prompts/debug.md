@@ -30,10 +30,10 @@ gh api /repos/${GITHUB_REPOSITORY}/issues/${TARGET_NUMBER}/comments --jq '.' > /
 
 ### 2b. Extract Run IDs
 
-From the comments, find every bot acknowledgment that contains a workflow run link. Each comment will contain a line like:
+From the comments, find every bot acknowledgment that contains a workflow run link. Each comment will contain a line like (the leading `<picture>…</picture>` is the theme-adaptive Nebuko logo mark, issue #778 — the extraction regex keys on the bold role text and the logs link, not the logo):
 
 ```
-🤖 **{role_name} agent started** — [View workflow run logs](https://github.com/{owner}/{repo}/actions/runs/{run_id})
+<picture>…</picture> **{role_name} agent started** — [View workflow run logs](https://github.com/{owner}/{repo}/actions/runs/{run_id})
 ```
 
 Use a regex to extract `{role_name}` and `{run_id}` from every match:

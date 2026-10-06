@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import AgentStartNotice
+from config import AgentStartNotice, brand
 
 RUN_URL = "https://github.com/olivier-norture/git-flow-ai/actions/runs/36979038271"
 
@@ -16,7 +16,7 @@ class TestAgentStartNotice:
         notice = AgentStartNotice(agent="dev", role="dev", run_url=RUN_URL, issue_number=720)
         assert notice.render() == (
             "<!-- bot-agent-dev -->\n"
-            f"🤖 **dev agent started** — [View workflow run logs]({RUN_URL})"
+            f"{brand().logo_mark()} **dev agent started** — [View workflow run logs]({RUN_URL})"
         )
 
     def test_render_carries_the_caller_marker_for_the_loop_guard(self):
@@ -26,7 +26,7 @@ class TestAgentStartNotice:
     def test_render_uses_role_and_run_url_verbatim(self):
         notice = AgentStartNotice(agent="ctx", role="context", run_url="https://example.test/run")
         assert notice.render().splitlines()[1] == (
-            "🤖 **context agent started** — [View workflow run logs](https://example.test/run)"
+            f"{brand().logo_mark()} **context agent started** — [View workflow run logs](https://example.test/run)"
         )
 
     def test_issue_number_defaults_to_none(self):
