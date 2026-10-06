@@ -7,7 +7,7 @@ name = "nebuko"
 version = "0.0.0"
 description = "Nebuko — multi-agent GitHub workflow engine (formerly git-flow-ai)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
 dependencies = [
     "pyyaml>=6",
