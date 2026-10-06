@@ -19,7 +19,10 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
+from pydantic import ValidationError as PydanticValidationError
+
 from config import load_agent_names
+from config.sub_domains.agent_run_config.agent_run_config import AgentRunConfig
 from workflow_state.sub_domains.dispatch.dispatch import DISPATCH_STATUSES
 
 # Canonical sentinel: single-line HTML comment, no DOTALL.
@@ -333,6 +336,26 @@ def strip_agent_run_config(text: str) -> str:
     return cleaned.strip()
 
 
+def _sentinel_contract_errors(data: dict) -> list[str]:
+    """Translate the canonical ``AgentRunConfig`` contract violations.
+
+    One source of truth for the sentinel invariants (issue #765): at least one
+    action (task / dispatch / function_call) and never ``task`` combined with
+    ``function_call``. Messages keep the ``AGENT_RUN_CONFIG`` prefix so failure
+    logs stay legible.
+    """
+    try:
+        AgentRunConfig.model_validate(data)
+    except PydanticValidationError as exc:
+        messages = []
+        for err in exc.errors():
+            loc = ".".join(str(part) for part in err.get("loc", ()))
+            msg = err.get("msg", "invalid value").removeprefix("Value error, ")
+            messages.append(f"{loc}: {msg}" if loc else msg)
+        return messages
+    return []
+
+
 def validate_agent_run_config(json_str: str) -> ValidationResult:
     """Validate a single AGENT_RUN_CONFIG JSON payload."""
     result = ValidationResult(is_valid=True)
@@ -347,9 +370,11 @@ def validate_agent_run_config(json_str: str) -> ValidationResult:
         result.add_error("AGENT_RUN_CONFIG must be a JSON object")
         return result
 
-    # task is required
-    if "task" not in data:
-        result.add_error("AGENT_RUN_CONFIG missing required field: 'task'")
+    # Canonical sentinel contract (issue #765): ≥1 action, task XOR
+    # function_call. Replaces the old unconditional "task is required" check
+    # that rejected the exact dispatch-only sentinel ctx is told to emit.
+    for error in _sentinel_contract_errors(data):
+        result.add_error(error)
 
     # Validate known fields' types
     valid_tasks = load_agent_names()
@@ -432,8 +457,10 @@ def validate_dispatch(data: dict) -> ValidationResult:
 
     # Reuse AGENT_RUN_CONFIG validators for shared fields
     config_result = validate_agent_run_config(json.dumps(data))
-    # Filter out 'task' errors since dispatch uses 'task_hint' instead
-    filtered = [e for e in config_result.errors if "missing required field: 'task'" not in e]
+    # Filter out 'task' errors since dispatch uses 'task_hint' instead. The
+    # canonical contract also flags "no action" here (a bare dispatch dict has
+    # no task/dispatch/function_call field) — that is expected and dropped.
+    filtered = [e for e in config_result.errors if "missing required field" not in e]
     for error in filtered:
         result.add_error(error)
 

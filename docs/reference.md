@@ -20,6 +20,22 @@ preparation) reuse it from there.
 Single line + HTML comment means no multi-line boundary ambiguity and no leak
 into rendered GitHub comments. A sentinel split across lines never matches.
 
+### Canonical Contract (`AgentRunConfig`)
+
+The payload is validated by the canonical model `AgentRunConfig`
+(`.github/scripts/config/sub_domains/agent_run_config/agent_run_config.py`),
+shared by the validator and the routing helpers. Two invariants hold:
+
+1. **At least one action is required** — one of `task`, `dispatch` or
+   `function_call`. An empty payload is invalid.
+2. **`task` and `function_call` are mutually exclusive** — they are two
+   different ways to name a target; combining them is rejected.
+
+`task` is therefore **not** required: a dispatch-only sentinel such as
+`{"dispatch": {"status": "advance"}}` is valid. See
+[handoff-and-callback.md](./handoff-and-callback.md) for the full contract,
+the `callback` return address, and the routing-precedence cascade.
+
 ### Dispatch Object
 
 The current dispatch contract (see
@@ -53,7 +69,8 @@ everything else empty/null.
 ### Legacy Flat Fields (Backward Compatibility)
 
 Older sentinels use flat fields instead of `dispatch` (see the README schema
-table): `task` (required — the target agent role), `skills` (string[]),
+table): `task` (the target agent role; required only when neither `dispatch`
+nor `function_call` is present), `skills` (string[]),
 `complexity`, `reasoning`, `round` (dev↔review callback counter),
 `temperature`, `top_p`, `top_k`, `repetition_penalty`, `model`, `workflow`,
 `step`, `branch`.

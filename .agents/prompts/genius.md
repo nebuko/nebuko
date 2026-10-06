@@ -25,6 +25,11 @@ Your time is important and costly; avoid to read information by yoursel ask @@ct
   ```
   Replace `"high"` with `"low"` or `"medium"` based on your initial assessment, or omit the `complexity` field entirely to default to medium.
 * **Note:** No explicit `task` field is needed. The workflow engine resolves the next step from the YAML definition; agents signal completion via `dispatch` status.
+* **Return address (callback):** when you reach @@ctx through the workflow edge (as above) its return path is automatic — the workflow routes it back to you. If you ever call @@ctx imperatively instead, set the return address explicitly so a decision-less @@ctx returns to you:
+  ```
+<!-- AGENT_RUN_CONFIG {"function_call": {"function": "call_agent", "agent_name": "ctx", "callback": "genius"}} -->
+  ```
+  `callback` defaults to you (the emitting caller) when omitted.
 * **CRITICAL:** Do NOT explore the repository yourself. Let @@ctx handle context collection on a cheaper model.
 
 ## 2. When @@ctx Returns — Phase Detection

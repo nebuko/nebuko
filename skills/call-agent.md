@@ -23,8 +23,21 @@ Rules:
 - `function` must be a registered name. Currently only `call_agent` is registered.
 - `agent_name` must be a known agent roster name: `genius`, `ctx`, `dev`, `review`, `issue`, `issue-reviewer`, `summarize`, `debug`, `po`.
 - `complexity` (optional, default `"medium"`): `low`, `medium`, or `high`.
+- `callback` (optional): the **return address** — the agent to run once the callee finishes without a decision of its own. It defaults to the **emitting caller**, so you usually omit it; set it explicitly only to route the return somewhere other than yourself. A `callback` equal to `agent_name` is a no-op.
 - The call is **one-shot**: it is consumed by the next run and cleared from the workflow state, so it can never re-fire.
 - **Keep the sentinel on a single line, inside the code fence shown above only.** Do not break the JSON across lines or wrap it in extra markdown fences — extraction is resilient to drift (issue #512), but a clean single-line sentinel is the safest form.
+
+## Return path and precedence (issue #765)
+
+When a callee finishes, the engine resolves its successor in this order (highest → lowest):
+
+1. The callee's own explicit `function_call` → route there.
+2. The callee's own explicit `dispatch` `hold` / `loop` / `terminate` → honor it.
+3. The registered `callback` → return to the caller.
+4. The workflow forward edge (`steps[].next`) → continue the workflow.
+5. No target at all → **default `hold`** (the no-action safety net; never auto-advance an unknown state).
+
+`dispatch advance` means "I am done — route me by the standard rules above". The callback (step 3) wins over the workflow edge (step 4) because it is explicit caller intent, but the callee's own action (steps 1–2) always wins over both.
 
 ## Notes
 
