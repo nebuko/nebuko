@@ -7,7 +7,7 @@ interpreter. The live run raised ``ModuleNotFoundError`` there.
 
 ``engine.run_loop._load_bridge_module`` loads the legacy modules by absolute
 path (``importlib.util.spec_from_file_location`` against
-``engine.paths.SCRIPTS_DIR``), so the resolution is independent of ``sys.path``
+``engine.paths.LIB_DIR``), so the resolution is independent of ``sys.path``
 and ``sys.modules`` — and ``Engine.preflight()`` resolves the bridge before the
 agent runs, so a broken checkout fails fast instead of mid-run.
 """
@@ -21,7 +21,7 @@ import pytest
 
 from adapters.local import LocalAdapter
 from engine.models import Trigger
-from engine.paths import SCRIPTS_DIR, repo_root
+from engine.paths import LIB_DIR, repo_root
 from engine import run_loop
 from engine.run_loop import Engine
 
@@ -36,12 +36,12 @@ def fresh_bridge_cache(monkeypatch):
 def poisoned_import_env(monkeypatch):
     """Reproduce the state the in-process agent run leaves behind (issue #766).
 
-    ``SCRIPTS_DIR`` is gone from ``sys.path`` and a stale ``None`` entry for the
+    ``LIB_DIR`` is gone from ``sys.path`` and a stale ``None`` entry for the
     module we expect the bridge to load sits in ``sys.modules`` — a bare
     ``import prepare_comment`` would raise ``ModuleNotFoundError``.
     """
     monkeypatch.setattr(
-        sys, "path", [p for p in sys.path if p != str(SCRIPTS_DIR)]
+        sys, "path", [p for p in sys.path if p != str(LIB_DIR)]
     )
     monkeypatch.setitem(sys.modules, "prepare_comment", None)
 
@@ -58,7 +58,7 @@ class TestBridgeResolution:
     ):
         module = run_loop._load_bridge_module("prepare_comment")
 
-        assert Path(module.__file__).resolve() == (SCRIPTS_DIR / "prepare_comment.py").resolve()
+        assert Path(module.__file__).resolve() == (LIB_DIR / "prepare_comment.py").resolve()
         assert callable(module.build_comment_body)
 
     def test_the_engine_bridge_survives_a_poisoned_import_env(
@@ -73,7 +73,7 @@ class TestBridgeResolution:
         self, fresh_bridge_cache, monkeypatch
     ):
         monkeypatch.setattr(
-            sys, "path", [p for p in sys.path if p != str(SCRIPTS_DIR)]
+            sys, "path", [p for p in sys.path if p != str(LIB_DIR)]
         )
         monkeypatch.setitem(sys.modules, "validate_output", None)
         text = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "soft_kill"}} -->'
@@ -103,7 +103,7 @@ class TestPreflight:
     def test_fails_fast_when_the_bridge_module_is_missing(
         self, tmp_path, monkeypatch, fresh_bridge_cache
     ):
-        monkeypatch.setattr(run_loop, "SCRIPTS_DIR", tmp_path / "absent")
+        monkeypatch.setattr(run_loop, "LIB_DIR", tmp_path / "absent")
         engine = _engine(tmp_path)
 
         with pytest.raises(ModuleNotFoundError, match="legacy bridge module not found"):
@@ -113,7 +113,7 @@ class TestPreflight:
         self, tmp_path, monkeypatch, fresh_bridge_cache
     ):
         """The fail-fast check must not be fooled by a stale ``sys.modules`` entry."""
-        monkeypatch.setattr(run_loop, "SCRIPTS_DIR", tmp_path / "absent")
+        monkeypatch.setattr(run_loop, "LIB_DIR", tmp_path / "absent")
         monkeypatch.setitem(sys.modules, "validate_output", None)
         engine = _engine(tmp_path)
 

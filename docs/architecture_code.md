@@ -1,7 +1,7 @@
 # DDD Package-by-Feature Architecture
 
 > **Status:** In progress — canonical implementation in PR #335 (open).  
-> **Scope:** `.github/scripts/workflow_state/`, `.github/scripts/resolve_config/`, `.github/scripts/config/`, and `.github/scripts/agent_script/` packages.
+> **Scope:** `engine/lib/workflow_state/`, `engine/lib/resolve_config/`, `engine/lib/config/`, and `engine/lib/agent_script/` packages.
 
 ---
 
@@ -16,7 +16,7 @@ This replaces the previous monolithic `state_manager.py` module, which contained
 ### Directory Structure
 
 ```
-.github/scripts/workflow_state/
+engine/lib/workflow_state/
 ├── workflow_state.py                          # Facade: facade + WorkflowState model + convenience functions
 ├── test_workflow_state.py                     # Facade-level tests
 ├── features/                                  # Cross-cutting features (span multiple sub-domains)
@@ -141,10 +141,10 @@ from ...sub_domains.state_metrics.state_metrics import StateMetrics
 
 When migrating remaining code from `state_manager` to `workflow_state`:
 
-- [x] Search for remaining `from state_manager import` statements in `.github/scripts/`
+- [x] Search for remaining `from state_manager import` statements in `engine/lib/`
 - [x] Map each imported symbol to its new location in `workflow_state/`
 - [x] Verify `workflow_state.py` facade exports cover all needed symbols
-- [x] Run tests after each import migration: `python -m pytest .github/scripts/ -v`
+- [x] Run tests after each import migration: `python -m pytest engine/lib/ -v`
 - [x] Add `__init__.py` to any new packages created (currently the package uses implicit namespace packages)
 - [x] Remove `state_manager.py` and `test_state_manager.py` once all references are migrated
 
@@ -194,7 +194,7 @@ Functions like `build_state()` follow a functional pattern: given a previous sta
 DDD package-by-feature layout for the layered YAML configuration (`agent-config.yaml`) and workflow definitions. Like the other packages, `__init__.py` re-exports the public surface so consumers can import from the package root.
 
 ```
-.github/scripts/config/
+engine/lib/config/
 ├── __init__.py                                # Package facade: re-exports all public symbols
 ├── config.py                                  # Facade constants (CONFIG_DEFAULT_PATH)
 ├── features/
@@ -230,7 +230,7 @@ DDD package-by-feature layout for the layered YAML configuration (`agent-config.
 The OpenHands execution layer. Entry point `agent_script.py` is a slim orchestrator that chains the features below; all heavy lifting lives in `features/`.
 
 ```
-.github/scripts/agent_script/
+engine/lib/agent_script/
 ├── agent_script.py                            # Slim entry point (orchestrates the features)
 ├── features/
 │   ├── load_prompt/                           # Load system prompt from the agent's prompt_file
