@@ -277,6 +277,63 @@ def _apply_wf_marker(
             config["config_branch"] = wf_result["branch"]
 
 
+def _callback_return_target(
+    prev_state: Optional["WorkflowState"],
+    dispatch_obj: Optional[Any],
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> Optional[tuple[str, str]]:
+    """Resolve the function-call return target for a finishing callee (#765).
+
+    When an agent was reached through a ``function_call`` (the agent-as-tools
+    pattern) its state carries the caller as a ``callback``. A callee that
+    finishes with an ``advance`` decision and no explicit target of its own
+    routes back to that caller instead of continuing the workflow.
+
+    Returns ``(agent, step)`` when the callback should route the run, else
+    ``None``. The callback is an *advance-only* fallback: an explicit
+    ``hold``/``loop``/``terminate`` status or an explicit target always wins,
+    which is the precedence documented in ``docs/handoff-and-callback.md``.
+    """
+    if prev_state is None:
+        return None
+    callback = (getattr(prev_state, "callback", "") or "").strip()
+    if not callback:
+        return None
+    if callback == (getattr(prev_state, "agent", "") or "").strip():
+        # Never re-enter the agent that just ran (defensive; self-calls are
+        # blocked upstream).
+        return None
+    status = (
+        getattr(dispatch_obj, "status", "") or "advance"
+        if dispatch_obj is not None
+        else "advance"
+    )
+    if status != "advance":
+        return None
+    if dispatch_obj is not None and any(
+        (getattr(dispatch_obj, field, "") or "").strip()
+        for field in ("task_hint", "workflow", "step")
+    ):
+        # The callee named its own explicit destination: it outranks callback.
+        return None
+    wf_name = (getattr(prev_state, "workflow", "") or "").strip()
+    if not wf_name:
+        return (callback, "")
+    target_step = _resolve_callee_step(
+        wf_name,
+        _recover_current_step(prev_state),
+        callback,
+        workflows_dir,
+        local_workflows_dir,
+    )
+    if not target_step:
+        # No workflow step for the callback: fall through to the workflow
+        # forward edge rather than emitting a bare callback into a workflow.
+        return None
+    return (callback, target_step)
+
+
 def _resolve_dispatch_path(
     prev_state: "WorkflowState",
     dispatch_obj: "Dispatch",
@@ -330,6 +387,26 @@ def _resolve_dispatch_path(
         "config_parent_workflow": dispatch_obj.parent_workflow or "",
         "config_parent_workflow_step": dispatch_obj.parent_workflow_step or "",
     }
+
+    # Callback return (issue #765): when this run is a callee reached through a
+    # caller's function_call, an `advance` decision with no explicit target of
+    # its own returns to the caller rather than continuing the workflow.
+    # Precedence: explicit function_call (resolved upstream) > explicit
+    # hold/loop/terminate > callback > workflow forward edge > default hold.
+    callback_target = _callback_return_target(
+        prev_state, dispatch_obj, workflows_dir, local_workflows_dir
+    )
+    if callback_target is not None:
+        target_agent, target_step = callback_target
+        config["task"] = target_agent
+        config["config_workflow"] = prev_state.workflow
+        config["config_step"] = target_step
+        print(
+            f"Callback: returning to agent '{target_agent}' "
+            f"(workflow='{prev_state.workflow}', step='{target_step}')",
+            file=sys.stderr,
+        )
+        return config
 
     # Workflow-driven resolution using previous workflow state
     if prev_state and prev_state.workflow and prev_state.step:
@@ -908,15 +985,24 @@ def _resolve_function_call_path(
     # Establish the callee's step from the active workflow so the callee's
     # posted state records the step it actually ran (issue #507).
     wf_step = _resolve_callee_step(wf_name, getattr(prev_state, "step", "") or "", task, workflows_dir, local_workflows_dir) if wf_name else ""
+    # Return address (issue #765): the explicit ``callback`` if the caller set
+    # one, otherwise auto-default to the emitting agent so a callee that
+    # finishes with no decision of its own routes back to whoever invoked it
+    # (the agent-as-tools pattern). A callback equal to the callee is a no-op.
+    emitter = (getattr(prev_state, "agent", "") or "").strip() if prev_state is not None else ""
+    callback = (function_call.callback or "").strip() or emitter
+    if callback == task:
+        callback = ""
     print(
         f"Function call: calling agent '{task}' (complexity={complexity}, "
-        f"workflow='{wf_name}', step='{wf_step}')",
+        f"workflow='{wf_name}', step='{wf_step}', callback='{callback}')",
         file=sys.stderr,
     )
     return {
         "task": task,
         "config_workflow": wf_name,
         "config_step": wf_step,
+        "config_callback": callback,
         "config_complexity": complexity,
         "config_reasoning": "none",
         "config_temperature": "",
@@ -1469,6 +1555,22 @@ def _resolve_workflow_next_step(
         "config_parent_workflow": "",
         "config_parent_workflow_step": "",
     }
+
+    # Callback return (issue #765): same advance-only fallback as the
+    # dispatch-driven path, for callees whose state carries a caller callback.
+    callback_target = _callback_return_target(
+        prev_state, dispatch_obj, workflows_dir, local_workflows_dir
+    )
+    if callback_target is not None:
+        target_agent, target_step = callback_target
+        config["task"] = target_agent
+        config["config_step"] = target_step
+        print(
+            f"Callback: returning to agent '{target_agent}' "
+            f"(workflow='{wf_name}', step='{target_step}')",
+            file=sys.stderr,
+        )
+        return config
 
     # Resolve next step from workflow YAML
     wf_result = resolve_next_from_workflow(

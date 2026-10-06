@@ -24,12 +24,19 @@ class FunctionCall(BaseModel):
             from resolve_workflow's TASK_TO_PROMPT).
         complexity: Complexity level for the called agent.
         reason: Optional free-text explanation for the call.
+        callback: Optional return address (issue #765). The agent to run when
+            the callee finishes without an explicit decision of its own —
+            the agent-as-tools "control returns to the caller" pattern. It is
+            a fallback target: the callee's own explicit function_call /
+            hold / loop still wins, and the workflow forward edge is used
+            only when no callback is registered.
     """
 
     function: str = Field(default="call_agent")
     agent_name: str = ""
     complexity: str = "medium"
     reason: Optional[str] = None
+    callback: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_known_function(self) -> "FunctionCall":

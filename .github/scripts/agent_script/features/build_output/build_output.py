@@ -923,6 +923,10 @@ def build_output(
     workflow_step = os.environ.get("WORKFLOW_STEP", "")
     parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
     parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
+    # Callback return address (issue #765): set by the resolver when this run
+    # was reached through a caller's function_call, so a callee that finishes
+    # with no decision of its own routes back to the caller.
+    callback = os.environ.get("CONFIG_CALLBACK", "").strip() or None
     position = _parse_position_env()
     phase = _derive_phase(workflow_step)
 
@@ -1017,6 +1021,7 @@ def build_output(
         resolution=resolution,
         dispatch=dispatch,
         function_call=function_call,
+        callback=callback,
         inject_context=inject_context,
         pin=pin,
         scaffold_branch=scaffold_branch,

@@ -113,6 +113,11 @@ class WorkflowState(BaseModel):
             retry the step in place (bounded by ``MAX_SOFT_RETRIES``) instead
             of advancing. Defaults to an empty counter, so legacy state blobs
             without this key load unchanged.
+        callback: Optional return address (issue #765). When this agent was
+            reached through a ``function_call``, this is the caller to return
+            to once the agent finishes without an explicit decision of its own
+            (the agent-as-tools pattern). None for workflow-driven runs, so
+            legacy blobs without this key load unchanged.
     """
 
     version: int = 1
@@ -136,6 +141,10 @@ class WorkflowState(BaseModel):
     # Consumed by the next run's resolver, which emits a fresh state with it
     # cleared so it cannot re-fire (consumption by supersession).
     function_call: Optional[FunctionCall] = None
+    # Return address for a function-call callee (issue #765): the caller to
+    # fall back to when this agent finishes without an explicit decision.
+    # Cleared on every non-function-call transition so it cannot re-fire.
+    callback: Optional[str] = None
     # Flat workflow step path, outermost-first, last ref = the step actually
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.
@@ -201,6 +210,7 @@ def go_next(
     resolution: Optional[StepResolution] = None,
     dispatch: Optional[Dispatch] = None,
     function_call: Optional[FunctionCall] = None,
+    callback: Optional[str] = None,
 ) -> WorkflowState:
     from .features.build_state.build_state import build_state
     return build_state(
@@ -224,4 +234,5 @@ def go_next(
         resolution=resolution,
         dispatch=dispatch,
         function_call=function_call,
+        callback=callback,
     )
