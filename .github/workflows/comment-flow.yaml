@@ -16,7 +16,7 @@ jobs:
     uses: ./.github/workflows/nebuko-workflow.yaml
     with:
       runs_on: "self-hosted"
-      agent_config_path: "agent-config-commandcode.yaml"
+      agent_config_path: "defaults/agent-config-commandcode.yaml"
       circuit_breaker_threshold: 25
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
