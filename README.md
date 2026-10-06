@@ -1,4 +1,4 @@
-# git-flow-ai
+# nebuko
 
 **What it is, in one line:** AI multi-agent workflow as code — a schema and an engine — that lives where *you* are: in GitHub issues and runners. GitLab, Codeberg, BitBucket and Gitea are the direction; today, GitHub is the platform.
 
@@ -11,7 +11,7 @@ Three layers, and this project owns Layer 2:
 | Layer | What it is | Here |
 |-------|-----------|------|
 | **3 — AI workflow** | A way of doing something with AI: code, review, analyze… | `workflows/` |
-| **2 — workflow engine** | The runner; today in GitHub CI/CD | git-flow-ai |
+| **2 — workflow engine** | The runner; today in GitHub CI/CD | nebuko |
 | **1 — AI agent runner** | Runs an individual agent | OpenHands SDK |
 
 The payoff: a new Layer-3 capability — a workflow, an MCP, a websearch or context7 skill — is a **copy into your repo, try it, adopt or delete**. No stack update, no new SaaS, no migration.
@@ -52,7 +52,7 @@ Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use y
    ```yaml
    jobs:
      agent:
-       uses: olivier-norture/git-flow-ai/.github/workflows/nebuko-workflow.yaml@main
+       uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
        with:
          agent_config_path: "agent-config.yaml"
        secrets:
@@ -66,7 +66,7 @@ Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use y
 
 4. **Start using**: comment `/nebuko default` on an issue, or mention `@@genius`, `@@ctx`, `@@dev` or `@@review` directly.
 
-> 💡 **Zero-copy setup**: workflows, prompts and scripts are fetched from the git-flow-ai repo on every run — you only need `agent-config.yaml` locally. Define custom workflows by adding a local `workflows/` directory (local files take precedence).
+> 💡 **Zero-copy setup**: workflows, prompts and scripts are fetched from the nebuko repo on every run — you only need `agent-config.yaml` locally. Define custom workflows by adding a local `workflows/` directory (local files take precedence).
 
 ## Configuration basics
 

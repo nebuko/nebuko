@@ -1,4 +1,4 @@
-# git-flow-ai — Landscape
+# nebuko — Landscape
 
 **What it is, in one line:** AI multi-agent workflow as code — a schema and an engine — that lives where *you* are: in GitHub issues and runners. Today, GitHub is the only supported platform; GitLab, Codeberg, BitBucket, Gitea and friends are the stated direction, not a claim.
 
@@ -8,18 +8,18 @@
 
 ### Built for iterative dev, not one-prompt apps
 
-git-flow-ai is focused on **iterative software development**: small iterations, fast delivery, clean code, TDD — the practices that make senior developers shine. It is deliberately not the "one big prompt builds an entire app" flow you see all over the internet. That waterfall style loses the best of how humans actually build software: review at design level, short feedback loops, work that lands in small reviewed slices.
+nebuko is focused on **iterative software development**: small iterations, fast delivery, clean code, TDD — the practices that make senior developers shine. It is deliberately not the "one big prompt builds an entire app" flow you see all over the internet. That waterfall style loses the best of how humans actually build software: review at design level, short feedback loops, work that lands in small reviewed slices.
 
 ### Anti-"AI slop": no forced new tool
 
 A lot of AI products are a good idea packaged in a SaaS that forces you to use *another* tool. But GitHub already has what a developer needs: a place to store code, a place to plan work, and a place to follow the discussion around an issue.
 
-A second drawback of those products: when you want to try a new, cool behaviour, you have to update your whole stack to integrate it. git-flow-ai focuses on **Layer 2**, which changes that:
+A second drawback of those products: when you want to try a new, cool behaviour, you have to update your whole stack to integrate it. nebuko focuses on **Layer 2**, which changes that:
 
 | Layer | What it is | In this project |
 |-------|-----------|-----------------|
 | **Layer 3** — AI workflow | A new way of doing something with AI: code, review, analyze… | the workflows in `workflows/` (spec-driven, dev-review-loop, …) |
-| **Layer 2** — workflow engine | The runner that executes Layer 3; today in GitHub CI/CD, a dedicated SaaS later | git-flow-ai itself |
+| **Layer 2** — workflow engine | The runner that executes Layer 3; today in GitHub CI/CD, a dedicated SaaS later | nebuko itself |
 | **Layer 1** — AI agent runner | The engine that runs an individual agent | OpenHands SDK |
 
 The payoff: when a new cool tool appears at Layer 3 — a new workflow, an MCP, a websearch or context7 skill — you **copy the flow into your repo**, give it a try on Layer 2, and adopt it or delete it. No stack update, no migration, no new infrastructure. The same story holds for any external capability: it plugs in as a skill or a workflow step, so adoption stays a copy-paste decision.
@@ -101,4 +101,4 @@ The core is open source (Apache-2.0), self-hosted, and runnable with your own LL
 
 ## In one paragraph
 
-git-flow-ai is AI multi-agent workflow as code that lives where you already are: in GitHub issues and runners. Agents with real roles collaborate as coworkers — commenting, delegating, and gating work with human approval exactly where it matters — while declarative workflows keep the AI on a defined path. Because the process is code, you copy it, update it with a diff, roll it back with a commit, and measure it; because every step leaves a human-readable comment and a machine-readable state, you always know what happened and why. New AI capabilities are a copy-paste at Layer 3, adopted or deleted without touching your stack.
+nebuko is AI multi-agent workflow as code that lives where you already are: in GitHub issues and runners. Agents with real roles collaborate as coworkers — commenting, delegating, and gating work with human approval exactly where it matters — while declarative workflows keep the AI on a defined path. Because the process is code, you copy it, update it with a diff, roll it back with a commit, and measure it; because every step leaves a human-readable comment and a machine-readable state, you always know what happened and why. New AI capabilities are a copy-paste at Layer 3, adopted or deleted without touching your stack.
