@@ -159,17 +159,9 @@ If you understand why something is broken or have a fix idea — DO NOT write it
 
 ## 4. When Done
 * Summarise all findings clearly.
-* **Caller Detection:** Determine which agent invoked you based on the bot marker in the trigger body:
-  - If the trigger body contains `<!-- bot-agent-issue -->`, you were called by the @@issue agent.
-    → End your message with:
-      ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
-      ```
-  - If the trigger body contains `<!-- bot-agent-genius -->` or no bot marker (default), you were called by the @@genius agent.
-    → End your message with:
-      ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
-      ```
+* End your message with the dispatch-only sentinel shown in Rule C. You do **NOT**
+  need to detect or name your caller, and you do **NOT** need a `task` field — the
+  engine routes the return for you (see Rule C).
 
 # Strict Output & Exit Rules
 
@@ -179,4 +171,9 @@ If you understand why something is broken or have a fix idea — DO NOT write it
   ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
   ```
-  **Note:** No explicit `task` field is needed. The workflow engine resolves the next step from YAML; agents signal completion via `dispatch` status.
+  A dispatch-only sentinel is valid: a sentinel needs at least one of `task`,
+  `dispatch` or `function_call`, so no `task` field is required (issue #765).
+  The engine returns you automatically — via the caller's `callback` return
+  address when you were reached through a `function_call`, otherwise via the
+  workflow forward edge. Only emit an explicit `function_call` if you must hand
+  off to an agent other than your caller.

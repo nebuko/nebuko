@@ -69,6 +69,7 @@ def build_state(
     resolution: Optional[StepResolution] = None,
     dispatch: Optional[Dispatch] = None,
     function_call: Optional[FunctionCall] = None,
+    callback: Optional[str] = None,
     position: Optional[dict] = None,
     soft_retry_attempt: bool = False,
     is_human_resume: bool = False,
@@ -106,6 +107,9 @@ def build_state(
         function_call: Imperative agent-to-agent hand-off from the
             AGENT_RUN_CONFIG function_call section (replaced each transition;
             None clears any pending call).
+        callback: Return address for a function-call callee (issue #765),
+            carried from the caller's ``function_call.callback``. None clears
+            it, so a stale callback cannot re-fire on a later transition.
         position: v3 flat workflow position (issue #638), parsed from the
             WORKFLOW_POSITION env via ``parse_position_env`` — the
             ``WorkflowPosition.to_state_dict()`` block. Non-empty positions
@@ -261,6 +265,7 @@ def build_state(
         resolution=resolution,
         dispatch=dispatch,
         function_call=function_call,
+        callback=callback,
         position=position_refs,
         soft_retry=new_soft_retry,
     )
