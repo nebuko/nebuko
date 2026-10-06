@@ -1,0 +1,14 @@
+providers:
+  p1:
+    api_url: "http://example.test/v1"
+    api_token_env: "P1_TOKEN"
+llms:
+  l1:
+    model_path: "hosted_vllm/l1"
+    provider: "${providers.p1}"
+agents:
+  a:
+    model: "${llms.nope}"
+    prompt_file: ".agents/prompts/ghost.md"
+    skills: ["ghost-skill"]
+    tools: ["think", "warp_drive"]
