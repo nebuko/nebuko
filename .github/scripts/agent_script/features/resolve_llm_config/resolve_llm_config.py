@@ -113,6 +113,9 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     temperature = None
     agent_cfg = None
     api_url_raw = None
+    tier_override = None
+
+    config_complexity = os.getenv("CONFIG_COMPLEXITY", "").lower()
 
     # ── Layered config file ──────────────────────────────────────
     if os.path.isfile(config_path):
@@ -123,8 +126,15 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
             agent_cfg = cfg.agents.get(role_name)
             api_url_raw = None
             if agent_cfg:
-                model = agent_cfg.model_ref.model_path
-                provider = agent_cfg.model_ref.provider_ref
+                if config_complexity in ("low", "medium", "high"):
+                    tier_override = agent_cfg.complexity_overrides.get(config_complexity)
+                effective_ref = (
+                    tier_override.model_ref
+                    if tier_override and tier_override.model_ref
+                    else agent_cfg.model_ref
+                )
+                model = effective_ref.model_path
+                provider = effective_ref.provider_ref
                 api_key = os.environ.get(provider.api_token_env)
                 api_url_raw = provider.api_url
                 temperature = agent_cfg.temperature
@@ -171,9 +181,10 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         temperature = float(config_temperature)
         logger.info(f"CONFIG_TEMPERATURE override: {temperature}")
     else:
-        config_complexity = os.getenv("CONFIG_COMPLEXITY", "").lower()
         complexity_temperature_map = {"low": 0.0, "medium": 0.1, "high": 0.3}
         if config_complexity in complexity_temperature_map:
+            if tier_override is not None and tier_override.temperature is not None:
+                temperature = tier_override.temperature
             complexity_temp = complexity_temperature_map[config_complexity]
             if temperature is not None:
                 temperature = max(temperature, complexity_temp)
@@ -253,6 +264,8 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     # Reasoning effort: ``none``/unset omits the param so the model default
     # (xhigh) applies; only emitted while thinking is on.
     llm_reasoning = os.getenv("LLM_REASONING", "none")
+    if llm_reasoning in ("", "none") and tier_override and tier_override.reasoning:
+        llm_reasoning = tier_override.reasoning
     reasoning_effort = normalize_reasoning_effort(llm_reasoning)
     thinking_on = chat_template_kwargs.get("enable_thinking", True)
     if reasoning_effort and thinking_on:
@@ -266,7 +279,8 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         litellm_extra_body["thinking_token_budget"] = agent_cfg.model_ref.thinking_token_budget
 
     # ── Sampling parameter overrides ─────────────────────────────
-    # Priority: per-invocation override > per-agent override > per-LLM config
+    # Priority: per-invocation override > complexity tier override
+    #           > per-agent override > per-LLM config
     sampling_params = [
         ("top_p", os.getenv("CONFIG_TOP_P")),
         ("top_k", os.getenv("CONFIG_TOP_K")),
@@ -277,6 +291,8 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     for param_name, config_val in sampling_params:
         if config_val is not None and str(config_val).strip():
             litellm_extra_body[param_name] = float(config_val)
+        elif tier_override is not None and getattr(tier_override, param_name, None) is not None:
+            litellm_extra_body[param_name] = float(getattr(tier_override, param_name))
         elif agent_cfg:
             agent_val = getattr(agent_cfg, param_name, None)
             llm_val = getattr(agent_cfg.model_ref, param_name, None)

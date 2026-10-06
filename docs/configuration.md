@@ -110,6 +110,7 @@ llms:
 | `temperature` | float | Per-agent temperature override (floor for complexity adjustment). |
 | `prompt_file` | string | Path to the agent's system prompt (convention: `.agents/prompts/{agent}.md`). |
 | `skills` | string[] | Skills attached to the agent by default. |
+| `complexity_overrides` | mapping<`low` \| `medium` \| `high`, object> | Per-tier partial overrides of model/sampling/reasoning. See [Complexity Overrides](#complexity-overrides-per-tier-configuration). |
 | `tools` | string[] | Tool whitelist: `terminal`, `file_editor`, `task_tracker` (SDK tools) plus `think`, `finish` (built-in defaults). See [agents-and-skills.md](./agents-and-skills.md). |
 
 Example:
@@ -206,6 +207,12 @@ agents:
   dev:
     model: "${llms.qwen-3-6-30b}"
     prompt_file: ".agents/prompts/dev.md"
+    complexity_overrides:
+      low:
+        temperature: 0.0
+      high:
+        temperature: 0.9
+        reasoning: "xhigh"
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 ```
 
@@ -222,8 +229,11 @@ Per-invocation dispatch fields override the YAML cascade. Precedence
 1. **Per-invocation** — dispatch fields in the `AGENT_RUN_CONFIG` sentinel
    (`model`, `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`,
    `repetition_penalty`, `complexity`).
-2. **Per-agent** — `agents.<name>` stanza in `agent-config.yaml`.
-3. **Per-LLM** — `llms.<name>` stanza in `agent-config.yaml`.
+2. **Complexity tier override** — `agents.<name>.complexity_overrides.<tier>`
+   for the dispatch `complexity` tier (`low`/`medium`/`high`). See
+   [Complexity Overrides](#complexity-overrides-per-tier-configuration).
+3. **Per-agent** — `agents.<name>` stanza in `agent-config.yaml`.
+4. **Per-LLM** — `llms.<name>` stanza in `agent-config.yaml`.
 
 ### Dynamic Complexity-Based Temperature
 
@@ -242,3 +252,34 @@ complexity only increases temperature, never decreases it.
 **Reasoning effort** is independent of `complexity`: the `reasoning` dispatch
 field (`none`/`low`/`medium`/`xhigh`) maps to the provider's thinking-mode
 parameter and only applies while `thinking_enabled` is true for the LLM.
+
+### Complexity Overrides (per-tier configuration)
+
+An agent can swap its model, temperature, reasoning effort, and sampling
+parameters per dispatch-declared `complexity` tier. This enables cost/quality
+tiering — cheap settings for `low`, escalate to a stronger model for `high`.
+
+Keys are exactly `low`, `medium`, or `high`; each value is a **partial**
+override reusing the agent-stanza field names (`model`, `temperature`,
+`reasoning`, `top_p`, `top_k`, `min_p`, `presence_penalty`,
+`repetition_penalty`). Unset fields fall through to the per-agent value.
+
+```yaml
+agents:
+  dev:
+    model: "${llms.qwen-3-6-27b}"
+    temperature: 0.7
+    complexity_overrides:
+      low:
+        temperature: 0.0
+      high:
+        model: "${llms.claude-sonnet-5}"
+        temperature: 0.9
+        reasoning: "xhigh"
+        top_p: 0.8
+```
+
+Precedence is per-invocation (`CONFIG_*` / `AGENT_RUN_CONFIG`) > tier override
+> per-agent > per-LLM. Temperature remains a **floor** (`max`), so a tier never
+lowers it below the base agent temperature, and `reasoning` only applies while
+thinking is enabled for the LLM.

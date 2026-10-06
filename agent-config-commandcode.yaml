@@ -35,8 +35,11 @@ agents:
     skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
     # complexity_overrides:
-    #   - high:
-    #     model: ${llms.claude-sonnet-5}
+    #   low:
+    #     temperature: 0.0
+    #   high:
+    #     model: "${llms.claude-sonnet-5}"
+    #     temperature: 0.9
 
   dev:
     model: "${llms.deepseek-v4_1-flash}"
