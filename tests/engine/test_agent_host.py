@@ -9,6 +9,7 @@ assembly never reaches the LLM, while still exercising the real code path.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -72,7 +73,7 @@ def _host(
             encoding="utf-8",
         )
 
-    def _default_run_agent(llm_config, prompt, args, agent_cfg=None):
+    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
         return SimpleNamespace(state=SimpleNamespace(events=events))
 
     pipeline = SimpleNamespace(
@@ -153,3 +154,26 @@ def test_a_run_failure_propagates_and_is_not_an_unavailable_signal(tmp_path: Pat
         host.run("prompt")
 
     assert not isinstance(excinfo.value, EngineAgentUnavailable)
+
+
+def test_run_binds_the_explicit_repo_root_workspace(tmp_path: Path) -> None:
+    """#766: the agent operates on the real checkout, not the host's temp cwd.
+
+    Artefact staging still runs under a temporary cwd, but the conversation
+    workspace — and therefore the wind-down's git ops — must target the repo.
+    """
+    repo_root = tmp_path / "checkout"
+    _write_entry_point(repo_root)
+    seen: dict[str, Any] = {}
+
+    def _capture_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+        seen["workspace"] = workspace
+        seen["cwd"] = os.getcwd()
+        return SimpleNamespace(state=SimpleNamespace(events=[]))
+
+    host = _host(repo_root, events=[], latest_answer="", run_agent=_capture_run_agent)
+
+    host.run("prompt")
+
+    assert os.fspath(seen["workspace"]) == os.fspath(repo_root)
+    assert os.fspath(seen["cwd"]) != os.fspath(repo_root)

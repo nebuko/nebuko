@@ -11,6 +11,7 @@ point written to the same relative path).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,6 +23,7 @@ from engine.agent_runner import (
     _FINAL_MESSAGE_FILE,
     _LATEST_ANSWER_FILE,
     _STATE_FILE,
+    _child_env,
     run_engine_agent,
     run_legacy_agent,
 )
@@ -110,6 +112,26 @@ def test_artifact_names_match_the_legacy_readers() -> None:
 # ── in-process seam (issue #740) ──────────────────────────────────────────
 
 
+def test_child_env_pins_gfa_repo_root(tmp_path: Path) -> None:
+    """#766: the child gets an explicit repo root so git/gh escape the temp cwd."""
+    script = tmp_path / "checkout" / ENTRY_POINT
+
+    env = _child_env(script, {"GFA_REPO_ROOT": "ignored-by-caller"})
+
+    assert env["GFA_REPO_ROOT"] == str(tmp_path / "checkout")
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(tmp_path / "checkout" / ".github" / "scripts")
+
+
+def test_child_env_honours_an_explicit_repo_root(tmp_path: Path) -> None:
+    """An explicit ``repo_root`` wins over the entry point's inferred location."""
+    script = tmp_path / "checkout" / ENTRY_POINT
+    explicit = tmp_path / "elsewhere"
+
+    env = _child_env(script, None, repo_root=explicit)
+
+    assert env["GFA_REPO_ROOT"] == str(explicit)
+
+
 def _write_entry_point(repo_root: Path) -> None:
     """Create the entry point so the seam's existence check passes.
 
@@ -172,7 +194,7 @@ def _install_fake_pipeline(
             encoding="utf-8",
         )
 
-    def _default_run_agent(llm_config, prompt, args, agent_cfg=None):
+    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
         return SimpleNamespace(state=SimpleNamespace(events=events))
 
     pipeline = SimpleNamespace(
