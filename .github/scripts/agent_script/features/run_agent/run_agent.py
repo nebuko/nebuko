@@ -154,6 +154,17 @@ def _perform_wind_down(
     return completed
 
 
+def _discard_token(_chunk: object) -> None:
+    """Sink for streamed chunks — its presence alone keeps streaming on.
+
+    ``LLM.generate`` silently degrades ``stream=True`` to a blocking call when
+    no ``on_token`` callback is wired (#4014). The headless CI run renders no
+    tokens, but wiring this sink keeps the streaming path — and the
+    ``stream_idle_timeout`` guard that goes with it — active across a long
+    reasoning phase (issue #775).
+    """
+
+
 def run_agent(
     llm_config: dict,
     prompt: str,
@@ -235,6 +246,9 @@ def run_agent(
     conversation = Conversation(
         agent=agent,
         workspace=cwd,
+        # Keep the streaming path live so the LLM timeout applies between
+        # chunks rather than to the whole reasoning turn (issue #775).
+        token_callbacks=[_discard_token],
     )
 
     budget = resolve_timeout_budget()

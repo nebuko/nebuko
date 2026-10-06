@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from openhands.sdk.llm.exceptions import LLMServiceUnavailableError
 
 from agent_script.features.run_agent.run_agent import (
+    _discard_token,
     _perform_wind_down,
     _resolve_security_policy,
     _run_supervised,
@@ -118,6 +119,28 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertFalse(convo.run_outcome.soft_timeout_fired)
         # Wind-down prompt must NOT be sent on success.
         self.assertEqual(convo.send_message.call_count, 1)
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_streaming_token_sink_wired(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        """The sink keeps LLM.generate on the streaming path (#775)."""
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        mock_conversation_cls.return_value = _make_conversation("finished")
+
+        with patch(
+            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            return_value=None,
+        ):
+            run_agent(llm_config={}, prompt="do the thing")
+
+        callbacks = mock_conversation_cls.call_args.kwargs["token_callbacks"]
+        self.assertEqual(callbacks, [_discard_token])
 
     @patch("agent_script.features.run_agent.run_agent.Conversation")
     @patch("agent_script.features.run_agent.run_agent.Agent")
