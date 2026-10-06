@@ -821,8 +821,9 @@ class Engine:
         """Stage ``console.log`` for the CI artifact; never abort the run.
 
         Mirrors the legacy ``| tee console.log``: a run that cannot persist its
-        logs must still publish its comment, and the upload step's ``if: always()``
-        tolerates a missing directory (issue #743).
+        logs must still publish its comment, and the upload steps' ``if: always()``
+        with ``if-no-files-found: ignore`` tolerate a missing file
+        (issues #743, #779).
         """
         try:
             staged = self._artifacts().bundle(console_log)
