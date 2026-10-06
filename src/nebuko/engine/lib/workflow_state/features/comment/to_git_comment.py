@@ -9,7 +9,7 @@ def format_collapsed_section(state: WorkflowState) -> str:
 
     Output:
     <details>
-    <summary>🤖 Workflow State (v{version})</summary>
+    <summary>{logo} Workflow State (v{version})</summary>
 
     ```json
     { ... }
@@ -18,7 +18,8 @@ def format_collapsed_section(state: WorkflowState) -> str:
     </details>
 
     The state markers (WORKFLOW_STATE_START/END) are embedded inside the
-    code block for reliable extraction by scripts.
+    code block for reliable extraction by scripts. ``{logo}`` is the
+    theme-adaptive brand mark (issue #778).
 
     Args:
         state: The WorkflowState to format.
@@ -26,8 +27,10 @@ def format_collapsed_section(state: WorkflowState) -> str:
     Returns:
         Markdown string ready to prepend to a comment body.
     """
+    from config import brand
+
     json_str = state_to_json(state, compact=False)
-    summary_label = f"🤖 Workflow State (v{state.version})"
+    summary_label = f"{brand().logo_mark()} Workflow State (v{state.version})"
 
     lines = [
         "<details>",
@@ -151,12 +154,15 @@ def collapse_sections(body: str, section_headings: list[str]) -> str:
 
 def strip_state_section(body: str) -> str:
     """Remove the workflow state collapsed section from a comment body, returning just the human-readable content.
-    
-    Only targets the specific <details> block with the '🤖 Workflow State' summary label,
-    preserving any other legitimate <details> blocks in the content.
+
+    Only targets the specific <details> block whose <summary> ends in
+    'Workflow State', preserving any other legitimate <details> blocks in the
+    content. Three prefix generations are tolerated so historical comments
+    keep parsing (issue #778): the legacy '🤖' emoji, the theme-adaptive
+    '<picture>' logo mark, and a bare label.
     """
     cleaned = re.sub(
-        r"<details>\s*<summary>🤖 Workflow State.*?</details>\s*",
+        r"<details>\s*<summary>(?:🤖|<picture>.*?</picture>|<img[^>]*>)?\s*Workflow State.*?</details>\s*",
         "",
         body,
         flags=re.DOTALL,

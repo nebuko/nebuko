@@ -9,13 +9,17 @@ independent of which workflow file drives the run.
 
 from pydantic import BaseModel, ConfigDict
 
+from ..brand import brand
+
 # The caller marker the legacy guard (``run_loop._caller_agent``) reads to
 # attribute a comment to the agent that posted it. Kept local so the value
 # object stays a pure payload (no GitHub adapter import); the universal
 # ``<!-- bot-workflow-terminal -->`` marker is injected by the comment client.
 _AGENT_MARKER = "<!-- bot-agent-{agent} -->"
 
-_NOTICE_LINE = "🤖 **{role} agent started** — [View workflow run logs]({run_url})"
+# ``{logo}`` is the theme-adaptive brand mark (issue #778); the tail from
+# ``**{role}`` onward is a byte-stable extraction contract (see debug.md).
+_NOTICE_LINE = "{logo} **{role} agent started** — [View workflow run logs]({run_url})"
 
 
 class AgentStartNotice(BaseModel):
@@ -42,6 +46,8 @@ class AgentStartNotice(BaseModel):
         return "\n".join(
             [
                 _AGENT_MARKER.format(agent=self.agent),
-                _NOTICE_LINE.format(role=self.role, run_url=self.run_url),
+                _NOTICE_LINE.format(
+                    logo=brand().logo_mark(), role=self.role, run_url=self.run_url
+                ),
             ]
         )

@@ -178,7 +178,7 @@ Conditional on `SUMMARIZER_NEEDED=true`. Posts a comment tagged with `<!-- bot-a
 **Input:** `ROLE_NAME`, `TARGET_NUMBER`, `github.run_id`.  
 **Output:** A comment on the issue confirming the agent has started, with a link to workflow logs. Saves `ACK_COMMENT_ID`.
 
-Posts a temporary "🤖 **{role} agent started**" comment that will be minimized later once the real answer is posted. The comment is tagged with `<!-- bot-agent-{role} -->`.
+Posts a temporary "**{role} agent started**" comment, prefixed with the theme-adaptive Nebuko logo mark (issue #778), that will be minimized later once the real answer is posted. The comment is tagged with `<!-- bot-agent-{role} -->`.
 
 > **Engine path (issue #720):** when the run is driven by the engine, this
 > comment is posted by the engine itself (`Engine.notify_agent_started()`, see
