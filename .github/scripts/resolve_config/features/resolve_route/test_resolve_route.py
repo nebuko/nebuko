@@ -482,3 +482,197 @@ class TestGatePrecedenceOverFunctionCall:
         assert result["TASK"] == "genius"
         assert result["WORKFLOW_STEP"] == "stub_approval"
 
+
+_CALLBACK_WF_YAML = (
+    "name: cb\n"
+    "description: test\n"
+    "trigger:\n"
+    "  agents: [genius]\n"
+    "steps:\n"
+    "  - name: context\n"
+    "    agent: ctx\n"
+    "    next: build\n"
+    "  - name: build\n"
+    "    agent: dev\n"
+    "    next: null\n"
+    "  - name: answer\n"
+    "    agent: genius\n"
+    "    next: null\n"
+)
+
+
+class TestCallbackReturnTarget:
+    """Unit tests for the callback return-address resolver (issue #765)."""
+
+    @staticmethod
+    def _state(tmp_path, callback):
+        from workflow_state import WorkflowState
+
+        (tmp_path / "cb.yaml").write_text(_CALLBACK_WF_YAML)
+        return WorkflowState(
+            workflow="cb", step="context", agent="ctx", callback=callback
+        ), str(tmp_path)
+
+    def test_advance_with_no_target_returns_callback_step(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+
+        state, wf_dir = self._state(tmp_path, "genius")
+        assert _callback_return_target(state, None, wf_dir) == ("genius", "answer")
+
+    def test_no_callback_returns_none(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+
+        state, wf_dir = self._state(tmp_path, None)
+        assert _callback_return_target(state, None, wf_dir) is None
+
+    def test_callback_equal_to_self_is_noop(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+
+        state, wf_dir = self._state(tmp_path, "ctx")
+        assert _callback_return_target(state, None, wf_dir) is None
+
+    def test_explicit_target_outranks_callback(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from workflow_state import Dispatch
+
+        state, wf_dir = self._state(tmp_path, "genius")
+        dispatch = Dispatch(status="advance", task_hint="dev")
+        assert _callback_return_target(state, dispatch, wf_dir) is None
+
+    def test_hold_outranks_callback(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from workflow_state import Dispatch
+
+        state, wf_dir = self._state(tmp_path, "genius")
+        assert _callback_return_target(state, Dispatch(status="hold"), wf_dir) is None
+
+    def test_callback_absent_from_workflow_falls_through(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+
+        # `review` owns no step in this workflow: never emit a bare callback
+        # into a workflow; let the forward edge handle it instead.
+        state, wf_dir = self._state(tmp_path, "review")
+        assert _callback_return_target(state, None, wf_dir) is None
+
+
+class TestCallbackReturnAddressEndToEnd:
+    """End-to-end callback routing through resolve_config (issue #765)."""
+
+    @staticmethod
+    def _dirs(tmp_path):
+        from resolve_workflow import TASK_TO_PROMPT
+
+        prompt_base = tmp_path / "prompts"
+        workflows_dir = tmp_path / "workflows"
+        prompt_base.mkdir()
+        workflows_dir.mkdir()
+        for name in TASK_TO_PROMPT.values():
+            (prompt_base / name).write_text("# prompt")
+        (workflows_dir / "cb.yaml").write_text(_CALLBACK_WF_YAML)
+        return str(prompt_base), str(workflows_dir)
+
+    def _resolve(self, tmp_path, state):
+        import json as _json
+
+        from resolve_config import resolve_config
+
+        block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        prompt_base, workflows_dir = self._dirs(tmp_path)
+        body = "<!-- bot-workflow-terminal -->\n" + block
+        return resolve_config(body, prompt_base, workflows_dir, is_bot=True)
+
+    def test_callee_advance_routes_back_to_caller_not_forward_edge(self, tmp_path):
+        # ctx was reached via genius's function_call (callback=genius) and ends
+        # with a bare advance. The workflow forward edge is ctx->dev(build);
+        # the callback must win and route back to genius(answer).
+        result = self._resolve(
+            tmp_path,
+            {
+                "version": 1,
+                "workflow": "cb",
+                "step": "context",
+                "agent": "ctx",
+                "callback": "genius",
+                "dispatch": {"status": "advance"},
+            },
+        )
+        assert result["TASK"] == "genius"
+        assert result["WORKFLOW_STEP"] == "answer"
+
+    def test_callee_without_callback_continues_workflow_edge(self, tmp_path):
+        # Same run but no callback registered: unchanged behavior - follow the
+        # workflow forward edge to dev.
+        result = self._resolve(
+            tmp_path,
+            {
+                "version": 1,
+                "workflow": "cb",
+                "step": "context",
+                "agent": "ctx",
+                "dispatch": {"status": "advance"},
+            },
+        )
+        assert result["TASK"] == "dev"
+        assert result["WORKFLOW_STEP"] == "build"
+
+
+class TestFunctionCallPathCallbackDefault:
+    """The function_call resolver records the callback return address (#765)."""
+
+    @staticmethod
+    def _workflows_dir(tmp_path, yaml_text):
+        (tmp_path / "spec.yaml").write_text(yaml_text)
+        return str(tmp_path)
+
+    SPEC_YAML = TestResolveFunctionCallPathWorkflowContext.SPEC_YAML
+
+    def test_callback_defaults_to_emitting_caller(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from workflow_state import FunctionCall, WorkflowState
+
+        prev = WorkflowState(workflow="spec", step="analyze", agent="genius")
+        config = _resolve_function_call_path(
+            FunctionCall(agent_name="ctx"),
+            self._workflows_dir(tmp_path, self.SPEC_YAML),
+            prev,
+        )
+        assert config["config_callback"] == "genius"
+
+    def test_explicit_callback_overrides_default(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from workflow_state import FunctionCall, WorkflowState
+
+        prev = WorkflowState(workflow="spec", step="analyze", agent="genius")
+        config = _resolve_function_call_path(
+            FunctionCall(agent_name="ctx", callback="issue"),
+            self._workflows_dir(tmp_path, self.SPEC_YAML),
+            prev,
+        )
+        assert config["config_callback"] == "issue"
+
+    def test_callback_equal_to_callee_is_cleared(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from workflow_state import FunctionCall, WorkflowState
+
+        prev = WorkflowState(workflow="spec", step="analyze", agent="genius")
+        config = _resolve_function_call_path(
+            FunctionCall(agent_name="genius"),
+            self._workflows_dir(tmp_path, self.SPEC_YAML),
+            prev,
+        )
+        assert config["config_callback"] == ""
+
+    def test_no_prev_state_has_no_callback(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from workflow_state import FunctionCall
+
+        config = _resolve_function_call_path(
+            FunctionCall(agent_name="ctx"),
+            self._workflows_dir(tmp_path, self.SPEC_YAML),
+        )
+        assert config["config_callback"] == ""
+

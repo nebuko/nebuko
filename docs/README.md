@@ -24,6 +24,7 @@ For the high-level pitch and quick overview, see the root
 | [subscription-plans.md](./subscription-plans.md) | Operators | Run agents on a subscription plan (CommandCode today; OpenCode Go planned). |
 | [features.md](./features.md) | Contributors | Deep dives: human commands, task decomposition, safety, metrics, execution layer, zero-copy. |
 | [reference.md](./reference.md) | Contributors | Machine contracts: dispatch sentinel, workflow grammar, state schema, env vars, markers. |
+| [handoff-and-callback.md](./handoff-and-callback.md) | Contributors | The `AGENT_RUN_CONFIG` contract: dispatch vs function_call, the callback return address, routing precedence, the no-action default. |
 | [default-workflow.md](./default-workflow.md) | Operators | Step-by-step reference of the GitHub Actions orchestrator (jobs, steps, data flow). |
 | [architecture_code.md](./architecture_code.md) | Contributors | Internal DDD package-by-feature layout of the Python code. |
 | [github-api-limits.md](./github-api-limits.md) | Operators | GitHub REST rate limits relevant to the comment-based state machine. |

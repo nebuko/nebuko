@@ -329,6 +329,26 @@ class TestValidateAgentRunConfig:
         assert result.is_valid is False
         assert any("missing required field" in e for e in result.errors)
 
+    def test_dispatch_only_valid(self):
+        """Defect D1 regression (issue #765): the dispatch-only sentinel ctx
+        is told to emit must validate."""
+        result = validate_agent_run_config('{"dispatch": {"status": "advance"}}')
+        assert result.is_valid is True
+
+    def test_function_call_only_valid(self):
+        result = validate_agent_run_config(
+            '{"function_call": {"function": "call_agent", "agent_name": "ctx"}}'
+        )
+        assert result.is_valid is True
+
+    def test_task_with_function_call_rejected(self):
+        result = validate_agent_run_config(
+            '{"task": "genius", '
+            '"function_call": {"function": "call_agent", "agent_name": "ctx"}}'
+        )
+        assert result.is_valid is False
+        assert any("cannot combine" in e for e in result.errors)
+
     def test_invalid_task(self):
         result = validate_agent_run_config('{"task": "invalid_role"}')
         assert result.is_valid is False
