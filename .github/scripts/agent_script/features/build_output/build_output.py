@@ -19,6 +19,7 @@ from config import (
     parse_position_env,
     resolve_workflow_reference,
 )
+from config.sub_domains.agent_run_config.agent_run_config import DispatchConfig
 from github_client import get_issue_comments
 from metrics_schema import Metrics
 from validate_output import (
@@ -223,6 +224,31 @@ def _soft_kill_dispatch() -> Dispatch:  # @stub-protected
             "human once MAX_SOFT_RETRIES is exhausted."
         ),
     )
+
+
+def _no_action_dispatch(diagnostic: str = "") -> Dispatch:
+    """Synthesize the safe no-action fallback for a decision-less run (#765).
+
+    An agent that ends its run without emitting any decision (no
+    ``dispatch`` and no ``function_call``) is contract drift, not a normal
+    completion — auto-advancing the workflow on an unknown state silently
+    misroutes. The safe response is to ``hold`` for a human and record why.
+    When a sentinel marker was present but could not be parsed, the
+    diagnostic is carried into the reason instead of being swallowed.
+
+    The canonical ``DispatchConfig.no_action_default`` factory owns the
+    fallback status/contract; this adapter maps it onto the ``Dispatch``
+    the workflow engine consumes.
+    """
+    if diagnostic:
+        reason = (
+            "no-action default: agent emitted no decision and the "
+            f"AGENT_RUN_CONFIG sentinel could not be parsed ({diagnostic})"
+        )
+    else:
+        reason = "no-action default: agent emitted no decision"
+    default = DispatchConfig.no_action_default(reason)
+    return Dispatch(status=default.status, reason=default.reason)
 
 
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
@@ -716,7 +742,9 @@ def _resolve_dispatch(
          free-text sentinel).
       2. Legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel — silent compat
          fallback during the dual-mode migration window.
-      3. Nothing — dispatch/function_call stay None.
+      3. Neither — a decision-less run, defaulted to ``hold`` (issue #765,
+         :func:`_no_action_dispatch`) so the engine never auto-advances an
+         unknown state.
 
     When the tool call wins, ``branch``/``workflow``/``step`` left unset by
     the tool are merged in from a co-emitted sentinel (issue #618) so the
@@ -731,6 +759,7 @@ def _resolve_dispatch(
     """
     dispatch: Optional[Dispatch] = None
     function_call: Optional[FunctionCall] = None
+    diagnostic = ""
 
     conv_id = getattr(conversation, "id", None)
     tool_dispatch = get_recorded_dispatch(conv_id) if conv_id is not None else None
@@ -755,6 +784,7 @@ def _resolve_dispatch(
         )
     elif final_message:
         if has_unterminated_agent_run_config(final_message):
+            diagnostic = "unterminated AGENT_RUN_CONFIG sentinel (truncated output)"
             logger.warning("Unterminated AGENT_RUN_CONFIG sentinel detected (truncated output)")
         extract_result = extract_dispatch_resilient(final_message)
         if extract_result.payload is not None:
@@ -763,14 +793,18 @@ def _resolve_dispatch(
             # so this re-parse cannot fail (valid-JSON guarantee).
             function_call = extract_function_call(json.loads(extract_result.payload))
             if dispatch is not None:
+                diagnostic = ""
                 logger.info(
                     "Dispatch resolved via legacy AGENT_RUN_CONFIG sentinel "
                     "(dispatch_next tool not called)"
                 )
+            else:
+                diagnostic = "AGENT_RUN_CONFIG payload failed Dispatch validation"
         elif extract_result.parse_error is not None:
             # A sentinel marker was present but no payload could be parsed
-            # (issue #512): log an explicit diagnostic instead of failing
+            # (issue #512): capture an explicit diagnostic instead of failing
             # silently with dispatch=function_call=None.
+            diagnostic = str(extract_result.parse_error)
             logger.warning(
                 f"AGENT_RUN_CONFIG sentinel found but could not be parsed: "
                 f"{extract_result.parse_error}"
@@ -779,6 +813,14 @@ def _resolve_dispatch(
     # Strip AGENT_RUN_CONFIG sentinels so they don't appear in the visible
     # comment body — dispatch is stored structurally in workflow_state.dispatch.
     final_message = strip_agent_run_config(final_message)
+
+    # No-action default (issue #765): a run that emitted neither a dispatch nor
+    # a function_call is contract drift, not a completion. Default to a hold
+    # (carrying any parse diagnostic) instead of auto-advancing the workflow.
+    if dispatch is None and function_call is None:
+        dispatch = _no_action_dispatch(diagnostic)
+        logger.warning(f"No action emitted — defaulting to hold: {dispatch.reason}")
+
     return dispatch, function_call, final_message
 
 

@@ -62,8 +62,9 @@ class TestResolveDispatch(unittest.TestCase):
         self.assertIsNone(function_call)
         self.assertNotIn("AGENT_RUN_CONFIG", message)
 
-    def test_no_dispatch_anywhere(self):
-        """Neither source yields a decision: all three outputs stay empty."""
+    def test_no_dispatch_anywhere_defaults_to_hold(self):
+        """Neither source yields a decision: default to the no-action hold
+        (issue #765) instead of silently auto-advancing the workflow."""
         fake = _FakeConv("conv-none")
         with mock.patch(
             "build_output.get_recorded_dispatch", return_value=None
@@ -71,9 +72,35 @@ class TestResolveDispatch(unittest.TestCase):
             dispatch, function_call, message = _resolve_dispatch(
                 fake, "plain final answer"
             )
-        self.assertIsNone(dispatch)
+        self.assertIsInstance(dispatch, Dispatch)
+        self.assertEqual(dispatch.status, "hold")
+        self.assertIn("no-action default", dispatch.reason)
         self.assertIsNone(function_call)
         self.assertEqual(message, "plain final answer")
+
+    def test_unparsable_sentinel_defaults_to_hold_with_diagnostic(self):
+        """A present-but-unparsable sentinel is still a decision-less run:
+        hold, with the parse diagnostic carried in the observable reason."""
+        fake = _FakeConv("conv-broken")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ):
+            dispatch, function_call, _ = _resolve_dispatch(
+                fake, '<!-- AGENT_RUN_CONFIG {"dispatch": {broken -->'
+            )
+        self.assertEqual(dispatch.status, "hold")
+        self.assertIn("no-action default", dispatch.reason)
+        self.assertIn("could not be parsed", dispatch.reason)
+        self.assertIsNone(function_call)
+
+    def test_explicit_dispatch_is_never_defaulted(self):
+        """An explicit decision must pass through untouched."""
+        fake = _FakeConv("conv-explicit")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ):
+            dispatch, _, _ = _resolve_dispatch(fake, SENTINEL)
+        self.assertEqual(dispatch.status, "advance")
 
     def test_tool_dispatch_without_agent_keeps_function_call_none(self):
         """A workflow-relative dispatch (no explicit target) must not
