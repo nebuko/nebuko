@@ -68,7 +68,7 @@ Determines whether the repository already has nebuko embedded. If the prompt fil
 **Input:** `needed` from Step 2.  
 **Output:** nebuko repository cloned at `.nebuko-cache/` (conditional).
 
-Only runs when `needed=true`. Clones `nebuko/nebuko` into `.nebuko-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed nebuko directly. The "Resolve Agent Configuration" step exports `GIT_FLOW_AI_SCRIPTS` as the single source of truth for script locations (cache-aware), consumed by all subsequent script invocations.
+Only runs when `needed=true`. Clones `nebuko/nebuko` into `.nebuko-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed nebuko directly. The orchestration engine resolves script locations from the embedded `engine/lib/` tree, falling back to the `.nebuko-cache/` clone.
 
 ---
 
@@ -434,11 +434,10 @@ GitHub Event
 
 | File | Purpose |
 |------|---------|
-| `.github/scripts/resolve_config.py` | Parses trigger body, resolves agent role, complexity, prompt, skills |
-| `.github/scripts/agent_script.py` | Core agent execution — loads prompt, runs OpenHands SDK, produces output |
-| `.github/scripts/query_context.py` | Builds query context from issue + comments + workflow state |
-| `.github/scripts/issue_creation.py` | Creates sub-issues from split plans |
-| `.github/scripts/summarize_metrics.py` | Aggregates metrics across agent runs on a closed issue |
+| `engine/lib/resolve_config.py` | Parses trigger body, resolves agent role, complexity, prompt, skills |
+| `engine/lib/agent_script.py` | Core agent execution — loads prompt, runs OpenHands SDK, produces output |
+| `engine/lib/issue_creation.py` | Creates sub-issues from split plans |
+| `engine/lib/summarize_metrics.py` | Aggregates metrics across agent runs on a closed issue |
 | `.agents/prompts/{role}.md` | Role-specific prompt templates |
 | `skills/{name}.md` | Skill files loaded as additional context |
 | `agent-config.yaml` | Layered config: providers → LLMs → agents |

@@ -31,7 +31,7 @@ The payload may carry up to three top-level actions:
 ### The contract invariants
 
 The canonical model is `AgentRunConfig`
-(`.github/scripts/config/sub_domains/agent_run_config/agent_run_config.py`).
+(`engine/lib/config/sub_domains/agent_run_config/agent_run_config.py`).
 Two invariants are enforced at validation time:
 
 1. **At least one action is required.** A sentinel must carry one of `task`,

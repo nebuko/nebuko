@@ -211,7 +211,7 @@ resolved step declares a `script:` source (nested `script: {path, args, timeout_
 ├─ resolve_config emits RUN_SCRIPT=true + SKIP_AGENT=true + SCRIPT_PATH /
 │  SCRIPT_ARGS / SCRIPT_TIMEOUT_MINUTES instead of a task assignment,
 │  with ROLE_NAME="script"
-├─ GHA "Run Script Step" executes .github/scripts/features/run_script/run_script.py
+├─ the legacy GHA "Run Script Step" (removed with the legacy flow)
 │  (bounded by GHA timeout-minutes and an executor-level timeout); no agent run
 ├─ executor writes the standard artifacts: final_message.txt (+ 10k split parts
 │  on overflow) and workflow_state.json with history advanced and a synthetic

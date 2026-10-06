@@ -6,6 +6,12 @@ Add missing dependencies here for next run.
 ## Code language
 This project is in Python.
 
+## Running the test suite
+The full suite is `pytest` with **no path argument**: it collects `tests/` and the
+runtime tests under `engine/lib/**` (relocated out of `.github/scripts/` in issue #769).
+`pytest tests/` alone only runs a subset. The suite needs `pytest-mock` (declared in
+`flake.nix`); the `mocker` fixture errors out when it is missing.
+
 ## Pushing CI workflow files
 The checkout's GitHub App token lacks the `workflows` permission, so git pushes that
 add/modify `.github/workflows/*` are rejected by GitHub. The `GH_TOKEN` env var has the

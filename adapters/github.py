@@ -47,7 +47,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     ) -> None:
         from pathlib import Path as _Path
 
-        # Bootstrap the legacy ``.github/scripts`` import path once, at adapter
+        # Bootstrap the legacy ``engine/lib`` import path once, at adapter
         # construction: every method below imports a legacy module, and the
         # repository packaging does not cover that directory (issue #590
         # round-4, finding 1). Doing it here keeps the methods themselves
@@ -66,7 +66,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         from pathlib import Path as _Path
 
         # Must precede the legacy import: ``event_normalizer`` only resolves
-        # once ``.github/scripts`` is on ``sys.path`` (issue #590 round-4,
+        # once ``engine/lib`` is on ``sys.path`` (issue #590 round-4,
         # finding 1 — ``__init__`` also bootstraps, this keeps the method
         # correct on its own if it is ever called on a bare instance).
         ensure_import_path()

@@ -19,6 +19,7 @@
           python313
           python313Packages.pyyaml
           python313Packages.pytest
+          python313Packages.pytest-mock
           python313Packages.pydantic
           python313Packages.cairosvg
           python313Packages.uharfbuzz

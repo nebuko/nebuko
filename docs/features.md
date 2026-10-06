@@ -15,7 +15,7 @@ Per-feature deep-dives. Table of contents:
 
 A human steers the workflow by writing commands in an issue body or comment.
 Commands are parsed by the `trigger_commands` sub-domain
-(`.github/scripts/resolve_config/sub_domains/trigger_commands/trigger_commands.py`)
+(`engine/lib/resolve_config/sub_domains/trigger_commands/trigger_commands.py`)
 into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 `workflow_cmd`, `force_next`, `resume`, `debug`.
 
@@ -87,7 +87,7 @@ sub-issue then runs its own full workflow chain independently.
 ## Safety Mechanisms
 
 Three independent guards prevent runaway automation. All live in
-`.github/scripts/` and run *before* an agent executes.
+`engine/lib/` and run *before* an agent executes.
 
 ### Circuit Breaker — `circuit_breaker.py`
 
@@ -133,7 +133,7 @@ Every agent run self-reports metrics in an HTML comment appended to its output:
 ```
 
 - **Schema** — the canonical `Metrics` dataclass lives in
-  `.github/scripts/metrics_schema.py` (single source of truth; both writers and
+  `engine/lib/metrics_schema.py` (single source of truth; both writers and
   readers import from it). The compact subset embedded in workflow state is
   `StateMetrics` (see [reference.md — WORKFLOW_STATE v1](./reference.md#workflow_state-v1)).
 - **Collection** — the `collect_metrics` feature of `agent_script` extracts
@@ -152,7 +152,7 @@ Every agent run self-reports metrics in an HTML comment appended to its output:
 ## Execution Layer
 
 The agent execution layer is the `agent_script` package
-(`.github/scripts/agent_script/`). Entry point `agent_script.py` orchestrates a
+(`engine/lib/agent_script/`). Entry point `agent_script.py` orchestrates a
 chain of features: `load_prompt` → `resolve_llm_config` → `run_agent` →
 `build_output` (with `collect_metrics`, `ensure_pr`, `extract_split_plan`).
 
@@ -223,7 +223,7 @@ is scored accordingly.
 
 Consumer repositories do not need to vendor the workflow YAML files from this
 repo. `remote_workflow.py`
-(`.github/scripts/remote_workflow.py`) provides zero-copy fetching:
+(`engine/lib/remote_workflow.py`) provides zero-copy fetching:
 
 ```python
 from remote_workflow import fetch_remote_workflow

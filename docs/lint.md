@@ -16,7 +16,7 @@ runs an agent, mutates a workflow, or touches GitHub.
 
 ## Why a separate linter
 
-The Pydantic loader under `.github/scripts/config/features/load_workflow`
+The Pydantic loader under `engine/lib/config/features/load_workflow`
 enforces every workflow's **field-level** shape (types, required keys, enums).
 Its rules are local to one key at a time, so it cannot detect structural
 defects that span the graph:
@@ -30,7 +30,7 @@ defects that span the graph:
 These surface today only at runtime, mid-workflow. The linter catches them in
 CI, before a run starts. It **reuses the runtime resolver's traversal helpers**
 (`match_condition`, `branch_key_for`, `is_terminal_step` in
-`.github/scripts/resolve_workflow.py`) rather than re-deriving the semantics, so
+`engine/lib/resolve_workflow.py`) rather than re-deriving the semantics, so
 the lint verdict and the runtime behaviour can never drift apart.
 
 ---

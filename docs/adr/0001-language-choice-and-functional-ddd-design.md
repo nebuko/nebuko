@@ -52,7 +52,7 @@ Safety/correctness parity is bought with **tooling, not language**: `mypy --stri
 - Within each domain, two fixed roles:
   - `sub_domains/<entity>/<entity>.py` — pydantic `BaseModel` / `@dataclass(frozen=True)` **aggregates** (the nouns).
   - `features/<transition>/<transition>.py` — **pure state-transition functions** (the verbs).
-- **Rationale:** one domain per folder keeps each unit independently searchable by a human *and* by an AI agent — a query like "how do X-states transition?" resolves to a single folder. This **formalizes the convention already present** in `.github/scripts/agent_script/` and in `docs/architecture_code.md` (lines 185 and 270); it does not invent a new layout.
+- **Rationale:** one domain per folder keeps each unit independently searchable by a human *and* by an AI agent — a query like "how do X-states transition?" resolves to a single folder. This **formalizes the convention already present** in `engine/lib/agent_script/` and in `docs/architecture_code.md` (lines 185 and 270); it does not invent a new layout.
 - **Packaging is mandatory for the open-source release:** `pyproject.toml` (src layout) declaring `license = "Apache-2.0"`, `requires-python = ">=3.13"`, and **pinned** OpenHands tags (stop installing from `@main`).
 
 ### 2.3 Style — "functional programming" = pure state-transition functions over immutable dataclass state
@@ -74,11 +74,11 @@ Added 2026-09-22 in response to the challenge of this ADR (issue #630), which qu
 
 | # | Capability | Location | Why it matters |
 |---|---|---|---|
-| 1 | **Type-level tool extension** — `DispatchNextTool` subclasses SDK `ToolDefinition`/`Action`/`Observation`/`ToolExecutor` | `.github/scripts/agent_script/features/dispatch_next_tool/dispatch_next_tool.py` | The entire agent hand-off/dispatch protocol is a *custom SDK tool*. A REST/WS call cannot express this; the alpha TS client cannot express it at all. |
-| 2 | **Async conversation lifecycle** — `Conversation.arun()` under an asyncio loop | `.github/scripts/agent_script/features/run_agent/run_agent.py` (L96–98) | A black-box process "exec" gives no mid-run handle. |
+| 1 | **Type-level tool extension** — `DispatchNextTool` subclasses SDK `ToolDefinition`/`Action`/`Observation`/`ToolExecutor` | `engine/lib/agent_script/features/dispatch_next_tool/dispatch_next_tool.py` | The entire agent hand-off/dispatch protocol is a *custom SDK tool*. A REST/WS call cannot express this; the alpha TS client cannot express it at all. |
+| 2 | **Async conversation lifecycle** — `Conversation.arun()` under an asyncio loop | `engine/lib/agent_script/features/run_agent/run_agent.py` (L96–98) | A black-box process "exec" gives no mid-run handle. |
 | 3 | **`conversation.interrupt` watchdog** — budget enforcement mid-conversation | `run_agent.py` (L93) | Cannot be reproduced faithfully against a black box; timeouts would be guessed. |
 | 4 | **Context condenser** — `get_default_condenser(llm)` wired per-conversation | `run_agent.py` (L199) | Internal SDK behavior, not exposed through REST. |
-| 5 | **Event-stream answer extraction** — `get_agent_final_response(conversation.state.events)`, iteration over `ActionEvent`/`MessageEvent`, `content_to_str` | `.github/scripts/agent_script/features/build_output/build_output.py` (L435+, L664) | The typed SDK event model is consumed; migrating to a non-Python surface means re-implementing an event normalizer against log text or WebSocket payloads. |
+| 5 | **Event-stream answer extraction** — `get_agent_final_response(conversation.state.events)`, iteration over `ActionEvent`/`MessageEvent`, `content_to_str` | `engine/lib/agent_script/features/build_output/build_output.py` (L435+, L664) | The typed SDK event model is consumed; migrating to a non-Python surface means re-implementing an event normalizer against log text or WebSocket payloads. |
 | 6 | **In-process SDK state access** for the dispatch-recall loop | `run_agent.py` (L248–293) | `conversation.state` is in-process data; remotely it is an extra API surface. |
 | 7 | **Per-role SDK tools** (`terminal`, `file_editor`, `task_tracker`) configured declaratively | `agent-config.yaml` (L66–75) | Available first-class only in the Python SDK. |
 
@@ -113,5 +113,5 @@ The challenge of this ADR (issue #630) was resolved with a documentation amendme
 
 1. **`adapters/openhands` boundary** — the single SDK-importing package: `OpenHandsAdapter` (owns `Agent`/`Conversation`/`LLM` construction, `arun` lifecycle, interrupt watchdog, event→domain projection) plus frozen domain contracts `AgentSpec` / `ConversationResult` / `ActionEventRecord`. Design per the approved proposal of issue #630; `DispatchNextTool` moves inside the adapter package as an SDK implementation detail.
 2. **Frozen state core** — `WorkflowState` immutability via pydantic `ConfigDict(frozen=True)` (see §2.3 refinement) plus explicit `Phase`/`Step` str-enums with typed-transition validation in the pure `build_state` function.
-3. **CI gates** — `mypy --strict` job scoped to `adapters/` and `workflow_state/` (repo-wide strict deferred), plus a boundary-guard check failing on any `import openhands` outside `.github/scripts/adapters/`.
+3. **CI gates** — `mypy --strict` job scoped to `adapters/` and `workflow_state/` (repo-wide strict deferred), plus a boundary-guard check failing on any `import openhands` outside `engine/lib/adapters/`.
 4. **SDK pinning** — pin `openhands-sdk` / `openhands-tools` in CI to a fixed commit SHA / version tag, replacing the unpinned `@main` install flagged in §2.4.
