@@ -85,35 +85,46 @@ Starting from the identified drift boundary (or one run before it), process each
 
 Since issue #779 each run publishes its logs as separate **unzipped** artifacts
 (`console.log` and `app.log`), so fetch the raw files directly — there is no zip
-to extract:
+to extract. The `/zip` endpoint name is historical: for an unzipped artifact it
+302-redirects to the artifact blob itself (verified on a live run — `302` →
+`200`, `Content-Disposition: attachment; filename="console.log"`, raw text bytes,
+no `PK` zip magic), so `curl -L` writes the raw log.
 
 ```bash
 mkdir -p /tmp/artifact_{run_id}
+fetched=0
 for name in console.log app.log; do
   artifact_id=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/{run_id}/artifacts" \
     --jq ".artifacts[] | select(.name == \"${name}\") | .id" 2>/dev/null)
-  [ -n "${artifact_id}" ] || continue
-  # The download endpoint 302-redirects to the artifact blob; for unzipped
-  # artifacts that blob is the file itself, so curl writes the raw log.
-  curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+  if [ -z "${artifact_id}" ]; then
+    echo "no '${name}' artifact in run {run_id} (predates #779?)" >&2
+    continue
+  fi
+  if curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
-    -o "/tmp/artifact_{run_id}/${name}"
+    -o "/tmp/artifact_{run_id}/${name}"; then
+    fetched=$((fetched + 1))
+  else
+    echo "ERROR: could not download '${name}' (artifact ${artifact_id}) for run {run_id}" >&2
+  fi
 done
+if [ "${fetched}" -eq 0 ]; then
+  echo "run {run_id} has no unzipped logs; falling back to the zipped bundle" >&2
+  gh run download {run_id} --name nebuko-task-logs --dir /tmp/artifact_{run_id} \
+    || echo "artifact unavailable (expired or not found)"
+fi
 ```
 
-For runs that predate #779 (a single zipped `nebuko-task-logs` artifact), fall
-back to the bundle; `gh run download` extracts the zip for you. Note the fallback
-in your analysis:
+Two distinct outcomes to report in your analysis:
 
-```bash
-gh run download {run_id} --name nebuko-task-logs --dir /tmp/artifact_{run_id} \
-  || echo "artifact unavailable (expired or not found)"
-```
+- **`no '<name>' artifact` / no unzipped logs** — the run predates #779; the
+  fallback above downloads the legacy zipped `nebuko-task-logs` bundle.
+- **`ERROR: could not download`** — the artifact exists but the fetch itself
+  failed (expired, network, permissions); record it and move on.
 
 (`gh run download` cannot yet fetch unzipped artifacts — see cli/cli#13012 — which
-is why the post-#779 path uses the authenticated `curl` above.)
-
-If the fetch fails (artifact expired or not found), note it in the analysis and move on to the next run.
+is why the post-#779 path uses the authenticated `curl` above; the fallback only
+handles pre-#779 runs, whose bundle is still zipped.)
 
 #### Step 2: Read and Analyze the Console Log
 

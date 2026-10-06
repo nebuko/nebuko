@@ -118,8 +118,8 @@ class TestWorkflowUploadContract:
         _walk(workflow)
         return steps
 
-    def test_each_upload_is_unzipped_and_matches_the_manifest(self, tmp_path):
-        manifest = {f.name for f in RunArtifactStager(tmp_path).artifact_files()}
+    def test_each_upload_is_unzipped_and_matches_the_manifest(self):
+        manifest = {f.name for f in RunArtifactStager(Path(ARTIFACT_DIR_NAME)).artifact_files()}
         steps = self._upload_steps()
 
         assert steps, "expected at least one actions/upload-artifact step"

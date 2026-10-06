@@ -87,6 +87,12 @@ class RunArtifactStager:
 
         The workflow uploads each entry as its own unzipped artifact; the
         filename-derived artifact name is what the debug prompt fetches raw.
+
+        ``app.log`` is listed unconditionally, but the SDK file logger only
+        writes it when ``LOG_TO_FILE`` is on — the entry may point at a file
+        that never appears. That is intentional: the upload steps run with
+        ``if-no-files-found: ignore``, so a missing ``app.log`` simply yields
+        no artifact instead of failing the run.
         """
         return tuple(
             ArtifactFile(name=name, path=self._base_dir / name)
