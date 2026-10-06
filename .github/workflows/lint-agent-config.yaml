@@ -1,0 +1,27 @@
+name: Lint agent config
+
+on:
+  pull_request:
+    paths:
+      - "defaults/agents/**"
+      - "src/nebuko/engine/config_lint.py"
+      - "src/nebuko/engine/config_lint_cli.py"
+      - ".github/workflows/lint-agent-config.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install pyyaml pydantic
+      - name: Lint agent-config YAML
+        env:
+          PYTHONPATH: src
+        run: python -m nebuko.engine lint-config defaults/agents/

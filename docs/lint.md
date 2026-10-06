@@ -306,3 +306,279 @@ happens exactly as at runtime (`config.load_workflow`); the linter then walks th
 loaded graph. If a file is rejected by the schema, the linter reports it as a
 load failure (exit `2`) rather than a `LintIssue` — schema validity is a
 precondition for graph-level analysis, not one of its rules.
+
+---
+
+# Linting the agent config
+
+`python -m nebuko.engine lint-config` is the sibling linter for the layered
+**agent config** (`providers` → `llms` → `agents`, see
+[configuration.md](./configuration.md)). Like the workflow linter it is offline
+and read-only: it never resolves a reference against a live model, imports the
+SDK runtime, or touches GitHub.
+
+| | |
+|---|---|
+| **Entry point** | `python -m nebuko.engine lint-config [paths…]` |
+| **Exit codes** | `0` clean (or warnings only) · `1` at least one error · `2` usage/load failure |
+| **Rule set** | `C1`–`C6` (see [Agent-config rule reference](#agent-config-rule-reference)) |
+| **Source** | `src/nebuko/engine/config_lint.py` (rules) + `src/nebuko/engine/config_lint_cli.py` (command) |
+
+> The workflow linter predates the `src/nebuko/` layout (issue #741). Under the
+> current layout both commands run from the package — `python -m nebuko.engine
+> lint …` and `python -m nebuko.engine lint-config …`.
+
+---
+
+## Why a separate linter
+
+The Pydantic loader (`engine/lib/config/features/load_config`) enforces every
+key's **field-level** shape — types, required keys, enums. But it runs *after*
+`${layer.key}` resolution, so the defects the linter targets are invisible to it:
+
+- a dangling reference is raised as a bare `KeyError` by `resolve_refs` before
+  the loader ever validates the mapping, so the run dies with no hint of which
+  key is wrong;
+- a tool name the runtime does not know is silently skipped with a log line
+  (`run_agent.py`), so the agent simply loses that capability;
+- a `prompt_file` or skill that does not exist is only noticed once that agent
+  is dispatched, mid-run;
+- an `llms`/`providers` entry nothing references is dead config that quietly
+  accumulates.
+
+The linter reports all of them offline, and reports **every** finding in one run
+rather than stopping at the first.
+
+---
+
+## Usage
+
+```bash
+# the shipped agent config (layered: .nebuko/agents/ → defaults/agents/)
+python -m nebuko.engine lint-config
+
+# one file …
+python -m nebuko.engine lint-config defaults/agents/agent-config.yaml
+
+# … or every *.yaml / *.yml in a directory
+python -m nebuko.engine lint-config defaults/agents/
+
+# promote warnings to errors (and flip the exit code)
+python -m nebuko.engine lint-config --strict defaults/agents/
+
+# machine-readable output
+python -m nebuko.engine lint-config --format json defaults/agents/
+```
+
+With no path, the command lints the config the runtime itself would load. File
+references are checked against the same layered lookup the engine uses, so a
+shipped config is never falsely flagged for a prompt or skill that resolves
+under `defaults/`.
+
+### Text output
+
+One line per issue and a summary. Config issues have no step, so the trailing
+parenthesised field is the dotted **config key path**:
+
+```
+$ python -m nebuko.engine lint-config defaults/agents/
+[C3-unknown-tool] error unknown tool 'warp_drive' (agents.dev.tools)
+[C6-unreferenced-entry] warning llm 'l_unused' is never referenced by any agent (llms.l_unused)
+[C6-unreferenced-entry] warning provider 'p_unused' is never referenced by any agent (providers.p_unused)
+3 issue(s): 1 error(s), 2 warning(s)
+```
+
+### JSON output
+
+`--format json` prints a single JSON array of issues and nothing else, so it can
+be piped straight into another tool:
+
+```json
+[
+  {
+    "rule": "C6-unreferenced-entry",
+    "severity": "warning",
+    "message": "provider 'local_vllm' is never referenced by any agent",
+    "step": "",
+    "location": "providers.local_vllm",
+    "hint": "Remove the unused entry or reference it"
+  }
+]
+```
+
+### Strict mode
+
+`--strict` promotes every warning (`C6`) to an error, which also flips the exit
+code. Use it to make dead config fail CI:
+
+```bash
+python -m nebuko.engine lint-config --strict defaults/agents/
+```
+
+---
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | No errors, and no warnings under `--strict`. |
+| `1` | At least one issue has severity `error` under the current mode. |
+| `2` | Usage or load failure: a path does not exist, the file is not valid YAML, its root is not a mapping, or no config files were found. |
+
+The mapping is uniform — any `error`-severity issue (including a promoted `C6`
+warning) yields `1`, and warnings alone yield `0` — so a CI consumer never has
+to guess at the exit code.
+
+---
+
+## Agent-config rule reference
+
+Each rule is identified by a stable `C`-prefixed code and reports every finding
+it sees, in rule order (`C1` … `C6`).
+
+| Rule | Severity | Catches |
+|---|---|---|
+| `C1-schema` | error | Violations of the `AppConfig` schema, all of them at once |
+| `C2-dangling-ref` | error | `${layer.key}` pointing at a nonexistent entry |
+| `C3-unknown-tool` | error | `tools` entries outside the runtime's known set |
+| `C4-prompt-file` | error | `prompt_file` that resolves to no file on disk |
+| `C5-skill-file` | error | `skills` entry with no matching skill file |
+| `C6-unreferenced-entry` | warning | `llms`/`providers` entry nothing references |
+
+### `C1-schema` — schema violations
+
+The config is resolved (best-effort) and validated against `AppConfig`. Pydantic
+collects *all* violations, so a config with several mistakes reports all of them
+in one run:
+
+```yaml
+agents:
+  dev:
+    model: "${llms.qwen}"
+    temperature: hot        # ← not a number
+                            # ← and prompt_file is missing entirely
+```
+
+```
+[C1-schema] error Input should be a valid number, unable to parse string as a number (agents.dev.temperature)
+[C1-schema] error Field required (agents.dev.prompt_file)
+```
+
+### `C2-dangling-ref` — undefined references
+
+Every `${layer.key}` must resolve against the config itself. The linter walks the
+**raw** mapping (it deliberately does not call `resolve_refs`, which would raise
+`KeyError` and hide the location):
+
+```yaml
+agents:
+  dev:
+    model: "${llms.qwen-typo}"   # no such entry under `llms:`
+```
+
+```
+[C2-dangling-ref] error undefined ref ${llms.qwen-typo} (agents.dev.model)
+```
+
+A dangling reference is also reported by `C1-schema`, because the value cannot
+satisfy the schema once the broken ref is substituted — fix the reference and
+both lines disappear.
+
+### `C3-unknown-tool` — unknown tool names
+
+`tools` entries are checked against the canonical set the runtime accepts
+(`terminal`, `file_editor`, `task_tracker`, `think`, `finish`, `dispatch_next`,
+`report_scaffold_branch`, per `agent_script/features/run_agent`). The runtime
+merely logs and skips an unknown tool, so the agent silently loses it:
+
+```yaml
+agents:
+  dev:
+    tools: ["think", "finish", "warp_drive"]   # ← no such tool
+```
+
+```
+[C3-unknown-tool] error unknown tool 'warp_drive' (agents.dev.tools)
+```
+
+### `C4-prompt-file` — missing prompt file
+
+Every `prompt_file` must resolve to a file — an explicit path relative to the
+config, or a name found through the layered prompt lookup
+(`.nebuko/prompts/` → `defaults/prompts/`). URLs are accepted, since the runtime
+prompt loader supports them:
+
+```yaml
+agents:
+  dev:
+    prompt_file: .agents/prompts/devv.md   # ← typo, no such file
+```
+
+```
+[C4-prompt-file] error prompt file '.agents/prompts/devv.md' does not exist (agents.dev.prompt_file)
+```
+
+### `C5-skill-file` — missing skill file
+
+Every `skills` entry must resolve — a bare name to `skills/{name}.md`, an
+explicit path as written, either also found through the layered skill lookup:
+
+```yaml
+agents:
+  dev:
+    skills: ["call-agent", "posting-contrat"]   # ← typo, no such skill
+```
+
+```
+[C5-skill-file] error missing skill file for 'posting-contrat' (agents.dev.skills)
+```
+
+### `C6-unreferenced-entry` — dead config
+
+An `llms` or `providers` entry that no `${ref}` anywhere reaches is unreachable
+config. This is the one *warning*: a deliberately staged entry is legitimate, so
+it does not fail the build unless `--strict` is given.
+
+```yaml
+providers:
+  openrouter:
+    api_url: "https://openrouter.ai/api/v1"
+    api_token_env: "OPENROUTER_API_KEY"
+  retired:
+    api_url: "https://retired.example/v1"
+    api_token_env: "RETIRED_API_KEY"   # ← referenced by nothing
+```
+
+```
+[C6-unreferenced-entry] warning provider 'retired' is never referenced by any agent (providers.retired)
+```
+
+---
+
+## CI integration
+
+`.github/workflows/lint-agent-config.yaml` runs the linter on every pull request
+that touches the shipped agent configs or the linter itself:
+
+```yaml
+- name: Lint agent-config YAML
+  env:
+    PYTHONPATH: src
+  run: python -m nebuko.engine lint-config defaults/agents/
+```
+
+The default agent configs intentionally carry `C6` warnings (staged models), so
+the CI run keeps the default, non-strict mode and exits `0`. Add `--strict` to
+gate on dead config too, or `--format json` to feed the issues into another
+tool. Exit code `1` fails the job; exit code `2` means the linter could not load
+a file (bad path, invalid YAML, or a non-mapping root).
+
+---
+
+## Relationship to the config loader
+
+The linter is a **consumer** of the same grammar, not a replacement. It reuses
+the config package's `REF_PATTERN` so reference *syntax* cannot drift, and the
+`LintIssue` type is shared with the workflow linter so both read identically.
+Loading at run time still happens exactly as before (`config.load_config`); the
+linter only reports what that load would do — or fail to do — ahead of time.
