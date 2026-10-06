@@ -545,11 +545,11 @@ class TestPrepareCommentCtxCollapse(TestPrepareCommentIntegration):
 class TestBuildCommentBodyHeader(unittest.TestCase):
     """The agent-answer comment carries the workflow state (issue #736).
 
-    The Stage B cutover dropped the legacy comment-assembly step
-    (``legacy-flow.yaml:877-960``). ``build_comment_body`` restores it on the
-    *agent-answer* comment: the bot marker on line 1 (issue #478), the caller
-    marker, a deterministic continue token while the flow stays alive, the
-    collapsed state section, the role answer line and finally the answer text.
+    The Stage B cutover dropped the legacy comment-assembly step.
+    ``build_comment_body`` restores it on the *agent-answer* comment: the bot
+    marker on line 1 (issue #478), the caller marker, a deterministic continue
+    token while the flow stays alive, the collapsed state section, the role
+    answer line and finally the answer text.
     """
 
     BOT_MARKER = "<!-- bot-workflow-terminal -->"

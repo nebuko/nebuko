@@ -389,8 +389,8 @@ def _with_metrics(text: str, metrics_comment: str) -> str:
 # The run's WorkflowState belongs on the agent's *answer* comment: it is the
 # run's authoritative output and its ``dispatch`` drives routing. These
 # constants/helpers restore the legacy "Add bot marker and workflow state to
-# comment" step (legacy-flow.yaml:877-960) inside the shared body builder, so
-# both hosts frame the exact same comment.
+# comment" step inside the shared body builder, so both hosts frame the exact
+# same comment.
 
 # The bot marker MUST stay on line 1 (issue #478) so bot detection is exact.
 BOT_MARKER = "<!-- bot-workflow-terminal -->"
@@ -568,8 +568,7 @@ def build_comment_body(
     is framed on either host (issue #590). The workflow-state header (issue
     #736) is prepended here because it frames *whatever* the run produced —
     latest answer, final message, console fallback or crash notice — exactly as
-    the legacy "Add bot marker and workflow state to comment" step did
-    (``legacy-flow.yaml:877-960``).
+    the legacy "Add bot marker and workflow state to comment" step did.
 
     Args:
         latest_answer: Raw ``latest_answer.md`` content (the preferred body).

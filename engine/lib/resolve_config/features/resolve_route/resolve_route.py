@@ -470,21 +470,18 @@ def _resolve_dispatch_path(
     return config
 
 
-# Soft-kill retry budget fallback (issue #704): the ``MAX_SOFT_RETRIES``
-# workflow_call input (declared in .github/workflows/legacy-flow.yaml
-# with a default of 2) is exported as an environment variable; this is the
+# Soft-kill retry budget fallback (issue #704): the hosting workflow may supply
+# the budget through the ``MAX_SOFT_RETRIES`` environment variable; this is the
 # value used when it is unset or malformed.
 DEFAULT_MAX_SOFT_RETRIES = 2
 
 
 def resolve_max_soft_retries(env: Optional[Mapping[str, str]] = None) -> int:  # @stub-protected
-    """Read and validate the ``MAX_SOFT_RETRIES`` workflow parameter (#704).
+    """Read and validate the ``MAX_SOFT_RETRIES`` environment value (#704).
 
-    Sole read site for the soft-kill retry budget. The value originates from
-    the ``max_soft_retries`` workflow_call input, declared with a default of 2
-    in ``.github/workflows/legacy-flow.yaml`` and exported as the
-    ``MAX_SOFT_RETRIES`` environment variable by the "Resolve Agent
-    Configuration" step.
+    Sole read site for the soft-kill retry budget. The value is exported as the
+    ``MAX_SOFT_RETRIES`` environment variable by the hosting workflow; when it
+    is absent or malformed the budget falls back to ``DEFAULT_MAX_SOFT_RETRIES``.
 
     Args:
         env: Mapping to read the variable from; ``None`` reads ``os.environ``.
