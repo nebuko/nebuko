@@ -66,7 +66,7 @@ def run_legacy_agent(
     if not script.is_file():
         raise FileNotFoundError(f"legacy agent entry point not found: {script}")
 
-    child_env = _child_env(script, env)
+    child_env = _child_env(script, env, repo_root=Path(repo_root))
     with tempfile.TemporaryDirectory(prefix="gfa-agent-") as workdir:
         work = Path(workdir)
         prompt_file = work / _PROMPT_FILE
@@ -169,12 +169,18 @@ def _stage_entry_point(script: Path, work: Path) -> Path:
     return staged
 
 
-def _child_env(script: Path, env: Mapping[str, str] | None) -> dict[str, str]:
+def _child_env(
+    script: Path, env: Mapping[str, str] | None, *, repo_root: Path | None = None
+) -> dict[str, str]:
     """Environment for the child, importing ``.github/scripts`` like the host."""
     child_env = {**os.environ, **(env or {})}
     scripts_dir = str(script.parent.parent)
     existing = child_env.get("PYTHONPATH")
     child_env["PYTHONPATH"] = f"{scripts_dir}{os.pathsep}{existing}" if existing else scripts_dir
+    # The agent run may execute under a temporary cwd (the in-process host, issue
+    # #740/#766); ``GFA_REPO_ROOT`` pins git/gh to the real checkout so the
+    # wind-down's ``ensure_pr`` can still commit and push.
+    child_env["GFA_REPO_ROOT"] = str(repo_root or script.parents[3])
     return child_env
 
 

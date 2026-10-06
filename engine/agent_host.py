@@ -83,9 +83,15 @@ class InProcessAgentHost:
 
         with tempfile.TemporaryDirectory(prefix="gfa-agent-") as workdir:
             work = Path(workdir)
-            with _applied_env(_child_env(script, self._env)), contextlib.chdir(workdir):
+            # The temp dir is the cwd only for *artefact staging* (the legacy
+            # steps write latest_answer.md / state here). Control-plane work that
+            # must target the real checkout — the conversation workspace and the
+            # wind-down git ops — is bound explicitly (issue #766).
+            with _applied_env(
+                _child_env(script, self._env, repo_root=self._repo_root)
+            ), contextlib.chdir(workdir):
                 with _capture_console() as console:
-                    conversation = _run_pipeline(pipeline, prompt)
+                    conversation = _run_pipeline(pipeline, prompt, self._repo_root)
                     console_log = console.getvalue()
             return self._capture_artifacts(work, conversation, console_log)
 
@@ -132,17 +138,19 @@ class InProcessAgentHost:
         }
 
 
-def _run_pipeline(pipeline: SimpleNamespace, prompt: str) -> Any:
+def _run_pipeline(pipeline: SimpleNamespace, prompt: str, workspace: Path) -> Any:
     """Drive the legacy steps (resolve -> run -> metrics -> build) in-process.
 
     ``args`` mirrors the legacy entry point's argparse namespace; the facade
     steps treat it as informational (only ``prompt_location`` is read, and the
-    prompt is passed explicitly here).
+    prompt is passed explicitly here). ``workspace`` is the real checkout the
+    agent must operate on, passed explicitly so the conversation does not bind
+    to the host's temporary cwd (issue #766).
     """
     args = SimpleNamespace(prompt_location=None)
     llm_config, resolved_prompt, agent_cfg = pipeline.resolve_llm_config(args, prompt)
     conversation = pipeline.run_agent(
-        llm_config, resolved_prompt, args, agent_cfg=agent_cfg
+        llm_config, resolved_prompt, args, agent_cfg=agent_cfg, workspace=workspace
     )
     metrics = pipeline.collect_and_save_metrics(conversation, agent_cfg)
     pipeline.build_output(

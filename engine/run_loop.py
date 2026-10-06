@@ -8,13 +8,15 @@ reference to their existing types and contains no platform-mode branching.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import os
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from engine.models import (
     ExitCode,
@@ -23,7 +25,7 @@ from engine.models import (
     Trigger,
     to_routing_decision,
 )
-from engine.paths import ensure_import_path
+from engine.paths import SCRIPTS_DIR, ensure_import_path
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -34,7 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
 
-__all__ = ["PHASES", "Engine", "main"]
+__all__ = ["PHASES", "Engine", "PhaseResult", "main"]
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +97,75 @@ def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
 
 def _exit_code_for(routing: RoutingDecision) -> ExitCode:
     return _EXIT_CODE_BY_STATUS.get(routing.status, ExitCode.ADVANCE)
+
+
+# @stub-protected
+@dataclass(frozen=True)
+class PhaseResult:
+    """Immutable outcome of a single engine phase; never raises.
+
+    ``body`` holds the phase's return value rendered to text when it succeeded;
+    ``error`` holds ``str(exc)`` when it failed. Best-effort phases return one of
+    these instead of propagating, so a crash (e.g. the ``publish`` bridge import
+    in issue #766) can never suppress the phases that follow it.
+    """
+
+    name: str
+    ok: bool
+    body: str = ""
+    error: str | None = None
+
+
+# Legacy bridge modules live directly under ``SCRIPTS_DIR`` and are imported by
+# name throughout the old assembly. Resolving them by absolute path keeps the
+# engine control plane working even when the in-process agent run has mutated
+# ``sys.path`` / ``sys.modules`` (issue #766).
+_BRIDGE_MODULES: tuple[str, ...] = ("validate_output", "prepare_comment")
+_BRIDGE_CACHE: dict[str, ModuleType] = {}
+
+
+def _load_bridge_module(name: str) -> ModuleType:
+    """Import a legacy bridge module by absolute path, independent of the import env.
+
+    Uses :func:`importlib.util.spec_from_file_location` against
+    :data:`engine.paths.SCRIPTS_DIR` so a poisoned ``sys.modules`` entry or a
+    ``sys.path`` that lost ``SCRIPTS_DIR`` cannot hide ``prepare_comment`` /
+    ``validate_output``. ``SCRIPTS_DIR`` is re-registered first so the module's
+    own top-level imports (``config``, ``workflow_state`` …) resolve.
+    """
+    cached = _BRIDGE_CACHE.get(name)
+    if cached is not None:
+        return cached
+    ensure_import_path()
+    path = SCRIPTS_DIR / f"{name}.py"
+    if not path.is_file():
+        raise ModuleNotFoundError(
+            f"legacy bridge module not found: {path}", name=name
+        )
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        raise ImportError(f"cannot load legacy bridge module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    _BRIDGE_CACHE[name] = module
+    return module
+
+
+# Neutralized form of the agent-trigger regex in ``prepare_comment`` (issue
+# #482). The fallback notice must not post a raw ``@@agent`` token even when the
+# ``prepare_comment`` bridge itself is unreachable.
+_AGENT_TRIGGER_RE = re.compile(r"(?<![\w])@@([A-Za-z0-9_-]+)")
+
+
+def _neutralize_agent_triggers(content: str) -> str:
+    return _AGENT_TRIGGER_RE.sub(
+        lambda match: match.group(0).replace("@@", "@@\u200b", 1), content
+    )
 
 
 # The bash guard reads the caller with ``sed -n 's/.*<!-- bot-agent-\([a-z]*\)
@@ -307,6 +378,14 @@ class Engine:
     _seeded_prev_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # Memo of the legacy bridge namespace resolved at pre-flight (issue #766).
+    # The bridge is loaded by absolute path independently of ``sys.path`` /
+    # ``sys.modules``, so the in-process agent run cannot break ``validate`` /
+    # ``publish`` mid-run. Engine-internal, so it is excluded from
+    # ``__init__``/equality/repr.
+    _bridge: dict[str, SimpleNamespace] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
 
     # @stub-protected
     def run(self) -> RunOutcome:
@@ -352,6 +431,10 @@ class Engine:
             prompt = self.build_prompt(resolved, history)
 
             self._enter(phases, "agent")
+            # Resolve the legacy comment/validation bridge once, before the
+            # in-process agent run can mutate the import environment (issue
+            # #766): a missing bridge fails fast here, not mid-``publish``.
+            self.preflight()
             # Seed the pre-agent hand-off (issue #739): the legacy
             # ``query_context`` step wrote the resolved state to ``$RUNNER_TEMP``
             # before the agent ran; the refactor dropped it, so on a fresh runner
@@ -375,29 +458,31 @@ class Engine:
 
             self._enter(phases, "validate")
             if failure_reason is None:
-                try:
-                    self.validate(agent_result)
-                except Exception as exc:  # noqa: BLE001 - publish, then error
-                    log.exception("[phase:validate] output validation failed: %s", exc)
-                    failure_reason = str(exc)
+                validation = self._run_phase(
+                    "validate", lambda: self.validate(agent_result)
+                )
+                failure_reason = validation.error
 
             # Published even on failure: legacy always reaches ``prepare_comment``
             # (``if: always()``), so the issue thread is never left silent. A
             # validation failure keeps the agent's real artefacts, a crash falls
-            # back to the crash notice (finding 2).
+            # back to the crash notice (finding 2), and a ``publish`` crash now
+            # falls back to a minimal notice instead of aborting the run (#766).
             self._enter(phases, "publish")
-            posted_body = self.publish(agent_result)
+            publication = self._run_phase(
+                "publish", lambda: self.publish(agent_result)
+            )
+            if publication.ok:
+                posted_body = publication.body
+            else:
+                posted_body = self._publish_fallback(agent_result, publication.error)
 
-            if failure_reason is not None:
-                return RunOutcome(
-                    exit_code=ExitCode.ERROR,
-                    routing=RoutingDecision(status="hold", reason=failure_reason),
-                    prompt=prompt,
-                    posted_body=posted_body,
-                    state=None,
-                    phases=tuple(phases),
-                )
-
+            # State and routing run regardless of a best-effort phase crash
+            # (issue #766): ``build_output`` already overrode the dispatch with
+            # ``soft_kill`` after the graceful wind-down, and that journal must
+            # land even when the comment bridge failed. Otherwise the engine
+            # returns ``ExitCode.ERROR`` and the whole workflow dies before the
+            # in-place retry.
             self._enter(phases, "state")
             state = self.persist(agent_result)
 
@@ -408,6 +493,19 @@ class Engine:
             return RunOutcome(
                 exit_code=ExitCode.ERROR,
                 routing=RoutingDecision(status="hold", reason=str(exc)),
+                prompt=prompt,
+                posted_body=posted_body,
+                state=state,
+                phases=tuple(phases),
+            )
+
+        # A crashed agent or a rejected answer stays a hard failure (validation
+        # contract), but a *publish* crash no longer is (issue #766): validation
+        # passed, so the run routes on the dispatch the agent produced.
+        if failure_reason is not None:
+            return RunOutcome(
+                exit_code=ExitCode.ERROR,
+                routing=RoutingDecision(status="hold", reason=failure_reason),
                 prompt=prompt,
                 posted_body=posted_body,
                 state=state,
@@ -427,6 +525,45 @@ class Engine:
     def _enter(phases: list[str], name: str) -> None:
         phases.append(name)
         log.info("[phase:%s]", name)
+
+    # @stub-protected
+    def _run_phase(self, name: str, fn: Callable[[], Any]) -> PhaseResult:
+        """Run a best-effort phase, converting any exception into a result.
+
+        The caller has already emitted the ``[phase:<name>]`` marker via
+        :meth:`_enter`; this helper only adds a failure log. A phase crash must
+        never suppress the phases that follow it (issue #766), so the exception
+        is captured here instead of propagating to :meth:`run`'s error handler.
+        """
+        try:
+            value = fn()
+        except Exception as exc:  # noqa: BLE001 - best-effort phase
+            log.exception("[phase:%s] failed: %s", name, exc)
+            return PhaseResult(name=name, ok=False, error=str(exc))
+        return PhaseResult(
+            name=name, ok=True, body="" if value is None else str(value)
+        )
+
+    # @stub-protected
+    def _publish_fallback(self, agent_result: Any, error: str | None) -> str:
+        """Post a minimal, trigger-safe notice when ``publish`` itself crashed.
+
+        ``publish`` is best-effort (legacy ``if: always()``). When the comment
+        bridge is unreachable (issue #766), the run must still leave a resumable
+        message on the thread rather than aborting before the state journal. This
+        notice is built without ``prepare_comment`` and never raises.
+        """
+        body = (
+            f"@{self._trigger_author()} the engine could not prepare the agent's "
+            f"comment ({error or 'unknown error'}). The agent's output follows.\n"
+            f"\n{_posted_answer_of(agent_result)}"
+        )
+        notice = _neutralize_agent_triggers(body)
+        try:
+            self.adapter.post(notice)
+        except Exception as exc:  # noqa: BLE001 - the fallback is best-effort
+            log.warning("[phase:publish] crash-notice post failed: %s", exc)
+        return notice
 
     # @stub-protected
     def normalize(self) -> Trigger:
@@ -724,13 +861,39 @@ class Engine:
             return {}
 
     # @stub-protected
+    def _resolve_bridge(self) -> SimpleNamespace:
+        """Resolve the legacy bridge callables once, by absolute path (issue #766).
+
+        The returned namespace is memoized for the run, so ``validate`` and
+        ``publish`` never re-import on the hot path and never depend on the
+        import environment the in-process agent run leaves behind.
+        """
+        cached = self._bridge.get("bridge")
+        if cached is not None:
+            return cached
+        validate_output = _load_bridge_module("validate_output")
+        prepare_comment = _load_bridge_module("prepare_comment")
+        bridge = SimpleNamespace(
+            validate_agent_output=validate_output.validate_agent_output,
+            extract_dispatch=validate_output.extract_dispatch,
+            build_comment_body=prepare_comment.build_comment_body,
+            escape_agent_triggers=prepare_comment.escape_agent_triggers,
+        )
+        self._bridge["bridge"] = bridge
+        return bridge
+
+    # @stub-protected
+    def preflight(self) -> None:
+        """Resolve the bridge before the agent runs so it fails fast (issue #766)."""
+        self._resolve_bridge()
+
+    # @stub-protected
     def validate(self, agent_result: Any) -> None:
         """Delegate to ``validate_output``."""
-        ensure_import_path()
-        from validate_output import validate_agent_output
+        bridge = self._resolve_bridge()
 
         answer = _answer_of(agent_result)
-        result = validate_agent_output(answer, self._role_of(agent_result))
+        result = bridge.validate_agent_output(answer, self._role_of(agent_result))
         if not result.is_valid:
             raise ValueError("agent output failed validation: " + "; ".join(result.errors))
 
@@ -746,14 +909,13 @@ class Engine:
         The body is framed with the workflow-state header (issue #736) before
         it is escaped and posted: only the sink differs here.
         """
-        ensure_import_path()
-        from prepare_comment import build_comment_body, escape_agent_triggers
+        bridge = self._resolve_bridge()
 
         answer = _posted_answer_of(agent_result)
         final_message = _final_message_of(agent_result) or answer
         console_log = self._console_log_of(agent_result)
         self._stage_run_logs(console_log)
-        body = build_comment_body(
+        body = bridge.build_comment_body(
             latest_answer=answer,
             final_message=final_message,
             console_log=console_log,
@@ -766,7 +928,7 @@ class Engine:
         # Same invariant as ``prepare_comment._write_output``: a posted comment
         # must never carry a raw ``@@agent`` token, or it re-arms the very gate
         # that started this run (issue #482).
-        escaped = escape_agent_triggers(body)
+        escaped = bridge.escape_agent_triggers(body)
         self.adapter.post(escaped)
         return escaped
 
@@ -956,10 +1118,7 @@ def _dispatch_from_text(text: str) -> dict[str, Any]:
     """Recover the ``AGENT_RUN_CONFIG`` dispatch payload from rendered text."""
     if not text:
         return {}
-    ensure_import_path()
-    from validate_output import extract_dispatch
-
-    raw = extract_dispatch(text)
+    raw = _load_bridge_module("validate_output").extract_dispatch(text)
     if not raw:
         return {}
     try:
