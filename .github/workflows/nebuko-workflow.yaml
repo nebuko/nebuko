@@ -174,7 +174,7 @@ jobs:
             # validate → publish → state → route) is now the single Stage A
             # engine. This job only wires the GitHub host and invokes it once.
             - name: Run orchestration engine
-              run: uv run python -m engine.run
+              run: uv run python -m nebuko.engine.run
               env:
                 ENGINE_ADAPTER: github
                 GFA_SOURCE: github
