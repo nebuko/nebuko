@@ -13,6 +13,12 @@ REASONING_EFFORT_VALUES = ("xhigh", "medium", "low")
 # Aliases mapped onto the model vocabulary (e.g. OpenAI-style "high").
 _REASONING_ALIASES = {"high": "xhigh"}
 
+# A high-reasoning turn can emit no bytes for minutes while the model thinks;
+# the SDK default (300s) aborts the HTTP call mid-reasoning and loses the turn
+# (issue #775). The SDK derives ``stream_idle_timeout`` from this value, so a
+# streamed response gets the same headroom between chunks.
+LLM_TIMEOUT_S = 900
+
 
 def normalize_reasoning_effort(raw: str | None) -> str | None:
     """Map a dispatch ``reasoning`` value onto the Qwen flexible-thinking set.
@@ -218,6 +224,11 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         "api_key": api_key,
         "usage_id": "agent_script",
         "drop_params": True,
+        "timeout": LLM_TIMEOUT_S,
+        # Streaming keeps the connection warm across a long reasoning phase:
+        # the SDK only keeps it on when an ``on_token`` sink is wired, which
+        # run_agent does (issue #775).
+        "stream": True,
     }
 
     if base_url:
