@@ -542,7 +542,10 @@ def resolve_soft_kill_route(
           trigger;
         * **halt** — ``{"SKIP_AGENT": "true", "REASON": ...}`` naming the step,
           the exhausted attempt count and the ``/nebuko resume`` command,
-          once the budget is spent so a human can resume.
+          once the budget is spent so a human can resume. It also carries
+          ``SOFT_RETRY_EXHAUSTED="true"`` so the engine can tell this terminal
+          skip apart from a routine one and post a human-visible halt notice
+          (issue #793).
 
         This is a **pure reader**: the counter is never mutated here. The
         increment/reset lifecycle is owned by the workflow-state writer
@@ -591,6 +594,9 @@ def resolve_soft_kill_route(
             f"({attempts}/{budget}); halting the workflow for a human to resume "
             f"with /nebuko resume."
         ),
+        # Marker consumed by ``Engine.run`` (issue #793) so the terminal skip
+        # posts a human-visible halt notice instead of staying silent.
+        "SOFT_RETRY_EXHAUSTED": "true",
     }
 
 

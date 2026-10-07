@@ -10,7 +10,9 @@ This project is in Python.
 The full suite is `pytest` with **no path argument**: it collects `tests/` and the
 runtime tests under `engine/lib/**` (relocated out of `.github/scripts/` in issue #769).
 `pytest tests/` alone only runs a subset. The suite needs `pytest-mock` (declared in
-`flake.nix`); the `mocker` fixture errors out when it is missing.
+`flake.nix`); the `mocker` fixture errors out when it is missing. Without `nix develop`,
+install them into the checked-in venv: `uv pip install --python .venv/bin/python pytest
+pytest-mock`, then run `.venv/bin/python -m pytest`.
 
 ## Pushing CI workflow files
 The checkout's GitHub App token lacks the `workflows` permission, so git pushes that
