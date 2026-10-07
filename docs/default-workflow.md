@@ -37,7 +37,7 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 The workflow defines three jobs:
 
 1. **`run-task`** — Main job that processes triggers and runs agents.
-2. **`summarize-metrics`** — Runs when an issue is closed (not a PR), aggregating metrics across all agent runs on that issue.
+2. **`agent-metrics`** — Runs when an issue is closed (not a PR), aggregating metrics across all agent runs on that issue.
 3. **`subtask-completion-notifier`** — Runs when a sub-task issue (title starts with `[Sub-task`) is closed; notifies the parent issue.
 
 ---
@@ -304,7 +304,7 @@ fetched raw with a browser or an authenticated `curl` — no zip, no unzip step.
 
 ---
 
-## 4. Job: `summarize-metrics`
+## 4. Job: `agent-metrics`
 
 **Trigger:** Issue closed (not a PR).  
 **Purpose:** Aggregates metrics from all agent runs on the now-closed issue and posts a summary comment.
@@ -312,7 +312,7 @@ fetched raw with a browser or an authenticated `curl` — no zip, no unzip step.
 ### Steps:
 1. Checkout repository (with nebuko cache if needed).
 2. Setup Python.
-3. Run `summarize_metrics.py` which scans all comments on the issue, extracts workflow states, and computes aggregate metrics.
+3. Run `agent_metrics.py` which scans all comments on the issue, extracts workflow states, and computes aggregate metrics.
 
 **Input:** Issue number, comment history.  
 **Output:** Summary comment posted on the issue.
@@ -418,7 +418,7 @@ GitHub Event
 | `engine/lib/resolve_config.py` | Parses trigger body, resolves agent role, complexity, prompt, skills |
 | `engine/lib/agent_script.py` | Core agent execution — loads prompt, runs OpenHands SDK, produces output |
 | `engine/lib/issue_creation.py` | Creates sub-issues from split plans |
-| `engine/lib/summarize_metrics.py` | Aggregates metrics across agent runs on a closed issue |
+| `engine/lib/agent_metrics.py` | Aggregates metrics across agent runs on a closed issue |
 | `.agents/prompts/{role}.md` | Role-specific prompt templates |
 | `skills/{name}.md` | Skill files loaded as additional context |
 | `agent-config.yaml` | Layered config: providers → LLMs → agents |

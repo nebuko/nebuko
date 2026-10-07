@@ -1,8 +1,8 @@
-# 0003 — Context management: recency window + pinned comments (no summarizer)
+# ADR-0003: Context Management — Recency Window + Pinned Comments (No Summarizer)
 
-- **Status:** Accepted
-- **Date:** 2026-10-07
-- **Issue:** #796
+**Status:** Accepted — 2026-10-07
+**Decider:** olivier-norture
+**Related:** #796 (this change), #731, #756 (future context building)
 
 ## Context
 

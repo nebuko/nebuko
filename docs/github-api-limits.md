@@ -109,7 +109,7 @@ comment slots.
 | `per_page` (REST API) | **100 items** per page |
 | Page navigation | Via `Link` header (`rel="next"`, `rel="last"`) |
 
-**Project status:** `summarize_metrics.py` already uses `per_page=100` and iterates
+**Project status:** `agent_metrics.py` already uses `per_page=100` and iterates
 through paginated results when fetching issue comments. This is the optimal page size
 for this endpoint.
 
@@ -124,10 +124,10 @@ The table below maps each limit to the code or workflow that consumes it.
 
 | Limit | Affected Component | File / Location | Notes |
 |-------|-------------------|-----------------|-------|
-| 5,000 req/h rate limit | All API calls | `engine/lib/summarize_metrics.py`, `engine/lib/agent_script.py`, `.github/workflows/nebuko-workflow.yaml` | Each agent run does several API calls (fetch comments, post comment, update check runs). With 5 agents, a single issue round could consume 5–15 requests. |
+| 5,000 req/h rate limit | All API calls | `engine/lib/agent_metrics.py`, `engine/lib/agent_script.py`, `.github/workflows/nebuko-workflow.yaml` | Each agent run does several API calls (fetch comments, post comment, update check runs). With 5 agents, a single issue round could consume 5–15 requests. |
 | Comment splitting (65,536 chars) | Multi-part message posting | `agent_script.py` (lines 355–403) | Splits at 10,000 chars. Safe. |
 | Max comments per issue (~30,000) | Long-running issues | N/A (structural) | Unlikely to be reached in practice. |
-| Pagination (100 per page) | Fetching comments | `summarize_metrics.py` (lines 29–60) | Correctly uses `per_page=100` with pagination. |
+| Pagination (100 per page) | Fetching comments | `agent_metrics.py` (lines 29–60) | Correctly uses `per_page=100` with pagination. |
 | Secondary rate limits (Retry-After) | Comment posting, comment fetching | Not handled anywhere | **Gap — not currently implemented.** |
 | Conditional requests (304) | Comment fetching | Not handled anywhere | **Gap — not currently implemented.** |
 
@@ -137,7 +137,7 @@ The table below maps each limit to the code or workflow that consumes it.
 
 ### 8.1 — Handle Secondary Rate Limits (Medium Priority)
 
-Add `Retry-After` header detection and exponential backoff to `summarize_metrics.py`
+Add `Retry-After` header detection and exponential backoff to `agent_metrics.py`
 and `agent_script.py`. When a `403` or `429` response includes a `Retry-After` header,
 the affected function should wait the specified number of seconds before retrying.
 

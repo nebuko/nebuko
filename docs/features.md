@@ -136,8 +136,8 @@ separate hidden HTML comment):
   token counts, latencies, tool-call statistics, and error rates from the
   OpenHands conversation after each run, and `build_state` attaches them to the
   step's `HistoryEntry`.
-- **Issue-close aggregation** — `summarize_metrics.py` (GHA job
-  `summarize-metrics`, triggered on issue close) fetches all comments, reads the
+- **Issue-close aggregation** — `agent_metrics.py` (GHA job
+  `agent-metrics`, triggered on issue close) fetches all comments, reads the
   per-step metrics from each comment's `workflow_state` snapshot (de-duplicating
   entries repeated across accumulating snapshots), aggregates by model name
   (tokens, runtime, error rate), and posts a summary table.
