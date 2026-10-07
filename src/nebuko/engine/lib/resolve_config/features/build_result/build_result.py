@@ -9,6 +9,7 @@ from typing import Optional
 from resolve_workflow import (
     resolve_workflow_routing,
     build_workflow_position,
+    resolve_complexity_tier,
     TASK_TO_PROMPT,
 )
 
@@ -147,11 +148,17 @@ def _build_result(
     role_name = wf_result["ROLE_NAME"]
     prompt_location = wf_result["PROMPT_LOCATION"]
 
+    # Effective complexity tier (issue #787): explicit dispatch complexity
+    # wins, else the workflow step's declared tier, else "medium".
+    effective_complexity = resolve_complexity_tier(
+        config.get("config_complexity", ""),
+        wf_result.get("STEP_COMPLEXITY", ""),
+    )
+
     # Determine complexity for dev/ctx agents
     complexity = "N/A"
     if role_name in ("dev", "ctx"):
-        comp_lower = config.get("config_complexity", "medium").lower() if config.get("config_complexity") else "medium"
-        complexity = comp_lower if comp_lower in ("low", "high") else "medium"
+        complexity = effective_complexity
 
     # Build matched rule identifier for debugging
     wf_name = wf_result.get("WORKFLOW_NAME", "")
@@ -170,6 +177,11 @@ def _build_result(
         "PROMPT_LOCATION": prompt_location,
         "AGENT_SELECTED": "true",
         "COMPLEXITY": complexity,
+        # CONFIG_COMPLEXITY drives the runtime tier machinery (issue #787):
+        # resolve_llm_config applies agents.<name>.complexity_overrides.<tier>
+        # and the complexity->temperature floor. Emitted for every role, not
+        # just dev/ctx, so cheap tiers also apply to genius/review steps.
+        "CONFIG_COMPLEXITY": effective_complexity,
         "LLM_REASONING": config.get("config_reasoning", "none"),
         "AGENT_ROUND": config.get("config_round", ""),
         "AGENT_SKILLS": config.get("config_skills", ""),

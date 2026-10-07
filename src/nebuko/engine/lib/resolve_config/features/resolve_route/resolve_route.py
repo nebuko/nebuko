@@ -222,7 +222,7 @@ def _resolve_resume_path(
     # with the same LLM settings (model, temperature, etc.)
     config = {
         "task": step_def.agent,
-        "config_complexity": dispatch.complexity or "medium",
+        "config_complexity": dispatch.complexity or "",
         "config_reasoning": dispatch.reasoning or "none",
         "config_temperature": (
             str(dispatch.temperature) if dispatch.temperature is not None else ""
@@ -372,7 +372,7 @@ def _resolve_dispatch_path(
 
     config = {
         "task": "",
-        "config_complexity": dispatch_obj.complexity or "medium",
+        "config_complexity": dispatch_obj.complexity or "",
         "config_reasoning": dispatch_obj.reasoning or "none",
         "config_temperature": str(dispatch_obj.temperature) if dispatch_obj.temperature is not None else "",
         "config_round": "",
@@ -570,7 +570,7 @@ def resolve_soft_kill_route(
         # state writer consumes exactly one per-step attempt for it.
         return {
             "task": dispatch_obj.task_hint or prev_state.agent or "",
-            "config_complexity": dispatch_obj.complexity or "medium",
+            "config_complexity": dispatch_obj.complexity or "",
             "config_reasoning": dispatch_obj.reasoning or "none",
             "config_temperature": str(dispatch_obj.temperature) if dispatch_obj.temperature is not None else "",
             "config_round": "",
@@ -984,7 +984,7 @@ def _resolve_function_call_path(
     if not task:
         return {"SKIP_AGENT": "true", "REASON": "function_call call_agent has no agent_name"}
 
-    complexity = function_call.complexity or "medium"
+    complexity = function_call.complexity or ""
     wf_name = (getattr(prev_state, "workflow", "") or "") if prev_state is not None else ""
     # Establish the callee's step from the active workflow so the callee's
     # posted state records the step it actually ran (issue #507).
@@ -1046,7 +1046,7 @@ def _resolve_machine_trigger_path(
         "task": task,
         "config_workflow": "",
         "config_step": "",
-        "config_complexity": "medium",
+        "config_complexity": "",
         "config_reasoning": "none",
         "config_temperature": "",
         "config_round": "",
@@ -1164,7 +1164,7 @@ def _build_force_next_result(
         "run_script": entry.get("run_script"),
         "config_step": entry.get("config_step") or config_step,
         "config_workflow": entry.get("config_workflow") or config_workflow,
-        "config_complexity": "medium",
+        "config_complexity": "",
         "config_reasoning": "none",
         "config_temperature": "",
         "config_round": "",
@@ -1384,7 +1384,7 @@ def _resolve_human_path(
         "run_script": run_script,
         "config_workflow": config_workflow,
         "config_step": config_step,
-        "config_complexity": "medium",
+        "config_complexity": "",
         "config_reasoning": "none",
         "config_temperature": "",
         "config_round": "",
@@ -1437,7 +1437,7 @@ def _resolve_bot_fallback_path(
 
     config = {
         "task": dispatch.task_hint or "",
-        "config_complexity": dispatch.complexity or "medium",
+        "config_complexity": dispatch.complexity or "",
         "config_reasoning": dispatch.reasoning or "none",
         "config_temperature": str(dispatch.temperature) if dispatch.temperature is not None else "",
         "config_round": "",
@@ -1547,7 +1547,7 @@ def _resolve_workflow_next_step(
 
     config = {
         "task": "",
-        "config_complexity": "medium",
+        "config_complexity": "",
         "config_reasoning": "none",
         "config_temperature": "",
         "config_round": "",

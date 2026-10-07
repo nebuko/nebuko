@@ -1,6 +1,6 @@
 """Workflow step entity."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, model_validator
 
@@ -42,6 +42,11 @@ class WorkflowStep(BaseModel):
     # responds. The approval agent evaluates human feedback and sets
     # dispatch.branch to "approved" or "rejected" accordingly.
     human_gate: bool = False
+    # Declared complexity tier for this step's agent invocation (issue #787):
+    # selects agents.<name>.complexity_overrides.<tier> and the
+    # complexity->temperature floor. None = inherit the dispatch
+    # complexity, else "medium".
+    complexity: Optional[Literal["low", "medium", "high"]] = None  # @stub-protected
 
     @model_validator(mode="after")
     def _validate_step_source(self) -> "WorkflowStep":
