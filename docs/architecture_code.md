@@ -242,7 +242,7 @@ engine/lib/agent_script/
 │   │   ├── wind_down_prompt.py                #   conclusion prompt sent when budget elapses
 │   │   └── run_outcome.py                     #   RunOutcome classification (finished/interrupted/...)
 │   ├── build_output/                          # Build final_message.txt + fresh WorkflowState snapshot
-│   ├── collect_metrics/                       # Extract the agent-metrics payload from the run
+│   ├── collect_metrics/                       # Extract the per-run Metrics payload (folded into the step's history entry)
 │   ├── ensure_pr/                             # Deterministic PR fallback (commit/push/open PR)
 │   ├── extract_recovery_trace/                # Capture the tail of interrupted runs
 │   └── extract_split_plan/                    # Pull <splitPlan> blocks out of the final message

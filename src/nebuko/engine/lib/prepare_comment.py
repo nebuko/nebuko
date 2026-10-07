@@ -1,9 +1,8 @@
 """Prepare github_comment.md from final_message.txt.
 
 Reads the agent's final message, strips internal XML/HTML tags
-(AGENT_RUN_CONFIG sentinels + legacy <agentRunConfig>, splitPlan,
-agent-metrics), and writes the cleaned
-content to github_comment.md for the peter-evans/comment action.
+(AGENT_RUN_CONFIG sentinels + legacy <agentRunConfig>, splitPlan), and writes
+the cleaned content to github_comment.md for the peter-evans/comment action.
 
 All regex operations use re.DOTALL for robust multi-line matching.
 No bash intermediate — Python reads and writes files directly.
@@ -349,10 +348,6 @@ _NO_FINAL_MESSAGE = (
     "> \u26a0\ufe0f The agent did not produce a final message. "
     "Please check the full logs in the workflow run."
 )
-
-
-def _with_metrics(text: str, metrics_comment: str) -> str:
-    return f"{text}\n\n{metrics_comment}" if metrics_comment else text
 
 
 # ── Answer-comment header (issue #736) ───────────────────────────

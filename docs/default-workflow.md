@@ -251,10 +251,11 @@ The step `timeout-minutes: 30` remains as a hard backstop only. In-process, the 
 Four-path logic:
 - **Path A:** `final_message.txt` exists and has content → use it (truncated to 60K chars).
 - **Path B:** `final_message.txt` has sentinel `__NO_FINAL_MESSAGE__` or is empty → parse `console.log` for "Message from Agent" blocks, fall back to last 50 meaningful lines.
-- **Path C:** No `console.log` either → crash message + preserved metrics.
+- **Path C:** No `console.log` either → crash message.
 - **Path D:** `final_message.txt` doesn't exist → fallback error message.
 
-Metrics comments (`<!-- agent-metrics:... -->`) are preserved and appended to the output.
+Per-step agent metrics are no longer appended to the comment; they live in the
+`workflow_state` `history` entries (see Step 19).
 
 ---
 

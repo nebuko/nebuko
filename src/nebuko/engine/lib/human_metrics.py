@@ -4,7 +4,7 @@ Pure, side-effect-free models and computation for the human-facing metrics
 appended to the metrics summary that is posted when an issue closes.
 
 All I/O stays in ``summarize_metrics.py``: it builds ``IssueData`` from the
-comments/agent-metrics payloads it already fetches, then calls
+comments/workflow-state payloads it already fetches, then calls
 ``HumanMetricsAnalyzer.analyze`` and ``HumanMetricsRenderer.render``.
 
 The models are immutable, the analyzer/renderer hold only their config, and any
@@ -39,10 +39,10 @@ def _ensure_aware_utc(value: datetime | None) -> datetime | None:
 def _strip_non_rendered_markup(text: str) -> str:
     """Drop HTML comments and ``<details>`` blocks that never render as prose.
 
-    Bot comments carry machine-only payloads (``<!-- bot-* -->`` markers,
-    ``agent-metrics`` JSON, the collapsed ``WORKFLOW_STATE`` dump) that a human
-    never reads but that dominate the word count. Removing them before counting
-    leaves only reader-visible text.
+    Bot comments carry machine-only payloads (``<!-- bot-* -->`` markers and
+    the collapsed ``WORKFLOW_STATE`` dump) that a human never reads but that
+    dominate the word count. Removing them before counting leaves only
+    reader-visible text.
     """
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
     return re.sub(r"<details>.*?</details>", " ", text, flags=re.DOTALL | re.IGNORECASE)

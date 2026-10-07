@@ -186,7 +186,6 @@ is authoritative.
 | `phase` | string | High-level phase (`analysis`, `planning`, `execution`, ...). |
 | `history` | HistoryEntry[] | Summarized records of prior steps (see below). |
 | `pinned_comment_ids` | int[] | Comment IDs injected **verbatim** into the next agent's context; every other included comment is injected as a summary/excerpt. |
-| `metrics` | StateMetrics \| null | Metrics of the most recent agent invocation (subset of the full `Metrics` schema). |
 | `current_context` | object | Free-form shared data between agents (pending tasks, constraints, decisions, `last_run_status`, ...). |
 | `parent_workflow` | string \| null | Parent workflow name when inside a sub-workflow. |
 | `parent_workflow_step` | string \| null | Parent step that mounted the sub-workflow. |
@@ -208,6 +207,7 @@ is authoritative.
 | `pin` | bool | Whether this entry's `comment_ids` are injected verbatim (their ids are unioned into `pinned_comment_ids` during state enrichment). |
 | `result` | string \| null | Reported result (`approved`, `rejected`, ...). |
 | `dispatch` | Dispatch \| null | Routing decision emitted by this step (same shape as the top-level [Dispatch Object](#dispatch-object)); `null` for legacy entries that predate the field. Makes the history a replayable movement log. |
+| `metrics` | StateMetrics \| null | Metrics of **this step's** agent invocation (full `Metrics` payload; issue #792). `history[-1].metrics` is the single metrics authority. |
 
 ### Annotated Example
 
@@ -219,22 +219,9 @@ is authoritative.
   "agent": "ctx",
   "phase": "analysis",
   "history": [
-    {"step": "analyze", "agent": "genius", "summary": "Issue analyzed, plan requested", "comment_ids": [1029384], "result": "advance", "dispatch": {"status": "advance", "task_hint": "ctx", "complexity": "high"}}
+    {"step": "analyze", "agent": "genius", "summary": "Issue analyzed, plan requested", "comment_ids": [1029384], "result": "advance", "dispatch": {"status": "advance", "task_hint": "ctx", "complexity": "high"}, "metrics": {"run_id": "1bb4941e-0bbf-432b-b79c-0b408feea07f", "model_name": "default", "agent_role": "genius", "input_tokens": 8365, "output_tokens": 1143, "max_context_window": 0, "tool_call_latency_ms": 19685.7, "agent_runtime_ms": 19685.7, "nb_tool_calls": 0, "tool_call_error_rate": 0.0, "review_fix_requests": 0}}
   ],
   "pinned_comment_ids": [],
-  "metrics": {
-    "run_id": "1bb4941e-0bbf-432b-b79c-0b408feea07f",
-    "model_name": "default",
-    "agent_role": "genius",
-    "input_tokens": 8365,
-    "output_tokens": 1143,
-    "max_context_window": 0,
-    "tool_call_latency_ms": 19685.7,
-    "agent_runtime_ms": 19685.7,
-    "nb_tool_calls": 0,
-    "tool_call_error_rate": 0.0,
-    "review_fix_requests": 0
-  },
   "current_context": {"last_run_status": "success"},
   "parent_workflow": null,
   "parent_workflow_step": null,
@@ -323,6 +310,5 @@ writes to `GITHUB_ENV` the same way.
 | `<!-- bot-agent-script -->` | Pseudo-role marker for deterministic `script` steps (issue #541): the step output is posted under this fixed tag so repeated runs update rather than duplicate, and circuit-breaker marker counting stays intact. |
 | `<!-- bot-agent-summary -->` | Marks a summarizer output; the summarizer gate checks for it before triggering again. |
 | `<!-- AGENT_RUN_CONFIG ... -->` | Dispatch sentinel — see [AGENT_RUN_CONFIG](#agent_run_config). Canonical regex in `validate_output.py`: `<!--(?:[ \t])*AGENT_RUN_CONFIG[ \t]+(\{.*?\})(?:[ \t])*-->` (single-line, no DOTALL). |
-| `<!-- WORKFLOW_STATE_START -->` ... `<!-- WORKFLOW_STATE_END -->` | Collapsed JSON workflow-state section — see [WORKFLOW_STATE v1](#workflow_state-v1). |
-| `<!-- agent-metrics: {...} -->` | Per-run metrics (full `Metrics` schema JSON), extracted and aggregated by `summarize_metrics.py` on issue close. May span multiple lines. |
+| `<!-- WORKFLOW_STATE_START -->` ... `<!-- WORKFLOW_STATE_END -->` | Collapsed JSON workflow-state section — see [WORKFLOW_STATE v1](#workflow_state-v1). Per-step agent metrics live in its `history` entries. |
 | `<!-- issue-agent-state: round=N,status=S -->` | Issue-refinement agent state markers (see `AGENTS.md`). |

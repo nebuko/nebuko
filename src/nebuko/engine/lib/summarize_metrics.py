@@ -2,8 +2,9 @@
 """
 Summarize agent metrics from issue comments on issue close.
 
-Fetches all comments from a GitHub issue, extracts embedded agent metrics
-from HTML comments, aggregates by model name, and posts a summary table.
+Fetches all comments from a GitHub issue, reads the per-step agent metrics
+embedded in each comment's ``workflow_state`` snapshot (issue #792), aggregates
+by model name and agent role, and posts a summary table.
 
 Environment Variables:
     GITHUB_TOKEN: GitHub API token (required)
@@ -31,8 +32,8 @@ from human_metrics import (
     HumanMetricsRenderer,
     IssueData,
 )
+from workflow_state.features.get_last_state.get_last_state import extract_state_from_body
 
-METRICS_REGEX = re.compile(r"<!--\s*agent-metrics:\s*(.*?)\s*-->")
 # Agent role marker emitted at the top of every agent comment (e.g. bot-agent-dev).
 BOT_AGENT_ROLE_REGEX = re.compile(r"<!--\s*bot-agent-([a-z0-9_-]+)\s*-->")
 # Human workflow trigger (e.g. @@dev, @@genius) used to count human commands.
@@ -92,15 +93,40 @@ def fetch_issue(repo, issue_number, token):
 
 
 def extract_metrics_from_comment(body):
-    """Extract all metrics objects from a comment body."""
-    metrics_list = []
-    for match in METRICS_REGEX.finditer(body):
-        try:
-            metrics = Metrics.from_json(match.group(1))
-            metrics_list.append(metrics)
-        except json.JSONDecodeError as e:
-            print(f"Warning: Failed to parse metrics JSON: {e}")
-    return metrics_list
+    """Return the per-step ``Metrics`` records carried by a comment's state.
+
+    Each ``workflow_state`` snapshot embeds one history entry per agent step,
+    and every entry holds the metrics of the invocation that produced it
+    (issue #792). Snapshots accumulate the full history, so callers must
+    de-duplicate entries shared with earlier comments.
+    """
+    state = extract_state_from_body(body)
+    if state is None:
+        return []
+    return [
+        Metrics.from_dict(entry.metrics.model_dump())
+        for entry in state.history
+        if entry.metrics is not None
+    ]
+
+
+def deduplicate_metrics(metrics_list):
+    """Drop duplicate step records repeated across accumulating snapshots.
+
+    Every comment embeds the run's full history, so a step's metrics recur in
+    each later comment. Records are keyed on ``run_id`` (falling back to the
+    run window plus agent role when it is missing) and the first occurrence
+    wins (issue #792).
+    """
+    seen = set()
+    unique = []
+    for metric in metrics_list:
+        key = metric.run_id or f"{metric.start_time}|{metric.end_time}|{metric.agent_role}"
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(metric)
+    return unique
 
 
 def _merge_per_tool_dict(base, override):
@@ -651,13 +677,12 @@ def main():
     issue_body = issue.get("body") or ""
     issue_closed_at = parse_iso_datetime(issue.get("closed_at"))
 
-    # Extract all metrics from all comments
+    # Extract per-step metrics from every comment's workflow_state snapshot,
+    # then collapse the repeats carried forward by accumulating histories.
     all_metrics = []
     for comment in comments:
-        body = comment.get("body", "")
-        metrics = extract_metrics_from_comment(body)
-        if metrics:
-            all_metrics.extend(metrics)
+        all_metrics.extend(extract_metrics_from_comment(comment.get("body", "")))
+    all_metrics = deduplicate_metrics(all_metrics)
 
     print(f"Extracted {len(all_metrics)} metric entries.")
 

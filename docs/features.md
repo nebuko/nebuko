@@ -124,25 +124,31 @@ documented in [github-api-limits.md](./github-api-limits.md).
 
 ## Metrics & Summarization
 
-Every agent run self-reports metrics in an HTML comment appended to its output:
+Every agent step self-reports metrics, embedded as the `metrics` field of its
+entry in the `workflow_state` `history` (issue #792 — there is no longer a
+separate hidden HTML comment):
 
-```
-<!-- agent-metrics: {"run_id": "...", "model_name": "...", "agent_role": "dev",
- "input_tokens": 492897, "output_tokens": 12638, "tool_call_latency_ms": 12562,
- "agent_runtime_ms": 200998, "nb_tool_calls": 29, "tool_call_error_rate": 0.0, ...} -->
+```json
+"history": [
+  {"step": "implement", "agent": "dev", "summary": "...",
+   "metrics": {"run_id": "...", "model_name": "...", "agent_role": "dev",
+     "input_tokens": 492897, "output_tokens": 12638, ...}}
+]
 ```
 
 - **Schema** — the canonical `Metrics` dataclass lives in
   `engine/lib/metrics_schema.py` (single source of truth; both writers and
-  readers import from it). The compact subset embedded in workflow state is
+  readers import from it). The per-step record embedded in workflow state is
   `StateMetrics` (see [reference.md — WORKFLOW_STATE v1](./reference.md#workflow_state-v1)).
 - **Collection** — the `collect_metrics` feature of `agent_script` extracts
   token counts, latencies, tool-call statistics, and error rates from the
-  OpenHands conversation after each run.
+  OpenHands conversation after each run, and `build_state` attaches them to the
+  step's `HistoryEntry`.
 - **Issue-close aggregation** — `summarize_metrics.py` (GHA job
-  `summarize-metrics`, triggered on issue close) fetches all comments, extracts
-  every `agent-metrics` block, aggregates by model name (tokens, runtime, error
-  rate), and posts a summary table.
+  `summarize-metrics`, triggered on issue close) fetches all comments, reads the
+  per-step metrics from each comment's `workflow_state` snapshot (de-duplicating
+  entries repeated across accumulating snapshots), aggregates by model name
+  (tokens, runtime, error rate), and posts a summary table.
 - **Qualitative summary** — separately, the `summarize` agent produces a
   structured JSON narrative of the issue (decisions, files, pending actions),
   gated by the summarizer gate above.
