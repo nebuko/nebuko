@@ -1,5 +1,6 @@
 """Tests for prepare_comment module."""
 
+import json
 import os
 import sys
 import tempfile
@@ -613,8 +614,15 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
     def test_omits_the_token_for_a_terminate(self):
         self.assertNotIn(self.CONTINUE_TOKEN, self._body(status="terminate"))
 
-    def test_omits_the_token_for_a_soft_kill(self):
-        self.assertNotIn(self.CONTINUE_TOKEN, self._body(status="soft_kill"))
+    def test_carries_the_continue_token_for_a_soft_kill(self):
+        """Issue #793: a soft-kill comment must re-arm the engine's own loop.
+
+        The soft-kill conclusion comment is the engine's own trigger, so it
+        must carry the continue token; the next run's
+        ``resolve_soft_kill_route`` then retries the interrupted step in place
+        (bounded by ``MAX_SOFT_RETRIES``) instead of the workflow stopping.
+        """
+        self.assertIn(self.CONTINUE_TOKEN, self._body(status="soft_kill"))
 
     def test_keeps_the_header_but_omits_the_section_without_a_state(self):
         body = self._body(state=None)
@@ -624,6 +632,49 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
         self.assertIn(self.CONTINUE_TOKEN, body)
         self.assertNotIn("<!-- WORKFLOW_STATE_START -->", body)
         self.assertIn(self.ANSWER, body)
+
+
+class TestSoftKillReproduction(unittest.TestCase):
+    """Reproduction for issue #793 from the captured soft-kill state blob.
+
+    The fixture is the exact state the issue reports: ``step=implement``,
+    ``agent=dev``, ``dispatch.status=soft_kill`` and
+    ``current_context.last_run_status=gracefully_timed_out``. The soft-killed
+    run posted its conclusion comment and nothing restarted it, because the
+    published body carried no continue token. The engine's own conclusion
+    comment is its trigger, so it must now carry the token.
+    """
+
+    FIXTURE = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "fixtures",
+        "workflow_state_issue793_soft_kill.json",
+    )
+
+    @staticmethod
+    def _state():
+        from workflow_state.workflow_state import WorkflowState
+
+        with open(TestSoftKillReproduction.FIXTURE, encoding="utf-8") as handle:
+            return WorkflowState.model_validate(json.load(handle))
+
+    def test_captured_soft_kill_state_rearms_the_engine(self):
+        state = self._state()
+        # Guard the fixture still captures the reported condition, otherwise
+        # this test could pass for the wrong reason.
+        self.assertEqual(state.step, "implement")
+        self.assertEqual(state.agent, "dev")
+        self.assertEqual(state.dispatch.status, "soft_kill")
+        self.assertEqual(state.current_context.get("last_run_status"), "gracefully_timed_out")
+
+        body = build_comment_body(
+            latest_answer="Soft time-kill: the step will be retried.",
+            final_message="Soft time-kill: the step will be retried.",
+            role_name="dev",
+            state=state,
+        )
+
+        self.assertIn("<!-- workflow-continue -->", body)
 
 
 if __name__ == "__main__":

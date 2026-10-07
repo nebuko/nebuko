@@ -66,6 +66,10 @@ _EXIT_CODE_BY_STATUS = {
     "advance": ExitCode.ADVANCE,
     "loop": ExitCode.ADVANCE,
     "hold": ExitCode.HOLD,
+    # A soft-kill comment re-triggers the next run (issue #793); the run itself
+    # still exits ADVANCE like the other live statuses rather than falling
+    # through to the default.
+    "soft_kill": ExitCode.ADVANCE,
 }
 
 
@@ -486,11 +490,19 @@ class Engine:
             if _is_true(verdict.get("SKIP_AGENT")):
                 reason = str(verdict.get("REASON") or "agent skipped")
                 log.info("[phase:guards] skipping agent — %s", reason)
+                # An exhausted soft-kill halt is the one terminal skip that owes
+                # the thread a human ping (issue #793); a routine resolver skip
+                # stays silent as before.
+                posted = (
+                    self._post_soft_kill_halt(reason)
+                    if _is_true(self._get(resolved, "SOFT_RETRY_EXHAUSTED"))
+                    else None
+                )
                 return RunOutcome(
                     exit_code=ExitCode.TERMINAL,
                     routing=RoutingDecision(status="hold", reason=reason),
                     prompt=None,
-                    posted_body=None,
+                    posted_body=posted,
                     state=None,
                     phases=tuple(phases),
                 )
@@ -639,6 +651,26 @@ class Engine:
         return notice
 
     # @stub-protected
+    def _post_soft_kill_halt(self, reason: str) -> str:
+        """Ping a human when the soft-kill retry budget is exhausted (issue #793).
+
+        The resolver's halt verdict short-circuits the run before ``publish``, so
+        the ``/nebuko resume`` instruction would otherwise live only in the CI
+        log while the thread went silent. The notice opens with the bot marker
+        and carries no continue token, so the automated chain stops here — the
+        exact "max restarts, then ping a human" contract. Best-effort: a failed
+        post must not mask the halt.
+        """
+        marker = _load_bridge_module("prepare_comment").BOT_MARKER
+        body = f"{marker}\n@{self._trigger_author()} {reason}"
+        notice = _neutralize_agent_triggers(body)
+        try:
+            self.adapter.post(notice)
+        except Exception as exc:  # noqa: BLE001 - the halt notice is best-effort
+            log.warning("[phase:guards] soft-kill halt notice failed: %s", exc)
+        return notice
+
+    # @stub-protected
     def normalize(self) -> Trigger:
         """Return the adapter's normalized trigger."""
         return self.adapter.read_trigger()
@@ -706,12 +738,20 @@ class Engine:
         resolved: Any = self.resolve(trigger) if caller else None
         task = str(self._get(resolved, "TASK") or "")
 
-        verdict = self._loop_verdict(
-            body,
-            task,
-            self._get(resolved, "WORKFLOW_POSITION_PATH"),
-            self._get(resolved, "WORKFLOW_STEP"),
-        )
+        # An engine-issued soft-kill retry (issue #793) deliberately re-runs the
+        # same agent at the same position, which the same-agent guard would
+        # otherwise classify as a self-loop and skip — severing the very retry
+        # this run exists to perform. The ``MAX_SOFT_RETRIES`` budget in
+        # ``resolve_soft_kill_route`` bounds the chain, so the bypass is safe.
+        if _is_true(self._get(resolved, "SOFT_RETRY_ATTEMPT")):
+            verdict: dict[str, Any] = {"SKIP_AGENT": "false"}
+        else:
+            verdict = self._loop_verdict(
+                body,
+                task,
+                self._get(resolved, "WORKFLOW_POSITION_PATH"),
+                self._get(resolved, "WORKFLOW_STEP"),
+            )
         if _is_true(verdict.get("SKIP_AGENT")):
             return verdict
 

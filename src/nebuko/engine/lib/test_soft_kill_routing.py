@@ -73,6 +73,23 @@ class TestSoftKillRoute(unittest.TestCase):
         # A halt must tell the human how to take over.
         self.assertIn("/nebuko resume", result["REASON"])
 
+    def test_exhausted_budget_marks_itself_for_the_halt_notice(self):
+        """Issue #793: the halt carries a marker so the engine pings a human.
+
+        Without it the terminal skip is indistinguishable from a routine one and
+        the ``/nebuko resume`` instruction would live only in the CI log.
+        """
+        result = resolve_soft_kill_route(
+            _state(attempts=2), Dispatch(status="soft_kill"), max_soft_retries=2
+        )
+        self.assertEqual(result["SOFT_RETRY_EXHAUSTED"], "true")
+
+    def test_a_retry_does_not_carry_the_halt_marker(self):
+        result = resolve_soft_kill_route(
+            _state(attempts=0), Dispatch(status="soft_kill"), max_soft_retries=2
+        )
+        self.assertNotIn("SOFT_RETRY_EXHAUSTED", result)
+
     def test_zero_budget_halts_immediately(self):
         result = resolve_soft_kill_route(
             _state(attempts=0), Dispatch(status="soft_kill"), max_soft_retries=0
