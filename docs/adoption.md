@@ -36,10 +36,10 @@ Adding Nebuko to a repository gives you:
 
 ## 2. Prerequisites
 
-1. **A caller repository that is public.** GitHub Actions does not allow a
-   reusable workflow hosted in a private repository to be called from another
-   repository. The Nebuko workflow lives in the public `nebuko/nebuko`
-   repository, so your caller repository must be public.
+1. **A caller repository on GitHub.** Nebuko's reusable workflow is hosted in
+   the public `nebuko/nebuko` repository — GitHub requires the *called*
+   repository to be public for a reusable workflow to be used from another
+   repository. Your own (caller) repository can be public or private.
 2. **A runner.** GitHub-hosted `ubuntu-latest` by default; you can point the
    jobs at your own runners instead (section 6).
 3. **A fine-grained `GH_PAT`** scoped to the account that owns the target
@@ -147,9 +147,14 @@ The `nebuko[bot]` actor requires the GitHub App and is not available yet.
 
 ## 5. Provider configuration — ready-to-paste configs
 
-Commit an `agent-config.yaml` at the path given by `agent_config_path`. The
-file is layered **providers → llms → agents**; the full schema is in
-[configuration.md](./configuration.md).
+Commit an `agent-config.yaml`. Nebuko resolves it — and every other config
+artifact — through a layered lookup: a repo override under `.nebuko/` first,
+then the copy shipped in `defaults/`. Add yours at
+`.nebuko/agents/agent-config.yaml` (or set `agent_config_path` to wherever you
+keep it). The file is layered **providers → llms → agents**; the full schema is
+in [configuration.md](./configuration.md). The shipped `defaults/agents/` and
+`defaults/prompts/` work with no local files at all, so the config below is the
+whole minimal setup.
 
 ### OpenRouter
 
@@ -191,6 +196,11 @@ Wire the matching secret in your entrypoint (section 3):
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GH_PAT: ${{ secrets.GH_PAT }}
 ```
+
+> `prompt_file` matters for its **file name** only: Nebuko resolves each agent's
+> prompt through the same layered lookup (`.nebuko/prompts/` override → shipped
+> `defaults/prompts/`), so the shipped prompt is used unless you add an override
+> with that name.
 
 ### Local vLLM
 

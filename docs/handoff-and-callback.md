@@ -59,7 +59,7 @@ Two invariants are enforced at validation time:
   pulling in `ctx`) rather than following the workflow edge.
 
 They are documented as a skill in
-[`skills/call-agent.md`](../skills/call-agent.md).
+[`skills/call-agent.md`](../defaults/skills/call-agent.md).
 
 ---
 

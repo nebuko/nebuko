@@ -216,7 +216,7 @@ agents:
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 ```
 
-See this repo's [`agent-config.yaml`](../agent-config.yaml) for the full
+See this repo's [`agent-config.yaml`](../defaults/agents/agent-config.yaml) for the full
 9-agent configuration.
 
 ---

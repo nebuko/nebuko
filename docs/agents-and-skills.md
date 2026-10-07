@@ -1,7 +1,7 @@
 # Agents & Skills
 
 The system ships with 8 agents and 5 reusable skills. Each agent is declared
-in [`agent-config.yaml`](../agent-config.yaml) (model, prompt file, tool
+in [`agent-config.yaml`](../defaults/agents/agent-config.yaml) (model, prompt file, tool
 whitelist) and defined by a system prompt in `.agents/prompts/{agent}.md`.
 Skills are standalone prompt files in `skills/` that can be attached to a
 workflow step via `skill: [...]` — see
@@ -99,11 +99,11 @@ prompt, narrowing or constraining the agent's behavior for that step only.
 
 | Skill | File | Purpose |
 |-------|------|---------|
-| `stub-only` | [`stub-only.md`](../skills/stub-only.md) | Constrains `dev` to fill existing function stubs + write spec-matching tests. No new logic, no new files beyond helpers/tests. Used by `spec-driven` and `spec-driven-impl`. |
-| `scaffold-plan` | [`scaffold-plan.md`](../skills/scaffold-plan.md) | Converts the approved `<planWorkflow>` JSON block into a runnable per-step `tmp_impl/workflow.yaml` sub-workflow. Used by `plan-orchestration` (issue #462). |
-| `plan-cleanup` | [`plan-cleanup.md`](../skills/plan-cleanup.md) | Removes the `tmp_impl/` scaffolding after all plan steps are done. Used by `plan-orchestration`. |
-| `final-fix` | [`final-fix.md`](../skills/final-fix.md) | Addresses the final whole-PR review feedback across all plan steps. Used by `plan-orchestration`. |
-| `python` | [`python.md`](../skills/python.md) | Generic Python style/testing guidance (PEP 8, type hints, pytest). |
+| `stub-only` | [`stub-only.md`](../defaults/skills/stub-only.md) | Constrains `dev` to fill existing function stubs + write spec-matching tests. No new logic, no new files beyond helpers/tests. Used by `spec-driven` and `spec-driven-impl`. |
+| `scaffold-plan` | [`scaffold-plan.md`](../defaults/skills/scaffold-plan.md) | Converts the approved `<planWorkflow>` JSON block into a runnable per-step `tmp_impl/workflow.yaml` sub-workflow. Used by `plan-orchestration` (issue #462). |
+| `plan-cleanup` | [`plan-cleanup.md`](../defaults/skills/plan-cleanup.md) | Removes the `tmp_impl/` scaffolding after all plan steps are done. Used by `plan-orchestration`. |
+| `final-fix` | [`final-fix.md`](../defaults/skills/final-fix.md) | Addresses the final whole-PR review feedback across all plan steps. Used by `plan-orchestration`. |
+| `python` | [`python.md`](../defaults/skills/python.md) | Generic Python style/testing guidance (PEP 8, type hints, pytest). |
 
 Agents can also carry default `skills` in their `agent-config.yaml` stanza;
 step-level skills override/augment them.

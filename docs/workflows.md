@@ -213,15 +213,15 @@ Security notes:
 
 | Workflow | File | One-line description |
 |----------|------|---------------------|
-| `default` | [`default.yaml`](../workflows/default.yaml) | Standard dev chain: analyze → context → plan → implement → review |
-| `think` | [`think.yaml`](../workflows/think.yaml) | Thinking only — analyze + context + plan, no implementation |
-| `review-only` | [`review-only.yaml`](../workflows/review-only.yaml) | Standalone single-shot code review |
-| `dev-review-loop` | [`dev-review-loop.yaml`](../workflows/dev-review-loop.yaml) | Reusable sub-workflow: one plan step with review, loops on rejection |
-| `plan-orchestration` | [`plan-orchestration.yaml`](../workflows/plan-orchestration.yaml) | Full multi-step plan lifecycle sharing one PR |
-| `spec-driven` | [`spec-driven.yaml`](../workflows/spec-driven.yaml) | Spec → stub (human-gated) → implement |
-| `spec-driven-impl` | [`spec-driven-impl.yaml`](../workflows/spec-driven-impl.yaml) | Plan → stub (human-gated) → implement |
-| `debug` | [`debug.yaml`](../workflows/debug.yaml) | Direct single-agent debug call |
-| `demo-composition` | [`demo-composition.yaml`](../workflows/demo-composition.yaml) | Demo of sub-workflow composition |
+| `default` | [`default.yaml`](../defaults/workflows/default.yaml) | Standard dev chain: analyze → context → plan → implement → review |
+| `think` | [`think.yaml`](../defaults/workflows/think.yaml) | Thinking only — analyze + context + plan, no implementation |
+| `review-only` | [`review-only.yaml`](../defaults/workflows/review-only.yaml) | Standalone single-shot code review |
+| `dev-review-loop` | [`dev-review-loop.yaml`](../defaults/workflows/dev-review-loop.yaml) | Reusable sub-workflow: one plan step with review, loops on rejection |
+| `plan-orchestration` | [`plan-orchestration.yaml`](../defaults/workflows/plan-orchestration.yaml) | Full multi-step plan lifecycle sharing one PR |
+| `spec-driven` | [`spec-driven.yaml`](../defaults/workflows/spec-driven.yaml) | Spec → stub (human-gated) → implement |
+| `spec-driven-impl` | [`spec-driven-impl.yaml`](../defaults/workflows/spec-driven-impl.yaml) | Plan → stub (human-gated) → implement |
+| `debug` | [`debug.yaml`](../defaults/workflows/debug.yaml) | Direct single-agent debug call |
+| `demo-composition` | [`demo-composition.yaml`](../defaults/workflows/demo-composition.yaml) | Demo of sub-workflow composition |
 
 ### default
 
