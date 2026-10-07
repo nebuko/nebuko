@@ -238,7 +238,7 @@ jobs:
             - name: Check if nebuko cache is needed
               id: check_nebuko
               run: |
-                if [ ! -d ".nebuko-cache/engine/lib" ]; then
+                if [ ! -d ".nebuko-cache/src/nebuko/engine/lib" ]; then
                   echo "needed=true" >> $GITHUB_OUTPUT
                 fi
 
@@ -263,10 +263,10 @@ jobs:
                   GITHUB_REPOSITORY: ${{ github.repository }}
                   ISSUE_NUMBER: ${{ github.event.issue.number }}
               run: |
-                if [ -f ".nebuko-cache/engine/lib/summarize_metrics.py" ]; then
-                  SCRIPT_PATH=".nebuko-cache/engine/lib/summarize_metrics.py"
+                if [ -f ".nebuko-cache/src/nebuko/engine/lib/summarize_metrics.py" ]; then
+                  SCRIPT_PATH=".nebuko-cache/src/nebuko/engine/lib/summarize_metrics.py"
                 else
-                  SCRIPT_PATH="engine/lib/summarize_metrics.py"
+                  SCRIPT_PATH="src/nebuko/engine/lib/summarize_metrics.py"
                 fi
                 python "$SCRIPT_PATH"
 
