@@ -1,8 +1,10 @@
 """The orchestration engine: the 15-step bash ``run-task`` job, typed once.
 
-Nine phases, in order, each emitting one ``[phase:<name>]`` log marker:
-``normalize -> resolve_config -> guards -> prompt -> agent -> validate ->
-publish -> state -> route``. The engine orchestrates legacy outputs by
+Ten phases, in order, each emitting one ``[phase:<name>]`` log marker:
+``normalize -> resolve_config -> guards -> action -> prompt -> agent -> validate
+-> publish -> state -> route``. The ``action`` phase executes the resolver's
+agent-free deterministic-step contract (comment deletion / script) and is a
+no-op for ordinary agent runs. The engine orchestrates legacy outputs by
 reference to their existing types and contains no platform-mode branching.
 """
 
@@ -19,6 +21,7 @@ from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from nebuko.engine.models import (
+    DeterministicStep,
     ExitCode,
     RoutingDecision,
     RunOutcome,
@@ -71,6 +74,7 @@ PHASES: tuple[str, ...] = (
     "normalize",
     "resolve_config",
     "guards",
+    "action",
     "prompt",
     "agent",
     "validate",
@@ -422,6 +426,33 @@ class Engine:
     )
 
     # @stub-protected
+    def _run_deterministic_step(
+        self, resolved: Any, phases: list[str]
+    ) -> RunOutcome | None:
+        """Execute the resolver's deterministic-step contract as ``[phase:action]``.
+
+        Returns ``None`` when the resolver carries no step, so the caller falls
+        through to the skip verdict. A completed step returns
+        ``RunOutcome(exit_code=ExitCode.ADVANCE)``: the deterministic work ran,
+        so the process must exit 0 (issue #724) rather than the terminal-20 the
+        pure-skip path returns.
+        """
+        self._enter(phases, "action")
+        step = DeterministicStep.from_resolved(resolved)
+        if step is None:
+            return None
+        result = step.execute(self.adapter)
+        log.info("[phase:action] %s: %s", result.step_kind, result.detail)
+        return RunOutcome(
+            exit_code=ExitCode.ADVANCE,
+            routing=RoutingDecision(status="terminate", reason=result.detail),
+            prompt=None,
+            posted_body=result.detail,
+            state=None,
+            phases=tuple(phases),
+        )
+
+    # @stub-protected
     def run(self) -> RunOutcome:
         """End-to-end pipeline; always returns an outcome."""
         phases: list[str] = []
@@ -440,6 +471,14 @@ class Engine:
             )
 
             self._enter(phases, "guards")
+            # The deterministic-step contract (``delete comments`` /
+            # ``run_script``) is executed here, *before* the resolver's
+            # SKIP_AGENT verdict: the same contract sets SKIP_AGENT=true, so
+            # checking the verdict first would collapse a real step into a
+            # terminal no-op (issue #724). A completed step exits 0.
+            stepped = self._run_deterministic_step(resolved, phases)
+            if stepped is not None:
+                return stepped
             # The bash short-circuits on the resolver's SKIP_AGENT before the
             # loop guard and breaker ever run (issue #458); the circuit breaker
             # is gated on ``SKIP_AGENT == 'false'`` in the job too.

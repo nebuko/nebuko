@@ -42,6 +42,7 @@ class FakeGhClient:
         self.comments = list(comments)
         self.posted = posted if posted is not None else {"id": 4242, "html_url": "https://example.test/c/4242"}
         self.calls = []
+        self.deleted = []
 
     def get_issue_comments(self, repo, issue_number, token=None, dry_run=False):
         self.calls.append(("get_issue_comments", repo, issue_number))
@@ -50,6 +51,11 @@ class FakeGhClient:
     def post_comment(self, repo, issue_number, body, token=None, dry_run=False):
         self.calls.append(("post_comment", repo, issue_number, body))
         return self.posted
+
+    def delete_comment(self, repo, comment_id, token=None, dry_run=False):
+        self.calls.append(("delete_comment", repo, comment_id))
+        self.deleted.append(comment_id)
+        return True
 
 
 def _event_file(tmp_path, payload):
@@ -135,6 +141,36 @@ class TestPost:
 
         assert "4242" in result
         assert ("post_comment", "olivier-norture/git-flow-ai", 590, "hello") in client.calls
+
+
+class TestDeleteIssueComments:
+    """Batch comment deletion through the composed REST client (issue #724)."""
+
+    def test_deletes_every_comment_by_default(self, tmp_path):
+        client = FakeGhClient(comments=[{"id": 10}, {"id": 20}, {"id": 30}])
+        adapter = _adapter(tmp_path, client)
+
+        deleted = adapter.delete_issue_comments("590")
+
+        assert deleted == 3
+        assert client.deleted == [10, 20, 30]
+        assert ("get_issue_comments", "olivier-norture/git-flow-ai", 590) in client.calls
+
+    def test_from_boundary_deletes_that_comment_and_every_later_one(self, tmp_path):
+        client = FakeGhClient(comments=[{"id": 10}, {"id": 20}, {"id": 30}])
+        adapter = _adapter(tmp_path, client)
+
+        deleted = adapter.delete_issue_comments("590", from_comment="20")
+
+        assert deleted == 2
+        assert client.deleted == [20, 30]
+
+    def test_skips_comments_without_an_id(self, tmp_path):
+        client = FakeGhClient(comments=[{"body": "no id"}, {"id": 20}])
+        adapter = _adapter(tmp_path, client)
+
+        assert adapter.delete_issue_comments("590") == 1
+        assert client.deleted == [20]
 
 
 class TestArtifacts:

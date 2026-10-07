@@ -1,6 +1,6 @@
 """Spec-scenario tests for the typed driver (issue #590, plan section 3.5).
 
-The driver is the typed form of the 15-step ``run-task`` bash job: nine phases,
+The driver is the typed form of the 15-step ``run-task`` bash job: ten phases,
 one ``[phase:<name>]`` log marker each, and an exit code that tells the host
 whether to advance, stop for a human, or terminate.
 """
@@ -91,11 +91,12 @@ def _stub_resolved(monkeypatch, resolved: dict) -> None:
 
 
 class TestPhaseVocabulary:
-    def test_phases_are_the_nine_documented_phases_in_order(self):
+    def test_phases_are_the_ten_documented_phases_in_order(self):
         assert PHASES == (
             "normalize",
             "resolve_config",
             "guards",
+            "action",
             "prompt",
             "agent",
             "validate",
@@ -160,6 +161,67 @@ class TestGuardsPhase:
         verdict = engine.guard(_trigger(), history)
 
         assert str(verdict["CIRCUIT_BREAKER_TRIPPED"]).lower() == "true"
+
+
+class TestDeterministicActionPhase:
+    """``action`` executes the resolver's agent-free step (issue #724)."""
+
+    def test_clean_comments_runs_the_step_and_exits_zero(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, _trigger(body="/nebuko clean comments", number=724))
+        invoked: list[str] = []
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: invoked.append(prompt))
+        # Seed the local journal so the deletion has something to remove.
+        engine.adapter.post("historical comment")
+
+        outcome = engine.run()
+
+        assert invoked == []
+        assert "action" in outcome.phases
+        assert "agent" not in outcome.phases
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.routing.status == "terminate"
+        assert outcome.posted_body == "deleted 1 comments on issue 724"
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
+        assert journal == ""
+
+    def test_the_step_is_executed_before_the_skip_verdict(self, tmp_path, monkeypatch):
+        """The delete contract also sets SKIP_AGENT, but the step still runs."""
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "DELETE_COMMENTS": "true",
+                "DELETE_COMMENTS_ISSUE": "900",
+            },
+        )
+        deleted: list[tuple[str, str]] = []
+
+        def record(self, issue, from_comment=""):
+            deleted.append((issue, from_comment))
+            return 7
+
+        monkeypatch.setattr(LocalAdapter, "delete_issue_comments", record)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert deleted == [("900", "")]
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body == "deleted 7 comments on issue 900"
+
+    def test_a_pure_resolver_skip_still_terminates(self, tmp_path, monkeypatch):
+        """SKIP_AGENT without a step flag keeps the terminal-20 contract."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "true", "REASON": "nothing to do"})
+        invoked: list[str] = []
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: invoked.append(prompt))
+
+        outcome = engine.run()
+
+        assert invoked == []
+        assert "agent" not in outcome.phases
+        assert outcome.exit_code == ExitCode.TERMINAL
 
 
 class TestRoutePhase:
