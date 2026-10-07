@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Date** | 2026-08-28 (édition du 2026-08-28 : extension à la section 4.4 — outils de workflow agentique) |
-| **Périmètre** | Produit *nebuko* (dépot [nebuko/nebuko](https://github.com/nebuko/nebuko)) : positionnement, marché, concurrence (revue de code + outils de workflow agentique), modèle économique, maturité |
-| **Méthode de collecte** | Analyse du dépôt (README, `landscape.md`, `agent-config.yaml`, métadonnées API GitHub), de l'issue interne #475 et de la PR #481 ; recherche web (SearXNG) du 2026-08-28 sur la concurrence, le pricing et les données de marché. Pour la section 4.4 : consolidation des analyses internes existantes (issues #227, #291, #318, #319, PR #485) complétée par le recoupement direct avec les sources officielles des éditeurs (vérifiées le 2026-08-28) et les métadonnées API GitHub des dépôts concernés |
+| **Date** | 2026-08-28 (édition du 2026-08-28 : extension à la section 4.4 — outils de workflow agentique ; mise à jour du 2026-09-20 : extension à la section 4.5 — ZenFlow (Zencoder), plateforme managée d'orchestration multi-agents) |
+| **Périmètre** | Produit *nebuko* (dépot [nebuko/nebuko](https://github.com/nebuko/nebuko)) : positionnement, marché, concurrence (revue de code + outils de workflow agentique + plateforme managée), modèle économique, maturité |
+| **Méthode de collecte** | Analyse du dépôt (README, `landscape.md`, `agent-config.yaml`, métadonnées API GitHub), de l'issue interne #475 et de la PR #481 ; recherche web (SearXNG) du 2026-08-28 sur la concurrence, le pricing et les données de marché. Pour la section 4.4 : consolidation des analyses internes existantes (issues #227, #291, #318, #319, PR #485) complétée par le recoupement direct avec les sources officielles des éditeurs (vérifiées le 2026-08-28) et les métadonnées API GitHub des dépôts concernés. Pour la section 4.5 : consultation directe des sources primaires de l'éditeur ZenFlow (pages produit et pricing, documentation officielle), vérifiées le 2026-09-20, et des documents internes de *nebuko* (`docs/workflows.md`, `docs/features.md`, `defaults/skills/scaffold-plan.md`) |
 | **Lisibilité** | Document unique, ~30 min de lecture. Tout fait chiffré porte une référence `[n]` résolue dans l'index des sources (section 10). Trois niveaux d'épistémicité sont explicitement distingués : **fait vérifié** (source primaire), **signal secondaire** (blog/press citant une source primaire — marqué « à recouper »), **hypothèse**. |
 
 ---
@@ -22,9 +22,11 @@
 - **La crise de la revue de code** : la génération de code par IA a déplacé le goulot d'étranglement du pipeline vers la revue humaine. Les données disponibles indiquent un temps de revue médian en forte hausse (+441,5 % selon Faros AI 2026, à recouper [34]) et des PRs assistées IA d'environ 2,5× plus grosses avec des attentes de revue ~5× plus longues (LinearB, à recouper [34]). Une étude randomisée de METR montre même que des développeurs expérimentés sont 19 % **plus lents** avec l'IA quand ils *pensent* être ~20 % plus rapides [30][31] — un écart perception/réalité qui renforce la demande pour des garde-fous de processus [32].
 - **La concentration du capital sur un sous-segment** : la review assistée par IA attire des valorisations massives (CodeRabbit : $1,5 Md [1] ; Cognition/Devin : négociations à ~$25 Md [11]) mais, à la date de cette étude, **aucun acteur identifié ne possède le segment « processus d'équipe orchestré par des agents multiples »** — l'espace revendiqué par *nebuko* [1][4][8][11].
 
+  > **Mise à jour du 2026-09-20 — cette affirmation est invalidée.** ZenFlow (Zencoder) a livré une plateforme commerciale managée d'orchestration multi-agents sur exactement ce créneau (nouvelle **section 4.5**). Le segment n'est donc pas « non occupé » : il est **scindé** entre plateforme managée commerciale (ZenFlow) et moteur open-source auto-possédé (*nebuko*). La phrase d'origine est conservée telle quelle, pour l'historique de l'étude.
+
 **État réel du projet, assumé.** Le dépôt a été créé le 2026-05-29 ; au 2026-08-28 il comptait 0 star, 0 fork, 0 watcher et 79 issues ouvertes [54]. Le produit est en pré-alpha, au Gate 0 d'un plan de lancement en quatre portes [48][54]. Cette étude assume ces chiffres plutôt que de les masquer : ils sont publics et vérifiables sur GitHub, et leur transparence est considérée ici comme un signal de maturité plutôt qu'un aveu.
 
-**En une phrase.** *nebuko* positionne un format ouvert (workflow YAML multi-agents) sur le segment non occupé de l'orchestration du travail d'équipe par agents IA, porté par une base GitHub de 150 M+ de personnes et 420 M+ de dépôts [47], avec le risque symétrique d'une fenêtre de tir limitée face à des entrants très capitalisés [1][11].
+**En une phrase.** *nebuko* positionne un format ouvert (workflow YAML multi-agents) sur le segment de l'orchestration du travail d'équipe par agents IA — non occupé au 2026-08-28, **désormais partagé** avec ZenFlow (section 4.5, mise à jour du 2026-09-20) —, porté par une base GitHub de 150 M+ de personnes et 420 M+ de dépôts [47], avec le risque symétrique d'une fenêtre de tir limitée face à des entrants très capitalisés [1][11].
 
 ---
 
@@ -119,7 +121,7 @@ C'est le cœur du positionnement, et il est documenté de plusieurs façons :
 Trois constats ressortent du tableau :
 
 1. **Le capital concentre la *review assistée*.** C'est le segment le plus financé ($1,5 Md pour CodeRabbit [1], ~$25 Md pour Cognition [11]) et le mieux défendu (l'intégration native de Copilot dans GitHub [17][19]). Compétiter frontalement sur « un autre outil de review IA » serait une bataille perdue d'avance face à des acteurs subventionnés.
-2. **Personne ne possède le *processus d'équipe orchestré*.** Tous les acteurs ci-dessus automatisent **une étape** (la revue, le merge, le diffing). Aucun ne propose des agents **multiples à rôles** qui se **délèguent** et encodent **le processus complet** (spec → design → implémentation → vérification) avec gates humains — c'est l'espace revendiqué par *nebuko* [50].
+2. **Personne ne possède le *processus d'équipe orchestré*.** Tous les acteurs ci-dessus automatisent **une étape** (la revue, le merge, le diffing). Aucun ne propose des agents **multiples à rôles** qui se **délèguent** et encodent **le processus complet** (spec → design → implémentation → vérification) avec gates humains — c'est l'espace revendiqué par *nebuko* [50]. **Nuance (mise à jour du 2026-09-20)** : un acteur identifié depuis occupe ce créneau sous forme de **plateforme managée commerciale** (ZenFlow, section 4.5) ; le constat doit donc se lire comme « aucun acteur *open-source et GitHub-native* », non comme « aucun acteur ».
 3. **Les plateformes natives descendent vite.** Copilot Code Review est devenu disponible sans licence Copilot en décembre 2025 [19] ; le risque principal est la convergence des plateformes natives (GitHub Actions + Copilot) vers l'orchestration multi-étapes (menace, section 8).
 
 ### 4.3 Concurrents open-source : absence notable
@@ -253,10 +255,69 @@ Deux axes structurent cet espace : **la place du workflow dans le système** (bi
 
 Constats :
 
-1. **Le croisement « plateforme encastrée × graphe déterministe × sémantique agentique » demeure non occupé — et l'arrivée de Dify ne le change pas.** Dify s'en approche (plateforme, graphe de canvas déclaratif, sémantique agentique via l'Agent Node [67][72]) mais reste **canvas/DSL-driven, non repo-native** : GitHub n'y est atteint que via un plugin en lecture seule et les workflows vivent dans l'interface, pas comme fichiers YAML versionnés dans le dépôt [67]. Le différenciateur de *nebuko* — « transport GitHub natif + workflows YAML versionnés dans le dépôt + gates humains dans le fil d'issue » — en sort donc renforcé, non affaibli : ce que Dify occupe est la case « plateforme × conversation/GUI », pas la case déterministe repo-native. Kestra occupe la case déterministe mais sans sémantique agentique ni ancrage GitHub-native ; gh-aw occupe l'ancrage GitHub mais reste single-agent et conversationnel [57][64]. La position *nebuko* demeure distinctive — cohérente avec la carte du segment revue de code (§5.2).
+1. **Le croisement « plateforme encastrée × graphe déterministe × sémantique agentique » demeure non occupé — et l'arrivée de Dify ne le change pas.** Dify s'en approche (plateforme, graphe de canvas déclaratif, sémantique agentique via l'Agent Node [67][72]) mais reste **canvas/DSL-driven, non repo-native** : GitHub n'y est atteint que via un plugin en lecture seule et les workflows vivent dans l'interface, pas comme fichiers YAML versionnés dans le dépôt [67]. Le différenciateur de *nebuko* — « transport GitHub natif + workflows YAML versionnés dans le dépôt + gates humains dans le fil d'issue » — en sort donc renforcé, non affaibli : ce que Dify occupe est la case « plateforme × conversation/GUI », pas la case déterministe repo-native. Kestra occupe la case déterministe mais sans sémantique agentique ni ancrage GitHub-native ; gh-aw occupe l'ancrage GitHub mais reste single-agent et conversationnel [57][64]. **Complément du 2026-09-20** : une **plateforme managée commerciale**, ZenFlow (section 4.5), est depuis identifiée sur ce périmètre — elle est bien « plateforme encastrée × sémantique agentique », mais sa définition de workflow reste une **liste d'étapes linéaire** (Markdown à cases à cocher), sans graphe déterministe ni gate porté par le langage : la case « graphe déterministe » de cette carte reste donc non occupée. La position *nebuko* demeure distinctive — cohérente avec la carte du segment revue de code (§5.2).
 2. **Les frameworks OSS (LangGraph, CrewAI, AutoGen) ne sont pas des challengers directs mais des fournisseurs potentiels** : tous trois peuvent servir de moteur *à l'intérieur* d'une étape d'un workflow *nebuko* ; aucun ne propose le transport GitHub-native + le processus versionné [50][59][60].
 3. **La vraie descension possible est la plateforme native** : gh-aw + Copilot dans la plateforme dominante [57][17] — même scénario de menace que la section 8 (« à quelle vitesse », pas « si »).
 4. **L'homogénéité du gabarit** : aucune de ces fiches ne remet en cause les six pain points traités en 5.1 — les réponses *nebuko* (processus versionné, délégation, gates) restent valides sur le périmètre élargi [50].
+
+---
+
+### 4.5 ZenFlow (Zencoder) : plateforme managée commerciale d'orchestration multi-agents
+
+**Note d'édition (2026-09-20).** Cette section est ajoutée à une étude qui affirmait, au 2026-08-28, qu'aucun acteur identifié n'occupait le segment « processus d'équipe orchestré par des agents multiples » (§1). ZenFlow, édité par Zencoder (*For Good AI Inc.*), occupe désormais ce créneau sous forme de **plateforme commerciale managée**. Le constat est corrigé, pas supprimé : la note datée en §1 documente la requalification. Toutes les données ci-dessous proviennent des sources primaires de l'éditeur, vérifiées le 2026-09-20 [73]–[80].
+
+#### 4.5.1 Fiche — ZenFlow
+
+**Ce que c'est.** ZenFlow est la couche d'orchestration — « le cerveau » — qui coordonne l'exécution d'agents Zencoder — « le moteur » [73]. La famille produit inclut Zenflow Code, Zenflow Work, un IDE, des agents, un CLI et un *Marketplace* ; la distribution se fait par **application desktop**, plugins d'IDE et CLI [73][74]. C'est l'**opposé structurel** de *nebuko* : un produit installé et hébergé, non un moteur exécuté dans le CI du client.
+
+**Positionnement.** « Built for AI-first engineering teams » : des agents qui lisent les spécifications, PRD ou documents d'architecture avant d'écrire du code ; exécution parallèle de « dizaines ou centaines d'agents » ; vérification intégrée (tests automatisés + revue croisée entre agents, un test en échec déclenchant une correction) [73]. L'accroche officielle — *« AI-first Engineering without AI slop »* [73] — recouvre explicitement la thèse anti-slop de *nebuko* [50] : c'est un signal de **validation du segment**, pas un différenciateur.
+
+**Workflows (données vérifiées).** Un workflow personnalisé est un **fichier Markdown versionné dans le dépôt**, sous `.zenflow/workflows/` : titre, section `## Configuration` (variables partagées dont `{@artifacts_path}`, résolu à l'exécution vers le worktree de la tâche), étapes `### [ ] Step: Nom`, et liaison optionnelle d'un *preset* d'agent par étape (`<!-- agent: preset-name -->`) [75]. La documentation recommande explicitement de versionner ce répertoire pour partager les processus d'équipe [75]. Types de tâches intégrés : Auto, Fix a Bug, **Spec First / Requirements First** (artefacts `requirements.md` → `spec.md` → `plan.md`, avec vérificateur IA après chaque étape) [79]. **Limite structurelle** : la grammaire d'étape est une **liste linéaire à cases à cocher** — pas de branchement conditionnel, pas de script par étape, pas de gate d'approbation porté par le langage de workflow [75][79].
+
+**Scripts et automatisations.** Les scripts ne sont **pas** des étapes de workflow mais des **hooks au niveau du dépôt**, déclarés dans `.zenflow/settings.json` : `setup_script` (création du worktree), `verification_script` (exécuté **après chaque tour d'agent** — exit 0 poursuit la tâche, exit non nul réinjecte l'erreur à l'agent pour auto-correction), `dev_server_script` [76]. Un agent peut *proposer* cette configuration (« Set up with Agent »), que l'humain relit puis fusionne ou ouvre en PR [76]. Des **automations planifiées** (workspace ou in-task, de 5 minutes à quotidien) et des déclencheurs (webhooks, événements PR, intake GitHub/Jira/Linear) complètent le dispositif, avec des templates prêts à l'emploi [78].
+
+**Exécution et modèles.** Exécution parallèle dans des worktrees isolés (`.zenflow/worktrees/{task_id}`) ; **Subagent Pipelines** (sous-processus éphémères, parallèles, multi-modèles, notamment pour la revue croisée) [77]. Orchestration multi-modèles depuis avril 2026 : modèle/*preset* par étape, revue par un modèle **différent** de celui qui a écrit le code (recommandation documentée, non contrainte d'exécution), et changement de modèle à chaud depuis le chat [77]. Fournisseurs multiples avec BYOK (OpenAI, Anthropic) [74][77].
+
+**Entreprise.** SOC 2 Type II, ISO 27001, ISO 42001 ; RBAC, SSO (Okta, Google Workspace) ; *policies* human-in-the-loop ; déploiement cloud, on-premise ou hybride ; indexation multi-dépôts [73].
+
+**Pricing (données vérifiées).** Pro **$45/mois** ($40 en annuel) — 30 000 crédits/mois, essai de 7 jours (5 000 crédits) ; Pro Plus **$95/mois** ($85) — 80 000 crédits, pool d'équipe partagé avec plafonds par utilisateur, indexation multi-dépôts, SSO et journaux d'audit ; Pro Max **$195/mois** ($175) — 180 000 crédits ; Enterprise sur devis [74]. Mécanique des crédits : **pas de report** d'un mois sur l'autre ; recharges à partir de $20, **non remboursables** ; le BYOK illimité **ne supprime pas** le coût du siège [74].
+
+**Réserves épistémiques.** L'allégation « ship complex features 4–10× faster » [73] est un **argument marketing**, non une mesure indépendante. La possibilité, pour un utilisateur, de *publier ses propres workflows* dans le *Marketplace* n'est **pas vérifiée** : le périmètre documenté du *Marketplace* (templates d'automation, agents, outils MCP) ne l'établit ni dans un sens ni dans l'autre [78][80].
+
+#### 4.5.2 Différenciation — *nebuko* vs ZenFlow
+
+**Ces deux produits se concurrencent-ils ?** Oui, mais **asymétriquement** : concurrents aux marges, substituts au cœur. ZenFlow répond à « comment acheter une plateforme d'agents qui fonctionne ? » ; *nebuko* répond à « comment posséder un processus d'agents, de bout en bout ? ». La formule de positionnement : **« ZenFlow est ce qu'on achète ; *nebuko* est ce qu'on possède. »**
+
+| Axe | ZenFlow | *nebuko* |
+|---|---|---|
+| Modèle | Produit commercial fermé (SaaS + desktop + IDE + CLI) [73][74] | Moteur open-core auto-hébergé, exécuté dans le CI [50][52] |
+| Coût | $45–195/utilisateur/mois, crédits non reportables [74] | $0 de plateforme ; clé LLM propre, vLLM local possible [52][53] |
+| Artefact de workflow | Markdown dans `.zenflow/workflows/` (liste linéaire) [75] | YAML versionné : `conditions`/routage, `human_gate` imposé par le moteur, composition de sous-workflows, étapes `script:` avec routage PASS/FAIL [81] |
+| Portabilité de l'artefact | Le fichier référence des *presets* stockés dans les réglages de l'application, hors dépôt [75][77] | Fichier auto-descriptif ; adoption zero-copy par référence épinglée (`fetch_remote_workflow(repo, ref, name)`, précédence locale) [82] |
+| Génération de workflow par un agent | Aucun mécanisme documenté d'écriture/modification d'un workflow en cours d'exécution [75][78] | `scaffold-plan` génère `tmp_impl/workflow.yaml` + skills par étape, que le moteur monte ensuite [83] |
+| Vérification | `verification_script` **après chaque tour d'agent**, avec auto-correction [76] | Revue par l'agent `@@review` (verdict LLM) ; étape `script:` possible mais non prescrite par les workflows par défaut [81] |
+| Parallélisme | Worktrees isolés, « dizaines ou centaines d'agents », subagents parallèles [73][77] | Fan-out via `splitPlan` en sous-issues trackables ; pas d'isolation de machines à l'échelle [50] |
+| Entreprise | SOC 2 Type II, ISO 27001/42001, SSO, RBAC, on-prem/hybride [73] | Pré-alpha, aucune conformité [54] |
+| Habitat | Application desktop + IDE + CLI [73] | Fils d'issue et PRs GitHub, sans nouvelle surface [50] |
+
+**Où *nebuko* gagne (écarts vérifiés).** (1) **Sémantique de flux** plus riche : routage par `conditions`, `human_gate` imposé par le moteur (frontière de sécurité), composition de sous-workflows — là où ZenFlow propose une liste à cases à cocher [75][81]. (2) **Auto-contenance de l'artefact** : un workflow ZenFlow partagé n'est pas portable seul, puisqu'il référence des *presets* définis dans les réglages de l'application, absents du dépôt [75][77] ; le YAML de *nebuko* est auto-descriptif. (3) **Partage zero-copy par référence épinglée** (`fetch_remote_workflow`, précédence locale), sans équivalent documenté côté ZenFlow [82]. (4) **Génération de workflow à l'exécution par un agent** — capacité sans contrepartie documentée chez ZenFlow [83]. (5) **Coût et confidentialité** : zéro frais de plateforme, vLLM local possible, aucune métrique [52][53]. (6) **Auditabilité par défaut** : état et métriques en commentaires, pas de couche analytique propriétaire [50].
+
+**Où ZenFlow gagne aujourd'hui.** (1) **Vérification objective continue** : le `verification_script` après chaque tour d'agent, avec réinjection de l'erreur, est à ce jour un gate vert/rouge plus rigoureux que la revue par verdict LLM de *nebuko* [76] — c'est l'idée à reprendre en priorité (§4.5.3). (2) **Exécution parallèle isolée à l'échelle** [73][77]. (3) **Conformité et distribution entreprise** (SOC 2, ISO, SSO, RBAC, hybride) [73]. (4) **Amplitude des intégrations** (100+ serveurs MCP, intake GitHub/Jira/Linear) et **maturité produit livrée** [73][78].
+
+**Lecture stratégique.** Il ne s'agit pas de « battre » une plateforme financée sur son terrain (conformité, support, infrastructure) mais de tenir le créneau qu'elle ne sert pas : **ownership du processus, habitat GitHub, coût marginal**. La présence de ZenFlow, au prix de $45–195/siège, **valide la demande** et fixe un **ancre de prix** que le cœur ouvert peut sous-coter ; elle invalide en revanche l'hypothèse d'un segment « non occupé » (§1). La fenêtre de tir s'en trouve resserrée d'autant (§8).
+
+#### 4.5.3 Idées retenues de ZenFlow (et écarts assumés)
+
+Idées classées par retour sur investissement, avec périmètre honnête :
+
+1. **Gate de vérification vert/rouge explicite** — une étape `script:` exécutant la suite de tests avec `conditions: fail → dev` et un nombre de reprises plafonné (au-delà, escalade humaine). ZenFlow en livre déjà l'équivalent continu [76] ; le mécanisme existe côté *nebuko* (étape `script:` + routage) mais n'est pas prescrit par les workflows par défaut [81]. **Priorité 1.**
+2. **Revue cross-provider imposée** — contraindre l'agent `@@review` à un modèle/fournisseur différent de celui de `@@dev`, éventuellement doublé d'un auditeur conformité/spécification. ZenFlow ne l'expose que comme **recommandation** [77] ; la configuration par agent de *nebuko* permet d'en faire un vrai gate [53].
+3. **Workflows planifiés / événementiels** — déclencheurs `schedule` et webhooks GitHub Actions (balayage nocturne : revue de PRs, triage de bugs, grooming de backlog), en écho aux automations ZenFlow [78].
+4. **Analytique de dépôt agrégée** — agréger à la demande les métriques `agent-metrics` déjà émises par exécution, en alternative légère au tableau de bord ZenFlow [78].
+5. **Pattern « Set up with Agent »** — un agent propose `agent-config.yaml` ou un squelette de workflow, que l'humain relit en PR [76] ; cohérent avec la distribution zero-copy de *nebuko* [52].
+6. **Contexte multi-dépôts pour `@@ctx`** — configuration de dépôts liés, en lecture seule ; sans reprendre l'affordance SaaS d'indexation quotidienne de ZenFlow [73].
+
+**Écarts assumés (non repris).** La **métrique en crédits** (report interdit, recharges non remboursables) est refusée : la transparence par token est préférable à *nebuko* [74]. Le **lock-in de plateforme**, le **code fermé** et la **surface desktop/IDE** restent hors périmètre : l'habitat de *nebuko* est le fil d'issue [50].
 
 ---
 
@@ -297,7 +358,7 @@ Deux axes structurent l'espace concurrentiel : **le périmètre automatisé** (u
                           Agent unique / sans délégation
 ```
 
-À la date de cette étude, le quadrant supérieur-droit (processus complet × multi-agents) est **vide d'acteurs identifiés** — c'est le positionnement de *nebuko* [50], et le risque que des entrants déjà financés y descendent (section 8).
+À la date de cette étude, le quadrant supérieur-droit (processus complet × multi-agents) est **vide d'acteurs identifiés** — c'est le positionnement de *nebuko* [50], et le risque que des entrants déjà financés y descendent (section 8). **Mise à jour du 2026-09-20** : ce quadrant n'est plus vide — ZenFlow (section 4.5) y est entré sous forme de **plateforme managée commerciale** ; la position de *nebuko* s'y défend désormais par l'*ownership* (moteur open-source, habitat GitHub, coût marginal), non par l'absence d'occupant.
 
 ### 5.3 Ce que les concurrents font / ne font pas
 
@@ -396,7 +457,7 @@ Analyse volontairement non flatteuse — un document transmissible doit pouvoir 
 ### Opportunités
 
 - **Crise de la revue documentée** (section 3.3) : le problème est urgent, chiffré, et ressenti par les équipes qui adoptent l'IA [30][34].
-- **Segment vierge** : le quadrant « processus complet × multi-agents » n'a pas d'occupant identifié ; le capital investi ailleurs (review unitaire) valide le thème sans occuper cet espace [1][4][8][11].
+- **Segment vierge** : le quadrant « processus complet × multi-agents » n'a pas d'occupant identifié ; le capital investi ailleurs (review unitaire) valide le thème sans occuper cet espace [1][4][8][11]. **Requalifié au 2026-09-20** : le quadrant est désormais occupé par ZenFlow (section 4.5) ; l'opportunité n'est plus « être seul » mais « tenir le créneau open-source, self-hosted et GitHub-native que la plateforme managée ne sert pas ».
 - **Écosystème OpenHands** : plateforme ouverte de coding agents avec offre cloud, sur laquelle le produit s'appuie — partenariat/natural fit possible [44][45][46].
 - **Effet réseau du format** : chaque workflow forké par une équipe externe renforce le contrat public v1 et alimente la future marketplace — le produit devient meilleur à chaque adoption [48][50].
 - **Diversité des modèles IA** : la guerre des prix des LLM [53] abaisse le coût marginal du produit plus vite que ses concurrents purement SaaS, pour qui l'inférence est une ligne de coût fixe.
@@ -432,7 +493,7 @@ Actions concrètes, classées par effort croissant. Les points (a)–(e) visent 
 
 ## 10. Index des sources
 
-Toutes les sources web ont été collectées et vérifiées le **2026-08-28** via recherche web (SearXNG). Types : **P** = source primaire (éditeur officiel, étude, annonce de l'acteur concerné) ; **S** = source secondaire (presse, blog citant une source primaire). Les sources secondaires portant des chiffres clés sont marquées **(à recouper)**.
+Toutes les sources web ont été collectées et vérifiées le **2026-08-28** via recherche web (SearXNG). Types : **P** = source primaire (éditeur officiel, étude, annonce de l'acteur concerné) ; **S** = source secondaire (presse, blog citant une source primaire). Les sources secondaires portant des chiffres clés sont marquées **(à recouper)**. Les sections 10.6 et 10.7 portent leurs propres dates de vérification (respectivement **2026-10-05** pour Dify et **2026-09-20** pour ZenFlow).
 
 ### 10.1 Concurrence & financements
 
@@ -525,6 +586,23 @@ Analyse interne consolidée (issues #227, #291, #318, #319 ; PR #485 — cf. htt
 - **[70]** P — Dify : documentation du Human Input node — https://docs.dify.ai/en/cloud/use-dify/nodes/human-input (delivery method, form content, boutons d'action avec `__action_id` exposé en aval, stratégie de timeout)
 - **[71]** P — Dify v1.6.0 : support MCP bidirectionnel natif (blog) — https://dify.ai/blog/v1-6-0-built-in-two-way-mcp-support (utiliser n'importe quel serveur MCP comme outil, ou exposer les agents/workflows Dify comme serveurs MCP)
 - **[72]** P — Dify : blog « Agent Node » — https://dify.ai/blog/dify-agent-node-introduction-when-workflows-learn-autonomous-reasoning (l'Agent Node confie certaines étapes d'un workflow au LLM pour décision autonome ; *Agent Strategies* extensibles — CoT, ToT, GoT…) — complété par les métadonnées API GitHub du dépôt relevées le 2026-10-05 [56]
+
+### 10.7 ZenFlow (section 4.5)
+
+Sources primaires de l'éditeur Zencoder, consultées et vérifiées le **2026-09-20**, complétées par des références internes de ce dépôt.
+
+- **[73]** P — ZenFlow : page produit officielle — https://zencoder.ai/zenflow (positionnement « AI-first engineering teams », accroche « AI-first Engineering without AI slop », exécution parallèle, vérification intégrée, famille produit Zenflow Code/Work/IDE/Agents/CLI/Marketplace, FAQ, offres entreprise — SOC 2 Type II, ISO 27001, ISO 42001, RBAC, SSO, human-in-the-loop, cloud/on-prem/hybride, indexation multi-dépôts) — l'allégation « 4–10× faster » est un argument marketing, non une mesure indépendante
+- **[74]** P — Zencoder : page pricing officielle — https://zencoder.ai/pricing (Pro $45/mois, annuel $40 — 30 000 crédits, essai 7 jours / 5 000 crédits ; Pro Plus $95/mois, annuel $85 — 80 000 crédits, pool d'équipe partagé, indexation multi-dépôts, SSO et audit ; Pro Max $195/mois, annuel $175 — 180 000 crédits ; Enterprise sur devis ; crédits non reportables ; recharges à partir de $20 non remboursables ; BYOK illimité mais coût du siège maintenu)
+- **[75]** P — ZenFlow : documentation « Custom Workflows » — https://docs.zencoder.ai/zenflow/workflows/custom (workflow = fichier Markdown dans `.zenflow/workflows/` : titre, `## Configuration` avec `{@artifacts_path}`, étapes `### [ ] Step: Nom`, liaison `<!-- agent: preset-name -->` ; recommandation explicite de versionner le répertoire ; ni branchement conditionnel ni script par étape)
+- **[76]** P — ZenFlow : documentation « Repository Configuration » — https://docs.zencoder.ai/zenflow/project-configuration (`.zenflow/settings.json` : `setup_script`, `verification_script` exécuté après chaque tour d'agent avec réinjection de l'erreur, `dev_server_script`, copie de fichiers ; « Set up with Agent » — configuration proposée par un agent, puis relue et mergée ou mise en PR par l'humain)
+- **[77]** P — ZenFlow : documentation « Multi-Agent Orchestration » et « Subagent Pipelines » — https://docs.zencoder.ai/zenflow/multi-agent-orchestration (modèle/*preset* par étape ; revue par un modèle différent = recommandation, non contrainte ; *runtime model switching*) et https://docs.zencoder.ai/zenflow/orchestration/subagent-pipelines (subagents éphémères et parallèles, revue croisée multi-modèles)
+- **[78]** P — ZenFlow : documentation « Scheduled Automations » et changelog officiel — https://docs.zencoder.ai/zenflow/scheduled-automation (automations workspace et in-task, de 5 minutes à quotidien, templates, cas d'usage) ; https://docs.zencoder.ai/zenflow-changelog/ (cross-model workflows en avril 2026 ; automations planifiées, task intake GitHub/Jira/Linear et serveur MCP intégré en février 2026)
+- **[79]** P — ZenFlow : documentation « Requirements First » et guide Spec-Driven Development — https://docs.zencoder.ai/zenflow/workflows/requirements-first et https://docs.zencoder.ai/user-guides/guides/spec-driven-development (artefacts `requirements.md` → `spec.md` → `plan.md`, vérificateur IA après chaque étape)
+- **[80]** P — Zencoder *Marketplace* — https://zencoder.ai/marketplace (page partiellement rendue côté client : catégories tools/trigger/impact confirmées, catalogue non vérifiable statiquement ; publication de workflows par les utilisateurs non établie dans un sens ou dans l'autre)
+- **[81]** Interne — `docs/workflows.md` de ce dépôt : étapes `script:` (contrat d'exécution `RUN_SCRIPT`/`SCRIPT_PATH`, sémantique PASS/FAIL par code de sortie, routage par `conditions`), `human_gate` comme frontière de sécurité imposée par le moteur, sous-workflows et descente vers la feuille exécutable
+- **[82]** Interne — `docs/features.md` de ce dépôt : workflows distants zero-copy (`fetch_remote_workflow(repo, ref, name)`, cache local, précédence du workflow local sur le distant)
+- **[83]** Interne — `defaults/skills/scaffold-plan.md` et `defaults/workflows/plan-orchestration.yaml` de ce dépôt : génération à l'exécution d'un sous-workflow par étape (`tmp_impl/workflow.yaml` + un skill par étape) et montage par le moteur (`workflow: tmp_impl/workflow.yaml`)
+
 
 ---
 
