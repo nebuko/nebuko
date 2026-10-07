@@ -95,14 +95,36 @@ def _compute_tokens_per_tool(combined_metrics):
     tokens_per_tool = {}
     for usage in combined_metrics.token_usages:
         tool_name = getattr(usage, 'tool_name', 'unknown') or 'unknown'
+        # SDK 1.49.x TokenUsage exposes cache_read_tokens; fall back to the
+        # legacy cache_hit_tokens name for older usage objects.
+        cache_read = getattr(usage, 'cache_read_tokens', 0)
+        if not cache_read:
+            cache_read = getattr(usage, 'cache_hit_tokens', 0)
         tokens_per_tool[tool_name] = {
             'input': getattr(usage, 'prompt_tokens', 0) or 0,
             'output': getattr(usage, 'completion_tokens', 0) or 0,
-            'cache_hit': getattr(usage, 'cache_hit_tokens', 0) or 0,
+            'cache_hit': cache_read or 0,
             'reasoning': getattr(usage, 'reasoning_tokens', 0) or 0,
         }
 
     return tokens_per_tool
+
+
+def _sum_cache_hit_tokens(tokens_per_tool):
+    """
+    Sum the per-tool cache_hit values into a run-level total.
+
+    Args:
+        tokens_per_tool: Mapping of tool_name to token usage dict
+
+    Returns:
+        int: Total cache-read (prefix-hit) tokens across all tools
+    """
+    total = 0
+    for values in tokens_per_tool.values():
+        if isinstance(values, dict):
+            total += values.get('cache_hit', 0) or 0
+    return total
 
 
 def collect_llm_metrics(conversation, agent_cfg=None):
@@ -185,6 +207,7 @@ def collect_llm_metrics(conversation, agent_cfg=None):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             max_context_window=max_context_window,
+            cache_read_tokens=_sum_cache_hit_tokens(tokens_per_tool),
             cost=cost,
             complexity=os.environ.get("COMPLEXITY", "N/A"),
             tool_call_latency_ms=tool_call_latency_ms,

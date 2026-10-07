@@ -26,6 +26,7 @@ from summarize_metrics import (
     AGENT_DISPLAY_NAMES,
     _merge_per_tool_dict,
     _format_tool_dict,
+    _sum_cache_read_tokens,
     parse_iso_datetime,
     parse_agent_role,
     build_comment_record,
@@ -242,7 +243,8 @@ class TestMetricsSchema(unittest.TestCase):
         # Verify dict has all expected keys
         expected_keys = {
             "run_id", "model_name", "agent_role", "input_tokens", "output_tokens",
-            "max_context_window", "cost", "complexity", "tool_call_latency_ms", "agent_runtime_ms",
+            "max_context_window", "cache_read_tokens", "cost", "complexity",
+            "tool_call_latency_ms", "agent_runtime_ms",
             "agent_runtimes_per_call_ms", "nb_tool_calls", "tool_call_error_rate",
             "start_time", "end_time", "tool_calls_per_tool", "errors_per_tool",
             "tokens_per_tool", "review_fix_requests", "dispatch_recall_count",
@@ -1085,6 +1087,77 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
         result = generate_model_summary_table(agg)
         result_str = "\n".join(result)
         self.assertIn("| 0 ", result_str)
+
+
+class TestSumCacheReadTokens(unittest.TestCase):
+    """Test _sum_cache_read_tokens helper."""
+
+    def test_sums_cache_hit_across_tools(self):
+        tokens_per_tool = {
+            "terminal": {"input": 1000, "output": 100, "cache_hit": 400, "reasoning": 0},
+            "file_editor": {"input": 500, "output": 50, "cache_hit": 100, "reasoning": 0},
+        }
+        self.assertEqual(_sum_cache_read_tokens(tokens_per_tool), 500)
+
+    def test_single_tool(self):
+        tokens_per_tool = {
+            "terminal": {"input": 1000, "output": 100, "cache_hit": 42, "reasoning": 0},
+        }
+        self.assertEqual(_sum_cache_read_tokens(tokens_per_tool), 42)
+
+    def test_empty_dict(self):
+        self.assertEqual(_sum_cache_read_tokens({}), 0)
+
+    def test_none_returns_zero(self):
+        self.assertEqual(_sum_cache_read_tokens(None), 0)
+
+    def test_missing_cache_hit_defaults_to_zero(self):
+        tokens_per_tool = {"terminal": {"input": 1000, "output": 100}}
+        self.assertEqual(_sum_cache_read_tokens(tokens_per_tool), 0)
+
+    def test_ignores_non_dict_values(self):
+        tokens_per_tool = {"terminal": 5, "file_editor": {"cache_hit": 7}}
+        self.assertEqual(_sum_cache_read_tokens(tokens_per_tool), 7)
+
+
+class TestAggregateCacheReadTokens(unittest.TestCase):
+    """Test total_cache_read_tokens propagation through aggregation."""
+
+    def _m(self, model, agent, tokens_per_tool):
+        return Metrics(
+            run_id="r", model_name=model, agent_role=agent,
+            tokens_per_tool=tokens_per_tool,
+        )
+
+    def test_aggregate_by_model_sums_cache_read_tokens(self):
+        metrics = [
+            self._m("m1", "dev", {"terminal": {"cache_hit": 42}}),
+            self._m("m1", "dev", {"terminal": {"cache_hit": 8}}),
+        ]
+        agg = aggregate_by_model(metrics)
+        self.assertEqual(agg["m1"]["total_cache_read_tokens"], 50)
+
+    def test_aggregate_by_agent_sums_cache_read_tokens(self):
+        metrics = [
+            self._m("m1", "dev", {"terminal": {"cache_hit": 7}}),
+            self._m("m2", "dev", {"file_editor": {"cache_hit": 3}}),
+        ]
+        agg = aggregate_by_agent(metrics)
+        self.assertEqual(agg["dev"]["total_cache_read_tokens"], 10)
+
+    def test_aggregate_empty_run_defaults_to_zero(self):
+        metrics = [self._m("m1", "dev", {})]
+        agg = aggregate_by_model(metrics)
+        self.assertEqual(agg["m1"]["total_cache_read_tokens"], 0)
+
+    def test_aggregate_legacy_dict_runs(self):
+        legacy = {
+            "model_name": "m1",
+            "agent_role": "dev",
+            "tokens_per_tool": {"terminal": {"cache_hit": 15}},
+        }
+        agg = aggregate_by_model([legacy])
+        self.assertEqual(agg["m1"]["total_cache_read_tokens"], 15)
 
 
 class TestMergePerToolDict(unittest.TestCase):

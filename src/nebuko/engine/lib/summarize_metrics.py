@@ -148,6 +148,25 @@ def _merge_per_tool_dict(base, override):
     return merged
 
 
+def _sum_cache_read_tokens(tokens_per_tool):
+    """
+    Sum the per-tool cache_hit values into a run-level cache_read_tokens total.
+
+    Args:
+        tokens_per_tool: Per-tool token usage mapping (may be None)
+
+    Returns:
+        int: Total cache-read (prefix-hit) tokens across all tools
+    """
+    if not tokens_per_tool:
+        return 0
+    total = 0
+    for values in tokens_per_tool.values():
+        if isinstance(values, dict):
+            total += values.get('cache_hit', 0) or 0
+    return total
+
+
 def _format_tool_dict(tool_dict):
     """
     Format a per-tool dict for display.
@@ -178,6 +197,7 @@ def aggregate_by_model(all_metrics):
         "tool_calls_sum": 0,
         "error_rate_sum": 0.0,
         "review_fix_requests_sum": 0,
+        "total_cache_read_tokens": 0,
         "tool_calls_per_tool": {},
         "errors_per_tool": {},
         "tokens_per_tool": {},
@@ -226,6 +246,8 @@ def aggregate_by_model(all_metrics):
         agg["tool_calls_sum"] += tool_calls
         agg["error_rate_sum"] += error_rate
         agg["review_fix_requests_sum"] += fix_requests
+        # Run-level cache-read total: sum of per-tool cache_hit values
+        agg["total_cache_read_tokens"] += _sum_cache_read_tokens(tokens_per_tool)
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
             agg["tool_calls_per_tool"], tool_calls_per_tool
@@ -265,6 +287,7 @@ def aggregate_by_agent(all_metrics):
         "tool_calls_sum": 0,
         "error_rate_sum": 0.0,
         "review_fix_requests_sum": 0,
+        "total_cache_read_tokens": 0,
         "tool_calls_per_tool": {},
         "errors_per_tool": {},
         "tokens_per_tool": {},
@@ -313,6 +336,8 @@ def aggregate_by_agent(all_metrics):
         agg["tool_calls_sum"] += tool_calls
         agg["error_rate_sum"] += error_rate
         agg["review_fix_requests_sum"] += fix_requests
+        # Run-level cache-read total: sum of per-tool cache_hit values
+        agg["total_cache_read_tokens"] += _sum_cache_read_tokens(tokens_per_tool)
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
             agg["tool_calls_per_tool"], tool_calls_per_tool

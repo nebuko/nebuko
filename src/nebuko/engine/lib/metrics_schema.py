@@ -26,6 +26,7 @@ class Metrics:
         input_tokens: Number of input/prompt tokens consumed.
         output_tokens: Number of output/completion tokens generated.
         max_context_window: Peak context window observed during the run (used for KV cache estimation).
+        cache_read_tokens: Aggregate cached (prefix-hit) input tokens for the run.
         cost: Total LLM cost for the run in USD, as reported by the SDK
             (0.0 when the model has no pricing configured).
         complexity: Task complexity level (e.g. "medium", "high").
@@ -55,6 +56,7 @@ class Metrics:
     input_tokens: int = 0
     output_tokens: int = 0
     max_context_window: int = 0
+    cache_read_tokens: int = 0
     cost: float = 0.0
     complexity: str = "N/A"
     tool_call_latency_ms: float = 0.0
