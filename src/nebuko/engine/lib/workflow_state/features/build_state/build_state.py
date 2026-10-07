@@ -157,6 +157,11 @@ def build_state(
     # the same refs are recorded on the entry and the state so
     # history[-1].position == state.position.
     position_refs = _position_refs(position)
+    # Metrics for THIS step (issue #792): each entry carries its own record and
+    # ``history[-1].metrics`` is the single metrics authority.
+    entry_metrics = (
+        StateMetrics.from_full_metrics_dict(metrics_dict) if metrics_dict else None
+    )
     entry = HistoryEntry(
         step=step,
         agent=agent,
@@ -168,6 +173,7 @@ def build_state(
         result=result,
         position=position_refs,
         dispatch=dispatch,
+        metrics=entry_metrics,
     )
     new_history = base_history + [entry]
 
@@ -176,11 +182,6 @@ def build_state(
     for cid in comment_ids or []:
         if pin and cid not in new_pinned:
             new_pinned.append(cid)
-
-    # Build metrics
-    new_metrics = None
-    if metrics_dict:
-        new_metrics = StateMetrics.from_full_metrics_dict(metrics_dict)
 
     # Merge context updates
     new_context = dict(base_context)
@@ -255,7 +256,6 @@ def build_state(
         phase=phase,
         history=new_history,
         pinned_comment_ids=new_pinned,
-        metrics=new_metrics,
         current_context=new_context,
         parent_workflow=new_parent_wf,
         parent_workflow_step=new_parent_step,

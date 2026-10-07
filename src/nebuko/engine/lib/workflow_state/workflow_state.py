@@ -5,7 +5,6 @@ from config import StepRef, WorkflowPosition
 
 # Import domain entities first (no circular dependency)
 from .sub_domains.history_entry.history_entry import HistoryEntry
-from .sub_domains.state_metrics.state_metrics import StateMetrics
 from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.dispatch.dispatch import Dispatch
@@ -91,9 +90,10 @@ class WorkflowState(BaseModel):
         agent: Agent role executing the current step.
         phase: High-level phase (e.g., "analysis", "planning", "execution").
         history: Summarized records of all prior steps in this workflow run.
+            Each entry carries the metrics of its own step (``history[-1].metrics``
+            is the single metrics authority; issue #792).
         pinned_comment_ids: GitHub comment IDs whose full content should be
             fetched at runtime for high-fidelity context.
-        metrics: Metrics from the most recent agent invocation.
         current_context: Free-form context dict for shared data between agents
             (pending tasks, constraints, decisions, etc.).
         parent_workflow: Parent workflow name if currently in a sub-workflow.
@@ -128,7 +128,6 @@ class WorkflowState(BaseModel):
 
     history: list[HistoryEntry] = Field(default_factory=list)
     pinned_comment_ids: list[int] = Field(default_factory=list)
-    metrics: Optional[StateMetrics] = None
     current_context: dict[str, Any] = Field(default_factory=dict)
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None

@@ -1,9 +1,8 @@
 """Prepare github_comment.md from final_message.txt.
 
 Reads the agent's final message, strips internal XML/HTML tags
-(AGENT_RUN_CONFIG sentinels + legacy <agentRunConfig>, splitPlan,
-agent-metrics), and writes the cleaned
-content to github_comment.md for the peter-evans/comment action.
+(AGENT_RUN_CONFIG sentinels + legacy <agentRunConfig>, splitPlan), and writes
+the cleaned content to github_comment.md for the peter-evans/comment action.
 
 All regex operations use re.DOTALL for robust multi-line matching.
 No bash intermediate — Python reads and writes files directly.
@@ -36,9 +35,6 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
 
 # ── Regex patterns (all DOTALL for multi-line safety) ─────────────
 
-# agent-metrics HTML comment — may span multiple lines
-_METRICS_COMMENT = re.compile(r"<!--\s*agent-metrics:.*?-->", re.DOTALL)
-
 # Legacy <agentRunConfig> XML block — comment hygiene ONLY.
 # The legacy form is no longer a dispatch-parsing path (issue #450);
 # this strip prevents stale raw XML from leaking into rendered comments.
@@ -52,10 +48,6 @@ _CONSOLE_MARKER = "Message from Agent " + "\u2500" * 63
 
 # @@agent trigger tokens (e.g. @@genius, @@dev)
 _AGENT_TRIGGER = re.compile(r"(?<![\w])@@([A-Za-z0-9_-]+)")
-
-# dispatch_recall_count inside the agent-metrics JSON payload (issue #558):
-# surfaces the post-recall finish-fallback case as a WARNING in CI logs.
-_RECALL_COUNT_IN_METRICS = re.compile(r'"dispatch_recall_count"\s*:\s*(\d+)')
 
 MAX_COMMENT_LENGTH = 60000
 
@@ -143,52 +135,44 @@ def _read_latest_answer(path: str = LATEST_ANSWER_FILE) -> str:
         return ""
 
 
-def _warn_post_recall_fallback(metrics_comment: str) -> None:
+def _warn_post_recall_fallback(recall_count: int) -> None:
     """Surface the post-recall finish-fallback case in CI logs (issue #558).
 
     Fires when the posted body came from the finish message although the
     run went through a dispatch-recall pass — a signature of the
-    clobber/fallback family of bugs. Reads the count from the
-    agent-metrics payload already attached to the body; adds no new
-    plumbing channel.
+    clobber/fallback family of bugs. The count comes from the run's
+    workflow state (``history[-1].metrics.dispatch_recall_count``).
     """
-    if not metrics_comment:
-        return
-    match = _RECALL_COUNT_IN_METRICS.search(metrics_comment)
-    if match and int(match.group(1)) > 0:
+    if recall_count > 0:
         print(
             "Warning: finish-message fallback used after dispatch recall "
-            f"(dispatch_recall_count={match.group(1)}) — no text answer was "
+            f"(dispatch_recall_count={recall_count}) — no text answer was "
             "captured; check the agent logs for a capture regression",
             flush=True,
         )
 
 
+def _posted_recall_count(state: WorkflowState | None) -> int:
+    """``dispatch_recall_count`` of the run's latest history entry, if any."""
+    if state is None or not state.history:
+        return 0
+    metrics = state.history[-1].metrics
+    return metrics.dispatch_recall_count if metrics is not None else 0
+
+
 # ── Core cleaning functions ───────────────────────────────────────
 
 
-def extract_metrics(content: str) -> str:
-    """Extract the agent-metrics HTML comment from content, if present.
-
-    Returns the full <!-- agent-metrics: ... --> string, or empty string.
-    """
-    match = _METRICS_COMMENT.search(content)
-    return match.group(0) if match else ""
-
-
-def clean_message(raw: str, metrics_comment: str) -> str:
+def clean_message(raw: str) -> str:
     """Strip internal XML/HTML tags from an agent message.
 
-    Removes AGENT_RUN_CONFIG sentinels (plus legacy <agentRunConfig> blocks),
-    <splitPlan>, and <!-- agent-metrics --> blocks.
-    The metrics comment is passed separately so it can be re-appended
-    at the end (preserving its position from the original workflow logic).
+    Removes AGENT_RUN_CONFIG sentinels (plus legacy <agentRunConfig> blocks)
+    and <splitPlan> blocks.
 
     All regex operations use re.DOTALL to handle multi-line content safely.
 
     Args:
         raw: The raw agent final message text.
-        metrics_comment: The extracted metrics comment (preserved separately).
 
     Returns:
         Cleaned message text without any internal tags.
@@ -204,15 +188,8 @@ def clean_message(raw: str, metrics_comment: str) -> str:
     # Strip <splitPlan> blocks (already replaced with summary upstream).
     content = _SPLIT_PLAN.sub("", content)
 
-    # Strip <!-- agent-metrics --> comments (will be re-added at end).
-    content = _METRICS_COMMENT.sub("", content)
-
     # Clean up residual blank lines from removals (collapse 3+ newlines to 2).
     content = re.sub(r"\n{3,}", "\n\n", content).strip()
-
-    # Re-add metrics comment at the end if one was preserved.
-    if metrics_comment:
-        content += "\n\n" + metrics_comment
 
     return content
 
@@ -220,14 +197,11 @@ def clean_message(raw: str, metrics_comment: str) -> str:
 # ── Fallback: parse console.log ───────────────────────────────────
 
 
-def extract_from_console_log(metrics_comment: str) -> str:
+def extract_from_console_log() -> str:
     """Parse console.log to extract agent message as a fallback.
 
     File-driven wrapper around :func:`console_log_fallback` (the shared body);
     kept as the legacy entry point for callers that read the working directory.
-
-    Args:
-        metrics_comment: Preserved metrics comment to append if available.
 
     Returns:
         Extracted message text from console.log.
@@ -238,10 +212,10 @@ def extract_from_console_log(metrics_comment: str) -> str:
     with open("console.log", "r", encoding="utf-8") as f:
         log_content = f.read()
 
-    return console_log_fallback(log_content, metrics_comment)
+    return console_log_fallback(log_content)
 
 
-def console_log_fallback(log_content: str, metrics_comment: str) -> str:
+def console_log_fallback(log_content: str) -> str:
     """Extract an agent message out of console output.
 
     Looks for "Message from Agent" blocks in the log output.
@@ -249,7 +223,6 @@ def console_log_fallback(log_content: str, metrics_comment: str) -> str:
 
     Args:
         log_content: Raw console output.
-        metrics_comment: Preserved metrics comment to append if available.
 
     Returns:
         Extracted message text from the console output.
@@ -276,9 +249,6 @@ def console_log_fallback(log_content: str, metrics_comment: str) -> str:
 
     # Truncate at paragraph boundary if needed
     last_message = _truncate_at_boundary(last_message)
-
-    if metrics_comment:
-        last_message += "\n\n" + metrics_comment
 
     return last_message
 
@@ -380,10 +350,6 @@ _NO_FINAL_MESSAGE = (
 )
 
 
-def _with_metrics(text: str, metrics_comment: str) -> str:
-    return f"{text}\n\n{metrics_comment}" if metrics_comment else text
-
-
 # ── Answer-comment header (issue #736) ───────────────────────────
 #
 # The run's WorkflowState belongs on the agent's *answer* comment: it is the
@@ -457,6 +423,7 @@ def _select_fallback_body(
     has_console_log: bool | None = None,
     trigger_author: str = "",
     role_name: str | None = None,
+    recall_count: int = 0,
 ) -> str:
     """The four-path publish fallback chain over explicit inputs.
 
@@ -474,6 +441,8 @@ def _select_fallback_body(
             content. ``None`` derives it from ``console_log``.
         trigger_author: Author pinged on the crash paths (``TRIGGER_AUTHOR``).
         role_name: Role for the ctx collapse; ``None`` reads the environment.
+        recall_count: The run's ``dispatch_recall_count`` (from the workflow
+            state); flags post-recall finish-fallbacks in CI logs (issue #558).
 
     Returns:
         The cleaned body, without the answer-comment header.
@@ -484,10 +453,10 @@ def _select_fallback_body(
         has_console_log = bool(console_log)
     author_ping = f"@{trigger_author} " if trigger_author else ""
 
-    def console_fallback(metrics_comment: str) -> str:
+    def console_fallback() -> str:
         if not has_console_log:
             return ""
-        return console_log_fallback(console_log, metrics_comment)
+        return console_log_fallback(console_log)
 
     def finalized(cleaned: str) -> str:
         return _truncate_at_boundary(_apply_ctx_collapse(cleaned, role_name))
@@ -500,11 +469,10 @@ def _select_fallback_body(
         if raw.startswith("__NO_FINAL_MESSAGE__"):
             print("Warning: No final message from agent (sentinel detected), falling back to console.log",
                   flush=True)
-            metrics_comment = extract_metrics(raw)
-            fallback = console_fallback(metrics_comment)
+            fallback = console_fallback()
             if fallback:
                 return fallback
-            return _with_metrics(author_ping + _CRASH_MESSAGE, metrics_comment)
+            return author_ping + _CRASH_MESSAGE
 
         # ── Latest-answer ETL (issue #522) ───────────────────────
         # The agent's latest full answer is the preferred posted body; the
@@ -515,38 +483,34 @@ def _select_fallback_body(
         if latest_raw.strip():
             body_raw = select_posted_body(latest_raw, raw)
             if body_raw.strip():
-                body_metrics = extract_metrics(body_raw) or extract_metrics(raw)
-                cleaned = clean_message(body_raw, "")
+                cleaned = clean_message(body_raw)
                 if cleaned:
                     merged_sentinel = merge_handoff_sentinels(latest_raw, raw)
                     if merged_sentinel:
                         cleaned += "\n\n" + merged_sentinel
-                    if body_metrics:
-                        cleaned += "\n\n" + body_metrics
                     print(f"Using latest answer ({len(cleaned)} characters)", flush=True)
                     return finalized(cleaned)
 
-        # Normal path: extract metrics, clean, write
-        metrics_comment = extract_metrics(raw)
-        cleaned = clean_message(raw, metrics_comment)
+        # Normal path: clean, write
+        cleaned = clean_message(raw)
 
         if cleaned:
             # Latest-answer artifact empty/missing → finish message is the
             # posted body: flag post-recall fallbacks for visibility (#558).
-            _warn_post_recall_fallback(metrics_comment)
+            _warn_post_recall_fallback(recall_count)
             print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
             return finalized(cleaned)
 
         # Content was empty after cleaning — fall through to console.log
         print("Warning: final_message.txt has no meaningful content after cleaning, "
               "falling back to console.log", flush=True)
-        fallback = console_fallback(metrics_comment)
+        fallback = console_fallback()
         if fallback:
             return fallback
-        return _with_metrics(author_ping + _CRASH_MESSAGE, metrics_comment)
+        return author_ping + _CRASH_MESSAGE
 
     # ── Path B: console.log only (final message missing/empty) ──
-    fallback = console_fallback("")
+    fallback = console_fallback()
     if fallback:
         return fallback
 
@@ -600,6 +564,7 @@ def build_comment_body(
         has_console_log=has_console_log,
         trigger_author=trigger_author,
         role_name=role_name,
+        recall_count=_posted_recall_count(state),
     )
 
 

@@ -130,10 +130,10 @@ class TestStripLenientSentinels:
         text = "Clean final message."
         assert strip_agent_run_config(text) == text
 
-    def test_preserves_agent_metrics(self):
+    def test_preserves_non_sentinel_html_comments(self):
         text = (
             "Answer\n"
-            "<!-- agent-metrics: {\"run_id\": \"abc\"} -->"
+            "<!-- bot-workflow-terminal -->"
         )
         assert strip_agent_run_config(text) == text
 
@@ -291,14 +291,14 @@ class TestStripAgentRunConfig:
         assert result == "Analysis complete with details."
         assert "AGENT_RUN_CONFIG" not in result
 
-    def test_preserves_agent_metrics(self):
+    def test_preserves_non_sentinel_html_comments(self):
         msg = (
             "Content\n"
-            "<!-- agent-metrics: {} -->\n"
+            "<!-- bot-workflow-terminal -->\n"
             '<!-- AGENT_RUN_CONFIG {"status": "advance"} -->'
         )
         result = strip_agent_run_config(msg)
-        assert "agent-metrics" in result
+        assert "bot-workflow-terminal" in result
         assert "AGENT_RUN_CONFIG" not in result
 
 

@@ -135,8 +135,9 @@ class TestBuildState(unittest.TestCase):
             agent="genius",
             metrics_dict=metrics_dict,
         )
-        self.assertIsNotNone(state.metrics)
-        self.assertEqual(state.metrics.input_tokens, 5000)
+        # Metrics live on the history entry, not at the root (issue #792).
+        self.assertIsNotNone(state.history[-1].metrics)
+        self.assertEqual(state.history[-1].metrics.input_tokens, 5000)
 
     def test_resolution_included(self):
         from workflow_state import StepResolution
