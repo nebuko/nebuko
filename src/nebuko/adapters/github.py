@@ -121,6 +121,23 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return int(result["number"])
 
     # @stub-protected
+    def delete_issue_comments(self, issue: str, from_comment: str = "") -> int:
+        client = self._client_handle()
+        repo = self._require_repo()
+        comments = client.get_issue_comments(repo, int(issue))
+        boundary = int(from_comment) if str(from_comment).strip().isdigit() else None
+        deleted = 0
+        for comment in comments:
+            comment_id = comment.get("id")
+            if comment_id is None:
+                continue
+            if boundary is not None and int(comment_id) < boundary:
+                continue
+            if client.delete_comment(repo, int(comment_id)):
+                deleted += 1
+        return deleted
+
+    # @stub-protected
     def artifact_dir(self) -> Path:
         from pathlib import Path as _Path
 

@@ -113,6 +113,20 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return index
 
     # @stub-protected
+    def delete_issue_comments(self, issue: str, from_comment: str = "") -> int:
+        """Local equivalent of a batch comment deletion.
+
+        The local journal is the issue thread, but its entries carry no numeric
+        id, so the ``from_comment`` boundary cannot be resolved and the whole
+        journal is cleared (the ``delete comments``-without-``--from`` behaviour).
+        """
+        entries = self._read_journal()
+        if not entries:
+            return 0
+        (self._run_dir / JOURNAL_FILE).write_text("", encoding="utf-8")
+        return len(entries)
+
+    # @stub-protected
     def artifact_dir(self) -> Path:
         """The run directory doubles as the local host's artifact staging area."""
         return self._run_dir

@@ -6,9 +6,11 @@ reused ``workflow_state.workflow_state.WorkflowState`` — never re-declared her
 
 from __future__ import annotations
 
+import shlex
+import subprocess
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict
 
@@ -21,6 +23,8 @@ __all__ = [
     "RoutingDecision",
     "ExitCode",
     "RunOutcome",
+    "DeterministicStep",
+    "StepResult",
     "NebukoManifest",
     "to_routing_decision",
 ]
@@ -99,6 +103,91 @@ class RunOutcome:
     posted_body: str | None
     state: WorkflowState | None
     phases: tuple[str, ...]  # ordered "[phase:*]" markers actually emitted
+
+
+def _is_true(value: Any) -> bool:
+    return str(value).strip().lower() == "true"
+
+
+# @stub-protected
+@dataclass(frozen=True)
+class StepResult:
+    """Immutable record of one executed deterministic step."""
+
+    step_kind: str
+    ok: bool
+    detail: str  # human-readable outcome (e.g. "deleted 42 comments on issue 590")
+    affected: int  # comments deleted / script exit code
+
+
+# @stub-protected
+@dataclass(frozen=True)
+class DeterministicStep:
+    """An agent-free step the resolver hands to the engine to execute directly."""
+
+    kind: Literal["delete_comments", "run_script"]
+    issue: str = ""  # delete_comments: target issue
+    from_comment: str = ""  # delete_comments: --from boundary ("" = all)
+    script_path: str = ""  # run_script
+    script_args: str = ""
+    timeout_minutes: int | None = None
+
+    # @stub-protected
+    @classmethod
+    def from_resolved(cls, resolved: Mapping[str, str]) -> DeterministicStep | None:
+        """Typed view over the resolver env contract; None when no step is present.
+
+        ``DELETE_COMMENTS`` wins over ``RUN_SCRIPT`` on a pathological overlap;
+        a pure ``SKIP_AGENT=true`` carrying neither flag resolves to ``None``,
+        which keeps the guards' skip verdict (``ExitCode.TERMINAL``) intact.
+        """
+        if not isinstance(resolved, Mapping):
+            return None
+        if _is_true(resolved.get("DELETE_COMMENTS")):
+            return cls(
+                kind="delete_comments",
+                issue=str(resolved.get("DELETE_COMMENTS_ISSUE") or ""),
+                from_comment=str(resolved.get("DELETE_COMMENTS_FROM") or ""),
+            )
+        if _is_true(resolved.get("RUN_SCRIPT")):
+            timeout = str(resolved.get("SCRIPT_TIMEOUT_MINUTES") or "").strip()
+            return cls(
+                kind="run_script",
+                script_path=str(resolved.get("SCRIPT_PATH") or ""),
+                script_args=str(resolved.get("SCRIPT_ARGS") or ""),
+                timeout_minutes=int(timeout) if timeout.isdigit() else None,
+            )
+        return None
+
+    # @stub-protected
+    def execute(self, adapter: Any) -> StepResult:
+        """Run the step through the adapter/runner; never raises for step failure."""
+        try:
+            if self.kind == "delete_comments":
+                deleted = int(
+                    adapter.delete_issue_comments(self.issue, self.from_comment)
+                )
+                return StepResult(
+                    step_kind=self.kind,
+                    ok=True,
+                    detail=f"deleted {deleted} comments on issue {self.issue}",
+                    affected=deleted,
+                )
+            return self._execute_script()
+        except Exception as exc:  # noqa: BLE001 - a step failure is data, not a crash
+            return StepResult(step_kind=self.kind, ok=False, detail=str(exc), affected=0)
+
+    def _execute_script(self) -> StepResult:
+        timeout = self.timeout_minutes * 60 if self.timeout_minutes else None
+        completed = subprocess.run(
+            [self.script_path, *shlex.split(self.script_args)], timeout=timeout
+        )
+        return StepResult(
+            step_kind=self.kind,
+            ok=completed.returncode == 0,
+            detail=f"script exited with code {completed.returncode}",
+            affected=completed.returncode,
+        )
 
 
 def to_routing_decision(args: Mapping[str, Any]) -> RoutingDecision:
