@@ -71,19 +71,23 @@ Each trigger runs the following sequence inside the `run-task` job:
 3. **Guards** — `loop_guard.py` skips same-agent loops and human+agent pings;
    `circuit_breaker.py` aborts when bot-marker count exceeds the threshold
    (default 15).
-4. **Build context** — `query_context.py` fetches issue comments, extracts
+4. **Action** — when the resolver emitted an agent-free deterministic step
+   (`DELETE_COMMENTS=true` / `RUN_SCRIPT=true`), the engine executes it
+   directly and ends the run with a success exit (issue #724); ordinary
+   agent runs pass through unchanged.
+5. **Build context** — `query_context.py` fetches issue comments, extracts
    the latest `WORKFLOW_STATE`, builds the history section, and formats the
    agent prompt against the template.
-5. **Execute** — `agent_script.py` loads the prompt, resolves the LLM config,
+6. **Execute** — `agent_script.py` loads the prompt, resolves the LLM config,
    and runs an OpenHands `Agent` + `Conversation` under a soft-timeout watchdog
    (see [features.md — Execution Layer](./features.md#execution-layer)).
-6. **Validate output** — `validate_output.py` checks the dispatch sentinel and
+7. **Validate output** — `validate_output.py` checks the dispatch sentinel and
    forbidden sections.
-7. **Post comment** — `prepare_comment.py` strips internal tags; the cleaned
+8. **Post comment** — `prepare_comment.py` strips internal tags; the cleaned
    message is posted via `github_client.py` with bot markers prepended.
-8. **Persist state** — a fresh full-snapshot `WORKFLOW_STATE` JSON is embedded
+9. **Persist state** — a fresh full-snapshot `WORKFLOW_STATE` JSON is embedded
    in a collapsed section of the posted comment.
-9. **Route next** — the `dispatch` field in the new state determines the next
+10. **Route next** — the `dispatch` field in the new state determines the next
    step (or ends the run). If a `<splitPlan>` was emitted, the
    **Process Split Plan** step creates sub-issues.
 
