@@ -47,6 +47,7 @@ from ...sub_domains.workflow_command.workflow_command import (
     WorkflowCommand,
     parse_workflow_command,
 )
+from ...sub_domains.workflow_entry.workflow_entry import WorkflowEntryPoint
 
 __all__ = [
     "MAX_LOOP_COUNT",
@@ -1294,17 +1295,15 @@ def _resolve_human_path(
             config_workflow=config_workflow, fs_state=fs_state,
         )
 
-    # /nebuko run workflow --name <name> (human only)
-    wf_name = (
-        wf_cmd.params["name"]
-        if wf_cmd is not None and wf_cmd.action == "run"
-        else None
-    )
+    # /nebuko run workflow --name <name> [--step <step>] (human only)
+    wf_run = wf_cmd if (wf_cmd is not None and wf_cmd.action == "run") else None
+    wf_name = wf_run.params.get("name") if wf_run else None
+    requested_step = (wf_run.params.get("step") or "") if wf_run else ""
     wf_resolved = False
     task = ""
     wf_fail_reason = ""
 
-    first_step_overrides: dict[str, str] = {}
+    entry_point: Optional[WorkflowEntryPoint] = None
     if wf_name and _SAFE_WF_NAME_RE.match(wf_name):
         try:
             wf_file = load_workflow_with_dirs(
@@ -1314,32 +1313,35 @@ def _resolve_human_path(
             task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
             if task:
                 wf_resolved = True
-            # Issue #609: a workflow whose first step mounts a sub-workflow
-            # (e.g. the scaffold's ``tmp-impl``) has no runnable first step —
-            # ``trigger.agents[0]`` alone would start with the wrong
-            # workflow/step state. Descend to the innermost runnable leaf and
-            # point the state at it (same contract as the force-next-step
-            # sub-workflow entry).
-            if wf_resolved and wf_def.steps and (
-                wf_def.steps[0].workflow or wf_def.steps[0].path
-                or wf_def.steps[0].repo
+            # Issue #789: enter at the requested step (``--step``; default the
+            # first step). Issue #609: this also descends a first-step
+            # sub-workflow mount (e.g. the scaffold's ``tmp-impl``) to its
+            # innermost runnable leaf instead of starting on the mount, and
+            # carries the parent/return fields.
+            if wf_resolved and requested_step and not _SAFE_WF_NAME_RE.match(
+                requested_step
             ):
-                entry = _sub_workflow_step_entry(
-                    wf_def.steps[0], wf_def, workflows_dir, prompt_base,
-                    scaffold_branch, local_workflows_dir,
+                wf_resolved = False
+                wf_fail_reason = (
+                    f"/nebuko '{wf_name}': invalid step name '{requested_step}'"
                 )
-                if entry.get("skip_reason"):
+                task = ""
+            elif wf_resolved:
+                entry_point = WorkflowEntryPoint(
+                    workflow=wf_name, step=requested_step
+                ).resolve(
+                    wf_def,
+                    lambda target: _resolve_step_entry(
+                        target, wf_def, workflows_dir, prompt_base,
+                        scaffold_branch, local_workflows_dir,
+                    ),
+                )
+                if not entry_point.is_valid():
                     wf_resolved = False
-                    wf_fail_reason = entry["skip_reason"]
+                    wf_fail_reason = entry_point.skip_reason
                     task = ""
                 else:
-                    task = entry["task"]
-                    first_step_overrides = {
-                        "config_step": entry["config_step"],
-                        "config_workflow": entry["config_workflow"],
-                        "config_parent_workflow": entry["config_parent_workflow"],
-                        "config_parent_workflow_step": entry["config_parent_workflow_step"],
-                    }
+                    task = entry_point.task
         except FileNotFoundError as e:
             # Multi-dir miss: the exception message enumerates every path
             # searched (issue #529).
@@ -1362,19 +1364,27 @@ def _resolve_human_path(
         # otherwise make extract_mention_agent return None (issue #478).
         task = pinned_task or extract_mention_agent(trigger_body) or ""
         wf_name = None
+        entry_point = None
 
-    if not wf_resolved:
-        first_step_overrides = {}
-    if first_step_overrides:
-        # Nested first step (issue #609): the active workflow is the innermost
-        # leaf workflow, not the one named in the trigger.
-        config_workflow = first_step_overrides["config_workflow"]
+    if entry_point is not None:
+        # The entry point owns the descent overrides (issue #609): the active
+        # workflow/step is the innermost leaf, not the one named in the trigger.
+        config_workflow = entry_point.config_workflow
+        config_step = entry_point.config_step
+        config_parent_workflow = entry_point.config_parent_workflow or ""
+        config_parent_workflow_step = entry_point.config_parent_workflow_step or ""
+        run_script = entry_point.run_script
     else:
         config_workflow = wf_name if wf_name and wf_resolved else ""
+        config_step = ""
+        config_parent_workflow = ""
+        config_parent_workflow_step = ""
+        run_script = None
     result = {
         "task": task,
+        "run_script": run_script,
         "config_workflow": config_workflow,
-        "config_step": first_step_overrides.get("config_step", ""),
+        "config_step": config_step,
         "config_complexity": "medium",
         "config_reasoning": "none",
         "config_temperature": "",
@@ -1386,12 +1396,8 @@ def _resolve_human_path(
         "config_repetition_penalty": "",
         "config_debug": extract_debug_flag(trigger_body),
         "config_branch": "",
-        "config_parent_workflow": first_step_overrides.get(
-            "config_parent_workflow", ""
-        ),
-        "config_parent_workflow_step": first_step_overrides.get(
-            "config_parent_workflow_step", ""
-        ),
+        "config_parent_workflow": config_parent_workflow,
+        "config_parent_workflow_step": config_parent_workflow_step,
     }
     # Diagnostic for the terminal skip comment when /nebuko failed and no
     # mention fallback produced a task (issue #529).

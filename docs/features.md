@@ -22,16 +22,16 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 | Command | Effect |
 |---------|--------|
 | `@@<agent>` | Run the named agent directly (`genius`, `ctx`, `dev`, `review`, ...). If the agent matches a workflow's `trigger.agents`, that workflow's first step runs. |
-| `/nebuko <name>` | Start (or switch to) the named workflow, regardless of current state. |
+| `/nebuko run workflow --name <name> [--step <step>]` | Start (or switch to) the named workflow, regardless of current state. `--step` seeds a **fresh** run directly at `<step>` instead of the first step (issue #789) — useful to enter `plan-orchestration` at `plan`/`scaffold` without replaying `architect`. An unknown or unsafe step name fails loudly. Human-only. |
 | `/nebuko resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. |
-| `/nebuko force-next-step <step>` | Jump directly to `<step>` of the active workflow, regardless of state. |
+| `/nebuko force-step step --name <step>` | Jump directly to `<step>` of the **active** workflow, regardless of state. Unlike `run --step`, this replays/forks within the current run (it requires an active workflow). |
 | `/nebuko delete comments [--issue <id>] [--from <comment-id>]` | Human-only batch deletion of issue comments. `--issue <id>` selects the target issue (mandatory on the CLI surface; auto-filled with the invoking issue when the command is posted in that issue). Optional `--from <comment-id>` deletes that comment **and every later one**; omit it to delete **all** comments. Terminal command: it runs the deterministic deletion step and no agent. Requires `GH_PAT` with `issues:write`. |
 | `/nebuko clean comments` | Alias of `/nebuko delete comments` (issue #679). Terminal; runs the deterministic deletion step and no agent. |
 | `DEBUG=true` | Routes to the debug/recovery path instead of normal routing. |
 
 **Precedence:** human commands always override state-based routing (see the
 cascade in [architecture.md — Routing Cascade](./architecture.md#routing-cascade)):
-`resume` > `force-next-step` > `delete comments` > `/nebuko <name>` >
+`resume` > `force-step` > `delete comments` > `run workflow` >
 `@@mention` > dispatch-based routing > next-step > bot fallback. This guarantee
 exists so explicit human intent is never absorbed by an active workflow's
 `dispatch` object. `delete comments` is a **terminal** human command: it runs

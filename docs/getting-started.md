@@ -220,7 +220,7 @@ outsider token burn.
 | Symptom | Checklist |
 |---------|-----------|
 | No response at all | If using a self-hosted runner (`runs_on: "self-hosted"`), is it online? Are the secrets set? Does the issue body contain a recognized trigger (`@@agent` or `/nebuko`)? Check the run's `if:` condition result in the GHA run. |
-| Wrong agent ran | Check the routing cascade ([architecture.md](./architecture.md#routing-cascade)) and the `WORKFLOW_STATE` section of the triggering comment. Use `/nebuko <name>` or `/nebuko force-next-step <step>` to correct course. |
+| Wrong agent ran | Check the routing cascade ([architecture.md](./architecture.md#routing-cascade)) and the `WORKFLOW_STATE` section of the triggering comment. Use `/nebuko run workflow --name <name>` or `/nebuko force-step step --name <step>` to correct course. |
 | Stuck in a loop | The circuit breaker (default 15 bot markers) should have stopped it and posted a warning. Review the last few comments, then use `/nebuko resume` with instructions. See [features.md — Safety Mechanisms](./features.md#safety-mechanisms). |
 | Agent ran but did nothing useful | Your prompts are too thin — give the agent an explicit role and output contract (step 3). |
 | Config errors at startup | The workflow fails fast on undefined `${ref}`s or missing prompt files — read the *Resolve Agent Configuration* step log. |

@@ -266,6 +266,20 @@ single PR** (issue #462):
 This is the main demonstration of **sub-workflow composition** — a step
 declaring `workflow:` instead of `agent:`, with a runtime-generated path.
 
+**Entering mid-lifecycle (issue #789).** When a plan already exists on the
+issue (for example from an earlier deep-thinking run), you can enter this
+workflow without replaying `architect`:
+
+```
+/nebuko run workflow --name plan-orchestration --step plan
+```
+
+Use `--step plan` to have genius convert/re-validate the existing plan and
+re-arm the human gate; `--step scaffold` converts it directly (bypassing the
+gate — `run` is human-only, so that is an explicit human choice). `--step
+sub_impl` requires `tmp_impl/workflow.yaml` to be scaffolded already, else the
+entry fails loudly rather than starting from the first step.
+
 ### spec-driven
 
 ```

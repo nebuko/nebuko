@@ -5,7 +5,9 @@ Value object + parser for the explicit first-line command grammar::
     /nebuko <action> [<resource>] [--flag value]*
 
 Canonical actions (issue #635):
-  - ``run``        resource ``workflow`` — start/switch a workflow; ``--name`` required
+  - ``run``        resource ``workflow`` — start/switch a workflow; ``--name``
+                   required, ``--step`` optional (enter at a dedicated step,
+                   issue #789)
   - ``resume``     no resource — resume the held step; ``--feedback`` optional
   - ``force-step`` resource ``step`` — jump to a step; ``--name`` required
   - ``delete``     resource ``comments`` — batch-delete issue comments (issue #644);
@@ -62,7 +64,7 @@ RESOURCE_BY_ACTION: Dict[str, Optional[str]] = {
 }
 
 FLAGS_BY_ACTION: Dict[str, Set[str]] = {
-    "run": {"name"},
+    "run": {"name", "step"},
     "force-step": {"name"},
     "resume": {"feedback"},
     "delete": {"issue"},
