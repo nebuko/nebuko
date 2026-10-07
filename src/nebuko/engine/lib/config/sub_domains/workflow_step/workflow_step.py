@@ -37,6 +37,11 @@ class WorkflowStep(BaseModel):
     skill: Optional[list[str]] = None
     # Standing instruction injected into this step's agent context (issue #551).
     prompt: Optional[str] = None
+    # When True and ``prompt`` is set, this step's agent context is the step
+    # prompt only: the role prompt (e.g. ``dev.md``) and its generic flow are
+    # suppressed, structurally scoping the step to its declared instruction
+    # (issue #784). Ignored when ``prompt`` is unset.
+    prompt_replace: bool = False
     # When True, this step is an explicit human validation gate.
     # The workflow MUST pause (dispatch.status == "hold") until a human
     # responds. The approval agent evaluates human feedback and sets
