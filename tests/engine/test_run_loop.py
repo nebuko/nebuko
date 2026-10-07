@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +23,7 @@ from nebuko.engine.run_loop import (
     Engine,
     _backfill_workflow_identity,
     _ensure_child_identity,
+    _exit_code_for,
     _TRIGGER_KEY,
     main,
     resolved_env_overlay,
@@ -90,6 +92,34 @@ def _stub_resolved(monkeypatch, resolved: dict) -> None:
     _patch_resolver(monkeypatch, lambda **_: resolved)
 
 
+# The captured soft-kill state from issue #793 (step=implement, agent=dev,
+# dispatch.status=soft_kill, last_run_status=gracefully_timed_out).
+SOFT_KILL_FIXTURE = (
+    Path(__file__).resolve().parents[2]
+    / "src/nebuko/engine/lib/fixtures/workflow_state_issue793_soft_kill.json"
+)
+
+
+def _soft_kill_comment_body() -> str:
+    """The engine's own soft-kill conclusion comment (trigger for run N+1)."""
+    state = json.loads(SOFT_KILL_FIXTURE.read_text(encoding="utf-8"))
+    return "\n".join(
+        [
+            "<!-- bot-workflow-terminal -->",
+            BOT_AGENT_MARKER,
+            "<!-- workflow-continue -->",
+            "<details>",
+            "<summary>Workflow State</summary>",
+            "```json",
+            WORKFLOW_STATE_MARKER,
+            json.dumps(state),
+            "<!-- WORKFLOW_STATE_END -->",
+            "```",
+            "</details>",
+        ]
+    )
+
+
 class TestPhaseVocabulary:
     def test_phases_are_the_ten_documented_phases_in_order(self):
         assert PHASES == (
@@ -133,6 +163,30 @@ class TestGuardsPhase:
 
         assert str(verdict["SKIP_AGENT"]).lower() == "true"
 
+    def test_a_soft_retry_bypasses_the_same_agent_loop_guard(self, tmp_path, monkeypatch):
+        """Issue #793: an engine soft-retry re-runs the same agent by design.
+
+        Without the bypass the guard classifies the identical caller/position as
+        a self-loop and skips the retry, so the soft-killed step never resumes.
+        The ``MAX_SOFT_RETRIES`` budget bounds the chain instead.
+        """
+        trigger = _trigger(body=f"<!-- bot-workflow-terminal -->\n{BOT_AGENT_MARKER}\n{_soft_kill_comment_body()}")
+        engine = _engine(tmp_path, trigger)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "false",
+                "TASK": "dev",
+                "WORKFLOW_POSITION_PATH": "default/implement",
+                "WORKFLOW_STEP": "implement",
+                "SOFT_RETRY_ATTEMPT": "true",
+            },
+        )
+
+        verdict = engine.guard(trigger, [])
+
+        assert str(verdict["SKIP_AGENT"]).lower() == "false"
+
     def test_makes_no_comparison_without_a_resolver_task(self, tmp_path, monkeypatch):
         """A caller marker without a resolver ``TASK`` skips the comparison.
 
@@ -161,6 +215,79 @@ class TestGuardsPhase:
         verdict = engine.guard(_trigger(), history)
 
         assert str(verdict["CIRCUIT_BREAKER_TRIPPED"]).lower() == "true"
+
+
+class TestSoftKillRetry:
+    """End-to-end restart of a soft-killed step (issue #793).
+
+    The soft-kill conclusion comment is the engine's own trigger: the next run
+    must clear the guards and reach the agent instead of short-circuiting on
+    the same-agent loop guard.
+    """
+
+    def test_the_soft_kill_comment_reaches_the_agent_phase(self, tmp_path, monkeypatch):
+        body = _soft_kill_comment_body()
+        trigger = _trigger(body=body, number=793)
+        engine = _engine(tmp_path, trigger)
+        invoked: list[str] = []
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: invoked.append(prompt) or _agent_result("done")
+        )
+
+        outcome = engine.run()
+
+        assert invoked, "the engine retried nothing; the soft-killed step never resumed"
+        assert "agent" in outcome.phases
+
+    def test_the_resolver_marks_the_retry_with_the_soft_retry_attempt(self, tmp_path):
+        """The real resolver must classify the fixture comment as a retry."""
+        engine = _engine(tmp_path, _trigger(body=_soft_kill_comment_body(), number=793))
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "false"
+        assert str(resolved.get("SOFT_RETRY_ATTEMPT")).lower() == "true"
+
+    def test_exhausted_budget_posts_a_human_halt_notice(self, tmp_path, monkeypatch):
+        """The exhausted retry halts and pings a human instead of going silent."""
+        engine = _engine(tmp_path, _trigger(body=_soft_kill_comment_body(), number=793))
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SOFT_RETRY_EXHAUSTED": "true",
+                "REASON": (
+                    "Soft time-kill: step 'implement' exhausted its retry budget "
+                    "(2/2); halting the workflow for a human to resume with /nebuko resume."
+                ),
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert "agent" not in outcome.phases
+        assert outcome.posted_body is not None
+        assert outcome.posted_body.splitlines()[0] == "<!-- bot-workflow-terminal -->"
+        assert "/nebuko resume" in outcome.posted_body
+        # No continue token: the automated chain must stop so a human takes over.
+        assert "<!-- workflow-continue -->" not in outcome.posted_body
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
+        assert "/nebuko resume" in journal
+
+    def test_a_routine_resolver_skip_stays_silent(self, tmp_path, monkeypatch):
+        """Only the exhausted soft-kill skip posts; an ordinary skip does not."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "true", "REASON": "nothing to do"})
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert outcome.posted_body is None
+        journal = tmp_path / "runs" / "run-1" / "journal.md"
+        assert not journal.exists() or journal.read_text(encoding="utf-8") == ""
 
 
 class TestDeterministicActionPhase:
@@ -239,6 +366,19 @@ class TestRoutePhase:
         decision = engine.route({"dispatch": {"status": "hold", "reason": "await approval"}})
 
         assert decision.status == "hold"
+
+    def test_maps_a_soft_kill_to_advance(self, tmp_path):
+        """Issue #793: ``soft_kill`` is a live status, not a silent fall-through.
+
+        The run exits ``ADVANCE`` (its own comment re-triggers the retry)
+        rather than relying on the ``.get`` default in ``_exit_code_for``.
+        """
+        engine = _engine(tmp_path)
+
+        decision = engine.route({"dispatch": {"status": "soft_kill"}})
+
+        assert decision.status == "soft_kill"
+        assert _exit_code_for(decision) == ExitCode.ADVANCE
 
 
 class TestRunLoop:
