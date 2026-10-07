@@ -185,7 +185,6 @@ class TestReadingTime(unittest.TestCase):
         noise = (
             "<!-- bot-workflow-terminal -->\n"
             "<!-- bot-agent-dev -->\n"
-            "<!-- agent-metrics: {\"input_tokens\": 42} -->\n"
             "<details>\n<summary>Workflow State</summary>\n\n```json\n"
             "<!-- WORKFLOW_STATE_START -->\n{\"history\": \"hidden metadata words\"}\n"
             "<!-- WORKFLOW_STATE_END -->\n```\n\n</details>"

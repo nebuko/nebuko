@@ -23,16 +23,25 @@ class TestWorkflowStateSchema(unittest.TestCase):
             agent="dev",
             version=5,
             phase="execution",
-            history=[HistoryEntry(step="analyze", agent="genius", summary="Analyzed issue")],
+            history=[
+                HistoryEntry(
+                    step="analyze",
+                    agent="genius",
+                    summary="Analyzed issue",
+                    metrics=StateMetrics(input_tokens=1000, output_tokens=500),
+                )
+            ],
             pinned_comment_ids=[12345],
             current_context={"task": "implement feature"},
-            metrics=StateMetrics(input_tokens=1000, output_tokens=500),
             parent_workflow="spec-driven-design",
             parent_workflow_step="stub_phase",
         )
         self.assertEqual(state.version, 5)
         self.assertEqual(len(state.history), 1)
         self.assertIn(12345, state.pinned_comment_ids)
+        # Per-step metrics live on the history entry (issue #792), not the root.
+        self.assertEqual(state.history[-1].metrics.input_tokens, 1000)
+        self.assertFalse(hasattr(state, "metrics"))
 
     def test_defaults_for_optional_fields(self):
         """Step, agent, phase default to empty string for backward compat."""
@@ -71,6 +80,34 @@ class TestWorkflowStateSchema(unittest.TestCase):
         back = WorkflowState.model_validate(json.loads(serialized))
         self.assertEqual(back.position, refs)
         self.assertEqual(back.history[-1].position, refs)
+
+    def test_to_json_round_trip_preserves_history_metrics(self):
+        """Per-step metrics survive to_json -> re-validate (issue #792): the
+        comment-embedded state JSON is now the single metrics authority, so
+        exclude_defaults must NOT collapse a populated metrics object."""
+        import json
+        from workflow_state.workflow_state import to_json
+
+        metrics = StateMetrics(
+            run_id="run-1",
+            model_name="default",
+            input_tokens=1234,
+            output_tokens=567,
+            complexity="medium",
+            tool_calls_per_tool={"terminal": 3},
+            agent_runtimes_per_call_ms=[10.0, 20.0],
+        )
+        state = WorkflowState(
+            workflow="dev-review-loop",
+            step="implement",
+            agent="dev",
+            history=[HistoryEntry(step="implement", agent="dev", metrics=metrics)],
+        )
+        raw = json.loads(to_json(state))
+        self.assertEqual(raw["history"][-1]["metrics"]["input_tokens"], 1234)
+        self.assertEqual(raw["history"][-1]["metrics"]["tool_calls_per_tool"], {"terminal": 3})
+        back = WorkflowState.model_validate(raw)
+        self.assertEqual(back.history[-1].metrics, metrics)
 
     def test_v2_position_migration_does_not_mutate_input_dict(self):
         """The position migration validator must not destroy the caller's

@@ -17,7 +17,6 @@ from prepare_comment import (
     build_comment_body,
     clean_message,
     escape_agent_triggers,
-    extract_metrics,
     merge_handoff_sentinels,
     prepare_comment,
     select_posted_body,
@@ -34,34 +33,6 @@ def _strip_answer_header(comment: str) -> str:
     return comment[marker + len(_HEADER_TERMINATOR):] if marker != -1 else comment
 
 
-class TestExtractMetrics(unittest.TestCase):
-    """Test metrics comment extraction."""
-
-    def test_extract_single_line_metrics(self):
-        content = "Hello\n\n<!-- agent-metrics: {\"key\": \"value\"} -->"
-        result = extract_metrics(content)
-        self.assertIn("agent-metrics", result)
-        self.assertIn("key", result)
-
-    def test_extract_multiline_metrics(self):
-        content = (
-            "Hello\n\n"
-            "<!-- agent-metrics: {\n"
-            '  "key": "value"\n'
-            "} -->"
-        )
-        result = extract_metrics(content)
-        self.assertIn("agent-metrics", result)
-
-    def test_no_metrics_returns_empty(self):
-        result = extract_metrics("Just plain text")
-        self.assertEqual(result, "")
-
-    def test_empty_input(self):
-        result = extract_metrics("")
-        self.assertEqual(result, "")
-
-
 class TestCleanMessage(unittest.TestCase):
     """Test internal tag stripping."""
 
@@ -70,7 +41,7 @@ class TestCleanMessage(unittest.TestCase):
             "Here is my response.\n\n"
             '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "low"} -->'
         )
-        result = clean_message(raw, "")
+        result = clean_message(raw)
         self.assertNotIn("AGENT_RUN_CONFIG", result)
         self.assertIn("Here is my response", result)
 
@@ -79,7 +50,7 @@ class TestCleanMessage(unittest.TestCase):
             "Here is my response.\n\n"
             '<!-- AGENT_RUN_CONFIG {"dispatch": {"statu'
         )
-        result = clean_message(raw, "")
+        result = clean_message(raw)
         self.assertNotIn("AGENT_RUN_CONFIG", result)
         self.assertIn("Here is my response", result)
 
@@ -90,7 +61,7 @@ class TestCleanMessage(unittest.TestCase):
             '{"dispatch": {"status": "advance"}, "complexity": "low"}\n'
             "</agentRunConfig>"
         )
-        result = clean_message(raw, "")
+        result = clean_message(raw)
         self.assertNotIn("<agentRunConfig>", result)
         self.assertIn("Here is my response", result)
 
@@ -102,7 +73,7 @@ class TestCleanMessage(unittest.TestCase):
             "<agentRunConfig>{\"task\": \"dev\"}</agentRunConfig>\n"
             "Last part"
         )
-        result = clean_message(raw, "")
+        result = clean_message(raw)
         self.assertNotIn("<agentRunConfig>", result)
         self.assertIn("First part", result)
         self.assertIn("Middle part", result)
@@ -110,36 +81,19 @@ class TestCleanMessage(unittest.TestCase):
 
     def test_preserves_content_before_config_tag(self):
         raw = "Important summary text.<agentRunConfig>{}</agentRunConfig>"
-        result = clean_message(raw, "")
+        result = clean_message(raw)
         self.assertIn("Important summary text", result)
         self.assertNotIn("<agentRunConfig>", result)
 
     def test_strips_split_plan(self):
         raw = "Intro<splitPlan>{\"tasks\": []}</splitPlan>Outro"
-        result = clean_message(raw, "")
+        result = clean_message(raw)
         self.assertNotIn("<splitPlan>", result)
         self.assertIn("Intro", result)
 
-    def test_preserves_metrics_comment_at_end(self):
-        raw = "Message body"
-        metrics = '<!-- agent-metrics: {"run_id": "123"} -->'
-        result = clean_message(raw, metrics)
-        self.assertIn(metrics, result)
-        # Metrics should be at the end
-        self.assertTrue(result.endswith(metrics))
-
-    def test_strips_inline_metrics_and_readds_at_end(self):
-        raw = "Start\n\n<!-- agent-metrics: {\"k\": 1} -->\n\nMiddle"
-        metrics = extract_metrics(raw)
-        result = clean_message(raw, metrics)
-        # The inline metrics should be gone from the middle
-        self.assertNotIn("<!-- agent-metrics", result.replace("<!-- agent-metrics: {\"k\": 1} -->", "").replace("<!-- agent-metrics: {\"k\": 1} -->", ""))
-        # But present at the end
-        self.assertTrue(result.endswith("<!-- agent-metrics: {\"k\": 1} -->"))
-
     def test_cleans_residual_blank_lines(self):
         raw = "Para1\n\n\n\n\nPara2"
-        result = clean_message(raw, "")
+        result = clean_message(raw)
         # Should collapse excessive blank lines
         self.assertNotIn("\n\n\n", result)
 
@@ -151,7 +105,7 @@ class TestCleanMessage(unittest.TestCase):
             "</agentRunConfig>\n\n"
             "More text after config."
         )
-        result = clean_message(raw, "")
+        result = clean_message(raw)
         self.assertIn("$variables", result)
         self.assertIn("`backticks`", result)
         self.assertNotIn("<agentRunConfig>", result)
@@ -168,7 +122,7 @@ class TestCleanMessage(unittest.TestCase):
             "</agentRunConfig>\n"
             "End"
         )
-        result = clean_message(raw, "")
+        result = clean_message(raw)
         self.assertNotIn("<agentRunConfig>", result)
         self.assertNotIn("</agentRunConfig>", result)
         self.assertIn("Start", result)
@@ -287,16 +241,14 @@ class TestPrepareCommentIntegration(unittest.TestCase):
         self.assertIn("Agent completed the task", result)
         self.assertNotIn("<agentRunConfig>", result)
 
-    def test_path_a_preserves_metrics(self):
-        content = (
-            "Summary text.\n\n"
-            "<!-- agent-metrics: {\"run_id\": \"abc\"} -->"
-        )
-        self._write("final_message.txt", content)
+    def test_path_a_has_no_metrics_block(self):
+        # Metrics no longer live in a hidden HTML comment (issue #792): the
+        # posted body carries only the answer text.
+        self._write("final_message.txt", "Summary text with no hidden payload.")
         prepare_comment()
         result = self._read("github_comment.md")
         self.assertIn("Summary text", result)
-        self.assertIn("agent-metrics", result)
+        self.assertNotIn("agent-metrics", result)
 
     def test_path_a_sentinel_falls_back_to_console_log(self):
         self._write("final_message.txt", "__NO_FINAL_MESSAGE__ no data")

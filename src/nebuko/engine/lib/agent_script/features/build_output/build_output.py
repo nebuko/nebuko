@@ -539,23 +539,16 @@ def _replace_split_plan_with_summary(message: str, json_str: str) -> str:
     return stripped
 
 
-def _write_output_files(final_message: str, message_parts: list[str], metrics: Metrics, new_state: WorkflowState) -> None:
-    """Write final message parts, workflow state JSON, and metrics to output files."""
-    MAX_MESSAGE_LENGTH = 10000
-
+def _write_output_files(final_message: str, message_parts: list[str], new_state: WorkflowState) -> None:
+    """Write final message parts and workflow state JSON to output files."""
     if not message_parts:
         logger.warning("No final agent message found in events")
         with open("workflow_state.json", "w", encoding="utf-8") as f:
             f.write(state_to_json(new_state))
-        metrics_json = metrics.to_json(compact=True)
-        sentinel = f"__NO_FINAL_MESSAGE__\n<!-- agent-metrics: {metrics_json} -->"
         with open("final_message.txt", "w", encoding="utf-8") as f:
-            f.write(sentinel)
-        logger.info("Saved sentinel + metrics comment (no final message)")
+            f.write("__NO_FINAL_MESSAGE__\n")
+        logger.info("Saved sentinel (no final message)")
         return
-
-    metrics_json = metrics.to_json(compact=True)
-    metrics_comment = f"\n\n<!-- agent-metrics: {metrics_json} -->"
 
     # Add part indicators for multi-part messages
     if len(message_parts) > 1:
@@ -566,8 +559,6 @@ def _write_output_files(final_message: str, message_parts: list[str], metrics: M
     # Write part 1
     with open("final_message.txt", "w", encoding="utf-8") as f:
         f.write(message_parts[0])
-        if len(message_parts) == 1:
-            f.write(metrics_comment)
     logger.info(f"Saved first message part ({len(message_parts[0])} characters)")
 
     # Save workflow state
@@ -583,8 +574,6 @@ def _write_output_files(final_message: str, message_parts: list[str], metrics: M
             filename = f"final_message_part_{i}.txt"
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(part)
-                if i == len(message_parts):
-                    f.write(metrics_comment)
             logger.info(f"Saved message part {i} ({len(part)} characters)")
 
         logger.info(f"Message split into {len(message_parts)} parts (was {len(final_message)} characters)")
@@ -1110,7 +1099,7 @@ def build_output(
     message_parts = split_message(final_message, max_split_length) if final_message else []
 
     # ── Write output files ───────────────────────────────────────
-    _write_output_files(final_message, message_parts, metrics, new_state)
+    _write_output_files(final_message, message_parts, new_state)
 
     logger.info("Task completed successfully")
 

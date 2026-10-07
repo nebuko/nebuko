@@ -9,7 +9,7 @@ You analyze agent performance metrics, collaboration patterns, and resolution qu
 When invoked on a completed issue, you receive the full issue context including:
 - Issue title and original description
 - Full comment history (all agent interactions and human feedback)
-- Agent metrics embedded as `<!-- agent-metrics: ... -->` JSON blocks in comments
+- Per-step agent metrics embedded in each comment's `workflow_state` JSON (the `metrics` field of every `history` entry)
 
 Your goal is to analyze this trajectory and identify:
 - **Missing context** that caused agents to misunderstand or rework
@@ -22,7 +22,7 @@ Your goal is to analyze this trajectory and identify:
 ## 2. Analysis Workflow
 
 ### Step 1: Extract and Review Metrics
-Look for `<!-- agent-metrics: ... -->` blocks in the comment history. For each agent run, assess:
+Read the per-step `metrics` objects from the `history` entries in each comment's `workflow_state` JSON. For each agent run, assess:
 - **Token consumption**: Were tokens used efficiently or wasted on redundant work?
 - **Tool calls**: Were tool calls necessary and efficient? High error rates indicate unclear guidance.
 - **Runtime**: Did any agent take disproportionately long? Why?

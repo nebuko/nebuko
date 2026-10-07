@@ -12,9 +12,10 @@ from io import StringIO
 # Import the module under test
 sys.path.insert(0, os.path.dirname(__file__))
 from metrics_schema import Metrics
+from workflow_state import STATE_MARKER_START, STATE_MARKER_END
 from summarize_metrics import (
-    METRICS_REGEX,
     extract_metrics_from_comment,
+    deduplicate_metrics,
     aggregate_by_model,
     aggregate_by_agent,
     generate_summary_table,
@@ -34,71 +35,133 @@ from summarize_metrics import (
 )
 
 
-class TestMetricsRegex(unittest.TestCase):
-    """Test the metrics regex pattern."""
+def _state_body(*entries, version=5):
+    """Build a comment body carrying a ``workflow_state`` snapshot.
 
-    def test_extract_single_metrics(self):
-        body = "Some text\n<!-- agent-metrics: {\"model_name\":\"gpt-4\",\"input_tokens\":100} -->\nMore text"
-        matches = METRICS_REGEX.findall(body)
-        self.assertEqual(len(matches), 1)
-        data = json.loads(matches[0])
-        self.assertEqual(data["model_name"], "gpt-4")
-        self.assertEqual(data["input_tokens"], 100)
-
-    def test_extract_multiple_metrics(self):
-        body = (
-            "<!-- agent-metrics: {\"model_name\":\"gpt-4\",\"input_tokens\":100} -->\n"
-            "Some text\n"
-            "<!-- agent-metrics: {\"model_name\":\"claude\",\"input_tokens\":200} -->"
+    Mirrors the collapsed `<details>` section emitted by
+    ``workflow_state.features.comment`` so extraction exercises the real
+    marker-based parser.
+    """
+    state = {
+        "version": version,
+        "workflow": "default",
+        "step": "implement",
+        "agent": "dev",
+        "phase": "execution",
+        "history": list(entries),
+    }
+    return (
+        "<details>\n<summary>Workflow State (v{0})</summary>\n\n```json\n"
+        "{1}\n{2}\n{3}\n```\n\n</details>\n".format(
+            version, STATE_MARKER_START, json.dumps(state), STATE_MARKER_END
         )
-        matches = METRICS_REGEX.findall(body)
-        self.assertEqual(len(matches), 2)
+    )
 
-    def test_no_metrics(self):
-        body = "This comment has no metrics."
-        matches = METRICS_REGEX.findall(body)
-        self.assertEqual(len(matches), 0)
 
-    def test_bot_marker_without_metrics(self):
-        body = "<!-- bot-agent-genius -->\nSome answer"
-        matches = METRICS_REGEX.findall(body)
-        self.assertEqual(len(matches), 0)
-
-    def test_metrics_with_extra_spaces(self):
-        body = "<!--  agent-metrics:  {\"model_name\":\"test\"}  -->"
-        matches = METRICS_REGEX.findall(body)
-        self.assertEqual(len(matches), 1)
+def _step_entry(run_id, **metrics_fields):
+    """A history entry whose ``metrics`` carries ``run_id`` plus overrides."""
+    return {
+        "step": "implement",
+        "agent": "dev",
+        "summary": "did work",
+        "metrics": {"run_id": run_id, **metrics_fields},
+    }
 
 
 class TestExtractMetricsFromComment(unittest.TestCase):
-    """Test extract_metrics_from_comment function."""
+    """extract_metrics_from_comment reads per-step metrics from the state."""
 
-    def test_extract_valid_metrics(self):
-        body = "<!-- agent-metrics: {\"model_name\":\"gpt-4\",\"input_tokens\":100,\"output_tokens\":50} -->"
+    def test_extract_single_step(self):
+        body = _state_body(_step_entry("run-1", model_name="gpt-4", input_tokens=100))
         result = extract_metrics_from_comment(body)
         self.assertEqual(len(result), 1)
         self.assertIsInstance(result[0], Metrics)
         self.assertEqual(result[0].model_name, "gpt-4")
         self.assertEqual(result[0].input_tokens, 100)
+        self.assertEqual(result[0].run_id, "run-1")
 
-    def test_extract_multiple_from_one_comment(self):
-        body = (
-            "<!-- agent-metrics: {\"model_name\":\"gpt-4\",\"input_tokens\":100} -->\n"
-            "<!-- agent-metrics: {\"model_name\":\"claude\",\"input_tokens\":200} -->"
+    def test_extract_multiple_steps(self):
+        body = _state_body(
+            _step_entry("run-1", model_name="gpt-4", input_tokens=100),
+            _step_entry("run-2", model_name="claude", input_tokens=200),
         )
         result = extract_metrics_from_comment(body)
         self.assertEqual(len(result), 2)
-        self.assertIsInstance(result[0], Metrics)
-        self.assertIsInstance(result[1], Metrics)
+        self.assertEqual([m.model_name for m in result], ["gpt-4", "claude"])
 
-    def test_malformed_json_skipped(self):
-        body = "<!-- agent-metrics: {invalid json} -->"
-        result = extract_metrics_from_comment(body)
-        self.assertEqual(len(result), 0)
+    def test_non_overlapping_fields_survive(self):
+        body = _state_body(
+            _step_entry(
+                "run-1",
+                complexity="medium",
+                start_time="2024-01-01T00:00:00",
+                end_time="2024-01-01T00:01:00",
+                agent_runtimes_per_call_ms=[10.0, 20.0],
+                tool_calls_per_tool={"terminal": 3},
+                errors_per_tool={"terminal": 1},
+                tokens_per_tool={"terminal": {"input": 5, "output": 2}},
+                dispatch_recall_count=2,
+            )
+        )
+        (metric,) = extract_metrics_from_comment(body)
+        self.assertEqual(metric.complexity, "medium")
+        self.assertEqual(metric.agent_runtimes_per_call_ms, [10.0, 20.0])
+        self.assertEqual(metric.tool_calls_per_tool, {"terminal": 3})
+        self.assertEqual(metric.errors_per_tool, {"terminal": 1})
+        self.assertEqual(metric.tokens_per_tool, {"terminal": {"input": 5, "output": 2}})
+        self.assertEqual(metric.dispatch_recall_count, 2)
+
+    def test_step_without_metrics_skipped(self):
+        body = _state_body({"step": "analyze", "agent": "genius", "summary": "s"})
+        self.assertEqual(extract_metrics_from_comment(body), [])
+
+    def test_no_state_returns_empty(self):
+        self.assertEqual(extract_metrics_from_comment("Just a normal comment."), [])
+
+    def test_bot_marker_without_state(self):
+        body = "<!-- bot-agent-genius -->\nSome answer"
+        self.assertEqual(extract_metrics_from_comment(body), [])
+
+    def test_malformed_state_json_skipped(self):
+        body = f"{STATE_MARKER_START}\n{{invalid json}}\n{STATE_MARKER_END}"
+        self.assertEqual(extract_metrics_from_comment(body), [])
 
     def test_empty_comment(self):
-        result = extract_metrics_from_comment("")
-        self.assertEqual(len(result), 0)
+        self.assertEqual(extract_metrics_from_comment(""), [])
+
+
+class TestDeduplicateMetrics(unittest.TestCase):
+    """deduplicate_metrics collapses snapshot carry-over."""
+
+    def test_repeated_run_kept_once(self):
+        dupes = [
+            Metrics(run_id="run-1", model_name="gpt-4"),
+            Metrics(run_id="run-1", model_name="gpt-4"),
+            Metrics(run_id="run-2", model_name="claude"),
+        ]
+        result = deduplicate_metrics(dupes)
+        self.assertEqual([m.run_id for m in result], ["run-1", "run-2"])
+
+    def test_first_occurrence_wins(self):
+        dupes = [
+            Metrics(run_id="run-1", input_tokens=100),
+            Metrics(run_id="run-1", input_tokens=999),
+        ]
+        result = deduplicate_metrics(dupes)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].input_tokens, 100)
+
+    def test_missing_run_id_uses_run_window(self):
+        dupes = [
+            Metrics(start_time="t0", end_time="t1", agent_role="dev"),
+            Metrics(start_time="t0", end_time="t1", agent_role="dev"),
+            Metrics(start_time="t0", end_time="t1", agent_role="genius"),
+        ]
+        result = deduplicate_metrics(dupes)
+        self.assertEqual(len(result), 2)
+
+    def test_empty(self):
+        self.assertEqual(deduplicate_metrics([]), [])
 
 
 class TestMetricsSchema(unittest.TestCase):

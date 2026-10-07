@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from config import StepRef
 from ..dispatch.dispatch import Dispatch
+from ..state_metrics.state_metrics import StateMetrics
 
 class HistoryEntry(BaseModel):
     """A summarized record of one workflow step."""
@@ -28,6 +29,10 @@ class HistoryEntry(BaseModel):
     artifacts: list[str] = Field(default_factory=list)
     pin: bool = False
     result: Optional[str] = None
+    # Metrics of THIS step's agent invocation. This is the single metrics
+    # authority (issue #792): the former top-level ``WorkflowState.metrics``
+    # snapshot was removed so each step keeps its own record.
+    metrics: Optional[StateMetrics] = None  # @stub-protected
 
     @model_validator(mode="before")
     @classmethod

@@ -242,12 +242,12 @@ class TestStripAgentRunConfigs(unittest.TestCase):
         self.assertEqual(result, "Response text")
         self.assertNotIn("AGENT_RUN_CONFIG", result)
 
-    def test_preserves_agent_metrics(self):
+    def test_preserves_non_sentinel_html_comments(self):
         msg = ("Content\n"
-                "<!-- agent-metrics: {} -->\n"
+                "<!-- bot-workflow-terminal -->\n"
                 '<!-- AGENT_RUN_CONFIG {"status": "advance"} -->')
         result = strip_agent_run_config(msg)
-        self.assertIn("agent-metrics", result)
+        self.assertIn("bot-workflow-terminal", result)
         self.assertNotIn("AGENT_RUN_CONFIG", result)
 
 
@@ -782,7 +782,7 @@ class TestExtractLatestAnswerRecallOffset(unittest.TestCase):
         )
         metrics = NS(review_fix_requests=0, to_dict=lambda: {})
 
-        def _fake_write(files, parts, m, state):
+        def _fake_write(files, parts, state):
             _fake_write.final_message = files
 
         with mock.patch.object(bo, "get_agent_final_response", return_value="finish summary"), \
