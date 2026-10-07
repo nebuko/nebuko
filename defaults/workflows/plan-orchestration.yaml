@@ -21,6 +21,7 @@ steps:
 
   - name: plan
     agent: genius
+    human_gate: true
     conditions:
       - on_result: approved
         next: scaffold
