@@ -335,6 +335,50 @@ mutation($subjectId: ID!) {
     return True
 
 
+def delete_comment(
+    repo: str,
+    comment_id: int,
+    token: Optional[str] = None,
+    dry_run: bool = False,
+) -> bool:
+    """Delete a single issue comment via the REST API.
+
+    An already-gone comment (HTTP 404) counts as success so a batch deletion
+    stays idempotent.
+
+    Args:
+        repo: Repository in format owner/repo.
+        comment_id: Numeric id of the comment to delete.
+        token: GitHub token (falls back to GH_TOKEN env var).
+        dry_run: If True, skip the API call.
+
+    Returns:
+        True when the comment is gone (deleted or already absent), else False.
+    """
+    if dry_run:
+        print(f"[DRY RUN] Would delete comment {comment_id}", file=sys.stderr)
+        return True
+
+    env = os.environ.copy()
+    resolved_token = _resolve_token(token)
+    if resolved_token:
+        env["GH_TOKEN"] = resolved_token
+
+    result = _run(
+        ["api", "--method", "DELETE", f"/repos/{repo}/issues/comments/{comment_id}"],
+        env=env,
+    )
+
+    if result.returncode == 0 or "404" in (result.stderr or ""):
+        return True
+
+    print(
+        f"Error deleting comment {comment_id}: {result.stderr.strip()}",
+        file=sys.stderr,
+    )
+    return False
+
+
 def main():
     """CLI interface for testing individual functions."""
     import argparse

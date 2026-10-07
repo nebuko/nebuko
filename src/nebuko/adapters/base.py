@@ -59,6 +59,12 @@ class PlatformAdapter(Protocol):
         ...
 
     # @stub-protected
+    def delete_issue_comments(self, issue: str, from_comment: str = "") -> int:
+        """Delete every comment on the issue, or ``from_comment`` and all later
+        ones, and return the number deleted."""
+        ...
+
+    # @stub-protected
     def artifact_dir(self) -> Path:
         """The host directory where a run's artifacts are staged."""
         ...

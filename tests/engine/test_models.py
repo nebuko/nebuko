@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import dataclasses
+import sys
 
 import pytest
 
-from nebuko.engine.models import CommentEntry, ExitCode, RoutingDecision, RunOutcome, Trigger
+from nebuko.engine.models import (
+    CommentEntry,
+    DeterministicStep,
+    ExitCode,
+    RoutingDecision,
+    RunOutcome,
+    StepResult,
+    Trigger,
+)
 
 
 def _trigger(**overrides):
@@ -103,3 +112,161 @@ class TestRunOutcome:
         )
         assert outcome.exit_code == ExitCode.ADVANCE
         assert outcome.phases == ("normalize",)
+
+
+class _RecordingAdapter:
+    """Minimal port stand-in that records delete calls."""
+
+    def __init__(self, deleted: int = 5, error: Exception | None = None):
+        self.deleted = deleted
+        self.error = error
+        self.calls: list[tuple[str, str]] = []
+
+    def delete_issue_comments(self, issue: str, from_comment: str = "") -> int:
+        self.calls.append((issue, from_comment))
+        if self.error is not None:
+            raise self.error
+        return self.deleted
+
+
+class TestStepResult:
+    def test_field_order_matches_the_frozen_contract(self):
+        assert [f.name for f in dataclasses.fields(StepResult)] == [
+            "step_kind",
+            "ok",
+            "detail",
+            "affected",
+        ]
+
+    def test_is_frozen(self):
+        result = StepResult(step_kind="delete_comments", ok=True, detail="done", affected=1)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.ok = False
+
+
+class TestDeterministicStepFromResolved:
+    def test_parses_the_delete_comments_contract(self):
+        step = DeterministicStep.from_resolved(
+            {"DELETE_COMMENTS": "true", "DELETE_COMMENTS_ISSUE": "590"}
+        )
+        assert step == DeterministicStep(kind="delete_comments", issue="590")
+
+    def test_honors_the_from_boundary_when_present(self):
+        step = DeterministicStep.from_resolved(
+            {
+                "DELETE_COMMENTS": "true",
+                "DELETE_COMMENTS_ISSUE": "590",
+                "DELETE_COMMENTS_FROM": "1234",
+            }
+        )
+        assert step is not None
+        assert step.from_comment == "1234"
+
+    def test_parses_the_run_script_contract(self):
+        step = DeterministicStep.from_resolved(
+            {
+                "RUN_SCRIPT": "true",
+                "SCRIPT_PATH": "scripts/clean.sh",
+                "SCRIPT_ARGS": "--all",
+                "SCRIPT_TIMEOUT_MINUTES": "5",
+            }
+        )
+        assert step == DeterministicStep(
+            kind="run_script",
+            script_path="scripts/clean.sh",
+            script_args="--all",
+            timeout_minutes=5,
+        )
+
+    def test_run_script_without_a_timeout_leaves_it_none(self):
+        step = DeterministicStep.from_resolved(
+            {"RUN_SCRIPT": "true", "SCRIPT_PATH": "scripts/clean.sh"}
+        )
+        assert step is not None
+        assert step.timeout_minutes is None
+
+    def test_delete_wins_on_a_pathological_overlap(self):
+        step = DeterministicStep.from_resolved(
+            {
+                "DELETE_COMMENTS": "true",
+                "DELETE_COMMENTS_ISSUE": "590",
+                "RUN_SCRIPT": "true",
+                "SCRIPT_PATH": "scripts/clean.sh",
+            }
+        )
+        assert step is not None
+        assert step.kind == "delete_comments"
+
+    @pytest.mark.parametrize(
+        "resolved",
+        [
+            {},
+            {"AGENT_SELECTED": "true", "SHOULD_SKIP": "false"},
+            {"SKIP_AGENT": "true", "REASON": "nothing to do"},
+            {"DELETE_COMMENTS": "false"},
+            {"RUN_SCRIPT": "false"},
+        ],
+    )
+    def test_returns_none_when_no_step_is_present(self, resolved):
+        assert DeterministicStep.from_resolved(resolved) is None
+
+    def test_returns_none_for_a_non_mapping(self):
+        assert DeterministicStep.from_resolved(None) is None
+
+
+class TestDeterministicStepExecute:
+    def test_delete_delegates_to_the_adapter_and_counts(self):
+        adapter = _RecordingAdapter(deleted=4)
+        result = DeterministicStep(kind="delete_comments", issue="590").execute(adapter)
+
+        assert adapter.calls == [("590", "")]
+        assert result == StepResult(
+            step_kind="delete_comments",
+            ok=True,
+            detail="deleted 4 comments on issue 590",
+            affected=4,
+        )
+
+    def test_delete_forwards_the_from_boundary(self):
+        adapter = _RecordingAdapter(deleted=2)
+        result = DeterministicStep(
+            kind="delete_comments", issue="590", from_comment="1234"
+        ).execute(adapter)
+
+        assert adapter.calls == [("590", "1234")]
+        assert result.affected == 2
+
+    def test_delete_transport_failure_becomes_a_result_not_a_crash(self):
+        adapter = _RecordingAdapter(error=RuntimeError("gh exploded"))
+        result = DeterministicStep(kind="delete_comments", issue="590").execute(adapter)
+
+        assert result.ok is False
+        assert result.affected == 0
+        assert "gh exploded" in result.detail
+
+    def test_run_script_reports_the_exit_code(self):
+        result = DeterministicStep(
+            kind="run_script",
+            script_path=sys.executable,
+            script_args='-c "import sys; sys.exit(3)"',
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is False
+        assert result.affected == 3
+        assert "exited with code 3" in result.detail
+
+    def test_run_script_success_is_ok(self):
+        result = DeterministicStep(
+            kind="run_script", script_path=sys.executable, script_args='-c "pass"'
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is True
+        assert result.affected == 0
+
+    def test_run_script_oserror_becomes_a_result_not_a_crash(self):
+        result = DeterministicStep(
+            kind="run_script", script_path="/nonexistent/nebuko-script"
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is False
+        assert result.affected == 0
