@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Date** | 2026-08-28 (édition du 2026-08-28 : extension à la section 4.4 — outils de workflow agentique ; mise à jour du 2026-09-20 : extension à la section 4.5 — ZenFlow (Zencoder), plateforme managée d'orchestration multi-agents) |
+| **Date** | 2026-08-28 (édition du 2026-08-28 : extension à la section 4.4 — outils de workflow agentique ; mise à jour du 2026-09-20 : extension à la section 4.5 — ZenFlow (Zencoder), plateforme managée d'orchestration multi-agents ; mise à jour du 2026-10-07 : alignement de la description produit (§1, §2.1, §2.2, §8) sur l'état courant — roster d'agents, secrets d'adoption, runners) |
 | **Périmètre** | Produit *nebuko* (dépot [nebuko/nebuko](https://github.com/nebuko/nebuko)) : positionnement, marché, concurrence (revue de code + outils de workflow agentique + plateforme managée), modèle économique, maturité |
 | **Méthode de collecte** | Analyse du dépôt (README, `landscape.md`, `agent-config.yaml`, métadonnées API GitHub), de l'issue interne #475 et de la PR #481 ; recherche web (SearXNG) du 2026-08-28 sur la concurrence, le pricing et les données de marché. Pour la section 4.4 : consolidation des analyses internes existantes (issues #227, #291, #318, #319, PR #485) complétée par le recoupement direct avec les sources officielles des éditeurs (vérifiées le 2026-08-28) et les métadonnées API GitHub des dépôts concernés. Pour la section 4.5 : consultation directe des sources primaires de l'éditeur ZenFlow (pages produit et pricing, documentation officielle), vérifiées le 2026-09-20, et des documents internes de *nebuko* (`docs/workflows.md`, `docs/features.md`, `defaults/skills/scaffold-plan.md`) |
 | **Lisibilité** | Document unique, ~30 min de lecture. Tout fait chiffré porte une référence `[n]` résolue dans l'index des sources (section 10). Trois niveaux d'épistémicité sont explicitement distingués : **fait vérifié** (source primaire), **signal secondaire** (blog/press citant une source primaire — marqué « à recouper »), **hypothèse**. |
@@ -11,7 +11,7 @@
 
 ## 1. Synthèse exécutive
 
-**Ce qu'est *nebuko*.** *nebuko* est un outil d'automatisation de flux Git/GitHub propulsé par une architecture multi-agents (cinq agents IA aux rôles distincts : architecte, collecte de contexte, développement, revue, raffinement de ticket), exécutée nativement dans GitHub Actions et coordonnée par la filature de commentaires des issues elles-mêmes [52][50]. Sa proposition de valeur tient en trois lignes :
+**Ce qu'est *nebuko*.** *nebuko* est un outil d'automatisation de flux Git/GitHub propulsé par une architecture multi-agents (neuf agents IA aux rôles distincts : architecte, collecte de contexte, développement, revue, raffinement de ticket, plus revue d'issues, synthèse, débogage et product owner), exécutée nativement dans GitHub Actions et coordonnée par la filature de commentaires des issues elles-mêmes [52][50]. Sa proposition de valeur tient en trois lignes :
 
 1. La **délégation entre agents spécialisés** (`@@mention`) — compétence clé de toute équipe d'ingénierie, absente des assistants IA actuels, qui sont des agents uniques [50].
 2. Le **processus d'équipe comme artefact versionné** : des workflows déclaratifs en YAML, commités, diffables, roll-backables, partables — avec des *gates* d'approbation humaine conservés sur les décisions de conception [50].
@@ -32,7 +32,7 @@
 
 ## 2. Le produit
 
-### 2.1 Architecture : cinq agents aux rôles distincts
+### 2.1 Architecture : neuf agents aux rôles distincts
 
 Le système s'appuie sur l'architecture multi-agents d'OpenHands [52][44] :
 
@@ -44,11 +44,13 @@ Le système s'appuie sur l'architecture multi-agents d'OpenHands [52][44] :
 | `@@review` (Senior Code Reviewer) | Inspection des diffs, bugs, régressions, verdict | Terminal pour `git diff`, **pas de modification** |
 | `@@issue` (Issue Refinement Agent) | Aide les humains à produire des issues claires et actionnables | Itératif avec l'humain [52] |
 
+Quatre rôles de support complètent ce noyau : `issue-reviewer` (revue d'issues terminées pour optimiser workflows et prompts), `summarize` (synthèse structurée en JSON de l'historique d'une issue), `debug` (investigation des exécutions passées) et `po` (spécifications WHEN/IF/THEN du workflow *spec-driven*).
+
 Chaque agent est défini déclarativement (rôle, personnalité, modèle, skills) et connaît le reste de la *roster*. Le mécanisme central est la **délégation par `@@mention`** : n'importe quel agent peut, à n'importe quelle étape, déléguer (« j'ai besoin du contexte sur X », « `@@dev`, implémente ce stub », « `@@review`, vérifie ce diff ») ; le résultat rebondit dans la même filature d'issue, où l'agent appelant reprend [50].
 
 ### 2.2 Distribution zero-copy
 
-L'adoption par un dépôt externe se résume à : une référence de *reusable workflow* (`uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main`), un fichier `agent-config.yaml`, et deux secrets (`OPENROUTER_API_KEY`, `GH_PAT`) sur un runner self-hosted [52]. Les workflows, prompts et scripts sont récupérés depuis le dépôt *nebuko* à chaque exécution : **aucune copie de code côté utilisateur**, et les mises à jour sont donc transparentes. Le point de friction restant est le runner self-hosted, exigence actuelle du produit [52].
+L'adoption par un dépôt externe se résume à : une référence de *reusable workflow* (`uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main`), un fichier `agent-config.yaml`, et deux secrets — un `GH_PAT` requis (jeton *fine-grained*) et une clé du provider LLM (`OPENROUTER_API_KEY`, `COMMANDCODE_API_KEY` ou `LOCAL_VLLM_API_TOKEN`) [52]. Les workflows, prompts et scripts sont récupérés depuis le dépôt *nebuko* à chaque exécution : **aucune copie de code côté utilisateur**, et les mises à jour sont donc transparentes. Le runner est GitHub-hosted par défaut (`ubuntu-latest`), un runner self-hosted restant possible via l'entrée `runs_on` ; la friction d'onboarding résiduelle porte désormais sur la création du `GH_PAT` fine-grained et de la clé provider [52].
 
 ### 2.3 Configuration YAML en trois couches
 
@@ -473,7 +475,7 @@ Analyse volontairement non flatteuse — un document transmissible doit pouvoir 
 - **Traction nulle** : 0 star / 0 fork / 0 watcher au 2026-08-28 [54]. Aucune preuve d'adoption tierce.
 - **3 mois d'existence, produit en pré-alpha** : rien de publiable pour des équipes externes avant la Gate 1 [48].
 - **Dépendance à un seul mainteneur** visible ; la communauté n'existe pas encore, alors que le moat revendiqué est « format + communauté » [48].
-- **Runner self-hosted requis** : friction d'onboarding réelle pour les équipes sans infrastructure d'Actions self-hosted [52].
+- **Onboarding : `GH_PAT` + clé provider.** L'adoption demande un jeton fine-grained et une clé LLM à provisionner ; le runner est GitHub-hosted par défaut, le self-hosted n'étant qu'une option [52].
 - **Signaux de mesure du processus encore « en cours de définition »** : la promesse de measurability n'est pas encore démontrée par des chiffres [50].
 
 ### Opportunités
@@ -506,7 +508,7 @@ Actions concrètes, classées par effort croissant. Les points (a)–(e) visent 
 3. **(c) Recoupement des chiffres secondaires avec les sources primaires.** Les données Faros AI (+441,5 % / « 98 % / +91 % » [34][35]) et LinearB (2,5× / 5× [34]) proviennent de blogs secondaires : contacter les auteurs des rapports, récupérer les méthodologies (taille d'échantillon, période, définition de « review time ») et ne citer dans les versions futures de cette étude que les chiffres validés.
 4. **(d) Benchmark pricing ligne à ligne.** Scraper les pages officielles (CodeRabbit [14], Copilot [18], Devin [22]) et produire un tableau : ce qui est inclus par tier, limites de PRs/caractères, pricing par utilisateur vs par consommation, prix enterprise. Comparer avec la structure de coûts de la section 6.2 pour définir une grille SaaS défendable avant la Gate 2 [48].
 5. **(e) Extraction des rapports de marché.** Lire intégralement les rapports agentic-AI [39][40][41] et consigner les valeurs TAM/SAM/CAM, les hypothèses de croissance et les segments « developer productivity » ; remplacer l'affirmation qualitative de la section 3.1 par des chiffres sourcés.
-6. **(f) Enquête de willingness-to-pay avant la beta.** Court questionnaire (200–500 répondants via les communautés ciblées en (b)) avec présentation du workflow flagship et du coût d'onboarding (self-hosted runner, clés) ; mesurer le taux de déclaration d'essai conditionnelle et le prix d'indifférence. À mener idéalement entre les Gates 1 et 2, quand la démo existe [48].
+6. **(f) Enquête de willingness-to-pay avant la beta.** Court questionnaire (200–500 répondants via les communautés ciblées en (b)) avec présentation du workflow flagship et du coût d'onboarding (création du `GH_PAT` fine-grained, clé provider) ; mesurer le taux de déclaration d'essai conditionnelle et le prix d'indifférence. À mener idéalement entre les Gates 1 et 2, quand la démo existe [48].
 7. **(g) Études de cas dès les Gates 1–2.** Intégrer 3 à 5 équipes externes en conditions réelles sur délégation `@@` ; instrumenter les signaux de la section 2.4 (interactions humaines par issue, tokens par issue, temps de merge, re-travail) et publier les résultats — ce qui transforme la promesse de *measurability* [50] en preuve, et fournit les premiers artefacts partageables de la future marketplace [48].
 8. **(h) Veille concurrentielle trimestrialisée.** Suivi systématique : financements et pivots des acteurs de la section 4.1 (en particulier le pivot « Agentic Change Management » de CodeRabbit [2]), changelogs Copilot [19], publications OpenHands [46]. Livrable mensuel léger : « qui est entré dans notre quadrant ».
 9. **(i) Audit d'absence de concurrent OSS.** Confirmer ou infirmer le constat de la section 4.3 par requêtes ciblées GitHub (topics : `multi-agent`, `github-actions`, `agentic-workflow`) et inspection des stars croissantes sur 6 mois.

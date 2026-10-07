@@ -245,7 +245,8 @@ path = fetch_remote_workflow(
 - **Update flow** — consumers pick up workflow fixes/features by bumping the
   ref, without any file changes in their own repository.
 
-The consumer-side entry point is [`workflow.yaml`](../workflow.yaml), a thin
-`workflow_call` wrapper that invokes this repo's reusable orchestrator with the
-consumer's `agent_config_path` and secrets. For the full orchestrator step
-reference, see [default-workflow.md](./default-workflow.md).
+The consumer-side entry point is `workflow.yaml` — the thin `workflow_call`
+wrapper each consumer repo writes to invoke this repo's reusable orchestrator
+with their `agent_config_path` and secrets (a ready-to-paste example lives in
+[adoption.md](./adoption.md)). For the full orchestrator step reference, see
+[default-workflow.md](./default-workflow.md).

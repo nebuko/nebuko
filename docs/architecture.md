@@ -28,7 +28,7 @@ state store.
 ```
 
 The orchestrator is `.github/workflows/nebuko-workflow.yaml` — a reusable
-workflow (consumer file: [`workflow.yaml`](../workflow.yaml)) with three jobs:
+workflow (consumers call it from their own `workflow.yaml`) with three jobs:
 `run-task` (the agent pipeline, ~24 steps), `agent-metrics` (runs on issue
 close), and `subtask-completion-notifier` (notifies a parent issue when a
 sub-issue's split plan completes). It runs on GitHub-hosted runners by default;
