@@ -15,7 +15,7 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 | Trigger | Condition |
 |---------|-----------|
 | `issues` | Issue opened, edited, assigned, or closed - body must contain an agent mention (`@@genius`, `@@dev`, etc.) or `/nebuko`. Bot-tagged bodies (starting with `<!-- bot-agent-` or `<!-- bot-workflow-terminal -->`) never fire on `@@mentions` |
-| `issue_comment` | New comment - body must contain an agent mention, or a machine trigger token: `"function_call"` (in the posted state JSON), `<!-- workflow-continue -->`, `<!-- bot-summarizer-trigger -->`, `<!-- bot-subtask-complete: N -->`, `<!-- bot-trigger: agent -->`. `@@mention` firing is suppressed when the comment starts with a bot marker |
+| `issue_comment` | New comment - body must contain an agent mention, or a machine trigger token: `"function_call"` (in the posted state JSON), `<!-- workflow-continue -->`, `<!-- bot-subtask-complete: N -->`, `<!-- bot-trigger: agent -->`. `@@mention` firing is suppressed when the comment starts with a bot marker |
 | `workflow_call` | Reusable workflow invoked by another workflow; uses `prompt_body` input |
 
 ### Agent Roles
@@ -29,7 +29,6 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 | `issue` | `@@issue` | Issue processor |
 | `issue-reviewer` | `@@issue-reviewer` | Issue reviewer |
 | `debug` | `@@debug` | Debug specialist |
-| `summarize` | (auto-triggered) | Summarizes long conversations |
 
 ---
 
@@ -151,29 +150,11 @@ Two guards prevent unwanted re-execution:
 **Input:** `TARGET_NUMBER`, `CIRCUIT_BREAKER_THRESHOLD` (default 25).  
 **Output:** `CIRCUIT_BREAKER_TRIPPED=true/false`, `SKIP_AGENT=true` if tripped. A comment posted to the issue if tripped.
 
-Counts historical `<!-- bot-agent- -->` markers across all comments on the issue. If the count divided by 2 exceeds the threshold, the circuit breaker trips: execution halts and a comment is posted notifying the issue author. Summary markers (`<!-- bot-agent-summary -->`) are excluded from the count.
+Counts historical `<!-- bot-agent- -->` markers across all comments on the issue. If the count divided by 2 exceeds the threshold, the circuit breaker trips: execution halts and a comment is posted notifying the issue author.
 
 ---
 
-### Step 11: Check Summarizer Gate
-
-**Input:** `TARGET_NUMBER`, `SUMMARIZER_THRESHOLD` (default 100).  
-**Output:** `SUMMARIZER_NEEDED=true/false`, `SKIP_AGENT=true` if summarizer needed.
-
-Checks if the issue has exceeded the comment threshold AND no existing summary comment is present. If so, sets `SUMMARIZER_NEEDED=true` and `SKIP_AGENT=true` to short-circuit the normal agent flow and trigger a summarizer instead.
-
----
-
-### Step 12: Post Summarizer Trigger Comment
-
-**Input:** `SUMMARIZER_NEEDED` from Step 11.  
-**Output:** A new comment on the issue containing `<!-- AGENT_RUN_CONFIG {"task": "summarize", "complexity": "low"} -->`.
-
-Conditional on `SUMMARIZER_NEEDED=true`. Posts a comment tagged with `<!-- bot-agent-summary -->` that will itself trigger the workflow again with the summarizer agent.
-
----
-
-### Step 13: Post Acknowledgment Comment
+### Step 11: Post Acknowledgment Comment
 
 **Input:** `ROLE_NAME`, `TARGET_NUMBER`, `github.run_id`.  
 **Output:** A comment on the issue confirming the agent has started, with a link to workflow logs. Saves `ACK_COMMENT_ID`.
@@ -187,16 +168,16 @@ Posts a temporary "**{role} agent started**" comment, prefixed with the theme-ad
 
 ---
 
-### Step 14: Save Acknowledgment Comment Node ID
+### Step 12: Save Acknowledgment Comment Node ID
 
-**Input:** `ACK_COMMENT_ID` from Step 13.  
+**Input:** `ACK_COMMENT_ID` from Step 11.  
 **Output:** `ACK_COMMENT_NODE_ID` (GraphQL node ID).
 
 Fetches the GraphQL node ID of the acknowledgment comment for later minimization via the GraphQL API.
 
 ---
 
-### Step 15: Prepare Agent Query Context
+### Step 13: Prepare Agent Query Context
 
 **Input:** Issue number, event path.  
 **Output:** `/tmp/ready_prompt.md` containing the full query context, exported to `AGENT_QUERY_PATH`.
@@ -211,7 +192,7 @@ Produces a consolidated markdown prompt file.
 
 ---
 
-### Step 16: Configure git to Use GH_PAT
+### Step 14: Configure git to Use GH_PAT
 
 **Input:** `GH_PAT` secret.  
 **Output:** Git remote configured with PAT authentication.
@@ -220,7 +201,7 @@ Updates the git remote URL to embed the PAT, allowing the agent to push branches
 
 ---
 
-### Step 17: Run OpenHands Agent
+### Step 15: Run OpenHands Agent
 
 **Input:** `PROMPT_LOCATION`, `AGENT_QUERY_PATH`, `ROLE_NAME`, `COMPLEXITY`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `AGENT_CONFIG_PATH`, `LLM_API_KEY`, `LLM_BASE_URL`, `PR_NUMBER` (optional for review agent).  
 **Output:** Agent execution results written to stdout → `console.log`, structured final message to `final_message.txt`, optional `split_plan.json`, `workflow_state.json`, and optional `final_message_part_{N}.txt` files.
@@ -243,7 +224,7 @@ The step `timeout-minutes: 30` remains as a hard backstop only. In-process, the 
 
 ---
 
-### Step 18: Clean and Prepare Comment
+### Step 16: Clean and Prepare Comment
 
 **Input:** `final_message.txt` (preferred), `console.log` (fallback), `TRIGGER_AUTHOR`.  
 **Output:** `github_comment.md` containing the cleaned agent response. Sets `HAS_COMMENT=true`.
@@ -259,7 +240,7 @@ Per-step agent metrics are no longer appended to the comment; they live in the
 
 ---
 
-### Step 19: Add Bot Marker and Workflow State to Comment
+### Step 17: Add Bot Marker and Workflow State to Comment
 
 **Input:** `github_comment.md`, `ROLE_NAME`, `workflow_state.json` (optional).  
 **Output:** Updated `github_comment.md` with bot marker, display name prefix, and collapsed workflow state section.
@@ -271,7 +252,7 @@ Prepends to the comment:
 
 ---
 
-### Step 20: Post Agent Comment to GitHub
+### Step 18: Post Agent Comment to GitHub
 
 **Input:** `github_comment.md`, `TARGET_NUMBER`, `ROLE_NAME`.  
 **Output:** New comment on the issue with the agent's answer.
@@ -280,16 +261,16 @@ Uses `peter-evans/create-or-update-comment@v4` to post the final comment. Mode i
 
 ---
 
-### Step 21: Minimize Acknowledgment Comment
+### Step 19: Minimize Acknowledgment Comment
 
-**Input:** `ACK_COMMENT_NODE_ID` from Step 14.  
+**Input:** `ACK_COMMENT_NODE_ID` from Step 12.  
 **Output:** The temporary "agent started" comment is minimized (collapsed) via GraphQL mutation.
 
-Cleans up the acknowledgment comment from Step 13 by marking it as `OUTDATED` via the GraphQL `minimizeComment` mutation.
+Cleans up the acknowledgment comment from Step 11 by marking it as `OUTDATED` via the GraphQL `minimizeComment` mutation.
 
 ---
 
-### Step 22: Process Split Plan (Issue Decomposition)
+### Step 20: Process Split Plan (Issue Decomposition)
 
 **Input:** `split_plan.json` (preferred) or `<splitPlan>...</splitPlan>` in `github_comment.md`. Only for `genius` role.  
 **Output:** Sub-issues created under the parent issue.
@@ -302,7 +283,7 @@ Extracts the split plan from the genius agent's output and creates child issues 
 
 ---
 
-### Step 23: Post Additional Message Parts
+### Step 21: Post Additional Message Parts
 
 **Input:** `final_message_parts_count.txt`, `final_message_part_{N}.txt` files.  
 **Output:** Additional comments on the issue for messages that exceeded GitHub's comment size limit.
@@ -311,7 +292,7 @@ If the agent's response was split into multiple parts (to stay within GitHub's ~
 
 ---
 
-### Step 24: Upload Logs as Artifacts (unzipped)
+### Step 22: Upload Logs as Artifacts (unzipped)
 
 **Input:** the staged `console.log` and `app.log` files under `${{ runner.temp }}/nebuko-task-logs`.  
 **Output:** two GitHub Actions artifacts named `console.log` and `app.log` (7-day retention).
@@ -402,10 +383,6 @@ GitHub Event
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
-│ Summarizer Gate     │ → SUMMARIZER_NEEDED (comment count threshold)
-└─────────┬───────────┘
-          ▼
-┌─────────────────────┐
 │ Acknowledgment      │ → Comment "agent started"
 └─────────┬───────────┘
           ▼
@@ -456,7 +433,6 @@ GitHub Event
 |----------|--------|---------|---------|
 | `AGENT_CONFIG_PATH` | `inputs.agent_config_path` | `agent-config.yaml` | Path to agent configuration YAML |
 | `CIRCUIT_BREAKER_THRESHOLD` | `inputs.circuit_breaker_threshold` | `15` | Max agent calls before circuit breaker trips |
-| `SUMMARIZER_THRESHOLD` | `inputs.summarizer_threshold` | `100` | Comment count before summarizer triggers |
 | `PIN_COMMENT` | `inputs.pin_comment` | `false` | Pin every agent step output comment for verbatim context injection |
 | `PYTHON_VERSION` | `inputs.python_version` | `3.13` | Python runtime version |
 | `ENABLE_UV_CACHE` | `inputs.enable_uv_cache` | `true` | Enable uv dependency caching |
@@ -477,10 +453,9 @@ GitHub Event
 | `AGENT_SKILLS` | Step 8 | Comma-separated skill file names |
 | `SKIP_AGENT` | Steps 8-10 | Whether to skip agent execution |
 | `CIRCUIT_BREAKER_TRIPPED` | Step 10 | Whether circuit breaker activated |
-| `SUMMARIZER_NEEDED` | Step 11 | Whether summarizer should run |
-| `HAS_COMMENT` | Step 18 | Whether a comment was generated |
-| `ACK_COMMENT_ID` | Step 13 | ID of acknowledgment comment |
-| `AGENT_QUERY_PATH` | Step 15 | Path to prepared query context |
+| `HAS_COMMENT` | Step 16 | Whether a comment was generated |
+| `ACK_COMMENT_ID` | Step 11 | ID of acknowledgment comment |
+| `AGENT_QUERY_PATH` | Step 13 | Path to prepared query context |
 
 ---
 
@@ -504,12 +479,11 @@ comments where consumers need to know which agent wrote it:
 
 | Emitter | Universal marker | Role marker |
 |---------|------------------|-------------|
-| Agent answer comment (Step 20) | line 1 | after state section |
-| Acknowledgment comment (Step 13) | line 1 | line 2 |
+| Agent answer comment (Step 18) | line 1 | after state section |
+| Acknowledgment comment (Step 11) | line 1 | line 2 |
 | Circuit-breaker comment (Step 10) | line 1 | line 2 (genius) |
-| Summarizer trigger (Step 12) | line 1 | line 2 (summary) |
 | Terminal skip comment | line 1 | - |
-| Multi-part message posts (Step 23) | every part, line 1 | - |
+| Multi-part message posts (Step 21) | every part, line 1 | - |
 | Sub-task completion notification | present | - |
 | Python emitters via `github_client.post_comment()` | injected by `ensure_bot_marker()` | - |
 

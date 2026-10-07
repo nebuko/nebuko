@@ -170,7 +170,7 @@ Once a subscription's limits are reached, the metered **OpenCode Zen** provider
   so there is no per-token price to report. `input_price` / `output_price` in
   the `llms:` stanza drive the cost columns; leave them unset and the metrics
   report token counts with zero cost. See
-  [features.md — Metrics](./features.md#metrics--summarization).
+  [features.md — Metrics](./features.md#metrics).
 - **OpenCode Go is not wired yet** — see the client-identity requirement above.
 
 ---

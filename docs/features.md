@@ -5,7 +5,7 @@ Per-feature deep-dives. Table of contents:
 1. [Human Commands](#human-commands)
 2. [Task Decomposition](#task-decomposition)
 3. [Safety Mechanisms](#safety-mechanisms)
-4. [Metrics & Summarization](#metrics--summarization)
+4. [Metrics](#metrics)
 5. [Execution Layer](#execution-layer)
 6. [Remote Workflows (Zero-Copy)](#remote-workflows-zero-copy)
 
@@ -109,20 +109,12 @@ Two checks:
 
 Output: `SKIP_AGENT=true/false`.
 
-### Summarizer Gate — `summarizer_gate.py`
-
-Counting-only (it never blocks a run): when non-bot-user comments reach the
-threshold (input `summarizer_threshold`, default **100**) *and* no
-`<!-- bot-agent-summary -->` comment exists yet, the summarizer agent is
-triggered to produce a structured summary, keeping long issues navigable.
-Output: `SUMMARIZER_TRIGGERED=true/false`.
-
 GitHub REST rate limits that constrain these comment-fetching guards are
 documented in [github-api-limits.md](./github-api-limits.md).
 
 ---
 
-## Metrics & Summarization
+## Metrics
 
 Every agent step self-reports metrics, embedded as the `metrics` field of its
 entry in the `workflow_state` `history` (issue #792 — there is no longer a
@@ -149,9 +141,6 @@ separate hidden HTML comment):
   per-step metrics from each comment's `workflow_state` snapshot (de-duplicating
   entries repeated across accumulating snapshots), aggregates by model name
   (tokens, runtime, error rate), and posts a summary table.
-- **Qualitative summary** — separately, the `summarize` agent produces a
-  structured JSON narrative of the issue (decisions, files, pending actions),
-  gated by the summarizer gate above.
 
 ---
 

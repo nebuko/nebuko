@@ -37,7 +37,7 @@
       }
     },
     {
-      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n<!-- bot-agent-summary -->\n*Genius answer*",
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n*Genius answer*",
       "created_at": "2026-10-01T07:41:00Z",
       "user": {
         "login": "github-actions[bot]",
