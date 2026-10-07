@@ -278,8 +278,8 @@ def resolve_config(
             config = _resolve_function_call_path(prev_state.function_call, workflows_dir, prev_state, local_workflows_dir=local_workflows_dir)
     elif extract_machine_trigger(trigger_body):
         # CI-posted machine trigger token (bot-subtask-complete /
-        # bot-summarizer-trigger / bot-trigger) — replaces the legacy
-        # machine-posted @@genius / @@summarize comments (issue #478).
+        # bot-trigger) — replaces the legacy machine-posted @@genius
+        # comments (issue #478).
         config = _resolve_machine_trigger_path(trigger_body, workflows_dir)
     elif prev_state and dispatch_obj:
         # Auto-dispatch: workflow state with dispatch object — follow the workflow.

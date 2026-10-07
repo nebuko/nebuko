@@ -164,11 +164,11 @@ class TestResolveFunctionCallPathWorkflowContext:
 
         prev = WorkflowState(workflow="spec", step="analyze", agent="genius")
         config = _resolve_function_call_path(
-            FunctionCall(agent_name="summarize"),
+            FunctionCall(agent_name="debug"),
             self._workflows_dir(tmp_path, self.SPEC_YAML),
             prev,
         )
-        assert config["task"] == "summarize"
+        assert config["task"] == "debug"
         assert config["config_workflow"] == "spec"
         assert config["config_step"] == ""
 

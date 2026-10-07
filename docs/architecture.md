@@ -37,7 +37,7 @@ callers can select the runner via the `runs_on` workflow input (e.g.
 
 ---
 
-## The 9-Agent Model
+## The 8-Agent Model
 
 | Agent | Role | Tools |
 |-------|------|-------|
@@ -47,7 +47,6 @@ callers can select the runner via the `runs_on` workflow input (e.g.
 | `review` | Senior code reviewer — inspects diffs, issues approved/rejected verdicts. | think, finish |
 | `issue` | Issue refinement — iteratively refines issue drafts with humans. | think, finish |
 | `issue-reviewer` | Reviews completed issues for workflow/prompt optimizations. | think, finish |
-| `summarize` | Produces structured JSON summaries of issue history. | think, finish |
 | `debug` | Investigates unusual agent behavior from past run logs/artifacts. | terminal, file_editor, think, finish |
 | `po` | Product owner — writes WHEN/IF/THEN specs (used by the `spec-driven` workflow). | think, finish |
 

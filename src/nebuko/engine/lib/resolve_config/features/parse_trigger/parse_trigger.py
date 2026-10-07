@@ -171,10 +171,9 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
 
 
 # Machine trigger tokens posted by the CI pipeline itself (issue #478).
-# These replace the legacy machine-posted "@@genius" / "@@summarize" comments
-# now that @@mentions are blocked for bot-triggered runs.
+# These replace the legacy machine-posted "@@genius" comments now that
+# @@mentions are blocked for bot-triggered runs.
 _SUBTASK_COMPLETE_RE = re.compile(r"<!--\s*bot-subtask-complete:\s*(\d+)\s*-->")
-_SUMMARIZER_TRIGGER_RE = re.compile(r"<!--\s*bot-summarizer-trigger\s*-->")
 _GENERIC_TRIGGER_RE = re.compile(r"<!--\s*bot-trigger:\s*([a-z][a-z-]*)\s*-->")
 
 
@@ -183,7 +182,6 @@ def extract_machine_trigger(trigger_body: str) -> Optional[Tuple[str, Optional[s
 
     Recognized tokens:
       - ``<!-- bot-subtask-complete: N -->`` → ("genius", "N")
-      - ``<!-- bot-summarizer-trigger -->``  → ("summarize", None)
       - ``<!-- bot-trigger: agent -->``      → ("agent", None) — generic form
 
     Args:
@@ -196,8 +194,6 @@ def extract_machine_trigger(trigger_body: str) -> Optional[Tuple[str, Optional[s
     match = _SUBTASK_COMPLETE_RE.search(trigger_body)
     if match:
         return ("genius", match.group(1))
-    if _SUMMARIZER_TRIGGER_RE.search(trigger_body):
-        return ("summarize", None)
     match = _GENERIC_TRIGGER_RE.search(trigger_body)
     if match:
         return (match.group(1), None)

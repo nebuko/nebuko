@@ -31,7 +31,6 @@ def matches_existing_gates(body, event_name):
     if event_name == "issue_comment" and (
         '"function_call"' in body
         or "<!-- workflow-continue -->" in body
-        or "<!-- bot-summarizer-trigger -->" in body
         or "<!-- bot-subtask-complete" in body
         or "<!-- bot-trigger:" in body
     ):
