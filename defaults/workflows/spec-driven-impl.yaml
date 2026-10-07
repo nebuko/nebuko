@@ -21,8 +21,6 @@ steps:
         next: stub
       - on_result: rejected
         next: context
-      - on_result: default
-        next: stub
 
   - name: stub
     agent: dev

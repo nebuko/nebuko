@@ -19,13 +19,12 @@ steps:
   - name: plan
     agent: genius
     next: implement
+    human_gate: true
     conditions:
       - on_result: approved
         next: implement
       - on_result: rejected
         next: context
-      - on_result: default
-        next: implement
 
   - name: implement
     agent: dev
