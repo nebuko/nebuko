@@ -400,7 +400,11 @@ BOT_MARKER = "<!-- bot-workflow-terminal -->"
 CONTINUE_TOKEN = "<!-- workflow-continue -->\n"
 
 # Dispatch statuses that keep the flow alive and therefore carry the token.
-_LIVE_STATUSES = ("advance", "loop")
+# ``soft_kill`` (issue #793) belongs here even though it is a stop: the
+# engine's own soft-kill conclusion comment must re-trigger the run so the
+# next run's ``resolve_soft_kill_route`` can retry the interrupted step in
+# place, bounded by ``MAX_SOFT_RETRIES`` (then halt for a human).
+_LIVE_STATUSES = ("advance", "loop", "soft_kill")
 
 # Role label for the answer header's announcement line (legacy mapping).
 _ROLE_DISPLAY_NAMES = {

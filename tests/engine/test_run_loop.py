@@ -22,6 +22,7 @@ from nebuko.engine.run_loop import (
     Engine,
     _backfill_workflow_identity,
     _ensure_child_identity,
+    _exit_code_for,
     _TRIGGER_KEY,
     main,
     resolved_env_overlay,
@@ -239,6 +240,19 @@ class TestRoutePhase:
         decision = engine.route({"dispatch": {"status": "hold", "reason": "await approval"}})
 
         assert decision.status == "hold"
+
+    def test_maps_a_soft_kill_to_advance(self, tmp_path):
+        """Issue #793: ``soft_kill`` is a live status, not a silent fall-through.
+
+        The run exits ``ADVANCE`` (its own comment re-triggers the retry)
+        rather than relying on the ``.get`` default in ``_exit_code_for``.
+        """
+        engine = _engine(tmp_path)
+
+        decision = engine.route({"dispatch": {"status": "soft_kill"}})
+
+        assert decision.status == "soft_kill"
+        assert _exit_code_for(decision) == ExitCode.ADVANCE
 
 
 class TestRunLoop:

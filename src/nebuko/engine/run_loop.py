@@ -66,6 +66,10 @@ _EXIT_CODE_BY_STATUS = {
     "advance": ExitCode.ADVANCE,
     "loop": ExitCode.ADVANCE,
     "hold": ExitCode.HOLD,
+    # A soft-kill comment re-triggers the next run (issue #793); the run itself
+    # still exits ADVANCE like the other live statuses rather than falling
+    # through to the default.
+    "soft_kill": ExitCode.ADVANCE,
 }
 
 
