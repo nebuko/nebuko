@@ -11,7 +11,7 @@
 
 ## 1. Synthèse exécutive
 
-**Ce qu'est *nebuko*.** *nebuko* est un outil d'automatisation de flux Git/GitHub propulsé par une architecture multi-agents (neuf agents IA aux rôles distincts : architecte, collecte de contexte, développement, revue, raffinement de ticket, plus revue d'issues, synthèse, débogage et product owner), exécutée nativement dans GitHub Actions et coordonnée par la filature de commentaires des issues elles-mêmes [52][50]. Sa proposition de valeur tient en trois lignes :
+**Ce qu'est *nebuko*.** *nebuko* est un outil d'automatisation de flux Git/GitHub propulsé par une architecture multi-agents (huit agents IA aux rôles distincts : architecte, collecte de contexte, développement, revue, raffinement de ticket, plus revue d'issues, débogage et product owner), exécutée nativement dans GitHub Actions et coordonnée par la filature de commentaires des issues elles-mêmes [52][50]. Sa proposition de valeur tient en trois lignes :
 
 1. La **délégation entre agents spécialisés** (`@@mention`) — compétence clé de toute équipe d'ingénierie, absente des assistants IA actuels, qui sont des agents uniques [50].
 2. Le **processus d'équipe comme artefact versionné** : des workflows déclaratifs en YAML, commités, diffables, roll-backables, partables — avec des *gates* d'approbation humaine conservés sur les décisions de conception [50].
@@ -32,7 +32,7 @@
 
 ## 2. Le produit
 
-### 2.1 Architecture : neuf agents aux rôles distincts
+### 2.1 Architecture : huit agents aux rôles distincts
 
 Le système s'appuie sur l'architecture multi-agents d'OpenHands [52][44] :
 
@@ -44,7 +44,7 @@ Le système s'appuie sur l'architecture multi-agents d'OpenHands [52][44] :
 | `@@review` (Senior Code Reviewer) | Inspection des diffs, bugs, régressions, verdict | Terminal pour `git diff`, **pas de modification** |
 | `@@issue` (Issue Refinement Agent) | Aide les humains à produire des issues claires et actionnables | Itératif avec l'humain [52] |
 
-Quatre rôles de support complètent ce noyau : `issue-reviewer` (revue d'issues terminées pour optimiser workflows et prompts), `summarize` (synthèse structurée en JSON de l'historique d'une issue), `debug` (investigation des exécutions passées) et `po` (spécifications WHEN/IF/THEN du workflow *spec-driven*).
+Trois rôles de support complètent ce noyau : `issue-reviewer` (revue d'issues terminées pour optimiser workflows et prompts), `debug` (investigation des exécutions passées) et `po` (spécifications WHEN/IF/THEN du workflow *spec-driven*).
 
 Chaque agent est défini déclarativement (rôle, personnalité, modèle, skills) et connaît le reste de la *roster*. Le mécanisme central est la **délégation par `@@mention`** : n'importe quel agent peut, à n'importe quelle étape, déléguer (« j'ai besoin du contexte sur X », « `@@dev`, implémente ce stub », « `@@review`, vérifie ce diff ») ; le résultat rebondit dans la même filature d'issue, où l'agent appelant reprend [50].
 
