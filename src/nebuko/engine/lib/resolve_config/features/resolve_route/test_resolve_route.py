@@ -752,3 +752,72 @@ class TestFunctionCallPathCallbackDefault:
         )
         assert config["config_callback"] == ""
 
+
+class TestWorkflowCommandPerStepComplexity:
+    """End-to-end tier pickup for ``/nebuko run workflow`` (issue #787).
+
+    The issue's motivating case is the *first* step of a workflow: it never
+    receives a dispatch, so its declared ``complexity`` must reach the runtime
+    override through ``CONFIG_COMPLEXITY`` via the workflow-command path.
+    """
+
+    _TIERED_YAML = (
+        "name: tiered\n"
+        'description: "tiered"\n'
+        "trigger:\n"
+        "  agents: [genius]\n"
+        "steps:\n"
+        "  - name: analyze\n"
+        "    agent: genius\n"
+        "    complexity: low\n"
+        "    next: plan\n"
+        "  - name: plan\n"
+        "    agent: genius\n"
+        "    next: null\n"
+    )
+
+    @staticmethod
+    def _parse(body):
+        from resolve_config.sub_domains.workflow_command.workflow_command import (
+            parse_workflow_command,
+        )
+        return parse_workflow_command(body)
+
+    def _resolve(self, tmp_path, body):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from resolve_config.features.build_result.build_result import _build_result
+        from resolve_workflow import TASK_TO_PROMPT
+
+        wf_dir = tmp_path / "workflows"
+        wf_dir.mkdir(exist_ok=True)
+        (wf_dir / "tiered.yaml").write_text(self._TIERED_YAML)
+
+        prompt_base = tmp_path / "prompts"
+        prompt_base.mkdir(exist_ok=True)
+        for name in TASK_TO_PROMPT.values():
+            (prompt_base / name).write_text(f"# {name}")
+
+        config = _resolve_human_path(
+            body, None, None, str(wf_dir), workflow_command=self._parse(body),
+        )
+        return _build_result(config, str(prompt_base), str(wf_dir))
+
+    def test_first_step_declared_tier_reaches_config_complexity(self, tmp_path):
+        result = self._resolve(tmp_path, "/nebuko run workflow --name tiered")
+        assert result["WORKFLOW_STEP"] == "analyze"
+        assert result["CONFIG_COMPLEXITY"] == "low"
+
+    def test_named_tiered_step_reaches_config_complexity(self, tmp_path):
+        result = self._resolve(
+            tmp_path, "/nebuko run workflow --name tiered --step analyze"
+        )
+        assert result["WORKFLOW_STEP"] == "analyze"
+        assert result["CONFIG_COMPLEXITY"] == "low"
+
+    def test_undeclared_step_defaults_to_medium(self, tmp_path):
+        result = self._resolve(
+            tmp_path, "/nebuko run workflow --name tiered --step plan"
+        )
+        assert result["WORKFLOW_STEP"] == "plan"
+        assert result["CONFIG_COMPLEXITY"] == "medium"
+
