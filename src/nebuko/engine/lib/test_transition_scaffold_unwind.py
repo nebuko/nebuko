@@ -249,5 +249,92 @@ class TestScaffoldUnwind:
         assert result.get("WORKFLOW_NEXT", "") == ""
 
 
+# The one reference under which the branch mount is discoverable: the filename
+# does not match the declared ``name: tmp-impl``, so a by-name fetch cannot
+# find it (real ``_find_workflow_file`` semantics).
+_DECLARED_MOUNT_REF = "tmp_impl/workflow.yaml"
+
+
+@pytest.fixture
+def strict_branch_only_workflows_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Like ``branch_only_workflows_dir`` but the fetch serves the mount *only*
+    under its declared reference (``tmp_impl/workflow.yaml``).
+
+    Reproduces the real exit-path miss of issue #812: ``_find_workflow_file``
+    cannot resolve ``tmp-impl``/``tmp-impl.yaml`` on the branch, so the exit
+    path must ask for the reference the enclosing mount step declares.
+    """
+    workflows_dir = tmp_path_factory.mktemp("default-branch-workflows")
+    (workflows_dir / "plan-orchestration.yaml").write_text(yaml.dump(_plan_orchestration()))
+    (workflows_dir / "dev-review-loop.yaml").write_text(yaml.dump(_dev_review_loop()))
+
+    branch_file = tmp_path_factory.mktemp("scaffold-branch") / "workflow.yaml"
+    branch_file.write_text(yaml.dump(_tmp_impl()))
+
+    def fake_scaffold_fetch(ref: str, scaffold_branch: str) -> "str | None":
+        return str(branch_file) if ref == _DECLARED_MOUNT_REF else None
+
+    monkeypatch.setattr(resolve_workflow, "_scaffold_fetch", fake_scaffold_fetch)
+    return workflows_dir
+
+
+def _step1_review_approved_full_stack_state() -> dict:
+    """Post-#812 state: a terminal ``dev-review-loop/review`` approval on plan
+    step 1, with the full ``plan-orchestration -> tmp-impl -> dev-review-loop``
+    stack preserved on both history entries (the #812 fix keeps it)."""
+    stack_impl = [
+        {"workflow": "plan-orchestration", "step": "sub_impl"},
+        {"workflow": "tmp-impl", "step": "step_1"},
+        {"workflow": "dev-review-loop", "step": "implement"},
+    ]
+    stack_review = [
+        {"workflow": "plan-orchestration", "step": "sub_impl"},
+        {"workflow": "tmp-impl", "step": "step_1"},
+        {"workflow": "dev-review-loop", "step": "review"},
+    ]
+    return {
+        "version": 15,
+        "workflow": "dev-review-loop",
+        "step": "review",
+        "agent": "review",
+        "phase": "review",
+        "history": [
+            {"step": "implement", "agent": "dev", "summary": "", "position": stack_impl},
+            {"step": "review", "agent": "review", "summary": "", "position": stack_review},
+        ],
+        "parent_workflow": "plan-orchestration",
+        "parent_workflow_step": "sub_impl",
+        "scaffold_branch": SCAFFOLD_BRANCH,
+        "dispatch": {"branch": "approved", "task_hint": "dev"},
+        "resolution": {
+            "selected_workflow": "dev-review-loop",
+            "selected_step": "review",
+        },
+        "position": stack_review,
+    }
+
+
+class TestBranchMountUnwindByDeclaredRef:
+    """The exit path must locate an intermediate branch mount by the
+    *declared* mount reference, not its declared ``name`` (issue #812)."""
+
+    def test_review_approved_unwinds_to_step2_via_declared_mount_ref(
+        self, strict_branch_only_workflows_dir: Path, prompt_base: str,
+    ) -> None:
+        state = _step1_review_approved_full_stack_state()
+        result = resolve_config(
+            _trigger_body(state), prompt_base,
+            str(strict_branch_only_workflows_dir), is_bot=True,
+        )
+        assert result["WORKFLOW_NAME"] == "dev-review-loop"
+        assert result["WORKFLOW_STEP"] == "implement"
+        assert "tmp-impl/step_2" in result.get("WORKFLOW_POSITION_PATH", "")
+        # Negative: the wrong hop to the outer clean step must not happen.
+        assert result.get("WORKFLOW_STEP") != "sub_clean"
+        assert "plan-cleanup" not in result.get("STEP_SKILLS", "")
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
