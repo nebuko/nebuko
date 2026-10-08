@@ -64,7 +64,8 @@ class HumanActionNotice(BaseModel):
             or trigger author — see the engine's resolution chain).
         step: Workflow step at which the run stopped.
         workflow: Active workflow name.
-        reason: Raw stop reason (e.g. ``human_gate:plan``), recorded verbatim.
+        reason: Raw stop reason (e.g. ``human_gate:plan``); recorded verbatim
+            but rendered inert by :meth:`render` (see there for why).
     """
 
     kind: str
@@ -77,6 +78,7 @@ class HumanActionNotice(BaseModel):
     # value object); nothing downstream may rewrite its classification.
     model_config = ConfigDict(frozen=True)
 
+    # @stub-protected
     @classmethod
     def classify(
         cls,
@@ -120,8 +122,18 @@ class HumanActionNotice(BaseModel):
             reason=reason,
         )
 
+    # @stub-protected
     def render(self) -> str:
-        """Canonical Markdown body carrying the byte-stable notice marker."""
+        """Canonical Markdown body carrying the byte-stable notice marker.
+
+        The ``reason`` is the agent's own dispatch text (or its parse
+        diagnostic), so it is passed through the publish path's human-ping
+        neutralizer before being emitted. The engine-authored body is otherwise
+        exempt from that neutralizer, and without this an agent could smuggle a
+        live ``@mention`` into the engine's comment via ``reason`` — exactly the
+        responsibility inversion issue #795 removes. Only ``target`` may be a
+        live ping.
+        """
         body = "\n".join(
             [
                 _BOT_MARKER,
@@ -134,5 +146,10 @@ class HumanActionNotice(BaseModel):
             ]
         )
         if self.reason:
-            body += f"\n\n_{self.reason}_"
+            # Deferred: ``prepare_comment`` pulls in ``workflow_state`` and
+            # ``validate_output``, which import ``config`` — a module-level
+            # import here would be circular.
+            from prepare_comment import neutralize_human_pings
+
+            body += f"\n\n_{neutralize_human_pings(self.reason)}_"
         return body

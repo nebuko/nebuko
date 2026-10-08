@@ -687,7 +687,27 @@ class TestHumanActionSinglePing:
 
     def test_the_exhausted_soft_kill_halt_does_not_double_ping(self, tmp_path, monkeypatch):
         """The #793 halt ping and the #795 notice must never both fire."""
-        engine = _engine(tmp_path, _trigger(body=_soft_kill_comment_body(), number=793))
+        engine = _engine(
+            tmp_path,
+            _trigger(body=_soft_kill_comment_body(), number=793),
+            env={"TRIGGER_AUTHOR": "someone-else"},
+        )
+        # The halt body must ping the recorded workflow starter, not the raw
+        # (here: different) trigger author — the #795 recipient unification.
+        engine.adapter.save_state(
+            WorkflowState.model_validate(
+                {
+                    "version": 7,
+                    "workflow": "default",
+                    "step": "implement",
+                    "agent": "dev",
+                    "history": [
+                        {"step": "implement", "agent": "dev", "summary": "ok"}
+                    ],
+                    "started_by": "workflow-starter",
+                }
+            )
+        )
         _stub_resolved(
             monkeypatch,
             {
@@ -702,6 +722,8 @@ class TestHumanActionSinglePing:
 
         assert outcome.posted_body is not None
         assert "/nebuko resume" in outcome.posted_body
+        assert "@workflow-starter" in outcome.posted_body
+        assert "@someone-else" not in outcome.posted_body
         # The human-aware halt body is the only ping: no second engine notice.
         assert "<!-- bot-human-action -->" not in outcome.posted_body
 

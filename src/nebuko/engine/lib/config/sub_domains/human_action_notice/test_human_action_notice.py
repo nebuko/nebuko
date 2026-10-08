@@ -120,6 +120,20 @@ class TestRender:
         body = _classify("terminate", None).render()
         assert not body.rstrip().endswith("_")
 
+    def test_reason_cannot_smuggle_a_live_human_ping(self):
+        """The agent-authored reason is neutralized: only ``target`` pings (#795)."""
+        body = _classify("hold", "blocked, cc @someone").render()
+        assert "@\u200bsomeone" in body
+        assert "@someone" not in body
+        # The engine's own ping is the single live mention in the body.
+        assert body.count("@olivier-norture") == 1
+
+    def test_reason_mention_in_code_span_stays_readable(self):
+        """The neutralizer preserves code spans (GitHub does not notify there)."""
+        body = _classify("hold", "see `@dataclass` cc @someone").render()
+        assert "`@dataclass`" in body
+        assert "@\u200bsomeone" in body
+
 
 class TestValueObject:
     """The notice is a frozen payload, like AgentStartNotice."""
