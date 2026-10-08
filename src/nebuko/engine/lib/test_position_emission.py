@@ -77,7 +77,8 @@ def scaffold_dir(tmp_path: Path) -> Path:
         "trigger": {"agents": ["genius"]},
         "steps": [
             {"name": "scaffold", "agent": "genius", "next": "sub_impl"},
-            {"name": "sub_impl", "workflow": "tmp-impl", "next": None},
+            {"name": "sub_impl", "workflow": "tmp-impl", "next": "sub_clean"},
+            {"name": "sub_clean", "agent": "dev", "next": None},
         ],
     })
     return tmp_path
@@ -369,3 +370,131 @@ class TestNonEntryEmission:
         )
         doc = json.loads(pair["WORKFLOW_POSITION"])
         assert doc["step"] == "review"
+
+
+class TestCarryForwardEmission:
+    """Issue #812: a non-entry transition must carry the previous run's full
+    mount stack forward and mutate one frame — never rebuild it from the
+    lossy flat parent pair, which truncated a nested run at every
+    intra-workflow step move."""
+
+    @staticmethod
+    def _build(workflows_dir: str, position=None, **cfg) -> dict:
+        from resolve_config.features.build_result.build_result import (
+            _build_result,
+        )
+        base = {
+            "task": "dev",
+            "config_complexity": "medium",
+            "config_reasoning": "none",
+            "config_round": "",
+            "config_skills": "",
+        }
+        if position is not None:
+            base["config_position"] = position
+        base.update(cfg)
+        prompt_base = tempfile.mkdtemp()
+        from resolve_workflow import TASK_TO_PROMPT
+        for name in set(TASK_TO_PROMPT.values()):
+            (Path(prompt_base) / name).write_text("# prompt")
+        return _build_result(base, prompt_base, workflows_dir)
+
+    @staticmethod
+    def _position(*pairs) -> WorkflowPosition:
+        from config import StepRef
+        return WorkflowPosition(
+            refs=[StepRef(workflow=w, step=s) for w, s in pairs]
+        )
+
+    def test_with_step_replaces_leaf_and_keeps_ancestors(self):
+        from config import StepRef
+        pos = self._position(
+            ("plan-orchestration", "sub_impl"),
+            ("tmp-impl", "step_1"),
+            ("dev-review-loop", "implement"),
+        )
+        moved = pos.with_step(StepRef(workflow="dev-review-loop", step="review"))
+        assert moved.path_str() == (
+            "plan-orchestration/sub_impl|tmp-impl/step_1|dev-review-loop/review"
+        )
+        # Immutable value object: the original leaf is untouched.
+        assert pos.path_str().endswith("dev-review-loop/implement")
+
+    def test_with_step_empty_position_raises(self):
+        from config import StepRef
+        with pytest.raises(ValueError):
+            WorkflowPosition().with_step(StepRef(workflow="w", step="s"))
+
+    def test_intra_workflow_move_keeps_full_stack(self, scaffold_dir):
+        """``implement -> review`` inside ``dev-review-loop`` crosses no mount
+        boundary (empty parent), so only the leaf frame is replaced and every
+        ancestor survives. Rebuilding from the empty pair truncated this to a
+        bare ``dev-review-loop/review`` (issue #812)."""
+        base = self._position(
+            ("plan-orchestration", "sub_impl"),
+            ("tmp-impl", "step_1"),
+            ("dev-review-loop", "implement"),
+        )
+        r = self._build(
+            str(scaffold_dir),
+            position=base,
+            config_workflow="dev-review-loop",
+            config_step="review",
+        )
+        assert r["WORKFLOW_POSITION_PATH"] == (
+            "plan-orchestration/sub_impl|tmp-impl/step_1|dev-review-loop/review"
+        )
+        assert json.loads(r["WORKFLOW_POSITION"])["step"] == "review"
+
+    def test_terminal_exit_collapses_to_outer_successor(self, scaffold_dir):
+        """A terminal inner workflow re-enters the outer workflow's next step
+        (leaf workflow differs, empty parent): the stack collapses to the
+        outermost frame rather than keeping the stale inner frames."""
+        base = self._position(
+            ("plan-orchestration", "sub_impl"),
+            ("tmp-impl", "step_10"),
+            ("dev-review-loop", "review"),
+        )
+        r = self._build(
+            str(scaffold_dir),
+            position=base,
+            config_workflow="plan-orchestration",
+            config_step="sub_clean",
+        )
+        assert r["WORKFLOW_POSITION_PATH"] == "plan-orchestration/sub_clean"
+
+    def test_mount_reentry_splices_under_anchor(self, scaffold_dir):
+        """Re-entry into a deeper mount (resolved parent pair) splices the
+        fresh tail beneath the anchors that enclose it — the branch-mounted
+        ``tmp-impl`` frame is retained even though the flat pair only records
+        one level (issue #812)."""
+        base = self._position(
+            ("plan-orchestration", "sub_impl"),
+            ("tmp-impl", "step_1"),
+            ("dev-review-loop", "review"),
+        )
+        r = self._build(
+            str(scaffold_dir),
+            position=base,
+            config_workflow="dev-review-loop",
+            config_step="implement",
+            config_parent_workflow="tmp-impl",
+            config_parent_workflow_step="step_2",
+        )
+        assert r["WORKFLOW_POSITION_PATH"] == (
+            "plan-orchestration/sub_impl|tmp-impl/step_2|dev-review-loop/implement"
+        )
+
+    def test_absent_base_falls_back_to_pair_rebuild(self, scaffold_dir):
+        """No carried-forward base (legacy/absent state) still rebuilds from
+        the recorded pair, preserving the pre-#812 contract."""
+        r = self._build(
+            str(scaffold_dir),
+            config_workflow="dev-review-loop",
+            config_step="review",
+            config_parent_workflow="tmp-impl",
+            config_parent_workflow_step="step_1",
+        )
+        assert r["WORKFLOW_POSITION_PATH"] == (
+            "tmp-impl/step_1|dev-review-loop/review"
+        )

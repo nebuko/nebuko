@@ -38,7 +38,7 @@ from .features.resolve_route.resolve_route import (
     _resolve_bot_fallback_path,
     _resolve_workflow_next_step,
 )
-from config import is_self_function_call
+from config import WorkflowPosition, is_self_function_call
 
 
 def _delete_comments_env(issue_param: Optional[str], issue_number: Optional[int]):
@@ -305,6 +305,14 @@ def resolve_config(
     # can fetch children absent from the local (default-branch) checkout.
     if prev_state is not None and prev_state.scaffold_branch:
         config["config_scaffold_branch"] = prev_state.scaffold_branch
+
+    # Carry-forward position (issue #812): the previous run's full mount
+    # chain is the authoritative base every transition mutates — an
+    # intra-workflow step move replaces its leaf, a mount boundary splices or
+    # pops. Without it, emission would rebuild the stack from the lossy flat
+    # parent pair and truncate the ancestors of a nested run.
+    if prev_state is not None and prev_state.position:
+        config["config_position"] = WorkflowPosition(refs=list(prev_state.position))
 
     # A malformed or unknown human slash command yields no valid task; keep its
     # usage hint on the config so _build_result can turn the terminal skip into
