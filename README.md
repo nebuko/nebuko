@@ -600,8 +600,6 @@ The engine's `guards` phase returns a terminal outcome with `posted_body=None` w
 
 ## Quick start
 
-> 🚀 **New here?** [**Adopt Nebuko**](./docs/adoption.md) walks a repository from zero to its first agent run — entrypoint, authentication, provider config, and runner choice.
-
 Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use your own [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners).
 
 1. **Add the reusable workflow** to `.github/workflows/`:
@@ -617,11 +615,12 @@ Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use y
          GH_PAT: ${{ secrets.GH_PAT }}
    ```
 
-2. **Add `agent-config.yaml`** at your repo root — see [this repo's config](./defaults/agents/agent-config.yaml) for the reference.
+2. **Add `agent-config.yaml`** at your repo root — see [this repo's config](./agent-config.yaml) for the reference.
+Or copy an existing one.
 
 3. **Add secrets**: `OPENROUTER_API_KEY` (your LLM key) and `GH_PAT` (a PAT with `repo` and `workflow` scopes).
 
-4. **Start using**: comment `/nebuko default` on an issue, or mention `@@genius`, `@@ctx`, `@@dev` or `@@review` directly.
+4. **Start using**: comment `/nebuko run workflow --name default` on an issue, or mention `@@genius`, `@@ctx`, `@@dev` or `@@review` directly.
 
 > 💡 **Zero-copy setup**: workflows, prompts and scripts are fetched from the nebuko repo on every run — you only need `agent-config.yaml` locally. Define custom workflows by adding a local `workflows/` directory (local files take precedence).
 
