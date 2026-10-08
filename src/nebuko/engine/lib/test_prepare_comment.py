@@ -204,6 +204,28 @@ class TestNeutralizeHumanPings(unittest.TestCase):
     def test_empty_input(self):
         self.assertEqual(neutralize_human_pings(""), "")
 
+    def test_leaves_a_fenced_code_block_verbatim(self):
+        """A mention in a fence never notifies; de-fanging it would mangle it."""
+        text = "See:\n```python\n@decorator\ndef f():\n    return '@author'\n```\ncc @alice"
+        result = neutralize_human_pings(text)
+        self.assertIn("@decorator", result)
+        self.assertIn("'@author'", result)
+        self.assertIn("@\u200balice", result)
+
+    def test_leaves_inline_code_verbatim(self):
+        result = neutralize_human_pings("use `@dataclass` then ping @alice")
+        self.assertIn("`@dataclass`", result)
+        self.assertIn("@\u200balice", result)
+
+    def test_leaves_a_word_glued_mention_verbatim(self):
+        """``user@host`` is not a GitHub notification, so it stays readable."""
+        text = "mail user@host.example to report it"
+        self.assertEqual(neutralize_human_pings(text), text)
+
+    def test_defuses_a_mention_at_the_start_of_a_line(self):
+        result = neutralize_human_pings("@alice please review")
+        self.assertEqual(result, "@\u200balice please review")
+
 
 class TestTruncateAtBoundary(unittest.TestCase):
     """Test truncation helper."""

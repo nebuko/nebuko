@@ -51,7 +51,17 @@ _AGENT_TRIGGER = re.compile(r"(?<![\w])@@([A-Za-z0-9_-]+)")
 
 # Bare human @mentions in *agent-authored* bodies (issue #795). Notification is
 # the engine's job now, so an agent must never be able to ping a human.
-_HUMAN_MENTION = re.compile(r"(?<!@)@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)")
+#
+# Code regions are matched first and emitted verbatim: GitHub does not notify
+# for a mention inside fenced or inline code either, so rewriting one there would
+# only corrupt the snippet (``@dataclass`` -> ``@\u200bdataclass``). A mention
+# glued to a word (``user@host``) is not a notification for the same reason.
+_CODE_REGION = r"```.*?```|~~~.*?~~~|`[^`\n]*`"
+_HUMAN_MENTION = re.compile(
+    rf"(?P<code>{_CODE_REGION})"
+    r"|(?<![\w@])@(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)",
+    re.DOTALL,
+)
 
 MAX_COMMENT_LENGTH = 60000
 
@@ -303,9 +313,17 @@ def neutralize_human_pings(content: str) -> str:
 
     Only agent-authored bodies pass through here; the engine's own notices and
     its crash-path ``@author`` pings are exempt (they are built outside the
-    agent-body finalizer).
+    agent-body finalizer). Fenced blocks and inline code spans are emitted
+    verbatim — a mention there never notifies, so de-fanging it would only
+    mangle the snippet.
     """
-    return _HUMAN_MENTION.sub(lambda m: "@\u200b" + m.group(1), content)
+
+    def _emitted(match: re.Match[str]) -> str:
+        if match.group("code") is not None:
+            return match.group("code")
+        return "@\u200b" + match.group("login")
+
+    return _HUMAN_MENTION.sub(_emitted, content)
 
 
 def _apply_ctx_collapse(cleaned: str, role_name: str | None = None) -> str:

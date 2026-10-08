@@ -1,6 +1,6 @@
 """Engine-owned human-action notification entity (issue #795).
 
-Agents report their results; they never ping a human. Ping a human is an
+Agents report their results; they never ping a human. Pinging a human is an
 orchestration concern: only the engine deterministically knows that a workflow
 *stopped* — at a ``human_gate`` hold, at a plain hold, or at its terminal step
 — and only the engine knows who started the workflow. The notice therefore

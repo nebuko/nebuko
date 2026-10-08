@@ -183,7 +183,9 @@ The recipient is the **workflow starter** (`WorkflowState.started_by`, captured
 from the first trigger and carried forward), falling back to the issue author
 and then the trigger author. Agent-authored comment bodies are made
 notification-inert by the publish path, so an agent mentioning `@someone` is
-readable but does not notify.
+readable but does not notify; fenced blocks and inline code are left verbatim
+(GitHub never notifies for a mention there, so rewriting one would only corrupt
+the snippet).
 
 The gate intercepts only `advance` (and an absent dispatch). `terminate` is
 never intercepted, and `loop` retries within a step are not intercepted.
