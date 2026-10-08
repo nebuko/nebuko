@@ -1,55 +1,51 @@
-# nebuko
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="logo/final/logo-horizontal-dark.svg">
+  <img src="logo/final/logo-horizontal-light.svg" alt="Nebuko" width="300">
+</picture>
 
-**What it is, in one line:** AI multi-agent workflow as code — a schema and an engine — that lives where *you* are: in GitHub issues and runners. GitLab, Codeberg, BitBucket and Gitea are the direction; today, GitHub is the platform.
+# Nebuko
 
-Built for **iterative dev** — small iterations, fast delivery, clean code, TDD — not for the "one big prompt builds an app" style. The full story, including the three-layer model and the honest shipped-vs-planned bar, lives in [landscape.md](landscape.md).
+> **Pre-alpha.** Nebuko is usable today but unstable — expect breaking changes
+> between releases. The config schema, workflow format and comment contracts may
+> change without notice.
 
-## What is the product?
+Nebuko is **AI multi-agent workflow as code** — a schema and an engine — that
+lives where *you* already are: in GitHub issues and runners. Mention an agent on
+an issue and a team of specialized agents plans, implements and reviews the work,
+leaving every step as a comment you can read, question and redirect.
 
-Three layers, and this project owns Layer 2:
+GitLab, Codeberg, BitBucket and Gitea are the direction; today, GitHub is the
+platform.
 
-| Layer | What it is | Here |
-|-------|-----------|------|
-| **3 — AI workflow** | A way of doing something with AI: code, review, analyze… | `workflows/` |
-| **2 — workflow engine** | The runner; today in GitHub CI/CD | nebuko |
-| **1 — AI agent runner** | Runs an individual agent | OpenHands SDK |
+## What it is
 
-The payoff: a new Layer-3 capability — a workflow, an MCP, a websearch or context7 skill — is a **copy into your repo, try it, adopt or delete**. No stack update, no new SaaS, no migration.
+A new AI tool, process or skill appears every week. Trying one usually means
+changing your whole stack — and removing it is worse. Nebuko treats agent
+configuration, tooling and workflows as **code in your own repository**: copy it
+in, try it, then adopt or delete it with a commit. No stack update, no new SaaS,
+no migration.
 
-And agents are **coworkers, not a black box**: they talk to you and each other in plain issue comments, so you see what they did and why.
+Three layers, and Nebuko owns Layer 2:
 
-## How it works
+| Layer | What it is | In this project |
+|-------|-----------|-----------------|
+| **3 — AI workflow** | A way of doing something with AI: code, review, analyze… | copyable workflow YAML you own (`defaults/workflows/`) |
+| **2 — workflow spec + engine** | The spec that describes a workflow, and the engine that runs it | **Nebuko** |
+| **1 — AI agent runner** | Runs an individual agent | [OpenHands SDK](https://github.com/OpenHands/software-agent-sdk) |
 
-**Agents with a role and a personality** — defined as code in `agent-config.yaml` (provider, model + parameters, prompt file, skills, tools). Eight agents ship today.
+Built for **iterative dev** — small iterations, fast delivery, clean code, TDD —
+not for the "one big prompt builds an app" style. The full positioning story is
+in [landscape.md](landscape.md).
 
-**Skills granted to agents** — markdown procedure files, granted per agent in the same config.
+## Quickstart
 
-**Workflows as code** — YAML that forces the AI onto a dedicated path, with `human_gate` approval points and conditional routing:
+> 🚀 **New here?** [**How to Adopt Nebuko**](docs/adoption.md) walks a repository
+> from zero to its first agent run — entrypoint, authentication, provider config
+> and runner choice.
 
-```yaml
-- name: plan
-  agent: genius
-  human_gate: true          # a human must approve before anything is built
-  conditions:
-    - on_result: approved
-      next: stub
-    - on_result: rejected
-      next: context
-```
-
-**Divide and conquer** — small dedicated agents bound long-context drift. When one finishes it posts what it did, found, and the next step, then can dispatch another agent. Every step is a comment you can read and redirect.
-
-**Workflow state in comments** — LLMs are stateless, so every comment embeds a JSON state (current step, history, PR, dispatch). That's what the engine uses to pick the next action — and it's visible, so you know how it works under the hood.
-
-**Choose your LLM** — different models per purpose; complexity-based temperature and per-invocation model override ship today. **Split tasks** — an agent decomposing a huge task into sub-issues (`splitPlan`) ships today.
-
-## Quick start
-
-> 🚀 **New here?** [**Adopt Nebuko**](./docs/adoption.md) walks a repository from zero to its first agent run — entrypoint, authentication, provider config, and runner choice.
-
-Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use your own [self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners).
-
-1. **Add the reusable workflow** to `.github/workflows/`:
+1. **Add the reusable workflow.** Create `.github/workflows/nebuko.yaml` and copy
+   the complete entrypoint from
+   [adoption.md](docs/adoption.md#3-the-entrypoint-copy-paste). The core is:
 
    ```yaml
    jobs:
@@ -62,26 +58,158 @@ Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use y
          GH_PAT: ${{ secrets.GH_PAT }}
    ```
 
-2. **Add `agent-config.yaml`** at your repo root — see [this repo's config](./defaults/agents/agent-config.yaml) for the reference.
+2. **Add secrets** under *Settings → Secrets and variables → Actions*:
+   - a provider key — `OPENROUTER_API_KEY` or `COMMANDCODE_API_KEY`
+     (see [Configuration & providers](#configuration--providers));
+   - `GH_PAT` — a fine-grained GitHub PAT with **Contents**, **Pull requests**
+     and **Issues** read/write.
 
-3. **Add secrets**: `OPENROUTER_API_KEY` (your LLM key) and `GH_PAT` (a PAT with `repo` and `workflow` scopes).
+3. **Start using it.** On an issue, comment:
+   - `/nebuko run workflow --name default` to start the standard
+     plan → context → implement → review workflow, or
+   - `@@genius <your request>` to call an agent directly.
 
-4. **Start using**: comment `/nebuko default` on an issue, or mention `@@genius`, `@@ctx`, `@@dev` or `@@review` directly.
+**Zero config to start.** Nebuko ships default agent configs
+([`defaults/agents/`](defaults/agents/)) and prompts
+([`defaults/prompts/`](defaults/prompts/)) that work with no local files:
+artifacts resolve through a layered lookup — a `.nebuko/<kind>/` override first,
+then the shipped `defaults/<kind>/`. To customize, add
+`.nebuko/agents/agent-config.yaml` (and optional `.nebuko/prompts/<agent>.md`).
+Runs on GitHub-hosted runners by default; pass `runs_on: "self-hosted"` to use
+your own runner.
 
-> 💡 **Zero-copy setup**: workflows, prompts and scripts are fetched from the nebuko repo on every run — you only need `agent-config.yaml` locally. Define custom workflows by adding a local `workflows/` directory (local files take precedence).
+## How it works
 
-## Configuration basics
+**Agents with a role and a personality** — defined as code in the config:
+provider, model and sampling parameters, a prompt file, the skills it may use and
+the tools it may call. Eight agents ship today — `genius` (principal engineer),
+`ctx` (context), `dev` (implementation), `review`, `issue`, `issue-reviewer`,
+`debug` and `po`.
 
-One layered file, `agent-config.yaml`, in three layers — `[docs/configuration.md](docs/configuration.md)` covers the depth:
+**Skills, granted to agents** — a markdown procedure file, granted per agent in
+the same config. Adding a capability is a one-line diff.
+
+**Workflows as code** — declarative YAML that forces the AI onto a dedicated path,
+with human approval gates and conditional routing:
+
+```yaml
+- name: plan
+  agent: genius
+  human_gate: true          # a human must approve before anything is built
+  conditions:
+    - on_result: approved
+      next: implement
+    - on_result: rejected
+      next: plan            # loop until the human is happy
+```
+
+**Divide and conquer** — small, dedicated agents bound long-context drift. When
+one finishes it comments what it did, what it found and the next step, then
+dispatches the next agent. Every step is a comment you can read and redirect.
+
+**Workflow state in comments** — LLMs are stateless, so every comment embeds a
+JSON state (current step, history, PR, dispatch). That is what the engine uses to
+pick the next action — and it is visible, so you can see how it works under the
+hood.
+
+Details: [architecture.md](docs/architecture.md) for the orchestration loop and
+[agents-and-skills.md](docs/agents-and-skills.md) for the roster and tool
+permissions.
+
+## Capabilities
+
+The honest bar — what works today versus what is still rough:
+
+| Works today | Rough / in progress |
+|---|---|
+| Agents, skills and workflows as code | Pre-alpha: config and workflow formats still move |
+| `human_gate` approval + conditional routing | GitHub only (GitLab, Codeberg, BitBucket, Gitea are the direction) |
+| Human commands (`@@agent`, `/nebuko run workflow`, `/nebuko force-step`, `/nebuko resume`, `/nebuko delete comments`) | Auto-escalation to a stronger model on loop failure |
+| JSON workflow state in comments | GitHub App identity (`nebuko[bot]`) — PAT mode only for now |
+| Split-task sub-issues (`splitPlan`) and task decomposition | OpenCode Go provider — documented, not wired |
+| Complexity-based temperature, per-invocation model override | — |
+| Safety rails: circuit breaker, loop guard, `CALLER_AUTH` | — |
+| Per-step metrics, remote (zero-copy) workflows | — |
+
+Full inventory: [features.md](docs/features.md).
+
+## Configuration & providers
+
+One layered YAML file, in three layers — `providers → llms → agents`:
 
 | Layer | Purpose | Example |
 |-------|---------|---------|
-| **Providers** | API endpoint + auth env var | `openrouter` |
-| **LLMs** | Model, provider, sampling params | `qwen-3-6-27b` |
-| **Agents** | Role → model + prompt file + skills + tools | `genius`, `dev`, `ctx`, … |
+| **Providers** | API endpoint + auth env-var name | `openrouter` |
+| **LLMs** | Model, provider, sampling parameters | `qwen-3-6-27b` |
+| **Agents** | Role → model + prompt file + skills + tools | `genius`, `dev`, … |
 
-Cross-references resolve with `${ref}` (`${llms.qwen-3-6-27b}`). Sampling parameters cascade per-invocation > per-agent > per-LLM, and a `complexity` field auto-adjusts temperature (`low` 0.0 → `high` 0.3, never decreasing the agent's floor). Adding an agent is a ~5-line stanza — no workflow changes needed. If `agent-config.yaml` is absent, the workflow falls back to the legacy env-var approach.
+References resolve with `${ref}` (`${llms.qwen-3-6-27b}`), sampling parameters
+cascade per-invocation > per-agent > per-LLM, and a per-step `complexity`
+auto-adjusts temperature. The full schema is in
+[configuration.md](docs/configuration.md).
 
-Already paying for a coding subscription? You can point the agents at **CommandCode** (and, later, **OpenCode Go**) instead of a metered API key — see [docs/subscription-plans.md](docs/subscription-plans.md).
+**Bring your own provider account and key** — nothing is billed through Nebuko.
+Keys never live in the config file: `api_token_env` names the environment
+variable, which you supply as a repository secret.
 
-For the machine contracts (`AGENT_RUN_CONFIG` sentinel, dispatch statuses, workflow grammar, state schema) see [docs/reference.md](docs/reference.md); for the full agent roster and tool permissions see [docs/agents-and-skills.md](docs/agents-and-skills.md).
+Nebuko ships ready-to-use provider profiles under
+[`defaults/agents/`](defaults/agents/):
+
+| Provider | Profile | Billing | Best for |
+|----------|---------|---------|----------|
+| **OpenRouter** | [`agent-config-openrouter.yaml`](defaults/agents/agent-config-openrouter.yaml) | Pay-as-you-go; 25+ free models | Model variety, zero-commitment trial |
+| **CommandCode** | [`agent-config-commandcode.yaml`](defaults/agents/agent-config-commandcode.yaml) | ~$10/mo GOAT plan ($10 → $70 of credits); API access needs **GOAT or higher**, not the Go plan | Cheapest subscription-driven runs |
+
+Point `agent_config_path` at a profile name (for example
+`agent-config-commandcode.yaml`) — it resolves through the layered lookup.
+OpenCode Go support is planned and tracked separately. See
+[subscription-plans.md](docs/subscription-plans.md) for the subscription story
+and its limits.
+
+## Roadmap
+
+| Stage | Promise |
+|-------|---------|
+| **Pre-alpha (now)** | Usable but unstable; breaking changes expected; GitHub only. |
+| **Alpha** | Stability: bug fixes, a stable architecture and a **frozen tool/spec surface** — no new features. |
+| **Beta** | The flagship *spec-driven* workflow end-to-end with both human gates; the **YAML workflow format v1 frozen as a public contract**. |
+| **0.1** | A stable tag, the format documented as a contract, and workflows robust enough to fork. |
+| **SaaS — planned, not available** | A hosted offering on the open core: managed LLM routing and cost control, GitHub App setup, self-hosted runners and a workflow marketplace. |
+
+The deeper story is in [landscape.md](landscape.md); the internal release plan is
+in [docs/etude-de-marche.md](docs/etude-de-marche.md#73-plan-de-release-en-quatre-gates).
+
+## Security & trust
+
+Nebuko runs agent tooling on **your** runner using **your** credentials. In PAT
+mode it acts entirely through the fine-grained `GH_PAT` you supply — narrow it to
+the repositories you point Nebuko at, and give it an expiration. Guards run
+before any agent executes:
+
+- a **circuit breaker** stops a runaway loop (bot-marker threshold, default 15);
+- a **loop guard** blocks same-agent loops and human-plus-agent ping races;
+- `CALLER_AUTH: on` restricts triggers to `OWNER` / `MEMBER` / `COLLABORATOR` —
+  recommended on public repositories so an outsider cannot burn your tokens;
+- a **`human_gate`** keeps design decisions human-owned.
+
+PAT requirements and security notes are in
+[adoption.md](docs/adoption.md#4-authentication--pat-mode-alpha-default); the
+mechanisms are in [features.md](docs/features.md#safety-mechanisms). Machine
+contracts (dispatch sentinel, workflow grammar, state schema, env vars) are in
+[reference.md](docs/reference.md).
+
+## Feedback & contributing
+
+Nebuko is public at this stage to **find bugs**. Please
+[open an issue](https://github.com/nebuko/nebuko/issues) — a good report includes:
+
+- the failing GitHub Actions **run link**;
+- the triggering comment's collapsed **`WORKFLOW_STATE` JSON** block;
+- the run's **`console.log`** and **`app.log`** artifacts;
+- what you expected versus what happened.
+
+Workflow, agent and skill ideas are just as welcome.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
