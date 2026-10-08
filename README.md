@@ -210,6 +210,16 @@ Nebuko is public at this stage to **find bugs**. Please
 
 Workflow, agent and skill ideas are just as welcome.
 
+## Acknowledgements
+
+Nebuko's Layer-1 agent runtime is the
+[OpenHands Software Agent SDK](https://github.com/OpenHands/software-agent-sdk)
+(MIT), with [litellm](https://github.com/BerriAI/litellm) (MIT) providing
+model-agnostic LLM access. Agents run on
+[GitHub Actions](https://github.com/features/actions). Thanks to the
+contributors of all three projects. The licensing rationale is recorded in
+[ADR-0007](docs/adr/0007-openhands-as-layer-1.md).
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
