@@ -30,8 +30,102 @@ steps:
 
   - name: scaffold
     agent: dev
-    skill: [scaffold-plan]
-    next: sub_impl
+    # prompt_replace drops dev's role prompt entirely: this step's whole
+    # contract is the scaffold instruction below, so dev's generic
+    # "Understand / Plan / Implement / Verify" flow cannot turn a
+    # materialize-the-plan step into an implementation step (issue #784).
+    prompt_replace: true
+    prompt: |
+      You are in plan-scaffolding mode for a branch-mounted dynamic plan workflow
+      (issue #462). Your ONLY job is to convert the human-approved
+      `<planWorkflow>` block into a runnable per-step sub-workflow committed on
+      the feature branch. You MUST NOT implement any plan step and MUST NOT
+      modify any file outside `tmp_impl/` (plus the feature-branch setup itself).
+
+      Inputs:
+      - The issue number N (from `$TARGET_NUMBER` or the issue context).
+      - The approved structured plan: the `<planWorkflow>` JSON block in the
+        @@genius comment on this issue:
+        <planWorkflow>
+        {"issue": N, "steps": [{"title": "...", "instructions": "...", "complexity": "medium", "model": null}, ...]}
+        </planWorkflow>
+
+      What you MUST do, in order:
+      1. Create/checkout the feature branch `feature/issue-{N}-{short-name}`.
+         First check for an existing open PR linked to this issue and reuse its
+         head branch if one exists.
+      2. Create `tmp_impl/workflow.yaml` and one `tmp_impl/skills/step_N.md` per
+         plan step.
+      3. Generate `tmp_impl/workflow.yaml` with one step per plan item, in plan
+         order:
+           name: tmp-impl
+           description: "Dynamically generated per-step execution workflow for issue #N"
+           trigger:
+             agents: [dev]
+           steps:
+             - name: step_1
+               workflow: dev-review-loop
+               skill: [tmp_impl/skills/step_1]
+               next: step_2
+             - name: step_2
+               workflow: dev-review-loop
+               skill: [tmp_impl/skills/step_2]
+               next: null
+         Rules: each step references `workflow: dev-review-loop` and
+         `skill: [tmp_impl/skills/step_N]` (N = 1-based plan index). Copy
+         `complexity` (and `model` if non-null) from the corresponding plan step
+         entry. The LAST step has `next: null`.
+      4. Write each `tmp_impl/skills/step_N.md` with self-contained content: the
+         step title, the detailed instructions (verbatim from the plan's
+         `instructions`, expanded with concrete file paths and context), the
+         expected outcome (how to verify the step is done), and the relevant file
+         context (which files to read/modify for this step).
+      5. Commit with message `chore: scaffold plan workflow for issue #N` and push
+         to the branch.
+      6. Immediately after pushing, call the `report_scaffold_branch` tool ONCE
+         with the exact pushed branch name (issue #636). Do NOT rely on printing a
+         `SCAFFOLD_BRANCH:` marker.
+
+      What you MUST NOT do:
+      - Implement any of the plan steps yourself — you only scaffold; execution
+        happens later in the `dev-review-loop` sub-workflow.
+      - Modify any file outside `tmp_impl/` (and the feature-branch setup itself).
+      - Invent plan steps or reorder them — the `<planWorkflow>` block is
+        authoritative.
+      - Skip the commit/push — the sub-workflow mounts `tmp_impl/workflow.yaml`
+        from the branch.
+
+      Escalation protocol: if the `<planWorkflow>` block is missing, malformed, or
+      references an unclear step, STOP and report the blocker to @@genius. Do NOT
+      guess at step content and do NOT implement anything.
+
+      Finish with a concise summary and end your message with (no `agent` field,
+      no self `function_call`; issue #618):
+      <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
+    next: scaffold_review
+
+  - name: scaffold_review
+    agent: review
+    prompt: |
+      The `scaffold` step materialized the human-approved `<planWorkflow>` block
+      into `tmp_impl/workflow.yaml` (and `tmp_impl/skills/step_N.md`) on the
+      feature branch. Verify the scaffold faithfully materializes the approved
+      plan before any execution starts:
+      - Compare `tmp_impl/workflow.yaml` against the approved `<planWorkflow>`
+        block: same steps, same order, same count, the last step `next: null`,
+        and every step using `workflow: dev-review-loop` with its matching
+        `tmp_impl/skills/step_N`.
+      - Confirm every plan step has a corresponding `tmp_impl/skills/step_N.md`
+        whose instructions match the approved plan.
+      - Confirm no implementation code was written and nothing outside `tmp_impl/`
+        (plus the feature-branch setup) was changed.
+      If it matches, dispatch `approved`. If it deviates, dispatch `rejected` with
+      the concrete discrepancies so `scaffold` runs again.
+    conditions:
+      - on_result: approved
+        next: sub_impl
+      - on_result: rejected
+        next: scaffold
 
   - name: sub_impl
     workflow: tmp_impl/workflow.yaml

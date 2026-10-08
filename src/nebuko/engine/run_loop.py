@@ -859,14 +859,26 @@ class Engine:
 
     # @stub-protected
     def build_prompt(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
-        """Build the agent prompt from the resolved config and history."""
-        sections = [self._base_prompt(resolved)]
+        """Build the agent prompt from the resolved config and history.
+
+        A step that declares prompt replacement drops the role prompt entirely:
+        only the step prompt carries the instruction, so the role's generic flow
+        cannot redefine the step's scope (issue #784). Every other step keeps the
+        additive ``role prompt + step prompt`` behaviour.
+        """
         step_prompt = self._step_prompt(resolved)
+        replacing = bool(step_prompt) and self._step_prompt_replaces(resolved)
+        sections = [] if replacing else [self._base_prompt(resolved)]
         if step_prompt:
             sections.append(f"{_STEP_HEADER}\n\n{step_prompt}")
         sections.append(_USER_REQUEST_HEADER)
         sections.append(self._render_context(resolved, history))
         return "\n\n".join(section for section in sections if section)
+
+    def _step_prompt_replaces(self, resolved: Any) -> bool:
+        """True when the run's step prompt replaces the role prompt (issue #784)."""
+        raw = self._get(resolved, "STEP_PROMPT_REPLACE")
+        return str(raw or "").strip().lower() == "true"
 
     # @stub-protected
     def notify_agent_started(self, notice: AgentStartNotice) -> None:

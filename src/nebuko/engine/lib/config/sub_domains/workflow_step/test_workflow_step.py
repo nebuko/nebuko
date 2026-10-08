@@ -149,6 +149,20 @@ class TestWorkflowStep:
         assert step.next == "implement"
         assert len(step.conditions) == 2
 
+    def test_prompt_replace_defaults_to_false(self):
+        step = WorkflowStep(name="dev", agent="dev", prompt="Do the thing.")
+        assert step.prompt_replace is False
+
+    def test_prompt_replace_can_be_true(self):
+        step = WorkflowStep(
+            name="scaffold",
+            agent="dev",
+            prompt="Materialize the plan only.",
+            prompt_replace=True,
+        )
+        assert step.prompt_replace is True
+        assert step.prompt == "Materialize the plan only."
+
 
 class TestWorkflowStepScript:
     """Test WorkflowStep with the deterministic script variant (issue #541)."""
