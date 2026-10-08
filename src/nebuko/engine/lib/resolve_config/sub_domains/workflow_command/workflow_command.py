@@ -19,9 +19,12 @@ Only the ``/nebuko``-prefixed form is recognized as a command; a bare
 ``clean comments`` line is not one (issue #679).
 
 Malformed input (unknown action, wrong/missing resource, unknown or
-duplicate flag, missing required flag) yields ``None`` so routing falls
-through to the normal cascade. Old positional forms (``/nebuko default``,
-``/nebuko force-next-step <step>``) deliberately do not parse.
+duplicate flag, missing required flag) yields ``None`` from
+:func:`parse_workflow_command` so routing falls through to the normal
+cascade; :func:`parse_command` is the typed sibling that keeps the failure
+category and a user-facing usage hint (issue #804). Old positional forms
+(``/nebuko default``, ``/nebuko force-next-step <step>``) deliberately do not
+parse.
 """
 
 import re
@@ -33,6 +36,10 @@ from config import brand
 __all__ = [
     "WorkflowCommand",
     "CommandGrammar",
+    "CommandParseResult",
+    "CommandDetail",
+    "ParseStatus",
+    "parse_command",
     "parse_workflow_command",
     "ACTIONS",
     "RESOURCE_BY_ACTION",
@@ -52,6 +59,43 @@ class WorkflowCommand:
     action: str  # "run" | "resume" | "force-step" | "delete" | "clean"
     resource: Optional[str]  # "workflow" | "step" | "comments" | None (resume)
     params: Dict[str, str]  # named flags, e.g. {"name": "spec-driven-impl"}
+
+
+#: Parse status: ``"absent"`` (no command intent), ``"valid"`` (a well-formed
+#: command), ``"malformed"`` (a slash/command attempt that broke the grammar).
+ParseStatus = Literal["absent", "valid", "malformed"]
+
+#: Machine-stable failure category carried by a :class:`CommandParseResult`
+#: (issue #804). ``"none"`` pairs with ``status == "absent"`` and ``"ok"`` with
+#: ``status == "valid"``; every other token names a distinct grammar violation.
+CommandDetail = Literal[
+    "none",
+    "ok",
+    "unknown_command",
+    "unknown_action",
+    "unknown_resource",
+    "unknown_flag",
+    "duplicate_flag",
+    "bare_flag_value",
+    "invalid_flag_value",
+    "missing_required_flag",
+]
+
+
+@dataclass(frozen=True)
+class CommandParseResult:
+    """Typed outcome of parsing a comment's first line as a /nebuko command.
+
+    Sibling of :func:`parse_workflow_command` that never collapses the several
+    malformed-invocation modes into one ``None`` (issue #804): ``detail`` keeps
+    a machine-stable category and ``usage`` carries a user-facing correction so
+    the engine can post actionable feedback without invoking an LLM.
+    """
+
+    status: ParseStatus  # @stub-protected
+    command: Optional[WorkflowCommand]  # @stub-protected  (set iff status == "valid")
+    detail: CommandDetail  # @stub-protected
+    usage: Optional[str]  # @stub-protected  (correction hint, iff malformed)
 
 
 ACTIONS: Tuple[str, ...] = ("run", "resume", "force-step", "delete")
@@ -139,18 +183,26 @@ COMMAND_GRAMMAR = CommandGrammar(primary=brand().command_name)
 _COMMAND_RE = COMMAND_GRAMMAR.pattern()
 
 
-def _parse_flags(tokens: List[str], action: str) -> Optional[Dict[str, str]]:
-    """Parse ``--flag value`` pairs into a dict; None on any malformed input."""
+def _parse_flags(
+    tokens: List[str], action: str
+) -> Tuple[Optional[Dict[str, str]], Optional[CommandDetail]]:
+    """Parse ``--flag value`` pairs into a dict.
+
+    Returns ``(params, None)`` on success, or ``(None, detail)`` naming the
+    first grammar violation so :func:`parse_command` can report it.
+    """
     flags = FLAGS_BY_ACTION[action]
     params: Dict[str, str] = {}
     i = 0
     while i < len(tokens):
         token = tokens[i]
         if not token.startswith("--"):
-            return None
+            return None, "unknown_flag"
         flag = token[2:]
-        if flag not in flags or flag in params:
-            return None
+        if flag not in flags:
+            return None, "unknown_flag"
+        if flag in params:
+            return None, "duplicate_flag"
         if flag in _MULTIWORD_FLAGS:
             # Consume everything up to the next "--" token or end of line.
             j = i + 1
@@ -158,50 +210,131 @@ def _parse_flags(tokens: List[str], action: str) -> Optional[Dict[str, str]]:
                 j += 1
             value = " ".join(tokens[i + 1 : j])
             if not value:
-                return None
+                return None, "bare_flag_value"
             params[flag] = value
             i = j
         else:
             if i + 1 >= len(tokens):
-                return None
+                return None, "bare_flag_value"
             params[flag] = tokens[i + 1]
             i += 2
-    return params
+    return params, None
 
 
-def parse_workflow_command(trigger_body: str) -> Optional[WorkflowCommand]:
-    """First-line /nebuko command → WorkflowCommand; None if absent/malformed.
+#: Per-action usage hints surfaced to a human whose command is malformed
+#: (issue #804). Keyed by the invoked action (so the ``clean`` alias keeps its
+#: own spelling) with the grammar action as fallback.
+_USAGE_BY_ACTION: Dict[str, str] = {
+    "run": "/nebuko run workflow --name <workflow> [--step <step>]",
+    "resume": "/nebuko resume [--feedback <text>]",
+    "force-step": "/nebuko force-step step --name <step>",
+    "delete": "/nebuko delete comments [--issue <number>]",
+    "clean": "/nebuko clean comments [--issue <number>]",
+}
+
+#: Usage shown when the action is missing or unrecognized.
+_USAGE_UNKNOWN_ACTION = (
+    "unrecognized command; expected one of: "
+    "/nebuko run workflow --name <workflow>, /nebuko resume, "
+    "/nebuko force-step step --name <step>, /nebuko delete comments"
+)
+
+#: Usage shown for a leading ``/`` that is not a ``/nebuko`` invocation.
+_USAGE_UNKNOWN_COMMAND = (
+    "unrecognized / command; see the Human Commands table in docs/features.md "
+    "(e.g. /nebuko run workflow --name <workflow>, /nebuko resume)"
+)
+
+
+def _usage_for(action: Optional[str], grammar_action: Optional[str]) -> str:
+    """Best available correction hint for a malformed invocation."""
+    return (
+        _USAGE_BY_ACTION.get(action or "")
+        or _USAGE_BY_ACTION.get(grammar_action or "")
+        or _USAGE_UNKNOWN_ACTION
+    )
+
+
+def _malformed_result(
+    detail: CommandDetail,
+    action: Optional[str] = None,
+    grammar_action: Optional[str] = None,
+) -> CommandParseResult:
+    """A ``malformed`` parse result carrying its detail + usage hint."""
+    return CommandParseResult(
+        status="malformed",
+        command=None,
+        detail=detail,
+        usage=_usage_for(action, grammar_action),
+    )
+
+
+def parse_command(trigger_body: str) -> CommandParseResult:
+    """First line → typed :class:`CommandParseResult`; never collapses failures.
 
     # @stub-protected
     """
     first_line = trigger_body.split("\n", 1)[0].strip()
     match = _COMMAND_RE.match(first_line)
     if not match:
-        return None
+        # A leading "/" that is not a well-formed /nebuko prefix is an unknown
+        # slash intent; anything else carries no command at all (issue #804).
+        if first_line == f"/{COMMAND_GRAMMAR.primary}":
+            # Bare prefix with no body — a /nebuko attempt, not a foreign slash.
+            return _malformed_result("unknown_action")
+        if first_line.startswith("/"):
+            return CommandParseResult(
+                status="malformed",
+                command=None,
+                detail="unknown_command",
+                usage=_USAGE_UNKNOWN_COMMAND,
+            )
+        return CommandParseResult(
+            status="absent", command=None, detail="none", usage=None
+        )
     tokens = match.group(1).split()
     if not tokens:
-        return None
+        return _malformed_result("unknown_action")
     action = tokens[0]
     # Registry-local commands (``clean``) reuse a core action's grammar, so
     # their resource/flag validation is identical to that action's (issue #679).
     grammar_action = _GRAMMAR_ALIASES.get(action, action)
     if grammar_action not in ACTIONS:
-        return None
+        return _malformed_result("unknown_action", action, grammar_action)
     i = 1
     expected_resource = RESOURCE_BY_ACTION[grammar_action]
     if expected_resource is not None:
         if i >= len(tokens) or tokens[i] != expected_resource:
-            return None
+            return _malformed_result("unknown_resource", action, grammar_action)
         i += 1
-    params = _parse_flags(tokens[i:], grammar_action)
+    params, detail = _parse_flags(tokens[i:], grammar_action)
     if params is None:
-        return None
+        return _malformed_result(detail or "unknown_flag", action, grammar_action)
     if not _numeric_flags_valid(params, grammar_action):
-        return None
+        return _malformed_result("invalid_flag_value", action, grammar_action)
     required = _REQUIRED_FLAGS.get(grammar_action)
     if required is not None and required not in params:
-        return None
-    return WorkflowCommand(action=action, resource=expected_resource, params=params)
+        return _malformed_result("missing_required_flag", action, grammar_action)
+    return CommandParseResult(
+        status="valid",
+        command=WorkflowCommand(
+            action=action, resource=expected_resource, params=params
+        ),
+        detail="ok",
+        usage=None,
+    )
+
+
+def parse_workflow_command(trigger_body: str) -> Optional[WorkflowCommand]:
+    """First-line /nebuko command → WorkflowCommand; None if absent/malformed.
+
+    Compatibility wrapper over :func:`parse_command` so existing consumers
+    (``classify_comment``, ``build_trigger_commands``, the resolver facade)
+    keep their signature and ``None``-on-malformed contract.
+
+    # @stub-protected
+    """
+    return parse_command(trigger_body).command
 
 
 def _is_ascii_digits(value: str) -> bool:

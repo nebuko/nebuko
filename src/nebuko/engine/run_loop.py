@@ -102,15 +102,40 @@ def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
     the runtime guards.
     """
     if isinstance(resolved, Mapping) and _is_true(resolved.get("SKIP_AGENT")):
-        return {
+        verdict = {
             "SKIP_AGENT": "true",
             "REASON": str(resolved.get("REASON") or "resolver skipped the agent"),
         }
+        # A command-caused skip (malformed / unknown human slash command) is
+        # owed a notice on the thread (issue #804); carry the flag through so
+        # the guards branch can tell it apart from a routine resolver skip.
+        if _is_true(resolved.get("COMMAND_ERROR")):
+            verdict["COMMAND_ERROR"] = "true"
+        return verdict
     return None
 
 
 def _exit_code_for(routing: RoutingDecision) -> ExitCode:
     return _EXIT_CODE_BY_STATUS.get(routing.status, ExitCode.ADVANCE)
+
+
+def _is_bot_trigger(trigger: Trigger) -> bool:
+    """True when the trigger body carries a bot marker (loop safety, issue #804).
+
+    Reuses the resolver's bot detection so a notice the engine itself posted —
+    which opens with ``BOT_MARKER`` — classifies as bot and can never re-enter
+    the human-command error path. A missing bridge must not crash the guard, so
+    an import failure conservatively reports "not a bot" (posting is the safe
+    default there; the terminal outcome is unaffected).
+    """
+    try:
+        ensure_import_path()
+        from resolve_config.features.parse_trigger.parse_trigger import is_bot_comment
+
+        return is_bot_comment(trigger.body or "")
+    except Exception:  # noqa: BLE001 - never let detection crash the guard
+        log.warning("[phase:guards] bot-marker check failed", exc_info=True)
+        return False
 
 
 # @stub-protected
@@ -490,14 +515,20 @@ class Engine:
             if _is_true(verdict.get("SKIP_AGENT")):
                 reason = str(verdict.get("REASON") or "agent skipped")
                 log.info("[phase:guards] skipping agent — %s", reason)
-                # An exhausted soft-kill halt is the one terminal skip that owes
-                # the thread a human ping (issue #793); a routine resolver skip
-                # stays silent as before.
-                posted = (
-                    self._post_soft_kill_halt(reason)
-                    if _is_true(self._get(resolved, "SOFT_RETRY_EXHAUSTED"))
-                    else None
-                )
+                # Two terminal skips owe the thread a human ping: an exhausted
+                # soft-kill halt (issue #793) and a malformed/unknown human
+                # slash command whose feedback would otherwise live only in the
+                # CI log (issue #804). A routine resolver skip stays silent as
+                # before; bot-authored bodies are excluded to keep the engine's
+                # own notices from re-entering this path.
+                if _is_true(self._get(resolved, "SOFT_RETRY_EXHAUSTED")):
+                    posted = self._post_soft_kill_halt(reason)
+                elif _is_true(verdict.get("COMMAND_ERROR")) and not _is_bot_trigger(
+                    trigger
+                ):
+                    posted = self._post_terminal_notice(reason)
+                else:
+                    posted = None
                 return RunOutcome(
                     exit_code=ExitCode.TERMINAL,
                     routing=RoutingDecision(status="hold", reason=reason),
@@ -651,6 +682,26 @@ class Engine:
         return notice
 
     # @stub-protected
+    def _post_terminal_notice(self, reason: str) -> str:
+        """Post a neutralized ``@author`` notice for a terminal, human-facing skip.
+
+        Generalizes the soft-kill halt body (issue #793): any terminal skip owed
+        to a human — an exhausted retry, or a malformed / unknown ``/nebuko``
+        command (issue #804) — leaves the same marker-led, trigger-safe comment
+        so the reason reaches the thread instead of living only in the CI log.
+        The bot marker keeps the notice from re-entering the engine. Best-effort:
+        a failed post must not mask the terminal outcome.
+        """
+        marker = _load_bridge_module("prepare_comment").BOT_MARKER
+        body = f"{marker}\n@{self._trigger_author()} {reason}"
+        notice = _neutralize_agent_triggers(body)
+        try:
+            self.adapter.post(notice)
+        except Exception as exc:  # noqa: BLE001 - the notice is best-effort
+            log.warning("[phase:guards] terminal notice failed: %s", exc)
+        return notice
+
+    # @stub-protected
     def _post_soft_kill_halt(self, reason: str) -> str:
         """Ping a human when the soft-kill retry budget is exhausted (issue #793).
 
@@ -658,17 +709,9 @@ class Engine:
         the ``/nebuko resume`` instruction would otherwise live only in the CI
         log while the thread went silent. The notice opens with the bot marker
         and carries no continue token, so the automated chain stops here — the
-        exact "max restarts, then ping a human" contract. Best-effort: a failed
-        post must not mask the halt.
+        exact "max restarts, then ping a human" contract.
         """
-        marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n@{self._trigger_author()} {reason}"
-        notice = _neutralize_agent_triggers(body)
-        try:
-            self.adapter.post(notice)
-        except Exception as exc:  # noqa: BLE001 - the halt notice is best-effort
-            log.warning("[phase:guards] soft-kill halt notice failed: %s", exc)
-        return notice
+        return self._post_terminal_notice(reason)
 
     # @stub-protected
     def normalize(self) -> Trigger:

@@ -24,6 +24,46 @@ class TestBuildResult:
         result = _build_result({"task": ""}, prompt_base, workflows_dir)
         assert result == {"SKIP_AGENT": "true", "REASON": "No valid task found"}
 
+    def test_command_error_outranks_skip_reason(self):
+        """A malformed command's usage wins and flags the notice (issue #804)."""
+        prompt_base, workflows_dir = _make_dirs()
+        result = _build_result(
+            {
+                "task": "",
+                "config_skip_reason": "/nebuko 'default': not found",
+                "config_command_error": "/nebuko run workflow --name <workflow>",
+            },
+            prompt_base,
+            workflows_dir,
+        )
+        assert result == {
+            "SKIP_AGENT": "true",
+            "REASON": "/nebuko run workflow --name <workflow>",
+            "COMMAND_ERROR": "true",
+        }
+
+    def test_skip_reason_without_command_error_stays_unflagged(self):
+        """The #529 workflow-name reason does not claim a command error."""
+        prompt_base, workflows_dir = _make_dirs()
+        result = _build_result(
+            {"task": "", "config_skip_reason": "/nebuko 'default': not found"},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result == {"SKIP_AGENT": "true", "REASON": "/nebuko 'default': not found"}
+        assert "COMMAND_ERROR" not in result
+
+    def test_command_error_present_but_task_resolved_runs(self):
+        """A fallback task (mention) means no skip — the error detail is moot."""
+        prompt_base, workflows_dir = _make_dirs()
+        result = _build_result(
+            {"task": "dev", "config_command_error": "/nebuko run workflow --name <workflow>"},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["SKIP_AGENT"] == "false"
+        assert "COMMAND_ERROR" not in result
+
     def test_unknown_task_skips(self):
         prompt_base, workflows_dir = _make_dirs()
         result = _build_result({"task": "not-a-task"}, prompt_base, workflows_dir)

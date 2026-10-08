@@ -96,6 +96,17 @@ def _build_result(
 
     task = config.get("task", "")
     if not task:
+        # A malformed or unknown human slash command outranks the workflow-name
+        # skip reason: the invocation can never be valid, so its usage hint is
+        # the actionable message (issue #804). The COMMAND_ERROR flag tells the
+        # engine this terminal skip is owed a notice on the thread.
+        command_error = config.get("config_command_error") or ""
+        if command_error:
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": command_error,
+                "COMMAND_ERROR": "true",
+            }
         # Enriched reason: carries /nebuko failure detail (name + searched
         # directories) when available (issue #529).
         skip_reason = config.get("config_skip_reason") or "No valid task found"

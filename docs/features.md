@@ -42,6 +42,12 @@ the `AGENT_RUN_CONFIG` sentinel ([reference.md](./reference.md#agent_run_config)
 The loop guard additionally skips a run when a human is pinged *alongside* an
 agent, so the human gets to orchestrate.
 
+An invalid invocation — an unknown flag (e.g. `/nebuko run workflow --default`),
+missing resource, or a leading `/` that matches no command — replies on the
+thread with a usage hint instead of failing silently in the CI log. The reply
+costs no LLM call and never re-triggers the engine (decision recorded in
+[ADR-0004](./adr/0004-propagate-human-command-errors-to-thread.md), issue #804).
+
 ---
 
 ## Task Decomposition
