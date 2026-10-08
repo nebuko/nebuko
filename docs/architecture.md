@@ -1,7 +1,7 @@
 # Architecture
 
 High-level system architecture of nebuko: how a GitHub event becomes an
-agent run, the 9-agent model, the orchestration loop, state management, and
+agent run, the 8-agent model, the orchestration loop, state management, and
 the routing cascade. For the internal DDD package layout, see
 [architecture_code.md](./architecture_code.md). For step-by-step details of
 the GitHub Actions job, see [default-workflow.md](./default-workflow.md).
@@ -28,7 +28,7 @@ state store.
 ```
 
 The orchestrator is `.github/workflows/nebuko-workflow.yaml` — a reusable
-workflow (consumer file: [`workflow.yaml`](../workflow.yaml)) with three jobs:
+workflow (consumers call it from their own `workflow.yaml`) with three jobs:
 `run-task` (the agent pipeline, ~24 steps), `agent-metrics` (runs on issue
 close), and `subtask-completion-notifier` (notifies a parent issue when a
 sub-issue's split plan completes). It runs on GitHub-hosted runners by default;
@@ -51,7 +51,7 @@ callers can select the runner via the `runs_on` workflow input (e.g.
 | `po` | Product owner — writes WHEN/IF/THEN specs (used by the `spec-driven` workflow). | think, finish |
 
 Each agent = a prompt file (`.agents/prompts/{agent}.md`) + a model reference +
-a tool whitelist, declared in [`agent-config.yaml`](../agent-config.yaml).
+a tool whitelist, declared in [`agent-config.yaml`](../defaults/agents/agent-config.yaml).
 Tools are a security boundary: planning agents (`genius`, `review`, `issue`,
 ...) physically cannot touch files, while execution agents (`dev`, `ctx`,
 `debug`) can. Full details in [agents-and-skills.md](./agents-and-skills.md).
@@ -164,7 +164,7 @@ for every agent (no per-agent code paths):
 
 **Shared contract** — the rule "last text answer = full deliverable; `finish`
 message = 2–3 sentence status + hand-off sentinel" lives in a single skill
-file, [`skills/posting-contract.md`](../skills/posting-contract.md), attached to
+file, [`skills/posting-contract.md`](../defaults/skills/posting-contract.md), attached to
 every agent via the `skills:` list in `agent-config.yaml` — no per-prompt edits.
 
 > **TODO (follow-up):** a global `core_skills` key in `agent-config.yaml` that

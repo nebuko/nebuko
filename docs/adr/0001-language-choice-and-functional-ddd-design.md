@@ -3,12 +3,12 @@
 **Status:** Accepted
 **Date:** 2026-09-22
 **Deciders:** Olivier Norture (author), @genius (architecture)
-**Scope:** `gitflow-ai` open-source + commercial (Apache-2.0) refactoring baseline
+**Scope:** `gitflow-ai` (now Nebuko) open-source + commercial (Apache-2.0) refactoring baseline
 **Records the thinking from:** issue #627
 
 ## 1. Context
 
-`gitflow-ai` is currently a 100% Python codebase: 161 `.py` files, ~30,164 LOC, 55 test files, and **no packaging metadata** (no `pyproject.toml`/`setup.py`/`requirements.txt`).
+`gitflow-ai` (now Nebuko) is currently a 100% Python codebase: 161 `.py` files, ~30,164 LOC, 55 test files, and **no packaging metadata** (no `pyproject.toml`/`setup.py`/`requirements.txt`).
 
 Relevant facts that constrain the decisions:
 
@@ -39,9 +39,9 @@ Safety/correctness parity is bought with **tooling, not language**: `mypy --stri
 
 ### 2.2 Organization — DDD package-by-feature (one domain = one folder)
 
-- A real package rooted at `src/gitflow_ai/`, **one folder per domain**:
+- A real package rooted at `src/nebuko/`, **one folder per domain**:
   ```
-  src/gitflow_ai/
+  src/nebuko/
     agent_script/        # OpenHands-facing orchestration domain
     resolve_config/
     workflow_state/
