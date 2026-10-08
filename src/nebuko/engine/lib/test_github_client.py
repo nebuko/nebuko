@@ -7,6 +7,8 @@ import pytest
 
 from github_client import (
     BOT_MARKER,
+    ApiErrorKind,
+    GitHubTransport,
     get_comment_body,
     get_issue_comments,
     get_comment_node_id,
@@ -14,6 +16,14 @@ from github_client import (
     minimize_comment,
     ensure_bot_marker,
 )
+
+
+def _transport(**kwargs):
+    """A transport with retries disabled and no real sleeping."""
+    kwargs.setdefault("max_attempts", 1)
+    kwargs.setdefault("sleep", lambda _seconds: None)
+    kwargs.setdefault("jitter", lambda: 0.0)
+    return GitHubTransport(**kwargs)
 
 
 class TestEnsureBotMarker:
@@ -120,9 +130,9 @@ class TestGetIssueComments:
 
     @patch("github_client.subprocess.run")
     def test_handles_api_error(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stderr="rate limited")
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="rate limited")
 
-        result = get_issue_comments("owner/repo", 42)
+        result = get_issue_comments("owner/repo", 42, transport=_transport())
         assert result == []
 
     @patch("github_client.subprocess.run")
@@ -131,6 +141,15 @@ class TestGetIssueComments:
 
         result = get_issue_comments("owner/repo", 42)
         assert result == []
+
+    @patch("github_client.subprocess.run")
+    def test_limit_keeps_the_last_comments(self, mock_run):
+        page = [{"id": str(index), "body": f"c{index}"} for index in range(5)]
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps([page]))
+
+        result = get_issue_comments("owner/repo", 42, limit=2)
+
+        assert [c["body"] for c in result] == ["c3", "c4"]
 
 
 class TestGetCommentNodeId:
@@ -149,9 +168,9 @@ class TestGetCommentNodeId:
 
     @patch("github_client.subprocess.run")
     def test_returns_none_on_error(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stderr="error")
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
 
-        result = get_comment_node_id("123", "owner/repo")
+        result = get_comment_node_id("123", "owner/repo", transport=_transport())
         assert result is None
 
 
@@ -171,9 +190,9 @@ class TestGetCommentBody:
 
     @patch("github_client.subprocess.run")
     def test_returns_none_on_error(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stderr="error")
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
 
-        result = get_comment_body("123", "owner/repo")
+        result = get_comment_body("123", "owner/repo", transport=_transport())
         assert result is None
 
 
@@ -182,15 +201,32 @@ class TestPostComment:
 
     def test_dry_run(self):
         result = post_comment("owner/repo", 42, "Hello", dry_run=True)
-        assert result is None
+        assert result.ok is True
 
     @patch("github_client.subprocess.run")
     def test_posts_comment(self, mock_run):
-        response = {"id": "999", "body": "Hello"}
+        response = {"id": 999, "html_url": "https://example.test/c/999"}
         mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(response))
 
         result = post_comment("owner/repo", 42, "Hello")
-        assert result["id"] == "999"
+
+        assert result.ok is True
+        assert result.comment_id == 999
+        assert result.comment_url == "https://example.test/c/999"
+
+    @patch("github_client.subprocess.run")
+    def test_failure_is_reported_not_swallowed(self, mock_run):
+        """The regression of issue #805: a dropped write must be visible."""
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr='gh: You have exceeded a secondary rate limit (HTTP 403)',
+        )
+
+        result = post_comment("owner/repo", 42, "Hello", transport=_transport())
+
+        assert result.ok is False
+        assert result.error_kind == ApiErrorKind.SECONDARY_RATE_LIMIT
 
 
 class TestMinimizeComment:
@@ -207,6 +243,155 @@ class TestMinimizeComment:
 
     @patch("github_client.subprocess.run")
     def test_handles_error(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stderr="fail")
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="fail")
 
-        assert minimize_comment("node123") is False
+        assert minimize_comment("node123", transport=_transport()) is False
+
+
+class TestGitHubTransport:
+    """The rate-limit-aware choke point (issue #805)."""
+
+    def _ok(self, stdout="{}", headers=""):
+        head = "HTTP/2.0 200 OK" + (f"\n{headers}" if headers else "")
+        return MagicMock(returncode=0, stdout=f"{head}\n\n{stdout}", stderr="")
+
+    def _error(self, status, message, headers=""):
+        return MagicMock(
+            returncode=1,
+            stdout="",
+            stderr=f"gh: {message} (HTTP {status})",
+        )
+
+    @patch("github_client.subprocess.run")
+    def test_success_parses_status_and_body(self, mock_run):
+        mock_run.return_value = self._ok(stdout='{"id": 7}')
+
+        result = _transport().call(["api", "/repos/o/r/issues/1"], mutative=False)
+
+        assert result.ok is True
+        assert result.status == 200
+        assert result.payload == '{"id": 7}'
+
+    @patch("github_client.subprocess.run")
+    def test_classifies_a_secondary_rate_limit(self, mock_run):
+        mock_run.return_value = self._error(403, "You have exceeded a secondary rate limit")
+
+        result = _transport().call(["api", "/x"], mutative=True)
+
+        assert result.error_kind == ApiErrorKind.SECONDARY_RATE_LIMIT
+
+    @patch("github_client.subprocess.run")
+    def test_classifies_a_primary_rate_limit_from_zero_remaining(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="HTTP/2.0 403 Forbidden\nx-ratelimit-remaining: 0\n\n{}",
+            stderr="gh: API rate limit exceeded (HTTP 403)",
+        )
+
+        result = _transport().call(["api", "/x"], mutative=False)
+
+        assert result.error_kind == ApiErrorKind.PRIMARY_RATE_LIMIT
+
+    @patch("github_client.subprocess.run")
+    def test_classifies_auth_and_not_found_as_terminal(self, mock_run):
+        for status, message, expected in (
+            (401, "Bad credentials", ApiErrorKind.AUTH),
+            (404, "Not Found", ApiErrorKind.NOT_FOUND),
+        ):
+            mock_run.return_value = self._error(status, message)
+            result = _transport().call(["api", "/x"], mutative=False)
+            assert result.error_kind == expected
+
+    @patch("github_client.subprocess.run")
+    def test_classifies_an_empty_body_decode_error(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="unexpected end of JSON input",
+        )
+
+        result = _transport().call(["api", "/x"], mutative=False)
+
+        assert result.error_kind == ApiErrorKind.DECODE
+
+    @patch("github_client.subprocess.run")
+    def test_retries_a_secondary_block_then_succeeds(self, mock_run):
+        sleeps = []
+        mock_run.side_effect = [
+            self._error(403, "You have exceeded a secondary rate limit"),
+            self._ok(stdout="{}"),
+        ]
+        transport = GitHubTransport(
+            max_attempts=3,
+            sleep=sleeps.append,
+            jitter=lambda: 0.0,
+            secondary_cooldown_s=5.0,
+        )
+
+        result = transport.call(["api", "/x"], mutative=True)
+
+        assert result.ok is True
+        assert transport.retries == 1
+        assert sleeps and sleeps[0] >= 5.0
+
+    @patch("github_client.subprocess.run")
+    def test_does_not_retry_a_terminal_failure(self, mock_run):
+        mock_run.return_value = self._error(401, "Bad credentials")
+
+        transport = _transport(max_attempts=4)
+        result = transport.call(["api", "/x"], mutative=False)
+
+        assert result.error_kind == ApiErrorKind.AUTH
+        assert mock_run.call_count == 1
+
+    @patch("github_client.subprocess.run")
+    def test_honours_retry_after_before_retrying(self, mock_run):
+        sleeps = []
+        mock_run.side_effect = [
+            MagicMock(
+                returncode=1,
+                stdout="HTTP/2.0 403 Forbidden\nretry-after: 7\n\n{}",
+                stderr="gh: secondary rate limit (HTTP 403)",
+            ),
+            self._ok(stdout="{}"),
+        ]
+        transport = GitHubTransport(
+            max_attempts=2, sleep=sleeps.append, jitter=lambda: 0.0
+        )
+
+        transport.call(["api", "/x"], mutative=True)
+
+        # The server-mandated Retry-After is honoured, not the 60s default.
+        assert sleeps and sleeps[0] == pytest.approx(7.0, abs=0.2)
+
+    @patch("github_client.subprocess.run")
+    def test_paces_mutative_requests(self, mock_run):
+        clock = {"now": 0.0}
+        sleeps = []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            clock["now"] += seconds
+
+        mock_run.return_value = self._ok(stdout="{}")
+        transport = GitHubTransport(
+            max_attempts=1,
+            min_write_gap_s=1.0,
+            sleep=sleep,
+            monotonic=lambda: clock["now"],
+            jitter=lambda: 0.0,
+        )
+
+        transport.call(["api", "/a"], mutative=True)
+        transport.call(["api", "/b"], mutative=True)
+
+        assert any(seconds >= 1.0 for seconds in sleeps)
+
+    @patch("github_client.subprocess.run")
+    def test_reads_do_not_add_headers_for_paginated_calls(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+
+        _transport().call(["api", "--paginate", "--slurp", "/x"], mutative=False)
+
+        args = mock_run.call_args[0][0]
+        assert "--include" not in args

@@ -1375,6 +1375,80 @@ class TestRunLogArtifacts:
         assert "could not stage run logs" in caplog.text
 
 
+class TestHonestPublish:
+    """A dropped comment write must never look like a green run (issue #805).
+
+    The transport retries transient/rate-limit failures and then raises
+    ``PublishError``; these tests pin the engine's reaction: the undelivered
+    body is staged as an artifact, the journal records the loss, and the
+    process exits non-zero — while state and routing still advance so the run
+    stays resumable.
+    """
+
+    def _run_with_failed_publish(self, tmp_path, monkeypatch, *, answer="*Dev answer*"):
+        from nebuko.adapters.github import PublishError
+        from workflow_state.workflow_state import WorkflowState
+
+        engine = _engine(tmp_path)
+        state = WorkflowState(version=3, workflow="default", step="implement", agent="dev")
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: {**_agent_result(answer), "state": state},
+        )
+
+        def failing_post(self, body):
+            raise PublishError("secondary rate limit", None)
+
+        monkeypatch.setattr(LocalAdapter, "post", failing_post)
+        return engine, engine.run()
+
+    def test_publish_failure_exits_non_zero(self, tmp_path, monkeypatch):
+        _, outcome = self._run_with_failed_publish(tmp_path, monkeypatch)
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.routing.status == "hold"
+
+    def test_state_and_routing_still_advance(self, tmp_path, monkeypatch):
+        _, outcome = self._run_with_failed_publish(tmp_path, monkeypatch)
+
+        assert "state" in outcome.phases
+        assert "route" in outcome.phases
+        assert (tmp_path / "runs" / "run-1" / "state.json").is_file()
+
+    def test_undelivered_comment_survives_as_an_artifact(self, tmp_path, monkeypatch):
+        engine, _ = self._run_with_failed_publish(tmp_path, monkeypatch, answer="the lost answer")
+
+        staged = engine.adapter.artifact_dir() / "comment-body.md"
+        assert "the lost answer" in staged.read_text(encoding="utf-8")
+
+    def test_state_journal_records_the_publish_failure(self, tmp_path, monkeypatch):
+        _, outcome = self._run_with_failed_publish(tmp_path, monkeypatch)
+
+        assert outcome.state is not None
+        assert outcome.state.publish_failed is True
+        saved = json.loads((tmp_path / "runs" / "run-1" / "state.json").read_text())
+        assert saved["publish_failed"] is True
+
+    def test_a_successful_publish_leaves_the_flag_unset(self, tmp_path, monkeypatch):
+        from workflow_state.workflow_state import WorkflowState
+
+        engine = _engine(tmp_path)
+        state = WorkflowState(version=3, workflow="default", step="implement", agent="dev")
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: {**_agent_result("posted"), "state": state},
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code != ExitCode.ERROR
+        assert outcome.state is not None
+        assert outcome.state.publish_failed is False
+        assert not (engine.adapter.artifact_dir() / "comment-body.md").exists()
+
+
 class TestAgentStartAcknowledgment:
     """The engine posts the acknowledgment the cutover dropped (issue #720).
 

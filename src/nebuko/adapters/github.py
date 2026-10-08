@@ -19,12 +19,34 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from nebuko.engine.models import CommentEntry, Trigger
     from workflow_state.workflow_state import WorkflowState
 
-__all__ = ["GitHubAdapter"]
+__all__ = ["GitHubAdapter", "PublishError"]
 
 # Staging directory whose files are uploaded as per-file unzipped CI artifacts
 # (``console.log``, ``app.log``). Kept in sync with the upload-artifact steps in
 # ``nebuko-workflow.yaml`` (issues #743, #779).
 ARTIFACT_DIR_NAME = "nebuko-task-logs"
+
+# Durable copy of a comment body whose write could not be delivered (issue
+# #805), staged next to the run logs by ``run_loop._publish_fallback``. Wiring
+# the matching ``upload-artifact`` step into ``nebuko-workflow.yaml`` needs
+# ``workflows`` push permission and is tracked as remaining work in PR #811.
+COMMENT_BODY_ARTIFACT = "comment-body.md"
+
+
+# @stub-protected
+class PublishError(RuntimeError):
+    """A comment write could not be delivered after the transport's retries.
+
+    Raised instead of silently returning an empty id, so ``run_loop``'s publish
+    phase fails loudly rather than reporting a green run whose deliverable
+    vanished (issue #805).
+    """
+
+    # @stub-protected
+    def __init__(self, detail: str, error_kind: Any | None = None) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.error_kind = error_kind
 
 
 def _github_client() -> Any:
@@ -86,7 +108,9 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
     # @stub-protected
     def load_history(self, *, limit: int | None = None) -> Sequence[CommentEntry]:
-        comments = self._client_handle().get_issue_comments(self._require_repo(), self._issue_number())
+        comments = self._client_handle().get_issue_comments(
+            self._require_repo(), self._issue_number()
+        )
         entries = [self._to_entry(comment) for comment in comments]
         if limit is not None:
             entries = entries[-limit:] if limit > 0 else []
@@ -94,10 +118,25 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
     # @stub-protected
     def post(self, body: str) -> str:
-        result = self._client_handle().post_comment(self._require_repo(), self._issue_number(), body)
+        """Publish ``body``; raise :class:`PublishError` if it cannot be delivered.
+
+        The client already retries transient/rate-limit failures; a remaining
+        failure is terminal for the write and must surface, never be coerced to
+        an empty id (issue #805).
+        """
+        result = self._client_handle().post_comment(
+            self._require_repo(), self._issue_number(), body
+        )
+        ok = getattr(result, "ok", None)
+        if ok is False:
+            raise PublishError(
+                str(getattr(result, "detail", "") or "comment write failed"),
+                getattr(result, "error_kind", None),
+            )
         if isinstance(result, dict):
             return str(result.get("html_url") or result.get("id") or "")
-        return str(result or "")
+        url = getattr(result, "comment_url", "") or getattr(result, "comment_id", "")
+        return str(url or "")
 
     # @stub-protected
     def load_state(self) -> WorkflowState | None:
