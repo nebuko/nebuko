@@ -27,7 +27,7 @@ import re
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -45,8 +45,12 @@ DEFAULT_BACKOFF_CAP_S = 60.0
 # header, so fall back to GitHub's documented "wait at least one minute".
 DEFAULT_SECONDARY_COOLDOWN_S = 60.0
 LOW_REMAINING_THRESHOLD = 50
+# GitHub caps every REST page at 100 items; a bounded tail read uses one
+# discovery page plus the last page(s) needed to cover ``limit`` comments.
+COMMENTS_PER_PAGE = 100
 
 _STATUS_RE = re.compile(r"HTTP[ /](\d{3})")
+_LINK_LAST_RE = re.compile(r'<[^>]*[?&]page=(\d+)[^>]*>\s*;\s*rel="last"')
 
 
 class ApiErrorKind(Enum):
@@ -70,6 +74,9 @@ class ApiCallResult:
     payload: str
     error_kind: Optional[ApiErrorKind]
     detail: str
+    # Response headers when ``gh api --include`` surfaced them (pagination
+    # ``Link``, rate-limit counters). Empty for calls without header capture.
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -287,7 +294,7 @@ class GitHubTransport:
             result, headers = self._interpret(completed)
             self._observe(headers)
             kind = self._classify(result, headers)
-            result = replace(result, error_kind=kind)
+            result = replace(result, error_kind=kind, headers=dict(headers))
             last = result
             if result.ok or kind not in _RETRYABLE_KINDS or attempt >= self.max_attempts:
                 return result
@@ -433,6 +440,86 @@ def _default_transport(token: Optional[str] = None, **kwargs) -> GitHubTransport
     return GitHubTransport(token, **kwargs)
 
 
+def _last_page_from_link(link: Optional[str]) -> Optional[int]:
+    """Parse the ``rel="last"`` page number out of a GitHub ``Link`` header."""
+    if not link:
+        return None
+    match = _LINK_LAST_RE.search(link)
+    return int(match.group(1)) if match else None
+
+
+def _decode_comments_page(
+    result: ApiCallResult,
+) -> Tuple[Optional[List[dict]], Optional[CommentsFetchResult]]:
+    """Decode one comment page into ``(comments, error_result)``."""
+    try:
+        parsed = json.loads(result.payload) if result.payload.strip() else []
+    except json.JSONDecodeError as e:
+        return None, CommentsFetchResult(
+            ok=False, error_kind=ApiErrorKind.DECODE, detail=str(e)
+        )
+    # ``_flatten_pages`` tolerates both the flat single-page array and the
+    # ``--slurp`` nested shape, so callers stay agnostic to the fetch mode.
+    return _flatten_pages(parsed), None
+
+
+def _read_comments_page(
+    repo: str,
+    issue_number: int,
+    page: int,
+    transport: GitHubTransport,
+) -> Tuple[Optional[List[dict]], Mapping[str, str], Optional[CommentsFetchResult]]:
+    """Fetch one 100-comment page; return ``(comments, headers, error_result)``."""
+    path = f"/repos/{repo}/issues/{issue_number}/comments?per_page={COMMENTS_PER_PAGE}"
+    if page > 1:
+        path += f"&page={page}"
+    result = transport.call(["api", path], mutative=False)
+    if not result.ok:
+        print(f"Error fetching comments: {result.detail}", file=sys.stderr)
+        return None, result.headers, CommentsFetchResult(
+            ok=False, error_kind=result.error_kind, detail=result.detail
+        )
+    comments, error = _decode_comments_page(result)
+    return comments, result.headers, error
+
+
+def _fetch_comments_tail(
+    repo: str,
+    issue_number: int,
+    limit: int,
+    transport: GitHubTransport,
+) -> CommentsFetchResult:
+    """Fetch only the last ``limit`` comments instead of the whole thread.
+
+    The first page reveals the last page number via the ``Link`` header, then
+    the tail pages that cover ``limit`` are fetched directly — a bounded number
+    of requests regardless of thread length (issue #805, Pillar C).
+    """
+    comments, headers, error = _read_comments_page(repo, issue_number, 1, transport)
+    if error is not None:
+        return error
+    tail: List[dict] = list(comments or [])
+
+    last_page = _last_page_from_link(headers.get("link"))
+    if last_page is not None and last_page > 1:
+        pages_needed = max(1, (limit + COMMENTS_PER_PAGE - 1) // COMMENTS_PER_PAGE)
+        start = max(1, last_page - pages_needed + 1)
+        tail = []
+        for page in range(start, last_page + 1):
+            page_comments, _, page_error = _read_comments_page(
+                repo, issue_number, page, transport
+            )
+            if page_error is not None:
+                return page_error
+            tail.extend(page_comments or [])
+
+    if limit > 0:
+        tail = tail[-limit:]
+    else:
+        tail = []
+    return CommentsFetchResult(ok=True, comments=tuple(tail))
+
+
 def get_issue_comments(
     repo: str,
     issue_number: int,
@@ -490,6 +577,12 @@ def fetch_issue_comments(
         return CommentsFetchResult(ok=True)
 
     transport = transport or _default_transport(token)
+
+    if limit is not None:
+        # Bounded tail read: a constant number of requests for any thread
+        # length, instead of paginating the entire history (issue #805).
+        return _fetch_comments_tail(repo, issue_number, limit, transport)
+
     result = transport.call(
         [
             "api",
@@ -512,8 +605,6 @@ def fetch_issue_comments(
         print(f"Failed to parse comments JSON: {e}", file=sys.stderr)
         return CommentsFetchResult(ok=False, error_kind=ApiErrorKind.DECODE, detail=str(e))
 
-    if limit is not None:
-        comments = comments[-limit:] if limit > 0 else []
     return CommentsFetchResult(ok=True, comments=tuple(comments))
 
 
