@@ -15,7 +15,7 @@ from ...features.load_config.load_config import load_config
 #: a run when the file is missing or malformed.
 DEFAULT_AGENT_NAMES: frozenset[str] = frozenset({
     "genius", "ctx", "dev", "review", "issue",
-    "issue-reviewer", "summarize", "debug", "po",
+    "issue-reviewer", "debug", "po",
 })
 
 _names_cache: dict[str, frozenset[str]] = {}

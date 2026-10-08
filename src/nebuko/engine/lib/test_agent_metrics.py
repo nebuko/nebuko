@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for summarize_metrics.py"""
+"""Tests for agent_metrics.py"""
 
 import json
 import re
@@ -13,7 +13,7 @@ from io import StringIO
 sys.path.insert(0, os.path.dirname(__file__))
 from metrics_schema import Metrics
 from workflow_state import STATE_MARKER_START, STATE_MARKER_END
-from summarize_metrics import (
+from agent_metrics import (
     extract_metrics_from_comment,
     deduplicate_metrics,
     aggregate_by_model,

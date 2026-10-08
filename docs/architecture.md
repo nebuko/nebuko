@@ -29,7 +29,7 @@ state store.
 
 The orchestrator is `.github/workflows/nebuko-workflow.yaml` — a reusable
 workflow (consumer file: [`workflow.yaml`](../workflow.yaml)) with three jobs:
-`run-task` (the agent pipeline, ~24 steps), `summarize-metrics` (runs on issue
+`run-task` (the agent pipeline, ~24 steps), `agent-metrics` (runs on issue
 close), and `subtask-completion-notifier` (notifies a parent issue when a
 sub-issue's split plan completes). It runs on GitHub-hosted runners by default;
 callers can select the runner via the `runs_on` workflow input (e.g.
@@ -37,7 +37,7 @@ callers can select the runner via the `runs_on` workflow input (e.g.
 
 ---
 
-## The 9-Agent Model
+## The 8-Agent Model
 
 | Agent | Role | Tools |
 |-------|------|-------|
@@ -47,7 +47,6 @@ callers can select the runner via the `runs_on` workflow input (e.g.
 | `review` | Senior code reviewer — inspects diffs, issues approved/rejected verdicts. | think, finish |
 | `issue` | Issue refinement — iteratively refines issue drafts with humans. | think, finish |
 | `issue-reviewer` | Reviews completed issues for workflow/prompt optimizations. | think, finish |
-| `summarize` | Produces structured JSON summaries of issue history. | think, finish |
 | `debug` | Investigates unusual agent behavior from past run logs/artifacts. | terminal, file_editor, think, finish |
 | `po` | Product owner — writes WHEN/IF/THEN specs (used by the `spec-driven` workflow). | think, finish |
 

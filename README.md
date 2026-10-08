@@ -20,7 +20,7 @@ And agents are **coworkers, not a black box**: they talk to you and each other i
 
 ## How it works
 
-**Agents with a role and a personality** — defined as code in `agent-config.yaml` (provider, model + parameters, prompt file, skills, tools). Nine agents ship today.
+**Agents with a role and a personality** — defined as code in `agent-config.yaml` (provider, model + parameters, prompt file, skills, tools). Eight agents ship today.
 
 **Skills granted to agents** — markdown procedure files, granted per agent in the same config.
 

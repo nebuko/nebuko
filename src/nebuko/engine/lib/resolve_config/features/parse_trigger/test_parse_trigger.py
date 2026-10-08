@@ -51,10 +51,6 @@ class TestIsPlainMentionTrigger:
         body = "@@genius <!-- bot-workflow-terminal --> <!-- subtask-complete: 2 -->"
         assert is_plain_mention_trigger(body) is True
 
-    def test_summarize_trigger(self):
-        body = "<!-- bot-workflow-terminal -->\n@@summarize"
-        assert is_plain_mention_trigger(body) is True
-
     def test_bare_human_mention_is_plain(self):
         # Human comments route via human_mention, but shape detection still
         # matches a bare mention.
@@ -143,11 +139,6 @@ class TestExtractMachineTrigger:
         assert extract_machine_trigger(
             "<!-- bot-subtask-complete: 3 -->"
         ) == ("genius", "3")
-
-    def test_summarizer_trigger(self):
-        assert extract_machine_trigger(
-            "<!-- bot-summarizer-trigger -->"
-        ) == ("summarize", None)
 
     def test_generic_trigger(self):
         assert extract_machine_trigger(

@@ -61,7 +61,7 @@ This thin wrapper calls the reusable orchestrator from this repository — you
 never vendor the 900-line workflow file itself (zero-copy, see
 [features.md — Remote Workflows](./features.md#remote-workflows-zero-copy)).
 Optional inputs: `runs_on` (default `ubuntu-latest`; e.g. `self-hosted` to use
-your own runners), `summarizer_threshold` (default 100), `pin_comment` (default
+your own runners), `pin_comment` (default
 `false`; pin every agent step output for verbatim context injection),
 `python_version` (default `3.13`), `enable_uv_cache` (default `true`),
 `prompt_body`.
@@ -166,9 +166,9 @@ Where to look when something goes wrong:
 - **GHA run logs** — the run for the triggering event, job `run-task`.
 - **Run artifacts** — each run publishes `console.log` and `app.log` as separate unzipped artifacts (direct fetch, no unzip).
 - **Metrics** — every agent comment's `workflow_state` snapshot carries the
-  per-step metrics in its `history` entries; on issue close, `summarize-metrics`
+  per-step metrics in its `history` entries; on issue close, `agent-metrics`
   posts an aggregated table.
-  Details in [features.md — Metrics](./features.md#metrics--summarization).
+  Details in [features.md — Metrics](./features.md#metrics).
 
 ---
 

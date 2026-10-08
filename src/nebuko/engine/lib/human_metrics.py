@@ -3,7 +3,7 @@
 Pure, side-effect-free models and computation for the human-facing metrics
 appended to the metrics summary that is posted when an issue closes.
 
-All I/O stays in ``summarize_metrics.py``: it builds ``IssueData`` from the
+All I/O stays in ``agent_metrics.py``: it builds ``IssueData`` from the
 comments/workflow-state payloads it already fetches, then calls
 ``HumanMetricsAnalyzer.analyze`` and ``HumanMetricsRenderer.render``.
 

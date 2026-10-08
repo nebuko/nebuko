@@ -380,7 +380,6 @@ _ROLE_DISPLAY_NAMES = {
     "review": "Reviewer",
     "issue": "Issue",
     "issue-reviewer": "Issue Reviewer",
-    "summarize": "Summarizer",
 }
 
 
