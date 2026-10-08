@@ -1235,6 +1235,30 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("no workflow state found", result["REASON"])
 
+    def test_fallback_reads_a_bounded_tail(self):
+        """The comment fallback must not re-paginate the whole thread (issue #805)."""
+        from unittest.mock import patch
+
+        from thread_snapshot import state_tail_limit
+
+        prompt_base, workflows_dir = self._setup_dirs()
+        state_block = self._build_state_block(workflow="default", step="analyze")
+        comments = self._comments_with_state(state_block)
+
+        with patch(
+            "resolve_config.get_issue_comments", return_value=comments
+        ) as fetch:
+            resolve_config(
+                "/nebuko force-step step --name context",
+                prompt_base,
+                workflows_dir,
+                is_bot=False,
+                repo="owner/repo",
+                issue_number=42,
+            )
+
+        fetch.assert_called_once_with("owner/repo", 42, limit=state_tail_limit())
+
 
 class TestWorkflowDrivenResolution(unittest.TestCase):
     """Tests for workflow-driven resolution in resolve_config() agent_config branch."""

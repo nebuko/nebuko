@@ -16,14 +16,17 @@ import json
 import os
 import re
 import sys
-import urllib.request
-import urllib.error
 from collections import defaultdict
 from datetime import datetime
 
 # Import the Metrics schema
 sys.path.insert(0, os.path.dirname(__file__))
-from github_client import BOT_MARKER, ensure_bot_marker
+from github_client import (
+    BOT_MARKER,
+    GitHubTransport,
+    fetch_issue_comments,
+)
+from github_client import post_comment as _github_post_comment
 from metrics_schema import Metrics
 from human_metrics import (
     CommentRecord,
@@ -41,55 +44,32 @@ HUMAN_COMMAND_REGEX = re.compile(r"@@[a-z][a-z0-9_-]*")
 
 
 def fetch_comments(repo, issue_number, token, per_page=100):
-    """Fetch all comments from an issue, handling pagination."""
-    all_comments = []
-    page = 1
+    """Fetch all comments from an issue via the rate-limit-aware transport.
 
-    while True:
-        url = (
-            f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
-            f"?per_page={per_page}&page={page}"
-        )
-        req = urllib.request.Request(url)
-        req.add_header("Authorization", f"token {token}")
-        req.add_header("Accept", "application/vnd.github.v3+json")
-        req.add_header("User-Agent", "nebuko-metrics-aggregator")
-
-        try:
-            with urllib.request.urlopen(req) as response:
-                comments = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            print(f"HTTP error fetching comments (page {page}): {e.code} - {e.reason}")
-            break
-        except Exception as e:
-            print(f"Error fetching comments (page {page}): {e}")
-            break
-
-        if not comments:
-            break
-
-        all_comments.extend(comments)
-        page += 1
-
-    return all_comments
+    The whole thread is returned in API order (oldest first); the transport
+    handles pagination, rate-limit classification and bounded retries.
+    """
+    result = fetch_issue_comments(repo, issue_number, token)
+    if not result.ok:
+        print(f"Error fetching comments: {result.detail}")
+        return []
+    return list(result.comments)
 
 
 def fetch_issue(repo, issue_number, token):
     """Fetch a single issue's body and metadata (body, closed_at)."""
-    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", f"token {token}")
-    req.add_header("Accept", "application/vnd.github.v3+json")
-    req.add_header("User-Agent", "nebuko-metrics-aggregator")
-
+    transport = GitHubTransport(token or None)
+    result = transport.call(
+        ["api", f"/repos/{repo}/issues/{issue_number}"], mutative=False
+    )
+    if not result.ok:
+        print(f"Error fetching issue: {result.detail}")
+        return {}
     try:
-        with urllib.request.urlopen(req) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        print(f"HTTP error fetching issue: {e.code} - {e.reason}")
-    except Exception as e:
+        return json.loads(result.payload) if result.payload.strip() else {}
+    except json.JSONDecodeError as e:
         print(f"Error fetching issue: {e}")
-    return {}
+        return {}
 
 
 def extract_metrics_from_comment(body):
@@ -540,27 +520,12 @@ def generate_model_summary_table(aggregated):
 
 
 def post_comment(repo, issue_number, token, body):
-    """Post a comment to a GitHub issue."""
-    body = ensure_bot_marker(body)
-    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
-    payload = json.dumps({"body": body}).encode("utf-8")
-
-    req = urllib.request.Request(url, data=payload, method="POST")
-    req.add_header("Authorization", f"token {token}")
-    req.add_header("Accept", "application/vnd.github.v3+json")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("User-Agent", "nebuko-metrics-aggregator")
-
-    try:
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            print(f"Comment posted successfully: {result.get('html_url', 'URL not available')}")
-    except urllib.error.HTTPError as e:
-        print(f"HTTP error posting comment: {e.code} - {e.reason}")
-        raise
-    except Exception as e:
-        print(f"Error posting comment: {e}")
-        raise
+    """Post a comment to a GitHub issue through the shared transport."""
+    result = _github_post_comment(repo, issue_number, body, token)
+    if not result.ok:
+        print(f"Error posting comment: {result.detail}")
+        raise RuntimeError(f"Failed to post comment: {result.detail}")
+    print(f"Comment posted successfully: {result.comment_url or 'URL not available'}")
 
 
 def parse_iso_datetime(value):

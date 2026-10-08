@@ -36,9 +36,14 @@ def _fetch_workflow_state_from_history(
     if not repo or not issue_number:
         return None
     try:
+        from thread_snapshot import state_tail_limit
+
         # Call through the package attribute so patch("resolve_config.get_issue_comments")
-        # intercepts, exactly as the old flat module did.
-        comments = resolve_config.get_issue_comments(repo, issue_number)
+        # intercepts, exactly as the old flat module did. The tail bound keeps
+        # this fallback to a single page instead of the whole thread (#805).
+        comments = resolve_config.get_issue_comments(
+            repo, issue_number, limit=state_tail_limit()
+        )
         return extract_latest_state_from_comments(comments)
     except Exception:
         return None

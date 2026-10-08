@@ -412,8 +412,16 @@ def _load_prev_state_from_comments(fetch_comments=None) -> WorkflowState | None:
     if not repo or not issue_number.isdigit():
         return None
     try:
-        fetch = fetch_comments or get_issue_comments
-        comments = fetch(repo, int(issue_number))
+        if fetch_comments is not None:
+            comments = fetch_comments(repo, int(issue_number))
+        else:
+            # A bounded tail read (single page) is enough to recover the state
+            # without re-paginating the whole thread (issue #805, Pillar C).
+            from thread_snapshot import state_tail_limit
+
+            comments = get_issue_comments(
+                repo, int(issue_number), limit=state_tail_limit()
+            )
         return extract_latest_state_from_comments(comments)
     except Exception as e:
         logger.warning(f"Failed to recover workflow state from comments: {e}")

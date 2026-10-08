@@ -1131,6 +1131,22 @@ class TestLoadPrevStateHandoff(unittest.TestCase):
         self.assertIsNotNone(state)
         self.assertEqual(state.version, 9)
 
+    def test_default_recovery_reads_a_bounded_tail(self):
+        """The comment recovery path must not re-paginate the whole thread (#805)."""
+        from unittest.mock import patch
+
+        from thread_snapshot import state_tail_limit
+
+        with patch(
+            "build_output.get_issue_comments",
+            return_value=[self._comment(self._state(version=11))],
+        ) as fetch:
+            state = load_prev_state_or_recover()
+
+        self.assertIsNotNone(state)
+        self.assertEqual(state.version, 11)
+        fetch.assert_called_once_with("owner/repo", 648, limit=state_tail_limit())
+
     def test_missing_repo_env_returns_none(self):
         os.environ.pop("REPO_NAME", None)
         self.assertIsNone(load_prev_state_or_recover(fetch_comments=lambda *_a: []))

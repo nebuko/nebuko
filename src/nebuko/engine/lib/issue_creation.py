@@ -21,10 +21,8 @@ import os
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
 
-from github_client import ensure_bot_marker
+from github_client import GitHubTransport, ensure_bot_marker
 
 # Injected REST seam for issue creation (issue #590, Stage A): local mode passes
 # a filesystem-writing callable instead of the GitHub REST path. The default
@@ -63,48 +61,63 @@ class GithubAPIError(Exception):
 
 class GitHubClient:
     """Thin adapter for GitHub REST API operations related to issues.
-    
-    Uses urllib to avoid external dependencies. Relies on GH_TOKEN env var.
+
+    Every request rides :class:`~github_client.GitHubTransport`, the single
+    choke point that paces mutative calls, classifies rate-limit failures and
+    retries with bounded backoff, so issue creation cannot silently drop a
+    write under a content-creation secondary limit (issue #805). Relies on the
+    ``GH_TOKEN``/``GITHUB_TOKEN`` env vars.
     """
 
-    BASE_URL = "https://api.github.com"
-
-    def __init__(self, repo: str, token: Optional[str] = None):
+    def __init__(
+        self,
+        repo: str,
+        token: Optional[str] = None,
+        transport: Optional[GitHubTransport] = None,
+    ):
         self.repo = repo
         self.token = token or os.environ.get("GH_TOKEN", "")
-        self.headers = {
-            "Authorization": f"token {self.token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
+        self._transport = transport or GitHubTransport(token or None)
 
     def _request(self, method: str, path: str, body: Optional[dict] = None) -> dict:
-        """Execute an HTTP request against the GitHub API.
-        
+        """Execute an HTTP request against the GitHub API via the transport.
+
         Args:
             method: HTTP method (GET, POST, etc.).
-            path: API path (e.g., /repos/owner/repo/issues).
+            path: Full API path (e.g., /repos/owner/repo/issues).
             body: Optional JSON body for POST/PUT requests.
-            
+
         Returns:
-            Parsed JSON response as dict.
-            
+            Parsed JSON response as dict (or list for collection endpoints).
+
         Raises:
             GithubAPIError: If the API returns an error status.
         """
-        url = f"{self.BASE_URL}{path}"
-        data = json.dumps(body).encode("utf-8") if body else None
-        
-        req = Request(url, data=data, headers=self.headers, method=method)
-        
+        payload = json.dumps(body) if body is not None else None
+        args = ["api", path, "--method", method.upper()]
+        if payload is not None:
+            args += ["--input", "-"]
+
+        result = self._transport.call(
+            args,
+            mutative=method.upper() != "GET",
+            input_data=payload,
+        )
+        if not result.ok:
+            raise GithubAPIError(
+                result.status or 0,
+                result.detail or f"HTTP {result.status or 0}",
+                result.payload,
+            )
+        text = result.payload.strip()
+        if not text:
+            return {}
         try:
-            with urlopen(req) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as e:
-            resp_body = e.read().decode("utf-8", errors="replace")
-            raise GithubAPIError(e.code, str(e), resp_body)
-        except Exception as e:
-            raise GithubAPIError(0, f"Request failed: {e}", "")
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            raise GithubAPIError(
+                result.status or 0, f"Invalid JSON response: {e}", result.payload
+            )
 
     def create_issue(self, title: str, body: str, labels: List[str]) -> Optional[dict]:
         """Create a new issue in the repository.
