@@ -280,7 +280,7 @@ def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
         return Dispatch(
             status=data.get("status", "advance"),
             task_hint=data.get("task"),
-            complexity=data.get("complexity", "medium"),
+            complexity=data.get("complexity") or "",
             reasoning=data.get("reasoning", "none"),
             model=data.get("model"),
             temperature=data.get("temperature"),
