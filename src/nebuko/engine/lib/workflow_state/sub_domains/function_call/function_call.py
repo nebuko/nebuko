@@ -22,7 +22,9 @@ class FunctionCall(BaseModel):
         agent_name: Target agent, validated by the resolver against the
             roster (kept free-form here so the state model stays decoupled
             from resolve_workflow's TASK_TO_PROMPT).
-        complexity: Complexity level for the called agent.
+        complexity: Complexity tier for the called agent. Empty means the
+            caller declared none, so the resolver falls back to the called
+            step's declared tier, then ``"medium"`` (issue #787).
         reason: Optional free-text explanation for the call.
         callback: Optional return address (issue #765). The agent to run when
             the callee finishes without an explicit decision of its own —
@@ -34,7 +36,9 @@ class FunctionCall(BaseModel):
 
     function: str = Field(default="call_agent")
     agent_name: str = ""
-    complexity: str = "medium"
+    # "" = the caller declared no tier; the resolver applies the called step's
+    # declared tier, else "medium" (issue #787).
+    complexity: str = ""
     reason: Optional[str] = None
     callback: Optional[str] = None
 

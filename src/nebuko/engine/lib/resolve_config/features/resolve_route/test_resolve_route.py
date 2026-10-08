@@ -51,12 +51,15 @@ class TestResolveFunctionCallPath:
         assert config["config_step"] == ""
         assert "SKIP_AGENT" not in config
 
-    def test_default_complexity_medium(self):
+    def test_unset_complexity_defers_to_step_tier(self):
         from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
         from workflow_state import FunctionCall
 
+        # An unset caller tier stays "" here so build_result can apply the
+        # callee step's declared tier before defaulting to "medium" (#787).
+        # Defaulting to "medium" at this layer would mask the step tier.
         config = _resolve_function_call_path(FunctionCall(agent_name="dev"), "/tmp")
-        assert config["config_complexity"] == "medium"
+        assert config["config_complexity"] == ""
 
     def test_missing_agent_name_rejected_by_model(self):
         from workflow_state import FunctionCall

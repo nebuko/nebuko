@@ -768,7 +768,13 @@ def _resolve_dispatch(
                 agent_to_function_call,
             )
 
-            function_call = FunctionCall(**agent_to_function_call(dispatch.task_hint))
+            # Carry the explicit dispatch tier (issue #787) so a hand-off
+            # without one inherits the callee step's declared tier instead of
+            # masking it with a hardcoded default.
+            function_call = FunctionCall(
+                **agent_to_function_call(dispatch.task_hint),
+                complexity=dispatch.complexity,
+            )
         logger.info(
             f"Dispatch resolved via dispatch_next tool: status={dispatch.status}, "
             f"agent={dispatch.task_hint or '-'}"
