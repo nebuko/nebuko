@@ -1028,11 +1028,10 @@ def _resolve_machine_trigger_path(
 ) -> dict:
     """Resolve config for a CI-posted machine trigger token (issue #478).
 
-    Machine tokens (``bot-subtask-complete``, ``bot-summarizer-trigger``,
-    generic ``bot-trigger: <agent>``) replace the legacy machine-posted
-    ``@@genius`` / ``@@summarize`` comments now that @@mentions are blocked
-    for bot-triggered runs. The target agent is pinned from the token;
-    unknown agents skip with a reason.
+    Machine tokens (``bot-subtask-complete`` or the generic
+    ``bot-trigger: <agent>``) replace the legacy machine-posted ``@@genius``
+    comments now that @@mentions are blocked for bot-triggered runs. The
+    target agent is pinned from the token; unknown agents skip with a reason.
     """
     machine = extract_machine_trigger(trigger_body)
     if not machine:

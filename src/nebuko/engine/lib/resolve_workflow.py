@@ -58,7 +58,6 @@ TASK_TO_PROMPT = {
     "review": "review.md",
     "issue": "issue.md",
     "issue-reviewer": "issue-reviewer.md",
-    "summarize": "summarize.md",
     "debug": "debug.md",
     "po": "po.md",
 }

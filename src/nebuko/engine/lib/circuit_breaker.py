@@ -30,27 +30,20 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
     from nebuko.engine.models import CommentEntry
 
 
-def count_bot_markers(comments):
-    """Count bot-agent markers in comment list (excluding summary markers).
+def count_bot_markers(comments) -> int:
+    """Count ``<!-- bot-agent- -->`` markers across the comment list.
 
     Args:
         comments: List of comment dicts from GitHub API, or normalized
             ``CommentEntry``-shaped objects (engine seam, issue #590).
 
     Returns:
-        Tuple of (bot_marker_count, summary_marker_count).
+        Total number of bot-agent markers found.
     """
     bot_count = 0
-    summary_count = 0
     for comment in comments:
-        body = _comment_body(comment)
-        # Count all bot-agent markers
-        bot_matches = re.findall(r"<!-- bot-agent-", body)
-        # Count summary markers specifically
-        summary_matches = re.findall(r"<!-- bot-agent-summary -->", body)
-        bot_count += len(bot_matches)
-        summary_count += len(summary_matches)
-    return bot_count, summary_count
+        bot_count += len(re.findall(r"<!-- bot-agent-", _comment_body(comment)))
+    return bot_count
 
 
 def _comment_body(comment) -> str:
@@ -102,17 +95,16 @@ def check_circuit_breaker(
         comments = list(history)
     else:
         comments = get_issue_comments(repo, issue_number, gh_token, dry_run=dry_run)
-    bot_count, summary_count = count_bot_markers(comments)
+    bot_count = count_bot_markers(comments)
 
-    # Agent calls = (total bot markers - summary markers) / 2
-    # Each agent invocation produces 2 markers: one in the trigger, one in the response
-    agent_calls = max(0, (bot_count - summary_count) // 2)
+    # Each agent invocation produces 2 markers: one in the trigger, one in the
+    # response.
+    agent_calls = max(0, bot_count // 2)
 
     result = {
         "CIRCUIT_BREAKER_TRIPPED": "true" if agent_calls >= threshold else "false",
         "AGENT_CALLS": str(agent_calls),
         "BOT_MARKER_COUNT": str(bot_count),
-        "SUMMARY_MARKER_COUNT": str(summary_count),
         "CIRCUIT_BREAKER_THRESHOLD": str(threshold),
     }
 

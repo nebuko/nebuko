@@ -249,12 +249,12 @@ class CommentIntent:
 #: ``features/parse_trigger``; kept local so this domain module has no
 #: dependency on the application layer (issue #679).
 _MENTION_RE = re.compile(
-    r"@@(?:issue-reviewer|genius|ctx|dev|review|issue|summarize)"
+    r"@@(?:issue-reviewer|genius|ctx|dev|review|issue)"
 )
 
 #: CI machine-trigger tokens (mirrors ``features/parse_trigger``).
 _MACHINE_TRIGGER_RE = re.compile(
-    r"<!--\s*bot-(?:subtask-complete|summarizer-trigger|trigger)\b"
+    r"<!--\s*bot-(?:subtask-complete|trigger)\b"
 )
 
 

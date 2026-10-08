@@ -13,11 +13,6 @@ on:
         required: false
         type: number
         default: 15
-      summarizer_threshold:
-        description: 'Summarizer threshold — number of comments before summarizer triggers'
-        required: false
-        type: number
-        default: 100
       pin_comment:
         description: 'When true, pin every agent step output comment for verbatim context injection (issue #617)'
         required: false
@@ -100,7 +95,6 @@ jobs:
               contains(github.event.issue.body, '@@issue-reviewer') ||
               contains(github.event.issue.body, '@@debug') ||
               contains(github.event.issue.body, '@@po') ||
-              contains(github.event.issue.body, '@@summarize') ||
               contains(github.event.issue.body, '/nebuko'))) ||
             (github.event_name == 'issue_comment' &&
              (inputs.CALLER_AUTH == 'off' ||
@@ -116,11 +110,9 @@ jobs:
                 contains(github.event.comment.body, '@@issue-reviewer') ||
                 contains(github.event.comment.body, '@@debug') ||
                 contains(github.event.comment.body, '@@po') ||
-                contains(github.event.comment.body, '@@summarize') ||
                 contains(github.event.comment.body, '/nebuko'))) ||
               contains(github.event.comment.body, '"function_call"') ||
               contains(github.event.comment.body, '<!-- workflow-continue -->') ||
-              contains(github.event.comment.body, '<!-- bot-summarizer-trigger -->') ||
               contains(github.event.comment.body, '<!-- bot-subtask-complete') ||
               contains(github.event.comment.body, '<!-- bot-trigger:')))
           )
@@ -218,7 +210,7 @@ jobs:
                 if-no-files-found: ignore
                 retention-days: 7
 
-    summarize-metrics:
+    agent-metrics:
         runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
         if: |
           github.event_name == 'issues' &&
@@ -257,16 +249,16 @@ jobs:
               with:
                   python-version: '3.13'
 
-            - name: Summarize agent metrics
+            - name: Aggregate agent metrics
               env:
                   GITHUB_TOKEN: ${{ secrets.GH_PAT }}
                   GITHUB_REPOSITORY: ${{ github.repository }}
                   ISSUE_NUMBER: ${{ github.event.issue.number }}
               run: |
-                if [ -f ".nebuko-cache/src/nebuko/engine/lib/summarize_metrics.py" ]; then
-                  SCRIPT_PATH=".nebuko-cache/src/nebuko/engine/lib/summarize_metrics.py"
+                if [ -f ".nebuko-cache/src/nebuko/engine/lib/agent_metrics.py" ]; then
+                  SCRIPT_PATH=".nebuko-cache/src/nebuko/engine/lib/agent_metrics.py"
                 else
-                  SCRIPT_PATH="src/nebuko/engine/lib/summarize_metrics.py"
+                  SCRIPT_PATH="src/nebuko/engine/lib/agent_metrics.py"
                 fi
                 python "$SCRIPT_PATH"
 

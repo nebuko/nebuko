@@ -80,12 +80,6 @@ agents:
     skills: ["posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
 
-  summarize:
-    model: "${llms.deepseek-v4_1-flash}"
-    prompt_file: ".agents/prompts/summarize.md"
-    skills: ["posting-contract"]
-    tools: ["think", "finish", "dispatch_next"]
-
   debug:
     model: "${llms.deepseek-v4_1-flash}"
     prompt_file: ".agents/prompts/debug.md"

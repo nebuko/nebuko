@@ -1,6 +1,6 @@
 # Agents & Skills
 
-The system ships with 9 agents and 5 reusable skills. Each agent is declared
+The system ships with 8 agents and 5 reusable skills. Each agent is declared
 in [`agent-config.yaml`](../agent-config.yaml) (model, prompt file, tool
 whitelist) and defined by a system prompt in `.agents/prompts/{agent}.md`.
 Skills are standalone prompt files in `skills/` that can be attached to a
@@ -19,7 +19,6 @@ workflow step via `skill: [...]` — see
 | `review` | Senior code reviewer — approves/rejects | think, finish | `review.md` | review, stub_review, final_review |
 | `issue` | Refines issue drafts with humans | think, finish | `issue.md` | invoked directly via `@@issue` |
 | `issue-reviewer` | Reviews completed issues for workflow optimizations | think, finish | `issue-reviewer.md` | ad-hoc |
-| `summarize` | Structured JSON summaries of issue history | think, finish | `summarize.md` | summarizer gate |
 | `debug` | Investigates past agent-run logs/artifacts | terminal, file_editor, think, finish | `debug.md` | debug workflow, recover path |
 | `po` | Product owner — WHEN/IF/THEN specs | think, finish | `po.md` | spec (spec-driven) |
 
@@ -80,12 +79,6 @@ Analyzes *completed* issues and their resolution trajectories — agent metrics,
 collaboration patterns, resolution quality — and produces recommendations for
 prompt and process improvements.
 
-### summarize
-Reads the full comment history and produces a structured JSON summary (key
-decisions, file modifications, workflow phase, pending actions). Triggered by
-the summarizer gate; its output is tagged with the `<!-- bot-agent-summary -->`
-marker.
-
 ### debug
 Investigates unusual agent behavior: extracts run IDs from comments, downloads
 GHA artifacts, analyzes `console.log` files, and posts structured checkpoint
@@ -122,18 +115,18 @@ step-level skills override/augment them.
 Tools form a hard security boundary — the OpenHands SDK only instantiates the
 tools whitelisted in the agent's config.
 
-| Tool | genius | ctx | dev | review | issue | issue-reviewer | summarize | debug | po |
-|------|:------:|:---:|:---:|:------:|:-----:|:--------------:|:---------:|:-----:|:--:|
-| `terminal` | | ✓ | ✓ | | | | | ✓ | |
-| `file_editor` | | ✓ | ✓ | | | | | ✓ | |
-| `task_tracker` | | ✓ | ✓ | | | | | | |
-| `think` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `finish` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Tool | genius | ctx | dev | review | issue | issue-reviewer | debug | po |
+|------|:------:|:---:|:---:|:------:|:-----:|:--------------:|:-----:|:--:|
+| `terminal` | | ✓ | ✓ | | | | ✓ | |
+| `file_editor` | | ✓ | ✓ | | | | ✓ | |
+| `task_tracker` | | ✓ | ✓ | | | | | |
+| `think` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `finish` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 (`think` and `finish` are built-in defaults present for every agent.)
 
 Rationale: planning and judgment roles (`genius`, `review`, `issue`,
-`issue-reviewer`, `summarize`, `po`) can *only reason and reply* — they cannot
+`issue-reviewer`, `po`) can *only reason and reply* — they cannot
 accidentally modify the repository. Context/execution roles (`ctx`, `dev`,
 `debug`) need full tool access. Note `ctx` has shell access but its prompt
 forbids modification — read-only-by-policy, unlike `genius`'s read-only-by-
