@@ -1322,6 +1322,53 @@ class TestIssueBodyContext:
         )
 
 
+class TestBuildPromptStepReplacement:
+    """A step's prompt can replace the role prompt (issue #784)."""
+
+    def _resolved(self, tmp_path, base_text: str, step_text: str, replace: str) -> dict:
+        base = tmp_path / "dev.md"
+        base.write_text(base_text, encoding="utf-8")
+        step = tmp_path / "step.md"
+        step.write_text(step_text, encoding="utf-8")
+        return {
+            "PROMPT_LOCATION": str(base),
+            "STEP_PROMPT_FILE": str(step),
+            "STEP_PROMPT_REPLACE": replace,
+        }
+
+    def test_prompt_replace_drops_the_role_prompt(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = self._resolved(tmp_path, "ROLE DEV FLOW", "SCAFFOLD ONLY", "true")
+
+        prompt = engine.build_prompt(resolved, [])
+
+        assert "ROLE DEV FLOW" not in prompt
+        assert "SCAFFOLD ONLY" in prompt
+
+    def test_default_keeps_the_role_prompt_additive(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = self._resolved(tmp_path, "ROLE DEV FLOW", "EXTRA STEP", "")
+
+        prompt = engine.build_prompt(resolved, [])
+
+        assert "ROLE DEV FLOW" in prompt
+        assert "EXTRA STEP" in prompt
+
+    def test_replace_without_a_step_prompt_keeps_the_role_prompt(self, tmp_path):
+        engine = _engine(tmp_path)
+        base = tmp_path / "dev.md"
+        base.write_text("ROLE DEV FLOW", encoding="utf-8")
+        resolved = {
+            "PROMPT_LOCATION": str(base),
+            "STEP_PROMPT_FILE": "",
+            "STEP_PROMPT_REPLACE": "true",
+        }
+
+        prompt = engine.build_prompt(resolved, [])
+
+        assert "ROLE DEV FLOW" in prompt
+
+
 class TestEntryPoints:
     def test_main_takes_an_argv_sequence(self):
         assert list(inspect.signature(main).parameters) == ["argv"]

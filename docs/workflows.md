@@ -42,6 +42,9 @@ steps:
   (see [Step Instructions](#step-instructions-prompt)).
 - `complexity: low|medium|high` declares the complexity tier for that step's
   agent invocation (see [Per-step Complexity](#per-step-complexity)).
+- `prompt_replace: true` makes the step `prompt:` *replace* the role prompt
+  entirely, so the role's generic flow cannot redefine the step's scope
+  (see [Step Instructions](#step-instructions-prompt)).
 - `human_gate: true` marks a step as a **security boundary**: the workflow is
   held after that step until a human releases it (see [Human Gates](#human-gates)).
 - Workflows can be started by an `@@mention` (matching `trigger.agents`), a
@@ -82,6 +85,16 @@ stays the base identity. Injection order in the agent context:
 contain newlines). When the step has no `prompt`, the variable is empty and any
 stale file is removed, so existing workflows are unaffected. Multi-line YAML
 block scalars (`|` / `>`) are supported.
+
+**Replacement mode (`prompt_replace: true`).** By default the step prompt is
+*additive*: the role prompt stays the base identity. Setting
+`prompt_replace: true` alongside `prompt:` makes the step prompt the **entire**
+agent context — the role prompt (e.g. `dev.md`) and its generic
+Understand / Plan / Implement / Verify flow are suppressed. Use it to
+structurally scope a step to a single job that the role's default flow would
+otherwise broaden (e.g. a scaffold step that must materialize a plan and not
+implement it). It is ignored when `prompt:` is unset, so existing workflows are
+unaffected.
 
 **`prompt:` vs `skill:`.** Use `prompt:` for short, self-contained,
 per-step directives that should live inline in the workflow. Use
@@ -276,7 +289,7 @@ started directly — it is referenced per-step from a dynamically generated
 ### plan-orchestration
 
 ```
-architect (genius) → context (ctx) → plan (genius) ──approved──► scaffold (dev, skill: scaffold-plan)
+architect (genius) → context (ctx) → plan (genius) ──approved──► scaffold (dev, prompt_replace)
                                                    │rejected                │
                                                    └────► plan (loop)       ▼
                                                             sub_impl (workflow: tmp_impl/workflow.yaml)
@@ -297,13 +310,20 @@ single PR** (issue #462):
 1. `architect` / `context` / `plan` — genius produces a structured plan; a
    human approves it (reject → re-plan loop).
 2. `scaffold` — dev converts the approved `<planWorkflow>` JSON into
-   `tmp_impl/workflow.yaml`, a per-step sub-workflow (skill: `scaffold-plan`).
-3. `sub_impl` — **mounts** the generated sub-workflow as one step. Each plan
+   `tmp_impl/workflow.yaml`, a per-step sub-workflow.
+   The step sets `prompt_replace: true`, so the `dev.md` role prompt and its
+   generic Implement flow are suppressed and the step scope is exactly the
+   scaffold instruction.
+3. `scaffold_review` (review) verifies `tmp_impl/workflow.yaml`
+   faithfully materializes the approved `<planWorkflow>` block (same steps,
+   same order; nothing implemented outside `tmp_impl/`); a mismatch loops back
+   to `scaffold`.
+4. `sub_impl` — **mounts** the generated sub-workflow as one step. Each plan
    step runs through `dev-review-loop` (implement → review, loop on
    rejection).
-4. `sub_clean` — dev removes the `tmp_impl/` scaffolding (skill:
+5. `sub_clean` — dev removes the `tmp_impl/` scaffolding (skill:
    `plan-cleanup`).
-5. `final_review` ↔ `final_fix` — one whole-PR review; rejections are
+6. `final_review` ↔ `final_fix` — one whole-PR review; rejections are
    addressed across all plan steps (skill: `final-fix`) and re-reviewed.
 
 This is the main demonstration of **sub-workflow composition** — a step

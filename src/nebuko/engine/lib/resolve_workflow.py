@@ -137,6 +137,7 @@ def resolve_workflow_routing(
         "STEP_SKILLS": "",
         "STEP_PROMPT_FILE": "",
         "STEP_COMPLEXITY": "",
+        "STEP_PROMPT_REPLACE": "",
         "SKIP_AGENT": "false",
     }
 
@@ -146,6 +147,16 @@ def _skills_to_string(skill_list: list[str] | None) -> str:
     if not skill_list:
         return ""
     return ",".join(skill_list)
+
+
+def _prompt_replace_flag(enabled: bool | None) -> str:
+    """Serialise a step's prompt-replacement mode for the KEY=value result.
+
+    Emits ``"true"`` only when the step declares ``prompt_replace: true``; the
+    consumer treats every other value as the additive (default) behaviour
+    (issue #784).
+    """
+    return "true" if enabled else ""
 
 
 def _write_step_prompt_file(prompt: str | None) -> str:
@@ -847,6 +858,8 @@ class SubWorkflowLeaf:
         workflow_next: The leaf workflow's next step after ``step``.
         skill: Merged skills string for the leaf step.
         prompt: Inline prompt for the leaf step ("" when none).
+        prompt_replace: True when the leaf step's inline prompt replaces the
+            role prompt (issue #784).
         refs: Descent chain, outermost-first; invariant:
             ``refs[-1] == {"workflow": workflow, "step": step}``.
         kind: Leaf kind, ``"agent"`` or ``"script"`` — a sub-workflow may
@@ -865,6 +878,7 @@ class SubWorkflowLeaf:
     skill: str  # @stub-protected
     prompt: str  # @stub-protected
     refs: tuple[dict[str, str], ...]
+    prompt_replace: bool = False  # @stub-protected
     kind: str = "agent"  # @stub-protected
     script_path: str = ""  # @stub-protected
     script_args: str = ""  # @stub-protected
@@ -1032,6 +1046,7 @@ def _resolve_sub_workflow_leaf(
             workflow_next=workflow_next,
             skill=merged_skill,
             prompt=leaf.prompt or "",
+            prompt_replace=bool(leaf.prompt_replace),
             refs=tuple(refs),
             complexity=leaf.complexity or "",
         )
@@ -1044,6 +1059,7 @@ def _resolve_sub_workflow_leaf(
             workflow_next=workflow_next,
             skill=merged_skill,
             prompt=leaf.prompt or "",
+            prompt_replace=bool(leaf.prompt_replace),
             refs=tuple(refs),
             kind="script",
             script_path=leaf.script.path or "",
@@ -1191,6 +1207,7 @@ def _resolve_sub_workflow_entry(
             "STEP_SKILLS": leaf.skill,
             "STEP_PROMPT_FILE": _write_step_prompt_file(leaf.prompt),
             "STEP_COMPLEXITY": leaf.complexity,
+            "STEP_PROMPT_REPLACE": "",
             "SKIP_AGENT": "true",
             "REASON": f"step '{leaf.step}' in sub-workflow '{leaf.workflow}' is a script step",
         } | position
@@ -1216,6 +1233,7 @@ def _resolve_sub_workflow_entry(
         "STEP_SKILLS": leaf.skill,
         "STEP_PROMPT_FILE": _write_step_prompt_file(leaf.prompt),
         "STEP_COMPLEXITY": leaf.complexity,
+        "STEP_PROMPT_REPLACE": _prompt_replace_flag(leaf.prompt_replace),
         "SKIP_AGENT": "false",
     } | position
 
@@ -1451,6 +1469,7 @@ def _next_step_resolution(
             "STEP_SKILLS": _skills_to_string(next_step.skill),
             "STEP_PROMPT_FILE": "",
             "STEP_COMPLEXITY": next_step.complexity or "",
+            "STEP_PROMPT_REPLACE": "",
             "SKIP_AGENT": "true",
         }
 
@@ -1471,6 +1490,7 @@ def _next_step_resolution(
         "STEP_SKILLS": _skills_to_string(next_step.skill),
         "STEP_PROMPT_FILE": _write_step_prompt_file(next_step.prompt),
         "STEP_COMPLEXITY": next_step.complexity or "",
+        "STEP_PROMPT_REPLACE": _prompt_replace_flag(next_step.prompt_replace),
         "SKIP_AGENT": "false",
     }
 
@@ -1725,6 +1745,7 @@ def resolve_workflow_step(
             "STEP_SKILLS": "",
             "STEP_PROMPT_FILE": "",
             "STEP_COMPLEXITY": "",
+            "STEP_PROMPT_REPLACE": "",
             "SKIP_AGENT": "false",
         }
 
@@ -1746,6 +1767,7 @@ def resolve_workflow_step(
             "STEP_SKILLS": "",
             "STEP_PROMPT_FILE": "",
             "STEP_COMPLEXITY": "",
+            "STEP_PROMPT_REPLACE": "",
             "SKIP_AGENT": "false",
         }
 
@@ -1817,6 +1839,7 @@ def resolve_workflow_step(
         "STEP_SKILLS": _skills_to_string(current_step.skill),
         "STEP_PROMPT_FILE": _write_step_prompt_file(current_step.prompt),
         "STEP_COMPLEXITY": current_step.complexity or "",
+        "STEP_PROMPT_REPLACE": _prompt_replace_flag(current_step.prompt_replace),
         "SKIP_AGENT": "false",
     }
 
