@@ -1,4 +1,4 @@
-# ADR-0004: Per-Step Complexity Selector (Not a Generic Agent-Config Override)
+# ADR-0005: Per-Step Complexity Selector (Not a Generic Agent-Config Override)
 
 **Status:** Accepted — 2026-10-08
 **Decider:** olivier-norture
