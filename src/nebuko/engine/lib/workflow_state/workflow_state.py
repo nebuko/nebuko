@@ -151,6 +151,10 @@ class WorkflowState(BaseModel):
     # Per-step soft-kill retry accounting (issue #704). default_factory keeps
     # legacy blobs without this key loadable and byte-identical on read.
     soft_retry: SoftRetryState = Field(default_factory=SoftRetryState)  # @stub-protected
+    # Set by the engine when the run's answer comment could not be delivered
+    # (issue #805). Defaults to False so legacy blobs without this key load
+    # unchanged; serialized only when True (``exclude_defaults``).
+    publish_failed: bool = False  # @stub-protected
 
     @model_validator(mode="before")
     @classmethod
