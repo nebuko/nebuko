@@ -9,6 +9,7 @@ from thread_snapshot import (
     ThreadSnapshot,
     build_snapshot,
     load_thread_snapshot,
+    state_tail_limit,
 )
 
 
@@ -140,3 +141,22 @@ class TestLoadThreadSnapshot:
 
         assert snapshot.state is not None
         assert snapshot.state.step == state.step
+
+
+class TestStateTailLimit:
+    """``state_tail_limit`` keeps a state-only read to a single page."""
+
+    def test_defaults_to_the_floor_when_unset(self):
+        assert state_tail_limit({}) == STATE_TAIL_FLOOR
+
+    def test_floors_a_small_history_bound(self):
+        assert state_tail_limit({"HISTORY_COMMENT_COUNT": "5"}) == STATE_TAIL_FLOOR
+
+    def test_honours_a_larger_history_bound(self):
+        assert state_tail_limit({"HISTORY_COMMENT_COUNT": "250"}) == 250
+
+    def test_ignores_a_non_numeric_bound(self):
+        assert state_tail_limit({"HISTORY_COMMENT_COUNT": "many"}) == STATE_TAIL_FLOOR
+
+    def test_floors_a_non_positive_bound(self):
+        assert state_tail_limit({"HISTORY_COMMENT_COUNT": "0"}) == STATE_TAIL_FLOOR

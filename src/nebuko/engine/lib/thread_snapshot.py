@@ -13,6 +13,7 @@ its cost is a constant number of REST requests regardless of thread length.
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Tuple
@@ -24,7 +25,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from github_client import GitHubTransport
     from workflow_state.workflow_state import WorkflowState
 
-__all__ = ["ThreadSnapshot", "build_snapshot", "load_thread_snapshot"]
+__all__ = [
+    "ThreadSnapshot",
+    "STATE_TAIL_FLOOR",
+    "build_snapshot",
+    "load_thread_snapshot",
+    "state_tail_limit",
+]
+
+HISTORY_COMMENT_COUNT_ENV = "HISTORY_COMMENT_COUNT"
 
 # A state lookup must never miss the newest state comment, which is posted at
 # the end of the previous run. Reserving a fixed tail keeps that read to a
@@ -67,6 +76,27 @@ def build_snapshot(
         state=extract_latest_state_from_comments(_state_view(ordered)),
         fetched_at=fetched_at,
     )
+
+
+def state_tail_limit(env: Optional[Mapping[str, str]] = None) -> int:
+    """Bound a state-only thread read to the tail that can carry the state.
+
+    A resolver/recovery fallback only needs the latest state comment, which is
+    posted near the end of the thread. The ``HISTORY_COMMENT_COUNT`` bound is
+    honoured when it is larger than :data:`STATE_TAIL_FLOOR`, so every such read
+    stays a single request instead of re-paginating the whole thread (issue #805,
+    Pillar C).
+    """
+    raw = (env if env is not None else os.environ).get(HISTORY_COMMENT_COUNT_ENV)
+    limit: Optional[int] = None
+    if raw is not None and str(raw).strip():
+        try:
+            limit = int(str(raw).strip())
+        except ValueError:
+            limit = None
+    if limit is None or limit <= 0:
+        return STATE_TAIL_FLOOR
+    return max(limit, STATE_TAIL_FLOOR)
 
 
 def load_thread_snapshot(

@@ -276,6 +276,7 @@ class GitHubTransport:
         *,
         mutative: bool,
         env: Optional[Mapping[str, str]] = None,
+        input_data: Optional[str] = None,
     ) -> ApiCallResult:
         """Run one ``gh`` invocation with pacing and bounded retries."""
         last = ApiCallResult(
@@ -290,7 +291,7 @@ class GitHubTransport:
             if mutative:
                 self._last_write_at = self._monotonic()
             self.calls += 1
-            completed = self._exec(args, env=env)
+            completed = self._exec(args, env=env, input_data=input_data)
             result, headers = self._interpret(completed)
             self._observe(headers)
             kind = self._classify(result, headers)
@@ -410,14 +411,17 @@ class GitHubTransport:
         return merged
 
     def _exec(
-        self, args: Sequence[str], env: Optional[Mapping[str, str]] = None
+        self,
+        args: Sequence[str],
+        env: Optional[Mapping[str, str]] = None,
+        input_data: Optional[str] = None,
     ) -> subprocess.CompletedProcess:
         argv = list(args)
         if argv and argv[0] == "api" and "--paginate" not in argv and "--jq" not in argv:
             # Capture response headers for budget observation. Skipped for
             # paginated (headers repeat per page) and ``--jq`` (raw) output.
             argv = ["api", "--include", *argv[1:]]
-        return _run(argv, env=self._env(env))
+        return _run(argv, env=self._env(env), input_data=input_data)
 
     @staticmethod
     def _interpret(completed: subprocess.CompletedProcess) -> Tuple[ApiCallResult, Dict[str, str]]:
