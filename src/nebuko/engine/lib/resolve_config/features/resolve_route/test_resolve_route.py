@@ -281,6 +281,79 @@ class TestWorkflowCommandPrecedence:
         assert config["task"] == "dev"
         assert "config_skip_reason" not in config
 
+    # --- issue #789: /nebuko run workflow --step <step> ---
+
+    _MULTI_STEP_YAML = (
+        "name: foo\n"
+        'description: "test"\n'
+        "trigger:\n"
+        "  agents: [genius]\n"
+        "steps:\n"
+        "  - name: one\n    agent: genius\n    next: two\n"
+        "  - name: two\n    agent: dev\n    next: null\n"
+    )
+
+    def _step_cmd(self, step):
+        from resolve_config.sub_domains.workflow_command.workflow_command import (
+            parse_workflow_command,
+        )
+        return parse_workflow_command(
+            "/nebuko run workflow --name foo --step " + step
+        )
+
+    def test_run_step_enters_at_named_step(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+
+        base = self._dir(tmp_path, "base", {"foo.yaml": self._MULTI_STEP_YAML})
+        local = self._dir(tmp_path, "local", {})
+        config = _resolve_human_path(
+            "/nebuko run workflow --name foo --step two", None, None, str(base),
+            local_workflows_dir=str(local), workflow_command=self._step_cmd("two"),
+        )
+        assert config["task"] == "dev"
+        assert config["config_workflow"] == "foo"
+        assert config["config_step"] == "two"
+        assert "SKIP_AGENT" not in config
+
+    def test_run_without_step_keeps_first_step(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+
+        base = self._dir(tmp_path, "base", {"foo.yaml": self._MULTI_STEP_YAML})
+        local = self._dir(tmp_path, "local", {})
+        config = _resolve_human_path(
+            "/nebuko run workflow --name foo", None, None, str(base),
+            local_workflows_dir=str(local), workflow_command=self._run_cmd("foo"),
+        )
+        assert config["task"] == "genius"
+        assert config["config_workflow"] == "foo"
+        assert config["config_step"] == ""
+
+    def test_run_step_unknown_step_fails_loudly(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+
+        base = self._dir(tmp_path, "base", {"foo.yaml": self._MULTI_STEP_YAML})
+        local = self._dir(tmp_path, "local", {})
+        config = _resolve_human_path(
+            "/nebuko run workflow --name foo --step nope", None, None, str(base),
+            local_workflows_dir=str(local), workflow_command=self._step_cmd("nope"),
+        )
+        assert config["task"] == ""
+        assert config["config_workflow"] == ""
+        assert "not found in workflow 'foo'" in config["config_skip_reason"]
+
+    def test_run_step_path_traversal_rejected(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+
+        base = self._dir(tmp_path, "base", {"foo.yaml": self._MULTI_STEP_YAML})
+        local = self._dir(tmp_path, "local", {})
+        config = _resolve_human_path(
+            "/nebuko run workflow --name foo --step ../etc/passwd", None, None,
+            str(base), local_workflows_dir=str(local),
+            workflow_command=self._step_cmd("../etc/passwd"),
+        )
+        assert config["task"] == ""
+        assert "invalid step name" in config["config_skip_reason"]
+
 
 # ---------------------------------------------------------------------------
 # Object Design Contract for issue #733: explicit routing precedence

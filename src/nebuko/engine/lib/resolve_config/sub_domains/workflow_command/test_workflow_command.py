@@ -35,7 +35,7 @@ class TestTables:
 
     def test_flags_by_action(self):
         assert FLAGS_BY_ACTION == {
-            "run": {"name"},
+            "run": {"name", "step"},
             "force-step": {"name"},
             "resume": {"feedback"},
             "delete": {"issue"},
@@ -64,6 +64,19 @@ class TestParseValid:
         assert cmd == WorkflowCommand(
             action="run", resource="workflow", params={"name": "spec-driven-impl"}
         )
+
+    def test_run_with_step(self):
+        cmd = parse_workflow_command(
+            "/nebuko run workflow --name plan-orchestration --step scaffold"
+        )
+        assert cmd == WorkflowCommand(
+            action="run",
+            resource="workflow",
+            params={"name": "plan-orchestration", "step": "scaffold"},
+        )
+
+    def test_run_step_still_requires_name(self):
+        assert parse_workflow_command("/nebuko run workflow --step scaffold") is None
 
     def test_force_step(self):
         cmd = parse_workflow_command("/nebuko force-step step --name implement")

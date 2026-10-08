@@ -309,6 +309,20 @@ class TestResolveConfigWithWorkflowCommand:
                 "    agent: review\n"
                 "    next: null\n"
             )
+        with open(os.path.join(workflows_dir, "multi.yaml"), "w") as f:
+            f.write(
+                "name: multi\n"
+                "description: Multi-step\n"
+                "trigger:\n"
+                "  agents: [genius]\n"
+                "steps:\n"
+                "  - name: analyze\n"
+                "    agent: genius\n"
+                "    next: implement\n"
+                "  - name: implement\n"
+                "    agent: dev\n"
+                "    next: null\n"
+            )
         return prompt_base, workflows_dir
 
     def test_workflow_default_resolves_genius(self):
@@ -331,6 +345,51 @@ class TestResolveConfigWithWorkflowCommand:
         assert result["TASK"] == "review"
         assert result["ROLE_NAME"] == "review"
         assert result["WORKFLOW_NAME"] == "review-only"
+
+    def test_run_workflow_step_enters_at_named_step(self):
+        """Issue #789: --step seeds the run at the requested step."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        body = "/nebuko run workflow --name multi --step implement\nGo."
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["TASK"] == "dev"
+        assert result["ROLE_NAME"] == "dev"
+        assert result["WORKFLOW_NAME"] == "multi"
+        assert result["WORKFLOW_STEP"] == "implement"
+        assert result["SKIP_AGENT"] == "false"
+
+    def test_run_workflow_without_step_is_backward_compatible(self):
+        """Omitting --step still enters at the first step (issue #789)."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        body = "/nebuko run workflow --name multi\nGo."
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["TASK"] == "genius"
+        assert result["WORKFLOW_NAME"] == "multi"
+        assert result["WORKFLOW_STEP"] == "analyze"
+
+    def test_run_workflow_unknown_step_fails_loudly(self):
+        """An unknown --step target skips with a diagnostic (issue #789)."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        body = "/nebuko run workflow --name multi --step nope\nGo."
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("TASK", "") == ""
+        assert "not found in workflow 'multi'" in result["REASON"]
+
+    def test_run_workflow_invalid_step_name_fails_loudly(self):
+        """Path-traversal in --step is rejected like workflow names (issue #789)."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        body = "/nebuko run workflow --name multi --step ../etc/passwd\nGo."
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["SKIP_AGENT"] == "true"
+        assert "invalid step name" in result["REASON"]
 
     def test_workflow_nonexistent_falls_through_mentions(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
