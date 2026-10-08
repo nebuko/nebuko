@@ -18,6 +18,7 @@ from prepare_comment import (
     clean_message,
     escape_agent_triggers,
     merge_handoff_sentinels,
+    neutralize_human_pings,
     prepare_comment,
     select_posted_body,
 )
@@ -165,6 +166,43 @@ class TestEscapeAgentTriggers(unittest.TestCase):
 
     def test_empty_input(self):
         self.assertEqual(escape_agent_triggers(""), "")
+
+
+class TestNeutralizeHumanPings(unittest.TestCase):
+    """Agent-authored bodies never carry a live human ping (issue #795)."""
+
+    def test_neutralizes_a_single_mention(self):
+        result = neutralize_human_pings("@olivier-norture ready for review")
+        self.assertIn("@\u200bolivier-norture", result)
+        self.assertNotIn("@olivier-norture", result)
+
+    def test_neutralizes_multiple_mentions(self):
+        result = neutralize_human_pings("cc @alice and @bob-c please")
+        self.assertIn("@\u200balice", result)
+        self.assertIn("@\u200bbob-c", result)
+        self.assertNotIn("@alice", result)
+        self.assertNotIn("@bob-c", result)
+
+    def test_keeps_the_login_readable(self):
+        self.assertIn("olivier-norture", neutralize_human_pings("@olivier-norture"))
+
+    def test_defuses_with_a_zero_width_space(self):
+        result = neutralize_human_pings("@olivier-norture")
+        self.assertIn("\u200b", result)
+        self.assertEqual(result, "@\u200bolivier-norture")
+
+    def test_leaves_agent_triggers_to_escape_agent_triggers(self):
+        # ``@@`` tokens are owned by ``escape_agent_triggers``; this helper must
+        # not touch them so the two transformations stay independently testable.
+        text = "ping @@genius and @@dev now"
+        self.assertEqual(neutralize_human_pings(text), text)
+
+    def test_no_mentions_unchanged(self):
+        text = "plain text without any mentions"
+        self.assertEqual(neutralize_human_pings(text), text)
+
+    def test_empty_input(self):
+        self.assertEqual(neutralize_human_pings(""), "")
 
 
 class TestTruncateAtBoundary(unittest.TestCase):
@@ -333,6 +371,14 @@ class TestPrepareCommentIntegration(unittest.TestCase):
         self.assertIn("@@\u200bdev", result)
         self.assertNotIn("handing off to @@dev", result)
         self.assertNotIn("to @@dev", result)
+
+    def test_path_a_neutralizes_human_pings(self):
+        """An agent-authored body never carries a live human ping (issue #795)."""
+        self._write("final_message.txt", "@olivier-norture the PR is ready for review.")
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn("@\u200bolivier-norture", result)
+        self.assertNotIn("@olivier-norture", result)
 
     def test_path_d_crash_fallback_sets_has_comment(self):
         """Empty/no final message + empty console.log still sets HAS_COMMENT=true."""

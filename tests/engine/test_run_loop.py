@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from nebuko.adapters.local import LocalAdapter
-from config import AgentStartNotice, brand
+from config import AgentStartNotice, HumanActionNotice, brand
 from nebuko.engine.models import ExitCode, RoutingDecision, RunOutcome, Trigger
 from nebuko.engine.paths import repo_root
 from nebuko.engine.run_loop import (
@@ -475,6 +475,143 @@ class TestRoutePhase:
 
         assert decision.status == "soft_kill"
         assert _exit_code_for(decision) == ExitCode.ADVANCE
+
+
+class TestHumanActionNotice:
+    """The engine owns the human ping (issue #795).
+
+    An agent reports its result and never mentions a human; the engine
+    classifies the finished run and posts the single canonical notice.
+    """
+
+    def test_advance_out_of_a_terminal_step_is_workflow_complete(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        notice = engine.human_action_notice(
+            routing=RoutingDecision(status="advance"),
+            agent_ran=True,
+            state=None,
+            resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
+        )
+
+        assert notice is not None
+        assert notice.kind == "workflow_complete"
+
+    def test_advance_out_of_a_mid_workflow_step_pings_nobody(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        notice = engine.human_action_notice(
+            routing=RoutingDecision(status="advance"),
+            agent_ran=True,
+            state=None,
+            resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "plan"},
+        )
+
+        assert notice is None
+
+    def test_a_hold_escalates_to_an_approval_or_input_notice(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = {"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "plan"}
+
+        gate = engine.human_action_notice(
+            routing=RoutingDecision(status="hold", reason="human_gate:plan"),
+            agent_ran=True,
+            state=None,
+            resolved=resolved,
+        )
+        plain = engine.human_action_notice(
+            routing=RoutingDecision(status="hold", reason="awaiting feedback"),
+            agent_ran=True,
+            state=None,
+            resolved=resolved,
+        )
+
+        assert gate is not None and gate.kind == "awaiting_approval"
+        assert plain is not None and plain.kind == "awaiting_input"
+
+    def test_a_run_that_skipped_the_agent_never_pings(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        notice = engine.human_action_notice(
+            routing=RoutingDecision(status="advance"),
+            agent_ran=False,
+            state=None,
+            resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
+        )
+
+        assert notice is None
+
+    def test_notify_human_action_posts_the_canonical_body(self, tmp_path):
+        engine = _engine(tmp_path)
+        notice = HumanActionNotice(
+            kind="awaiting_approval",
+            target="olivier-norture",
+            step="plan",
+            workflow="default",
+            reason="human_gate:plan",
+        )
+
+        engine.notify_human_action(notice)
+
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
+        assert "<!-- bot-human-action -->" in journal
+        assert "@olivier-norture" in journal
+
+    def test_notify_human_action_never_aborts_the_run(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        notice = HumanActionNotice(kind="awaiting_input", target="olivier-norture")
+
+        def boom(self, body):
+            raise RuntimeError("network down")
+
+        monkeypatch.setattr(LocalAdapter, "post", boom)
+
+        engine.notify_human_action(notice)  # must not raise
+
+    def test_a_human_gate_hold_posts_the_engine_owned_ping(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: _agent_result(
+                "proposal", {"status": "hold", "reason": "human_gate:plan"}
+            ),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.HOLD
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
+        assert "<!-- bot-human-action -->" in journal
+        assert "@olivier-norture" in journal
+        assert "waiting for your approval" in journal
+
+    def test_a_guard_skip_never_posts_a_human_notice(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "true", "REASON": "nothing to do"})
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        engine.run()
+
+        journal = tmp_path / "runs" / "run-1" / "journal.md"
+        assert not journal.exists() or "<!-- bot-human-action -->" not in journal.read_text(
+            encoding="utf-8"
+        )
+
+    def test_the_engine_publish_neutralizes_agent_human_pings(self, tmp_path, monkeypatch):
+        """An agent-composed human mention is inert by the time it is posted."""
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: _agent_result("@olivier-norture ready for review"),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.posted_body is not None
+        assert "@olivier-norture" not in outcome.posted_body
+        assert "@\u200bolivier-norture" in outcome.posted_body
 
 
 class TestRunLoop:
