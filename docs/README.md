@@ -15,6 +15,7 @@ For the high-level pitch and quick overview, see the root
 
 | Document | Audience | Description |
 |----------|----------|-------------|
+| [adoption.md](./adoption.md) | New users | Adopt Nebuko in your repo: intro, entrypoint contract, PAT mode, provider configs, runner choice. |
 | [getting-started.md](./getting-started.md) | New users | Prerequisites, setup, first workflow run, troubleshooting. |
 | [architecture.md](./architecture.md) | Everyone | System overview: agents, orchestration loop, state model, routing cascade. |
 | [workflows.md](./workflows.md) | Users & contributors | Declarative workflow engine + all built-in workflows with step graphs. |

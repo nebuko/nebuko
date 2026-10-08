@@ -14,64 +14,47 @@ read [architecture.md](./architecture.md) and
    To run on your own infrastructure instead, pass `runs_on: "self-hosted"`
    to the reusable workflow and [set up a self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners).
 2. **Python 3.13** and the **`uv`** package manager on the runner.
-3. **GitHub secrets** configured at repo or organization level:
+3. **GitHub secrets** configured at repo or organization level (at least one
+   provider key is required):
 
    | Secret | Required | Purpose |
    |--------|----------|---------|
-   | `OPENROUTER_API_KEY` | yes | LLM provider token (OpenRouter). |
-   | `GH_PAT` | yes | GitHub PAT with `repo` scope — used for git push, issue/PR API calls, and posting comments. |
-   | `LOCAL_VLLM_API_TOKEN` | optional | Only if you use a local vLLM provider. |
-   | `COMMANDCODE_API_KEY` | optional | Only if you point the agents at a CommandCode subscription ([subscription-plans.md](./subscription-plans.md)). |
+   | `GH_PAT` | yes | Fine-grained GitHub PAT (Contents, Pull requests, Issues: read and write) — used for git push, issue/PR API calls, and posting comments. |
+   | `OPENROUTER_API_KEY` | one of | LLM provider token (OpenRouter). |
+   | `LOCAL_VLLM_API_TOKEN` | one of | Local vLLM provider token. |
+   | `COMMANDCODE_API_KEY` | one of | CommandCode subscription ([subscription-plans.md](./subscription-plans.md)). |
 
-4. **A configuration file** — `agent-config.yaml` (see step 2 below) and agent
-   prompts (step 3), committed to your repository.
+4. **A configuration file** — `agent-config.yaml` (see step 2 below) and,
+   optionally, prompt overrides (step 3), committed to your repository.
 
 ---
 
 ## Step 1 — Add the Workflow
 
-Copy the consumer file into `.github/workflows/workflow.yaml`:
+Add the consumer entrypoint `.github/workflows/nebuko.yaml`. It is a thin wrapper
+that calls the reusable orchestrator from this repository:
 
 ```yaml
-name: AI Dev Workflow (nebuko)
-
-on:
-  issues:
-    types: [opened, edited, assigned, closed]
-  issue_comment:
-    types: [created]
-
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-
-jobs:
-  agent:
-    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
-    with:
-      agent_config_path: "agent-config.yaml"
-      circuit_breaker_threshold: 15
-    secrets:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      GH_PAT: ${{ secrets.GH_PAT }}
+uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
 ```
 
-This thin wrapper calls the reusable orchestrator from this repository — you
-never vendor the 900-line workflow file itself (zero-copy, see
+Copy the **complete** file — the `on:` triggers, `permissions:`, and the
+`with:`/`secrets:` blocks — from
+[adoption.md — The entrypoint (copy-paste)](./adoption.md#3-the-entrypoint-copy-paste).
+You never vendor the workflow file itself (zero-copy, see
 [features.md — Remote Workflows](./features.md#remote-workflows-zero-copy)).
-Optional inputs: `runs_on` (default `ubuntu-latest`; e.g. `self-hosted` to use
-your own runners), `pin_comment` (default
-`false`; pin every agent step output for verbatim context injection),
-`python_version` (default `3.13`), `enable_uv_cache` (default `true`),
-`prompt_body`.
+All inputs are optional and listed in
+[adoption.md — Inputs](./adoption.md#inputs).
 
 ---
 
 ## Step 2 — Create `agent-config.yaml`
 
-Commit a layered config (providers → llms → agents) at the repo root. Minimal
-working example with 3 agents:
+Commit a layered config (providers → llms → agents). Nebuko resolves it through
+its layered lookup — a repo override under `.nebuko/agents/` first, then the
+copy shipped in `defaults/agents/` — so add yours at
+`.nebuko/agents/agent-config.yaml` (or set `agent_config_path` to wherever you
+keep it). Minimal working example with 3 agents:
 
 ```yaml
 providers:
@@ -105,7 +88,8 @@ agents:
 
 For the full schema (all fields, `${ref}` rules, sampling parameters), see
 [configuration.md](./configuration.md). You can start from this repository's
-[`agent-config.yaml`](../agent-config.yaml) as a reference.
+[`defaults/agents/agent-config.yaml`](../defaults/agents/agent-config.yaml) as a
+reference.
 
 Using a subscription plan instead of a metered API key? See
 [subscription-plans.md](./subscription-plans.md) for the provider stanza, the
@@ -115,10 +99,14 @@ Using a subscription plan instead of a metered API key? See
 
 ## Step 3 — Create Agent Prompts
 
-Place one Markdown system prompt per agent under `.agents/prompts/`:
+Nebuko ships a system prompt per agent in `defaults/prompts/` and resolves each
+prompt by file name through the layered lookup (`.nebuko/prompts/` override →
+shipped `defaults/prompts/`), so the shipped prompts work with no local files at
+all. To customize one, add a file with the same agent name under
+`.nebuko/prompts/`:
 
 ```
-.agents/prompts/
+.nebuko/prompts/
 ├── genius.md
 ├── dev.md
 └── review.md
@@ -127,8 +115,8 @@ Place one Markdown system prompt per agent under `.agents/prompts/`:
 Each file describes the agent's role, responsibilities, output contract (how it
 must emit its `AGENT_RUN_CONFIG` dispatch — see
 [reference.md](./reference.md#agent_run_config)), and constraints. You can start
-with minimal prompts and refine them iteratively; the prompts in this repo's
-[`.agents/prompts/`](../.agents/prompts/) are good starting templates.
+from the shipped prompts in this repository's
+[`defaults/prompts/`](../defaults/prompts/) and refine them iteratively.
 
 ---
 

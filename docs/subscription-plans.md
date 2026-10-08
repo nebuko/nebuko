@@ -8,7 +8,7 @@ flat monthly fee instead of per-token billing.
 This page documents:
 
 - **CommandCode** — works today, using the root
-  [`agent-config-commandcode.yaml`](../agent-config-commandcode.yaml) as the
+  [`agent-config-commandcode.yaml`](../defaults/agents/agent-config-commandcode.yaml) as the
   template.
 - **OpenCode Go** — **not wired yet**; documented so the same pattern is ready
   when it lands.
@@ -82,7 +82,7 @@ and forwarded to the run as an environment variable, which is exactly what
 ### 4. Point the config at the subscription
 
 Copy this repo's
-[`agent-config-commandcode.yaml`](../agent-config-commandcode.yaml) to your repo
+[`agent-config-commandcode.yaml`](../defaults/agents/agent-config-commandcode.yaml) to your repo
 root and keep the provider stanza:
 
 ```yaml
@@ -179,5 +179,5 @@ Once a subscription's limits are reached, the metered **OpenCode Zen** provider
 
 - [configuration.md](./configuration.md) — provider / LLM / agent schema.
 - [getting-started.md](./getting-started.md) — secrets and first run.
-- [`agent-config-commandcode.yaml`](../agent-config-commandcode.yaml) — the
+- [`agent-config-commandcode.yaml`](../defaults/agents/agent-config-commandcode.yaml) — the
   working CommandCode example.
