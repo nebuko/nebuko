@@ -32,4 +32,8 @@ steps:
 
   - name: review
     agent: review
-    next: null  # terminal step
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: implement
