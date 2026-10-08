@@ -24,6 +24,7 @@ from nebuko.engine.run_loop import (
     _backfill_workflow_identity,
     _ensure_child_identity,
     _exit_code_for,
+    _history_limit_from_env,
     _TRIGGER_KEY,
     main,
     resolved_env_overlay,
@@ -1416,3 +1417,18 @@ class TestEntryPoints:
         assert engine.main is main
         assert engine.Engine is Engine
         assert tuple(engine.PHASES) == PHASES
+
+
+class TestHistoryLimitFromEnv:
+    """``HISTORY_COMMENT_COUNT`` bounds the per-run thread read (issue #805)."""
+
+    def test_absent_count_means_the_whole_thread(self):
+        assert _history_limit_from_env({}) is None
+        assert _history_limit_from_env({"HISTORY_COMMENT_COUNT": ""}) is None
+
+    def test_numeric_count_becomes_the_tail_bound(self):
+        assert _history_limit_from_env({"HISTORY_COMMENT_COUNT": "50"}) == 50
+
+    def test_non_numeric_and_non_positive_counts_fall_back_to_unbounded(self):
+        assert _history_limit_from_env({"HISTORY_COMMENT_COUNT": "many"}) is None
+        assert _history_limit_from_env({"HISTORY_COMMENT_COUNT": "0"}) is None

@@ -1369,6 +1369,24 @@ def _dispatch_from_text(text: str) -> dict[str, Any]:
 
 
 # @stub-protected
+def _history_limit_from_env(env: Mapping[str, str] | None = None) -> int | None:
+    """Parse ``HISTORY_COMMENT_COUNT`` into a tail bound (``None`` = whole thread).
+
+    Wiring this into :attr:`Engine.history_limit` is what makes the per-run
+    thread read bounded instead of re-paginating the full history every phase
+    (issue #805, Pillar C).
+    """
+    raw = (env if env is not None else os.environ).get("HISTORY_COMMENT_COUNT")
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        log.warning("ignoring non-numeric HISTORY_COMMENT_COUNT=%r", raw)
+        return None
+    return value if value > 0 else None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Select the adapter, run once, map ``RunOutcome.exit_code`` to the process code."""
     import argparse
@@ -1408,5 +1426,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         kwargs["repo"] = args.repo
 
     adapter = build_adapter(args.adapter, **kwargs)
-    outcome = Engine(adapter=adapter, repo_root=repo_root(), env=dict(os.environ)).run()
+    outcome = Engine(
+        adapter=adapter,
+        repo_root=repo_root(),
+        env=dict(os.environ),
+        history_limit=_history_limit_from_env(),
+    ).run()
     return int(outcome.exit_code)

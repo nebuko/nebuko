@@ -43,10 +43,15 @@ class FakeGhClient:
         self.posted = posted if posted is not None else {"id": 4242, "html_url": "https://example.test/c/4242"}
         self.calls = []
         self.deleted = []
+        self.limits = []
 
-    def get_issue_comments(self, repo, issue_number, token=None, dry_run=False):
+    def get_issue_comments(self, repo, issue_number, token=None, dry_run=False, limit=None):
         self.calls.append(("get_issue_comments", repo, issue_number))
-        return list(self.comments)
+        self.limits.append(limit)
+        comments = list(self.comments)
+        if limit is not None:
+            comments = comments[-limit:] if limit > 0 else []
+        return comments
 
     def post_comment(self, repo, issue_number, body, token=None, dry_run=False):
         self.calls.append(("post_comment", repo, issue_number, body))
@@ -173,6 +178,57 @@ class TestDeleteIssueComments:
         assert client.deleted == [20]
 
 
+class TestThreadSnapshotReuse:
+    """One bounded thread read per run (issue #805, Pillar C).
+
+    ``load_history`` and ``load_state`` used to list the whole comment thread
+    independently; they now share a single snapshot, and an explicit history
+    bound is floored so a state lookup can never be truncated away.
+    """
+
+    def test_history_and_state_share_a_single_fetch(self, tmp_path):
+        _, body = _state_comment()
+        client = FakeGhClient(comments=[{"body": body, "user": {"login": "x"}}])
+        adapter = _adapter(tmp_path, client)
+        adapter.read_trigger()
+
+        history = adapter.load_history(limit=5)
+        state = adapter.load_state()
+
+        assert len(history) == 1
+        assert state is not None
+        assert [call for call in client.calls if call[0] == "get_issue_comments"] == [
+            ("get_issue_comments", "olivier-norture/git-flow-ai", 590)
+        ]
+
+    def test_a_low_history_limit_still_reserves_a_state_safe_tail(self, tmp_path):
+        from thread_snapshot import STATE_TAIL_FLOOR
+
+        client = FakeGhClient(comments=[{"body": "hi", "user": {"login": "x"}}])
+        adapter = _adapter(tmp_path, client)
+        adapter.read_trigger()
+
+        adapter.load_history(limit=1)
+
+        assert client.limits == [STATE_TAIL_FLOOR]
+
+    def test_a_failed_fetch_is_not_read_as_an_empty_thread(self, tmp_path):
+        from github_client import ApiErrorKind, CommentsFetchResult
+
+        class FailingClient:
+            def fetch_issue_comments(self, repo, number, token=None, limit=None):
+                return CommentsFetchResult(
+                    ok=False, error_kind=ApiErrorKind.SECONDARY_RATE_LIMIT, detail="403"
+                )
+
+        adapter = _adapter(tmp_path, FailingClient())
+        adapter.read_trigger()
+
+        assert list(adapter.load_history(limit=5)) == []
+        assert adapter.load_state() is None
+        assert adapter._thread_snapshot().fetch_error == "403"
+
+
 class TestArtifacts:
     """Run logs are staged under ``$RUNNER_TEMP`` for the CI artifact (issue #743)."""
 
@@ -235,7 +291,7 @@ class TestImportBootstrap:
         program = (
             "from nebuko.adapters.github import GitHubAdapter\n"
             "class Client:\n"
-            "    def get_issue_comments(self, repo, number):\n"
+            "    def get_issue_comments(self, repo, number, limit=None):\n"
             "        return []\n"
             f"adapter = GitHubAdapter(repo='x/y', event_path={str(event_path)!r}, client=Client())\n"
             # Legacy imports only resolve after the adapter's bootstrap, exactly
