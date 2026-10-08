@@ -183,10 +183,14 @@ trigger body
 │
 ├─ /nebuko resume ──────────────────► held step re-run with human input,
 │                                     or advance if no active dispatch
-├─ /nebuko force-next-step <step>   ► jump to that step (regardless of state)
+├─ /nebuko force-step step --name <step>
+│                                    ► jump to <step> of the active workflow
+│                                     (replay/fork within the current run)
 ├─ /nebuko delete comments ─────────► deterministic comment deletion
 │  /nebuko clean comments            (alias; terminal, no agent runs)
-├─ /nebuko <name> ──────────────────► start/switch to workflow <name>
+├─ /nebuko run workflow --name <name> [--step <step>]
+│                                    ► start/switch to workflow <name>; a fresh
+│                                     run entering at <step> (default: first step)
 ├─ @@mention (human, or plain-mention CI trigger)
 │                                    ► run the mentioned agent
 ├─ state + dispatch ────────────────► dispatch-based routing
@@ -200,6 +204,19 @@ Precedence rationale: explicit human intent must never be absorbed by an
 active workflow's `dispatch` object. If no state is found in the current body,
 the router fetches the last state from the issue comment history first.
 `DEBUG=true` in a body routes to the debug/recovery path instead.
+
+### Entering a workflow at a dedicated step (issue #789)
+
+`/nebuko run workflow --name <wf> [--step <step>]` seeds a **fresh** run whose
+state points directly at `<step>` (default: the workflow's first step), so a
+completed upstream plan can be handed to a downstream step without replaying
+its predecessors. It is deliberately distinct from `/nebuko force-step`, which
+jumps *inside* an already-active run (keeping that run's history/position) and
+therefore requires an active workflow. The `run` branch resolves the entry via
+the `WorkflowEntryPoint` value object, reusing the same shape-aware step
+resolution as `force-step` — so `--step` can also target a sub-workflow mount
+step, and an unknown, unsafe, or not-yet-scaffolded target fails loudly instead
+of silently starting at the first step.
 
 ### The `human_gate` intercept
 
