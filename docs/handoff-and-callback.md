@@ -134,10 +134,14 @@ reason: "no-action default: agent emitted no decision and the AGENT_RUN_CONFIG s
 The factory is `DispatchConfig.no_action_default(reason)`, applied in
 `build_output._resolve_dispatch`.
 
-> **Note for operators.** The hold surfaces in the workflow's normal
-> awaiting-human path; there is no separate "ping the owner" channel in v1.
-> A dedicated notification target is a documented extension point, not part of
-> this contract.
+> **Engine-owned human notification (issue #795).** The hold surfaces in the
+> workflow's normal awaiting-human path, and the engine — not the agent — posts
+> the notification. On every stop-for-a-human outcome (`human_gate` hold, plain
+> hold, terminal step) the engine emits one `HumanActionNotice` mentioning the
+> workflow starter (`WorkflowState.started_by`, falling back to the issue author
+> and then the trigger author). Agents never ping a human: their comment bodies
+> are made notification-inert by the publish path. A dedicated per-step
+> notification target remains a documented extension point.
 
 ---
 

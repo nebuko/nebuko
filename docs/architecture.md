@@ -230,6 +230,26 @@ authorization that releases the gate. `terminate` is never intercepted, and
 `loop` retries are not intercepted (the gate fires on step transitions). See
 [workflows.md — Human Gates](./workflows.md#human-gates).
 
+### Human-action notification (issue #795)
+
+Notification is an orchestration concern, not an agent one: a run reports its
+result and never pings a human. The engine — the only component that
+deterministically knows a workflow stopped — posts a single
+`HumanActionNotice` from a choke point in `run_loop.run()` after the agent's
+output is published. `HumanActionNotice.classify()` maps the run outcome to
+one of three kinds (`awaiting_approval` for a `human_gate` hold,
+`awaiting_input` for any other hold, `workflow_complete` for a terminal step)
+and `render()` emits the comment, tagged with the byte-stable
+`<!-- bot-human-action -->` marker, mentioning the workflow starter.
+
+The recipient resolves as `WorkflowState.started_by` → issue author → trigger
+author. `started_by` is captured from the first trigger of a run and carried
+forward verbatim, so a maintainer resuming someone else's workflow still pings
+the person who started it. Engine-authored bodies are exempt from the publish
+path's human-ping neutralizer; agent-authored bodies are not, so agent prose
+can mention a login without notifying it. A failed notice is logged, never
+fatal to the run, exactly like `notify_agent_started`.
+
 ### Deterministic `script` steps (issue #541)
 
 A step can also be a **script**: instead of running an agent, the engine runs

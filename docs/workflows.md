@@ -165,6 +165,26 @@ Mechanics:
 4. If the agent `loop`s after a resume, the flow is auto-triggered again, and
    the final `advance` re-triggers the gate: fresh human validation is required.
 
+**Engine-owned human notification (issue #795).** Agents never ping a human.
+When a run stops for human attention the engine itself posts one
+`HumanActionNotice` comment naming the workflow starter
+(`@started_by`), so the person who launched the workflow is asked for
+validation. The notice is classified from the run outcome:
+
+| Stop | Notice |
+|---|---|
+| `hold`, reason `human_gate:<step>` | *awaiting approval* |
+| `hold`, any other reason (incl. no-action default) | *awaiting input* |
+| terminal step, on the run that produced its output | *workflow complete* |
+| `soft_kill` while the soft-retry budget remains | none (transient retry) |
+| terminal `SKIP_AGENT` on a follow-up run | none (nothing new to act on) |
+
+The recipient is the **workflow starter** (`WorkflowState.started_by`, captured
+from the first trigger and carried forward), falling back to the issue author
+and then the trigger author. Agent-authored comment bodies are made
+notification-inert by the publish path, so an agent mentioning `@someone` is
+readable but does not notify.
+
 The gate intercepts only `advance` (and an absent dispatch). `terminate` is
 never intercepted, and `loop` retries within a step are not intercepted.
 

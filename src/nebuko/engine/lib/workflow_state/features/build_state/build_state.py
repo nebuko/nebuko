@@ -213,9 +213,10 @@ def build_state(
         scaffold_branch if scaffold_branch is not None else base_scaffold_branch
     )
 
-    # Workflow starter (issue #795): capture on the first run, then carry the
-    # previous value forward so a chained run cannot re-point the human ping.
-    new_started_by = started_by or base_started_by
+    # Workflow starter (issue #795): captured once, on the first run, then
+    # carried forward verbatim. A later (chained, bot-triggered) run must not
+    # re-point the human ping at its own trigger author.
+    new_started_by = started_by if prev_state is None else base_started_by
 
     # Preserve per-step soft-kill retry accounting across transitions (issue
     # #704). The counter is default-filled from the previous state so a

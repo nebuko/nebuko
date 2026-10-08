@@ -49,6 +49,10 @@ _CONSOLE_MARKER = "Message from Agent " + "\u2500" * 63
 # @@agent trigger tokens (e.g. @@genius, @@dev)
 _AGENT_TRIGGER = re.compile(r"(?<![\w])@@([A-Za-z0-9_-]+)")
 
+# Bare human @mentions in *agent-authored* bodies (issue #795). Notification is
+# the engine's job now, so an agent must never be able to ping a human.
+_HUMAN_MENTION = re.compile(r"(?<!@)@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)")
+
 MAX_COMMENT_LENGTH = 60000
 
 # Section headings of the ctx report template (.agents/prompts/ctx.md).
@@ -287,6 +291,23 @@ def escape_agent_triggers(content: str) -> str:
     return _AGENT_TRIGGER.sub(lambda m: m.group(0).replace("@@", "@@\u200b", 1), content)
 
 
+def neutralize_human_pings(content: str) -> str:
+    """Make bare human @mentions inert in agent-authored comment bodies (#795).
+
+    Notification is the engine's responsibility: an agent reports its result and
+    never pings a human. Inserting a zero-width space (U+200B) between the ``@``
+    and the login keeps the text readable but stops GitHub from
+    linkifying/notifying, and keeps it invisible to the loop guard's human-ping
+    detector. The ``@@agent`` token form is deliberately left to
+    :func:`escape_agent_triggers`, which owns that transformation.
+
+    Only agent-authored bodies pass through here; the engine's own notices and
+    its crash-path ``@author`` pings are exempt (they are built outside the
+    agent-body finalizer).
+    """
+    return _HUMAN_MENTION.sub(lambda m: "@\u200b" + m.group(1), content)
+
+
 def _apply_ctx_collapse(cleaned: str, role_name: str | None = None) -> str:
     """Wrap ctx-report sections in <details> blocks (issue #557).
 
@@ -455,9 +476,10 @@ def _select_fallback_body(
     def console_fallback() -> str:
         if not has_console_log:
             return ""
-        return console_log_fallback(console_log)
+        return neutralize_human_pings(console_log_fallback(console_log))
 
     def finalized(cleaned: str) -> str:
+        cleaned = neutralize_human_pings(cleaned)
         return _truncate_at_boundary(_apply_ctx_collapse(cleaned, role_name))
 
     # ── Path A: Structured final message ────────────────────────
