@@ -63,6 +63,19 @@ TASK_TO_PROMPT = {
 }
 
 
+def resolve_complexity_tier(
+    dispatch_complexity: Optional[str],
+    step_complexity: Optional[str],
+) -> str:
+    """Resolve the effective complexity tier (issue #787).
+
+    Precedence: an explicit dispatch ``complexity`` (the agent's runtime
+    choice) overrides the tier declared on the workflow step, which overrides
+    the ``"medium"`` default. Empty/absent values count as unset.
+    """
+    return dispatch_complexity or step_complexity or "medium"
+
+
 def resolve_workflow_routing(
     agent_config: dict,
     workflows_dir: str,
@@ -123,6 +136,7 @@ def resolve_workflow_routing(
         "PARENT_WORKFLOW_STEP": "",
         "STEP_SKILLS": "",
         "STEP_PROMPT_FILE": "",
+        "STEP_COMPLEXITY": "",
         "SKIP_AGENT": "false",
     }
 
@@ -841,6 +855,7 @@ class SubWorkflowLeaf:
         script_path: Script to run for a ``"script"`` leaf ("" otherwise).
         script_args: Space-joined script args for a ``"script"`` leaf.
         script_timeout: Script timeout in minutes for a ``"script"`` leaf.
+        complexity: Declared complexity tier of the leaf step ("" when unset).
     """
 
     agent: str  # @stub-protected
@@ -854,6 +869,8 @@ class SubWorkflowLeaf:
     script_path: str = ""  # @stub-protected
     script_args: str = ""  # @stub-protected
     script_timeout: Optional[float] = None  # @stub-protected
+    # Declared complexity tier of the leaf step (issue #787); "" when unset.
+    complexity: str = ""  # @stub-protected
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -1016,6 +1033,7 @@ def _resolve_sub_workflow_leaf(
             skill=merged_skill,
             prompt=leaf.prompt or "",
             refs=tuple(refs),
+            complexity=leaf.complexity or "",
         )
 
     if leaf.script is not None:
@@ -1031,6 +1049,7 @@ def _resolve_sub_workflow_leaf(
             script_path=leaf.script.path or "",
             script_args=" ".join(leaf.script.args or []),
             script_timeout=leaf.script.timeout_minutes,
+            complexity=leaf.complexity or "",
         )
 
     return SubWorkflowLeafError(
@@ -1171,6 +1190,7 @@ def _resolve_sub_workflow_entry(
             "PARENT_WORKFLOW_STEP": parent_step_name,
             "STEP_SKILLS": leaf.skill,
             "STEP_PROMPT_FILE": _write_step_prompt_file(leaf.prompt),
+            "STEP_COMPLEXITY": leaf.complexity,
             "SKIP_AGENT": "true",
             "REASON": f"step '{leaf.step}' in sub-workflow '{leaf.workflow}' is a script step",
         } | position
@@ -1195,6 +1215,7 @@ def _resolve_sub_workflow_entry(
         "PARENT_WORKFLOW_STEP": parent_step_name,
         "STEP_SKILLS": leaf.skill,
         "STEP_PROMPT_FILE": _write_step_prompt_file(leaf.prompt),
+        "STEP_COMPLEXITY": leaf.complexity,
         "SKIP_AGENT": "false",
     } | position
 
@@ -1429,6 +1450,7 @@ def _next_step_resolution(
             "PARENT_WORKFLOW_STEP": parent_step,
             "STEP_SKILLS": _skills_to_string(next_step.skill),
             "STEP_PROMPT_FILE": "",
+            "STEP_COMPLEXITY": next_step.complexity or "",
             "SKIP_AGENT": "true",
         }
 
@@ -1448,6 +1470,7 @@ def _next_step_resolution(
         "PARENT_WORKFLOW_STEP": parent_step,
         "STEP_SKILLS": _skills_to_string(next_step.skill),
         "STEP_PROMPT_FILE": _write_step_prompt_file(next_step.prompt),
+        "STEP_COMPLEXITY": next_step.complexity or "",
         "SKIP_AGENT": "false",
     }
 
@@ -1701,6 +1724,7 @@ def resolve_workflow_step(
             "PARENT_WORKFLOW_STEP": parent_workflow_step,
             "STEP_SKILLS": "",
             "STEP_PROMPT_FILE": "",
+            "STEP_COMPLEXITY": "",
             "SKIP_AGENT": "false",
         }
 
@@ -1721,6 +1745,7 @@ def resolve_workflow_step(
             "PARENT_WORKFLOW_STEP": parent_workflow_step,
             "STEP_SKILLS": "",
             "STEP_PROMPT_FILE": "",
+            "STEP_COMPLEXITY": "",
             "SKIP_AGENT": "false",
         }
 
@@ -1791,6 +1816,7 @@ def resolve_workflow_step(
         "PARENT_WORKFLOW_STEP": parent_workflow_step,
         "STEP_SKILLS": _skills_to_string(current_step.skill),
         "STEP_PROMPT_FILE": _write_step_prompt_file(current_step.prompt),
+        "STEP_COMPLEXITY": current_step.complexity or "",
         "SKIP_AGENT": "false",
     }
 

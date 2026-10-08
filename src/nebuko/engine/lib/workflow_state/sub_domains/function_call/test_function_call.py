@@ -9,7 +9,9 @@ class TestFunctionCallModel:
     def test_defaults(self):
         fc = FunctionCall(agent_name="ctx")
         assert fc.function == "call_agent"
-        assert fc.complexity == "medium"
+        # "" (unset) lets the resolver apply the called step's declared tier
+        # before defaulting to "medium" (issue #787).
+        assert fc.complexity == ""
         assert fc.reason is None
 
     def test_unknown_function_rejected(self):

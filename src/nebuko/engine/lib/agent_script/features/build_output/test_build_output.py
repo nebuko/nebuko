@@ -28,13 +28,15 @@ class TestAgentRunConfigToDispatch(unittest.TestCase):
     """Test the agent_run_config_to_dispatch() function."""
 
     def test_valid_minimal_json(self):
-        """Minimal JSON with just task produces correct defaults."""
+        """Minimal JSON with just task leaves complexity unset for the step tier."""
         data = '{"task": "ctx"}'
         result = agent_run_config_to_dispatch(data)
         self.assertIsNotNone(result)
         self.assertEqual(result.task_hint, "ctx")
         self.assertEqual(result.status, "advance")
-        self.assertEqual(result.complexity, "medium")
+        # Unset complexity -> "" so the resolver applies the workflow step's
+        # declared tier, else "medium" (issue #787).
+        self.assertEqual(result.complexity, "")
         self.assertEqual(result.reasoning, "none")
         self.assertIsNone(result.model)
 
@@ -105,7 +107,8 @@ class TestAgentRunConfigToDispatch(unittest.TestCase):
         result = agent_run_config_to_dispatch(data)
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "advance")
-        self.assertEqual(result.complexity, "medium")
+        # Unset complexity -> "" (issue #787); the resolver fills "medium".
+        self.assertEqual(result.complexity, "")
         self.assertEqual(result.reasoning, "none")
         self.assertIsNone(result.task_hint)
 

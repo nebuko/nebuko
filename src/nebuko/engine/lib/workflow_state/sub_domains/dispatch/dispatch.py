@@ -21,7 +21,9 @@ class Dispatch(BaseModel):
             engine retries the same step (bounded by MAX_SOFT_RETRIES) instead
             of advancing.
         task_hint: Optional suggested next agent (overrides workflow YAML).
-        complexity: Complexity level for downstream agent.
+        complexity: Complexity level for downstream agent. Empty means the
+            agent declared none, so the resolver falls back to the workflow
+            step's declared tier, then ``"medium"`` (issue #787).
         reasoning: Reasoning mode for downstream agent.
         model: Optional model override.
         temperature, top_p, top_k, min_p, presence_penalty, repetition_penalty:
@@ -38,7 +40,9 @@ class Dispatch(BaseModel):
 
     status: str = "advance"
     task_hint: Optional[str] = None
-    complexity: str = "medium"
+    # "" = the agent declared no tier; the resolver applies the workflow step's
+    # declared tier, else "medium" (issue #787).
+    complexity: str = ""
     reasoning: str = "none"
     model: Optional[str] = None
     temperature: Optional[float] = None

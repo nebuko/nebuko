@@ -261,3 +261,32 @@ class TestWorkflowStepScript:
         step = WorkflowStep(name="analyze", agent="genius", next="context")
         assert step.script is None
         assert step.agent == "genius"
+
+
+class TestWorkflowStepComplexity:
+    """Test the per-step declared complexity tier (issue #787)."""
+
+    def test_complexity_defaults_to_none(self):
+        step = WorkflowStep(name="dev", agent="dev")
+        assert step.complexity is None
+
+    @pytest.mark.parametrize("tier", ["low", "medium", "high"])
+    def test_complexity_accepts_valid_tiers(self, tier):
+        step = WorkflowStep(name="dev", agent="dev", complexity=tier)
+        assert step.complexity == tier
+
+    def test_complexity_rejects_unknown_tier(self):
+        with pytest.raises(ValueError):
+            WorkflowStep(name="dev", agent="dev", complexity="ultra")
+
+    def test_complexity_coexists_with_existing_fields(self):
+        step = WorkflowStep(
+            name="analyze",
+            agent="genius",
+            complexity="low",
+            skill=["call-agent"],
+            next="context",
+        )
+        assert step.complexity == "low"
+        assert step.skill == ["call-agent"]
+        assert step.next == "context"

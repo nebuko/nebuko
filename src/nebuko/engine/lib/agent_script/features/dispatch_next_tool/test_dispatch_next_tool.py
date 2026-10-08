@@ -36,7 +36,9 @@ class TestDispatchNextActionToDispatch(unittest.TestCase):
         self.assertIsNotNone(d)
         self.assertEqual(d.status, "advance")
         self.assertIsNone(d.task_hint)
-        self.assertEqual(d.complexity, "medium")
+        # An unspecified complexity stays unset so the resolver can apply the
+        # workflow step's declared tier (issue #787).
+        self.assertEqual(d.complexity, "")
         self.assertIsNone(d.reason)
 
     def test_branch_round_trip(self):
