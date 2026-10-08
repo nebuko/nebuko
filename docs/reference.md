@@ -189,8 +189,9 @@ is authoritative.
 | `history` | HistoryEntry[] | Summarized records of prior steps (see below). |
 | `pinned_comment_ids` | int[] | Comment IDs injected **verbatim** into the next agent's context; every other included comment is injected as a summary/excerpt. |
 | `current_context` | object | Free-form shared data between agents (pending tasks, constraints, decisions, `last_run_status`, ...). |
-| `parent_workflow` | string \| null | Parent workflow name when inside a sub-workflow. |
+| `parent_workflow` | string \| null | Parent workflow name when inside a sub-workflow. Derived view of the second-to-last `position` frame. |
 | `parent_workflow_step` | string \| null | Parent step that mounted the sub-workflow. |
+| `position` | StepRef[] | The run's full nested call-stack — flat, outermost-first; the last frame is the step actually executing (issue #638). Engine-owned, carried forward across transitions: entry appends a frame, an intra-workflow move replaces the leaf, return-to-parent pops it (issue #812). |
 | `issue` | IssueInfo \| null | Static issue metadata: `number`, `url`, `title`, `author`, `repo`. |
 | `pull_request` | PullRequestInfo \| null | Same shape as `issue`, for PR contexts. |
 | `dispatch` | Dispatch \| null | Outcome + runtime preferences of the current agent (see [Dispatch Object](#dispatch-object)). |
@@ -209,6 +210,7 @@ is authoritative.
 | `pin` | bool | Whether this entry's `comment_ids` are injected verbatim (their ids are unioned into `pinned_comment_ids` during state enrichment). |
 | `result` | string \| null | Reported result (`approved`, `rejected`, ...). |
 | `dispatch` | Dispatch \| null | Routing decision emitted by this step (same shape as the top-level [Dispatch Object](#dispatch-object)); `null` for legacy entries that predate the field. Makes the history a replayable movement log. |
+| `position` | StepRef[] | The mount stack recorded for this step (issue #638). After every run `history[-1].position` equals `WorkflowState.position`; faithful stacks let the terminal unwind recover the ancestor chain one level at a time (issue #812). |
 | `metrics` | StateMetrics \| null | Metrics of **this step's** agent invocation (full `Metrics` payload; issue #792). `history[-1].metrics` is the single metrics authority. |
 
 ### Annotated Example
@@ -291,7 +293,10 @@ Variables the orchestrator sets/consumes per run:
 | `SCRIPT_PATH` | `resolve_config` | Repo-relative path of the script to run (from `script.path`). |
 | `SCRIPT_ARGS` | `resolve_config` | Space-joined argument string for the script (empty when none). |
 | `SCRIPT_TIMEOUT_MINUTES` | `resolve_config` | Script timeout in minutes (empty → default 30). |
+| `PARENT_WORKFLOW` | `resolve_config` / `resolve_workflow` | Parent workflow name when the run is nested in a sub-workflow mount; empty at top level. Derived from the second-to-last `position` frame. |
 | `PARENT_WORKFLOW_STEP` | `resolve_config` | Step in the parent workflow that mounted a sub-workflow. |
+| `WORKFLOW_POSITION` | `resolve_config` / `resolve_workflow` | Single-line JSON of the run's full mount stack (`WorkflowState.position`). |
+| `WORKFLOW_POSITION_PATH` | `resolve_config` / `resolve_workflow` | Human-readable `wf/step\|wf/step\|...` rendering of `WORKFLOW_POSITION`. |
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables debug-mode routing (recover) and verbose logs. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |

@@ -275,11 +275,29 @@ steps:
     next: sub_clean
 ```
 
-The mounted workflow runs to completion before the parent continues. The state
-records `parent_workflow` / `parent_workflow_step` so the engine can return to
-the right place. The sub-workflow path may be **runtime-generated**: the
-`plan-orchestration` workflow has its `scaffold` step generate
-`tmp_impl/workflow.yaml` from the approved plan, which `sub_impl` then mounts
-(see [workflows.md — plan-orchestration](./workflows.md#plan-orchestration)).
+The mounted workflow runs to completion before the parent continues. The
+engine tracks the **position** — the run's full nested call-stack of
+`(workflow, step)` frames, outermost first, persisted as
+`WorkflowState.position` and mirrored on every history entry. Frames are
+added on entry, have their leaf replaced on an intra-workflow move, and are
+popped on return, so a mount three levels deep
+(`plan-orchestration/sub_impl → tmp_impl/step_1 → dev-review-loop/implement`)
+keeps its enclosing frames while the innermost step changes. A terminal
+sub-workflow returns to its **immediate** parent step, and the chain unwinds
+one level per return. The `parent_workflow` / `parent_workflow_step` pair is
+a derived view of the second-to-last frame.
+
+The position is engine-owned state, **carried forward** from the previous run
+rather than rebuilt from the flat parent pair — the latter is only the
+fallback when no prior position exists. A branch-mounted sub-workflow whose
+filename differs from its declared `name` (`tmp_impl/workflow.yaml` declaring
+`tmp-impl`) is resolved by the mount reference its enclosing step declares,
+so the unwind can re-enter it. See
+[ADR-0006](./adr/0006-nested-workflow-position-carry-forward.md).
+
+The sub-workflow path may be **runtime-generated**: the `plan-orchestration`
+workflow has its `scaffold` step generate `tmp_impl/workflow.yaml` from the
+approved plan, which `sub_impl` then mounts (see
+[workflows.md — plan-orchestration](./workflows.md#plan-orchestration)).
 Local `workflows/` files take precedence over zero-copy fetched ones; see
 [features.md — Remote Workflows](./features.md#remote-workflows-zero-copy).
