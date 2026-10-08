@@ -13,14 +13,16 @@ from typing import Optional
 
 from .features.build_result.build_result import _build_result
 from .features.fetch_state.fetch_state import _fetch_workflow_state_from_history
-from .sub_domains.workflow_command.workflow_command import classify_comment
+from .sub_domains.workflow_command.workflow_command import (
+    classify_comment,
+    parse_command,
+)
 from .features.parse_trigger.parse_trigger import (
     is_bot_comment,
     has_universal_bot_marker,
     is_plain_mention_trigger,
     extract_plain_mention_agent,
     extract_mention_agent,
-    parse_workflow_command,
     normalize_resume_input,
     extract_debug_flag,
     extract_machine_trigger,
@@ -124,7 +126,8 @@ def resolve_config(
 
     # Check for human commands early — they take precedence over workflow state
     # regardless of whether prev_state exists (they need to resolve the command)
-    wf_cmd = parse_workflow_command(trigger_body)
+    command_parse = parse_command(trigger_body)
+    wf_cmd = command_parse.command
 
     # Centralized fallback: if no state from current body, try comment history
     if not prev_state:
@@ -157,7 +160,7 @@ def resolve_config(
         and command_intent.command == "clean"
         and not is_bot
     ):
-        clean_cmd = parse_workflow_command(trigger_body)
+        clean_cmd = wf_cmd
         clean_env = _delete_comments_env(
             clean_cmd.params.get("issue") if clean_cmd is not None else None,
             issue_number,
@@ -302,6 +305,13 @@ def resolve_config(
     # can fetch children absent from the local (default-branch) checkout.
     if prev_state is not None and prev_state.scaffold_branch:
         config["config_scaffold_branch"] = prev_state.scaffold_branch
+
+    # A malformed or unknown human slash command yields no valid task; keep its
+    # usage hint on the config so _build_result can turn the terminal skip into
+    # an actionable notice (issue #804). Bot bodies are excluded so the engine's
+    # own notices can never re-enter this path.
+    if command_parse.status == "malformed" and not is_bot:
+        config["config_command_error"] = command_parse.usage or ""
 
     result = _build_result(config, prompt_base, workflows_dir, local_workflows_dir=local_workflows_dir)
     if os.environ.get("DEBUG") or debug:

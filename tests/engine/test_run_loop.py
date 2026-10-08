@@ -290,6 +290,102 @@ class TestSoftKillRetry:
         assert not journal.exists() or journal.read_text(encoding="utf-8") == ""
 
 
+class TestCommandErrorNotice:
+    """A malformed / unknown human slash command posts feedback (issue #804)."""
+
+    def test_malformed_human_command_posts_a_usage_notice(self, tmp_path, monkeypatch):
+        engine = _engine(
+            tmp_path, _trigger(body="/nebuko run workflow --default", number=804)
+        )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "COMMAND_ERROR": "true",
+                "REASON": "/nebuko run workflow --name <workflow> [--step <step>]",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert "agent" not in outcome.phases
+        assert outcome.posted_body is not None
+        assert outcome.posted_body.splitlines()[0] == "<!-- bot-workflow-terminal -->"
+        assert "@olivier-norture" in outcome.posted_body
+        assert "/nebuko run workflow --name <workflow>" in outcome.posted_body
+        # No continue token: an error notice must not re-trigger the chain.
+        assert "<!-- workflow-continue -->" not in outcome.posted_body
+
+    def test_unknown_slash_command_posts_notice(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, _trigger(body="/foo bar", number=804))
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "COMMAND_ERROR": "true",
+                "REASON": "unrecognized / command; see the Human Commands table",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert outcome.posted_body is not None
+        assert "unrecognized / command" in outcome.posted_body
+
+    def test_bot_authored_command_error_stays_silent(self, tmp_path, monkeypatch):
+        """The engine's own marker-led notices never re-enter the path (loop safety)."""
+        bot_body = "<!-- bot-workflow-terminal -->\n/nebuko run workflow --default"
+        engine = _engine(tmp_path, _trigger(body=bot_body, number=804))
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "COMMAND_ERROR": "true",
+                "REASON": "/nebuko run workflow --name <workflow>",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert outcome.posted_body is None
+
+    def test_the_real_resolver_flags_a_malformed_command(self, tmp_path):
+        """End-to-end: the real resolver carries usage + COMMAND_ERROR (issue #804)."""
+        engine = _engine(
+            tmp_path, _trigger(body="/nebuko run workflow --default", number=804)
+        )
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert str(resolved.get("COMMAND_ERROR")).lower() == "true"
+        assert "/nebuko run workflow --name" in resolved.get("REASON", "")
+
+    def test_the_real_resolver_flags_an_unknown_slash_command(self, tmp_path):
+        engine = _engine(tmp_path, _trigger(body="/foo bar", number=804))
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert str(resolved.get("COMMAND_ERROR")).lower() == "true"
+        assert "unrecognized" in resolved.get("REASON", "")
+
+    def test_the_real_resolver_keeps_auto_routing_skips_silent(self, tmp_path):
+        """A non-command body must not be flagged as a command error."""
+        engine = _engine(tmp_path, _trigger(body="just some prose", number=804))
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert not resolved.get("COMMAND_ERROR")
+
+
 class TestDeterministicActionPhase:
     """``action`` executes the resolver's agent-free step (issue #724)."""
 

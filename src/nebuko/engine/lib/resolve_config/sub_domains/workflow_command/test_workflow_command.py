@@ -14,9 +14,11 @@ from resolve_config.sub_domains.workflow_command.workflow_command import (  # no
     FLAGS_BY_ACTION,
     RESOURCE_BY_ACTION,
     CommandGrammar,
+    CommandParseResult,
     CommentIntent,
     WorkflowCommand,
     classify_comment,
+    parse_command,
     parse_workflow_command,
 )
 
@@ -237,6 +239,108 @@ class TestParseMalformed:
 
     def test_clean_non_numeric_issue_rejected(self):
         assert parse_workflow_command("/nebuko clean comments --issue abc") is None
+
+
+class TestParseCommandTyped:
+    """Typed parse surface that preserves the failure category (issue #804)."""
+
+    def test_valid_command(self):
+        result = parse_command("/nebuko run workflow --name default")
+        assert result.status == "valid"
+        assert result.detail == "ok"
+        assert result.usage is None
+        assert result.command == WorkflowCommand(
+            action="run", resource="workflow", params={"name": "default"}
+        )
+        # The compatibility wrapper agrees with the typed result.
+        assert parse_workflow_command("/nebuko run workflow --name default") == result.command
+
+    def test_plain_prose_is_absent(self):
+        result = parse_command("hello there, just a normal comment")
+        assert result == CommandParseResult(
+            status="absent", command=None, detail="none", usage=None
+        )
+
+    def test_unknown_slash_command(self):
+        result = parse_command("/foo bar baz")
+        assert result.status == "malformed"
+        assert result.detail == "unknown_command"
+        assert result.command is None
+        assert result.usage and "/nebuko run workflow" in result.usage
+
+    def test_unknown_slash_command_only_first_line(self):
+        # A later-line slash does not count — only the first line is a command.
+        assert parse_command("prose\n/foo").status == "absent"
+
+    def test_bare_prefix_is_malformed_not_absent(self):
+        result = parse_command("/nebuko")
+        assert result.status == "malformed"
+        assert result.detail == "unknown_action"
+        assert result.usage
+
+    def test_unknown_action(self):
+        result = parse_command("/nebuko deploy workflow --name x")
+        assert result.status == "malformed"
+        assert result.detail == "unknown_action"
+        assert result.usage
+
+    def test_wrong_resource(self):
+        result = parse_command("/nebuko run step --name default")
+        assert result.status == "malformed"
+        assert result.detail == "unknown_resource"
+        assert "run workflow" in result.usage
+
+    def test_unknown_flag(self):
+        # The issue's own example: a bare "--default" instead of "--name default".
+        result = parse_command("/nebuko run workflow --default")
+        assert result.status == "malformed"
+        assert result.detail == "unknown_flag"
+        assert result.usage == "/nebuko run workflow --name <workflow> [--step <step>]"
+
+    def test_duplicate_flag(self):
+        result = parse_command("/nebuko resume --feedback a --feedback b")
+        assert result.status == "malformed"
+        assert result.detail == "duplicate_flag"
+        assert result.usage
+
+    def test_bare_flag_value(self):
+        result = parse_command("/nebuko run workflow --name")
+        assert result.status == "malformed"
+        assert result.detail == "bare_flag_value"
+        assert result.usage
+
+    def test_missing_required_flag(self):
+        result = parse_command("/nebuko run workflow")
+        assert result.status == "malformed"
+        assert result.detail == "missing_required_flag"
+        assert result.usage
+
+    def test_invalid_flag_value(self):
+        result = parse_command("/nebuko delete comments --issue abc")
+        assert result.status == "malformed"
+        assert result.detail == "invalid_flag_value"
+        assert result.usage
+
+    def test_clean_alias_keeps_its_own_usage(self):
+        result = parse_command("/nebuko clean comments --unknown x")
+        assert result.status == "malformed"
+        assert result.detail == "unknown_flag"
+        assert result.usage.startswith("/nebuko clean comments")
+
+    def test_wrapper_returns_none_for_every_non_valid_result(self):
+        bodies = [
+            "plain prose",
+            "",
+            "/foo",
+            "/nebuko",
+            "/nebuko deploy workflow --name x",
+            "/nebuko run workflow",
+            "/nebuko run workflow --name",
+            "/nebuko delete comments --issue abc",
+        ]
+        for body in bodies:
+            assert parse_command(body).status != "valid"
+            assert parse_workflow_command(body) is None
 
 
 class TestCommandRegistry:
