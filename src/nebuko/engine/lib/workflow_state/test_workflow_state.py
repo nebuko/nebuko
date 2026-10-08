@@ -4,6 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from workflow_state import WorkflowState, HistoryEntry, StateMetrics
+from workflow_state.sub_domains.gate_decision import GateDecision
 
 class TestWorkflowStateSchema(unittest.TestCase):
     """Test WorkflowState Pydantic schema validation."""
@@ -141,6 +142,78 @@ class TestWorkflowStateSchema(unittest.TestCase):
         )
         # Caller's dict untouched — still serializes to the same payload.
         self.assertEqual(json.dumps(raw), original)
+
+
+class TestWorkflowStateGateFields(unittest.TestCase):
+    """Engine-owned gate decision fields survive state serialization (#648)."""
+
+    @staticmethod
+    def _decision(status: str, step: str = "plan") -> GateDecision:
+        from datetime import datetime, timezone
+        from config import StepRef
+
+        return GateDecision(
+            status=status,
+            workflow="default",
+            target_step=step,
+            decided_by="olivier-norture",
+            decided_at=datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc),
+            position=[StepRef(workflow="default", step=step)],
+        )
+
+    def test_gate_fields_default_to_none_and_empty(self):
+        """A fresh state carries no decision and an empty audit."""
+        state = WorkflowState(workflow="default", step="plan")
+        self.assertIsNone(state.gate_decision)
+        self.assertEqual(state.gate_history, [])
+
+    def test_legacy_blob_without_gate_keys_loads_with_defaults(self):
+        """Older state blobs (no gate_decision / gate_history) still load."""
+        raw = {"workflow": "default", "step": "plan", "agent": "genius"}
+        state = WorkflowState.model_validate(raw)
+        self.assertIsNone(state.gate_decision)
+        self.assertEqual(state.gate_history, [])
+
+    def test_gate_history_preserves_append_order(self):
+        approved = self._decision("approved", "plan")
+        rejected = self._decision("rejected", "stub_approval")
+        state = WorkflowState(
+            workflow="default",
+            step="implement",
+            gate_decision=rejected,
+            gate_history=[approved, rejected],
+        )
+        self.assertEqual(state.gate_decision, rejected)
+        self.assertEqual(state.gate_history, [approved, rejected])
+
+    def test_to_json_round_trip_preserves_gate_fields(self):
+        """The <details> state JSON carries the decision and the full audit."""
+        import json
+        from workflow_state.workflow_state import to_json
+
+        approved = self._decision("approved", "plan")
+        rejected = self._decision("rejected", "stub_approval")
+        state = WorkflowState(
+            workflow="default",
+            step="implement",
+            gate_decision=rejected,
+            gate_history=[approved, rejected],
+        )
+        raw = json.loads(to_json(state))
+        self.assertEqual(raw["gate_decision"]["status"], "rejected")
+        self.assertEqual([d["status"] for d in raw["gate_history"]], ["approved", "rejected"])
+        back = WorkflowState.model_validate(raw)
+        self.assertEqual(back.gate_decision, rejected)
+        self.assertEqual(back.gate_history, [approved, rejected])
+
+    def test_to_json_omits_empty_gate_fields(self):
+        """Defaults are excluded, so legacy states stay byte-identical."""
+        import json
+        from workflow_state.workflow_state import to_json
+
+        raw = json.loads(to_json(WorkflowState(workflow="default", step="plan")))
+        self.assertNotIn("gate_decision", raw)
+        self.assertNotIn("gate_history", raw)
 
 
 class TestStateMetricsCost(unittest.TestCase):

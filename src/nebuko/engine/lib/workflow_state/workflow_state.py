@@ -8,6 +8,7 @@ from .sub_domains.history_entry.history_entry import HistoryEntry
 from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.dispatch.dispatch import Dispatch
+from .sub_domains.gate_decision.gate_decision import GateDecision
 from .sub_domains.function_call import FunctionCall
 from .sub_domains.step_resolution.step_resolution import StepResolution
 
@@ -150,6 +151,12 @@ class WorkflowState(BaseModel):
             can still be resolved. None until the scaffold step has run.
         issue: Static issue metadata (number, URL, title, author, repo).
         pull_request: Static PR metadata (number, URL, title, author, repo).
+        gate_decision: Latest engine-owned human gate decision (issue #648),
+            written from an identity-verified ``/nebuko approve gate`` /
+            ``/nebuko reject gate`` command. None on legacy blobs without the
+            key.
+        gate_history: Full append-only audit of every gate decision for this
+            workflow run, oldest first. Empty on legacy blobs without the key.
         position: Flat workflow step path, outermost-first; last ref = the
             step actually executed (issue #638). The flat ``workflow``/
             ``step`` fields keep leaf (v1) semantics.
@@ -190,6 +197,12 @@ class WorkflowState(BaseModel):
     issue: Optional[IssueInfo] = None
     pull_request: Optional[PullRequestInfo] = None
     dispatch: Optional[Dispatch] = None
+    # Engine-owned human gate decision (issue #648): the latest recorded
+    # decision plus the full append-only audit of every decision. Written
+    # only by the gate-decision resolver from an identity-verified human
+    # command; None/empty on legacy blobs, which keep loading unchanged.
+    gate_decision: Optional[GateDecision] = None
+    gate_history: list[GateDecision] = Field(default_factory=list)
     resolution: Optional[StepResolution] = None
     # Imperative one-shot hand-off (AGENT_RUN_CONFIG function_call section).
     # Consumed by the next run's resolver, which emits a fresh state with it
