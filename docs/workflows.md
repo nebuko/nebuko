@@ -449,3 +449,15 @@ values declared on the referencing parent step propagate down to the leaf.
 Each sub-workflow's terminal return resumes only its *immediate* parent; an
 outer parent pair already on record survives nested re-entry, so the chain
 unwinds one level per return.
+
+**Position (the nested call-stack).** The engine tracks where a run is as a
+**position** — the ordered stack of `(workflow, step)` frames from the
+outermost workflow down to the step actually executing (persisted as
+`WorkflowState.position`). It is carried forward across transitions and
+mutated by exactly one frame per move: entry appends a frame, an
+intra-workflow step move replaces the leaf, and return-to-parent pops it.
+This is what keeps a `plan-orchestration → tmp_impl → dev-review-loop` run
+inside `tmp_impl/step_1` while `implement → review` happens, and what lets the
+terminal `review` resume `tmp_impl/step_2` instead of collapsing to the outer
+`sub_clean`. See
+[ADR-0006](./adr/0006-nested-workflow-position-carry-forward.md).

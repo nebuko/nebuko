@@ -6,9 +6,12 @@ constructs the final KEY=value environment variable dict.
 
 from typing import Optional
 
+from config import StepRef, WorkflowPosition
 from resolve_workflow import (
     resolve_workflow_routing,
     build_workflow_position,
+    build_workflow_position_value,
+    _position_pair_from_value,
     resolve_complexity_tier,
     TASK_TO_PROMPT,
 )
@@ -26,27 +29,89 @@ def _attach_position(
 
     Every agent result carries a position (issue #646: universal) —
     sub-workflow runs the full mount chain, top-level runs the bare
-    single ref. The resolver's own entry path already emits it (keep it
-    verbatim for exact fidelity), so only non-entry results are rebuilt
-    here from the leaf pair + the recorded parent pair.
+    single ref. The resolver's own entry path already emits it (kept
+    verbatim for exact fidelity). Otherwise the previous run's position is
+    carried forward and mutated by this transition (issue #812); rebuilding
+    from the lossy flat parent pair is only the fallback for a legacy or
+    absent base — that rebuild is what previously truncated a nested run.
     """
     if result.get("WORKFLOW_POSITION"):
         # Entry path already emitted the position (resolver fidelity).
         return result
     leaf_wf = result.get("WORKFLOW_NAME", "")
     leaf_step = result.get("WORKFLOW_STEP", "")
-    parent_wf = result.get("PARENT_WORKFLOW", "")
     if not leaf_wf:
         # No leaf resolvable — nothing to address (stays position-less).
         return result
-    pair = build_workflow_position(
-        leaf_wf, leaf_step, parent_wf,
-        result.get("PARENT_WORKFLOW_STEP", ""),
-        workflows_dir,
-        scaffold_branch=config.get("config_scaffold_branch") or None,
+    parent_wf = result.get("PARENT_WORKFLOW", "")
+    parent_step = result.get("PARENT_WORKFLOW_STEP", "")
+    scaffold_branch = config.get("config_scaffold_branch") or None
+    base = config.get("config_position")
+    if isinstance(base, WorkflowPosition) and base.refs:
+        position = _carry_forward_position(
+            base, leaf_wf, leaf_step, parent_wf, parent_step,
+            workflows_dir, scaffold_branch, local_workflows_dir,
+        )
+        return result | _position_pair_from_value(position)
+    return result | build_workflow_position(
+        leaf_wf, leaf_step, parent_wf, parent_step, workflows_dir,
+        scaffold_branch=scaffold_branch,
         local_workflows_dir=local_workflows_dir,
     )
-    return result | pair
+
+
+def _carry_forward_position(
+    base: WorkflowPosition,
+    leaf_wf: str,
+    leaf_step: str,
+    parent_wf: str,
+    parent_step: str,
+    workflows_dir: str,
+    scaffold_branch: Optional[str],
+    local_workflows_dir: Optional[str],
+) -> WorkflowPosition:
+    """Apply one transition to the carried-forward mount stack (issue #812).
+
+    The prior position is authoritative. An intra-workflow move (no mount
+    boundary — ``parent_wf`` empty and the leaf workflow unchanged) replaces
+    just the leaf frame, so every ancestor survives. A mount boundary
+    (entry/re-entry/exit, signalled by a resolved ``parent_wf``) re-derives
+    the freshly resolved tail and splices it beneath the base frames that
+    still enclose it — those frames are carried forward even when the flat
+    pair only records the outermost level, which is what the old rebuild
+    could not represent.
+    """
+    leaf = StepRef(workflow=leaf_wf, step=leaf_step)
+    if not parent_wf and leaf_wf == base.refs[-1].workflow:
+        return base.with_step(leaf)
+    rebuilt = build_workflow_position_value(
+        leaf_wf, leaf_step, parent_wf, parent_step, workflows_dir,
+        scaffold_branch=scaffold_branch,
+        local_workflows_dir=local_workflows_dir,
+    )
+    if rebuilt is None or not rebuilt.refs:
+        return base.with_step(leaf)
+    index = _deepest_workflow_index(base.refs, rebuilt.refs[0].workflow)
+    if index is None:
+        return rebuilt
+    return WorkflowPosition(
+        version=base.version, refs=[*base.refs[:index], *rebuilt.refs]
+    )
+
+
+def _deepest_workflow_index(refs: list, workflow: str) -> Optional[int]:
+    """Index of the innermost base frame owned by ``workflow`` (issue #812).
+
+    The splice point for a mount boundary: frames above this index enclose
+    the transition and are carried forward; frames at or below it are
+    replaced by the freshly resolved tail. ``None`` when the base does not
+    contain the boundary's workflow (a wholly new branch), meaning the
+    rebuilt tail stands alone.
+    """
+    for index in range(len(refs) - 1, -1, -1):
+        if refs[index].workflow == workflow:
+            return index
+    return None
 
 
 def _build_result(

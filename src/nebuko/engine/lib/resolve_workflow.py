@@ -481,6 +481,11 @@ class WorkflowLoadContext:
     local_workflows_dir: Optional[str] = None
     scaffold_branch: Optional[str] = None
     fetch_cache: Optional[dict] = field(default=None, compare=False)
+    # Declared-name -> repo-root-relative mount reference (issue #812). A
+    # branch-mounted child's declared ``name`` (e.g. ``tmp-impl``) is not its
+    # filename (``tmp_impl/workflow.yaml``), so a by-name lookup cannot fetch
+    # it: the hint carries the reference the enclosing mount step declares.
+    name_refs: Optional[dict] = field(default=None, compare=False)
 
     # @stub-protected
     def load(self, ref: str) -> Optional[WorkflowDefinition]:
@@ -518,11 +523,27 @@ class WorkflowLoadContext:
         """Load a workflow by its declared ``name`` via recursive file scan.
 
         Falls back to a scaffold fetch keyed on the declared name when no
-        local file declares it.
+        local file declares it. When ``name_refs`` carries the mount
+        reference the enclosing parent step declares (issue #812), that
+        reference — not the name — drives the fetch, so a branch-mounted
+        child whose filename differs from its declared name (e.g.
+        ``tmp_impl/workflow.yaml`` declaring ``tmp-impl``) is located
+        instead of collapsing the nesting level.
         """
         local = _scan_workflow_by_name(name, self.workflows_dir, self.local_workflows_dir)
         if local is not None:
             return local
+        declared = (self.name_refs or {}).get(name)
+        if declared:
+            hint = _local_child_path_for_name(declared, name, self.workflows_dir)
+            if hint is not None:
+                return _try_load_workflow(hint)
+            fetched = _fetch_workflow_from_scaffold(
+                declared, self.scaffold_branch, self.fetch_cache,
+            )
+            loaded = _try_load_workflow(fetched) if fetched else None
+            if loaded is not None:
+                return loaded
         fetched = _fetch_workflow_from_scaffold(
             name, self.scaffold_branch, self.fetch_cache,
         )
@@ -655,6 +676,23 @@ def _position_pair(nodes: list) -> dict:
     }
 
 
+def _position_pair_from_value(position: Optional["WorkflowPosition"]) -> dict:
+    """Emission pair for a resolved ``WorkflowPosition`` (issue #812).
+
+    Same shape as :func:`_position_pair`, but built from the carried-forward
+    value object rather than a reconstructed ``(name, ref, step)`` chain.
+    ``None``/empty maps to the empty pair so callers merge unconditionally.
+    """
+    if position is None or not position.refs:
+        return {"WORKFLOW_POSITION": "", "WORKFLOW_POSITION_PATH": ""}
+    return {
+        "WORKFLOW_POSITION": json.dumps(
+            position.to_state_dict(), separators=(",", ":")
+        ),
+        "WORKFLOW_POSITION_PATH": position.path_str(),
+    }
+
+
 def _position_to_json(nodes: list) -> str:
     """Serialize a position chain to single-line JSON (issue #638, v3).
 
@@ -771,6 +809,60 @@ def _step_mount_ref(
     return step.workflow or step.path or ""
 
 
+def build_workflow_position_value(
+    leaf_name: str,
+    leaf_step: str,
+    parent_workflow: str,
+    parent_step: str,
+    workflows_dir: str,
+    scaffold_branch: Optional[str] = None,
+    local_workflows_dir: Optional[str] = None,
+) -> Optional[WorkflowPosition]:
+    """The ``WorkflowPosition`` that :func:`build_workflow_position` serializes.
+
+    ``None`` when no leaf is resolvable at all. A top-level run (no parent
+    pair) yields the bare single-ref position (issue #646); a nested run
+    rebuilds the mount chain by descending from the recorded parent pair
+    (issue #618). Exposed as a value (issue #812) so the carry-forward
+    emission path can splice the rebuilt tail beneath the prior run's
+    position instead of re-deriving the whole stack from lossy flat data.
+    """
+    if not leaf_name:
+        return None
+    if not parent_workflow:
+        # Top-level run (issue #646): the bare single-ref position is the
+        # run's canonical address — never empty.
+        return WorkflowPosition.bare(leaf_name, leaf_step)
+    fetch_cache: dict = {}
+    # Anchor the chain on the parent pair (outermost recorded level) and
+    # descend first steps until the leaf workflow/step pair is reached.
+    # The descent ref is the parent *step's* mount reference — a ``wf/step``
+    # composite is not a loadable workflow reference, so it must be looked
+    # up in the parent workflow itself.
+    chain = _build_position_chain(
+        _step_mount_ref(parent_workflow, parent_step, workflows_dir, local_workflows_dir),
+        parent_workflow, parent_step,
+        fetch_cache, {parent_workflow},
+        workflows_dir, scaffold_branch,
+        local_workflows_dir,
+        start_path=_resolve_outer_path(parent_workflow, workflows_dir, local_workflows_dir),
+    )
+    if chain and chain[-1][0] == leaf_name and chain[-1][2] == leaf_step:
+        pass  # leaf already recorded — nothing to append
+    elif chain and chain[-1][0] == leaf_name:
+        # Leaf workflow reached but the step differs (re-entry, e.g.
+        # ``step_2: workflow: dev-review-loop`` where the executed step is
+        # ``implement``, not the child's first step) — substitute.
+        chain[-1] = (leaf_name, chain[-1][1], leaf_step)
+    else:
+        # The recorded parent pair is further out than the leaf (the flat
+        # state can carry the outermost level while the run executes a
+        # deeper level): append the leaf as the innermost node.
+        chain.append((leaf_name, "", leaf_step))
+    refs = [StepRef(workflow=name, step=step) for name, _, step in chain]
+    return WorkflowPosition(refs=refs) if refs else None
+
+
 def build_workflow_position(
     leaf_name: str,
     leaf_step: str,
@@ -792,51 +884,13 @@ def build_workflow_position(
     *inside* a sub-workflow (and every other non-entry resolution path)
     post the same full chain instead of ``position=None``.
     """
-    if not leaf_name:
-        return {"WORKFLOW_POSITION": "", "WORKFLOW_POSITION_PATH": ""}
-    if not parent_workflow:
-        # Top-level run (issue #646): the bare single-ref position is the
-        # run's canonical address — never empty.
-        bare = WorkflowPosition.bare(leaf_name, leaf_step)
-        return {
-            "WORKFLOW_POSITION": json.dumps(
-                bare.to_state_dict(), separators=(",", ":")
-            ),
-            "WORKFLOW_POSITION_PATH": f"{leaf_name}/{leaf_step}",
-        }
-    fetch_cache: dict = {}
-    # Anchor the chain on the parent pair (outermost recorded level) and
-    # descend first steps until the leaf workflow/step pair is reached.
-    # The descent ref is the parent *step's* mount reference — a ``wf/step``
-    # composite is not a loadable workflow reference, so it must be looked
-    # up in the parent workflow itself.
-    chain = _build_position_chain(
-        _step_mount_ref(parent_workflow, parent_step, workflows_dir, local_workflows_dir),
-        parent_workflow, parent_step,
-        fetch_cache, {parent_workflow},
-        workflows_dir, scaffold_branch,
-        local_workflows_dir,
-        start_path=_resolve_outer_path(parent_workflow, workflows_dir, local_workflows_dir),
+    return _position_pair_from_value(
+        build_workflow_position_value(
+            leaf_name, leaf_step, parent_workflow, parent_step, workflows_dir,
+            scaffold_branch=scaffold_branch,
+            local_workflows_dir=local_workflows_dir,
+        )
     )
-    leaf_node = (leaf_name, "", leaf_step)
-    if chain and chain[-1][0] == leaf_name and chain[-1][2] == leaf_step:
-        pass  # leaf already recorded — nothing to append
-    elif chain and chain[-1][0] == leaf_name:
-        # Leaf workflow reached but the step differs (re-entry, e.g.
-        # ``step_2: workflow: dev-review-loop`` where the executed step is
-        # ``implement``, not the child's first step) — substitute.
-        chain[-1] = (leaf_name, chain[-1][1], leaf_step)
-    else:
-        # The recorded parent pair is further out than the leaf (the flat
-        # state can carry the outermost level while the run executes a
-        # deeper level): append the leaf as the innermost node.
-        chain.append(leaf_node)
-    position = _position_pair(chain)
-    path = position["WORKFLOW_POSITION_PATH"]
-    return {
-        "WORKFLOW_POSITION": position["WORKFLOW_POSITION"],
-        "WORKFLOW_POSITION_PATH": path if position["WORKFLOW_POSITION"] else "",
-    }
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -2009,6 +2063,31 @@ def _return_to_parent_marker(
     return marker
 
 
+def _enclosing_mount_refs(
+    chain: list[tuple[str, str]], workflows_dir: str
+) -> dict[str, str]:
+    """Map each ancestor level's declared name to its branch-mount reference.
+
+    ``chain`` is ordered immediate→outermost, so level ``i`` is mounted by
+    level ``i + 1``'s step; that step's declared ``workflow``/``path``
+    reference is the branch-checkout location of the level (issue #812) — a
+    branch-mounted child's declared ``name`` (``tmp-impl``) is not its
+    filename (``tmp_impl/workflow.yaml``), so a by-name lookup misses it. The
+    outermost level has no enclosing step (it lives in the default checkout)
+    and is left to by-name resolution. Later levels never overwrite an
+    earlier hint, keeping the innermost mount authoritative.
+    """
+    refs: dict[str, str] = {}
+    for i, (name, _step) in enumerate(chain):
+        if i + 1 >= len(chain):
+            break
+        outer_wf, outer_step = chain[i + 1]
+        ref = _parent_step_child_reference(outer_wf, outer_step, workflows_dir)
+        if ref and name not in refs:
+            refs[name] = ref
+    return refs
+
+
 def _return_to_parent_on_terminal(
     parent_workflow: str,
     parent_workflow_step: str,
@@ -2035,12 +2114,14 @@ def _return_to_parent_on_terminal(
     marker stays the fallback.
     """
     if parent_workflow and parent_workflow_step:
+        chain = _parent_chain_from_history(
+            history, current_workflow, parent_workflow, parent_workflow_step,
+        )
         load_ctx = WorkflowLoadContext(
             workflows_dir, local_workflows_dir, scaffold_branch, {},
+            _enclosing_mount_refs(chain, workflows_dir),
         )
-        for pair in _parent_chain_from_history(
-            history, current_workflow, parent_workflow, parent_workflow_step,
-        ):
+        for pair in chain:
             marker = _return_marker_for_parent(
                 pair, branch_result, workflows_dir,
                 local_workflows_dir, scaffold_branch, load_ctx=load_ctx,

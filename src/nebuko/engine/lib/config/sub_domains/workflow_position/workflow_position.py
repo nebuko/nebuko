@@ -56,6 +56,20 @@ class WorkflowPosition:
         """A new position with ``ref`` appended (sub-workflow entry)."""
         return WorkflowPosition(version=self.version, refs=[*self.refs, ref])
 
+    # @stub-protected: signature defined by architect — do not modify
+    def with_step(self, ref: StepRef) -> "WorkflowPosition":
+        """A new position with the leaf frame replaced by ``ref`` (issue #812).
+
+        Intra-workflow step move: a run already inside this position's leaf
+        workflow advances to ``ref`` *without* crossing a mount boundary, so
+        every enclosing frame is carried forward unchanged. Raises
+        ``ValueError`` when the path is empty — a move needs a frame to
+        replace; callers with no base build a bare position instead.
+        """
+        if not self.refs:
+            raise ValueError("with_step requires a non-empty position")
+        return WorkflowPosition(version=self.version, refs=[*self.refs[:-1], ref])
+
     def parent(self) -> Optional["WorkflowPosition"]:
         """A new position with the last ref dropped (return-to-parent).
 
