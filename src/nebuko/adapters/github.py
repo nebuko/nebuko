@@ -29,7 +29,7 @@ ARTIFACT_DIR_NAME = "nebuko-task-logs"
 # Durable copy of a comment body whose write could not be delivered (issue
 # #805), staged next to the run logs by ``run_loop._publish_fallback``. Wiring
 # the matching ``upload-artifact`` step into ``nebuko-workflow.yaml`` needs
-# ``workflows`` push permission and is tracked as remaining work in PR #811.
+# ``workflows`` push permission and is tracked as remaining work in PR #814.
 COMMENT_BODY_ARTIFACT = "comment-body.md"
 
 
