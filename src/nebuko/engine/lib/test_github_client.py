@@ -7,6 +7,7 @@ import pytest
 
 from github_client import (
     BOT_MARKER,
+    COMMENTS_PER_PAGE,
     ApiErrorKind,
     GitHubTransport,
     get_comment_body,
@@ -150,6 +151,26 @@ class TestGetIssueComments:
         result = get_issue_comments("owner/repo", 42, limit=2)
 
         assert [c["body"] for c in result] == ["c3", "c4"]
+
+    @patch("github_client.subprocess.run")
+    def test_tail_fetch_falls_back_when_link_header_is_missing(self, mock_run):
+        """A multi-page thread whose ``Link`` header is absent must not be
+        mistaken for a single page of the *newest* comments (issue #805)."""
+        first_page = [
+            {"id": str(i), "body": f"old{i}"} for i in range(COMMENTS_PER_PAGE)
+        ]
+        newest = [{"id": "n1", "body": "newer"}, {"id": "n2", "body": "newest"}]
+        # First a full first page with no Link header, then the paginated read.
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=json.dumps(first_page)),
+            MagicMock(returncode=0, stdout=json.dumps([first_page, newest])),
+        ]
+
+        result = get_issue_comments("owner/repo", 42, limit=2)
+
+        assert [c["body"] for c in result] == ["newer", "newest"]
+        assert mock_run.call_count == 2
+        assert "--paginate" in mock_run.call_args_list[1][0][0]
 
 
 class TestGetCommentNodeId:
@@ -395,3 +416,17 @@ class TestGitHubTransport:
 
         args = mock_run.call_args[0][0]
         assert "--include" not in args
+
+    @patch("github_client.subprocess.run")
+    def test_forwards_cwd_and_timeout_to_subprocess(self, mock_run):
+        """``ensure_pr`` runs git/gh from the real checkout, so the transport
+        must pass ``cwd``/``timeout`` through to ``subprocess.run``."""
+        mock_run.return_value = self._ok(stdout="{}")
+
+        _transport().call(
+            ["api", "/x"], mutative=False, cwd="/real/checkout", timeout=30
+        )
+
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs["cwd"] == "/real/checkout"
+        assert kwargs["timeout"] == 30

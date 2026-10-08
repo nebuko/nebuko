@@ -144,12 +144,22 @@ def _run(
     dry_run: bool = False,
     input_data: Optional[str] = None,
     env: Optional[dict] = None,
+    cwd: Optional[str] = None,
+    timeout: Optional[float] = None,
 ) -> subprocess.CompletedProcess:
     """Run a gh CLI command and return the result."""
     if dry_run:
         print(f"[DRY RUN] Would run: gh {' '.join(args)}", file=sys.stderr)
         return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
-    return subprocess.run(_gh_cli() + args, capture_output=True, text=True, input=input_data, env=env)
+    return subprocess.run(
+        _gh_cli() + args,
+        capture_output=True,
+        text=True,
+        input=input_data,
+        env=env,
+        cwd=cwd,
+        timeout=timeout,
+    )
 
 
 def _resolve_token(token: Optional[str]) -> Optional[str]:
@@ -277,6 +287,8 @@ class GitHubTransport:
         mutative: bool,
         env: Optional[Mapping[str, str]] = None,
         input_data: Optional[str] = None,
+        cwd: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> ApiCallResult:
         """Run one ``gh`` invocation with pacing and bounded retries."""
         last = ApiCallResult(
@@ -291,7 +303,9 @@ class GitHubTransport:
             if mutative:
                 self._last_write_at = self._monotonic()
             self.calls += 1
-            completed = self._exec(args, env=env, input_data=input_data)
+            completed = self._exec(
+                args, env=env, input_data=input_data, cwd=cwd, timeout=timeout
+            )
             result, headers = self._interpret(completed)
             self._observe(headers)
             kind = self._classify(result, headers)
@@ -415,13 +429,17 @@ class GitHubTransport:
         args: Sequence[str],
         env: Optional[Mapping[str, str]] = None,
         input_data: Optional[str] = None,
+        cwd: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> subprocess.CompletedProcess:
         argv = list(args)
         if argv and argv[0] == "api" and "--paginate" not in argv and "--jq" not in argv:
             # Capture response headers for budget observation. Skipped for
             # paginated (headers repeat per page) and ``--jq`` (raw) output.
             argv = ["api", "--include", *argv[1:]]
-        return _run(argv, env=self._env(env), input_data=input_data)
+        return _run(
+            argv, env=self._env(env), input_data=input_data, cwd=cwd, timeout=timeout
+        )
 
     @staticmethod
     def _interpret(completed: subprocess.CompletedProcess) -> Tuple[ApiCallResult, Dict[str, str]]:
@@ -487,6 +505,37 @@ def _read_comments_page(
     return comments, result.headers, error
 
 
+def _fetch_all_comments(
+    repo: str,
+    issue_number: int,
+    transport: GitHubTransport,
+) -> CommentsFetchResult:
+    """Read the whole thread with ``--paginate --slurp`` (oldest first)."""
+    result = transport.call(
+        [
+            "api",
+            "--paginate",
+            "--slurp",
+            f"/repos/{repo}/issues/{issue_number}/comments",
+        ],
+        mutative=False,
+    )
+
+    if not result.ok:
+        print(f"Error fetching comments: {result.detail}", file=sys.stderr)
+        return CommentsFetchResult(
+            ok=False, error_kind=result.error_kind, detail=result.detail
+        )
+
+    try:
+        comments = _flatten_pages(json.loads(result.payload))
+    except json.JSONDecodeError as e:
+        print(f"Failed to parse comments JSON: {e}", file=sys.stderr)
+        return CommentsFetchResult(ok=False, error_kind=ApiErrorKind.DECODE, detail=str(e))
+
+    return CommentsFetchResult(ok=True, comments=tuple(comments))
+
+
 def _fetch_comments_tail(
     repo: str,
     issue_number: int,
@@ -505,7 +554,16 @@ def _fetch_comments_tail(
     tail: List[dict] = list(comments or [])
 
     last_page = _last_page_from_link(headers.get("link"))
-    if last_page is not None and last_page > 1:
+    if last_page is None and len(tail) >= COMMENTS_PER_PAGE:
+        # The thread spans more than one page but the ``Link`` header did not
+        # expose the last page, so the tail jump cannot be trusted. Fall back
+        # to a full read rather than silently returning the *first* page's
+        # comments as if they were the newest (issue #805 review).
+        full = _fetch_all_comments(repo, issue_number, transport)
+        if not full.ok:
+            return full
+        tail = list(full.comments)
+    elif last_page is not None and last_page > 1:
         pages_needed = max(1, (limit + COMMENTS_PER_PAGE - 1) // COMMENTS_PER_PAGE)
         start = max(1, last_page - pages_needed + 1)
         tail = []
@@ -587,29 +645,7 @@ def fetch_issue_comments(
         # length, instead of paginating the entire history (issue #805).
         return _fetch_comments_tail(repo, issue_number, limit, transport)
 
-    result = transport.call(
-        [
-            "api",
-            "--paginate",
-            "--slurp",
-            f"/repos/{repo}/issues/{issue_number}/comments",
-        ],
-        mutative=False,
-    )
-
-    if not result.ok:
-        print(f"Error fetching comments: {result.detail}", file=sys.stderr)
-        return CommentsFetchResult(
-            ok=False, error_kind=result.error_kind, detail=result.detail
-        )
-
-    try:
-        comments = _flatten_pages(json.loads(result.payload))
-    except json.JSONDecodeError as e:
-        print(f"Failed to parse comments JSON: {e}", file=sys.stderr)
-        return CommentsFetchResult(ok=False, error_kind=ApiErrorKind.DECODE, detail=str(e))
-
-    return CommentsFetchResult(ok=True, comments=tuple(comments))
+    return _fetch_all_comments(repo, issue_number, transport)
 
 
 def get_comment_body(

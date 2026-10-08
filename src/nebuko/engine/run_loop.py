@@ -160,7 +160,7 @@ class PhaseResult:
     ok: bool
     body: str = ""
     error: str | None = None
-    error_type: str | None = None
+    error_type: type | None = None
 
 
 # Legacy bridge modules live directly under ``LIB_DIR`` and are imported by
@@ -223,6 +223,19 @@ def _gha_error(message: str) -> None:
     the Actions summary (issue #805).
     """
     print(f"::error::{message}")
+
+
+def _is_publish_error(exc_type: type | None) -> bool:
+    """True when ``exc_type`` is the adapter's ``PublishError`` (issue #805).
+
+    Compared by identity against the class object rather than by name so a
+    rename of the exception cannot silently disable the honest-publish path.
+    """
+    if exc_type is None:
+        return False
+    from nebuko.adapters.github import PublishError
+
+    return issubclass(exc_type, PublishError)
 
 
 # The bash guard reads the caller with ``sed -n 's/.*<!-- bot-agent-\([a-z]*\)
@@ -633,7 +646,7 @@ class Engine:
                 posted_body = self._publish_fallback(
                     agent_result, publication.error, publication.error_type
                 )
-                publish_failed = publication.error_type == "PublishError"
+                publish_failed = _is_publish_error(publication.error_type)
 
             # State and routing run regardless of a best-effort phase crash
             # (issue #766): ``build_output`` already overrode the dispatch with
@@ -731,7 +744,7 @@ class Engine:
         except Exception as exc:  # noqa: BLE001 - best-effort phase
             log.exception("[phase:%s] failed: %s", name, exc)
             return PhaseResult(
-                name=name, ok=False, error=str(exc), error_type=type(exc).__name__
+                name=name, ok=False, error=str(exc), error_type=type(exc)
             )
         return PhaseResult(
             name=name, ok=True, body="" if value is None else str(value)
@@ -739,7 +752,7 @@ class Engine:
 
     # @stub-protected
     def _publish_fallback(
-        self, agent_result: Any, error: str | None, error_type: str | None = None
+        self, agent_result: Any, error: str | None, error_type: type | None = None
     ) -> str:
         """Publish a durable, trigger-safe fallback when ``publish`` failed.
 
@@ -751,7 +764,7 @@ class Engine:
         final body is additionally staged as an artifact so the deliverable
         survives even if this fallback post is also rate-limited. Never raises.
         """
-        if error_type == "PublishError":
+        if _is_publish_error(error_type):
             self._publish_state["failed"] = True
             self._stage_failed_comment()
             _gha_error(f"comment publish failed: {error or 'unknown error'}")
