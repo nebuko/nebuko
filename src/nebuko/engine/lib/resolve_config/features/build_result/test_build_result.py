@@ -135,3 +135,92 @@ class TestBuildResult:
         finally:
             if os.path.exists("/tmp/step_prompt.md"):
                 os.unlink("/tmp/step_prompt.md")
+
+
+class TestConfigComplexityEmission:
+    """CONFIG_COMPLEXITY wiring + per-step tier resolution (issue #787)."""
+
+    def _tiered_dirs(self):
+        prompt_base, workflows_dir = _make_dirs()
+        with open(os.path.join(workflows_dir, "tiered.yaml"), "w") as f:
+            f.write(
+                "name: tiered\n"
+                "description: tiered\n"
+                "trigger:\n"
+                "  agents: [genius]\n"
+                "steps:\n"
+                "  - name: analyze\n"
+                "    agent: genius\n"
+                "    complexity: low\n"
+                "    next: plan\n"
+                "  - name: plan\n"
+                "    agent: genius\n"
+                "    next: null\n"
+            )
+        return prompt_base, workflows_dir
+
+    def test_step_declared_tier_reaches_config_complexity(self):
+        prompt_base, workflows_dir = self._tiered_dirs()
+        result = _build_result(
+            {"task": "genius", "config_workflow": "tiered", "config_step": "analyze"},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["CONFIG_COMPLEXITY"] == "low"
+
+    def test_config_complexity_is_emitted_for_genius_role(self):
+        # genius/review keep COMPLEXITY="N/A" but must still carry the tier
+        # through CONFIG_COMPLEXITY so the runtime override applies (#787).
+        prompt_base, workflows_dir = self._tiered_dirs()
+        result = _build_result(
+            {"task": "genius", "config_workflow": "tiered", "config_step": "analyze"},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["COMPLEXITY"] == "N/A"
+        assert result["CONFIG_COMPLEXITY"] == "low"
+
+    def test_explicit_dispatch_tier_wins_over_step(self):
+        prompt_base, workflows_dir = self._tiered_dirs()
+        result = _build_result(
+            {
+                "task": "genius",
+                "config_workflow": "tiered",
+                "config_step": "analyze",
+                "config_complexity": "high",
+            },
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["CONFIG_COMPLEXITY"] == "high"
+
+    def test_absent_tier_defaults_to_medium(self):
+        prompt_base, workflows_dir = self._tiered_dirs()
+        result = _build_result(
+            {"task": "genius", "config_workflow": "tiered", "config_step": "plan"},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["CONFIG_COMPLEXITY"] == "medium"
+
+    def test_dev_role_complexity_follows_step_tier(self):
+        prompt_base, workflows_dir = _make_dirs()
+        with open(os.path.join(workflows_dir, "devwf.yaml"), "w") as f:
+            f.write(
+                "name: devwf\n"
+                "description: dev tiered\n"
+                "trigger:\n"
+                "  agents: [genius]\n"
+                "steps:\n"
+                "  - name: implement\n"
+                "    agent: dev\n"
+                "    complexity: high\n"
+                "    next: null\n"
+            )
+        result = _build_result(
+            {"task": "dev", "config_workflow": "devwf", "config_step": "implement"},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["COMPLEXITY"] == "high"
+        assert result["CONFIG_COMPLEXITY"] == "high"

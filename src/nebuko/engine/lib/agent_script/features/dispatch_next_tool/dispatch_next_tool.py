@@ -51,9 +51,12 @@ class DispatchNextAction(Action):
             "the workflow definition."
         ),
     )
-    complexity: str = Field(
-        default="medium",
-        description="'low', 'medium', or 'high'. Defaults to 'medium'.",
+    complexity: Optional[str] = Field(
+        default=None,
+        description=(
+            "'low', 'medium', or 'high'. Omit to inherit the workflow step's "
+            "declared complexity (defaults to 'medium')."
+        ),
     )
     branch: Optional[str] = Field(
         default=None,
@@ -89,7 +92,7 @@ DISPATCH_NEXT_DESCRIPTION = """Record the workflow's next-step decision. You MUS
 Parameters:
 - status: 'advance' (route to the next step/agent), 'loop' (repeat the current step), or 'hold' (wait for human input).
 - agent: optional explicit target agent name; omit to let the workflow engine decide from the workflow definition.
-- complexity: 'low' | 'medium' | 'high' for the next agent.
+- complexity: 'low' | 'medium' | 'high' for the next agent; omit to inherit the workflow step's declared complexity (defaults to 'medium').
 - branch: optional workflow branch/condition key to route on (e.g. 'approved', 'rejected'); omit to let the engine use a default condition.
 - pin: set true to pin this step's output comment(s) for verbatim injection into downstream context; omit to leave unpinned.
 - reason: one-sentence justification.
@@ -149,7 +152,7 @@ def action_to_dispatch(action: DispatchNextAction) -> Optional[Dispatch]:
         return Dispatch(
             status=action.status,
             task_hint=action.agent,
-            complexity=action.complexity,
+            complexity=action.complexity or "",
             branch=action.branch,
             pin=action.pin,
             reason=action.reason,

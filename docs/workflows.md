@@ -40,6 +40,8 @@ steps:
 - `skill: [...]` attaches extra prompt context from `skills/` to that step.
 - `prompt:` injects a standing instruction into that step's agent context
   (see [Step Instructions](#step-instructions-prompt)).
+- `complexity: low|medium|high` declares the complexity tier for that step's
+  agent invocation (see [Per-step Complexity](#per-step-complexity)).
 - `human_gate: true` marks a step as a **security boundary**: the workflow is
   held after that step until a human releases it (see [Human Gates](#human-gates)).
 - Workflows can be started by an `@@mention` (matching `trigger.agents`), a
@@ -85,6 +87,47 @@ block scalars (`|` / `>`) are supported.
 per-step directives that should live inline in the workflow. Use
 `skill: [...]` for richer, multi-file, or reusable knowledge files in
 `skills/`. They compose: a step may have both.
+
+---
+
+## Per-step Complexity
+
+A step can declare the complexity tier for its own agent invocation with
+`complexity: low|medium|high`. This lets a workflow author cheaply price each
+step instead of paying the default `medium` on every one — for example a
+triage/`analyze` step that only drafts a context query can run `low`, while an
+architecture `plan` step can run `high`:
+
+```yaml
+steps:
+  - name: analyze
+    agent: genius
+    complexity: low      # triage + ctx-query drafting is cheap
+    next: context
+
+  - name: plan
+    agent: genius
+    complexity: high     # architecture work deserves the top tier
+    next: stub
+```
+
+The step **selects** the tier; the agent config **defines** it. What a tier
+means (model swap, temperature floor, reasoning effort) lives in
+`agents.<name>.complexity_overrides.<tier>` — see
+[configuration.md](./configuration.md#complexity-overrides-per-tier-configuration).
+
+**Precedence** (highest first):
+
+1. an explicit `complexity` in the agent's `dispatch_next` (the agent in the
+   loop knows best), then
+2. the step's `steps[].complexity`, then
+3. `medium`.
+
+The resolved tier is exported to the run as `CONFIG_COMPLEXITY` and drives the
+tier machinery at LLM-config resolution time. Note that the *first* step of a
+workflow has no preceding dispatch, so its declared `complexity` is the only
+thing that can lower its cost — this is the motivating case for the field
+(issue #787).
 
 ---
 

@@ -46,6 +46,30 @@ class TestResolveDispatch(unittest.TestCase):
         # The sentinel is always stripped so it never leaks into the body.
         self.assertNotIn("AGENT_RUN_CONFIG", message)
 
+    def test_tool_dispatch_complexity_propagates_to_function_call(self):
+        """An explicit dispatch tier rides the derived call_agent hand-off
+        (issue #787) so the callee keeps the caller's declared tier."""
+        fake = _FakeConv("conv-fc-complexity")
+        recorded = Dispatch(status="advance", task_hint="ctx", complexity="high")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=recorded
+        ):
+            _, function_call, _ = _resolve_dispatch(fake, "answer")
+        self.assertEqual(function_call.agent_name, "ctx")
+        self.assertEqual(function_call.complexity, "high")
+
+    def test_tool_dispatch_unset_complexity_stays_unset_on_function_call(self):
+        """No explicit tier -> the derived call keeps "" so the callee's step
+        tier applies instead of being masked by a hardcoded default (#787)."""
+        fake = _FakeConv("conv-fc-unset")
+        recorded = Dispatch(status="advance", task_hint="ctx")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=recorded
+        ):
+            _, function_call, _ = _resolve_dispatch(fake, "answer")
+        self.assertEqual(function_call.agent_name, "ctx")
+        self.assertEqual(function_call.complexity, "")
+
     def test_sentinel_only_resolves_as_before(self):
         """No tool call: the legacy sentinel resolves exactly as today
         (round-2 required test 4, the dual-mode regression guard)."""

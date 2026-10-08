@@ -1321,3 +1321,59 @@ class TestParentReturnFailureSurface:
         assert "no runnable source" in marker["REASON"]
         # The failure dict must not be decorated with a branch key.
         assert "branch" not in marker
+
+
+class TestStepComplexityEmission:
+    """Per-step declared complexity threading (issue #787)."""
+
+    @pytest.fixture
+    def complexity_workflows_dir(self, tmp_path: Path) -> Path:
+        (tmp_path / "tiered.yaml").write_text(yaml.dump({
+            "name": "tiered",
+            "description": "Workflow with a declared per-step tier",
+            "trigger": {"agents": ["genius"]},
+            "steps": [
+                {"name": "analyze", "agent": "genius", "complexity": "low", "next": "plan"},
+                {"name": "plan", "agent": "genius", "next": None},
+            ],
+        }))
+        return tmp_path
+
+    def test_declared_tier_is_emitted(self, complexity_workflows_dir):
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="genius", workflow_name="tiered", step_name="analyze",
+            branch_key="", workflows_dir=str(complexity_workflows_dir),
+            prompt_base="/tmp/prompts",
+        )
+        assert r["STEP_COMPLEXITY"] == "low"
+
+    def test_undeclared_tier_emits_empty_string(self, complexity_workflows_dir):
+        rwt = _import_workflow_step()
+        r = rwt(
+            task="genius", workflow_name="tiered", step_name="plan",
+            branch_key="", workflows_dir=str(complexity_workflows_dir),
+            prompt_base="/tmp/prompts",
+        )
+        assert r["STEP_COMPLEXITY"] == ""
+
+
+class TestResolveComplexityTier:
+    """The single resolution policy: dispatch > step > "medium" (issue #787)."""
+
+    def test_explicit_dispatch_wins_over_step(self):
+        resolve = _import_resolve_module()
+        assert resolve.resolve_complexity_tier("high", "low") == "high"
+
+    def test_step_tier_used_when_dispatch_unset(self):
+        resolve = _import_resolve_module()
+        assert resolve.resolve_complexity_tier("", "low") == "low"
+
+    def test_defaults_to_medium_when_both_unset(self):
+        resolve = _import_resolve_module()
+        assert resolve.resolve_complexity_tier("", "") == "medium"
+
+    def test_none_values_count_as_unset(self):
+        resolve = _import_resolve_module()
+        assert resolve.resolve_complexity_tier(None, None) == "medium"
+        assert resolve.resolve_complexity_tier(None, "high") == "high"
