@@ -235,6 +235,12 @@ Per-invocation dispatch fields override the YAML cascade. Precedence
 3. **Per-agent** — `agents.<name>` stanza in `agent-config.yaml`.
 4. **Per-LLM** — `llms.<name>` stanza in `agent-config.yaml`.
 
+The `complexity` tier used for a run is resolved as **explicit dispatch
+`complexity` > `steps[].complexity` (workflow YAML) > `"medium"`** (issue
+#787) and exported as `CONFIG_COMPLEXITY`. A workflow step can therefore
+declare a default tier for its own invocation — see
+[workflows.md](./workflows.md#per-step-complexity).
+
 ### Dynamic Complexity-Based Temperature
 
 When `complexity` is set in the dispatch and no explicit `temperature` override
@@ -256,8 +262,10 @@ parameter and only applies while `thinking_enabled` is true for the LLM.
 ### Complexity Overrides (per-tier configuration)
 
 An agent can swap its model, temperature, reasoning effort, and sampling
-parameters per dispatch-declared `complexity` tier. This enables cost/quality
-tiering — cheap settings for `low`, escalate to a stronger model for `high`.
+parameters per resolved `complexity` tier — an explicit dispatch `complexity`,
+else the workflow step's `steps[].complexity`, else `medium`. This enables
+cost/quality tiering — cheap settings for `low`, escalate to a stronger model
+for `high`.
 
 Keys are exactly `low`, `medium`, or `high`; each value is a **partial**
 override reusing the agent-stanza field names (`model`, `temperature`,

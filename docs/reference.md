@@ -45,7 +45,7 @@ The current dispatch contract (see
 |-------|------|-------------|
 | `status` | string | Agent outcome: `advance`, `loop`, `hold`, or `terminate`. The workflow engine resolves routing from this plus the workflow definition. |
 | `task_hint` | string | Optional suggested next agent (overrides workflow YAML). |
-| `complexity` | string | Complexity for the downstream agent: `low`, `medium`, `high`. Auto-adjusts temperature (see [configuration.md](./configuration.md)). |
+| `complexity` | string | Complexity for the downstream agent: `low`, `medium`, `high`. When unset, the downstream workflow step's declared `steps[].complexity` applies, else `medium` (issue #787). Auto-adjusts temperature (see [configuration.md](./configuration.md)). |
 | `reasoning` | string | Reasoning effort: `none`, `low`, `medium`, `xhigh` (`high` is an alias for `xhigh`). Only applies while thinking is enabled in the LLM config. |
 | `model` | string | Optional LLM model override for the downstream agent. |
 | `temperature` | float | Sampling override. |
@@ -63,8 +63,9 @@ The current dispatch contract (see
 | `pin` | bool | When true, pin this step's output comment(s) so downstream agents receive their full body verbatim (mirrors the `PIN_COMMENT` workflow input / env var). |
 | `reason` | string | Optional free-text explanation of the dispatch decision. |
 
-Defaults: `status: "advance"`, `complexity: "medium"`, `reasoning: "none"`,
-everything else empty/null.
+Defaults: `status: "advance"`, `reasoning: "none"`, everything else
+empty/null. An unset `complexity` falls back to the workflow step's declared
+`steps[].complexity`, else `"medium"` (issue #787).
 
 ### Legacy Flat Fields (Backward Compatibility)
 
@@ -116,6 +117,7 @@ graph-level invariants below are checked offline by
 | `steps[].conditions[].next` | condition | string/null | yes | Target step for that result. |
 | `steps[].skill` | step | string[] | no | Skills attached to the step prompt (files in `skills/`). |
 | `steps[].prompt` | step | string | no | Standing instruction injected into this step's agent context (multi-line YAML blocks supported). See [workflows.md](./workflows.md#step-instructions-prompt). |
+| `steps[].complexity` | step | string | no | Declared complexity tier for this step's agent invocation: `low`, `medium`, or `high`. A dispatch `complexity` overrides it; otherwise it selects `agents.<name>.complexity_overrides.<tier>` and the tier temperature floor (issue #787; see [configuration.md](./configuration.md#complexity-overrides-per-tier-configuration)). |
 | `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts the agent's `advance` and holds the workflow until a human releases it with `/nebuko resume` (see [workflows.md](./workflows.md#human-gates)). |
 
 Minimal valid workflow:
@@ -284,6 +286,7 @@ Variables the orchestrator sets/consumes per run:
 | `WORKFLOW_STEP` | `resolve_config` / `resolve_workflow` | Resolved current step name. |
 | `WORKFLOW_NEXT` | `resolve_config` / `resolve_workflow` | Next step name after the current one. |
 | `STEP_PROMPT_FILE` | `resolve_config` / `resolve_workflow` | Path to the step's standing instruction file (`steps[].prompt`). Empty when the step has no prompt. |
+| `CONFIG_COMPLEXITY` | `resolve_config` | Effective tier for this run (`low`/`medium`/`high`): an explicit dispatch `complexity`, else the step's `steps[].complexity`, else `medium`. Drives `agents.<name>.complexity_overrides.<tier>` and the tier temperature floor (issue #787). |
 | `RUN_SCRIPT` | `resolve_config` | `"true"` when the resolved step is a deterministic `script` step (no agent runs). |
 | `SCRIPT_PATH` | `resolve_config` | Repo-relative path of the script to run (from `script.path`). |
 | `SCRIPT_ARGS` | `resolve_config` | Space-joined argument string for the script (empty when none). |
