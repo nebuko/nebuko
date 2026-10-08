@@ -70,6 +70,7 @@ def build_state(
     dispatch: Optional[Dispatch] = None,
     function_call: Optional[FunctionCall] = None,
     callback: Optional[str] = None,
+    started_by: Optional[str] = None,
     position: Optional[dict] = None,
     soft_retry_attempt: bool = False,
     is_human_resume: bool = False,
@@ -110,6 +111,11 @@ def build_state(
         callback: Return address for a function-call callee (issue #765),
             carried from the caller's ``function_call.callback``. None clears
             it, so a stale callback cannot re-fire on a later transition.
+        started_by: Login of whoever started the workflow (issue #795).
+            Captured on the first run (``prev_state is None``) and carried
+            forward verbatim afterwards — a later run must not overwrite the
+            human who is on the hook with its own trigger author. None keeps
+            the previous value (and stays None on legacy blobs).
         position: v3 flat workflow position (issue #638), parsed from the
             WORKFLOW_POSITION env via ``parse_position_env`` — the
             ``WorkflowPosition.to_state_dict()`` block. Non-empty positions
@@ -140,6 +146,7 @@ def build_state(
         base_scaffold_branch = None
         base_issue = None
         base_pr = None
+        base_started_by = None
     else:
         base_version = prev_state.version
         base_history = list(prev_state.history)
@@ -151,6 +158,7 @@ def build_state(
         base_scaffold_branch = prev_state.scaffold_branch
         base_issue = prev_state.issue
         base_pr = prev_state.pull_request
+        base_started_by = prev_state.started_by
 
     # Build history entry for the current step
     # Normalize the position block to the flat v3 refs list (issue #638);
@@ -204,6 +212,10 @@ def build_state(
     new_scaffold_branch = (
         scaffold_branch if scaffold_branch is not None else base_scaffold_branch
     )
+
+    # Workflow starter (issue #795): capture on the first run, then carry the
+    # previous value forward so a chained run cannot re-point the human ping.
+    new_started_by = started_by or base_started_by
 
     # Preserve per-step soft-kill retry accounting across transitions (issue
     # #704). The counter is default-filled from the previous state so a
@@ -266,6 +278,7 @@ def build_state(
         dispatch=dispatch,
         function_call=function_call,
         callback=callback,
+        started_by=new_started_by,
         position=position_refs,
         soft_retry=new_soft_retry,
     )
