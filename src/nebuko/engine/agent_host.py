@@ -70,6 +70,11 @@ _REPORT_PROMPT = (
 
 _REPORT_TURN_TIMEOUT_S = 240.0
 
+#: The control-plane tool names the report turn may expose (issue #830). The
+#: report exists to fill the typed control slots, so the work tools are hidden
+#: for its duration.
+_ENGINE_TOOL_NAMES = frozenset(DEFAULT_ENGINE_TOOLS.tools)
+
 
 class InProcessAgentHost:
     """Run the legacy agent assembly in-process and capture the deliverable.
@@ -180,7 +185,8 @@ class InProcessAgentHost:
             return
         setattr(conversation, _REPORT_OFFSET_ATTR, _event_count(conversation))
         try:
-            _send_and_run(conversation, _REPORT_PROMPT)
+            with _report_tools_only(conversation):
+                _send_and_run(conversation, _REPORT_PROMPT)
         except Exception as error:  # noqa: BLE001 - degrade to the fallback chain
             log.warning("[phase:agent] report turn failed: %s", error)
             return
@@ -225,6 +231,46 @@ def _harvest_report(conversation: Any, tool_name: str) -> EngineToolPayload | No
         if harvested is not None:
             payload = harvested
     return payload
+
+
+@contextlib.contextmanager
+def _report_tools_only(conversation: Any) -> Iterator[None]:
+    """Restrict the report turn's tool surface to the control plane (issue #830).
+
+    The report turn exists to fill the typed control slots, so the work tools
+    must not be callable while it runs. The SDK resolves each step's toolset
+    from the agent's private ``_tools`` map (read fresh per LLM call), so the
+    host swaps in the engine tools for the turn's duration and restores the
+    original map afterwards — the same private seam the SDK's own runtime tool
+    registration uses. Hosts that do not expose that map (or that would not be
+    narrowed) are left untouched; the report prompt still constrains the turn.
+    """
+    agent = getattr(conversation, "agent", None)
+    resolved = getattr(agent, "_tools", None)
+    if not isinstance(resolved, dict) or not resolved:
+        yield
+        return
+    narrowed = {
+        name: tool for name, tool in resolved.items() if name in _ENGINE_TOOL_NAMES
+    }
+    if not narrowed or len(narrowed) == len(resolved):
+        yield
+        return
+
+    def _install(tools: dict) -> None:
+        lock = getattr(agent, "_tools_lock", None)
+        if lock is None:
+            object.__setattr__(agent, "_tools", tools)
+            return
+        with lock:
+            object.__setattr__(agent, "_tools", tools)
+
+    _install(narrowed)
+    log.info("[phase:agent] report turn tool surface restricted to %s", sorted(narrowed))
+    try:
+        yield
+    finally:
+        _install(resolved)
 
 
 def _send_and_run(conversation: Any, prompt: str) -> None:
