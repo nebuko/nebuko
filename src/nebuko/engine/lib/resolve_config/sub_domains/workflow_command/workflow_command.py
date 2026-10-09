@@ -14,6 +14,9 @@ Canonical actions (issue #635):
                    ``--issue`` and ``--from`` optional, both numeric
   - ``clean``      resource ``comments`` — local maintenance command (issue #679);
                    runs its script and starts no agent
+  - ``update``     resource ``circuit-breaker`` — set the per-issue
+                   circuit-breaker call limit (issue #839); ``--value`` required
+                   and numeric, human-only, agent-free
 
 Only the ``/nebuko``-prefixed form is recognized as a command; a bare
 ``clean comments`` line is not one (issue #679).
@@ -56,8 +59,8 @@ __all__ = [
 class WorkflowCommand:
     """Immutable parsed /nebuko <action> <resource> --flag value command."""
 
-    action: str  # "run" | "resume" | "force-step" | "delete" | "clean"
-    resource: Optional[str]  # "workflow" | "step" | "comments" | None (resume)
+    action: str  # "run" | "resume" | "force-step" | "delete" | "clean" | "update"
+    resource: Optional[str]  # "workflow" | "step" | "comments" | "circuit-breaker" | None
     params: Dict[str, str]  # named flags, e.g. {"name": "spec-driven-impl"}
 
 
@@ -98,13 +101,14 @@ class CommandParseResult:
     usage: Optional[str]  # @stub-protected  (correction hint, iff malformed)
 
 
-ACTIONS: Tuple[str, ...] = ("run", "resume", "force-step", "delete")
+ACTIONS: Tuple[str, ...] = ("run", "resume", "force-step", "delete", "update")
 
 RESOURCE_BY_ACTION: Dict[str, Optional[str]] = {
     "run": "workflow",
     "force-step": "step",
     "resume": None,
     "delete": "comments",
+    "update": "circuit-breaker",
 }
 
 FLAGS_BY_ACTION: Dict[str, Set[str]] = {
@@ -112,6 +116,7 @@ FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "force-step": {"name"},
     "resume": {"feedback"},
     "delete": {"issue"},
+    "update": {"value"},
 }
 
 #: Classification outcome for a single issue comment (issue #679).
@@ -134,10 +139,15 @@ COMMAND_REGISTRY: Dict[str, CommandClass] = {
     "force-step": "workflow",
     "delete": "local",
     "clean": "local",
+    "update": "local",
 }
 
 #: Required flags per action (absent ⇒ malformed ⇒ None).
-_REQUIRED_FLAGS: Dict[str, str] = {"run": "name", "force-step": "name"}
+_REQUIRED_FLAGS: Dict[str, str] = {
+    "run": "name",
+    "force-step": "name",
+    "update": "value",
+}
 
 #: Flags whose value consumes all tokens up to the next ``--`` token or the
 #: end of line (multi-word, e.g. ``--feedback fix the bug``).
@@ -147,7 +157,13 @@ _MULTIWORD_FLAGS = {"feedback"}
 #: non-numeric value makes the command malformed (⇒ None).
 _NUMERIC_FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "delete": {"issue"},
+    "update": {"value"},
 }
+
+#: Accepted spellings for a resource token, normalized to the canonical
+#: hyphenated form (issue #839). The request's ``circuit_breaker`` spelling is
+#: an alias of the canonical ``circuit-breaker`` resource.
+_RESOURCE_ALIASES: Dict[str, str] = {"circuit_breaker": "circuit-breaker"}
 
 #: Registry-local commands that reuse a core action's grammar (issue #679).
 #: ``clean`` is a registry alias of ``delete comments`` — same resource and
@@ -230,13 +246,15 @@ _USAGE_BY_ACTION: Dict[str, str] = {
     "force-step": "/nebuko force-step step --name <step>",
     "delete": "/nebuko delete comments [--issue <number>]",
     "clean": "/nebuko clean comments [--issue <number>]",
+    "update": "/nebuko update circuit-breaker --value <n>",
 }
 
 #: Usage shown when the action is missing or unrecognized.
 _USAGE_UNKNOWN_ACTION = (
     "unrecognized command; expected one of: "
     "/nebuko run workflow --name <workflow>, /nebuko resume, "
-    "/nebuko force-step step --name <step>, /nebuko delete comments"
+    "/nebuko force-step step --name <step>, /nebuko delete comments, "
+    "/nebuko update circuit-breaker --value <n>"
 )
 
 #: Usage shown for a leading ``/`` that is not a ``/nebuko`` invocation.
@@ -304,7 +322,12 @@ def parse_command(trigger_body: str) -> CommandParseResult:
     i = 1
     expected_resource = RESOURCE_BY_ACTION[grammar_action]
     if expected_resource is not None:
-        if i >= len(tokens) or tokens[i] != expected_resource:
+        if i >= len(tokens):
+            return _malformed_result("unknown_resource", action, grammar_action)
+        # Normalize alias spellings (e.g. ``circuit_breaker``) to the canonical
+        # resource token before validating (issue #839).
+        resource_token = _RESOURCE_ALIASES.get(tokens[i], tokens[i])
+        if resource_token != expected_resource:
             return _malformed_result("unknown_resource", action, grammar_action)
         i += 1
     params, detail = _parse_flags(tokens[i:], grammar_action)

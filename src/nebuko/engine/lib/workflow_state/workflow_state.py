@@ -75,6 +75,51 @@ class SoftRetryState(BaseModel):  # @stub-protected
         return SoftRetryState(step=step, attempts=0)
 
 
+class CircuitBreakerState(BaseModel):  # @stub-protected
+    """Per-issue circuit-breaker policy persisted in workflow_state (issue #839).
+
+    The breaker is a stateless mechanism: every run recounts the bot markers
+    and compares the count to an effective threshold. This model is the
+    per-issue *policy source* for that threshold, letting a human raise (or
+    tighten) the call budget for a single issue without touching the
+    ``circuit_breaker_threshold`` workflow parameter.
+
+    Fields:
+        limit: Per-issue override. ``None`` means "inherit the workflow
+            parameter" (``CIRCUIT_BREAKER_THRESHOLD``, effective default 25),
+            so a state blob predating this feature never silently regresses a
+            host running with a custom parameter.
+    """
+
+    limit: Optional[int] = None  # @stub-protected
+
+    def effective(self, env_default: int) -> int:  # @stub-protected
+        """Resolve the threshold: per-issue override wins, else ``env_default``.
+
+        Args:
+            env_default: The workflow-parameter threshold (the untouched
+                ``CIRCUIT_BREAKER_THRESHOLD`` value, default 25).
+
+        Returns:
+            The override when set, otherwise ``env_default``.
+        """
+        return self.limit if self.limit is not None else env_default
+
+    def with_limit(self, value: int) -> "CircuitBreakerState":  # @stub-protected
+        """Return a new policy carrying ``value`` as the per-issue limit.
+
+        Immutable replace mirroring :meth:`SoftRetryState.record`, so callers
+        (the ``update circuit-breaker`` command) never mutate shared state.
+
+        Args:
+            value: The new per-issue limit (a positive integer).
+
+        Returns:
+            A new :class:`CircuitBreakerState` with ``limit=value``.
+        """
+        return self.model_copy(update={"limit": value})
+
+
 class WorkflowState(BaseModel):
     """
     Structured workflow state embedded in GitHub comments.
@@ -113,6 +158,11 @@ class WorkflowState(BaseModel):
             retry the step in place (bounded by ``MAX_SOFT_RETRIES``) instead
             of advancing. Defaults to an empty counter, so legacy state blobs
             without this key load unchanged.
+        circuit_breaker: Per-issue circuit-breaker override (issue #839). When
+            set, it wins over the ``circuit_breaker_threshold`` workflow
+            parameter for this issue; when unset the parameter (default 25)
+            applies. Defaults to an empty policy, so legacy blobs without this
+            key load unchanged and serialize byte-identically.
         callback: Optional return address (issue #765). When this agent was
             reached through a ``function_call``, this is the caller to return
             to once the agent finishes without an explicit decision of its own
@@ -159,6 +209,12 @@ class WorkflowState(BaseModel):
     # Per-step soft-kill retry accounting (issue #704). default_factory keeps
     # legacy blobs without this key loadable and byte-identical on read.
     soft_retry: SoftRetryState = Field(default_factory=SoftRetryState)  # @stub-protected
+    # Per-issue circuit-breaker override (issue #839). default_factory keeps
+    # legacy blobs without this key loadable and byte-identical on read; an
+    # all-default policy serializes to nothing (exclude_defaults + collapse).
+    circuit_breaker: CircuitBreakerState = Field(  # @stub-protected
+        default_factory=CircuitBreakerState
+    )
 
     @model_validator(mode="before")
     @classmethod
