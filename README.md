@@ -188,8 +188,8 @@ before any agent executes:
 
 - a **circuit breaker** stops a runaway loop (bot-marker threshold, default 15);
 - a **loop guard** blocks same-agent loops and human-plus-agent ping races;
-- `CALLER_AUTH: on` restricts triggers to `OWNER` / `MEMBER` / `COLLABORATOR` —
-  recommended on public repositories so an outsider cannot burn your tokens;
+- `CALLER_AUTH` (on by default) restricts triggers to `OWNER` / `MEMBER` /
+  `COLLABORATOR` so an outsider cannot burn your tokens on a public repository;
 - a **`human_gate`** keeps design decisions human-owned.
 
 PAT requirements and security notes are in
