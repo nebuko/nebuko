@@ -191,6 +191,27 @@ def _format_tool_dict(tool_dict):
     return ", ".join(parts)
 
 
+def _accumulate_provider_health(agg, tokens_per_second, time_to_first_token):
+    """Fold one run's provider-health values into the aggregate sums.
+
+    Each metric has its own count so a run missing one value still contributes
+    the other (issue #829).
+    """
+    if tokens_per_second is not None:
+        agg["tps_sum"] += tokens_per_second
+        agg["tps_count"] += 1
+    if time_to_first_token is not None:
+        agg["ttft_sum"] += time_to_first_token
+        agg["ttft_count"] += 1
+
+
+def _format_provider_metric(total, count, decimals):
+    """Mean of a provider-health metric over observable runs, or 'n/a'."""
+    if not count:
+        return "n/a"
+    return f"{total / count:.{decimals}f}"
+
+
 def aggregate_by_model(all_metrics):
     """Aggregate metrics by model_name."""
     aggregated = defaultdict(lambda: {
@@ -207,6 +228,10 @@ def aggregate_by_model(all_metrics):
         "tool_calls_per_tool": {},
         "errors_per_tool": {},
         "tokens_per_tool": {},
+        "tps_sum": 0.0,
+        "tps_count": 0,
+        "ttft_sum": 0.0,
+        "ttft_count": 0,
     })
 
     for m in all_metrics:
@@ -225,6 +250,8 @@ def aggregate_by_model(all_metrics):
             tool_calls_per_tool = m.tool_calls_per_tool
             errors_per_tool = m.errors_per_tool
             tokens_per_tool = m.tokens_per_tool
+            tokens_per_second = m.tokens_per_second
+            time_to_first_token = m.time_to_first_token
         else:
             # Legacy dict support
             model = m.get("model_name", "unknown")
@@ -240,6 +267,8 @@ def aggregate_by_model(all_metrics):
             tool_calls_per_tool = m.get("tool_calls_per_tool", {})
             errors_per_tool = m.get("errors_per_tool", {})
             tokens_per_tool = m.get("tokens_per_tool", {})
+            tokens_per_second = m.get("tokens_per_second")
+            time_to_first_token = m.get("time_to_first_token")
 
         agg = aggregated[model]
         agg["runs"] += 1
@@ -252,6 +281,7 @@ def aggregate_by_model(all_metrics):
         agg["tool_calls_sum"] += tool_calls
         agg["error_rate_sum"] += error_rate
         agg["review_fix_requests_sum"] += fix_requests
+        _accumulate_provider_health(agg, tokens_per_second, time_to_first_token)
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
             agg["tool_calls_per_tool"], tool_calls_per_tool
@@ -294,6 +324,10 @@ def aggregate_by_agent(all_metrics):
         "tool_calls_per_tool": {},
         "errors_per_tool": {},
         "tokens_per_tool": {},
+        "tps_sum": 0.0,
+        "tps_count": 0,
+        "ttft_sum": 0.0,
+        "ttft_count": 0,
     })
 
     for m in all_metrics:
@@ -312,6 +346,8 @@ def aggregate_by_agent(all_metrics):
             tool_calls_per_tool = m.tool_calls_per_tool
             errors_per_tool = m.errors_per_tool
             tokens_per_tool = m.tokens_per_tool
+            tokens_per_second = m.tokens_per_second
+            time_to_first_token = m.time_to_first_token
         else:
             # Legacy dict support
             agent = m.get("agent_role", "unknown")
@@ -327,6 +363,8 @@ def aggregate_by_agent(all_metrics):
             tool_calls_per_tool = m.get("tool_calls_per_tool", {})
             errors_per_tool = m.get("errors_per_tool", {})
             tokens_per_tool = m.get("tokens_per_tool", {})
+            tokens_per_second = m.get("tokens_per_second")
+            time_to_first_token = m.get("time_to_first_token")
 
         agg = aggregated[agent]
         agg["runs"] += 1
@@ -339,6 +377,7 @@ def aggregate_by_agent(all_metrics):
         agg["tool_calls_sum"] += tool_calls
         agg["error_rate_sum"] += error_rate
         agg["review_fix_requests_sum"] += fix_requests
+        _accumulate_provider_health(agg, tokens_per_second, time_to_first_token)
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
             agg["tool_calls_per_tool"], tool_calls_per_tool
@@ -432,8 +471,8 @@ def generate_agent_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Agent Statistics Summary")
     lines.append("")
-    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
-    lines.append("|-------|------|-------------|---------------|-----------|-------------------|------------------|----------------------|----------------|-------------|--------------|----------------|")
+    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|")
 
     grand_runs = 0
     grand_input = 0
@@ -453,6 +492,12 @@ def generate_agent_summary_table(aggregated):
         avg_latency = agg["latency_sum"] / runs if runs else 0
         avg_llm_runtime = agg["llm_runtime_sum"] / runs if runs else 0
         avg_tool_calls = agg["tool_calls_sum"] / runs if runs else 0
+        avg_tps = _format_provider_metric(
+            agg.get("tps_sum", 0.0), agg.get("tps_count", 0), 1
+        )
+        avg_ttft = _format_provider_metric(
+            agg.get("ttft_sum", 0.0), agg.get("ttft_count", 0), 2
+        )
 
         # Calculate total tool errors across all runs
         total_errors = sum(agg["errors_per_tool"].values()) if agg["errors_per_tool"] else 0
@@ -471,6 +516,8 @@ def generate_agent_summary_table(aggregated):
             f"| {format_number(avg_context_window)} "
             f"| {avg_latency:.0f} "
             f"| {avg_llm_runtime:.0f} "
+            f"| {avg_tps} "
+            f"| {avg_ttft} "
             f"| {avg_tool_calls:.1f} "
             f"| {total_errors} "
             f"| {fix_requests} "
@@ -501,8 +548,8 @@ def generate_model_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Model Statistics Summary")
     lines.append("")
-    lines.append("| Model | Runs | Input Tokens | Output Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
-    lines.append("|-------|------|-------------|---------------|-----------|-------------------|------------------|----------------------|----------------|-------------|--------------|----------------|")
+    lines.append("| Model | Runs | Input Tokens | Output Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|")
 
     for model in sorted(aggregated.keys()):
         agg = aggregated[model]
@@ -514,6 +561,12 @@ def generate_model_summary_table(aggregated):
         avg_latency = agg["latency_sum"] / runs if runs else 0
         avg_llm_runtime = agg["llm_runtime_sum"] / runs if runs else 0
         avg_tool_calls = agg["tool_calls_sum"] / runs if runs else 0
+        avg_tps = _format_provider_metric(
+            agg.get("tps_sum", 0.0), agg.get("tps_count", 0), 1
+        )
+        avg_ttft = _format_provider_metric(
+            agg.get("ttft_sum", 0.0), agg.get("ttft_count", 0), 2
+        )
 
         # Calculate total tool errors across all runs
         total_errors = sum(agg["errors_per_tool"].values()) if agg["errors_per_tool"] else 0
@@ -530,6 +583,8 @@ def generate_model_summary_table(aggregated):
             f"| {format_number(avg_context_window)} "
             f"| {avg_latency:.0f} "
             f"| {avg_llm_runtime:.0f} "
+            f"| {avg_tps} "
+            f"| {avg_ttft} "
             f"| {avg_tool_calls:.1f} "
             f"| {total_errors} "
             f"| {fix_requests} "

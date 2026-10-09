@@ -38,6 +38,11 @@ from agent_script.features.run_agent.timeout_budget import (
     resolve_timeout_budget,
 )
 from agent_script.features.run_agent.wind_down_prompt import WIND_DOWN_PROMPT
+from agent_script.sub_domains.metrics.token_telemetry_collector import (
+    TokenTelemetryCollector,
+    install,
+    maybe_register_langfuse,
+)
 
 logger = get_logger(__name__)
 
@@ -300,13 +305,21 @@ def run_agent(
         condenser=get_default_condenser(llm=llm),
     )
 
+    # ── Token telemetry capture (issue #829) ─────────────────────
+    # The collector stamps each call's request start (via litellm.callbacks)
+    # and reads first-token/finish/usage from the streamed chunks; LangFuse
+    # self-registers only when its env keys opt in (default-off).
+    collector = TokenTelemetryCollector()
+    install(collector)
+    maybe_register_langfuse()
+
     # ── Conversation setup & supervised execution ────────────────
     conversation = Conversation(
         agent=agent,
         workspace=cwd,
         # Keep the streaming path live so the LLM timeout applies between
         # chunks rather than to the whole reasoning turn (issue #775).
-        token_callbacks=[_discard_token],
+        token_callbacks=[_discard_token, collector.on_token],
     )
 
     budget = resolve_timeout_budget()
