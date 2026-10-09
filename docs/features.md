@@ -201,7 +201,7 @@ comment parts by the GHA *Post Additional Message Parts* step.
 ## External Reference Sharing
 
 Contract for the web references `@@context` collects, so downstream agents
-actually see page content rather than 1–2 sentence SearXNG snippets:
+actually see page content rather than 1–2 sentence search snippets:
 
 - **Inline curated JSON (agent access path).** `@@context` reads each reference
   page in full, then emits a fenced ```json block inside the
