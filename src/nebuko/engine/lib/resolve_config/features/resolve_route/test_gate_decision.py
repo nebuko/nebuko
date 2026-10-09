@@ -41,13 +41,13 @@ GATED_WORKFLOW_YAML = (
     "name: default\n"
     "description: Standard workflow with a gated approval step\n"
     "trigger:\n"
-    "  agents: [genius]\n"
+    "  agents: [architect]\n"
     "steps:\n"
     "  - name: plan\n"
-    "    agent: genius\n"
+    "    agent: architect\n"
     "    next: stub_approval\n"
     "  - name: stub_approval\n"
-    "    agent: genius\n"
+    "    agent: architect\n"
     "    human_gate: true\n"
     "    next: implement\n"
     "    conditions:\n"
@@ -83,7 +83,7 @@ def _held_state(
     return WorkflowState(
         workflow="default",
         step=step,
-        agent="genius",
+        agent="architect",
         dispatch=Dispatch(status="hold", reason=reason),
         position=[StepRef(workflow="default", step=step)],
         gate_history=list(gate_history or []),
@@ -162,7 +162,7 @@ class TestResolveGateDecisionPath(unittest.TestCase):
             )
         self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
         # Re-runs the gated step's own agent, not the on_result successor.
-        self.assertEqual(cfg["task"], "genius")
+        self.assertEqual(cfg["task"], "architect")
         self.assertEqual(cfg["config_step"], "stub_approval")
         decision = json.loads(cfg["config_gate_decision"])
         self.assertEqual(decision["status"], "rejected")
@@ -175,7 +175,7 @@ class TestResolveGateDecisionPath(unittest.TestCase):
                 _held_state(), _cmd("/nebuko reject gate"), HUMAN, tmpdir
             )
         self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
-        self.assertEqual(cfg["task"], "genius")
+        self.assertEqual(cfg["task"], "architect")
         self.assertEqual(cfg["config_step"], "plan")
 
     def test_duplicate_approve_is_single_shot_noop(self):
@@ -239,9 +239,9 @@ class TestGateCommandIntegration(unittest.TestCase):
     def _setup_prompt_base():
         prompt_base = tempfile.mkdtemp()
         os.makedirs(os.path.join(prompt_base, "dev"), exist_ok=True)
-        os.makedirs(os.path.join(prompt_base, "genius"), exist_ok=True)
+        os.makedirs(os.path.join(prompt_base, "architect"), exist_ok=True)
         os.makedirs(os.path.join(prompt_base, "review"), exist_ok=True)
-        for role in ("dev", "genius", "review"):
+        for role in ("dev", "architect", "review"):
             with open(os.path.join(prompt_base, role, "system.md"), "w") as f:
                 f.write(f"# {role} prompt")
         return prompt_base

@@ -437,7 +437,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             self._write_workflow(
                 tmpdir,
                 "wf",
-                "  - name: plan\n    agent: genius\n    next: implement\n",
+                "  - name: plan\n    agent: architect\n    next: implement\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
             dispatch = Dispatch(status="advance", branch="approved")

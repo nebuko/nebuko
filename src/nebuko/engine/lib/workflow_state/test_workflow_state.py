@@ -169,7 +169,7 @@ class TestWorkflowStateGateFields(unittest.TestCase):
 
     def test_legacy_blob_without_gate_keys_loads_with_defaults(self):
         """Older state blobs (no gate_decision / gate_history) still load."""
-        raw = {"workflow": "default", "step": "plan", "agent": "genius"}
+        raw = {"workflow": "default", "step": "plan", "agent": "architect"}
         state = WorkflowState.model_validate(raw)
         self.assertIsNone(state.gate_decision)
         self.assertEqual(state.gate_history, [])
