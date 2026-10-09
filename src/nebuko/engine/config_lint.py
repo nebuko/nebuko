@@ -47,6 +47,7 @@ _RULE_PROMPT_FILE = "C4-prompt-file"
 _RULE_SKILL_FILE = "C5-skill-file"
 _RULE_UNREFERENCED = "C6-unreferenced-entry"
 _RULE_MCP_SERVERS = "C7-mcp-servers"
+_RULE_MISSING_ROLE = "C8-missing-role"
 
 RULE_SEVERITY: dict[str, str] = {
     _RULE_SCHEMA: _SEVERITY_ERROR,
@@ -56,6 +57,7 @@ RULE_SEVERITY: dict[str, str] = {
     _RULE_SKILL_FILE: _SEVERITY_ERROR,
     _RULE_UNREFERENCED: _SEVERITY_WARNING,
     _RULE_MCP_SERVERS: _SEVERITY_ERROR,
+    _RULE_MISSING_ROLE: _SEVERITY_WARNING,
 }
 
 # Canonical tool names accepted at run time. Source of truth:
@@ -374,6 +376,7 @@ class ConfigLinter:
         issues.extend(self._check_refs(raw))
         issues.extend(self._check_schema(raw))
         issues.extend(self._check_tools(raw))
+        issues.extend(self._check_roles(raw))
         issues.extend(self._check_mcp_servers(raw))
         issues.extend(self._check_prompt_files(raw, root, prompt_dirs))
         issues.extend(self._check_skill_files(raw, root, skill_dirs))
@@ -458,6 +461,27 @@ class ConfigLinter:
                             f"Use one of: {known}",
                         )
                     )
+        return issues
+
+    def _check_roles(self, raw: dict) -> list[LintIssue]:
+        """C8: every agent should declare a one-line ``role``.
+
+        Warning, not error: ``role`` feeds the injected "Your Team" section
+        (issue #476), so a missing one degrades team awareness but never breaks
+        a run.
+        """
+        issues: list[LintIssue] = []
+        for name, agent in _iter_agents(raw):
+            role = agent.get("role")
+            if not isinstance(role, str) or not role.strip():
+                issues.append(
+                    _make_issue(
+                        _RULE_MISSING_ROLE,
+                        f"agent '{name}' has no role",
+                        f"agents.{name}.role",
+                        "Add a one-line role describing what this agent does",
+                    )
+                )
         return issues
 
     def _check_mcp_servers(self, raw: dict) -> list[LintIssue]:

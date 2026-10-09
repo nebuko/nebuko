@@ -1,7 +1,7 @@
 """Spec-scenario tests for the agent-config linter (issue #774).
 
 The workflow linter (``nebuko.engine.lint``) covers graph-level defects; these
-scenarios pin the sibling ``ConfigLinter`` contract (rules C1–C7) for the layered
+scenarios pin the sibling ``ConfigLinter`` contract (rules C1–C8) for the layered
 agent-config: every fixture is a complete providers → llms → agents mapping so
 the other rules stay quiet unless they are the subject of the scenario.
 """
@@ -17,8 +17,9 @@ from nebuko.engine.lint import LintIssue
 FIXTURES = Path(__file__).parent / "config_lint_fixtures"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Rules and severities fixed by the approved plan (issue #774): C6 is the only
-# warning that ``strict`` promotes; every other rule is an error.
+# Rules and severities fixed by the approved plan (issue #774) plus C8 from
+# issue #476: C6 and C8 are the warnings that ``strict`` promotes; every other
+# rule is an error.
 RULE_SEVERITY_EXPECTED = {
     "C1-schema": "error",
     "C2-dangling-ref": "error",
@@ -27,6 +28,7 @@ RULE_SEVERITY_EXPECTED = {
     "C5-skill-file": "error",
     "C6-unreferenced-entry": "warning",
     "C7-mcp-servers": "error",
+    "C8-missing-role": "warning",
 }
 
 FILE_RULES = ("C4-prompt-file", "C5-skill-file")
@@ -81,6 +83,7 @@ class TestConfigLinterContract:
             "_check_refs",
             "_check_schema",
             "_check_tools",
+            "_check_roles",
             "_check_mcp_servers",
             "_check_prompt_files",
             "_check_skill_files",
@@ -96,8 +99,9 @@ class TestConfigLinterContract:
 
 class TestRuleScenarios:
     def test_c1_collects_every_schema_error_not_just_the_first(self):
-        issues = _lint("c1_schema.yaml")
-        assert all(issue.rule == "C1-schema" for issue in issues)
+        # ``c1_schema.yaml`` declares no ``role``, so C8 is reported alongside —
+        # the scenario is about C1 collecting every schema error, not the first.
+        issues = _by_rule(_lint("c1_schema.yaml"), "C1-schema")
         locations = {issue.location for issue in issues}
         assert {"agents.a.temperature", "agents.a.prompt_file"} <= locations
 
@@ -125,6 +129,14 @@ class TestRuleScenarios:
     def test_c5_flags_a_missing_skill_file(self):
         issues = _by_rule(_lint("c5_missing_skill.yaml"), "C5-skill-file")
         assert [issue.location for issue in issues] == ["agents.a.skills"]
+
+    def test_c8_warns_on_a_missing_or_blank_role(self):
+        issues = _by_rule(_lint("c8_missing_role.yaml"), "C8-missing-role")
+        assert [issue.location for issue in issues] == [
+            "agents.a.role",
+            "agents.b.role",
+        ]
+        assert all(issue.severity == "warning" for issue in issues)
 
     def test_c6_warns_on_dead_llm_and_provider_entries(self):
         issues = _by_rule(_lint("c6_unreferenced.yaml"), "C6-unreferenced-entry")

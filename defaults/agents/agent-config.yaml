@@ -69,23 +69,26 @@ llms:
 agents:
   architect:
     model: "${llms.qwen-3-6-27b}"
+    role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
     temperature: 0.4
-    prompt_file: ".agents/prompts/architect.md"
-    skills: ["call-agent", "posting-contract"]
+    prompt_file: "defaults/prompts/architect.md"
+    skills: ["call-agent", "posting-contract", "planning"]
     tools: ["think", "finish", "dispatch_next"]
 
   dev:
     model: "${llms.qwen-3-6-27b}"
+    role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     temperature: 0.1
-    prompt_file: ".agents/prompts/dev.md"
-    skills: ["posting-contract"]
+    prompt_file: "defaults/prompts/dev.md"
+    skills: ["posting-contract", "git-pr-workflow"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch"]
 
   context:
     model: "${llms.qwen-3-6-27b}"
+    role: "Read-only context collector — gathers and compiles codebase facts for other agents."
     temperature: 0.1
-    prompt_file: ".agents/prompts/context.md"
-    skills: ["call-agent", "posting-contract"]
+    prompt_file: "defaults/prompts/context.md"
+    skills: ["call-agent", "posting-contract", "context-research"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
     mcp_servers:
       - name: "brave-search"
@@ -101,13 +104,15 @@ agents:
 
   review:
     model: "${llms.qwen-3-6-27b}"
+    role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
     temperature: 0.4
-    prompt_file: ".agents/prompts/review.md"
-    skills: ["posting-contract"]
+    prompt_file: "defaults/prompts/review.md"
+    skills: ["posting-contract", "plan-review", "retrospective"]
     tools: ["think", "finish", "dispatch_next"]
 
   po:
     model: "${llms.qwen-3-6-27b}"
-    prompt_file: ".agents/prompts/po.md"
-    skills: ["call-agent", "posting-contract"]
+    role: "Product owner — triages and refines issues into actionable specs; never modifies code."
+    prompt_file: "defaults/prompts/po.md"
+    skills: ["call-agent", "posting-contract", "issue-refinement"]
     tools: ["think", "finish", "dispatch_next"]

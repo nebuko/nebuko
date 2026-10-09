@@ -177,3 +177,25 @@ returns to `issue`.
 An agent posts an answer with no sentinel at all. The engine resolves
 `dispatch = hold` with an observable reason (§5) rather than continuing the
 workflow.
+
+---
+
+## 7. What the agent is told (injected team context)
+
+The delegation and call-back contract above is **engine-enforced**; the prompt
+only carries a reminder, injected once per run by
+`resolve_config/features/team_context/team_context.py`. Every built system
+prompt gains one **"Your Team"** section listing the agent's own role, its
+teammates' roles (from each agent's config `role:`), and two rules:
+
+- work outside your own tool scope must be delegated through the `call_agent`
+  mechanism (see [`call-agent.md`](../defaults/skills/call-agent.md)) — `@@`
+  mentions are for humans only (issue #478);
+- when a teammate calls you, your answer is returned to them by the engine's
+  callback (precedence rule 3) — treat it as a conversation turn, not
+  fire-and-forget.
+
+When the run was started by a bot call, the section also names the caller:
+`You were called by <caller> — your result returns to <caller>.` The reminder is
+worded to match this contract literally; it adds no mechanism of its own. See
+[agents-and-skills.md — Team Context Injection](./agents-and-skills.md#team-context-injection).

@@ -1,27 +1,45 @@
 # Agents & Skills
 
-The system ships with 5 agents and 5 reusable skills. Each agent is declared
-in [`agent-config.yaml`](../defaults/agents/agent-config.yaml) (model, prompt file, tool
-whitelist) and defined by a system prompt in `.agents/prompts/{agent}.md`.
-Skills are standalone prompt files in `skills/` that can be attached to a
-workflow step via `skill: [...]` — see
+The system ships with 5 agents and 13 reusable skills. Each agent is declared
+in [`agent-config.yaml`](../defaults/agents/agent-config.yaml) (model, one-line
+`role`, prompt file, skills, tool whitelist) and defined by a system prompt in
+`defaults/prompts/{agent}.md`. Skills are standalone prompt files in
+`defaults/skills/` that can be attached to an agent by default (`skills:` in
+its config stanza) or to a workflow step via `skill: [...]` — see
 [workflows.md](./workflows.md#how-declarative-workflows-work).
+
+The reasoning behind this structure — central config over per-file frontmatter,
+personality-only prompts with procedure in skills, and the generated team
+context — is recorded in
+[ADR-0010: Agent File Structure](./adr/0010-agent-file-structure.md).
 
 ---
 
 ## Agent Roster
 
-| Agent | Role (one line) | Tools | Prompt | Typical workflow steps |
+The roster is **derived from the config**, not from a prompt file: the
+`agents:` map key is the agent name and its `role` field is the one-line
+description below. Adding an agent to `agent-config.yaml` is enough to make it
+routable, `@@`-mentionable, and visible in every other agent's team section —
+no code or prompt edit required.
+
+| Agent | Role (from config `role:`) | Tools | Prompt | Typical workflow steps |
 |-------|-----------------|-------|--------|------------------------|
-| `architect` | Principal engineer — plans and delegates, never codes | think, finish | `architect.md` | analyze, plan, architect, spec gates |
+| `architect` | Principal software engineer — analysis, architecture, planning, and delegation; never writes code | think, finish | `architect.md` | analyze, plan, architect, spec gates |
 | `context` | Read-only context collector | terminal, file_editor, task_tracker, think, finish | `context.md` | context, context_architect |
-| `dev` | Execution developer — implements and opens PRs | terminal, file_editor, task_tracker, think, finish | `dev.md` | implement, scaffold, sub_clean, final_fix |
-| `review` | Senior code reviewer — approves/rejects; runs issue retrospectives | think, finish | `review.md` | review, stub_review, final_review |
+| `dev` | Implementation engineer — writes code, runs tests, manages branches, commits, and PRs | terminal, file_editor, task_tracker, think, finish | `dev.md` | implement, scaffold, sub_clean, final_fix |
+| `review` | Code and plan reviewer — approves/rejects round by round; runs issue retrospectives | think, finish | `review.md` | review, stub_review, final_review |
 | `po` | Product owner — WHEN/IF/THEN specs and issue refinement | think, finish | `po.md` | spec (spec-driven), issue refinement |
 
-Behavior notes per agent live at the top of each prompt file; the product
-owner's issue-refinement behavior contract (question format, state markers,
-delegation rules) is also documented in [`AGENTS.md`](../AGENTS.md).
+Behavior notes per agent live at the top of each prompt file (personality and
+core rules only); the product owner's issue-refinement behavior contract
+(question format, state markers, delegation rules) lives in the
+[`issue-refinement`](../defaults/skills/issue-refinement.md) skill.
+
+Prompts themselves hold only **personality and core rules**. Procedural
+playbooks (search strategy, git/PR mechanics, planning, review modes, issue
+refinement) are skills, injected on demand — see
+[The Skills System](#the-skills-system).
 
 ---
 
@@ -82,20 +100,30 @@ markers (see
 
 ## The Skills System
 
-A skill is a Markdown prompt file in `skills/`. A workflow step attaches one or
-more with `skill: [name]`; the skill content is injected into that step's agent
-prompt, narrowing or constraining the agent's behavior for that step only.
+A skill is a Markdown prompt file in `defaults/skills/`. An agent attaches one or
+more by default through the `skills:` field of its `agent-config.yaml` stanza; a
+workflow step attaches one or more with `skill: [name]`. The skill content is
+injected into that agent's system prompt, narrowing or constraining its behavior
+for that run.
 
 | Skill | File | Purpose |
 |-------|------|---------|
+| `call-agent` | [`call-agent.md`](../defaults/skills/call-agent.md) | Teaches delegation via the `function_call` / `call_agent` mechanism and the `callback` return address. Default for `architect`, `context`, `po`. |
+| `posting-contract` | [`posting-contract.md`](../defaults/skills/posting-contract.md) | How the final answer is posted to the issue. Default for every agent. |
+| `context-research` | [`context-research.md`](../defaults/skills/context-research.md) | Search strategies and complexity-based exploration depth for `context`. |
+| `git-pr-workflow` | [`git-pr-workflow.md`](../defaults/skills/git-pr-workflow.md) | Rebase/PR mechanics, checkpoints, and git safety rules for `dev`. |
+| `planning` | [`planning.md`](../defaults/skills/planning.md) | Plan decomposition, `<splitPlan>` / `<planWorkflow>` mechanics, and orchestration modes for `architect`. |
+| `plan-review` | [`plan-review.md`](../defaults/skills/plan-review.md) | Plan-workflow review modes for `review`. |
+| `retrospective` | [`retrospective.md`](../defaults/skills/retrospective.md) | Issue retrospective mode for `review`. |
+| `issue-refinement` | [`issue-refinement.md`](../defaults/skills/issue-refinement.md) | Issue refinement behavior contract (question format, state markers, delegation) for `po`. |
 | `stub-only` | [`stub-only.md`](../defaults/skills/stub-only.md) | Constrains `dev` to fill existing function stubs + write spec-matching tests. No new logic, no new files beyond helpers/tests. Used by `spec-driven` and `spec-driven-impl`. |
 | `scaffold-plan` | [`scaffold-plan.md`](../defaults/skills/scaffold-plan.md) | Converts the approved `<planWorkflow>` JSON block into a runnable per-step `tmp_impl/workflow.yaml` sub-workflow. Used by `plan-orchestration` (issue #462). |
 | `plan-cleanup` | [`plan-cleanup.md`](../defaults/skills/plan-cleanup.md) | Removes the `tmp_impl/` scaffolding after all plan steps are done. Used by `plan-orchestration`. |
 | `final-fix` | [`final-fix.md`](../defaults/skills/final-fix.md) | Addresses the final whole-PR review feedback across all plan steps. Used by `plan-orchestration`. |
 | `python` | [`python.md`](../defaults/skills/python.md) | Generic Python style/testing guidance (PEP 8, type hints, pytest). |
 
-Agents can also carry default `skills` in their `agent-config.yaml` stanza;
-step-level skills override/augment them.
+Agents carry default `skills` in their `agent-config.yaml` stanza; step-level
+skills override/augment them.
 
 ---
 
@@ -109,10 +137,13 @@ tools whitelisted in the agent's config.
 | `terminal` | | ✓ | ✓ | | |
 | `file_editor` | | ✓ | ✓ | | |
 | `task_tracker` | | ✓ | ✓ | | |
+| `dispatch_next` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `report_scaffold_branch` | | | ✓ | | |
 | `think` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `finish` | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-(`think` and `finish` are built-in defaults present for every agent.)
+(`think`, `finish` and `dispatch_next` are present for every agent;
+`report_scaffold_branch` is `dev`-only.)
 
 Rationale: planning and judgment roles (`architect`, `review`, `po`) can
 *only reason and reply* — they cannot accidentally modify the repository.
@@ -124,9 +155,46 @@ read-only-by-policy, unlike `architect`'s read-only-by-enforcement.
 
 ## Prompt File Convention
 
-Prompts live at `.agents/prompts/{agent}.md` and are loaded by the
+Prompts live at `defaults/prompts/{agent}.md` and are loaded by the
 `load_prompt` feature of the `agent_script` package. The path is resolved from
 the agent's `prompt_file` field in `agent-config.yaml`; the workflow step's
 context (workflow name, current step, history, issue context) is appended to
 the system prompt at runtime — the prompt file itself stays static and
 reusable across workflows.
+
+Runtimes re-resolve a configured prompt by its **basename** through the layered
+prompt lookup (`paths.resolve(ConfigKind.PROMPT, ...)`), so a deployment can
+override a shipped prompt by name without editing the config. Prompt files
+carry **personality and core rules only**; every agent's shared sections —
+generic exit discipline and the generated "Your Team" block — are injected
+once at run time, not stored in the file.
+
+---
+
+## Team Context Injection
+
+Every agent's system prompt carries a generated **"Your Team"** section,
+assembled from the live roster at run time
+(`engine/lib/resolve_config/features/team_context/team_context.py`):
+
+```
+# Your Team
+You are <self> — <role>
+Teammates:
+- <name>: <role>            # one line per other agent, from config `role:`
+Delegation rules:
+- Only do work covered by your own tools (...). Work in a teammate's scope must
+  be delegated to them via the `call_agent` mechanism (see the `call-agent`
+  skill); `@@<name>` mentions are for humans only.
+- When a teammate calls you, your answer is returned to them automatically (the
+  engine's `callback` routes it) — treat it as a conversation turn.
+[You were called by <caller> — your result returns to <caller>.]   # only when invoked by a bot
+```
+
+The same module injects one shared copy of the **generic exit rules** (removed
+from the individual prompt files), so each built prompt contains exactly one
+exit-rules section and exactly one team section. An unreadable roster degrades
+to no team section rather than failing the run, mirroring
+`config.load_agent_names`. See
+[handoff-and-callback.md](./handoff-and-callback.md) for the delegation and
+callback contract this section describes.

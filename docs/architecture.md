@@ -39,19 +39,25 @@ callers can select the runner via the `runs_on` workflow input (e.g.
 
 ## The 5-Agent Model
 
-| Agent | Role | Tools |
+Each agent's one-line role is **declared in config** (`role:` in
+[`agent-config.yaml`](../defaults/agents/agent-config.yaml)) and rendered into
+the others' "Your Team" section; the table below mirrors it.
+
+| Agent | Role (config `role:`) | Tools |
 |-------|------|-------|
-| `architect` | Principal engineer — analysis, architecture, planning; delegates everything else. Never writes code. | think, finish |
-| `context` | Context collection — locates files, extracts snippets, reports sources. Read-only; never modifies code. | terminal, file_editor, task_tracker, think, finish |
-| `dev` | Execution developer — implements plans, writes tests, opens PRs. | terminal, file_editor, task_tracker, think, finish |
-| `review` | Senior code reviewer — inspects diffs, issues approved/rejected verdicts; also runs issue retrospectives. | think, finish |
+| `architect` | Principal software engineer — analysis, architecture, planning; delegates everything else. Never writes code. | think, finish |
+| `context` | Context collector — locates files, extracts snippets, reports sources. Read-only; never modifies code. | terminal, file_editor, task_tracker, think, finish |
+| `dev` | Implementation engineer — implements plans, writes tests, opens PRs. | terminal, file_editor, task_tracker, think, finish |
+| `review` | Code and plan reviewer — inspects diffs, issues approved/rejected verdicts; also runs issue retrospectives. | think, finish |
 | `po` | Product owner — writes WHEN/IF/THEN specs and refines issue drafts with humans. | think, finish |
 
-Each agent = a prompt file (`.agents/prompts/{agent}.md`) + a model reference +
+Each agent = a prompt file (`defaults/prompts/{agent}.md`) + a model reference +
 a tool whitelist, declared in [`agent-config.yaml`](../defaults/agents/agent-config.yaml).
 Tools are a security boundary: planning agents (`architect`, `review`, `po`)
 physically cannot touch files, while execution agents (`dev`, `context`)
-can. Full details in [agents-and-skills.md](./agents-and-skills.md).
+can. The prompt holds personality and core rules only; procedural playbooks and
+the shared exit-rules/team sections are injected at run time. Full details in
+[agents-and-skills.md](./agents-and-skills.md).
 
 ---
 

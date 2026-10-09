@@ -107,11 +107,12 @@ llms:
 | Field | Type | Description |
 |-------|------|-------------|
 | `model` | `${ref}` | LLM entry from the `llms:` layer. |
+| `role` | string | One-line role description, rendered into every other agent's "Your Team" section. Optional; a missing role renders a placeholder and raises the `C8-missing-role` lint warning. |
 | `temperature` | float | Per-agent temperature override (floor for complexity adjustment). |
-| `prompt_file` | string | Path to the agent's system prompt (convention: `.agents/prompts/{agent}.md`). |
+| `prompt_file` | string | Path to the agent's system prompt (convention: `defaults/prompts/{agent}.md`). Only the basename is used at run time — the layered lookup re-resolves it, so deployments can override a prompt by name. |
 | `skills` | string[] | Skills attached to the agent by default. |
 | `complexity_overrides` | mapping<`low` \| `medium` \| `high`, object> | Per-tier partial overrides of model/sampling/reasoning. See [Complexity Overrides](#complexity-overrides-per-tier-configuration). |
-| `tools` | string[] | Tool whitelist: `terminal`, `file_editor`, `task_tracker` (SDK tools) plus `think`, `finish` (built-in defaults). See [agents-and-skills.md](./agents-and-skills.md). |
+| `tools` | string[] | Tool whitelist: `terminal`, `file_editor`, `task_tracker` (SDK tools) plus `think`, `finish`, `dispatch_next` (built-in defaults). See [agents-and-skills.md](./agents-and-skills.md). |
 | `mcp_servers` | object[] | MCP servers attached to the agent's conversation (see [MCP Servers](#mcp-servers)). |
 
 Example:
@@ -120,9 +121,10 @@ Example:
 agents:
   dev:
     model: "${llms.qwen-3-6-27b}"
-    prompt_file: ".agents/prompts/dev.md"
-    skills: []
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
+    role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
+    prompt_file: "defaults/prompts/dev.md"
+    skills: ["posting-contract", "git-pr-workflow"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
 ```
 
 ---
@@ -200,7 +202,7 @@ agents:
   architect:
     model: "${llms.qwen-3-6-27b}"      # → resolves to the qwen-3-6-27b LLM dict
     temperature: 1.0
-    prompt_file: ".agents/prompts/architect.md"
+    prompt_file: "defaults/prompts/architect.md"
     tools: ["think", "finish"]
 
 llms:
@@ -242,13 +244,13 @@ agents:
   architect:
     model: "${llms.qwen-3-6-30b}"
     temperature: 1.0
-    prompt_file: ".agents/prompts/architect.md"
+    prompt_file: "defaults/prompts/architect.md"
     skills: []
     tools: ["think", "finish"]   # planners never touch files
 
   dev:
     model: "${llms.qwen-3-6-30b}"
-    prompt_file: ".agents/prompts/dev.md"
+    prompt_file: "defaults/prompts/dev.md"
     complexity_overrides:
       low:
         temperature: 0.0
