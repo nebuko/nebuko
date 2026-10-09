@@ -359,3 +359,73 @@ class TestHistoryEntryDispatch(unittest.TestCase):
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.history[0].dispatch)
+
+
+class TestBuildStateStartedBy(unittest.TestCase):
+    """The workflow starter captured once and carried forward (issue #795)."""
+
+    def test_initial_state_captures_the_starter(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+            started_by="olivier-norture",
+        )
+        self.assertEqual(state.started_by, "olivier-norture")
+
+    def test_started_by_defaults_to_none(self):
+        state = build_state(None, workflow="default", step="analyze", agent="genius")
+        self.assertIsNone(state.started_by)
+
+    def test_carried_forward_verbatim_across_transitions(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+            started_by="olivier-norture",
+        )
+        # A later chained run is triggered by a bot comment; its TRIGGER_AUTHOR
+        # must not re-point the human ping at the bot.
+        nxt = build_state(
+            prev,
+            workflow="default",
+            step="context",
+            agent="ctx",
+            started_by="nebuko-bot",
+        )
+        self.assertEqual(nxt.started_by, "olivier-norture")
+
+    def test_a_later_run_without_a_starter_keeps_the_original(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+            started_by="olivier-norture",
+        )
+        nxt = build_state(prev, workflow="default", step="context", agent="ctx")
+        self.assertEqual(nxt.started_by, "olivier-norture")
+
+    def test_legacy_state_without_field_loads_none(self):
+        data = {
+            "version": 3,
+            "workflow": "default",
+            "step": "analyze",
+            "agent": "genius",
+            "history": [{"step": "analyze", "agent": "genius", "summary": "ok"}],
+        }
+        state = WorkflowState.model_validate(data)
+        self.assertIsNone(state.started_by)
+
+    def test_started_by_survives_a_state_roundtrip(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="genius",
+            started_by="olivier-norture",
+        )
+        restored = WorkflowState.model_validate_json(state.model_dump_json())
+        self.assertEqual(restored.started_by, "olivier-norture")

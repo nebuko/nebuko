@@ -118,6 +118,11 @@ class WorkflowState(BaseModel):
             to once the agent finishes without an explicit decision of its own
             (the agent-as-tools pattern). None for workflow-driven runs, so
             legacy blobs without this key load unchanged.
+        started_by: Login of whoever *started* the workflow (issue #795),
+            captured from the first run's trigger author and carried forward
+            verbatim by every later transition. It is the target of the
+            engine's human-action notices, so a chained run (whose own trigger
+            is a bot comment) still pings the human who is on the hook.
     """
 
     version: int = 1
@@ -144,6 +149,9 @@ class WorkflowState(BaseModel):
     # fall back to when this agent finishes without an explicit decision.
     # Cleared on every non-function-call transition so it cannot re-fire.
     callback: Optional[str] = None
+    # Login of whoever started the workflow (issue #795). Captured once (first
+    # run) then carried forward; None on legacy blobs, which load unchanged.
+    started_by: Optional[str] = None
     # Flat workflow step path, outermost-first, last ref = the step actually
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.

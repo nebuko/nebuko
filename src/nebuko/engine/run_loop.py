@@ -40,7 +40,7 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
     from nebuko.adapters.base import PlatformAdapter
-    from config import AgentStartNotice
+    from config import AgentStartNotice, HumanActionNotice
     from nebuko.engine.artifacts import RunArtifactStager
     from nebuko.engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
@@ -628,6 +628,21 @@ class Engine:
                 phases=tuple(phases),
             )
 
+        # Human-action notice (issue #795): the engine owns the human ping. A
+        # completed agent run that stopped the workflow — a human gate, a plain
+        # hold, or the terminal step — pings the workflow starter here, after
+        # the agent's own comment so the notice is the newest one on the thread.
+        # Only a run that actually ran its agent (the ``publish`` phase was
+        # reached) can demand action; a guard/terminal skip never does.
+        notice = self.human_action_notice(
+            routing=routing,
+            agent_ran="publish" in phases,
+            state=state,
+            resolved=resolved,
+        )
+        if notice is not None:
+            self.notify_human_action(notice)
+
         return RunOutcome(
             exit_code=_exit_code_for(routing),
             routing=routing,
@@ -730,15 +745,13 @@ class Engine:
         from resolve_config.resolve_config import resolve_config
 
         paths = NebukoPaths.discover(self.repo_root)
-        workflows_roots = paths.search_roots(ConfigKind.WORKFLOW)
+        workflows_dir, local_workflows_dir = self._workflow_dirs()
         resolved = dict(
             resolve_config(
                 trigger_body=trigger.body,
                 prompt_base=str(paths.directory(ConfigKind.PROMPT)),
-                workflows_dir=str(workflows_roots[-1]),
-                local_workflows_dir=(
-                    str(workflows_roots[0]) if len(workflows_roots) > 1 else None
-                ),
+                workflows_dir=workflows_dir,
+                local_workflows_dir=local_workflows_dir,
                 repo=self._repo(trigger),
                 issue_number=trigger.number or None,
                 debug=_is_true(self.env.get("CONFIG_DEBUG")),
@@ -898,6 +911,84 @@ class Engine:
             self.adapter.post(notice.render())
         except Exception as exc:  # noqa: BLE001 - a notice must not abort a run
             log.warning("[phase:agent] agent-start notice failed: %s", exc)
+
+    # @stub-protected
+    def notify_human_action(self, notice: HumanActionNotice) -> None:
+        """Post the engine's "human action needed" notice (issue #795).
+
+        The single emitter for a human ping: the engine — not an agent —
+        decides when a stop owes a human attention (a ``human_gate`` hold, a
+        plain hold, or end-of-workflow). Mirrors :meth:`notify_agent_started`:
+        a failed post is logged and swallowed, never aborting the run.
+        """
+        try:
+            self.adapter.post(notice.render())
+        except Exception as exc:  # noqa: BLE001 - a notice must not abort a run
+            log.warning("[phase:publish] human-action notice failed: %s", exc)
+
+    def human_action_notice(
+        self,
+        *,
+        routing: RoutingDecision,
+        agent_ran: bool,
+        state: WorkflowState | None,
+        resolved: Any,
+    ) -> HumanActionNotice | None:
+        """Classify the finished run into the human notice it owes, or ``None``.
+
+        An ``advance`` out of a step with no workflow successor is the
+        *completing* run reaching the end of the workflow, so it is normalized
+        to ``terminate`` before classification (issue #795); the follow-up run
+        that merely observes the terminal step skips the agent and is filtered
+        by ``agent_ran``.
+        """
+        if not agent_ran:
+            return None
+        status = routing.status
+        if status == "advance" and self._step_is_terminal(resolved):
+            status = "terminate"
+        ensure_import_path()
+        from config import HumanActionNotice
+
+        return HumanActionNotice.classify(
+            status,
+            routing.reason,
+            agent_ran=True,
+            target=self._trigger_author(state),
+            step=str(self._get(resolved, "WORKFLOW_STEP") or ""),
+            workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
+        )
+
+    def _step_is_terminal(self, resolved: Any) -> bool:
+        """True when the step this run executed has no workflow successor.
+
+        Only an ``advance`` out of an agent run consults this — see
+        :meth:`human_action_notice`. Reuses the router's own successor lookup so
+        the engine and the router agree on what "terminal" means.
+        """
+        workflow = str(self._get(resolved, "WORKFLOW_NAME") or "")
+        step = str(self._get(resolved, "WORKFLOW_STEP") or "")
+        if not (workflow and step):
+            return False
+        ensure_import_path()
+        from resolve_config.features.resolve_route.resolve_route import (
+            _workflow_successor,
+        )
+
+        workflows_dir, local_workflows_dir = self._workflow_dirs()
+        return (
+            _workflow_successor(workflow, step, workflows_dir, local_workflows_dir)
+            is None
+        )
+
+    def _workflow_dirs(self) -> tuple[str, str | None]:
+        """The workflow search roots the resolver uses (shipped, most-specific)."""
+        paths = NebukoPaths.discover(self.repo_root)
+        roots = paths.search_roots(ConfigKind.WORKFLOW)
+        return (
+            str(roots[-1]),
+            str(roots[0]) if len(roots) > 1 else None,
+        )
 
     # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:
@@ -1218,11 +1309,26 @@ class Engine:
                 return str(value)
         return ""
 
-    def _trigger_author(self) -> str:
-        """Author pinged by the crash-path fallback bodies."""
-        author = self.env.get("TRIGGER_AUTHOR")
-        if author:
-            return author
+    def _trigger_author(self, state: WorkflowState | None = None) -> str:
+        """Login the engine's human notices ping.
+
+        Precedence (issue #795): the workflow **starter** recorded in state — so
+        a chained, bot-triggered run still pings the human on the hook — then
+        the issue author, then the raw trigger author. Falls back to the
+        adapter's own trigger when the environment carries none.
+        """
+        if state is None:
+            state = self._seeded_prev_state.get("state") or self._previous_state()
+        candidates = (
+            getattr(state, "started_by", None) if state is not None else None,
+            getattr(getattr(state, "issue", None), "author", None)
+            if state is not None
+            else None,
+            self.env.get("TRIGGER_AUTHOR"),
+        )
+        for candidate in candidates:
+            if candidate and str(candidate).strip():
+                return str(candidate).strip()
         try:
             return self.adapter.read_trigger().author
         except Exception:  # noqa: BLE001 - a missing event payload is not fatal here

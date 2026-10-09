@@ -1061,6 +1061,7 @@ def build_output(
         dispatch=dispatch,
         function_call=function_call,
         callback=callback,
+        started_by=os.environ.get("TRIGGER_AUTHOR") or None,
         inject_context=inject_context,
         pin=pin,
         scaffold_branch=scaffold_branch,
