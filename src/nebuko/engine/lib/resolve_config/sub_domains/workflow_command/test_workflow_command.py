@@ -94,6 +94,36 @@ class TestParseValid:
     def test_run_step_still_requires_name(self):
         assert parse_workflow_command("/nebuko run workflow --step scaffold") is None
 
+    def test_run_with_nested_step_path(self):
+        # Dot-separated nested selector (issue #822): the grammar carries the
+        # raw value through; StepPath.parse is the authoritative validator.
+        cmd = parse_workflow_command(
+            "/nebuko run workflow --name plan-orchestration --step sub_impl.step_3"
+        )
+        assert cmd == WorkflowCommand(
+            action="run",
+            resource="workflow",
+            params={"name": "plan-orchestration", "step": "sub_impl.step_3"},
+        )
+
+    def test_run_with_deeply_nested_step_path(self):
+        cmd = parse_workflow_command(
+            "/nebuko run workflow --name plan-orchestration --step sub_impl.step_3.review"
+        )
+        assert cmd == WorkflowCommand(
+            action="run",
+            resource="workflow",
+            params={"name": "plan-orchestration", "step": "sub_impl.step_3.review"},
+        )
+
+    def test_force_step_with_nested_step_path(self):
+        cmd = parse_workflow_command(
+            "/nebuko force-step step --name sub_impl.step_3"
+        )
+        assert cmd == WorkflowCommand(
+            action="force-step", resource="step", params={"name": "sub_impl.step_3"}
+        )
+
     def test_force_step(self):
         cmd = parse_workflow_command("/nebuko force-step step --name implement")
         assert cmd == WorkflowCommand(
@@ -357,7 +387,7 @@ class TestParseCommandTyped:
         result = parse_command("/nebuko run workflow --default")
         assert result.status == "malformed"
         assert result.detail == "unknown_flag"
-        assert result.usage == "/nebuko run workflow --name <workflow> [--step <step>]"
+        assert result.usage == "/nebuko run workflow --name <workflow> [--step <step[.step...]>]"
 
     def test_duplicate_flag(self):
         result = parse_command("/nebuko resume --feedback a --feedback b")

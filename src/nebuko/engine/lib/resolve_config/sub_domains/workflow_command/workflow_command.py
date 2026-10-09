@@ -7,9 +7,11 @@ Value object + parser for the explicit first-line command grammar::
 Canonical actions (issue #635):
   - ``run``        resource ``workflow`` — start/switch a workflow; ``--name``
                    required, ``--step`` optional (enter at a dedicated step,
-                   issue #789)
+                   issue #789; a dotted ``a.b`` selector descends into mounted
+                   sub-workflows, issue #822)
   - ``resume``     no resource — resume the held step; ``--feedback`` optional
   - ``force-step`` resource ``step`` — jump to a step; ``--name`` required
+                   (dotted ``a.b`` selectors accepted, issue #822)
   - ``delete``     resource ``comments`` — batch-delete issue comments (issue #644);
                    ``--issue`` and ``--from`` optional, both numeric
   - ``clean``      resource ``comments`` — local maintenance command (issue #679);
@@ -267,9 +269,9 @@ def _parse_flags(
 #: (issue #804). Keyed by the invoked action (so the ``clean`` alias keeps its
 #: own spelling) with the grammar action as fallback.
 _USAGE_BY_ACTION: Dict[str, str] = {
-    "run": "/nebuko run workflow --name <workflow> [--step <step>]",
+    "run": "/nebuko run workflow --name <workflow> [--step <step[.step...]>]",
     "resume": "/nebuko resume [--feedback <text>]",
-    "force-step": "/nebuko force-step step --name <step>",
+    "force-step": "/nebuko force-step step --name <step[.step...]>",
     "delete": "/nebuko delete comments [--issue <number>] [--from <comment-id>]",
     "clean": "/nebuko clean comments [--issue <number>] [--from <comment-id>]",
     "update": "/nebuko update circuit-breaker --value <n>",

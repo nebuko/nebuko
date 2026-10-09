@@ -32,6 +32,7 @@ from .sub_domains.workflow_position.workflow_position import (
     parse_position_env,
 )
 from .sub_domains.step_ref.step_ref import StepRef
+from .sub_domains.step_path.step_path import SEGMENT_PATTERN, StepPath
 
 # Features
 from .features.resolve_refs.resolve_refs import resolve_refs, REF_PATTERN
@@ -81,6 +82,8 @@ __all__ = [
     "POSITION_STATE_VERSION",
     "parse_position_env",
     "StepRef",
+    "StepPath",
+    "SEGMENT_PATTERN",
     # Features
     "resolve_refs",
     "REF_PATTERN",
