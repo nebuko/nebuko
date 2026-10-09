@@ -171,23 +171,31 @@ jobs:
               contains(github.event.issue.body, '@@ctx') ||
               contains(github.event.issue.body, '/nebuko'))) ||
             (github.event_name == 'issue_comment' &&
-             (inputs.CALLER_AUTH == 'off' ||
-              contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-                       github.event.comment.author_association)) &&
-             ((!startsWith(github.event.comment.body, '<!-- bot-agent-') &&
+             (
+              ((inputs.CALLER_AUTH == 'off' ||
+                contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                         github.event.comment.author_association)) &&
+               ((!startsWith(github.event.comment.body, '<!-- bot-agent-') &&
+                 !startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
+                 (contains(github.event.comment.body, '@@architect') ||
+                  contains(github.event.comment.body, '@@context') ||
+                  contains(github.event.comment.body, '@@dev') ||
+                  contains(github.event.comment.body, '@@review') ||
+                  contains(github.event.comment.body, '@@po') ||
+                  contains(github.event.comment.body, '@@genius') ||
+                  contains(github.event.comment.body, '@@ctx') ||
+                  contains(github.event.comment.body, '/nebuko'))) ||
+                contains(github.event.comment.body, '"function_call"') ||
+                contains(github.event.comment.body, '<!-- workflow-continue -->') ||
+                contains(github.event.comment.body, '<!-- bot-subtask-complete') ||
+                contains(github.event.comment.body, '<!-- bot-trigger:'))) ||
+              (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                        github.event.comment.author_association) &&
+               !startsWith(github.event.comment.body, '<!-- bot-agent-') &&
                !startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
-               (contains(github.event.comment.body, '@@architect') ||
-                contains(github.event.comment.body, '@@context') ||
-                contains(github.event.comment.body, '@@dev') ||
-                contains(github.event.comment.body, '@@review') ||
-                contains(github.event.comment.body, '@@po') ||
-                contains(github.event.comment.body, '@@genius') ||
-                contains(github.event.comment.body, '@@ctx') ||
-                contains(github.event.comment.body, '/nebuko'))) ||
-              contains(github.event.comment.body, '"function_call"') ||
-              contains(github.event.comment.body, '<!-- workflow-continue -->') ||
-              contains(github.event.comment.body, '<!-- bot-subtask-complete') ||
-              contains(github.event.comment.body, '<!-- bot-trigger:')))
+               (contains(github.event.comment.body, '/nebuko approve gate') ||
+                contains(github.event.comment.body, '/nebuko reject gate')))
+             ))
           )
         env:
             BOT_MARKER: "<!-- bot-workflow-terminal -->"
@@ -200,6 +208,14 @@ jobs:
             # $GITHUB_ENV (issue #834). A step-level binding would shadow the
             # materialized value when the named secret is not passed.
             BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+            # Human-gate event-author identity (issue #648): forwarded from the
+            # GitHub event so the engine can verify a gate command's author
+            # out-of-band. Never derived from comment body markers (which are
+            # agent-writable). Falls back to the issue author for `issues`.
+            TRIGGER_AUTHOR_LOGIN: ${{ github.event.comment.user.login || github.event.issue.user.login }}
+            TRIGGER_AUTHOR_TYPE: ${{ github.event.comment.user.type || github.event.issue.user.type }}
+            TRIGGER_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association || github.event.issue.author_association }}
+            TRIGGER_COMMENT_ID: ${{ github.event.comment.id }}
         steps:
             - name: Clean global git config
               run:
