@@ -22,7 +22,14 @@ class TestDefaultRegistry:
     def test_dispatch_next_carries_the_routing_fields(self):
         spec = DEFAULT_ENGINE_TOOLS.tools["dispatch_next"]
         assert spec.payload_kind == "routing"
-        assert spec.payload_fields == ("status", "branch", "complexity", "reason")
+        assert spec.payload_fields == (
+            "status",
+            "branch",
+            "complexity",
+            "reason",
+            "agent",
+            "pin",
+        )
 
     def test_finish_is_the_work_loop_terminator(self):
         assert DEFAULT_ENGINE_TOOLS.work_loop_presence("finish") == "terminator"
@@ -45,7 +52,12 @@ class TestHarvest:
 
     def test_harvests_the_dispatch_routing_fields(self):
         action = SimpleNamespace(
-            status="advance", branch="approved", complexity="high", reason="done"
+            status="advance",
+            branch="approved",
+            complexity="high",
+            reason="done",
+            agent="review",
+            pin=True,
         )
         payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
         assert payload is not None
@@ -55,6 +67,8 @@ class TestHarvest:
             "branch": "approved",
             "complexity": "high",
             "reason": "done",
+            "agent": "review",
+            "pin": "true",
         }
 
     def test_missing_optional_fields_become_empty_strings(self):
@@ -65,7 +79,15 @@ class TestHarvest:
             "branch": "",
             "complexity": "",
             "reason": "",
+            "agent": "",
+            "pin": "",
         }
+
+    def test_an_unset_boolean_flag_is_empty_not_false(self):
+        # ``pin=False`` must read as "unset" so it never masks a fallback value.
+        action = SimpleNamespace(status="advance", pin=False)
+        payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
+        assert payload.fields["pin"] == ""
 
     def test_none_field_is_an_empty_string(self):
         action = SimpleNamespace(status="advance", branch=None, complexity=None, reason=None)

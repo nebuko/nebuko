@@ -112,7 +112,14 @@ class EngineToolRegistry(BaseModel):
 
 
 def _field_text(value: object) -> str:
-    """Coerce a typed action field to its stripped string form (``""`` if unset)."""
+    """Coerce a typed action field to its stripped string form (``""`` if unset).
+
+    Boolean flags render as ``"true"`` only when set: an unset flag is
+    indistinguishable from ``False``, so a falsy flag stays ``""`` and never
+    masks a fallback value (issue #830).
+    """
+    if isinstance(value, bool):
+        return "true" if value else ""
     if value is None:
         return ""
     return str(value).strip()
@@ -133,7 +140,10 @@ DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
         "dispatch_next": EngineToolSpec(
             name="dispatch_next",
             payload_kind="routing",
-            payload_fields=("status", "branch", "complexity", "reason"),
+            # ``agent``/``pin`` carry the explicit cross-agent override that the
+            # prose sentinel used to provide; dropping them here silently
+            # reverts a hand-off to the workflow's default next step (#830).
+            payload_fields=("status", "branch", "complexity", "reason", "agent", "pin"),
         ),
     }
 )

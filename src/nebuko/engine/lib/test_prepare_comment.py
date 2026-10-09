@@ -788,6 +788,18 @@ class TestRenderHandoffSentinel(unittest.TestCase):
         # Unset/blank fields are omitted, keeping the payload minimal.
         self.assertNotIn("complexity", dispatch)
 
+    def test_dispatch_carries_the_cross_agent_target_and_pin(self):
+        """#830: ``task_hint``/``pin`` reach the sentinel as ``agent``/``pin``."""
+        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
+
+        state = self._state(
+            dispatch=Dispatch(status="advance", task_hint="review", pin=True)
+        )
+        dispatch = self._payload(render_handoff_sentinel(state))["dispatch"]
+
+        self.assertEqual(dispatch["agent"], "review")
+        self.assertIs(dispatch["pin"], True)
+
     def test_function_call_is_rendered_alongside_dispatch(self):
         from workflow_state.sub_domains.dispatch.dispatch import Dispatch
         from workflow_state.sub_domains.function_call.function_call import FunctionCall

@@ -63,7 +63,8 @@ _REPORT_PROMPT = (
     "1. `finish` with `message` set to your COMPLETE, self-contained "
     "deliverable for this run - the full report that must be posted on the "
     "GitHub issue (not a one-line status note).\n"
-    "2. `dispatch_next` with your routing decision (status, and branch/"
+    "2. `dispatch_next` with your routing decision (status, plus `agent` when "
+    "you are explicitly overriding the workflow's next step, `pin`, and branch/"
     "complexity/reason when they apply).\n"
     "Put no deliverable prose outside the `finish` message."
 )
@@ -237,7 +238,13 @@ def _routing_payload(conversation: Any, state: Any) -> dict[str, Any] | None:
     if harvested is not None:
         direct = _drop_blanks(harvested.fields)
         if direct:
-            return direct
+            # The harvested fields win per key, but the report turn routinely
+            # omits the cross-agent target/pin: those live only in the work
+            # loop's resolution. Merge the state fallback underneath so an
+            # omitted key inherits it instead of silently reverting the
+            # hand-off to the workflow's default next step (issue #830).
+            fallback = _state_routing_fields(state) or {}
+            return {**fallback, **direct}
     if _report_payload(conversation) is None:
         return None
     return _state_routing_fields(state)
@@ -336,6 +343,15 @@ def _send_and_run(conversation: Any, prompt: str) -> None:
         with contextlib.suppress(Exception):
             conversation.interrupt()
         worker.join(30.0)
+        if worker.is_alive():
+            # The worker outlived the interrupt; the report turn is degraded and
+            # any further events it emits may leak into the harvest window. Log
+            # loudly so the fallback chain is the documented outcome of a run
+            # (issue #830 review).
+            log.error(
+                "[phase:agent] report turn worker still alive after interrupt "
+                "+ 30s join - harvesting a partially completed turn"
+            )
 
 
 def _event_count(conversation: Any) -> int:

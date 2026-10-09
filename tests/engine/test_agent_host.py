@@ -443,7 +443,14 @@ class TestEngineElicitedReportTurn:
     def test_typed_routing_payload_beats_the_state_fallback(
         self, tmp_path: Path
     ) -> None:
-        """The report turn's own dispatch wins over ``build_output``'s resolution."""
+        """The report turn's own field wins; an omitted field is inherited.
+
+        ``build_output`` resolves the run's dispatch from the typed
+        ``dispatch_next`` tool into the workflow state. The report turn's
+        ``dispatch_next`` is authoritative for the fields it sets, while a
+        field it omits (here the cross-agent target) still falls back to that
+        resolution instead of silently dropping the hand-off (issue #830).
+        """
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         conversation = _FakeConversation(
@@ -462,8 +469,32 @@ class TestEngineElicitedReportTurn:
 
         assert host.run("prompt")["dispatch"] == {
             "status": "hold",
+            "agent": "review",
             "reason": "await approval",
         }
+
+    def test_report_turn_agent_reaches_the_routing_decision(self, tmp_path: Path) -> None:
+        """#830: a report-turn ``dispatch_next(agent=...)`` survives the harvest.
+
+        The report turn is the sole source of the typed route after a report
+        run, so its cross-agent override must reach ``to_routing_decision``.
+        """
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FakeConversation(
+            events=[_end_tool_turn("finish", "note")],
+            report_events=[
+                _finish_report_event("Full report"),
+                _dispatch_report_event(status="advance", agent="review", pin=True),
+            ],
+        )
+        host = _host_for(repo_root, conversation, latest_answer="note")
+
+        result = host.run("prompt")
+
+        assert result["dispatch"]["agent"] == "review"
+        assert result["dispatch"]["pin"] == "true"
+        assert to_routing_decision(result["dispatch"]).agent == "review"
 
     def test_routes_from_the_state_when_the_report_returns_only_finish(
         self, tmp_path: Path

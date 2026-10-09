@@ -139,11 +139,28 @@ def merge_handoff_sentinels(*sources: str) -> str:
 
 
 # Typed sections rendered into the engine-owned hand-off sentinel, in the
-# canonical ``AgentRunConfig`` shape (issue #830). Only the fields the sentinel
-# contract defines are carried; a falsy/unset field is omitted so the rendered
-# payload stays minimal and JSON-stable.
-_DISPATCH_SENTINEL_FIELDS = ("status", "branch", "complexity", "reason", "workflow", "step")
-_FUNCTION_CALL_SENTINEL_FIELDS = ("function", "agent_name", "complexity", "reason", "callback")
+# canonical ``AgentRunConfig`` shape (issue #830). Each entry is
+# ``(sentinel_key, model_attribute)``; only truthy fields are carried, so an
+# unset field is omitted and the payload stays minimal and JSON-stable. The
+# dispatch model names the cross-agent target ``task_hint``; the sentinel
+# spells that routing field ``agent`` (what ``to_routing_decision`` reads).
+_DISPATCH_SENTINEL_FIELDS = (
+    ("status", "status"),
+    ("branch", "branch"),
+    ("complexity", "complexity"),
+    ("reason", "reason"),
+    ("workflow", "workflow"),
+    ("step", "step"),
+    ("agent", "task_hint"),
+    ("pin", "pin"),
+)
+_FUNCTION_CALL_SENTINEL_FIELDS = (
+    ("function", "function"),
+    ("agent_name", "agent_name"),
+    ("complexity", "complexity"),
+    ("reason", "reason"),
+    ("callback", "callback"),
+)
 
 
 def render_handoff_sentinel(state: WorkflowState | None) -> str:
@@ -184,11 +201,17 @@ def _handoff_sentinel_payload(state: WorkflowState | None) -> dict[str, object] 
     return payload or None
 
 
-def _populated_fields(source: object, fields: tuple[str, ...]) -> dict[str, object]:
-    """The truthy ``fields`` of a pydantic section model, as a plain dict."""
+def _populated_fields(
+    source: object, fields: tuple[tuple[str, str], ...]
+) -> dict[str, object]:
+    """The truthy ``(key, attribute)`` fields of a pydantic section, as a dict."""
     if source is None:
         return {}
-    return {field: value for field in fields if (value := getattr(source, field, None))}
+    return {
+        key: value
+        for key, attribute in fields
+        if (value := getattr(source, attribute, None))
+    }
 
 
 def _read_latest_answer(path: str = LATEST_ANSWER_FILE) -> str:
