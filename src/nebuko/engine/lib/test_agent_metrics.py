@@ -437,6 +437,44 @@ class TestAggregateByModel(unittest.TestCase):
         result = aggregate_by_model(metrics)
         self.assertAlmostEqual(result["gpt-4"]["total_cost"], 0.5)
 
+    def test_provider_health_means_metrics_objects(self):
+        """TPS/TTFT are averaged over the runs that observed them (#829)."""
+        first = self._make_metric("gpt-4")
+        first.tokens_per_second = 100.0
+        first.time_to_first_token = 0.5
+        second = self._make_metric("gpt-4")
+        second.tokens_per_second = 200.0
+        second.time_to_first_token = 0.7
+        agg = aggregate_by_model([first, second])["gpt-4"]
+        self.assertEqual(agg["tps_count"], 2)
+        self.assertEqual(agg["ttft_count"], 2)
+        self.assertAlmostEqual(agg["tps_sum"] / agg["tps_count"], 150.0)
+        self.assertAlmostEqual(agg["ttft_sum"] / agg["ttft_count"], 0.6)
+
+    def test_provider_health_counts_are_independent(self):
+        """A run missing one value still contributes the other."""
+        partial = self._make_metric("gpt-4")
+        partial.tokens_per_second = 90.0
+        agg = aggregate_by_model([partial])["gpt-4"]
+        self.assertEqual(agg["tps_count"], 1)
+        self.assertEqual(agg["ttft_count"], 0)
+
+    def test_provider_health_absent_leaves_counts_at_zero(self):
+        """Runs without observations leave both counters empty."""
+        agg = aggregate_by_model([self._make_metric("gpt-4")])["gpt-4"]
+        self.assertEqual(agg["tps_count"], 0)
+        self.assertEqual(agg["ttft_count"], 0)
+
+    def test_provider_health_legacy_dicts(self):
+        """Legacy dicts read the two provider-health keys."""
+        metrics = [
+            {"model_name": "gpt-4", "tokens_per_second": 10.0, "time_to_first_token": 1.0},
+            {"model_name": "gpt-4", "tokens_per_second": 20.0},
+        ]
+        agg = aggregate_by_model(metrics)["gpt-4"]
+        self.assertEqual(agg["tps_count"], 2)
+        self.assertEqual(agg["ttft_count"], 1)
+
 
 class TestAggregateByAgent(unittest.TestCase):
     """Test aggregate_by_agent function."""
@@ -794,6 +832,30 @@ class TestAggregateByAgent(unittest.TestCase):
         result = aggregate_by_agent(metrics)
         self.assertEqual(result["architect"]["runs"], 1)
         self.assertEqual(result["unknown"]["runs"], 1)
+
+    def test_provider_health_legacy_dicts(self):
+        """Legacy dict path reads both provider-health keys (#829)."""
+        metrics = [
+            {"agent_role": "dev", "tokens_per_second": 10.0, "time_to_first_token": 1.0},
+            {"agent_role": "dev", "time_to_first_token": 0.5},
+        ]
+        agg = aggregate_by_agent(metrics)["dev"]
+        self.assertEqual(agg["tps_count"], 1)
+        self.assertEqual(agg["ttft_count"], 2)
+        self.assertAlmostEqual(agg["ttft_sum"] / agg["ttft_count"], 0.75)
+
+    def test_provider_health_metrics_objects(self):
+        """Metrics objects feed the same sums/counters."""
+        metric = Metrics(
+            run_id="r1",
+            model_name="gpt-4",
+            agent_role="dev",
+            tokens_per_second=42.0,
+            time_to_first_token=0.25,
+        )
+        agg = aggregate_by_agent([metric])["dev"]
+        self.assertEqual(agg["tps_sum"], 42.0)
+        self.assertEqual(agg["ttft_count"], 1)
 
 
 class TestGenerateAgentSummaryTable(unittest.TestCase):
@@ -1485,6 +1547,50 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
         result_str = "\n".join(generate_model_summary_table(agg))
         self.assertIn("Cost (USD)", result_str)
         self.assertIn("$0.2500", result_str)
+
+    def test_agent_table_has_provider_health_columns(self):
+        """Agent table should expose the tokens/sec and TTFT columns (#829)."""
+        result_str = "\n".join(generate_agent_summary_table(self._make_aggregated_with_per_tool()))
+        self.assertIn("Avg Tokens/sec", result_str)
+        self.assertIn("Avg TTFT (s)", result_str)
+
+    def test_model_table_has_provider_health_columns(self):
+        """Model table should expose the tokens/sec and TTFT columns (#829)."""
+        result_str = "\n".join(generate_model_summary_table(self._make_aggregated_with_per_tool()))
+        self.assertIn("Avg Tokens/sec", result_str)
+        self.assertIn("Avg TTFT (s)", result_str)
+
+    def test_agent_table_renders_na_when_unobserved(self):
+        """Runs without provider-health observations render n/a."""
+        result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
+        architect_line = [l for l in result if "Architect" in l][0]
+        self.assertIn("| n/a | n/a |", architect_line)
+
+    def test_agent_table_renders_provider_health_means(self):
+        """Means are rendered from the sums and counts."""
+        agg = self._make_aggregated_with_per_tool()
+        agg["architect"].update(
+            {"tps_sum": 300.0, "tps_count": 2, "ttft_sum": 1.0, "ttft_count": 2}
+        )
+        result = generate_agent_summary_table(agg)
+        architect_line = [l for l in result if "Architect" in l][0]
+        self.assertIn("| 150.0 | 0.50 |", architect_line)
+
+    def test_agent_table_columns_align(self):
+        """Header, separator and rows must keep the same column count (#829)."""
+        lines = generate_agent_summary_table(self._make_aggregated_with_per_tool())
+        header_cols = lines[2].count("|")
+        self.assertEqual(lines[3].count("|"), header_cols)
+        arch_row = next(l for l in lines if l.startswith("| Architect "))
+        self.assertEqual(arch_row.count("|"), header_cols)
+
+    def test_model_table_columns_align(self):
+        """Header, separator and rows must keep the same column count (#829)."""
+        lines = generate_model_summary_table(self._make_aggregated_with_per_tool())
+        header_cols = lines[2].count("|")
+        self.assertEqual(lines[3].count("|"), header_cols)
+        arch_row = next(l for l in lines if l.startswith("| architect "))
+        self.assertEqual(arch_row.count("|"), header_cols)
 
 
 class TestParseHelpers(unittest.TestCase):
