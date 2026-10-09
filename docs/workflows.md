@@ -37,7 +37,7 @@ steps:
 - `conditions[]` give the agent a choice of where to go, based on the result
   it reports in its dispatch (`status` / `task_hint`). Always include a
   catch-all (e.g., `default`) so routing stays deterministic.
-- `skill: [...]` attaches extra prompt context from `skills/` to that step.
+- `skill: [...]` attaches extra prompt context from `defaults/skills/` to that step.
 - `prompt:` injects a standing instruction into that step's agent context
   (see [Step Instructions](#step-instructions-prompt)).
 - `complexity: low|medium|high` declares the complexity tier for that step's
@@ -99,7 +99,7 @@ unaffected.
 **`prompt:` vs `skill:`.** Use `prompt:` for short, self-contained,
 per-step directives that should live inline in the workflow. Use
 `skill: [...]` for richer, multi-file, or reusable knowledge files in
-`skills/`. They compose: a step may have both.
+`defaults/skills/`. They compose: a step may have both.
 
 ---
 

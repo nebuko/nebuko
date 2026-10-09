@@ -72,17 +72,17 @@ agents:
   architect:
     model: "${llms.my-model}"
     temperature: 1.0
-    prompt_file: ".agents/prompts/architect.md"
+    prompt_file: "defaults/prompts/architect.md"
     tools: ["think", "finish"]
 
   dev:
     model: "${llms.my-model}"
-    prompt_file: ".agents/prompts/dev.md"
+    prompt_file: "defaults/prompts/dev.md"
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
   review:
     model: "${llms.my-model}"
-    prompt_file: ".agents/prompts/review.md"
+    prompt_file: "defaults/prompts/review.md"
     tools: ["think", "finish"]
 ```
 
