@@ -185,6 +185,9 @@ trigger body
 │                                     (replay/fork within the current run)
 ├─ /nebuko delete comments ─────────► deterministic comment deletion
 │  /nebuko clean comments            (alias; terminal, no agent runs)
+├─ /nebuko update circuit-breaker --value <n>
+│                                    ► persist a per-issue breaker limit in
+│                                     workflow_state (terminal, no agent runs)
 ├─ /nebuko run workflow --name <name> [--step <step>]
 │                                    ► start/switch to workflow <name>; a fresh
 │                                     run entering at <step> (default: first step)

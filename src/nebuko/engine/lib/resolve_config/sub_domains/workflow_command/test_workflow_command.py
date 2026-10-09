@@ -25,7 +25,7 @@ from resolve_config.sub_domains.workflow_command.workflow_command import (  # no
 
 class TestTables:
     def test_actions(self):
-        assert ACTIONS == ("run", "resume", "force-step", "delete")
+        assert ACTIONS == ("run", "resume", "force-step", "delete", "update")
 
     def test_resource_by_action(self):
         assert RESOURCE_BY_ACTION == {
@@ -33,6 +33,7 @@ class TestTables:
             "force-step": "step",
             "resume": None,
             "delete": "comments",
+            "update": "circuit-breaker",
         }
 
     def test_flags_by_action(self):
@@ -41,6 +42,7 @@ class TestTables:
             "force-step": {"name"},
             "resume": {"feedback"},
             "delete": {"issue"},
+            "update": {"value"},
         }
 
 
@@ -137,6 +139,25 @@ class TestParseValid:
         cmd = parse_workflow_command("/nebuko clean comments --issue 123")
         assert cmd == WorkflowCommand(
             action="clean", resource="comments", params={"issue": "123"}
+        )
+
+    # /nebuko update circuit-breaker --value <n> (issue #839)
+    def test_update_circuit_breaker(self):
+        cmd = parse_workflow_command("/nebuko update circuit-breaker --value 35")
+        assert cmd == WorkflowCommand(
+            action="update",
+            resource="circuit-breaker",
+            params={"value": "35"},
+        )
+
+    def test_update_circuit_breaker_underscore_alias(self):
+        # The issue's own spelling (`circuit_breaker`) is accepted as an alias
+        # of the canonical hyphenated resource (issue #839).
+        cmd = parse_workflow_command("/nebuko update circuit_breaker --value 35")
+        assert cmd == WorkflowCommand(
+            action="update",
+            resource="circuit-breaker",
+            params={"value": "35"},
         )
 
 
@@ -239,6 +260,22 @@ class TestParseMalformed:
 
     def test_clean_non_numeric_issue_rejected(self):
         assert parse_workflow_command("/nebuko clean comments --issue abc") is None
+
+    # /nebuko update circuit-breaker (issue #839): malformed forms must not parse.
+    def test_update_missing_value_rejected(self):
+        assert parse_workflow_command("/nebuko update circuit-breaker") is None
+
+    def test_update_non_numeric_value_rejected(self):
+        assert parse_workflow_command("/nebuko update circuit-breaker --value abc") is None
+
+    def test_update_wrong_resource_rejected(self):
+        assert parse_workflow_command("/nebuko update comments --value 35") is None
+
+    def test_update_missing_resource_rejected(self):
+        assert parse_workflow_command("/nebuko update --value 35") is None
+
+    def test_update_unknown_flag_rejected(self):
+        assert parse_workflow_command("/nebuko update circuit-breaker --limit 35") is None
 
 
 class TestParseCommandTyped:
@@ -354,6 +391,12 @@ class TestCommandRegistry:
         # recognized command so it can never reach the agent-trigger path.
         assert "clean" in COMMAND_REGISTRY
 
+    def test_registers_update(self):
+        # `update circuit-breaker` is the deterministic, agent-free limit
+        # command (issue #839); registration makes it a command-prefix
+        # short-circuit so it never reaches the agent-trigger path.
+        assert COMMAND_REGISTRY["update"] == "local"
+
 
 class TestClassifyComment:
     def test_clean_is_command(self):
@@ -366,6 +409,11 @@ class TestClassifyComment:
         intent = classify_comment("/nebuko delete comments --issue 123")
         assert intent.kind == "command"
         assert intent.command == "delete"
+
+    def test_update_is_command(self):
+        intent = classify_comment("/nebuko update circuit-breaker --value 35")
+        assert intent.kind == "command"
+        assert intent.command == "update"
 
     def test_run_is_command(self):
         intent = classify_comment("/nebuko run workflow --name spec-driven-impl")
