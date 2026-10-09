@@ -6,7 +6,13 @@ that mirrors the expression and a table-driven test of its semantics:
 `inputs.CALLER_AUTH == 'off' || contains(fromJSON('[...]'), author_association)`.
 """
 
+from pathlib import Path
+
 import pytest
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+WORKFLOW_YAML = REPO_ROOT / ".github" / "workflows" / "nebuko-workflow.yaml"
 
 ALLOWED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 # Values GitHub can emit that must NOT trigger the workflow when CALLER_AUTH=on
@@ -107,3 +113,15 @@ class TestTriggerMatrix:
 
     def test_machine_token_comment_skipped_for_unauthorized_author(self):
         assert trigger_starts("issue_comment", "NONE", "on", body=MACHINE_BODY) is False
+
+
+class TestCallerAuthDefault:
+    """The gate is opt-out: the reusable workflow defaults `CALLER_AUTH` to `on`
+    so a public repo is defensive before any explicit configuration (issue #831).
+    """
+
+    def test_workflow_defaults_caller_auth_on(self):
+        workflow = yaml.safe_load(WORKFLOW_YAML.read_text(encoding="utf-8"))
+        # PyYAML parses the unquoted `on:` top-level key as the boolean True.
+        inputs = workflow[True]["workflow_call"]["inputs"]
+        assert inputs["CALLER_AUTH"]["default"] == "on"
