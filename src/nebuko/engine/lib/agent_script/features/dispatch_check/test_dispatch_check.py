@@ -69,11 +69,11 @@ class TestAgentToFunctionCall(unittest.TestCase):
     """The shared call_agent spec builder (warn-only on unknown names)."""
 
     def test_known_agent(self):
-        # Genius is registered in agent-config.yaml, so this also proves the
+        # Architect is registered in agent-config.yaml, so this also proves the
         # roster lookup works in the test environment (non-empty roster).
         self.assertEqual(
-            agent_to_function_call("genius"),
-            {"function": "call_agent", "agent_name": "genius"},
+            agent_to_function_call("architect"),
+            {"function": "call_agent", "agent_name": "architect"},
         )
 
     def test_unknown_agent_warns_but_passes_through(self):

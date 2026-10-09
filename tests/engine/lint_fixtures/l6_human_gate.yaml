@@ -1,12 +1,12 @@
 name: l6-human-gate
 description: "L6: the gated 'gate' step is terminal, so the hold can never resume"
 trigger:
-  agents: [genius]
+  agents: [architect]
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     next: gate
   - name: gate
-    agent: genius
+    agent: architect
     human_gate: true
     next: null

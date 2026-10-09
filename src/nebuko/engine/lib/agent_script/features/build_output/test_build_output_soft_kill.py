@@ -158,7 +158,7 @@ class TestBuildOutputSoftKill(unittest.TestCase):
             f.write(
                 f"name: {name}\n"
                 f'description: "test workflow"\n'
-                f"trigger:\n  agents: [genius]\n"
+                f"trigger:\n  agents: [architect]\n"
                 f"steps:\n  - name: implement\n    agent: dev\n"
                 f"    human_gate: true\n    next: review\n"
             )

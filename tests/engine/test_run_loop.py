@@ -452,10 +452,10 @@ class TestRoutePhase:
     def test_maps_the_dispatch_payload(self, tmp_path):
         engine = _engine(tmp_path)
 
-        decision = engine.route({"dispatch": {"status": "advance", "agent": "ctx", "complexity": "high"}})
+        decision = engine.route({"dispatch": {"status": "advance", "agent": "context", "complexity": "high"}})
 
         assert isinstance(decision, RoutingDecision)
-        assert (decision.status, decision.agent, decision.complexity) == ("advance", "ctx", "high")
+        assert (decision.status, decision.agent, decision.complexity) == ("advance", "context", "high")
 
     def test_maps_a_human_gate_hold(self, tmp_path):
         engine = _engine(tmp_path)
@@ -624,8 +624,8 @@ class TestHumanActionRecipient:
             "version": 3,
             "workflow": "default",
             "step": "plan",
-            "agent": "genius",
-            "history": [{"step": "plan", "agent": "genius", "summary": "ok"}],
+            "agent": "architect",
+            "history": [{"step": "plan", "agent": "architect", "summary": "ok"}],
         }
         if started_by is not None:
             data["started_by"] = started_by
@@ -794,7 +794,7 @@ class TestRunLoop:
         monkeypatch.setattr(
             Engine,
             "invoke_agent",
-            lambda self, prompt: _agent_result("ping @@genius and @@dev now"),
+            lambda self, prompt: _agent_result("ping @@architect and @@dev now"),
         )
 
         outcome = engine.run()
@@ -802,11 +802,11 @@ class TestRunLoop:
         # The posted body must never carry a raw @@ token (issue #482), exactly
         # as ``prepare_comment._write_output`` guarantees on the legacy path.
         assert outcome.posted_body is not None
-        assert "@@genius" not in outcome.posted_body
+        assert "@@architect" not in outcome.posted_body
         assert "@@dev" not in outcome.posted_body
-        assert "@@\u200bgenius" in outcome.posted_body
+        assert "@@\u200barchitect" in outcome.posted_body
         journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
-        assert "@@genius" not in journal
+        assert "@@architect" not in journal
         assert "@@dev" not in journal
 
     def test_never_invokes_the_agent_when_the_guards_trip(self, tmp_path, monkeypatch):
@@ -940,14 +940,14 @@ class TestPreviousStateHandoff:
         from workflow_state.workflow_state import WorkflowState
 
         entries = [
-            HistoryEntry(step=f"step_{index}", agent="genius", summary=f"s{index}")
+            HistoryEntry(step=f"step_{index}", agent="architect", summary=f"s{index}")
             for index in range(history_len)
         ]
         return WorkflowState(
             version=3,
             workflow="spec-driven-impl",
             step="plan",
-            agent="genius",
+            agent="architect",
             position=[StepRef(workflow="spec-driven-impl", step="plan")],
             history=entries,
         )
@@ -1095,7 +1095,7 @@ class TestWorkflowIdentityBackfill:
             version=3,
             workflow="spec-driven-impl",
             step="plan",
-            agent="genius",
+            agent="architect",
             position=[StepRef(workflow="spec-driven-impl", step="plan")],
         )
 
@@ -1213,7 +1213,7 @@ class TestAgentEnvHandoff:
         """The child rebuilds the position from the seeded state (issue #739)."""
         engine = _engine(tmp_path)
         engine.adapter.save_state(TestPreviousStateHandoff._previous_state(history_len=1))
-        _stub_resolved(monkeypatch, {"ROLE_NAME": "genius", "TASK": "genius"})
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "architect", "TASK": "architect"})
         monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
 
         engine.run()
@@ -1383,12 +1383,12 @@ class TestAgentStartAcknowledgment:
 
     def test_builds_the_notice_from_the_resolved_role(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path, _trigger(number=720), env=RUN_ENV)
-        _stub_resolved(monkeypatch, {"ROLE_NAME": "genius"})
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "architect"})
 
         notice = engine._agent_start_notice(_trigger(number=720))
 
         assert notice == AgentStartNotice(
-            agent="genius", role="genius", run_url=RUN_URL, issue_number=720
+            agent="architect", role="architect", run_url=RUN_URL, issue_number=720
         )
 
     def test_links_the_run_from_the_github_env(self, tmp_path):

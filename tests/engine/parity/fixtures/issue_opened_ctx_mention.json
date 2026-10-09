@@ -1,13 +1,13 @@
 {
-  "name": "issue_opened_ctx_mention",
-  "description": "An `issues` event (issue opened) whose body pings @ctx; the trigger type and author come from the issue, not a comment.",
+  "name": "issue_opened_context_mention",
+  "description": "An `issues` event (issue opened) whose body pings @context; the trigger type and author come from the issue, not a comment.",
   "provenance": "Recorded issues event shape (issue #590 workflow run logs): the `issues` branch of the `Normalize GitHub Event Data` step.",
   "payload": {
     "action": "opened",
     "issue": {
       "number": 590,
       "title": "[engine] Stage A: port/adapter engine core",
-      "body": "@@ctx collect context for the engine extraction",
+      "body": "@@context collect context for the engine extraction",
       "user": {
         "login": "olivier-norture",
         "type": "User"
@@ -29,7 +29,7 @@
       "number": 590
     },
     "resolved": {
-      "ROLE_NAME": "ctx",
+      "ROLE_NAME": "context",
       "WORKFLOW_NAME": "",
       "WORKFLOW_STEP": "",
       "WORKFLOW_POSITION_PATH": "",
@@ -42,7 +42,7 @@
       "CIRCUIT_BREAKER_TRIPPED": "false"
     },
     "prompt": {
-      "prompt": "defaults/prompts/ctx.md",
+      "prompt": "defaults/prompts/context.md",
       "step_prompt": ""
     },
     "agent_ran": true

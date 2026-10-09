@@ -33,10 +33,10 @@ class TestLoadConfig:
                 }
             },
             "agents": {
-                "genius": {
+                "architect": {
                     "model": "${llms.deepseek-v4-pro}",
                     "temperature": 0.2,
-                    "prompt_file": ".agents/prompts/genius.md",
+                    "prompt_file": ".agents/prompts/architect.md",
                     "skills": [],
                 }
             },
@@ -50,9 +50,9 @@ class TestLoadConfig:
 
         assert "openrouter" in config.providers
         assert "deepseek-v4-pro" in config.llms
-        assert "genius" in config.agents
-        assert config.agents["genius"].model_ref.model_path == "openrouter/deepseek/deepseek-v4-pro"
-        assert config.agents["genius"].model_ref.provider_ref.api_url == "https://openrouter.ai/api/v1/chat/completions"
+        assert "architect" in config.agents
+        assert config.agents["architect"].model_ref.model_path == "openrouter/deepseek/deepseek-v4-pro"
+        assert config.agents["architect"].model_ref.provider_ref.api_url == "https://openrouter.ai/api/v1/chat/completions"
 
         os.unlink(f.name)
 

@@ -10,13 +10,13 @@ class TestBuildState(unittest.TestCase):
     """Test build_state() pure state-transition function."""
 
     def test_initial_state(self):
-        state = build_state(None, workflow="default", step="analyze", agent="genius")
+        state = build_state(None, workflow="default", step="analyze", agent="architect")
         # issue #646: position is universal → every built state is at least
         # the v3 shape.
         self.assertEqual(state.version, POSITION_STATE_VERSION)
         self.assertEqual(state.workflow, "default")
         self.assertEqual(state.step, "analyze")
-        self.assertEqual(state.agent, "genius")
+        self.assertEqual(state.agent, "architect")
         self.assertEqual(len(state.history), 1)
 
     def test_append_to_existing(self):
@@ -24,14 +24,14 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
             summary="Analyzed request",
         )
         next_state = build_state(
             prev,
             workflow="default",
             step="context",
-            agent="ctx",
+            agent="context",
             summary="Collected files",
         )
         self.assertEqual(next_state.version, POSITION_STATE_VERSION + 1)
@@ -54,7 +54,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="plan",
-            agent="genius",
+            agent="architect",
             summary="Architecture proposal",
             pin=True,
         )
@@ -65,7 +65,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="plan",
-            agent="genius",
+            agent="architect",
             summary="Architecture proposal",
             pin=True,
             comment_ids=[101, 102],
@@ -90,7 +90,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="plan",
-            agent="genius",
+            agent="architect",
             summary="Plan",
             pin=True,
             comment_ids=[301],
@@ -122,7 +122,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
         )
         self.assertIsNone(state.history[0].result)
 
@@ -132,7 +132,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
             metrics_dict=metrics_dict,
         )
         # Metrics live on the history entry, not at the root (issue #792).
@@ -164,7 +164,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
         )
         self.assertIsNone(state.resolution)
 
@@ -173,7 +173,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
         )
         self.assertTrue(state.history[0].inject_context)
 
@@ -182,7 +182,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="context",
-            agent="ctx",
+            agent="context",
             inject_context=False,
         )
         self.assertFalse(state.history[0].inject_context)
@@ -192,7 +192,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
             inject_context=True,
         )
         self.assertTrue(state.history[0].inject_context)
@@ -202,7 +202,7 @@ class TestBuildState(unittest.TestCase):
             None,
             workflow="default",
             step="context",
-            agent="ctx",
+            agent="context",
             inject_context=False,
         )
         next_state = build_state(
@@ -224,7 +224,7 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
             None,
             workflow="plan-orchestration",
             step="plan",
-            agent="genius",
+            agent="architect",
         )
         self.assertIsNone(state.scaffold_branch)
 
@@ -233,7 +233,7 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
             None,
             workflow="plan-orchestration",
             step="plan",
-            agent="genius",
+            agent="architect",
             summary="Scaffolded plan",
             scaffold_branch="feature/issue-604-scaffold-branch-fetch",
         )
@@ -246,7 +246,7 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
             None,
             workflow="plan-orchestration",
             step="plan",
-            agent="genius",
+            agent="architect",
             scaffold_branch="feature/issue-604-scaffold-branch-fetch",
         )
         next_state = build_state(
@@ -264,14 +264,14 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
             None,
             workflow="plan-orchestration",
             step="plan",
-            agent="genius",
+            agent="architect",
             scaffold_branch="feature/issue-604-old-scaffold",
         )
         next_state = build_state(
             prev,
             workflow="plan-orchestration",
             step="plan",
-            agent="genius",
+            agent="architect",
             scaffold_branch="feature/issue-604-new-scaffold",
         )
         self.assertEqual(
@@ -283,7 +283,7 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
             None,
             workflow="plan-orchestration",
             step="plan",
-            agent="genius",
+            agent="architect",
             scaffold_branch="feature/issue-604-scaffold-branch-fetch",
         )
         self.assertEqual(
@@ -296,8 +296,8 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
             "version": 3,
             "workflow": "plan-orchestration",
             "step": "plan",
-            "agent": "genius",
-            "history": [{"step": "analyze", "agent": "genius", "summary": "ok"}],
+            "agent": "architect",
+            "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.scaffold_branch)
@@ -309,13 +309,13 @@ class TestHistoryEntryDispatch(unittest.TestCase):
     def test_step_dispatch_recorded_on_entry(self):
         d = Dispatch(status="advance", task_hint="dev", complexity="high")
         state = build_state(
-            None, workflow="w", step="plan", agent="genius", dispatch=d
+            None, workflow="w", step="plan", agent="architect", dispatch=d
         )
         self.assertIs(state.history[-1].dispatch, d)
         self.assertIs(state.dispatch, d)
 
     def test_entry_dispatch_defaults_to_none(self):
-        state = build_state(None, workflow="w", step="plan", agent="genius")
+        state = build_state(None, workflow="w", step="plan", agent="architect")
         self.assertIsNone(state.history[-1].dispatch)
 
     def test_each_entry_carries_its_own_dispatch(self):
@@ -323,18 +323,18 @@ class TestHistoryEntryDispatch(unittest.TestCase):
             None,
             workflow="w",
             step="analyze",
-            agent="genius",
-            dispatch=Dispatch(status="advance", task_hint="ctx", complexity="high"),
+            agent="architect",
+            dispatch=Dispatch(status="advance", task_hint="context", complexity="high"),
         )
         second = build_state(
             first,
             workflow="w",
             step="context",
-            agent="ctx",
+            agent="context",
             dispatch=Dispatch(status="hold", reason="awaiting input"),
         )
         self.assertEqual(second.history[0].dispatch.status, "advance")
-        self.assertEqual(second.history[0].dispatch.task_hint, "ctx")
+        self.assertEqual(second.history[0].dispatch.task_hint, "context")
         self.assertEqual(second.history[1].dispatch.status, "hold")
         # top-level dispatch reflects only the most recent run
         self.assertEqual(second.dispatch.status, "hold")
@@ -342,7 +342,7 @@ class TestHistoryEntryDispatch(unittest.TestCase):
 
     def test_history_dispatch_roundtrip(self):
         d = Dispatch(status="loop", task_hint="dev", complexity="low", branch="rejected")
-        state = build_state(None, workflow="w", step="plan", agent="genius", dispatch=d)
+        state = build_state(None, workflow="w", step="plan", agent="architect", dispatch=d)
         restored = WorkflowState.model_validate_json(state.model_dump_json())
         self.assertIsNotNone(restored.history[-1].dispatch)
         self.assertEqual(restored.history[-1].dispatch.status, "loop")
@@ -354,8 +354,8 @@ class TestHistoryEntryDispatch(unittest.TestCase):
             "version": 3,
             "workflow": "w",
             "step": "plan",
-            "agent": "genius",
-            "history": [{"step": "analyze", "agent": "genius", "summary": "ok"}],
+            "agent": "architect",
+            "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.history[0].dispatch)
@@ -369,13 +369,13 @@ class TestBuildStateStartedBy(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
             started_by="olivier-norture",
         )
         self.assertEqual(state.started_by, "olivier-norture")
 
     def test_started_by_defaults_to_none(self):
-        state = build_state(None, workflow="default", step="analyze", agent="genius")
+        state = build_state(None, workflow="default", step="analyze", agent="architect")
         self.assertIsNone(state.started_by)
 
     def test_carried_forward_verbatim_across_transitions(self):
@@ -383,7 +383,7 @@ class TestBuildStateStartedBy(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
             started_by="olivier-norture",
         )
         # A later chained run is triggered by a bot comment; its TRIGGER_AUTHOR
@@ -392,7 +392,7 @@ class TestBuildStateStartedBy(unittest.TestCase):
             prev,
             workflow="default",
             step="context",
-            agent="ctx",
+            agent="context",
             started_by="nebuko-bot",
         )
         self.assertEqual(nxt.started_by, "olivier-norture")
@@ -402,10 +402,10 @@ class TestBuildStateStartedBy(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
             started_by="olivier-norture",
         )
-        nxt = build_state(prev, workflow="default", step="context", agent="ctx")
+        nxt = build_state(prev, workflow="default", step="context", agent="context")
         self.assertEqual(nxt.started_by, "olivier-norture")
 
     def test_legacy_state_without_field_loads_none(self):
@@ -413,8 +413,8 @@ class TestBuildStateStartedBy(unittest.TestCase):
             "version": 3,
             "workflow": "default",
             "step": "analyze",
-            "agent": "genius",
-            "history": [{"step": "analyze", "agent": "genius", "summary": "ok"}],
+            "agent": "architect",
+            "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.started_by)
@@ -424,7 +424,7 @@ class TestBuildStateStartedBy(unittest.TestCase):
             None,
             workflow="default",
             step="analyze",
-            agent="genius",
+            agent="architect",
             started_by="olivier-norture",
         )
         restored = WorkflowState.model_validate_json(state.model_dump_json())

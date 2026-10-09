@@ -21,12 +21,12 @@ class TestDispatchNextActionToDispatch(unittest.TestCase):
 
     def test_valid_action_maps_to_dispatch(self):
         act = DispatchNextAction(
-            status="advance", agent="ctx", complexity="low", reason="need context"
+            status="advance", agent="context", complexity="low", reason="need context"
         )
         d = action_to_dispatch(act)
         self.assertIsInstance(d, Dispatch)
         self.assertEqual(d.status, "advance")
-        self.assertEqual(d.task_hint, "ctx")
+        self.assertEqual(d.task_hint, "context")
         self.assertEqual(d.complexity, "low")
         self.assertEqual(d.reason, "need context")
 
@@ -155,13 +155,13 @@ class TestDispatchNextTool(unittest.TestCase):
             id=uuid.uuid4(), agent=None, workspace=None
         )
         tools = resolve_tool(Tool(name="DispatchNextTool"), state)
-        tools[0].executor(DispatchNextAction(status="advance", agent="ctx"))
+        tools[0].executor(DispatchNextAction(status="advance", agent="context"))
 
         # Read side keys under str(conversation.id) == str(state.id).
         retrieved = get_recorded_dispatch(str(state.id))
         self.assertIsNotNone(retrieved)
         self.assertEqual(retrieved.status, "advance")
-        self.assertEqual(retrieved.task_hint, "ctx")
+        self.assertEqual(retrieved.task_hint, "context")
         clear_run(str(state.id))
 
 

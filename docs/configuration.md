@@ -14,7 +14,7 @@ For the machine-readable dispatch overrides applied at invocation time, see
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ agents        genius / dev / ctx / review / issue / ...     │
+│ agents        architect / dev / context / review / issue / ...     │
 │               model: "${llms.qwen-3-6-27b}"                 │
 └──────────────────────────────┬──────────────────────────────┘
                                │ ${ref}
@@ -155,10 +155,10 @@ Chain example (as found in this repo's `agent-config.yaml`):
 
 ```yaml
 agents:
-  genius:
+  architect:
     model: "${llms.qwen-3-6-27b}"      # → resolves to the qwen-3-6-27b LLM dict
     temperature: 1.0
-    prompt_file: ".agents/prompts/genius.md"
+    prompt_file: ".agents/prompts/architect.md"
     tools: ["think", "finish"]
 
 llms:
@@ -197,10 +197,10 @@ llms:
 
 # ── Layer 3: Agents — role → model + prompt + tools ──
 agents:
-  genius:
+  architect:
     model: "${llms.qwen-3-6-30b}"
     temperature: 1.0
-    prompt_file: ".agents/prompts/genius.md"
+    prompt_file: ".agents/prompts/architect.md"
     skills: []
     tools: ["think", "finish"]   # planners never touch files
 

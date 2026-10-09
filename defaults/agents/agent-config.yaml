@@ -67,10 +67,10 @@ llms:
 # Tools: terminal, file_editor, task_tracker (SDK tools)
 #        think, finish (built-in defaults)
 agents:
-  genius:
+  architect:
     model: "${llms.qwen-3-6-27b}"
     temperature: 0.4
-    prompt_file: ".agents/prompts/genius.md"
+    prompt_file: ".agents/prompts/architect.md"
     skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
 
@@ -81,10 +81,10 @@ agents:
     skills: ["posting-contract"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch"]
 
-  ctx:
+  context:
     model: "${llms.qwen-3-6-27b}"
     temperature: 0.1
-    prompt_file: ".agents/prompts/ctx.md"
+    prompt_file: ".agents/prompts/context.md"
     skills: ["call-agent", "posting-contract"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
 

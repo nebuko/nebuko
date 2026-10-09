@@ -13,8 +13,8 @@ workflow step via `skill: [...]` — see
 
 | Agent | Role (one line) | Tools | Prompt | Typical workflow steps |
 |-------|-----------------|-------|--------|------------------------|
-| `genius` | Principal engineer — plans and delegates, never codes | think, finish | `genius.md` | analyze, plan, architect, spec gates |
-| `ctx` | Read-only context collector | terminal, file_editor, task_tracker, think, finish | `ctx.md` | context, ctx_architect |
+| `architect` | Principal engineer — plans and delegates, never codes | think, finish | `architect.md` | analyze, plan, architect, spec gates |
+| `context` | Read-only context collector | terminal, file_editor, task_tracker, think, finish | `context.md` | context, context_architect |
 | `dev` | Execution developer — implements and opens PRs | terminal, file_editor, task_tracker, think, finish | `dev.md` | implement, scaffold, sub_clean, final_fix |
 | `review` | Senior code reviewer — approves/rejects | think, finish | `review.md` | review, stub_review, final_review |
 | `issue` | Refines issue drafts with humans | think, finish | `issue.md` | invoked directly via `@@issue` |
@@ -30,20 +30,20 @@ documented in [`AGENTS.md`](../AGENTS.md).
 
 ## Per-Agent Notes
 
-### genius — Principal Engineer
+### architect — Principal Engineer
 Analyzes requests, designs architecture, drafts plans, and hands off to
-`@@ctx` and `@@dev`. Its prompt opens with a **critical override** telling it to
+`@@context` and `@@dev`. Its prompt opens with a **critical override** telling it to
 ignore the SDK's generic coding instructions: it is *not* a coding agent and
 must not explore repos or edit files (the tool whitelist enforces this
 regardless). Plans end in an `AGENT_RUN_CONFIG` dispatch that routes the next
 step — including `<splitPlan>` blocks for task decomposition
 ([features.md — Task Decomposition](./features.md#task-decomposition)).
 
-### ctx — Context Collection Agent
+### context — Context Collection Agent
 Strictly read-only information gathering: locate files, extract snippets with
 line numbers, search the web, and report in a fixed template (files found,
 relevant snippets, external references). Analysis and solution proposals
-belong exclusively to `@@genius` — its job is the raw material.
+belong exclusively to `@@architect` — its job is the raw material.
 
 Its web-search phase reads each selected reference **in full** (3 for LOW,
 5–6 for MEDIUM, up to 10 for HIGH complexity) and curates the result: verbatim
@@ -65,12 +65,12 @@ scope.
 Inspects diffs for bugs, edge cases, regressions, security, and maintainability,
 then returns an explicit verdict (`approved` / `rejected`) that drives
 conditional workflow routing. Uses the same high-quality LLM class as
-`@@genius` — accuracy over cost.
+`@@architect` — accuracy over cost.
 
 ### issue — Issue Refinement Agent
 Iteratively refines issue drafts with the human: rephrases first, asks
 1–5 grouped questions per round with proposed answers, and may delegate context
-collection to `@@ctx` (max one call per round). Tracks progress across stateless
+collection to `@@context` (max one call per round). Tracks progress across stateless
 runs via `<!-- issue-agent-state -->` markers (see
 [reference.md — Bot Marker Conventions](./reference.md#bot-marker-conventions)).
 
@@ -115,7 +115,7 @@ step-level skills override/augment them.
 Tools form a hard security boundary — the OpenHands SDK only instantiates the
 tools whitelisted in the agent's config.
 
-| Tool | genius | ctx | dev | review | issue | issue-reviewer | debug | po |
+| Tool | architect | context | dev | review | issue | issue-reviewer | debug | po |
 |------|:------:|:---:|:---:|:------:|:-----:|:--------------:|:-----:|:--:|
 | `terminal` | | ✓ | ✓ | | | | ✓ | |
 | `file_editor` | | ✓ | ✓ | | | | ✓ | |
@@ -125,11 +125,11 @@ tools whitelisted in the agent's config.
 
 (`think` and `finish` are built-in defaults present for every agent.)
 
-Rationale: planning and judgment roles (`genius`, `review`, `issue`,
+Rationale: planning and judgment roles (`architect`, `review`, `issue`,
 `issue-reviewer`, `po`) can *only reason and reply* — they cannot
-accidentally modify the repository. Context/execution roles (`ctx`, `dev`,
-`debug`) need full tool access. Note `ctx` has shell access but its prompt
-forbids modification — read-only-by-policy, unlike `genius`'s read-only-by-
+accidentally modify the repository. Context/execution roles (`context`, `dev`,
+`debug`) need full tool access. Note `context` has shell access but its prompt
+forbids modification — read-only-by-policy, unlike `architect`'s read-only-by-
 enforcement.
 
 ---

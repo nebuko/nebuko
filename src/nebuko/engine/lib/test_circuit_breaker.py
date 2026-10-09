@@ -23,14 +23,14 @@ class TestCountBotMarkers:
         assert count_bot_markers(comments) == 1
 
     def test_multiple_markers_in_one_comment(self):
-        body = "<!-- bot-agent-dev --><!-- bot-agent-genius -->"
+        body = "<!-- bot-agent-dev --><!-- bot-agent-architect -->"
         assert count_bot_markers([{"body": body}]) == 2
 
     def test_mixed_comments(self):
         comments = [
             {"body": "Human comment"},
             {"body": "<!-- bot-agent-dev -->\nResponse"},
-            {"body": "<!-- bot-agent-ctx -->\nContext"},
+            {"body": "<!-- bot-agent-context -->\nContext"},
         ]
         assert count_bot_markers(comments) == 2
 
@@ -63,10 +63,10 @@ class TestCircuitBreakerLogic:
 
     def test_four_markers_equals_two_calls(self):
         comments = [
-            {"body": "<!-- bot-agent-genius -->\nT1"},
-            {"body": "<!-- bot-agent-genius -->\nR1"},
-            {"body": "<!-- bot-agent-ctx -->\nT2"},
-            {"body": "<!-- bot-agent-ctx -->\nR2"},
+            {"body": "<!-- bot-agent-architect -->\nT1"},
+            {"body": "<!-- bot-agent-architect -->\nR1"},
+            {"body": "<!-- bot-agent-context -->\nT2"},
+            {"body": "<!-- bot-agent-context -->\nR2"},
         ]
         assert self._calc_calls(comments) == 2
 

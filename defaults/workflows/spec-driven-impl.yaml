@@ -2,20 +2,20 @@ name: spec-driven-impl
 description: "Spec-driven development: plan -> stub -> implement"
 
 trigger:
-  agents: [genius]  # which @@mentions can start this workflow
+  agents: [architect]  # which @@mentions can start this workflow
 
 steps:
   - name: analyze
-    agent: genius
-    complexity: low  # triage + ctx-query drafting is cheap
+    agent: architect
+    complexity: low  # triage + context-query drafting is cheap
     next: context
 
   - name: context
-    agent: ctx
+    agent: context
     next: plan
 
   - name: plan
-    agent: genius
+    agent: architect
     next: stub
     conditions:
       - on_result: approved
@@ -33,7 +33,7 @@ steps:
     next: stub_approval
 
   - name: stub_approval
-    agent: genius
+    agent: architect
     human_gate: true
     conditions:
       - on_result: approved

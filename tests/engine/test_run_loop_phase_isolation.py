@@ -125,7 +125,7 @@ class TestPhaseIsolation:
         monkeypatch.setattr(
             Engine,
             "invoke_agent",
-            lambda self, prompt: _soft_kill_result("ping @@dev and @@genius"),
+            lambda self, prompt: _soft_kill_result("ping @@dev and @@architect"),
         )
         monkeypatch.setattr(Engine, "publish", _raise_publish)
 

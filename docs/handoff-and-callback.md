@@ -42,9 +42,9 @@ Two invariants are enforced at validation time:
    (the legacy ambiguity guard).
 
 > **Defect fixed (D1).** Before issue #765 the validator required `task` on
-> *every* sentinel, so the exact dispatch-only sentinel the `ctx` prompt is
+> *every* sentinel, so the exact dispatch-only sentinel the `context` prompt is
 > instructed to emit (`{"dispatch": {"status": "advance"}}`) could never pass
-> validation — which is why `ctx` appeared not to call `genius` back. The
+> validation — which is why `context` appeared not to call `architect` back. The
 > `≥1 action` rule above replaces the old unconditional `task` requirement.
 
 ---
@@ -55,8 +55,8 @@ Two invariants are enforced at validation time:
   next step (see the cascade in §3). Use it when you are finishing a workflow
   step and want the workflow to route onward.
 - `function_call` = an **imperative hand-off** to a named agent, overriding
-  workflow continuation. Use it to summon a specific agent (e.g. `genius`
-  pulling in `ctx`) rather than following the workflow edge.
+  workflow continuation. Use it to summon a specific agent (e.g. `architect`
+  pulling in `context`) rather than following the workflow edge.
 
 They are documented as a skill in
 [`skills/call-agent.md`](../defaults/skills/call-agent.md).
@@ -90,12 +90,12 @@ pattern — the caller delegates a sub-task and control returns to it — as
 opposed to a pure hand-off where control moves on.
 
 ```
-<!-- AGENT_RUN_CONFIG {"function_call": {"function": "call_agent", "agent_name": "ctx", "callback": "genius"}} -->
+<!-- AGENT_RUN_CONFIG {"function_call": {"function": "call_agent", "agent_name": "context", "callback": "architect"}} -->
 ```
 
 Behavior:
 
-- `callback` **defaults to the emitting caller**. `genius` calling `ctx`
+- `callback` **defaults to the emitting caller**. `architect` calling `context`
   therefore does not have to write the field — the engine fills it in.
 - It is a **fallback**, not an override: the callee's own action (precedence
   rules 1–2) always wins.
@@ -147,10 +147,10 @@ The factory is `DispatchConfig.no_action_default(reason)`, applied in
 
 ## 6. Worked examples
 
-### `genius` → `ctx` → `genius` (workflow edge)
+### `architect` → `context` → `architect` (workflow edge)
 
-`genius` finishes the `analyze` step with a plain dispatch advance; the
-workflow edge `analyze → context` runs `ctx`. `ctx` answers and ends with:
+`architect` finishes the `analyze` step with a plain dispatch advance; the
+workflow edge `analyze → context` runs `context`. `context` answers and ends with:
 
 ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
@@ -158,17 +158,17 @@ workflow edge `analyze → context` runs `ctx`. `ctx` answers and ends with:
 
 No `task`, and no callback is registered (this was a workflow-driven run), so
 precedence falls to the workflow forward edge `context → plan`, which is
-`genius`. This is the path that was broken by D1 and is now fixed.
+`architect`. This is the path that was broken by D1 and is now fixed.
 
-### `issue` → `ctx` → `issue` (imperative call)
+### `issue` → `context` → `issue` (imperative call)
 
-`issue` calls `ctx` imperatively:
+`issue` calls `context` imperatively:
 
 ```
-<!-- AGENT_RUN_CONFIG {"function_call": {"function": "call_agent", "agent_name": "ctx"}} -->
+<!-- AGENT_RUN_CONFIG {"function_call": {"function": "call_agent", "agent_name": "context"}} -->
 ```
 
-The callback defaults to `issue`. `ctx` answers with a dispatch-only advance;
+The callback defaults to `issue`. `context` answers with a dispatch-only advance;
 because a callback is registered it wins over the workflow edge and control
 returns to `issue`.
 

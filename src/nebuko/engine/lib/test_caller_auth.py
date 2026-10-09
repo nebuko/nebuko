@@ -18,7 +18,7 @@ ALLOWED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 # Values GitHub can emit that must NOT trigger the workflow when CALLER_AUTH=on
 DENIED_ASSOCIATIONS = ("NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", None)
 
-ISSUE_BODY = "Hello @@genius please analyze"
+ISSUE_BODY = "Hello @@architect please analyze"
 MACHINE_BODY = "<!-- workflow-continue -->"
 BOT_BODY = "<!-- bot-agent-dev -->done"
 
@@ -41,7 +41,7 @@ def matches_existing_gates(body, event_name):
         or "<!-- bot-trigger:" in body
     ):
         return True
-    return "@@genius" in body or "/nebuko" in body
+    return "@@architect" in body or "/nebuko" in body
 
 
 def trigger_starts(event_name, author_association, caller_auth, body=ISSUE_BODY, action="opened"):

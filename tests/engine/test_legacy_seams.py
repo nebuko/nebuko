@@ -138,7 +138,7 @@ class TestLoopGuardSeam:
         from loop_guard import check_loop_guard
 
         verdict = check_loop_guard(
-            "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n@@dev implement",
+            "<!-- bot-workflow-terminal -->\n<!-- bot-agent-architect -->\n@@dev implement",
             "dev",
         )
 

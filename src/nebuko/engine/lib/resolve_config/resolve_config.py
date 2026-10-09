@@ -151,7 +151,7 @@ def resolve_config(
     # command but is not part of the core /nebuko grammar (ACTIONS), so it is
     # matched via the comment classifier. This short-circuit must run *before*
     # the agent-trigger cascade below, otherwise `/nebuko clean comments`
-    # falls through and boots ctx/genius (issue #590). Human-only, like delete.
+    # falls through and boots context/architect (issue #590). Human-only, like delete.
     # Flags are forwarded just as for `delete`, so `--issue <n>` targets that
     # issue rather than silently falling back to the invoking issue.
     command_intent = classify_comment(trigger_body)
@@ -174,7 +174,7 @@ def resolve_config(
     # Check for human commands early (independent of is_bot) so they take
     # priority even when prev_state+dispatch exist.
     human_mention = not is_bot and extract_mention_agent(trigger_body)
-    # CI-posted command triggers (sub-issue bootstrap "@@genius", sub-task
+    # CI-posted command triggers (sub-issue bootstrap "@@architect", sub-task
     # completion notification) now carry the universal bot marker and so
     # classify as bot. They are plain mention-only triggers (no prose after
     # the mention) that must still route to the mentioned agent, even when
@@ -234,7 +234,7 @@ def resolve_config(
             workflow_command=wf_cmd,
         )
     elif human_mention or ci_mention:
-        # Human @@mention (e.g. @@ctx) takes priority over auto-dispatch
+        # Human @@mention (e.g. @@context) takes priority over auto-dispatch
         # so standalone agent calls work even when a workflow is active.
         # ci_mention covers CI-posted plain mention triggers (see above):
         # their universal marker makes them bot bodies, so extract_mention
@@ -281,7 +281,7 @@ def resolve_config(
             config = _resolve_function_call_path(prev_state.function_call, workflows_dir, prev_state, local_workflows_dir=local_workflows_dir)
     elif extract_machine_trigger(trigger_body):
         # CI-posted machine trigger token (bot-subtask-complete /
-        # bot-trigger) — replaces the legacy machine-posted @@genius
+        # bot-trigger) — replaces the legacy machine-posted @@architect
         # comments (issue #478).
         config = _resolve_machine_trigger_path(trigger_body, workflows_dir)
     elif prev_state and dispatch_obj:

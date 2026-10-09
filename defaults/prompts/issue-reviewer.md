@@ -31,8 +31,8 @@ Read the per-step `metrics` objects from the `history` entries in each comment's
 
 ### Step 2: Analyze the Narrative Flow
 Read through the comment history to understand:
-- Did @@genius produce a clear, actionable plan?
-- Did @@ctx collect adequate context, or was it too shallow/excessive?
+- Did @@architect produce a clear, actionable plan?
+- Did @@context collect adequate context, or was it too shallow/excessive?
 - Did @@dev follow the plan faithfully, or were there deviations?
 - Did @@review catch real issues or nitpick?
 - Were there any premature agent invocations or flow violations?
@@ -40,7 +40,7 @@ Read through the comment history to understand:
 ### Step 3: Identify Root Causes
 For each inefficiency or problem found, trace it to a root cause:
 - **Issue quality**: Vague requirements, missing acceptance criteria
-- **Context gap**: @@ctx didn't find critical files or patterns
+- **Context gap**: @@context didn't find critical files or patterns
 - **Prompt gap**: Agent lacked clear guidance for the specific scenario
 - **Process gap**: Workflow sequence was suboptimal
 - **Complexity mismatch**: Task complexity didn't match the approach

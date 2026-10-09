@@ -222,7 +222,7 @@ class TestGitHubClient:
     def test_create_comment(self, mock_urlopen):
         mock_urlopen.return_value = make_mock_response({"id": 999})
         client = GitHubClient(repo="owner/repo", token="test-token")
-        cid = client.create_comment(issue_number=42, body="@@genius")
+        cid = client.create_comment(issue_number=42, body="@@architect")
         assert cid == 999
 
     @patch("issue_creation.urlopen")
@@ -357,7 +357,7 @@ class TestCreateSubIssues:
 
 
 class TestTriggerWorkflows:
-    def test_posts_genius_on_each_ready_task(self):
+    def test_posts_architect_on_each_ready_task(self):
         mock_client = MagicMock()
         tasks = [
             {"index": 1, "number": 101, "dependencies": []},
@@ -366,7 +366,7 @@ class TestTriggerWorkflows:
         trigger_workflows(mock_client, tasks)
         assert mock_client.create_comment.call_count == 2
         assert mock_client.create_comment.call_args_list[0][0][0] == 101
-        assert mock_client.create_comment.call_args_list[0][0][1] == "@@genius"
+        assert mock_client.create_comment.call_args_list[0][0][1] == "@@architect"
         assert mock_client.create_comment.call_args_list[1][0][0] == 102
 
     def test_skips_tasks_with_dependencies(self):

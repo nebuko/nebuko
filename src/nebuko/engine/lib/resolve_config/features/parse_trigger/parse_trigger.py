@@ -27,6 +27,8 @@ __all__ = [
     "extract_plain_mention_agent",
     "extract_mention_agent",
     "extract_machine_trigger",
+    "LEGACY_AGENT_NAMES",
+    "canonical_agent_name",
     "parse_workflow_command",
     "WorkflowCommand",
     "normalize_resume_input",
@@ -79,7 +81,7 @@ def is_plain_mention_trigger(trigger_body: str) -> bool:
     A plain trigger consists solely of an @@mention plus optional
     HTML-comment markers (bot marker, subtask-complete, ...), with no
     other prose. This identifies CI-posted command triggers (e.g. the
-    "@@genius" sub-issue bootstrap and the sub-task completion
+    "@@architect" sub-issue bootstrap and the sub-task completion
     notification) that carry the universal bot marker but must still be
     routed to the mentioned agent — as opposed to agent answer comments,
     whose prose body disqualifies them here.
@@ -114,12 +116,32 @@ def extract_plain_mention_agent(trigger_body: str) -> Optional[str]:
         trigger_body: Raw trigger body text.
 
     Returns:
-        Last mentioned agent name, or None when no mention is present.
+        Last mentioned agent name (canonicalised), or None when no mention is
+        present.
     """
     agents = re.findall(_mention_re(), trigger_body)
     if agents:
-        return agents[-1].replace("@@", "")
+        return canonical_agent_name(agents[-1].replace("@@", ""))
     return None
+
+
+#: Deprecated agent names kept resolvable for a transition window (issue #828).
+#: ``genius``/``ctx`` were renamed to ``architect``/``context``; the published
+#: external reference contract (docs/reference.md) and historical ``@@``
+#: mentions may still use the old spellings, so they are accepted and mapped.
+LEGACY_AGENT_NAMES: dict[str, str] = {"genius": "architect", "ctx": "context"}
+
+
+def canonical_agent_name(name: str) -> str:
+    """Map a deprecated agent name to its canonical roster name.
+
+    Args:
+        name: Agent name as it appeared in the trigger body.
+
+    Returns:
+        The canonical name, or ``name`` unchanged when it is not deprecated.
+    """
+    return LEGACY_AGENT_NAMES.get(name, name)
 
 
 _mention_re_cache: Optional["re.Pattern[str]"] = None
@@ -131,11 +153,16 @@ def _mention_re() -> "re.Pattern[str]":
     Names are ordered longest-first so ``issue-reviewer`` is matched before
     ``issue`` (no prefix shadowing). The non-capturing group keeps
     ``re.findall`` returning the whole ``@@name`` token, exactly as the
-    previous hard-coded pattern did.
+    previous hard-coded pattern did. Deprecated names (issue #828) are matched
+    too so historical mentions keep routing.
     """
     global _mention_re_cache
     if _mention_re_cache is None:
-        names = sorted(load_agent_names(), key=len, reverse=True)
+        names = sorted(
+            set(load_agent_names()) | set(LEGACY_AGENT_NAMES),
+            key=len,
+            reverse=True,
+        )
         alternatives = "|".join(re.escape(name) for name in names)
         _mention_re_cache = re.compile(rf"@@(?:{alternatives})(?![A-Za-z0-9_-])")
     return _mention_re_cache
@@ -166,12 +193,12 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
         return None
     agents = re.findall(_mention_re(), trigger_body)
     if agents:
-        return agents[-1].replace("@@", "")
+        return canonical_agent_name(agents[-1].replace("@@", ""))
     return None
 
 
 # Machine trigger tokens posted by the CI pipeline itself (issue #478).
-# These replace the legacy machine-posted "@@genius" comments now that
+# These replace the legacy machine-posted "@@architect" comments now that
 # @@mentions are blocked for bot-triggered runs.
 _SUBTASK_COMPLETE_RE = re.compile(r"<!--\s*bot-subtask-complete:\s*(\d+)\s*-->")
 _GENERIC_TRIGGER_RE = re.compile(r"<!--\s*bot-trigger:\s*([a-z][a-z-]*)\s*-->")
@@ -181,7 +208,7 @@ def extract_machine_trigger(trigger_body: str) -> Optional[Tuple[str, Optional[s
     """Extract a CI-posted machine trigger token from the trigger body.
 
     Recognized tokens:
-      - ``<!-- bot-subtask-complete: N -->`` → ("genius", "N")
+      - ``<!-- bot-subtask-complete: N -->`` → ("architect", "N")
       - ``<!-- bot-trigger: agent -->``      → ("agent", None) — generic form
 
     Args:
@@ -193,10 +220,10 @@ def extract_machine_trigger(trigger_body: str) -> Optional[Tuple[str, Optional[s
     """
     match = _SUBTASK_COMPLETE_RE.search(trigger_body)
     if match:
-        return ("genius", match.group(1))
+        return ("architect", match.group(1))
     match = _GENERIC_TRIGGER_RE.search(trigger_body)
     if match:
-        return (match.group(1), None)
+        return (canonical_agent_name(match.group(1)), None)
     return None
 
 

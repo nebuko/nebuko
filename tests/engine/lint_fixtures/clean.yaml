@@ -1,10 +1,10 @@
 name: clean
 description: "A minimal, fully valid two-step workflow"
 trigger:
-  agents: [genius]
+  agents: [architect]
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     next: review
   - name: review
     agent: review

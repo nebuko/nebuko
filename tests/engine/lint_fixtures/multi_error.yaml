@@ -1,10 +1,10 @@
 name: multi-error
 description: "Several distinct defects in one definition"
 trigger:
-  agents: [genius]
+  agents: [architect]
 steps:
   - name: a
-    agent: genius
+    agent: architect
     next: ghost
   - name: a
     agent: dev

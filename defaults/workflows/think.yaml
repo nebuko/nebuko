@@ -1,23 +1,23 @@
 # Default workflow: the standard dev chain
-# genius → ctx → genius (plan) → dev → review
+# architect → context → architect (plan) → dev → review
 
 name: think
 description: "Simple workflow to think about a subject and help user to define and understand something"
 
 trigger:
-  agents: [genius]  # which @@mentions can start this workflow
+  agents: [architect]  # which @@mentions can start this workflow
 
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     next: context
 
   - name: context
-    agent: ctx
+    agent: context
     next: plan
 
   - name: plan
-    agent: genius
+    agent: architect
     next: null
     conditions:
       - on_result: approved

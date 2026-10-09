@@ -15,10 +15,10 @@ class TestWorkflowDefinition:
     """Test WorkflowDefinition Pydantic model."""
 
     def test_valid_workflow(self):
-        trigger = WorkflowTrigger(agents=["genius"])
+        trigger = WorkflowTrigger(agents=["architect"])
         steps = [
-            WorkflowStep(name="analyze", agent="genius", next="context"),
-            WorkflowStep(name="context", agent="ctx", next=None),
+            WorkflowStep(name="analyze", agent="architect", next="context"),
+            WorkflowStep(name="context", agent="context", next=None),
         ]
         wf = WorkflowDefinition(
             name="test-workflow",
@@ -28,10 +28,10 @@ class TestWorkflowDefinition:
         )
         assert wf.name == "test-workflow"
         assert len(wf.steps) == 2
-        assert wf.trigger.agents == ["genius"]
+        assert wf.trigger.agents == ["architect"]
 
     def test_missing_name_raises(self):
-        trigger = WorkflowTrigger(agents=["genius"])
+        trigger = WorkflowTrigger(agents=["architect"])
         with pytest.raises(ValidationError):
             WorkflowDefinition(
                 description="No name",

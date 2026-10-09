@@ -81,7 +81,7 @@ Examples:
 ```
 <!-- AGENT_RUN_CONFIG {"task": "review", "complexity": "medium"} -->
 <!-- AGENT_RUN_CONFIG {"task": "dev", "round": 2} -->
-<!-- AGENT_RUN_CONFIG {"task": "ctx", "workflow": "default", "step": "context"} -->
+<!-- AGENT_RUN_CONFIG {"task": "context", "workflow": "default", "step": "context"} -->
 <!-- AGENT_RUN_CONFIG {"task": "dev", "complexity": "low", "top_p": 0.1, "top_k": 10, "repetition_penalty": 1.2} -->
 ```
 
@@ -126,10 +126,10 @@ Minimal valid workflow:
 name: my-workflow
 description: "A minimal two-step workflow"
 trigger:
-  agents: [genius]
+  agents: [architect]
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     next: review
   - name: review
     agent: review
@@ -220,10 +220,10 @@ is authoritative.
   "version": 1,
   "workflow": "default",
   "step": "context",
-  "agent": "ctx",
+  "agent": "context",
   "phase": "analysis",
   "history": [
-    {"step": "analyze", "agent": "genius", "summary": "Issue analyzed, plan requested", "comment_ids": [1029384], "result": "advance", "dispatch": {"status": "advance", "task_hint": "ctx", "complexity": "high"}, "metrics": {"run_id": "1bb4941e-0bbf-432b-b79c-0b408feea07f", "model_name": "default", "agent_role": "genius", "input_tokens": 8365, "output_tokens": 1143, "max_context_window": 0, "tool_call_latency_ms": 19685.7, "agent_runtime_ms": 19685.7, "nb_tool_calls": 0, "tool_call_error_rate": 0.0, "review_fix_requests": 0}}
+    {"step": "analyze", "agent": "architect", "summary": "Issue analyzed, plan requested", "comment_ids": [1029384], "result": "advance", "dispatch": {"status": "advance", "task_hint": "context", "complexity": "high"}, "metrics": {"run_id": "1bb4941e-0bbf-432b-b79c-0b408feea07f", "model_name": "default", "agent_role": "architect", "input_tokens": 8365, "output_tokens": 1143, "max_context_window": 0, "tool_call_latency_ms": 19685.7, "agent_runtime_ms": 19685.7, "nb_tool_calls": 0, "tool_call_error_rate": 0.0, "review_fix_requests": 0}}
   ],
   "pinned_comment_ids": [],
   "current_context": {"last_run_status": "success"},
@@ -232,7 +232,7 @@ is authoritative.
   "issue": {"number": 501, "url": "https://github.com/o/r/issues/501", "title": "write documentation", "author": "olivier-norture", "repo": "o/r"},
   "pull_request": null,
   "dispatch": {"status": "advance", "complexity": "high"},
-  "resolution": {"role_name": "ctx", "matched_rule": "workflow:default/step:context", "timestamp": "2026-09-04T21:05:53Z"}
+  "resolution": {"role_name": "context", "matched_rule": "workflow:default/step:context", "timestamp": "2026-09-04T21:05:53Z"}
 }
 ```
 
@@ -240,10 +240,10 @@ is authoritative.
 
 ## External Reference JSON
 
-Contract for the fenced ```json block `@@ctx` emits inside
+Contract for the fenced ```json block `@@context` emits inside
 `### EXTERNAL REFERENCES` of its context report. It is an **array** with one
 object per reference; the human-readable entries and this block must cover the
-same references. This block is the access path for tool-less agents (e.g. `@@genius`)
+same references. This block is the access path for tool-less agents (e.g. `@@architect`)
 ([features.md — External Reference Sharing](./features.md#external-reference-sharing)).
 
 | Field | Type | Description |
@@ -260,7 +260,7 @@ same references. This block is the access path for tool-less agents (e.g. `@@gen
     "url": "https://docs.searxng.org/dev/search_api.html",
     "date": "2026-09-23T09:25:00Z",
     "chunks": ["SearXNG supports querying via a simple HTTP API ..."],
-    "summary": "Documents the /search endpoint used by @@ctx; confirms results[].content is snippet-only.",
+    "summary": "Documents the /search endpoint used by @@context; confirms results[].content is snippet-only.",
     "score": 0.9
   }
 ]
@@ -282,7 +282,7 @@ Variables the orchestrator sets/consumes per run:
 | `TRIGGER_BODY` | `event_normalizer.py` | Raw text of the triggering issue body or comment. |
 | `TRIGGER_AUTHOR` | `event_normalizer.py` | Author of the triggering event. |
 | `EVENT_TYPE` | `event_normalizer.py` | GitHub event type (`issues`, `issue_comment`, `workflow_call`, ...). |
-| `ROLE_NAME` | `resolve_config` / `resolve_workflow` | Resolved agent role (`genius`, `ctx`, `dev`, `review`, ...). |
+| `ROLE_NAME` | `resolve_config` / `resolve_workflow` | Resolved agent role (`architect`, `context`, `dev`, `review`, ...). |
 | `PROMPT_LOCATION` | `resolve_config` / `resolve_workflow` | Path to the resolved prompt file. |
 | `WORKFLOW_NAME` | `resolve_config` / `resolve_workflow` | Resolved workflow name. |
 | `WORKFLOW_STEP` | `resolve_config` / `resolve_workflow` | Resolved current step name. |
@@ -314,7 +314,7 @@ writes to `GITHUB_ENV` the same way.
 | Marker | Purpose |
 |--------|---------|
 | `<!-- bot-workflow-terminal -->` | Universal bot marker prepended (line 1) to every CI-posted comment. Makes human-vs-bot classification deterministic. Defined as `BOT_MARKER` in `github_client.py`. |
-| `<!-- bot-agent-{name} -->` | Per-agent marker identifying which agent posted a comment (e.g., `<!-- bot-agent-genius -->`). Used by circuit breaker and metrics extraction. |
+| `<!-- bot-agent-{name} -->` | Per-agent marker identifying which agent posted a comment (e.g., `<!-- bot-agent-architect -->`). Used by circuit breaker and metrics extraction. |
 | `<!-- bot-agent-script -->` | Pseudo-role marker for deterministic `script` steps (issue #541): the step output is posted under this fixed tag so repeated runs update rather than duplicate, and circuit-breaker marker counting stays intact. |
 | `<!-- AGENT_RUN_CONFIG ... -->` | Dispatch sentinel — see [AGENT_RUN_CONFIG](#agent_run_config). Canonical regex in `validate_output.py`: `<!--(?:[ \t])*AGENT_RUN_CONFIG[ \t]+(\{.*?\})(?:[ \t])*-->` (single-line, no DOTALL). |
 | `<!-- WORKFLOW_STATE_START -->` ... `<!-- WORKFLOW_STATE_END -->` | Collapsed JSON workflow-state section — see [WORKFLOW_STATE v1](#workflow_state-v1). Per-step agent metrics live in its `history` entries. |

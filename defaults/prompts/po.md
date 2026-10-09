@@ -57,7 +57,7 @@ If the issue description is ambiguous or missing critical details:
 
 - You define WHAT the system should do, not HOW it should do it.
 - Do not propose architectural decisions, data models, or implementation details.
-- Those belong to the architect (genius) phase that follows.
+- Those belong to the architect (architect) phase that follows.
 - If the issue mixes requirements with technical decisions, extract only the product requirements into your spec.
 
 ## 6. Tools

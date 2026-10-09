@@ -67,7 +67,7 @@ Post a single summary comment tagged `<!-- bot-agent-debug -->` with the followi
 
 | # | Role | Run ID | Summary |
 |---|------|--------|---------|
-| 1 | genius | 123456789 | Analyzed request, proposed architecture |
+| 1 | architect | 123456789 | Analyzed request, proposed architecture |
 | ... | ... | ... | ... |
 
 **Suspected drift boundary:** Run #123456789 ({role_name}) — {reason}

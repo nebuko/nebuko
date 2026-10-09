@@ -41,8 +41,8 @@ callers can select the runner via the `runs_on` workflow input (e.g.
 
 | Agent | Role | Tools |
 |-------|------|-------|
-| `genius` | Principal engineer — analysis, architecture, planning; delegates everything else. Never writes code. | think, finish |
-| `ctx` | Context collection — locates files, extracts snippets, reports sources. Read-only; never modifies code. | terminal, file_editor, task_tracker, think, finish |
+| `architect` | Principal engineer — analysis, architecture, planning; delegates everything else. Never writes code. | think, finish |
+| `context` | Context collection — locates files, extracts snippets, reports sources. Read-only; never modifies code. | terminal, file_editor, task_tracker, think, finish |
 | `dev` | Execution developer — implements plans, writes tests, opens PRs. | terminal, file_editor, task_tracker, think, finish |
 | `review` | Senior code reviewer — inspects diffs, issues approved/rejected verdicts. | think, finish |
 | `issue` | Issue refinement — iteratively refines issue drafts with humans. | think, finish |
@@ -52,8 +52,8 @@ callers can select the runner via the `runs_on` workflow input (e.g.
 
 Each agent = a prompt file (`.agents/prompts/{agent}.md`) + a model reference +
 a tool whitelist, declared in [`agent-config.yaml`](../defaults/agents/agent-config.yaml).
-Tools are a security boundary: planning agents (`genius`, `review`, `issue`,
-...) physically cannot touch files, while execution agents (`dev`, `ctx`,
+Tools are a security boundary: planning agents (`architect`, `review`, `issue`,
+...) physically cannot touch files, while execution agents (`dev`, `context`,
 `debug`) can. Full details in [agents-and-skills.md](./agents-and-skills.md).
 
 ---

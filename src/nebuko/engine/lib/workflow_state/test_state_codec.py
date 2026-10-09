@@ -43,7 +43,7 @@ def _state_v7() -> WorkflowState:
         phase="execution",
         scaffold_branch="feature/issue-648-scaffold",
         history=[
-            HistoryEntry(step=f"step_{i}", agent="genius", summary=f"s{i}")
+            HistoryEntry(step=f"step_{i}", agent="architect", summary=f"s{i}")
             for i in range(5)
         ],
         position=_branch_mounted_leaf_position(),
@@ -87,20 +87,20 @@ def _state_with_per_entry_dispatch() -> WorkflowState:
         version=4,
         workflow="spec-driven-impl",
         step="plan",
-        agent="genius",
+        agent="architect",
         phase="planning",
         history=[
             HistoryEntry(
                 step="analyze",
-                agent="genius",
+                agent="architect",
                 summary="a",
-                dispatch=Dispatch(status="advance", task_hint="ctx", reason="need context"),
+                dispatch=Dispatch(status="advance", task_hint="context", reason="need context"),
             ),
             HistoryEntry(
                 step="context",
-                agent="ctx",
+                agent="context",
                 summary="c",
-                dispatch=Dispatch(status="hold", task_hint="genius", branch="approved"),
+                dispatch=Dispatch(status="hold", task_hint="architect", branch="approved"),
             ),
         ],
     )
@@ -120,7 +120,7 @@ class TestCodecRoundTripPreservesPerEntryDispatch(unittest.TestCase):
         restored = codec.decode(codec.encode(_state_with_per_entry_dispatch(), compact=True))
 
         self.assertEqual(restored.history[0].dispatch.status, "advance")
-        self.assertEqual(restored.history[0].dispatch.task_hint, "ctx")
+        self.assertEqual(restored.history[0].dispatch.task_hint, "context")
         self.assertEqual(restored.history[1].dispatch.status, "hold")
         self.assertEqual(restored.history[1].dispatch.branch, "approved")
 
@@ -132,7 +132,7 @@ class TestCodecRoundTripPreservesPerEntryDispatch(unittest.TestCase):
             result = codec.load_prev()
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.state.history[1].dispatch.task_hint, "genius")
+        self.assertEqual(result.state.history[1].dispatch.task_hint, "architect")
 
 
 class TestMalformedPositionNeverSilentlyDropped(unittest.TestCase):

@@ -69,10 +69,10 @@ llms:
     default_temperature: 0.7
 
 agents:
-  genius:
+  architect:
     model: "${llms.my-model}"
     temperature: 1.0
-    prompt_file: ".agents/prompts/genius.md"
+    prompt_file: ".agents/prompts/architect.md"
     tools: ["think", "finish"]
 
   dev:
@@ -107,7 +107,7 @@ all. To customize one, add a file with the same agent name under
 
 ```
 .nebuko/prompts/
-├── genius.md
+├── architect.md
 ├── dev.md
 └── review.md
 ```
@@ -126,10 +126,10 @@ from the shipped prompts in this repository's
 2. In the issue body (or a comment), type:
 
    ```
-   @@genius <your request, e.g. "add input validation to the parser">
+   @@architect <your request, e.g. "add input validation to the parser">
    ```
 
-That's it. The trigger condition matches the `@@genius` mention, the
+That's it. The trigger condition matches the `@@architect` mention, the
 orchestrator runs, and the `default` workflow starts
 (see [workflows.md — default](./workflows.md#default)).
 

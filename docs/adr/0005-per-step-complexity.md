@@ -59,7 +59,7 @@ The generic `agent_config_override` (option 2) is **rejected**.
   is centralized in agent config, so one edit changes every step using that
   tier.
 - **Dormant machinery re-activated.** Emitting `CONFIG_COMPLEXITY` restores
-  the runtime tier application for all roles, not just `dev`/`ctx`.
+  the runtime tier application for all roles, not just `dev`/`context`.
 - **Deferred, not precluded.** If per-step model/parameter pinning is ever
   needed, it can be added later as a strictly higher-precedence layer without
   breaking this design. It would warrant its own issue and ADR.

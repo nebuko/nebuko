@@ -21,10 +21,10 @@ class TestResolveRefs:
         """Full-string ${providers.x} resolves to the referenced dict."""
         root = {
             "providers": {"openrouter": {"api_url": "https://example.com"}},
-            "agents": {"genius": {"model": "${providers.openrouter}"}},
+            "agents": {"architect": {"model": "${providers.openrouter}"}},
         }
         result = resolve_refs(root)
-        assert result["agents"]["genius"]["model"] == {
+        assert result["agents"]["architect"]["model"] == {
             "api_url": "https://example.com"
         }
 
@@ -38,10 +38,10 @@ class TestResolveRefs:
                     "provider": "${providers.openrouter}",
                 }
             },
-            "agents": {"genius": {"model": "${llms.deepseek}"}},
+            "agents": {"architect": {"model": "${llms.deepseek}"}},
         }
         result = resolve_refs(root)
-        model = result["agents"]["genius"]["model"]
+        model = result["agents"]["architect"]["model"]
         assert model["model_path"] == "openrouter/deepseek/v4"
         assert model["provider"]["api_url"] == "https://example.com"
 
@@ -49,23 +49,23 @@ class TestResolveRefs:
         """Partial ${ref} in a string is substituted with the value."""
         root = {
             "providers": {"openrouter": {"api_url": "https://example.com"}},
-            "agents": {"genius": {"url": "prefix_${providers.openrouter.api_url}_suffix"}},
+            "agents": {"architect": {"url": "prefix_${providers.openrouter.api_url}_suffix"}},
         }
         result = resolve_refs(root)
-        assert result["agents"]["genius"]["url"] == "prefix_https://example.com_suffix"
+        assert result["agents"]["architect"]["url"] == "prefix_https://example.com_suffix"
 
     def test_list_resolution(self):
         """Lists are traversed and refs resolved."""
         root = {
             "providers": {"openrouter": {"api_url": "https://example.com"}},
             "agents": {
-                "genius": {
+                "architect": {
                     "skills": ["${providers.openrouter.api_url}"],
                 }
             },
         }
         result = resolve_refs(root)
-        assert result["agents"]["genius"]["skills"] == ["https://example.com"]
+        assert result["agents"]["architect"]["skills"] == ["https://example.com"]
 
     def test_hyphenated_keys_in_refs(self):
         """Refs with hyphens in path keys (e.g., deepseek-v4-pro) are resolved."""
@@ -77,10 +77,10 @@ class TestResolveRefs:
                     "provider": "${providers.openrouter}",
                 }
             },
-            "agents": {"genius": {"model": "${llms.deepseek-v4-pro}"}},
+            "agents": {"architect": {"model": "${llms.deepseek-v4-pro}"}},
         }
         result = resolve_refs(root)
-        assert result["agents"]["genius"]["model"]["model_path"] == "openrouter/deepseek/v4"
+        assert result["agents"]["architect"]["model"]["model_path"] == "openrouter/deepseek/v4"
 
     def test_non_string_values_unchanged(self):
         """Non-string, non-dict, non-list values pass through unchanged."""

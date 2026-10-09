@@ -3,7 +3,7 @@
 One validated representation of a single ``AGENT_RUN_CONFIG`` payload, shared
 by the output validator and the routing helpers. The previous contract lived
 half in prose (the prompts) and half in a single validator check, which let
-the exact dispatch-only sentinel ``ctx`` is instructed to emit fail validation
+the exact dispatch-only sentinel ``context`` is instructed to emit fail validation
 (defect D1 of issue #765).
 
 Invariants encoded here:

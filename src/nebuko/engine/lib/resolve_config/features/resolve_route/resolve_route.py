@@ -667,7 +667,7 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
 
     Resolution order (issue #618 defect 1):
       1. Linear successor of ``current_step`` whose ``agent == callee``
-         (in-workflow hand-offs such as genius(analyze) -> ctx(context)).
+         (in-workflow hand-offs such as architect(analyze) -> context(context)).
       2. When ``current_step``'s successor is a *workflow-mount* step the
          callee enters through a sub-workflow: resolve the mount chain via
          :func:`resolve_position` and return the leaf step it lands on — the
@@ -1030,7 +1030,7 @@ def _resolve_machine_trigger_path(
     """Resolve config for a CI-posted machine trigger token (issue #478).
 
     Machine tokens (``bot-subtask-complete`` or the generic
-    ``bot-trigger: <agent>``) replace the legacy machine-posted ``@@genius``
+    ``bot-trigger: <agent>``) replace the legacy machine-posted ``@@architect``
     comments now that @@mentions are blocked for bot-triggered runs. The
     target agent is pinned from the token; unknown agents skip with a reason.
     """

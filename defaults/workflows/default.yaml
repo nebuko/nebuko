@@ -1,24 +1,24 @@
 # Default workflow: the standard dev chain
-# genius → ctx → genius (plan) → dev → review
+# architect → context → architect (plan) → dev → review
 
 name: default
 description: "Standard development workflow: analyze → context → plan → implement → review"
 
 trigger:
-  agents: [genius]  # which @@mentions can start this workflow
+  agents: [architect]  # which @@mentions can start this workflow
 
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     complexity: low
     next: context
 
   - name: context
-    agent: ctx
+    agent: context
     next: plan
 
   - name: plan
-    agent: genius
+    agent: architect
     next: implement
     human_gate: true
     conditions:

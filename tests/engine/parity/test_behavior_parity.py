@@ -312,16 +312,16 @@ _LOOP_VERDICT_BODIES = (
     "",
     "please fix this",
     "<!-- bot-agent-dev -->\n@@dev continue",
-    "<!-- bot-agent-dev -->\n@@genius continue",
+    "<!-- bot-agent-dev -->\n@@architect continue",
     "@@dev continue",
-    "@@genius continue",
-    "<!-- bot-agent-dev -->\n@@genius continue\n@@dev you too",
-    "<!-- bot-agent-dev -->\n<!-- bot-agent-genius -->\n@@dev go",
+    "@@architect continue",
+    "<!-- bot-agent-dev -->\n@@architect continue\n@@dev you too",
+    "<!-- bot-agent-dev -->\n<!-- bot-agent-architect -->\n@@dev go",
 )
 
 
 @pytest.mark.parametrize("body", _LOOP_VERDICT_BODIES)
-@pytest.mark.parametrize("task", ["dev", "genius", "issue-reviewer", ""])
+@pytest.mark.parametrize("task", ["dev", "architect", "issue-reviewer", ""])
 def test_loop_verdict_matches_the_legacy_replay(body, task):
     """Drift check: ``Engine._loop_verdict`` ≡ the legacy replay, branch for branch."""
     resolved = {

@@ -61,12 +61,12 @@ class TestResolveWorkflowRouting:
         """Without workflow field, resolves directly via task name."""
         resolve = self._import_resolver()
         result = resolve(
-            {"task": "genius"},
+            {"task": "architect"},
             "workflows",
             ".agents/prompts",
         )
-        assert result["ROLE_NAME"] == "genius"
-        assert result["PROMPT_LOCATION"] == ".agents/prompts/genius.md"
+        assert result["ROLE_NAME"] == "architect"
+        assert result["PROMPT_LOCATION"] == ".agents/prompts/architect.md"
         assert result["SKIP_AGENT"] == "false"
         assert result["WORKFLOW_NAME"] == ""
 
@@ -85,11 +85,11 @@ class TestResolveWorkflowRouting:
         """With workflow+step, resolves via workflow definition."""
         resolve = self._import_resolver()
         result = resolve(
-            {"task": "ctx", "workflow": "default", "step": "context"},
+            {"task": "context", "workflow": "default", "step": "context"},
             str(Path(__file__).parents[2] / "workflows"),
             ".agents/prompts",
         )
-        assert result["ROLE_NAME"] == "ctx"
+        assert result["ROLE_NAME"] == "context"
         assert result["WORKFLOW_NAME"] == "default"
         assert result["WORKFLOW_STEP"] == "context"
         assert result["WORKFLOW_NEXT"] == "plan"
@@ -98,11 +98,11 @@ class TestResolveWorkflowRouting:
         """When step is empty, defaults to first step of workflow."""
         resolve = self._import_resolver()
         result = resolve(
-            {"task": "genius", "workflow": "default", "step": ""},
+            {"task": "architect", "workflow": "default", "step": ""},
             str(Path(__file__).parents[2] / "workflows"),
             ".agents/prompts",
         )
-        assert result["ROLE_NAME"] == "genius"
+        assert result["ROLE_NAME"] == "architect"
         assert result["WORKFLOW_STEP"] == "analyze"
         assert result["WORKFLOW_NEXT"] == "context"
 
@@ -158,7 +158,7 @@ class TestResolveWorkflowRouting:
                 yaml.dump({
                     "name": "conditional",
                     "description": "Conditional workflow",
-                    "trigger": {"agents": ["genius"]},
+                    "trigger": {"agents": ["architect"]},
                     "steps": [
                         {
                             "name": "implement",
@@ -191,7 +191,7 @@ class TestResolveWorkflowRouting:
                 yaml.dump({
                     "name": "conditional",
                     "description": "Conditional workflow",
-                    "trigger": {"agents": ["genius"]},
+                    "trigger": {"agents": ["architect"]},
                     "steps": [
                         {
                             "name": "implement",
@@ -222,16 +222,16 @@ class TestResolveWorkflowRouting:
                 yaml.dump({
                     "name": "linear",
                     "description": "Linear workflow",
-                    "trigger": {"agents": ["genius"]},
+                    "trigger": {"agents": ["architect"]},
                     "steps": [
-                        {"name": "step1", "agent": "genius", "next": "step2"},
+                        {"name": "step1", "agent": "architect", "next": "step2"},
                         {"name": "step2", "agent": "dev", "next": None},
                     ],
                 })
             )
             resolve = self._import_resolver()
             result = resolve(
-                {"task": "genius", "workflow": "linear", "step": "step1", "branch": "some_branch"},
+                {"task": "architect", "workflow": "linear", "step": "step1", "branch": "some_branch"},
                 tmpdir,
                 ".agents/prompts",
             )
@@ -246,7 +246,7 @@ class TestResolveWorkflowRouting:
                 yaml.dump({
                     "name": "conditional",
                     "description": "Test null next",
-                    "trigger": {"agents": ["genius"]},
+                    "trigger": {"agents": ["architect"]},
                     "steps": [
                         {
                             "name": "implement",
@@ -288,7 +288,7 @@ class TestStepPromptFile:
         return {
             "name": "wf",
             "description": "prompt wf",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": steps,
         }
 
@@ -307,9 +307,9 @@ class TestStepPromptFile:
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 (Path(tmpdir) / "wf.yaml").write_text(yaml.dump(self._wf([
-                    {"name": "analyze", "agent": "genius", "prompt": self.PROMPT, "next": None},
+                    {"name": "analyze", "agent": "architect", "prompt": self.PROMPT, "next": None},
                 ])))
-                result = self._resolve({"task": "genius", "workflow": "wf"}, tmpdir)
+                result = self._resolve({"task": "architect", "workflow": "wf"}, tmpdir)
                 assert result["STEP_PROMPT_FILE"] == self.PROMPT_PATH
                 assert Path(self.PROMPT_PATH).read_text() == self.PROMPT
         finally:
@@ -320,7 +320,7 @@ class TestStepPromptFile:
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 (Path(tmpdir) / "wf.yaml").write_text(yaml.dump(self._wf([
-                    {"name": "first", "agent": "genius", "next": "second"},
+                    {"name": "first", "agent": "architect", "next": "second"},
                     {"name": "second", "agent": "dev", "prompt": self.PROMPT, "next": None},
                 ])))
                 result = self._resolve(
@@ -365,14 +365,14 @@ class TestStepPromptFile:
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 (Path(tmpdir) / "parent.yaml").write_text(yaml.dump(self._wf([
-                    {"name": "start", "agent": "genius", "next": "subtask"},
+                    {"name": "start", "agent": "architect", "next": "subtask"},
                     {"name": "subtask", "workflow": "child", "next": None},
                 ])))
                 (Path(tmpdir) / "child.yaml").write_text(yaml.dump(self._wf([
-                    {"name": "scan", "agent": "ctx", "prompt": self.PROMPT, "next": None},
+                    {"name": "scan", "agent": "context", "prompt": self.PROMPT, "next": None},
                 ])))
                 result = self._resolve(
-                    {"task": "ctx", "workflow": "parent", "step": "subtask"}, tmpdir
+                    {"task": "context", "workflow": "parent", "step": "subtask"}, tmpdir
                 )
                 assert result["WORKFLOW_NAME"] != "parent"
                 assert result["WORKFLOW_STEP"] == "scan"
@@ -398,9 +398,9 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
-                    {"name": "start", "agent": "genius", "next": "subtask"},
+                    {"name": "start", "agent": "architect", "next": "subtask"},
                     {
                         "name": "subtask",
                         "workflow": "child",
@@ -413,19 +413,19 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
                 "name": "child",
                 "description": "Child workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
-                    {"name": "scan", "agent": "ctx", "next": "report"},
+                    {"name": "scan", "agent": "context", "next": "report"},
                     {"name": "report", "agent": "review", "next": None},
                 ],
             }))
 
             resolve = self._import_resolver()
             result = resolve(
-                {"task": "genius", "workflow": "parent", "step": "subtask"},
+                {"task": "architect", "workflow": "parent", "step": "subtask"},
                 tmpdir, ".agents/prompts",
             )
-            assert result["ROLE_NAME"] == "ctx"
+            assert result["ROLE_NAME"] == "context"
             assert result["WORKFLOW_NAME"] == "child"
             assert result["WORKFLOW_STEP"] == "scan"
             assert result["WORKFLOW_NEXT"] == "report"
@@ -441,7 +441,7 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {
                         "name": "subtask",
@@ -454,7 +454,7 @@ class TestSubWorkflowResolution:
             (subdir / "custom-wf.yaml").write_text(yaml.dump({
                 "name": "external",
                 "description": "External workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "run", "agent": "dev", "next": None},
                 ],
@@ -462,7 +462,7 @@ class TestSubWorkflowResolution:
 
             resolve = self._import_resolver()
             result = resolve(
-                {"task": "genius", "workflow": "parent", "step": "subtask"},
+                {"task": "architect", "workflow": "parent", "step": "subtask"},
                 tmpdir, ".agents/prompts",
             )
             assert result["ROLE_NAME"] == "dev"
@@ -476,9 +476,9 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
-                    {"name": "start", "agent": "genius", "next": "subtask"},
+                    {"name": "start", "agent": "architect", "next": "subtask"},
                     {"name": "subtask", "workflow": "child", "next": "finalize"},
                     {"name": "finalize", "agent": "dev", "next": None},
                 ],
@@ -486,7 +486,7 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
                 "name": "child",
                 "description": "Child workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "only-step", "agent": "review", "next": None},
                 ],
@@ -515,18 +515,18 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "subtask", "workflow": "child", "next": "after"},
-                    {"name": "after", "agent": "genius", "next": None},
+                    {"name": "after", "agent": "architect", "next": None},
                 ],
             }))
             (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
                 "name": "child",
                 "description": "Child workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
-                    {"name": "first", "agent": "ctx", "next": "last"},
+                    {"name": "first", "agent": "context", "next": "last"},
                     {"name": "last", "agent": "review", "next": None},
                 ],
             }))
@@ -537,7 +537,7 @@ class TestSubWorkflowResolution:
             # Step 2: continue within child (non-terminal step)
             result = resolve(
                 {
-                    "task": "ctx",
+                    "task": "context",
                     "workflow": "child",
                     "step": "first",
                     "parent_workflow": "parent",
@@ -545,7 +545,7 @@ class TestSubWorkflowResolution:
                 },
                 tmpdir, ".agents/prompts",
             )
-            assert result["ROLE_NAME"] == "ctx"
+            assert result["ROLE_NAME"] == "context"
             assert result["WORKFLOW_NEXT"] == "last"
             assert result["PARENT_WORKFLOW"] == "parent"
 
@@ -560,7 +560,7 @@ class TestSubWorkflowResolution:
                 },
                 tmpdir, ".agents/prompts",
             )
-            assert result["ROLE_NAME"] == "genius"
+            assert result["ROLE_NAME"] == "architect"
             assert result["WORKFLOW_NAME"] == "parent"
             assert result["WORKFLOW_STEP"] == "after"
             assert result["PARENT_WORKFLOW"] == ""
@@ -571,15 +571,15 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "simple.yaml").write_text(yaml.dump({
                 "name": "simple",
                 "description": "Simple workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
-                    {"name": "step1", "agent": "genius", "next": None},
+                    {"name": "step1", "agent": "architect", "next": None},
                 ],
             }))
 
             resolve = self._import_resolver()
             result = resolve(
-                {"task": "genius", "workflow": "simple", "step": "step1"},
+                {"task": "architect", "workflow": "simple", "step": "step1"},
                 tmpdir, ".agents/prompts",
             )
             assert result["PARENT_WORKFLOW"] == ""
@@ -591,9 +591,9 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
-                    {"name": "start", "agent": "genius", "next": "subtask"},
+                    {"name": "start", "agent": "architect", "next": "subtask"},
                     {
                         "name": "subtask",
                         "workflow": "child",
@@ -610,7 +610,7 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
                 "name": "child",
                 "description": "Child workflow",
-                "trigger": {"agents": ["genius"]},
+                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "review-step", "agent": "review", "next": None},
                 ],
@@ -697,7 +697,7 @@ class TestSpecDrivenWorkflow:
                 "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
-                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
+                    {"name": "spec_approval", "agent": "architect", "next": "architect"},
                 ],
             }))
 
@@ -722,7 +722,7 @@ class TestSpecDrivenWorkflow:
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
                     {
                         "name": "spec_approval",
-                        "agent": "genius",
+                        "agent": "architect",
                         "conditions": [
                             {"on_result": "approved", "next": "architect"},
                             {"on_result": "rejected", "next": "spec"},
@@ -730,12 +730,12 @@ class TestSpecDrivenWorkflow:
                         ],
                         "next": "architect",
                     },
-                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "architect", "agent": "architect", "next": "stub"},
                     {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
                     {"name": "stub_review", "agent": "review", "next": "stub_approval"},
                     {
                         "name": "stub_approval",
-                        "agent": "genius",
+                        "agent": "architect",
                         "conditions": [
                             {"on_result": "approved", "next": "implement"},
                             {"on_result": "rejected", "next": "stub"},
@@ -749,9 +749,9 @@ class TestSpecDrivenWorkflow:
 
             resolve = self._import_resolver()
             result = resolve(
-                "genius", "spec-driven", "spec_approval", "approved", tmpdir, ".agents/prompts",
+                "architect", "spec-driven", "spec_approval", "approved", tmpdir, ".agents/prompts",
             )
-            assert result["ROLE_NAME"] == "genius"
+            assert result["ROLE_NAME"] == "architect"
             assert result["WORKFLOW_NEXT"] == "architect"
 
     def test_spec_approval_with_rejected_branch(self):
@@ -765,7 +765,7 @@ class TestSpecDrivenWorkflow:
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
                     {
                         "name": "spec_approval",
-                        "agent": "genius",
+                        "agent": "architect",
                         "conditions": [
                             {"on_result": "approved", "next": "architect"},
                             {"on_result": "rejected", "next": "spec"},
@@ -773,12 +773,12 @@ class TestSpecDrivenWorkflow:
                         ],
                         "next": "architect",
                     },
-                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "architect", "agent": "architect", "next": "stub"},
                     {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
                     {"name": "stub_review", "agent": "review", "next": "stub_approval"},
                     {
                         "name": "stub_approval",
-                        "agent": "genius",
+                        "agent": "architect",
                         "conditions": [
                             {"on_result": "approved", "next": "implement"},
                             {"on_result": "rejected", "next": "stub"},
@@ -792,7 +792,7 @@ class TestSpecDrivenWorkflow:
 
             resolve = self._import_resolver()
             result = resolve(
-                "genius", "spec-driven", "spec_approval", "rejected", tmpdir, ".agents/prompts",
+                "architect", "spec-driven", "spec_approval", "rejected", tmpdir, ".agents/prompts",
             )
             assert result["WORKFLOW_NEXT"] == "spec"
 
@@ -805,11 +805,11 @@ class TestSpecDrivenWorkflow:
                 "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
-                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
-                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "spec_approval", "agent": "architect", "next": "architect"},
+                    {"name": "architect", "agent": "architect", "next": "stub"},
                     {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
                     {"name": "stub_review", "agent": "review", "next": "stub_approval"},
-                    {"name": "stub_approval", "agent": "genius", "next": "implement"},
+                    {"name": "stub_approval", "agent": "architect", "next": "implement"},
                     {"name": "implement", "agent": "dev", "next": None},
                 ],
             }))
@@ -830,11 +830,11 @@ class TestSpecDrivenWorkflow:
                 "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
-                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
-                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "spec_approval", "agent": "architect", "next": "architect"},
+                    {"name": "architect", "agent": "architect", "next": "stub"},
                     {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
                     {"name": "stub_review", "agent": "review", "next": "stub_approval"},
-                    {"name": "stub_approval", "agent": "genius", "next": "implement"},
+                    {"name": "stub_approval", "agent": "architect", "next": "implement"},
                     {"name": "implement", "agent": "dev", "next": None},
                 ],
             }))
@@ -855,13 +855,13 @@ class TestSpecDrivenWorkflow:
                 "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
-                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
-                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "spec_approval", "agent": "architect", "next": "architect"},
+                    {"name": "architect", "agent": "architect", "next": "stub"},
                     {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
                     {"name": "stub_review", "agent": "review", "next": "stub_approval"},
                     {
                         "name": "stub_approval",
-                        "agent": "genius",
+                        "agent": "architect",
                         "conditions": [
                             {"on_result": "approved", "next": "implement"},
                             {"on_result": "rejected", "next": "stub"},
@@ -875,7 +875,7 @@ class TestSpecDrivenWorkflow:
 
             resolve = self._import_resolver()
             result = resolve(
-                "genius", "spec-driven", "stub_approval", "", tmpdir, ".agents/prompts",
+                "architect", "spec-driven", "stub_approval", "", tmpdir, ".agents/prompts",
             )
             assert result["WORKFLOW_NEXT"] == "implement"
 
@@ -888,11 +888,11 @@ class TestSpecDrivenWorkflow:
                 "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
-                    {"name": "spec_approval", "agent": "genius", "next": "architect"},
-                    {"name": "architect", "agent": "genius", "next": "stub"},
+                    {"name": "spec_approval", "agent": "architect", "next": "architect"},
+                    {"name": "architect", "agent": "architect", "next": "stub"},
                     {"name": "stub", "agent": "dev", "skill": ["stub-only"], "next": "stub_review"},
                     {"name": "stub_review", "agent": "review", "next": "stub_approval"},
-                    {"name": "stub_approval", "agent": "genius", "next": "implement"},
+                    {"name": "stub_approval", "agent": "architect", "next": "implement"},
                     {"name": "implement", "agent": "dev", "next": None},
                 ],
             }))

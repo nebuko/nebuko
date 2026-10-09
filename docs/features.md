@@ -21,7 +21,7 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 
 | Command | Effect |
 |---------|--------|
-| `@@<agent>` | Run the named agent directly (`genius`, `ctx`, `dev`, `review`, ...). If the agent matches a workflow's `trigger.agents`, that workflow's first step runs. |
+| `@@<agent>` | Run the named agent directly (`architect`, `context`, `dev`, `review`, ...). If the agent matches a workflow's `trigger.agents`, that workflow's first step runs. |
 | `/nebuko run workflow --name <name> [--step <step>]` | Start (or switch to) the named workflow, regardless of current state. `--step` seeds a **fresh** run directly at `<step>` instead of the first step (issue #789) — useful to enter `plan-orchestration` at `plan`/`scaffold` without replaying `architect`. An unknown or unsafe step name fails loudly. Human-only. |
 | `/nebuko resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. |
 | `/nebuko force-step step --name <step>` | Jump directly to `<step>` of the **active** workflow, regardless of state. Unlike `run --step`, this replays/forks within the current run (it requires an active workflow). |
@@ -52,7 +52,7 @@ costs no LLM call and never re-triggers the engine (decision recorded in
 
 ## Task Decomposition
 
-When `@@genius` judges a task too large for one implementation round, it emits
+When `@@architect` judges a task too large for one implementation round, it emits
 a **split plan** as an XML-tagged JSON block inside its final message:
 
 ```
@@ -85,7 +85,7 @@ Pipeline:
    watches sub-issues; when all tasks of a split plan are done, it posts a
    summary on the parent issue.
 
-`@@genius` resolves the dependency order and triggers ready tasks; each
+`@@architect` resolves the dependency order and triggers ready tasks; each
 sub-issue then runs its own full workflow chain independently.
 
 ---
@@ -109,7 +109,7 @@ Two checks:
 
 1. **Same-agent loop** — if the triggering bot comment was posted by the very
    agent about to be invoked, skip. Cross-agent calls remain allowed
-   (`genius → ctx` is fine).
+   (`architect → context` is fine).
 2. **Human + agent ping** — if a human is pinged alongside an agent, skip, so
    the human (not the machine) orchestrates the next move.
 
@@ -200,10 +200,10 @@ comment parts by the GHA *Post Additional Message Parts* step.
 
 ## External Reference Sharing
 
-Contract for the web references `@@ctx` collects, so downstream agents
+Contract for the web references `@@context` collects, so downstream agents
 actually see page content rather than 1–2 sentence SearXNG snippets:
 
-- **Inline curated JSON (agent access path).** `@@ctx` reads each reference
+- **Inline curated JSON (agent access path).** `@@context` reads each reference
   page in full, then emits a fenced ```json block inside the
   `### EXTERNAL REFERENCES` section of its report: one object per reference
   with `url`, `date` (ISO-8601 UTC fetch date), `chunks` (verbatim, unedited
@@ -212,7 +212,7 @@ actually see page content rather than 1–2 sentence SearXNG snippets:
   not credibility). Schema:
   [reference.md — External Reference JSON](./reference.md#external-reference-json).
   This rides the normal comment-history injection, so tool-less agents
-  (notably `@@genius`) consume the content with zero new machinery.
+  (notably `@@architect`) consume the content with zero new machinery.
 
 Fetch failures degrade gracefully: the reference stays in the report with the
 search snippet as its sole chunk, the failure is noted in its summary, and it

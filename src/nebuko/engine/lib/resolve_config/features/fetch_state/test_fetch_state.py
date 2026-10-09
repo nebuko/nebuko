@@ -12,7 +12,7 @@ from resolve_config.features.fetch_state.fetch_state import (  # noqa: E402
 
 
 def _state_block(workflow="default", step="analyze"):
-    state = {"version": 1, "workflow": workflow, "step": step, "agent": "genius"}
+    state = {"version": 1, "workflow": workflow, "step": step, "agent": "architect"}
     return (
         "<!-- WORKFLOW_STATE_START -->\n"
         + json.dumps(state)
