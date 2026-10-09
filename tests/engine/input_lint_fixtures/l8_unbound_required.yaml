@@ -1,0 +1,11 @@
+name: l8-unbound
+description: "A required callee input is left unbound at the call site"
+trigger:
+  agents: [dev]
+steps:
+  - name: call_callee
+    workflow: callee
+    inputs:
+      diff:
+        exec: ["git", "diff"]
+    next: null

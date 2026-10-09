@@ -9,7 +9,7 @@ runs an agent, mutates a workflow, or touches GitHub.
 |---|---|
 | **Entry point** | `python -m engine lint <paths…>` |
 | **Exit codes** | `0` clean (or warnings only) · `1` at least one error · `2` usage/load failure |
-| **Rule set** | `L1`–`L7` (see [Rule reference](#rule-reference)) |
+| **Rule set** | `L1`–`L10` (see [Rule reference](#rule-reference)) |
 | **Source** | `engine/lint.py` (rules) + `engine/lint_cli.py` (command) |
 
 ---
@@ -118,6 +118,9 @@ want an unreachable step to fail the build.
 | `L5-terminal-consistency` | error | A non-terminal entry step that routes only through `conditions` and has no linear `next`, so a branch-less dispatch dead-ends. |
 | `L6-human-gate` | error | A `human_gate: true` step that is terminal; its hold can never resume. |
 | `L7-no-terminal` | error | No step can terminate — every path cycles. |
+| `L8-input-binding` | error | A call-site binding names an input the callee does not declare, or leaves a `required` input unbound. |
+| `L9-input-kind` | error | A call-site binding's kind does not match the callee's declared kind — a `ref` must be kind-preserving. |
+| `L10-input-ref` | warning → error under `--strict` | A consumer references an `input.<name>` / `<step>.<out>` not in scope, or a declared input is never consumed or forwarded. |
 
 ### L1 — dangling `next`
 
@@ -255,6 +258,53 @@ steps:
 ```
 
 **Fix:** add a step with `next: null` (directly, or as a conditional branch).
+
+### L8 — call-site binding mismatch
+
+A workflow is a typed function: a `workflow` call step's `inputs` are its
+arguments. L8 fires when a binding names an input the callee does not declare,
+or when a `required` input is left unbound. A callee that the linter cannot
+resolve (missing file, bad path) is skipped here — that is L1's concern.
+
+```yaml
+# build calls spec-driven-impl, which declares only 'run_test'
+- name: build
+  workflow: spec-driven-impl
+  inputs:
+    setup_dev_env: ["nix", "develop"]   # ← callee declares no such input
+    # 'run_test' is required and never bound
+```
+
+**Fix:** bind exactly the declared inputs; remove stale bindings.
+
+### L9 — binding kind mismatch
+
+The bound value's kind must equal the callee's declared kind. A `ref` is
+**kind-preserving**: a `ref` to an `exec` input forwards a command spec, not a
+string, so a `str`-declared target cannot receive it (and vice-versa).
+
+```yaml
+# callee declares run_test: {kind: exec}; the caller passes a constant
+inputs:
+  run_test: "pytest ."        # ← str binding for an exec input
+```
+
+**Fix:** match the declared kind — usually by forwarding `input.<name>`.
+
+### L10 — unresolvable or unused reference
+
+Two shapes of the same "not wired" defect. First, a consumer `agent` step
+references `input.<name>` or `<step>.<out>` that is not in scope. Second, a
+declared input is never consumed or forwarded by any step (even via a nested
+call), so the parameter is dead.
+
+```yaml
+# 'run_test' is declared but no step ever references input.run_test
+inputs:
+  - {name: run_test, kind: exec}
+```
+
+**Fix:** reference the value from a step, or drop the declaration.
 
 ---
 

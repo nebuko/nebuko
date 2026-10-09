@@ -12,6 +12,12 @@ from .sub_domains.human_action_notice.human_action_notice import HumanActionNoti
 from .sub_domains.app_config.app_config import AppConfig
 
 # Workflow Config sub-domains
+from .sub_domains.workflow.input_binding import (
+    REF_PATTERN as INPUT_REF_PATTERN,
+    InputBinding,
+    InputMaterializationError,
+)
+from .sub_domains.workflow.workflow_input_spec import WorkflowInputSpec
 from .sub_domains.workflow_condition.workflow_condition import WorkflowCondition
 from .sub_domains.workflow_step.script_step_spec import ScriptStepSpec
 from .sub_domains.workflow_step.workflow_step import WorkflowStep
@@ -58,6 +64,10 @@ __all__ = [
     "AppConfig",
     # Workflow Config entities
     "WorkflowCondition",
+    "WorkflowInputSpec",
+    "InputBinding",
+    "InputMaterializationError",
+    "INPUT_REF_PATTERN",
     "ScriptStepSpec",
     "WorkflowStep",
     "WorkflowTrigger",

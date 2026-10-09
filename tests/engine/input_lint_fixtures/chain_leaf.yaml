@@ -1,0 +1,14 @@
+name: chain-leaf
+description: "Leaf: consumes the forwarded command"
+trigger:
+  agents: [dev]
+inputs:
+  - name: run_test
+    kind: exec
+steps:
+  - name: work
+    agent: dev
+    inputs:
+      run_test: input.run_test
+    outputs: [patch_ready]
+    next: null

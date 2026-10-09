@@ -1706,6 +1706,171 @@ class TestBuildPromptStepReplacement:
         assert "ROLE DEV FLOW" in prompt
 
 
+class TestStepInputSeam:
+    """The engine materializes declared inputs *before* the agent (issue #813).
+
+    These pin the run-loop seam the resolver's ``STEP_INPUTS`` feeds: a
+    three-level kind-preserving lazy forwarding injects one forced block, a
+    failed ``required`` input is terminal without invoking the agent, and an
+    over-deep call-frame chain is refused the same deterministic way.
+    """
+
+    @staticmethod
+    def _frame(callee: str, call_step: str, bindings: dict) -> dict:
+        return {"callee": callee, "call_step": call_step, "bindings": bindings}
+
+    @staticmethod
+    def _step_inputs(frames, consumer, specs=None) -> dict:
+        return {
+            "STEP_INPUTS": json.dumps(
+                {"frames": frames, "consumer": consumer, "specs": specs or {}}
+            )
+        }
+
+    def test_three_level_forwarding_injects_one_forced_block(self, tmp_path):
+        engine = _engine(tmp_path)
+        role = tmp_path / "dev.md"
+        role.write_text("ROLE DEV FLOW", encoding="utf-8")
+        frames = [
+            self._frame(
+                "spec-driven", "call_spec",
+                {"run_test": {"exec": ["sh", "-c", "echo 1 passed"]}},
+            ),
+            self._frame("spec-driven-impl", "build", {"run_test": "input.run_test"}),
+        ]
+        resolved = {
+            "PROMPT_LOCATION": str(role),
+            **self._step_inputs(frames, {"run_test": "input.run_test"}),
+        }
+
+        results, failure = engine._materialize_inputs(resolved, ["action"])
+
+        assert failure is None
+        assert [result.body for result in results] == ["1 passed\n"]
+        prompt = engine.build_prompt(resolved, [], results)
+        assert "## Step inputs (deterministic)" in prompt
+        assert "1 passed" in prompt
+
+    def test_required_input_failure_is_terminal_before_the_agent(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = self._step_inputs(
+            [],
+            {"diff": {"exec": ["sh", "-c", "exit 2"]}},
+            {"diff": {"kind": "exec", "required": True}},
+        )
+
+        _, failure = engine._materialize_inputs(resolved, ["action"])
+
+        assert failure is not None
+        assert failure.exit_code == ExitCode.TERMINAL
+        assert "required step input failed" in failure.routing.reason
+
+    def test_over_deep_call_chain_is_terminal_before_the_agent(self, tmp_path):
+        from nebuko.engine.input_wiring import MAX_CALL_FRAMES
+
+        engine = _engine(tmp_path)
+        frames = [
+            self._frame(f"wf-{i}", f"s{i}", {})
+            for i in range(MAX_CALL_FRAMES + 1)
+        ]
+
+        results, failure = engine._materialize_inputs(
+            self._step_inputs(frames, {"x": {"str": "v"}}), ["action"]
+        )
+
+        assert results == []
+        assert failure is not None
+        assert failure.exit_code == ExitCode.TERMINAL
+        assert "sub-workflow call depth exceeded" in failure.routing.reason
+
+    def test_resolver_emission_feeds_the_engine_seam(self, tmp_path):
+        """End-to-end: the trio's YAML is resolved, then materialized (issue #813).
+
+        The resolver emits ``STEP_INPUTS`` from the carried-forward mount chain
+        and the engine runs the forwarded ``exec`` exactly once at the
+        consuming step — the same path a live run takes, without mocking either
+        side.
+        """
+        import tempfile
+
+        from config import StepRef, WorkflowPosition
+        from resolve_config.features.build_result.build_result import _build_result
+        from resolve_workflow import TASK_TO_PROMPT
+
+        prompt_base = tempfile.mkdtemp()
+        for name in set(TASK_TO_PROMPT.values()):
+            Path(prompt_base, name).write_text("# prompt", encoding="utf-8")
+        self._write_trio(tmp_path)
+
+        base = WorkflowPosition(refs=[
+            StepRef(workflow="super-parent", step="call_spec"),
+            StepRef(workflow="spec-driven", step="build"),
+        ])
+        resolved = _build_result(
+            {
+                "task": "dev",
+                "config_workflow": "spec-driven",
+                "config_step": "build",
+                "config_position": base,
+            },
+            prompt_base,
+            str(tmp_path),
+        )
+
+        engine = _engine(tmp_path)
+        results, failure = engine._materialize_inputs(resolved, ["action"])
+
+        assert failure is None
+        assert [result.body for result in results] == ["1 passed\n"]
+        prompt = engine.build_prompt(resolved, [], results)
+        assert "1 passed" in prompt
+
+    @staticmethod
+    def _write_trio(workflows_dir) -> None:
+        from pathlib import Path as _Path
+
+        (_Path(workflows_dir) / "super-parent.yaml").write_text(
+            "name: super-parent\n"
+            "description: root\n"
+            "trigger:\n  agents: [dev]\n"
+            "steps:\n"
+            "  - name: call_spec\n"
+            "    workflow: spec-driven\n"
+            "    inputs:\n"
+            "      run_test:\n"
+            '        exec: ["echo", "1 passed"]\n',
+            encoding="utf-8",
+        )
+        (_Path(workflows_dir) / "spec-driven.yaml").write_text(
+            "name: spec-driven\n"
+            "description: middle\n"
+            "trigger:\n  agents: [dev]\n"
+            "inputs:\n"
+            "  - name: run_test\n"
+            "    kind: exec\n"
+            "steps:\n"
+            "  - name: build\n"
+            "    workflow: spec-driven-impl\n"
+            "    inputs:\n"
+            "      run_test: input.run_test\n",
+            encoding="utf-8",
+        )
+        (_Path(workflows_dir) / "spec-driven-impl.yaml").write_text(
+            "name: spec-driven-impl\n"
+            "description: leaf\n"
+            "trigger:\n  agents: [dev]\n"
+            "inputs:\n"
+            "  - name: run_test\n"
+            "    kind: exec\n"
+            "steps:\n"
+            "  - name: stub\n"
+            "    agent: dev\n"
+            "    inputs:\n"
+            "      run_test: input.run_test\n",
+            encoding="utf-8",
+        )
+
+
 class TestEntryPoints:
     def test_main_takes_an_argv_sequence(self):
         assert list(inspect.signature(main).parameters) == ["argv"]

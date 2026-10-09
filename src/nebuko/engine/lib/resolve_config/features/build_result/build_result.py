@@ -11,6 +11,10 @@ from resolve_workflow import (
     resolve_workflow_routing,
     build_workflow_position,
     build_workflow_position_value,
+    attach_call_frames,
+    build_step_inputs,
+    _find_workflow_step,
+    _load_workflow_by_reference,
     _position_pair_from_value,
     resolve_complexity_tier,
     TASK_TO_PROMPT,
@@ -36,8 +40,13 @@ def _attach_position(
     absent base — that rebuild is what previously truncated a nested run.
     """
     if result.get("WORKFLOW_POSITION"):
-        # Entry path already emitted the position (resolver fidelity).
-        return result
+        # Entry path already emitted the position (resolver fidelity). The
+        # resolver rebuilds that chain from the *current* run's workflow only,
+        # so a depth-2 entry (entering a leaf from a middle workflow that is
+        # itself mounted) drops every ancestor above the caller; underpin the
+        # emitted tail with the carried-forward base so the full mount chain
+        # survives to the next job (issue #813).
+        return _splice_entry_position(result, config.get("config_position"))
     leaf_wf = result.get("WORKFLOW_NAME", "")
     leaf_step = result.get("WORKFLOW_STEP", "")
     if not leaf_wf:
@@ -58,6 +67,31 @@ def _attach_position(
         scaffold_branch=scaffold_branch,
         local_workflows_dir=local_workflows_dir,
     )
+
+
+def _splice_entry_position(result: dict, base: Optional[WorkflowPosition]) -> dict:
+    """Underpin a resolver-emitted entry position with the carried-forward base.
+
+    The resolver's entry path rebuilds the chain with ``_build_position_chain``
+    starting from the *current* run's workflow, so entering a leaf from a middle
+    workflow that is itself mounted truncates every ancestor above the caller.
+    Those enclosing frames are exactly what the carried-forward position still
+    records, so the emitted tail is spliced beneath the deepest base frame owned
+    by its first element. A missing/foreign base leaves the emitted pair as-is
+    (the top-level and legacy cases, which the resolver already renders whole).
+    """
+    if not isinstance(base, WorkflowPosition) or not base.refs:
+        return result
+    entry = WorkflowPosition.from_env(result.get("WORKFLOW_POSITION", ""))
+    if entry is None or not entry.refs:
+        return result
+    index = _deepest_workflow_index(base.refs, entry.refs[0].workflow)
+    if index is None:
+        return result
+    merged = WorkflowPosition(
+        version=base.version, refs=[*base.refs[:index], *entry.refs]
+    )
+    return result | _position_pair_from_value(merged)
 
 
 def _carry_forward_position(
@@ -282,4 +316,42 @@ def _build_result(
     }
     result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")
     result["WORKFLOW_POSITION_PATH"] = wf_result.get("WORKFLOW_POSITION_PATH", "")
-    return _attach_position(result, config, workflows_dir, local_workflows_dir)
+    result = _attach_position(result, config, workflows_dir, local_workflows_dir)
+    return _attach_step_inputs(result, config, workflows_dir, local_workflows_dir)
+
+
+def _attach_step_inputs(
+    result: dict,
+    config: dict,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> dict:
+    """Emit a resolved step's declared input wiring as ``STEP_INPUTS`` (issue #813).
+
+    The payload is the step's own ``inputs:`` bindings plus its workflow's
+    declared input signature (the ``required`` policy). The mount-chain frames
+    are derived from the run's *final* position — the carried-forward chain is
+    the only place the immediate caller of each level is recorded accurately,
+    which is what makes kind-preserving lazy forwarding work across nesting.
+    Steps that declare no inputs are left untouched, keeping their resolver
+    output byte-identical.
+    """
+    wf_name = result.get("WORKFLOW_NAME") or ""
+    step_name = result.get("WORKFLOW_STEP") or ""
+    if not wf_name or not step_name:
+        return result
+    scaffold_branch = config.get("config_scaffold_branch") or None
+    workflow = _load_workflow_by_reference(
+        wf_name, workflows_dir, local_workflows_dir, scaffold_branch,
+    )
+    step = _find_workflow_step(workflow, step_name) if workflow else None
+    if step is None or not step.inputs:
+        return result
+    result["STEP_INPUTS"] = attach_call_frames(
+        build_step_inputs(workflow, step),
+        result.get("WORKFLOW_POSITION", ""),
+        workflows_dir,
+        local_workflows_dir,
+        scaffold_branch,
+    )
+    return result
