@@ -46,7 +46,7 @@ _SPLIT_PLAN = re.compile(r"<splitPlan>.*?</splitPlan>", re.DOTALL)
 # Console.log "Message from Agent" separator
 _CONSOLE_MARKER = "Message from Agent " + "\u2500" * 63
 
-# @@agent trigger tokens (e.g. @@genius, @@dev)
+# @@agent trigger tokens (e.g. @@architect, @@dev)
 _AGENT_TRIGGER = re.compile(r"(?<![\w])@@([A-Za-z0-9_-]+)")
 
 # Bare human @mentions in *agent-authored* bodies (issue #795). Notification is
@@ -65,10 +65,10 @@ _HUMAN_MENTION = re.compile(
 
 MAX_COMMENT_LENGTH = 60000
 
-# Section headings of the ctx report template (.agents/prompts/ctx.md).
-# Wrapped in <details> at posting time so a long ctx report stays scannable
+# Section headings of the context report template (.agents/prompts/context.md).
+# Wrapped in <details> at posting time so a long context report stays scannable
 # while remaining fully auditable in the comment body (issue #557).
-CTX_SECTION_HEADINGS = [
+CONTEXT_SECTION_HEADINGS = [
     "FILES FOUND",
     "RELEVANT SNIPPETS",
     "EXTERNAL REFERENCES",
@@ -294,8 +294,8 @@ def escape_agent_triggers(content: str) -> str:
     the issue_comment workflow gate (issue #482).
 
     Inserts a zero-width space (U+200B) between @@ and the agent name
-    (e.g. "@@genius" -> "@@\u200bgenius"). This is invisible when rendered but
-    breaks the contains(body, '@@genius') substring match in the workflow
+    (e.g. "@@architect" -> "@@\u200barchitect"). This is invisible when rendered but
+    breaks the contains(body, '@@architect') substring match in the workflow
     trigger condition.
     """
     return _AGENT_TRIGGER.sub(lambda m: m.group(0).replace("@@", "@@\u200b", 1), content)
@@ -326,13 +326,13 @@ def neutralize_human_pings(content: str) -> str:
     return _HUMAN_MENTION.sub(_emitted, content)
 
 
-def _apply_ctx_collapse(cleaned: str, role_name: str | None = None) -> str:
-    """Wrap ctx-report sections in <details> blocks (issue #557).
+def _apply_context_collapse(cleaned: str, role_name: str | None = None) -> str:
+    """Wrap context-report sections in <details> blocks (issue #557).
 
-    Only applied when the role is "ctx": the title + executive summary
+    Only applied when the role is "context": the title + executive summary
     (above the first ### heading) stay visible; FILES FOUND / RELEVANT
     SNIPPETS / EXTERNAL REFERENCES / OTHER FILES collapse by default.
-    Non-ctx roles and bodies without any recognized heading pass through
+    Non-context roles and bodies without any recognized heading pass through
     unchanged.
 
     Args:
@@ -341,9 +341,9 @@ def _apply_ctx_collapse(cleaned: str, role_name: str | None = None) -> str:
             ``ROLE_NAME`` from the environment, which is the GHA path.
     """
     role = os.environ.get("ROLE_NAME", "") if role_name is None else role_name
-    if role != "ctx":
+    if role != "context":
         return cleaned
-    collapsed = collapse_sections(cleaned, CTX_SECTION_HEADINGS)
+    collapsed = collapse_sections(cleaned, CONTEXT_SECTION_HEADINGS)
     return cleaned if collapsed == cleaned else collapsed
 
 
@@ -413,12 +413,11 @@ _LIVE_STATUSES = ("advance", "loop", "soft_kill")
 
 # Role label for the answer header's announcement line (legacy mapping).
 _ROLE_DISPLAY_NAMES = {
-    "genius": "Genius",
-    "ctx": "Ctx",
+    "architect": "Architect",
+    "context": "Context",
     "dev": "Developer",
     "review": "Reviewer",
-    "issue": "Issue",
-    "issue-reviewer": "Issue Reviewer",
+    "po": "Product Owner",
 }
 
 
@@ -478,7 +477,7 @@ def _select_fallback_body(
         has_console_log: Whether the ``console.log`` artifact existed with
             content. ``None`` derives it from ``console_log``.
         trigger_author: Author pinged on the crash paths (``TRIGGER_AUTHOR``).
-        role_name: Role for the ctx collapse; ``None`` reads the environment.
+        role_name: Role for the context collapse; ``None`` reads the environment.
         recall_count: The run's ``dispatch_recall_count`` (from the workflow
             state); flags post-recall finish-fallbacks in CI logs (issue #558).
 
@@ -498,7 +497,7 @@ def _select_fallback_body(
 
     def finalized(cleaned: str) -> str:
         cleaned = neutralize_human_pings(cleaned)
-        return _truncate_at_boundary(_apply_ctx_collapse(cleaned, role_name))
+        return _truncate_at_boundary(_apply_context_collapse(cleaned, role_name))
 
     # ── Path A: Structured final message ────────────────────────
     if has_final_message:
@@ -586,7 +585,7 @@ def build_comment_body(
         has_console_log: Whether the ``console.log`` artifact existed with
             content. ``None`` derives it from ``console_log``.
         trigger_author: Author pinged on the crash paths (``TRIGGER_AUTHOR``).
-        role_name: Answer-comment role; also drives the ctx body collapse.
+        role_name: Answer-comment role; also drives the context body collapse.
             ``None`` reads ``ROLE_NAME`` from the environment (GHA path).
         state: The agent's ``workflow_state.json`` artifact, or ``None`` when
             the run emitted none. ``None`` still emits the marker/token header

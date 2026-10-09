@@ -25,10 +25,10 @@ class TestLoadWorkflow:
         raw = {
             "name": "default",
             "description": "Standard dev workflow",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "analyze", "agent": "genius", "next": "context"},
-                {"name": "context", "agent": "ctx", "next": None},
+                {"name": "analyze", "agent": "architect", "next": "context"},
+                {"name": "context", "agent": "context", "next": None},
             ],
         }
         with tempfile.NamedTemporaryFile(
@@ -39,15 +39,15 @@ class TestLoadWorkflow:
             wf = load_workflow(f.name)
 
         assert wf.name == "default"
-        assert wf.steps[0].agent == "genius"
-        assert wf.steps[1].agent == "ctx"
+        assert wf.steps[0].agent == "architect"
+        assert wf.steps[1].agent == "context"
         os.unlink(f.name)
 
     def test_load_workflow_with_conditions(self):
         raw = {
             "name": "conditional",
             "description": "Workflow with conditional branching",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
                 {
                     "name": "implement",
@@ -82,11 +82,11 @@ class TestLoadWorkflow:
         raw = {
             "name": "digest",
             "description": "Digest workflow with a step prompt",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
                 {
                     "name": "analyze",
-                    "agent": "genius",
+                    "agent": "architect",
                     "prompt": prompt_text,
                     "next": "distill",
                 },
@@ -140,10 +140,10 @@ class TestLoadWorkflow:
         wf = load_workflow(workflow_path)
 
         assert wf.name == "default"
-        assert wf.trigger.agents == ["genius"]
+        assert wf.trigger.agents == ["architect"]
         assert len(wf.steps) == 5
         assert wf.steps[0].name == "analyze"
-        assert wf.steps[0].agent == "genius"
+        assert wf.steps[0].agent == "architect"
         assert wf.steps[0].next == "context"
         assert wf.steps[-1].name == "review"
         assert wf.steps[-1].agent == "review"
@@ -167,7 +167,7 @@ class TestPathBasedLoading:
     RAW = {
         "name": "path_wf",
         "description": "Workflow at a non-standard path",
-        "trigger": {"agents": ["genius"]},
+        "trigger": {"agents": ["architect"]},
         "steps": [{"name": "step", "agent": "dev", "next": None}],
     }
 
@@ -231,7 +231,7 @@ class TestLoadWorkflowWithDirs:
         path.write_text(yaml.safe_dump(raw))
         return path
 
-    def _wf(self, name="foo", agent="genius"):
+    def _wf(self, name="foo", agent="architect"):
         return {
             "name": name,
             "description": "test workflow",
@@ -244,7 +244,7 @@ class TestLoadWorkflowWithDirs:
 
         base, local = tmp_dirs
         self._write(base / "foo.yaml", self._wf(agent="dev"))
-        self._write(local / "foo.yaml", self._wf(agent="ctx"))
+        self._write(local / "foo.yaml", self._wf(agent="context"))
         winner = load_workflow_with_dirs("foo", str(base), str(local))
         assert winner == local / "foo.yaml"
 

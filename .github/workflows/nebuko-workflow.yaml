@@ -87,14 +87,13 @@ jobs:
                        github.event.issue.author_association)) &&
              !startsWith(github.event.issue.body, '<!-- bot-agent-') &&
              !startsWith(github.event.issue.body, '<!-- bot-workflow-terminal -->') &&
-             (contains(github.event.issue.body, '@@genius') ||
-              contains(github.event.issue.body, '@@ctx') ||
+             (contains(github.event.issue.body, '@@architect') ||
+              contains(github.event.issue.body, '@@context') ||
               contains(github.event.issue.body, '@@dev') ||
               contains(github.event.issue.body, '@@review') ||
-              contains(github.event.issue.body, '@@issue') ||
-              contains(github.event.issue.body, '@@issue-reviewer') ||
-              contains(github.event.issue.body, '@@debug') ||
               contains(github.event.issue.body, '@@po') ||
+              contains(github.event.issue.body, '@@genius') ||
+              contains(github.event.issue.body, '@@ctx') ||
               contains(github.event.issue.body, '/nebuko'))) ||
             (github.event_name == 'issue_comment' &&
              (inputs.CALLER_AUTH == 'off' ||
@@ -102,14 +101,13 @@ jobs:
                        github.event.comment.author_association)) &&
              ((!startsWith(github.event.comment.body, '<!-- bot-agent-') &&
                !startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
-               (contains(github.event.comment.body, '@@genius') ||
-                contains(github.event.comment.body, '@@ctx') ||
+               (contains(github.event.comment.body, '@@architect') ||
+                contains(github.event.comment.body, '@@context') ||
                 contains(github.event.comment.body, '@@dev') ||
                 contains(github.event.comment.body, '@@review') ||
-                contains(github.event.comment.body, '@@issue') ||
-                contains(github.event.comment.body, '@@issue-reviewer') ||
-                contains(github.event.comment.body, '@@debug') ||
                 contains(github.event.comment.body, '@@po') ||
+                contains(github.event.comment.body, '@@genius') ||
+                contains(github.event.comment.body, '@@ctx') ||
                 contains(github.event.comment.body, '/nebuko'))) ||
               contains(github.event.comment.body, '"function_call"') ||
               contains(github.event.comment.body, '<!-- workflow-continue -->') ||

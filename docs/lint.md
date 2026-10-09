@@ -127,7 +127,7 @@ that route fires.
 ```yaml
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     next: ghost      # ← no step named 'ghost'
   - name: review
     agent: review
@@ -144,7 +144,7 @@ It is dead weight — often a leftover after a route was removed.
 ```yaml
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     next: review
   - name: review
     agent: review
@@ -165,7 +165,7 @@ duplicate makes `next` ambiguous.
 ```yaml
 steps:
   - name: dup
-    agent: genius
+    agent: architect
     next: done
   - name: done
     agent: dev
@@ -185,7 +185,7 @@ repeated `on_result` on the same step is unreachable by construction.
 ```yaml
 steps:
   - name: gate
-    agent: genius
+    agent: architect
     next: done
     conditions:
       - on_result: approved   # ← selected
@@ -207,7 +207,7 @@ lookup, so they are not flagged.)
 ```yaml
 steps:
   - name: analyze        # ← entry step, no linear 'next'
-    agent: genius
+    agent: architect
     conditions:
       - on_result: approved
         next: done
@@ -227,10 +227,10 @@ for it to go. See [workflows.md](./workflows.md) for gate/resume semantics.
 ```yaml
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     next: gate
   - name: gate
-    agent: genius
+    agent: architect
     human_gate: true
     next: null           # ← terminal gate, cannot resume
 ```
@@ -247,7 +247,7 @@ terminal (`next: null`) **or** if a branch of its `conditions` has
 ```yaml
 steps:
   - name: a
-    agent: genius
+    agent: architect
     next: b
   - name: b
     agent: dev
@@ -272,7 +272,7 @@ cover the resume decision:
 
 ```yaml
   - name: approve
-    agent: genius
+    agent: architect
     human_gate: true
     conditions:
       - on_result: approved

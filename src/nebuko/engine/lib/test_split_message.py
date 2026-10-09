@@ -77,7 +77,7 @@ class TestExtractSplitPlan(unittest.TestCase):
 
     def test_large_message_with_split_plan_deep_inside(self):
         """Simulates issue #231: splitPlan deep in a long message that would be split into parts."""
-        # Simulate what genius produces - a long plan where splitPlan may end up in part 2+
+        # Simulate what architect produces - a long plan where splitPlan may end up in part 2+
         intro = "Implementation Plan\n\n" + ("Detailed analysis paragraph.\n\n") * 80
         json_block = '{"tasks": [{"title": "Task 1"}, {"title": "Task 2"}, {"title": "Task 3"}], "auto_trigger": true}'
         closing = "\n\nHand-off instructions.\n\n<!-- AGENT_RUN_CONFIG {\"dispatch\": {\"status\": \"advance\"}, \"complexity\": \"high\"} -->"

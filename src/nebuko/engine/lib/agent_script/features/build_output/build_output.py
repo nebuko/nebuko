@@ -1099,10 +1099,10 @@ def build_output(
     _write_latest_answer_file(latest_answer)
 
     # ── Message splitting ────────────────────────────────────────
-    # ctx reports are posted as a single collapsed comment (issue #557):
+    # context reports are posted as a single collapsed comment (issue #557):
     # raise the split threshold to the 60k comment cap so they fit in one
     # part; other agents keep the 10k multi-part split.
-    max_split_length = 60000 if role_name == "ctx" else 10000
+    max_split_length = 60000 if role_name == "context" else 10000
     message_parts = split_message(final_message, max_split_length) if final_message else []
 
     # ── Write output files ───────────────────────────────────────

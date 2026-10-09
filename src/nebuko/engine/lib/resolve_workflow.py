@@ -11,12 +11,12 @@ Usage:
         --prompt-base .agents/prompts \\
         --agent-config-path agent-config.yaml \\
         <<EOF
-    {"task": "genius", "workflow": "default", "step": "analyze"}
+    {"task": "architect", "workflow": "default", "step": "analyze"}
     EOF
 
 Output (written to --env-file):
-    ROLE_NAME=genius
-    PROMPT_LOCATION=.agents/prompts/genius.md
+    ROLE_NAME=architect
+    PROMPT_LOCATION=.agents/prompts/architect.md
     WORKFLOW_NAME=default
     WORKFLOW_STEP=analyze
     WORKFLOW_NEXT=context
@@ -52,13 +52,10 @@ except ImportError:
 
 # Default task-to-prompt mapping (backward compatibility fallback)
 TASK_TO_PROMPT = {
-    "genius": "genius.md",
-    "ctx": "ctx.md",
+    "architect": "architect.md",
+    "context": "context.md",
     "dev": "dev.md",
     "review": "review.md",
-    "issue": "issue.md",
-    "issue-reviewer": "issue-reviewer.md",
-    "debug": "debug.md",
     "po": "po.md",
 }
 

@@ -28,7 +28,7 @@ class TestAgentRunConfigContract:
         assert config.function_call is None
 
     def test_dispatch_only_valid(self):
-        """Defect D1 regression: the dispatch-only sentinel ctx emits is valid."""
+        """Defect D1 regression: the dispatch-only sentinel context emits is valid."""
         config = AgentRunConfig.model_validate(
             {"dispatch": {"status": "advance"}}
         )
@@ -38,10 +38,10 @@ class TestAgentRunConfigContract:
 
     def test_function_call_only_valid(self):
         config = AgentRunConfig.model_validate(
-            {"function_call": {"function": "call_agent", "agent_name": "ctx"}}
+            {"function_call": {"function": "call_agent", "agent_name": "context"}}
         )
         assert config.function_call is not None
-        assert config.function_call.agent_name == "ctx"
+        assert config.function_call.agent_name == "context"
 
     def test_empty_payload_rejected(self):
         with pytest.raises(ValidationError, match="at least one"):
@@ -55,10 +55,10 @@ class TestAgentRunConfigContract:
         with pytest.raises(ValidationError, match="cannot combine"):
             AgentRunConfig.model_validate(
                 {
-                    "task": "genius",
+                    "task": "architect",
                     "function_call": {
                         "function": "call_agent",
-                        "agent_name": "ctx",
+                        "agent_name": "context",
                     },
                 }
             )
@@ -84,10 +84,10 @@ class TestDispatchConfig:
 
 class TestFunctionCallCallback:
     def test_callback_defaults_to_none(self):
-        call = FunctionCall(agent_name="ctx")
+        call = FunctionCall(agent_name="context")
         assert call.callback is None
 
     def test_callback_round_trips(self):
-        call = FunctionCall(agent_name="ctx", callback="genius")
-        assert call.callback == "genius"
+        call = FunctionCall(agent_name="context", callback="architect")
+        assert call.callback == "architect"
         assert FunctionCall.model_validate(call.model_dump()) == call

@@ -31,7 +31,7 @@ Do NOT start any new task. Do NOT restate your previous answer.
 Call the `dispatch_next` tool NOW with exactly these parameters:
 - status: 'advance' (proceed to the next step/agent), 'loop' (re-run the
   current step), or 'hold' (wait for a human)
-- agent: explicit target agent name if you are handing off (e.g. 'ctx',
+- agent: explicit target agent name if you are handing off (e.g. 'context',
   'dev'), otherwise omit it — the workflow definition resolves the next agent
 - complexity: 'low', 'medium', or 'high'
 - reason: one short sentence justifying the decision

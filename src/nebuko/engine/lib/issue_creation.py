@@ -4,7 +4,7 @@ GitHub issue creation utility for the multi-agent workflow.
 
 Provides functions to create sub-issues under a parent issue using the
 GitHub REST API. Called from the GitHub Actions workflow to implement
-issue splitting when the genius agent decomposes a complex task into
+issue splitting when the architect agent decomposes a complex task into
 smaller sub-tasks.
 
 Usage:
@@ -372,14 +372,14 @@ def trigger_workflows(
     client: GitHubClient,
     tasks_with_numbers: List[Dict[str, Any]],
 ) -> None:
-    """Post @@genius comments only on tasks with no pending dependencies.
+    """Post @@architect comments only on tasks with no pending dependencies.
     
     Args:
         client: GitHub API client.
         tasks_with_numbers: List of task dicts with "index", "number", "dependencies".
             Only tasks whose "dependencies" list is empty will be triggered.
     """
-    trigger_body = "@@genius"
+    trigger_body = "@@architect"
     triggered = 0
     skipped = 0
     
@@ -417,7 +417,7 @@ def main():
     create_parser.add_argument("--plan", required=True, help="Path to split plan JSON file")
     create_parser.add_argument(
         "--no-trigger", action="store_true",
-        help="Do NOT post @@genius on created issues (skip workflow trigger)",
+        help="Do NOT post @@architect on created issues (skip workflow trigger)",
     )
 
     # `list` command

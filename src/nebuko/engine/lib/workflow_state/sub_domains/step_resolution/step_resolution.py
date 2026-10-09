@@ -20,7 +20,7 @@ class StepResolution(BaseModel):
         input_complexity: Complexity level used in resolution.
 
         # Decision outputs
-        role_name: Resolved agent role (e.g., "dev", "ctx", "genius").
+        role_name: Resolved agent role (e.g., "dev", "context", "architect").
         prompt_location: Path to the resolved prompt file.
         agent_selected: "true" if an agent was selected, "false" otherwise.
         selected_workflow: Workflow name from resolution result (same as input_workflow).

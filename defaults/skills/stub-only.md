@@ -9,7 +9,7 @@ You are in stub-implementation mode. Follow these constraints strictly.
 - Add code ONLY inside existing function stubs (bodies of functions with signatures already defined)
 - Create class skeletons exactly as the plan's Object Design Contract specifies (fields, method signatures, `# @stub-protected` markers, bodies `raise NotImplementedError`)
 - Create helper/sub-functions that are called exclusively from within the stubbed functions
-- Update data class fields if the genius plan explicitly lists new fields
+- Update data class fields if the architect plan explicitly lists new fields
 - Write test cases matching the spec scenarios (tests are expected to fail against stubs)
 
 ## What You MUST NOT Do
@@ -30,12 +30,12 @@ If you determine that the implementation requires:
 - Any architectural decision beyond filling in stub bodies
 - Any deviation from the plan's Object Design Contract (renamed class/field/method, different file placement, extra/removed signature)
 
-→ Stop immediately and invoke @@genius with a clear explanation of what is needed.
+→ Stop immediately and invoke @@architect with a clear explanation of what is needed.
 Do NOT proceed with unauthorized changes.
 
 ## Protected Signatures
 
-The architect (genius) will mark protected signatures with `# @stub-protected` comments. These markers are copied from the plan's Object Design Contract, not invented at stub time, and must never be modified:
+The architect (architect) will mark protected signatures with `# @stub-protected` comments. These markers are copied from the plan's Object Design Contract, not invented at stub time, and must never be modified:
 
 ```python
 # @stub-protected: signature defined by architect — do not modify

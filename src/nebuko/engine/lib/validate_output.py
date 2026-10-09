@@ -35,8 +35,8 @@ AGENT_RUN_CONFIG_PATTERN = re.compile(r"<!--(?:[ \t])*AGENT_RUN_CONFIG[ \t]+(\{.
 # Must tolerate the same whitespace the canonical pattern allows after "<!--".
 _AGENT_RUN_CONFIG_START_RE = re.compile(r"<!--\s*AGENT_RUN_CONFIG")
 
-# Forbidden section headers that ctx agent must never include
-CTX_FORBIDDEN_SECTIONS = [
+# Forbidden section headers that context agent must never include
+CONTEXT_FORBIDDEN_SECTIONS = [
     "ROOT CAUSE",
     "ANALYSIS",
     "FIX",
@@ -372,7 +372,7 @@ def validate_agent_run_config(json_str: str) -> ValidationResult:
 
     # Canonical sentinel contract (issue #765): ≥1 action, task XOR
     # function_call. Replaces the old unconditional "task is required" check
-    # that rejected the exact dispatch-only sentinel ctx is told to emit.
+    # that rejected the exact dispatch-only sentinel context is told to emit.
     for error in _sentinel_contract_errors(data):
         result.add_error(error)
 
@@ -478,14 +478,14 @@ def validate_forbidden_sections(
 
     Args:
         text: The agent output text to check.
-        forbidden_headers: List of section headers to forbid. Defaults to CTX_FORBIDDEN_SECTIONS.
+        forbidden_headers: List of section headers to forbid. Defaults to CONTEXT_FORBIDDEN_SECTIONS.
 
     Returns:
         ValidationResult with is_valid=False if any forbidden headers are found.
     """
     result = ValidationResult(is_valid=True)
     if forbidden_headers is None:
-        forbidden_headers = CTX_FORBIDDEN_SECTIONS
+        forbidden_headers = CONTEXT_FORBIDDEN_SECTIONS
 
     for header in forbidden_headers:
         # Build a case-insensitive pattern that matches the header as a
@@ -508,7 +508,7 @@ def validate_agent_output(
 
     Args:
         text: The agent output text.
-        role: The agent role name (e.g., "ctx", "dev").
+        role: The agent role name (e.g., "context", "dev").
 
     Returns:
         ValidationResult containing all found issues.
@@ -524,7 +524,7 @@ def validate_agent_output(
                 result.add_error(f"AGENT_RUN_CONFIG[{i}]: {error}")
 
     # Role-specific validation
-    if role == "ctx":
+    if role == "context":
         forbidden_result = validate_forbidden_sections(text)
         for error in forbidden_result.errors:
             result.add_error(error)
@@ -537,7 +537,7 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python validate_output.py <file> [role]")
         print("  file: path to agent output file")
-        print("  role: agent role (ctx, dev, etc.) for role-specific checks")
+        print("  role: agent role (context, dev, etc.) for role-specific checks")
         sys.exit(1)
 
     filepath = sys.argv[1]

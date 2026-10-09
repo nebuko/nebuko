@@ -373,7 +373,7 @@ class TestClassifyComment:
         assert intent.command == "run"
 
     def test_mention_is_agent_trigger(self):
-        intent = classify_comment("@@ctx please look at this")
+        intent = classify_comment("@@context please look at this")
         assert intent.kind == "agent_trigger"
         assert intent.command is None
 

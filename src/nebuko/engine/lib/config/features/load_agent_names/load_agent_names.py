@@ -14,8 +14,7 @@ from ...features.load_config.load_config import load_config
 #: source of truth (the config is) — it only keeps mention parsing from crashing
 #: a run when the file is missing or malformed.
 DEFAULT_AGENT_NAMES: frozenset[str] = frozenset({
-    "genius", "ctx", "dev", "review", "issue",
-    "issue-reviewer", "debug", "po",
+    "architect", "context", "dev", "review", "po",
 })
 
 _names_cache: dict[str, frozenset[str]] = {}

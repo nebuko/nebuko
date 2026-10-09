@@ -1,5 +1,5 @@
 # Spec-Driven Development Workflow
-# po → [human spec approval] → genius (architect) → dev (stub) → review → [human stub approval] → dev (implement)
+# po → [human spec approval] → architect (architect) → dev (stub) → review → [human stub approval] → dev (implement)
 
 name: spec-driven
 description: "Spec-driven development: spec → stub → implement"

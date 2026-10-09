@@ -67,7 +67,7 @@ class TestRecoveryTrace(unittest.TestCase):
         self.assertEqual(len(trace.tool_calls), 1)
 
     def test_empty_tool_calls(self):
-        trace = RecoveryTrace(agent_role="ctx", total_tool_calls=0, errors_count=0)
+        trace = RecoveryTrace(agent_role="context", total_tool_calls=0, errors_count=0)
         self.assertEqual(trace.tool_calls, [])
 
 

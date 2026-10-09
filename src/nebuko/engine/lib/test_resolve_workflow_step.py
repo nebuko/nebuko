@@ -20,10 +20,10 @@ def linear_workflows_dir(tmp_path: Path) -> Path:
     (tmp_path / "linear.yaml").write_text(yaml.dump({
         "name": "linear",
         "description": "Simple linear workflow",
-        "trigger": {"agents": ["genius"]},
+        "trigger": {"agents": ["architect"]},
         "steps": [
-            {"name": "analyze", "agent": "genius", "next": "context"},
-            {"name": "context", "agent": "ctx", "next": "implement"},
+            {"name": "analyze", "agent": "architect", "next": "context"},
+            {"name": "context", "agent": "context", "next": "implement"},
             {"name": "implement", "agent": "dev", "next": None},
         ],
     }))
@@ -36,12 +36,12 @@ def conditional_workflows_dir(tmp_path: Path) -> Path:
     (tmp_path / "approval.yaml").write_text(yaml.dump({
         "name": "approval",
         "description": "Approval workflow with conditions",
-        "trigger": {"agents": ["genius"]},
+        "trigger": {"agents": ["architect"]},
         "steps": [
             {"name": "spec", "agent": "po", "next": "approval"},
             {
                 "name": "approval",
-                "agent": "genius",
+                "agent": "architect",
                 "conditions": [
                     {"on_result": "approved", "next": "implement"},
                     {"on_result": "rejected", "next": "spec"},
@@ -63,7 +63,7 @@ class TestLinearNextStep:
         result = resolve(
             "linear", "analyze", str(linear_workflows_dir),
         )
-        assert result == {"task": "ctx", "step": "context"}
+        assert result == {"task": "context", "step": "context"}
 
     def test_resolves_middle_step(self, linear_workflows_dir):
         resolve = _import_resolver()
@@ -157,9 +157,9 @@ class TestAgentHintFallback:
         resolve = _import_resolver()
         result = resolve(
             "linear", "ghost_step", str(linear_workflows_dir),
-            agent_hint="genius",
+            agent_hint="architect",
         )
-        assert result == {"task": "genius"}
+        assert result == {"task": "architect"}
 
     def test_hint_fallback_on_terminal_step(self, linear_workflows_dir):
         resolve = _import_resolver()
@@ -187,9 +187,9 @@ class TestSubWorkflowEntry:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with sub-workflow",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "start", "agent": "genius", "next": "subtask"},
+                {"name": "start", "agent": "architect", "next": "subtask"},
                 {
                     "name": "subtask",
                     "workflow": "child",
@@ -243,9 +243,9 @@ class TestSubWorkflowTraversal:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with sub-workflow",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "analyze", "agent": "genius", "next": "subtask"},
+                {"name": "analyze", "agent": "architect", "next": "subtask"},
                 {
                     "name": "subtask",
                     "workflow": "child",
@@ -322,9 +322,9 @@ class TestSubWorkflowTraversal:
         (tmp_path / "loop_parent.yaml").write_text(yaml.dump({
             "name": "loop_parent",
             "description": "Parent of looping child",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "start", "agent": "genius", "next": "run"},
+                {"name": "start", "agent": "architect", "next": "run"},
                 {"name": "run", "workflow": "loop_child", "next": "done"},
                 {"name": "done", "agent": "review", "next": None},
             ],
@@ -383,7 +383,7 @@ class TestSubWorkflowTraversal:
         (subdir / "flow.yaml").write_text(yaml.dump({
             "name": "flow",
             "description": "Path-resolved workflow",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "one", "agent": "dev", "next": "two"},
                 {"name": "two", "agent": "review", "next": None},
@@ -408,9 +408,9 @@ class TestThreeLevelNestingRuntime:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Outer parent",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "analyze", "agent": "genius", "next": "mount"},
+                {"name": "analyze", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "mid", "next": None},
                 {"name": "done", "agent": "review", "next": None},
             ],
@@ -497,9 +497,9 @@ class TestThreeLevelNestingRuntime:
         (three_level_dir / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Outer parent",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "analyze", "agent": "genius", "next": "mount"},
+                {"name": "analyze", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "mid", "next": "done"},
                 {"name": "done", "agent": "review", "next": None},
             ],
@@ -693,9 +693,9 @@ class TestNestedEntrySkillPrecedence:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with a nested reference",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "start", "agent": "genius", "next": "mount"},
+                {"name": "start", "agent": "architect", "next": "mount"},
                 step,
             ],
         }))
@@ -704,7 +704,7 @@ class TestNestedEntrySkillPrecedence:
         self._parent(skill_dirs, "child1", skill=["entry1"])
         rwt = _import_workflow_step()
         r = rwt(
-            task="genius", workflow_name="parent", step_name="mount",
+            task="architect", workflow_name="parent", step_name="mount",
             branch_key="", workflows_dir=str(skill_dirs), prompt_base="/tmp/prompts",
         )
         assert r["SKIP_AGENT"] == "false"
@@ -715,7 +715,7 @@ class TestNestedEntrySkillPrecedence:
         self._parent(skill_dirs, "child1")
         rwt = _import_workflow_step()
         r = rwt(
-            task="genius", workflow_name="parent", step_name="mount",
+            task="architect", workflow_name="parent", step_name="mount",
             branch_key="", workflows_dir=str(skill_dirs), prompt_base="/tmp/prompts",
         )
         assert r["SKIP_AGENT"] == "false"
@@ -726,7 +726,7 @@ class TestNestedEntrySkillPrecedence:
         self._parent(skill_dirs, "child1b")
         rwt = _import_workflow_step()
         r = rwt(
-            task="genius", workflow_name="parent", step_name="mount",
+            task="architect", workflow_name="parent", step_name="mount",
             branch_key="", workflows_dir=str(skill_dirs), prompt_base="/tmp/prompts",
         )
         assert r["SKIP_AGENT"] == "false"
@@ -744,9 +744,9 @@ class TestNestedEntryErrors:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent mounting a child",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "start", "agent": "genius", "next": "mount"},
+                {"name": "start", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "child", "next": None},
             ],
         }))
@@ -765,7 +765,7 @@ class TestNestedEntryErrors:
         }))
         rwt = _import_workflow_step()
         r = rwt(
-            task="genius", workflow_name="parent", step_name="mount",
+            task="architect", workflow_name="parent", step_name="mount",
             branch_key="", workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
         )
         assert r["SKIP_AGENT"] == "true"
@@ -873,9 +873,9 @@ class TestLinearScriptSuccessor:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with a script successor after the mount",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "start", "agent": "genius", "next": "mount"},
+                {"name": "start", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "child", "next": "post"},
                 {
                     "name": "post",
@@ -939,9 +939,9 @@ class TestNestedFetchOnMiss:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Local parent",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "start", "agent": "genius", "next": "mount"},
+                {"name": "start", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "tmp_impl/workflow.yaml", "next": None},
             ],
         }))
@@ -960,7 +960,7 @@ class TestNestedFetchOnMiss:
 
         rwt = _import_workflow_step()
         r = rwt(
-            task="genius", workflow_name="parent", step_name="mount",
+            task="architect", workflow_name="parent", step_name="mount",
             branch_key="", workflows_dir=str(tmp_path), prompt_base="/tmp/prompts",
             scaffold_branch="feature/issue-590-engine-core",
         )
@@ -981,7 +981,7 @@ class TestCircularReference:
         (tmp_path / "circular.yaml").write_text(yaml.dump({
             "name": "circular",
             "description": "Circular reference workflow",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "step_a", "agent": "dev", "next": "step_b"},
                 {"name": "step_b", "agent": "review", "next": "step_a"},
@@ -1016,9 +1016,9 @@ class TestMissingNextStep:
         (tmp_path / "broken_next.yaml").write_text(yaml.dump({
             "name": "broken_next",
             "description": "Broken next step reference",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "start", "agent": "genius", "next": "ghost"},
+                {"name": "start", "agent": "architect", "next": "ghost"},
                 {"name": "real_step", "agent": "dev", "next": None},
             ],
         }))
@@ -1054,9 +1054,9 @@ class TestConditionsOnlyWorkflow:
         (tmp_path / "conditions_only.yaml").write_text(yaml.dump({
             "name": "conditions_only",
             "description": "Workflow with conditions-only step",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "start", "agent": "genius", "next": "decision"},
+                {"name": "start", "agent": "architect", "next": "decision"},
                 {
                     "name": "decision",
                     "agent": "review",
@@ -1107,11 +1107,11 @@ class TestConditionsOnlyWorkflow:
         (tmp_path / "branchless_default.yaml").write_text(yaml.dump({
             "name": "branchless_default",
             "description": "Conditions-only step with a default condition",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
                 {
                     "name": "decision",
-                    "agent": "genius",
+                    "agent": "architect",
                     "conditions": [
                         {"on_result": "approved", "next": "proceed"},
                         {"on_result": "rejected", "next": "decision"},
@@ -1145,7 +1145,7 @@ class TestEmptyWorkflowDefinition:
         (tmp_path / "empty.yaml").write_text(yaml.dump({
             "name": "empty",
             "description": "Empty workflow",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [],
         }))
         return tmp_path
@@ -1177,20 +1177,20 @@ class TestDefaultWorkflowWithRealFile:
     """Test resolve_next_from_workflow against the real workflows/default.yaml.
 
     Regression test for issue #377 — ensures dispatch.advance from the
-    'analyze' step correctly resolves to the 'ctx' agent.
+    'analyze' step correctly resolves to the 'context' agent.
     """
 
-    def test_analyze_resolves_to_ctx(self):
-        """dispatch.advance from analyze step → ctx agent (context step)."""
+    def test_analyze_resolves_to_context(self):
+        """dispatch.advance from analyze step → context agent (context step)."""
         resolve = _import_resolver()
         result = resolve("default", "analyze", str(_real_workflows_dir()))
-        assert result == {"task": "ctx", "step": "context"}
+        assert result == {"task": "context", "step": "context"}
 
-    def test_context_resolves_to_genius_plan(self):
-        """dispatch.advance from context step → genius agent (plan step)."""
+    def test_context_resolves_to_architect_plan(self):
+        """dispatch.advance from context step → architect agent (plan step)."""
         resolve = _import_resolver()
         result = resolve("default", "context", str(_real_workflows_dir()))
-        assert result == {"task": "genius", "step": "plan"}
+        assert result == {"task": "architect", "step": "plan"}
 
     def test_plan_resolves_to_dev_implement(self):
         """dispatch.advance from plan step → dev agent (implement step)."""
@@ -1210,12 +1210,12 @@ class TestDefaultWorkflowWithRealFile:
         result = resolve("default", "review", str(_real_workflows_dir()))
         assert result is None
 
-    def test_body_from_issue_resolves_to_ctx(self):
-        """End-to-end test: parse the exact body text from issue #377 and verify ctx is resolved.
+    def test_body_from_issue_resolves_to_context(self):
+        """End-to-end test: parse the exact body text from issue #377 and verify context is resolved.
 
-        The genius agent finishes the 'analyze' step with dispatch.advance (no task field).
+        The architect agent finishes the 'analyze' step with dispatch.advance (no task field).
         The body contains a WORKFLOW_STATE block. The resolver should extract the state,
-        find the next step in default.yaml ('context'), and return agent 'ctx'.
+        find the next step in default.yaml ('context'), and return agent 'context'.
         """
         resolve = _import_resolver()
 
@@ -1231,19 +1231,19 @@ class TestDefaultWorkflowWithRealFile:
             '{\n'
             '  "workflow": "default",\n'
             '  "step": "analyze",\n'
-            '  "agent": "genius",\n'
+            '  "agent": "architect",\n'
             '  "phase": "analysis",\n'
             '  "history": [\n'
             '    {\n'
             '      "step": "analyze",\n'
-            '      "agent": "genius",\n'
-            '      "summary": "Genius answer summary"\n'
+            '      "agent": "architect",\n'
+            '      "summary": "Architect answer summary"\n'
             "    }\n"
             "  ],\n"
             '  "metrics": {\n'
             '    "run_id": "d17d26d4-c4de-4808-b80b-e353d79e0563",\n'
             '    "model_name": "default",\n'
-            '    "agent_role": "genius",\n'
+            '    "agent_role": "architect",\n'
             '    "input_tokens": 8069,\n'
             '    "output_tokens": 276\n'
             "  },\n"
@@ -1263,10 +1263,10 @@ class TestDefaultWorkflowWithRealFile:
         assert state is not None
         assert state.workflow == "default"
         assert state.step == "analyze"
-        assert state.agent == "genius"
+        assert state.agent == "architect"
 
         result = resolve(state.workflow, state.step, str(_real_workflows_dir()))
-        assert result == {"task": "ctx", "step": "context"}
+        assert result == {"task": "context", "step": "context"}
 
 
 def _import_return_marker_for_parent():
@@ -1285,11 +1285,11 @@ class TestParentReturnFailureSurface:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with a conditional remount",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
                 {
                     "name": "anchor",
-                    "agent": "genius",
+                    "agent": "architect",
                     "conditions": [
                         {"on_result": "approved", "next": "remount"},
                     ],
@@ -1331,10 +1331,10 @@ class TestStepComplexityEmission:
         (tmp_path / "tiered.yaml").write_text(yaml.dump({
             "name": "tiered",
             "description": "Workflow with a declared per-step tier",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "analyze", "agent": "genius", "complexity": "low", "next": "plan"},
-                {"name": "plan", "agent": "genius", "next": None},
+                {"name": "analyze", "agent": "architect", "complexity": "low", "next": "plan"},
+                {"name": "plan", "agent": "architect", "next": None},
             ],
         }))
         return tmp_path
@@ -1342,7 +1342,7 @@ class TestStepComplexityEmission:
     def test_declared_tier_is_emitted(self, complexity_workflows_dir):
         rwt = _import_workflow_step()
         r = rwt(
-            task="genius", workflow_name="tiered", step_name="analyze",
+            task="architect", workflow_name="tiered", step_name="analyze",
             branch_key="", workflows_dir=str(complexity_workflows_dir),
             prompt_base="/tmp/prompts",
         )
@@ -1351,7 +1351,7 @@ class TestStepComplexityEmission:
     def test_undeclared_tier_emits_empty_string(self, complexity_workflows_dir):
         rwt = _import_workflow_step()
         r = rwt(
-            task="genius", workflow_name="tiered", step_name="plan",
+            task="architect", workflow_name="tiered", step_name="plan",
             branch_key="", workflows_dir=str(complexity_workflows_dir),
             prompt_base="/tmp/prompts",
         )

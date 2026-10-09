@@ -27,7 +27,7 @@ ISSUE_511_SHAPE = (
     'Done here.\n'
     "```\n"
     '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"},\n'
-    '  "function_call": {"function": "call_agent", "agent_name": "ctx"}} -->\n'
+    '  "function_call": {"function": "call_agent", "agent_name": "context"}} -->\n'
     "```"
 )
 
@@ -38,7 +38,7 @@ class TestExtractDispatchResilient:
         assert result.parse_error is None
         data = json.loads(result.payload)
         assert data["dispatch"]["status"] == "advance"
-        assert data["function_call"]["agent_name"] == "ctx"
+        assert data["function_call"]["agent_name"] == "context"
 
     def test_single_line_multiline_json_sentinel(self):
         text = '<!-- AGENT_RUN_CONFIG {\n  "dispatch": {"status": "advance"}\n} -->'
@@ -162,13 +162,13 @@ Some text after"""
 
     def test_extract_multiple_configs(self):
         text = """
-<!-- AGENT_RUN_CONFIG {"task": "genius"} -->
+<!-- AGENT_RUN_CONFIG {"task": "architect"} -->
 Middle text.
 <!-- AGENT_RUN_CONFIG {"task": "dev", "complexity": "low"} -->
 """
         configs = extract_agent_run_configs(text)
         assert len(configs) == 2
-        assert configs[0] == '{"task": "genius"}'
+        assert configs[0] == '{"task": "architect"}'
         assert configs[1] == '{"task": "dev", "complexity": "low"}'
 
     def test_extract_no_configs(self):
@@ -207,7 +207,7 @@ Middle text.
 class TestExtractDispatch:
     def test_last_valid_wins(self):
         text = (
-            '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
+            '<!-- AGENT_RUN_CONFIG {"task": "architect"} -->\n'
             "middle\n"
             '<!-- AGENT_RUN_CONFIG {"task": "dev", "complexity": "low"} -->\n'
         )
@@ -215,17 +215,17 @@ class TestExtractDispatch:
 
     def test_invalid_json_skipped(self):
         text = (
-            '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
+            '<!-- AGENT_RUN_CONFIG {"task": "architect"} -->\n'
             "<!-- AGENT_RUN_CONFIG {not valid json} -->\n"
         )
-        assert extract_dispatch(text) == '{"task": "genius"}'
+        assert extract_dispatch(text) == '{"task": "architect"}'
 
     def test_non_dict_json_skipped(self):
         text = (
             '<!-- AGENT_RUN_CONFIG [1, 2, 3] -->\n'
-            '<!-- AGENT_RUN_CONFIG {"task": "ctx"} -->\n'
+            '<!-- AGENT_RUN_CONFIG {"task": "context"} -->\n'
         )
-        assert extract_dispatch(text) == '{"task": "ctx"}'
+        assert extract_dispatch(text) == '{"task": "context"}'
 
     def test_no_sentinel_returns_none(self):
         assert extract_dispatch("plain message, no sentinel") is None
@@ -246,7 +246,7 @@ class TestUnterminatedSentinel:
 
     def test_complete_then_truncated(self):
         text = (
-            '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
+            '<!-- AGENT_RUN_CONFIG {"task": "architect"} -->\n'
             'tail\n<!-- AGENT_RUN_CONFIG {"task": "dev"'
         )
         assert has_unterminated_agent_run_config(text) is True
@@ -267,7 +267,7 @@ class TestStripAgentRunConfig:
     def test_removes_multiple_sentinels(self):
         msg = (
             "First part\n"
-            '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
+            '<!-- AGENT_RUN_CONFIG {"task": "architect"} -->\n'
             "Middle part\n"
             '<!-- AGENT_RUN_CONFIG {"task": "dev"} -->\n'
             "Last part"
@@ -320,9 +320,10 @@ class TestValidateAgentRunConfig:
         result = validate_agent_run_config('{"task": "po"}')
         assert result.is_valid is True
 
-    def test_debug_task_valid(self):
+    def test_debug_task_now_invalid(self):
+        # `debug` was retired in issue #828.
         result = validate_agent_run_config('{"task": "debug"}')
-        assert result.is_valid is True
+        assert result.is_valid is False
 
     def test_missing_task(self):
         result = validate_agent_run_config('{"complexity": "high"}')
@@ -330,21 +331,21 @@ class TestValidateAgentRunConfig:
         assert any("missing required field" in e for e in result.errors)
 
     def test_dispatch_only_valid(self):
-        """Defect D1 regression (issue #765): the dispatch-only sentinel ctx
+        """Defect D1 regression (issue #765): the dispatch-only sentinel context
         is told to emit must validate."""
         result = validate_agent_run_config('{"dispatch": {"status": "advance"}}')
         assert result.is_valid is True
 
     def test_function_call_only_valid(self):
         result = validate_agent_run_config(
-            '{"function_call": {"function": "call_agent", "agent_name": "ctx"}}'
+            '{"function_call": {"function": "call_agent", "agent_name": "context"}}'
         )
         assert result.is_valid is True
 
     def test_task_with_function_call_rejected(self):
         result = validate_agent_run_config(
-            '{"task": "genius", '
-            '"function_call": {"function": "call_agent", "agent_name": "ctx"}}'
+            '{"task": "architect", '
+            '"function_call": {"function": "call_agent", "agent_name": "context"}}'
         )
         assert result.is_valid is False
         assert any("cannot combine" in e for e in result.errors)
@@ -494,7 +495,7 @@ class TestValidateAgentOutput:
         result = validate_agent_output(text, "dev")
         assert result.is_valid is True
 
-    def test_ctx_output_with_forbidden_sections(self):
+    def test_context_output_with_forbidden_sections(self):
         text = """Here are the files.
 
 ## ROOT CAUSE
@@ -503,12 +504,12 @@ The issue is a null pointer.
 ## SOLUTION
 Add a null check.
 """
-        result = validate_agent_output(text, "ctx")
+        result = validate_agent_output(text, "context")
         assert result.is_valid is False
         assert any("ROOT CAUSE" in e for e in result.errors)
         assert any("SOLUTION" in e for e in result.errors)
 
-    def test_ctx_output_valid(self):
+    def test_context_output_valid(self):
         text = """### FILES FOUND
 1. `config.py` (lines 79-91) — Pydantic model for LLM config.
 2. `agent_script.py` (lines 454-561) — LLM configuration resolution.
@@ -520,14 +521,14 @@ class LLMConfig(BaseModel):
     model_path: str
 ```
 """
-        result = validate_agent_output(text, "ctx")
+        result = validate_agent_output(text, "context")
         assert result.is_valid is True
 
     def test_invalid_config_in_output(self):
         text = """Done.
 <!-- AGENT_RUN_CONFIG {"task": "invalid_role"} -->
 """
-        result = validate_agent_output(text, "genius")
+        result = validate_agent_output(text, "architect")
         assert result.is_valid is False
 
     def test_empty_text(self):

@@ -22,7 +22,7 @@ class Metrics:
     Fields:
         run_id: UUID string identifying the conversation run.
         model_name: LLM model identifier (e.g. "default", "gpt-5.5").
-        agent_role: Agent role name ("genius", "ctx", "dev", "review").
+        agent_role: Agent role name ("architect", "context", "dev", "review").
         input_tokens: Number of input/prompt tokens consumed.
         output_tokens: Number of output/completion tokens generated.
         max_context_window: Peak context window observed during the run (used for KV cache estimation).

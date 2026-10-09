@@ -43,28 +43,28 @@ class TestIsBotComment:
 class TestIsPlainMentionTrigger:
     """Test is_plain_mention_trigger function."""
 
-    def test_bootstrap_genius_with_universal_marker(self):
-        body = "<!-- bot-workflow-terminal -->\n@@genius"
+    def test_bootstrap_architect_with_universal_marker(self):
+        body = "<!-- bot-workflow-terminal -->\n@@architect"
         assert is_plain_mention_trigger(body) is True
 
     def test_subtask_completion_notification(self):
-        body = "@@genius <!-- bot-workflow-terminal --> <!-- subtask-complete: 2 -->"
+        body = "@@architect <!-- bot-workflow-terminal --> <!-- subtask-complete: 2 -->"
         assert is_plain_mention_trigger(body) is True
 
     def test_bare_human_mention_is_plain(self):
         # Human comments route via human_mention, but shape detection still
         # matches a bare mention.
-        assert is_plain_mention_trigger("@@ctx") is True
+        assert is_plain_mention_trigger("@@context") is True
 
     def test_prose_after_mention_not_plain(self):
-        body = "<!-- bot-agent-dev -->\n@@genius please analyze this"
+        body = "<!-- bot-agent-dev -->\n@@architect please analyze this"
         assert is_plain_mention_trigger(body) is False
 
     def test_agent_answer_with_mention_in_text_not_plain(self):
         body = (
             "<!-- bot-workflow-terminal -->\n"
-            "<!-- bot-agent-genius -->\n"
-            "*Genius answer*\n\nHanding off to @@dev for implementation."
+            "<!-- bot-agent-architect -->\n"
+            "*Architect answer*\n\nHanding off to @@dev for implementation."
         )
         assert is_plain_mention_trigger(body) is False
 
@@ -78,8 +78,8 @@ class TestIsPlainMentionTrigger:
         body = "\n".join(
             [
                 "<!-- bot-workflow-terminal -->",
-                "<!-- bot-agent-ctx -->",
-                "@@genius",
+                "<!-- bot-agent-context -->",
+                "@@architect",
             ]
         )
         assert is_plain_mention_trigger(body) is True
@@ -90,7 +90,7 @@ class TestIsPlainMentionTrigger:
 
 class TestExtractMentionAgent:
     def test_last_mention_wins(self):
-        assert extract_mention_agent("@@genius then @@dev do it") == "dev"
+        assert extract_mention_agent("@@architect then @@dev do it") == "dev"
 
     def test_no_mention(self):
         assert extract_mention_agent("just some text") is None
@@ -98,12 +98,16 @@ class TestExtractMentionAgent:
     def test_mention_po(self):
         assert extract_mention_agent("@@po please write the spec") == "po"
 
-    def test_mention_debug(self):
-        assert extract_mention_agent("@@debug investigate this") == "debug"
+    def test_removed_agent_mentions_no_longer_route(self):
+        # debug/issue/issue-reviewer were retired in issue #828.
+        assert extract_mention_agent("@@debug investigate this") is None
+        assert extract_mention_agent("@@issue open a ticket") is None
+        assert extract_mention_agent("@@issue-reviewer take a look") is None
 
-    def test_issue_prefix_not_shadowing_issue_reviewer(self):
-        assert extract_mention_agent("@@issue-reviewer take a look") == "issue-reviewer"
-        assert extract_mention_agent("@@issue open a ticket") == "issue"
+    def test_legacy_agent_mentions_still_route(self):
+        # Deprecated names resolve to their renamed successors (issue #828).
+        assert extract_mention_agent("@@genius plan this") == "architect"
+        assert extract_mention_agent("@@ctx gather context") == "context"
 
     def test_all_configured_agents_mentionable(self):
         from config import load_agent_names
@@ -122,23 +126,23 @@ class TestExtractMentionAgent:
         # Bots cannot @@mention — stray tokens in bot prose must not re-route
         # execution (issue #478).
         assert (
-            extract_mention_agent("<!-- bot-agent-genius -->\nask @@ctx please")
+            extract_mention_agent("<!-- bot-agent-architect -->\nask @@context please")
             is None
         )
 
     def test_bot_body_warning_logs_ignored_mentions(self, capsys):
         extract_mention_agent(
-            "<!-- bot-agent-dev -->\nsee @@genius and @@ctx above"
+            "<!-- bot-agent-dev -->\nsee @@architect and @@context above"
         )
         err = capsys.readouterr().err
-        assert "@@genius" in err and "@@ctx" in err
+        assert "@@architect" in err and "@@context" in err
 
 
 class TestExtractMachineTrigger:
-    def test_subtask_complete_maps_to_genius_with_index(self):
+    def test_subtask_complete_maps_to_architect_with_index(self):
         assert extract_machine_trigger(
             "<!-- bot-subtask-complete: 3 -->"
-        ) == ("genius", "3")
+        ) == ("architect", "3")
 
     def test_generic_trigger(self):
         assert extract_machine_trigger(
@@ -150,7 +154,7 @@ class TestExtractMachineTrigger:
 
     def test_subtask_complete_beats_generic(self):
         body = "<!-- bot-subtask-complete: 1 -->\n<!-- bot-trigger: dev -->"
-        assert extract_machine_trigger(body) == ("genius", "1")
+        assert extract_machine_trigger(body) == ("architect", "1")
 
 
 class TestNormalizeResumeInput:

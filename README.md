@@ -67,7 +67,7 @@ in [landscape.md](landscape.md).
 3. **Start using it.** On an issue, comment:
    - `/nebuko run workflow --name default` to start the standard
      plan → context → implement → review workflow, or
-   - `@@genius <your request>` to call an agent directly.
+   - `@@architect <your request>` to call an agent directly.
 
 **Zero config to start.** Nebuko ships default agent configs
 ([`defaults/agents/`](defaults/agents/)) and prompts
@@ -82,9 +82,8 @@ your own runner.
 
 **Agents with a role and a personality** — defined as code in the config:
 provider, model and sampling parameters, a prompt file, the skills it may use and
-the tools it may call. Eight agents ship today — `genius` (principal engineer),
-`ctx` (context), `dev` (implementation), `review`, `issue`, `issue-reviewer`,
-`debug` and `po`.
+the tools it may call. Five agents ship today — `architect` (principal engineer),
+`context` (context), `dev` (implementation), `review` and `po`.
 
 **Skills, granted to agents** — a markdown procedure file, granted per agent in
 the same config. Adding a capability is a one-line diff.
@@ -94,7 +93,7 @@ with human approval gates and conditional routing:
 
 ```yaml
 - name: plan
-  agent: genius
+  agent: architect
   human_gate: true          # a human must approve before anything is built
   conditions:
     - on_result: approved
@@ -141,7 +140,7 @@ One layered YAML file, in three layers — `providers → llms → agents`:
 |-------|---------|---------|
 | **Providers** | API endpoint + auth env-var name | `openrouter` |
 | **LLMs** | Model, provider, sampling parameters | `qwen-3-6-27b` |
-| **Agents** | Role → model + prompt file + skills + tools | `genius`, `dev`, … |
+| **Agents** | Role → model + prompt file + skills + tools | `architect`, `dev`, … |
 
 References resolve with `${ref}` (`${llms.qwen-3-6-27b}`), sampling parameters
 cascade per-invocation > per-agent > per-LLM, and a per-step `complexity`

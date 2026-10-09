@@ -14,7 +14,7 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 
 | Trigger | Condition |
 |---------|-----------|
-| `issues` | Issue opened, edited, assigned, or closed - body must contain an agent mention (`@@genius`, `@@dev`, etc.) or `/nebuko`. Bot-tagged bodies (starting with `<!-- bot-agent-` or `<!-- bot-workflow-terminal -->`) never fire on `@@mentions` |
+| `issues` | Issue opened, edited, assigned, or closed - body must contain an agent mention (`@@architect`, `@@dev`, etc.) or `/nebuko`. Bot-tagged bodies (starting with `<!-- bot-agent-` or `<!-- bot-workflow-terminal -->`) never fire on `@@mentions` |
 | `issue_comment` | New comment - body must contain an agent mention, or a machine trigger token: `"function_call"` (in the posted state JSON), `<!-- workflow-continue -->`, `<!-- bot-subtask-complete: N -->`, `<!-- bot-trigger: agent -->`. `@@mention` firing is suppressed when the comment starts with a bot marker |
 | `workflow_call` | Reusable workflow invoked by another workflow; uses `prompt_body` input |
 
@@ -22,13 +22,11 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 
 | Role | Mention | Responsibility |
 |------|---------|---------------|
-| `genius` | `@@genius` | Principal engineer — plans, decomposes tasks |
-| `ctx` | `@@ctx` | Context builder — gathers repository context |
+| `architect` | `@@architect` | Principal engineer — plans, decomposes tasks |
+| `context` | `@@context` | Context builder — gathers repository context |
 | `dev` | `@@dev` | Execution developer — implements code changes |
 | `review` | `@@review` | Code reviewer — reviews PRs |
-| `issue` | `@@issue` | Issue processor |
-| `issue-reviewer` | `@@issue-reviewer` | Issue reviewer |
-| `debug` | `@@debug` | Debug specialist |
+| `po` | `@@po` | Product owner — specs and issue refinement |
 
 ---
 
@@ -55,7 +53,7 @@ Standard `actions/checkout@v5` to clone the target repository.
 
 ### Step 2: Check if nebuko Checkout is Needed
 
-**Input:** Filesystem presence of `.agents/prompts/genius.md`.  
+**Input:** Filesystem presence of `.agents/prompts/architect.md`.  
 **Output:** `needed` output (`true` or `false`).
 
 Determines whether the repository already has nebuko embedded. If the prompt file exists, the repo is self-hosting the tooling. If not, the nebuko repo must be checked out separately (for reusable workflow mode).
@@ -272,10 +270,10 @@ Cleans up the acknowledgment comment from Step 11 by marking it as `OUTDATED` vi
 
 ### Step 20: Process Split Plan (Issue Decomposition)
 
-**Input:** `split_plan.json` (preferred) or `<splitPlan>...</splitPlan>` in `github_comment.md`. Only for `genius` role.  
+**Input:** `split_plan.json` (preferred) or `<splitPlan>...</splitPlan>` in `github_comment.md`. Only for `architect` role.  
 **Output:** Sub-issues created under the parent issue.
 
-Extracts the split plan from the genius agent's output and creates child issues via `issue_creation.py create`. Supports `auto_trigger` flag to automatically trigger agents on sub-issues.
+Extracts the split plan from the architect agent's output and creates child issues via `issue_creation.py create`. Supports `auto_trigger` flag to automatically trigger agents on sub-issues.
 
 **Split plan source priority:**
 1. `split_plan.json` (pre-extracted by `agent_script.py`).
@@ -322,17 +320,17 @@ fetched raw with a browser or an authenticated `curl` — no zip, no unzip step.
 ## 5. Job: `subtask-completion-notifier`
 
 **Trigger:** Sub-task issue closed (title starts with `[Sub-task`).  
-**Purpose:** Notifies the parent issue's genius agent that a sub-task is complete.
+**Purpose:** Notifies the parent issue's architect agent that a sub-task is complete.
 
 ### Steps:
 1. Extract the 1-based index `N` from the title `[Sub-task N/M]`.
 2. Resolve the parent issue number from the `parent-{N}` label on the sub-task.
 3. Post a comment `<!-- bot-subtask-complete: {zero-index} -->` on the parent issue.
 
-The resolver maps this token directly to the `genius` agent (no `@@genius` needed — the token is one of the machine trigger tokens the CI gate recognizes). Genius detects the marker in the comment and runs sub-task orchestration mode.
+The resolver maps this token directly to the `architect` agent (no `@@architect` needed — the token is one of the machine trigger tokens the CI gate recognizes). Architect detects the marker in the comment and runs sub-task orchestration mode.
 
 **Input:** Issue title, issue labels.  
-**Output:** Comment on parent issue triggering genius agent to evaluate completion status.
+**Output:** Comment on parent issue triggering architect agent to evaluate completion status.
 
 ---
 
@@ -481,7 +479,7 @@ comments where consumers need to know which agent wrote it:
 |---------|------------------|-------------|
 | Agent answer comment (Step 18) | line 1 | after state section |
 | Acknowledgment comment (Step 11) | line 1 | line 2 |
-| Circuit-breaker comment (Step 10) | line 1 | line 2 (genius) |
+| Circuit-breaker comment (Step 10) | line 1 | line 2 (architect) |
 | Terminal skip comment | line 1 | - |
 | Multi-part message posts (Step 21) | every part, line 1 | - |
 | Sub-task completion notification | present | - |
@@ -506,7 +504,7 @@ the role marker and are unaffected by the universal marker.
 
 CI plain-mention triggers — a universal-marker comment whose body is only an
 `@@mention` plus HTML-comment markers (e.g. the sub-task completion
-notification `@@genius <!-- subtask-complete: N -->`) — route to the mentioned
+notification `@@architect <!-- subtask-complete: N -->`) — route to the mentioned
 agent even when an active workflow dispatch exists in the comment history,
 matching the pre-marker behavior of their untagged predecessors.
 

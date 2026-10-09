@@ -9,7 +9,7 @@ class TestWorkflowStateSchema(unittest.TestCase):
     """Test WorkflowState Pydantic schema validation."""
 
     def test_minimal_state(self):
-        state = WorkflowState(workflow="test", step="analyze", agent="genius")
+        state = WorkflowState(workflow="test", step="analyze", agent="architect")
         self.assertEqual(state.version, 1)
         self.assertEqual(state.phase, "")
         self.assertEqual(state.history, [])
@@ -26,7 +26,7 @@ class TestWorkflowStateSchema(unittest.TestCase):
             history=[
                 HistoryEntry(
                     step="analyze",
-                    agent="genius",
+                    agent="architect",
                     summary="Analyzed issue",
                     metrics=StateMetrics(input_tokens=1000, output_tokens=500),
                 )
@@ -45,7 +45,7 @@ class TestWorkflowStateSchema(unittest.TestCase):
 
     def test_defaults_for_optional_fields(self):
         """Step, agent, phase default to empty string for backward compat."""
-        state = WorkflowState(workflow="test", agent="genius")
+        state = WorkflowState(workflow="test", agent="architect")
         self.assertEqual(state.step, "")
         self.assertEqual(state.phase, "")
         self.assertEqual(state.version, 1)

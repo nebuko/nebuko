@@ -7,7 +7,7 @@ Migrates 'Prevent all agent-trigger loops & human ping guard' bash block.
 Two guards:
 1. Same-agent loop detection: if the last bot comment matches the current
    agent being invoked, skip (prevent infinite loop).
-   Cross-agent calls are allowed (e.g., genius -> ctx).
+   Cross-agent calls are allowed (e.g., architect -> context).
 2. Human+agent ping detection: if a human is pinged alongside an agent,
    skip to let the human orchestrate.
 

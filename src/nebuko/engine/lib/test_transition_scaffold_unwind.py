@@ -82,13 +82,13 @@ def _plan_orchestration() -> dict:
     return {
         "name": "plan-orchestration",
         "description": "Full lifecycle — architect, context, plan, scaffold, execute, cleanup, final review",
-        "trigger": {"agents": ["genius"]},
+        "trigger": {"agents": ["architect"]},
         "steps": [
-            {"name": "architect", "agent": "genius", "next": "context"},
-            {"name": "context", "agent": "ctx", "next": "plan"},
+            {"name": "architect", "agent": "architect", "next": "context"},
+            {"name": "context", "agent": "context", "next": "plan"},
             {
                 "name": "plan",
-                "agent": "genius",
+                "agent": "architect",
                 "conditions": [
                     {"on_result": "approved", "next": "scaffold"},
                     {"on_result": "rejected", "next": "plan"},

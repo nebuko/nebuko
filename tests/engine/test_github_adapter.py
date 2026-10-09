@@ -297,19 +297,19 @@ def _state_comment(*, history_len: int = 2):
     )
 
     entries = [
-        HistoryEntry(step=f"step_{index}", agent="genius", summary=f"s{index}")
+        HistoryEntry(step=f"step_{index}", agent="architect", summary=f"s{index}")
         for index in range(history_len)
     ]
     state = WorkflowState(
         version=7,
         workflow="spec-driven-impl",
         step="plan",
-        agent="genius",
+        agent="architect",
         position=[StepRef(workflow="spec-driven-impl", step="plan")],
         history=entries,
     )
     body = (
-        "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n"
+        "<!-- bot-workflow-terminal -->\n<!-- bot-agent-architect -->\n"
         f"{STATE_MARKER_START}\n{state.model_dump_json()}\n{STATE_MARKER_END}"
     )
     return state, body
@@ -429,7 +429,7 @@ class TestHistoryIncrementRegression:
         """The pre-fix shape from #739: ``build_state(prev_state=None)``."""
         from workflow_state.features.build_state.build_state import build_state
 
-        state = build_state(None, workflow="", step="", agent="genius", summary="s")
+        state = build_state(None, workflow="", step="", agent="architect", summary="s")
 
         assert state.version == 3
         assert len(state.history) == 1

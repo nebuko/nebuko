@@ -99,8 +99,8 @@ class TestRemoteWorkflowStepSchema:
         assert step.path == "/custom/review.yaml"
 
     def test_backward_compat_agent_step(self):
-        step = WorkflowStep(name="analyze", agent="genius", next="context")
-        assert step.agent == "genius"
+        step = WorkflowStep(name="analyze", agent="architect", next="context")
+        assert step.agent == "architect"
         assert step.repo is None
 
     def test_path_without_workflow_raises(self):
@@ -361,7 +361,7 @@ class TestRemoteWorkflowStepLoading:
         raw = {
             "name": "remote-deploy",
             "description": "Deploy from remote repo",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [{
                 "name": "deploy",
                 "repo": "https://github.com/org/shared-workflows.git",
@@ -382,7 +382,7 @@ class TestRemoteWorkflowStepLoading:
         raw = {
             "name": "remote-default",
             "description": "Default from remote repo",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [{
                 "name": "run",
                 "repo": "https://github.com/org/shared.git",
@@ -413,9 +413,9 @@ class TestResolverWithRemoteWorkflows:
         (Path(tmp_path) / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent workflow",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [
-                {"name": "start", "agent": "genius", "next": "remote-task"},
+                {"name": "start", "agent": "architect", "next": "remote-task"},
                 {
                     "name": "remote-task",
                     "repo": "https://github.com/org/workflows.git",
@@ -454,7 +454,7 @@ class TestResolverWithRemoteWorkflows:
         (Path(tmp_path) / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent workflow",
-            "trigger": {"agents": ["genius"]},
+            "trigger": {"agents": ["architect"]},
             "steps": [{
                 "name": "remote-task",
                 "repo": "https://github.com/org/workflows.git",

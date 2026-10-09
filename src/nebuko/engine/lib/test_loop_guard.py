@@ -17,8 +17,8 @@ class TestDetectSameAgentLoop:
         assert detect_same_agent_loop(body, "dev") is True
 
     def test_different_agent_not_detected(self):
-        body = "<!-- bot-agent-genius -->\n@@ctx please analyze"
-        assert detect_same_agent_loop(body, "ctx") is False
+        body = "<!-- bot-agent-architect -->\n@@context please analyze"
+        assert detect_same_agent_loop(body, "context") is False
 
     def test_no_bot_marker_returns_false(self):
         body = "Regular human comment @@dev"
@@ -29,7 +29,7 @@ class TestDetectSameAgentLoop:
         assert detect_same_agent_loop(body, "issue-reviewer") is True
 
     def test_all_agents(self):
-        for agent in ("genius", "ctx", "dev", "review", "issue", "issue-reviewer"):
+        for agent in ("architect", "context", "dev", "review", "po"):
             body = f"<!-- bot-agent-{agent} -->"
             assert detect_same_agent_loop(body, agent) is True
             assert detect_same_agent_loop(body, "other") is False
@@ -55,16 +55,18 @@ class TestDetectHumanPlusAgentPing:
         assert detect_human_plus_agent_ping(body) is False
 
     def test_multiple_agents_one_human(self):
-        body = "@charlie @@genius @@dev let's go"
+        body = "@charlie @@architect @@dev let's go"
         assert detect_human_plus_agent_ping(body) is True
 
     def test_po_mention_with_human_ping(self):
         body = "@alice @@po please draft the spec"
         assert detect_human_plus_agent_ping(body) is True
 
-    def test_debug_mention_with_human_ping(self):
+    def test_removed_agent_mention_not_an_agent_ping(self):
+        # `debug` was retired in issue #828: `@@debug` is no longer a roster
+        # mention, so it must not register as an agent ping.
         body = "@alice @@debug investigate"
-        assert detect_human_plus_agent_ping(body) is True
+        assert detect_human_plus_agent_ping(body) is False
 
     def test_po_mention_without_human_ping(self):
         body = "@@po please draft the spec"
@@ -92,7 +94,7 @@ class TestCheckLoopGuard:
 
     def test_cross_agent_allowed(self):
         result = check_loop_guard(
-            "<!-- bot-agent-genius -->\n<!-- AGENT_RUN_CONFIG {\"dispatch\": {\"task_hint\": \"dev\"}} -->",
+            "<!-- bot-agent-architect -->\n<!-- AGENT_RUN_CONFIG {\"dispatch\": {\"task_hint\": \"dev\"}} -->",
             "dev",
         )
         assert result["SKIP_AGENT"] == "false"
@@ -113,7 +115,7 @@ class TestCheckLoopGuard:
 
     def test_bot_without_matching_agent_passes(self):
         result = check_loop_guard(
-            "<!-- bot-agent-ctx -->\nContent here",
+            "<!-- bot-agent-context -->\nContent here",
             "dev",
         )
         assert result["SKIP_AGENT"] == "false"

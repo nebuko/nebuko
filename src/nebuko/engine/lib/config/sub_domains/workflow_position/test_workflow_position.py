@@ -46,9 +46,9 @@ def _wf(name: str, *steps: WorkflowStep) -> WorkflowDefinition:
 # -- #617 scenario fixtures ---------------------------------------------
 PLAN_ORCHESTRATION = _wf(
     "plan-orchestration",
-    WorkflowStep(name="architect", agent="genius", next="context"),
-    WorkflowStep(name="context", agent="ctx", next="plan"),
-    WorkflowStep(name="plan", agent="genius", next="scaffold"),
+    WorkflowStep(name="architect", agent="architect", next="context"),
+    WorkflowStep(name="context", agent="context", next="plan"),
+    WorkflowStep(name="plan", agent="architect", next="scaffold"),
     WorkflowStep(name="scaffold", agent="dev", next="sub_impl"),
     WorkflowStep(name="sub_impl", workflow="tmp_impl/workflow.yaml", next="sub_clean"),
     WorkflowStep(name="sub_clean", agent="dev", next=None),

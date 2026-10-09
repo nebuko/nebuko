@@ -95,7 +95,7 @@ class TestBuildResult:
 
     def test_omitted_config_fields_default_to_empty(self):
         prompt_base, workflows_dir = _make_dirs()
-        result = _build_result({"task": "genius"}, prompt_base, workflows_dir)
+        result = _build_result({"task": "architect"}, prompt_base, workflows_dir)
         assert result["AGENT_ROUND"] == ""
         assert result["AGENT_SKILLS"] == ""
         assert result["CONFIG_MODEL"] == ""
@@ -147,14 +147,14 @@ class TestConfigComplexityEmission:
                 "name: tiered\n"
                 "description: tiered\n"
                 "trigger:\n"
-                "  agents: [genius]\n"
+                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: analyze\n"
-                "    agent: genius\n"
+                "    agent: architect\n"
                 "    complexity: low\n"
                 "    next: plan\n"
                 "  - name: plan\n"
-                "    agent: genius\n"
+                "    agent: architect\n"
                 "    next: null\n"
             )
         return prompt_base, workflows_dir
@@ -162,18 +162,18 @@ class TestConfigComplexityEmission:
     def test_step_declared_tier_reaches_config_complexity(self):
         prompt_base, workflows_dir = self._tiered_dirs()
         result = _build_result(
-            {"task": "genius", "config_workflow": "tiered", "config_step": "analyze"},
+            {"task": "architect", "config_workflow": "tiered", "config_step": "analyze"},
             prompt_base,
             workflows_dir,
         )
         assert result["CONFIG_COMPLEXITY"] == "low"
 
-    def test_config_complexity_is_emitted_for_genius_role(self):
-        # genius/review keep COMPLEXITY="N/A" but must still carry the tier
+    def test_config_complexity_is_emitted_for_architect_role(self):
+        # architect/review keep COMPLEXITY="N/A" but must still carry the tier
         # through CONFIG_COMPLEXITY so the runtime override applies (#787).
         prompt_base, workflows_dir = self._tiered_dirs()
         result = _build_result(
-            {"task": "genius", "config_workflow": "tiered", "config_step": "analyze"},
+            {"task": "architect", "config_workflow": "tiered", "config_step": "analyze"},
             prompt_base,
             workflows_dir,
         )
@@ -184,7 +184,7 @@ class TestConfigComplexityEmission:
         prompt_base, workflows_dir = self._tiered_dirs()
         result = _build_result(
             {
-                "task": "genius",
+                "task": "architect",
                 "config_workflow": "tiered",
                 "config_step": "analyze",
                 "config_complexity": "high",
@@ -197,7 +197,7 @@ class TestConfigComplexityEmission:
     def test_absent_tier_defaults_to_medium(self):
         prompt_base, workflows_dir = self._tiered_dirs()
         result = _build_result(
-            {"task": "genius", "config_workflow": "tiered", "config_step": "plan"},
+            {"task": "architect", "config_workflow": "tiered", "config_step": "plan"},
             prompt_base,
             workflows_dir,
         )
@@ -210,7 +210,7 @@ class TestConfigComplexityEmission:
                 "name: devwf\n"
                 "description: dev tiered\n"
                 "trigger:\n"
-                "  agents: [genius]\n"
+                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: implement\n"
                 "    agent: dev\n"

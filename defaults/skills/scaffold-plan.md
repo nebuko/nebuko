@@ -5,7 +5,7 @@ You are in plan-scaffolding mode for a branch-mounted dynamic plan workflow (iss
 ## Inputs
 
 - The issue number `N` (from `$TARGET_NUMBER` or the issue context).
-- The **approved structured plan**: find the `<planWorkflow>` JSON block in the @@genius comment on this issue:
+- The **approved structured plan**: find the `<planWorkflow>` JSON block in the @@architect comment on this issue:
   ```
   <planWorkflow>
   {"issue": N, "steps": [{"title": "...", "instructions": "...", "complexity": "medium", "model": null}, ...]}
@@ -61,4 +61,4 @@ You are in plan-scaffolding mode for a branch-mounted dynamic plan workflow (iss
 ## Escalation Protocol
 
 If the `<planWorkflow>` block is missing, malformed, or references an unclear step:
-→ Stop and report the blocker to @@genius. Do NOT guess at step content.
+→ Stop and report the blocker to @@architect. Do NOT guess at step content.

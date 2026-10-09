@@ -29,10 +29,10 @@ class TestAgentRunConfigToDispatch(unittest.TestCase):
 
     def test_valid_minimal_json(self):
         """Minimal JSON with just task leaves complexity unset for the step tier."""
-        data = '{"task": "ctx"}'
+        data = '{"task": "context"}'
         result = agent_run_config_to_dispatch(data)
         self.assertIsNotNone(result)
-        self.assertEqual(result.task_hint, "ctx")
+        self.assertEqual(result.task_hint, "context")
         self.assertEqual(result.status, "advance")
         # Unset complexity -> "" so the resolver applies the workflow step's
         # declared tier, else "medium" (issue #787).
@@ -114,7 +114,7 @@ class TestAgentRunConfigToDispatch(unittest.TestCase):
 
     def test_status_field_override(self):
         """Status field can be overridden from default."""
-        data = '{"task": "ctx", "status": "terminate"}'
+        data = '{"task": "context", "status": "terminate"}'
         result = agent_run_config_to_dispatch(data)
         self.assertEqual(result.status, "terminate")
 
@@ -211,7 +211,7 @@ class TestStripAgentRunConfigs(unittest.TestCase):
 
     def test_removes_multiple_sentinels(self):
         msg = ("First part\n"
-                '<!-- AGENT_RUN_CONFIG {"task": "genius"} -->\n'
+                '<!-- AGENT_RUN_CONFIG {"task": "architect"} -->\n'
                 "Middle part\n"
                 '<!-- AGENT_RUN_CONFIG {"task": "dev"} -->\n'
                 "Last part")
@@ -330,7 +330,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             f.write(
                 f"name: {name}\n"
                 f'description: "test workflow"\n'
-                f"trigger:\n  agents: [genius]\n"
+                f"trigger:\n  agents: [architect]\n"
                 f"steps:\n{steps_yaml}"
             )
         return path
@@ -372,7 +372,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             self._write_workflow(
                 tmpdir,
                 "wf",
-                "  - name: plan\n    agent: genius\n    next: implement\n",
+                "  - name: plan\n    agent: architect\n    next: implement\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
             dispatch = Dispatch(status="advance")
@@ -520,16 +520,16 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
         from resolve_config import resolve_config
         import json
         prompt_base = tempfile.mkdtemp()
-        for role in ("dev", "genius", "ctx", "review"):
+        for role in ("dev", "architect", "context", "review"):
             os.makedirs(os.path.join(prompt_base, role), exist_ok=True)
             with open(os.path.join(prompt_base, role, "system.md"), "w") as f:
                 f.write(f"# {role}")
         state = {
             "version": 1, "workflow": "spec-driven-impl", "step": "stub_approval",
-            "agent": "genius", "phase": "stub_approval", "history": [],
+            "agent": "architect", "phase": "stub_approval", "history": [],
             "dispatch": {"status": "advance", "complexity": "medium"},
         }
-        body = "<!-- bot-agent-genius -->\n*Genius answer*\n\n```json\n" \
+        body = "<!-- bot-agent-architect -->\n*Architect answer*\n\n```json\n" \
                "<!-- WORKFLOW_STATE_START -->\n" + json.dumps(state) + \
                "\n<!-- WORKFLOW_STATE_END -->\n```"
         with mock.patch.dict(os.environ, self.env, clear=False):
@@ -1177,7 +1177,7 @@ class TestBuildOutputPrevStateIntegration(unittest.TestCase):
             step="scaffold",
             agent="dev",
             history=[
-                HistoryEntry(step=f"step_{i}", agent="genius", summary=f"s{i}")
+                HistoryEntry(step=f"step_{i}", agent="architect", summary=f"s{i}")
                 for i in range(5)
             ],
         )

@@ -32,7 +32,7 @@ class TestFormatCollapsedSection(unittest.TestCase):
     """The state summary label is prefixed by the theme-adaptive brand mark."""
 
     def test_label_carries_the_brand_logo(self):
-        state = WorkflowState(workflow="default", step="analyze", agent="genius")
+        state = WorkflowState(workflow="default", step="analyze", agent="architect")
         section = format_collapsed_section(state)
         self.assertIn(
             f"<summary>{brand().logo_mark()} Workflow State (v1)</summary>",
@@ -64,8 +64,8 @@ class TestStripStateSection(unittest.TestCase):
         )
 
     def test_round_trip_restores_body_for_both_generations(self):
-        state = WorkflowState(workflow="default", step="analyze", agent="genius")
-        body = "*Genius answer*"
+        state = WorkflowState(workflow="default", step="analyze", agent="architect")
+        body = "*Architect answer*"
         wrapped = wrap_comment_with_state(state, body)
         self.assertEqual(strip_state_section(wrapped), body)
 

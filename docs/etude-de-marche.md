@@ -32,19 +32,19 @@
 
 ## 2. Le produit
 
-### 2.1 Architecture : huit agents aux rôles distincts
+### 2.1 Architecture : cinq agents aux rôles distincts
 
 Le système s'appuie sur l'architecture multi-agents d'OpenHands [52][44] :
 
 | Agent | Rôle | Contrainte clé |
 |---|---|---|
-| `@@genius` (Principal Engineer) | Architecture, analyse logique, plans techniques | Délègue la revue à `@@review` |
-| `@@ctx` (Context Agent) | Collecte de contexte profond (code, issues, PRs, docs) avec localisation et extraits | **Lecture seule** — ne modifie jamais le code |
+| `@@architect` (Principal Engineer) | Architecture, analyse logique, plans techniques | Délègue la revue à `@@review` |
+| `@@context` (Context Agent) | Collecte de contexte profond (code, issues, PRs, docs) avec localisation et extraits | **Lecture seule** — ne modifie jamais le code |
 | `@@dev` (Execution Developer) | Implémentation, tests, validation | Exécute les plans |
 | `@@review` (Senior Code Reviewer) | Inspection des diffs, bugs, régressions, verdict | Terminal pour `git diff`, **pas de modification** |
-| `@@issue` (Issue Refinement Agent) | Aide les humains à produire des issues claires et actionnables | Itératif avec l'humain [52] |
+| `@@po` (Product Owner) | Specs WHEN/IF/THEN et raffinement d'issues avec l'humain | Itératif avec l'humain [52] |
 
-Trois rôles de support complètent ce noyau : `issue-reviewer` (revue d'issues terminées pour optimiser workflows et prompts), `debug` (investigation des exécutions passées) et `po` (spécifications WHEN/IF/THEN du workflow *spec-driven*).
+Le `@@review` assure en outre les rétrospectives d'issues terminées (analyse des métriques et patterns de résolution) pour optimiser workflows et prompts.
 
 Chaque agent est défini déclarativement (rôle, personnalité, modèle, skills) et connaît le reste de la *roster*. Le mécanisme central est la **délégation par `@@mention`** : n'importe quel agent peut, à n'importe quelle étape, déléguer (« j'ai besoin du contexte sur X », « `@@dev`, implémente ce stub », « `@@review`, vérifie ce diff ») ; le résultat rebondit dans la même filature d'issue, où l'agent appelant reprend [50].
 
@@ -60,7 +60,7 @@ Au lieu de dizaines de paramètres plats dupliqués, la configuration est strati
 |---|---|---|
 | **Providers** | Endpoint API + variable d'authentification | `openrouter`, `local_vllm` |
 | **LLMs** | Modèle, provider, température, paramètres de sampling | `deepseek-v4-pro`, `qwen-3-6-30b` |
-| **Agents** | Rôle → modèle + prompt + skills + overrides par agent | `genius`, `dev`, `ctx`, `review`, `issue` |
+| **Agents** | Rôle → modèle + prompt + skills + overrides par agent | `architect`, `dev`, `context`, `review`, `issue` |
 
 Cette séparation est aussi ce qui rend le routage de modèles **pluggable** (OpenRouter, vLLM local, autre provider) — un élément structurant du modèle économique (section 6) [50][53].
 
@@ -339,7 +339,7 @@ Idées classées par retour sur investissement, avec périmètre honnête :
 3. **Workflows planifiés / événementiels** — déclencheurs `schedule` et webhooks GitHub Actions (balayage nocturne : revue de PRs, triage de bugs, grooming de backlog), en écho aux automations ZenFlow [78].
 4. **Analytique de dépôt agrégée** — agréger à la demande les métriques `agent-metrics` déjà émises par exécution, en alternative légère au tableau de bord ZenFlow [78].
 5. **Pattern « Set up with Agent »** — un agent propose `agent-config.yaml` ou un squelette de workflow, que l'humain relit en PR [76] ; cohérent avec la distribution zero-copy de *nebuko* [52].
-6. **Contexte multi-dépôts pour `@@ctx`** — configuration de dépôts liés, en lecture seule ; sans reprendre l'affordance SaaS d'indexation quotidienne de ZenFlow [73].
+6. **Contexte multi-dépôts pour `@@context`** — configuration de dépôts liés, en lecture seule ; sans reprendre l'affordance SaaS d'indexation quotidienne de ZenFlow [73].
 
 **Écarts assumés (non repris).** La **métrique en crédits** (report interdit, recharges non remboursables) est refusée : la transparence par token est préférable à *nebuko* [74]. Le **lock-in de plateforme**, le **code fermé** et la **surface desktop/IDE** restent hors périmètre : l'habitat de *nebuko* est le fil d'issue [50].
 
