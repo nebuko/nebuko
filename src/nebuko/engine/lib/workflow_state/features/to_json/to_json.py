@@ -28,10 +28,54 @@ def _collapse_empty_dicts(data):
     return data
 
 
+def _is_scalar(value) -> bool:
+    """True for JSON leaves: scalars, not objects or arrays."""
+    return not isinstance(value, (dict, list))
+
+
+def _is_scalar_array(value: list) -> bool:
+    """True when every element is a scalar, so the array fits on one line."""
+    return all(_is_scalar(item) for item in value)
+
+
+def _format_json(value, indent: int, level: int) -> str:
+    """Pretty-print a JSON value, keeping arrays of scalars on a single line.
+
+    ``json.dumps(indent=...)`` puts every array element on its own line, so a
+    long numeric array such as ``agent_runtimes_per_call_ms`` dominates the
+    comment-embedded workflow state (issue #845). Arrays whose elements are all
+    scalars are rendered inline; arrays of objects keep the standard
+    multi-line shape, and objects are always expanded.
+    """
+    pad = " " * (indent * level)
+    child_pad = " " * (indent * (level + 1))
+
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        body = ",\n".join(
+            f"{child_pad}{json.dumps(key)}: {_format_json(item, indent, level + 1)}"
+            for key, item in value.items()
+        )
+        return "{\n" + body + "\n" + pad + "}"
+
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        if _is_scalar_array(value):
+            return "[" + ", ".join(json.dumps(item) for item in value) + "]"
+        body = ",\n".join(
+            f"{child_pad}{_format_json(item, indent, level + 1)}" for item in value
+        )
+        return "[\n" + body + "\n" + pad + "]"
+
+    return json.dumps(value)
+
+
 def state_to_json(state: WorkflowState, compact: bool = False) -> str:
     """Serialize WorkflowState to a JSON string."""
     dump = state.model_dump(mode="json", exclude_defaults=True)
     cleaned = _collapse_empty_dicts(dump)
     if compact:
         return json.dumps(cleaned, separators=(",", ":"))
-    return json.dumps(cleaned, indent=2)
+    return _format_json(cleaned, indent=2, level=0)

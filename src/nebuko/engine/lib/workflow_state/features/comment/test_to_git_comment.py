@@ -5,7 +5,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from config import brand
-from workflow_state import WorkflowState
+from workflow_state import WorkflowState, HistoryEntry, StateMetrics
 from workflow_state.features.comment.to_git_comment import (
     format_collapsed_section,
     strip_state_section,
@@ -39,6 +39,29 @@ class TestFormatCollapsedSection(unittest.TestCase):
             section,
         )
         self.assertNotIn("🤖", section)
+
+    def test_scalar_metrics_array_stays_on_one_line(self):
+        """``agent_runtimes_per_call_ms`` must not be exploded across lines
+        (issue #845)."""
+        state = WorkflowState(
+            workflow="dev-review-loop",
+            step="implement",
+            agent="dev",
+            history=[
+                HistoryEntry(
+                    step="implement",
+                    agent="dev",
+                    metrics=StateMetrics(
+                        agent_runtimes_per_call_ms=[1000.0, 2000.0, 3000.0]
+                    ),
+                )
+            ],
+        )
+        section = format_collapsed_section(state)
+        self.assertIn(
+            '"agent_runtimes_per_call_ms": [1000.0, 2000.0, 3000.0]',
+            section,
+        )
 
 
 class TestStripStateSection(unittest.TestCase):
