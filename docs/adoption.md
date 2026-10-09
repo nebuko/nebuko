@@ -99,7 +99,7 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 | `python_version` | string | `3.13` | Python version installed on the runner. |
 | `enable_uv_cache` | boolean | `true` | Enable the `uv` dependency cache. |
 | `prompt_body` | string | `""` | Prompt/body text for programmatic (`workflow_call`) callers. |
-| `CALLER_AUTH` | string | `off` | When `on`, only OWNER/MEMBER/COLLABORATOR authors may trigger from issues/comments. |
+| `CALLER_AUTH` | string | `on` | When `on` (default), only OWNER/MEMBER/COLLABORATOR authors may trigger from issues/comments; set to `off` to allow anyone. |
 
 ### Secrets
 
