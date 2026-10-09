@@ -11,8 +11,25 @@ import os
 from metrics_schema import Metrics
 
 from agent_script.sub_domains.metrics.cost import CostRates, SessionCost
+from agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
+from agent_script.sub_domains.metrics.token_telemetry_collector import (
+    get_active_collector,
+)
 
 logger = get_logger(__name__)
+
+
+def _derive_tps_and_ttft() -> tuple[float | None, float | None]:
+    """Mean (tokens/sec, time-to-first-token) over the run's captured calls.
+
+    Drains the active capture collector (issue #829). Returns ``(None, None)``
+    when no collector was installed for this run or nothing was observable.
+    """
+    collector = get_active_collector()
+    if collector is None:
+        return None, None
+    mean_ttft, mean_tps = TokenTelemetry.aggregate(collector.drain())
+    return mean_tps, mean_ttft
 
 
 def _session_cost(combined_metrics, input_tokens, output_tokens, agent_cfg) -> float:
@@ -176,6 +193,9 @@ def collect_llm_metrics(conversation, agent_cfg=None):
             if hasattr(first_event, 'timestamp'):
                 start_time = first_event.timestamp
 
+        # Provider-health indicators captured over the run's LLM calls (#829).
+        tokens_per_second, time_to_first_token = _derive_tps_and_ttft()
+
         # Build Metrics object
         role_name = os.environ.get("ROLE_NAME", "unknown")
         metrics = Metrics(
@@ -197,6 +217,8 @@ def collect_llm_metrics(conversation, agent_cfg=None):
             tool_calls_per_tool=tool_calls_per_tool,
             errors_per_tool=errors_per_tool,
             tokens_per_tool=tokens_per_tool,
+            tokens_per_second=tokens_per_second,
+            time_to_first_token=time_to_first_token,
         )
 
         logger.info(f"Collected LLM metrics for run {metrics.run_id}")
