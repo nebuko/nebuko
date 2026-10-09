@@ -428,7 +428,11 @@ class Engine:
     adapter: PlatformAdapter
     repo_root: Path
     env: Mapping[str, str] = field(default_factory=dict)
-    history_limit: int | None = None
+    # Bounded by default: an unwired construction site must never inject the
+    # whole thread again (issue #844). ``HistoryWindowConfig`` is the source of
+    # truth and ``main`` passes ``normalized_count()`` explicitly; ``None``
+    # survives only as an explicit Python-level opt-out (full thread).
+    history_limit: int | None = 5
     # Per-run memo of the resolver output. ``guard`` needs the same resolved
     # config the ``resolve_config`` phase already computed (it reads ``TASK``
     # and the workflow position back out of it), and the legacy job resolves
@@ -1407,7 +1411,7 @@ class Engine:
             parts.append(f"**Author:** {trigger.author}")
             if trigger.issue_body and trigger.type != "issue":
                 parts.append(f"**Issue body:**\n{trigger.issue_body}")
-            parts.append(trigger.body)
+            parts.append(_agent_facing_body(trigger.body))
         task = self._get(resolved, "TASK")
         if task:
             parts.append(f"**Task:** {task}")
@@ -1510,11 +1514,24 @@ class Engine:
         return resolved.get(key) if isinstance(resolved, Mapping) else None
 
 
+def _agent_facing_body(body: str) -> str:
+    """Strip engine bookkeeping from a comment body before it reaches the prompt.
+
+    The collapsed workflow-state block and the bot routing markers are the
+    engine's persistence/routing mechanism, so they stay in the stored thread;
+    only the agent-facing rendering drops them (issue #844).
+    """
+    from workflow_state.features.comment.to_git_comment import strip_state_section
+
+    return strip_state_section(body)
+
+
 def _render_history(history: Sequence[CommentEntry]) -> str:
     if not history:
         return "_(no prior thread)_"
     return "\n\n".join(
-        f"### {entry.author} — {entry.created_at}\n\n{entry.body}" for entry in history
+        f"### {entry.author} — {entry.created_at}\n\n{_agent_facing_body(entry.body)}"
+        for entry in history
     )
 
 
@@ -1574,5 +1591,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         kwargs["repo"] = args.repo
 
     adapter = build_adapter(args.adapter, **kwargs)
-    outcome = Engine(adapter=adapter, repo_root=repo_root(), env=dict(os.environ)).run()
+    from config import HistoryWindowConfig
+
+    window = HistoryWindowConfig.from_env(os.environ)
+    outcome = Engine(
+        adapter=adapter,
+        repo_root=repo_root(),
+        env=dict(os.environ),
+        history_limit=window.normalized_count(),
+    ).run()
     return int(outcome.exit_code)
