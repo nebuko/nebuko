@@ -36,6 +36,7 @@ import yaml
 from config import (
     WorkflowStep,
     WorkflowDefinition,
+    load_config,
     load_workflow,
     load_workflow_with_dirs,
     is_path_like_reference,
@@ -50,14 +51,50 @@ try:
 except ImportError:
     fetch_remote_workflow = None  # type: ignore
 
-# Default task-to-prompt mapping (backward compatibility fallback)
-TASK_TO_PROMPT = {
+#: Routing fallback for an unreadable agent config (issue #476). The live roster
+#: is the source of truth; this map only keeps routing alive when the config is
+#: missing or malformed.
+_FALLBACK_TASK_TO_PROMPT = {
     "architect": "architect.md",
     "context": "context.md",
     "dev": "dev.md",
     "review": "review.md",
     "po": "po.md",
 }
+
+
+def _load_task_to_prompt() -> dict[str, str]:
+    """Agent name → prompt-file basename, derived from the live roster.
+
+    Only the basename is kept: ``prompt_base`` already points at the prompt
+    directory, so adding or renaming an agent in ``agent-config.yaml`` is enough
+    to route it here.
+    """
+    try:
+        config = load_config(os.environ.get("AGENT_CONFIG_PATH", "agent-config.yaml"))
+        derived = {
+            name: os.path.basename(agent.prompt_file)
+            for name, agent in config.agents.items()
+            if agent.prompt_file
+        }
+    except Exception as e:  # noqa: BLE001 - routing must not crash on a bad config
+        print(
+            f"Warning: agent roster unreadable ({e}); using fallback routing map",
+            file=sys.stderr,
+        )
+        return dict(_FALLBACK_TASK_TO_PROMPT)
+
+    if not derived:
+        print(
+            "Warning: agent roster is empty; using fallback routing map",
+            file=sys.stderr,
+        )
+        return dict(_FALLBACK_TASK_TO_PROMPT)
+    return derived
+
+
+#: Agent name → prompt-file basename, derived from the roster (issue #476).
+TASK_TO_PROMPT = _load_task_to_prompt()
 
 
 def resolve_complexity_tier(

@@ -10,6 +10,7 @@ agents:
   a:
     model: "${llms.l1}"
     temperature: 0.1
+    role: "Test agent role."
     prompt_file: ".agents/prompts/a.md"
     skills: ["skill-a"]
     tools: ["think", "finish"]
