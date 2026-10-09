@@ -28,6 +28,7 @@ import sys
 from typing import TYPE_CHECKING, Mapping, Optional, Sequence
 
 from config import load_agent_names
+from resolve_config.features.parse_trigger.parse_trigger import LEGACY_AGENT_NAMES
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
     from nebuko.engine.models import CommentEntry
@@ -174,10 +175,18 @@ _agent_mentions_re_cache: Optional["re.Pattern[str]"] = None
 
 
 def _agent_mentions_re() -> "re.Pattern[str]":
-    """Compiled ``@@agent`` pattern derived from the live agent roster."""
+    """Compiled ``@@agent`` pattern derived from the live agent roster.
+
+    Deprecated names (issue #828) are included so this guard agrees with
+    ``parse_trigger``: a ``@@genius`` ping is still an agent ping.
+    """
     global _agent_mentions_re_cache
     if _agent_mentions_re_cache is None:
-        names = sorted(load_agent_names(), key=len, reverse=True)
+        names = sorted(
+            set(load_agent_names()) | set(LEGACY_AGENT_NAMES),
+            key=len,
+            reverse=True,
+        )
         alternatives = "|".join(re.escape(name) for name in names)
         _agent_mentions_re_cache = re.compile(rf"@@(?:{alternatives})(?![A-Za-z0-9_-])")
     return _agent_mentions_re_cache

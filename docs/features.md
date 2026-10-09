@@ -193,6 +193,22 @@ run is uncooperative — a pure git/gh subprocess sequence, no LLM involved:
 `extract_recovery_trace` captures the tail of an interrupted run so a resumed
 or debugged run knows exactly where the previous one stopped.
 
+### Team context injection — `team_context`
+
+`resolve_config/features/team_context/team_context.py` assembles the two shared
+sections injected into **every** agent's system prompt (issue #476):
+
+- the **generic exit rules** (mandatory feedback + exactly-one-sentinel), moved
+  out of the individual prompt files so each built prompt contains one copy;
+- a generated **"Your Team"** block — the agent's own role and its teammates'
+  roles from the live config roster, the delegation rule (`call_agent`, not
+  `@@`), the call-back reminder, and a caller line when the run was bot-invoked.
+
+It is pure text generation over the parsed `AppConfig`; an unreadable roster or
+an unknown agent degrades to no team section rather than failing the run (same
+contract as `config.load_agent_names`). See
+[agents-and-skills.md — Team Context Injection](./agents-and-skills.md#team-context-injection).
+
 ### Long-output splitting — `message_splitter`
 
 GitHub comment bodies have a size limit; `split_message` splits long final

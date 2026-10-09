@@ -53,7 +53,7 @@ Standard `actions/checkout@v5` to clone the target repository.
 
 ### Step 2: Check if nebuko Checkout is Needed
 
-**Input:** Filesystem presence of `.agents/prompts/architect.md`.  
+**Input:** Filesystem presence of `defaults/prompts/architect.md`.  
 **Output:** `needed` output (`true` or `false`).
 
 Determines whether the repository already has nebuko embedded. If the prompt file exists, the repo is self-hosting the tooling. If not, the nebuko repo must be checked out separately (for reusable workflow mode).
@@ -417,8 +417,8 @@ GitHub Event
 | `engine/lib/agent_script.py` | Core agent execution — loads prompt, runs OpenHands SDK, produces output |
 | `engine/lib/issue_creation.py` | Creates sub-issues from split plans |
 | `engine/lib/agent_metrics.py` | Aggregates metrics across agent runs on a closed issue |
-| `.agents/prompts/{role}.md` | Role-specific prompt templates |
-| `skills/{name}.md` | Skill files loaded as additional context |
+| `defaults/prompts/{role}.md` | Role-specific prompt templates |
+| `defaults/skills/{name}.md` | Skill files loaded as additional context |
 | `agent-config.yaml` | Layered config: providers → LLMs → agents |
 
 ---

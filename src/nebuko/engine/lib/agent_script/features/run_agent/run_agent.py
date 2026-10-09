@@ -12,6 +12,7 @@ import dataclasses
 import os
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
+from openhands.sdk.context import AgentContext
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.sdk.mcp import MCPServer
 from openhands.tools.preset.default import get_default_condenser
@@ -43,6 +44,7 @@ from agent_script.sub_domains.metrics.token_telemetry_collector import (
     install,
     maybe_register_langfuse,
 )
+from resolve_config.features.team_context.team_context import compose_system_context
 
 logger = get_logger(__name__)
 
@@ -153,6 +155,19 @@ def _resolve_security_policy() -> str:
         logger.info(f"Injecting skills via system channel: {skill_file}")
         return skill_file
     return _DEFAULT_SECURITY_POLICY
+
+
+def _build_agent_context(role_name: str) -> AgentContext | None:
+    """Shared prompt sections for ``role_name`` (issue #476).
+
+    Returns the exit-rules + "Your Team" block as the system-message suffix so
+    it is *added* to the SDK's default policy and skill content rather than
+    replacing them. ``None`` when there is nothing to inject (unknown role or an
+    unreadable roster) so the agent still boots.
+    """
+    caller = os.environ.get("CONFIG_CALLBACK", "").strip() or None
+    context = compose_system_context(role_name, caller)
+    return AgentContext(system_message_suffix=context) if context else None
 
 
 def _run_supervised(
@@ -302,6 +317,7 @@ def run_agent(
         mcp_config=mcp_servers,
         system_prompt_kwargs=system_prompt_kwargs,
         security_policy_filename=_resolve_security_policy(),
+        agent_context=_build_agent_context(role_name),
         condenser=get_default_condenser(llm=llm),
     )
 

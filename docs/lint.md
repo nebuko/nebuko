@@ -561,16 +561,16 @@ prompt loader supports them:
 ```yaml
 agents:
   dev:
-    prompt_file: .agents/prompts/devv.md   # ← typo, no such file
+    prompt_file: defaults/prompts/devv.md   # ← typo, no such file
 ```
 
 ```
-[C4-prompt-file] error prompt file '.agents/prompts/devv.md' does not exist (agents.dev.prompt_file)
+[C4-prompt-file] error prompt file 'defaults/prompts/devv.md' does not exist (agents.dev.prompt_file)
 ```
 
 ### `C5-skill-file` — missing skill file
 
-Every `skills` entry must resolve — a bare name to `skills/{name}.md`, an
+Every `skills` entry must resolve — a bare name to `defaults/skills/{name}.md`, an
 explicit path as written, either also found through the layered skill lookup:
 
 ```yaml
