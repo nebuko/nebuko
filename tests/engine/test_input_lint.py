@@ -30,6 +30,12 @@ class TestCleanWiring:
     def test_fully_bound_call_site_reports_no_wiring_issue(self):
         assert _wiring(_lint("clean_wired.yaml")) == set()
 
+    def test_three_level_forwarding_chain_is_lint_clean(self):
+        """The super-parent → middle → leaf trio (the documented canonical
+        example) type-checks: the middle forwards a kind-preserving ``ref``
+        and the leaf consumes it."""
+        assert _wiring(_lint("chain_super.yaml")) == set()
+
 
 class TestCallSiteRules:
     def test_unbound_required_input_is_an_error(self):
