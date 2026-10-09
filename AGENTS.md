@@ -14,6 +14,12 @@ runtime tests under `engine/lib/**` (relocated out of `.github/scripts/` in issu
 install them into the checked-in venv: `uv pip install --python .venv/bin/python pytest
 pytest-mock`, then run `.venv/bin/python -m pytest`.
 
+Note: in this sandbox the repo-root `workflows/` directory is absent, so ~15
+`resolve_config` / `resolve_workflow_step` / `resolve_route` / `build_output`
+tests that load the "real" workflow files fail even on a clean `origin/main`
+checkout. Judge a regression by diffing the failing-test set against `origin/main`
+rather than expecting a fully green `engine/lib/**` run.
+
 ## Pushing CI workflow files
 The checkout's GitHub App token lacks the `workflows` permission, so git pushes that
 add/modify `.github/workflows/*` are rejected by GitHub. The `GH_TOKEN` env var has the
