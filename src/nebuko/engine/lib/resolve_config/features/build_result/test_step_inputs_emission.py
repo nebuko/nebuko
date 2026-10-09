@@ -17,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[3]))
 from config import StepRef, WorkflowPosition  # noqa: E402
 from resolve_config.features.build_result.build_result import (  # noqa: E402
+    _attach_step_inputs,
     _build_result,
-    _step_inputs_payload,
 )
 from resolve_workflow import TASK_TO_PROMPT  # noqa: E402
 
@@ -74,7 +74,7 @@ steps:
             prompt_base, workflows_dir,
         )
         payload = json.loads(result["STEP_INPUTS"])
-        assert payload["frames"] == []
+        assert payload.get("frames", []) == []
         assert payload["consumer"] == {"diff": {"exec": ["echo", "hello"]}}
         assert payload["specs"]["diff"] == {"kind": "exec", "required": True}
 
@@ -156,7 +156,8 @@ steps:
             "WORKFLOW_NAME": "spec-driven-impl",
             "WORKFLOW_STEP": "stub",
         }
-        payload = json.loads(_step_inputs_payload(result, workflows_dir, None, None))
+        wired = _attach_step_inputs(result, {}, workflows_dir, None)
+        payload = json.loads(wired["STEP_INPUTS"])
         assert [frame["callee"] for frame in payload["frames"]] == [
             "spec-driven", "spec-driven-impl",
         ]
@@ -177,4 +178,4 @@ steps:
             "WORKFLOW_NAME": "review",
             "WORKFLOW_STEP": "inspect",
         }
-        assert _step_inputs_payload(result, workflows_dir, None, None) == ""
+        assert _attach_step_inputs(result, {}, workflows_dir, None) == result
