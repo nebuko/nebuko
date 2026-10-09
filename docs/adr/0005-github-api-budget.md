@@ -1,7 +1,7 @@
 # ADR-0005: GitHub API Budget — Content-Creation Ceiling and the Per-Run Cost Model
 
 **Status:** Accepted — 2026-10-08
-**Deciders:** Olivier Norture (author), @genius (architecture)
+**Deciders:** Olivier Norture (author), @architect (architecture)
 **Related:** #805 (this change), #648 (silent lost answer), PR #814
 
 ## 1. Context

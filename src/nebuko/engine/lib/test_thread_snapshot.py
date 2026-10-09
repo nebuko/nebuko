@@ -45,10 +45,10 @@ def _state_json(*, history_len=1):
         version=7,
         workflow="default",
         step="plan",
-        agent="genius",
+        agent="architect",
         position=[StepRef(workflow="default", step="plan")],
         history=[
-            HistoryEntry(step=f"step_{index}", agent="genius", summary=f"s{index}")
+            HistoryEntry(step=f"step_{index}", agent="architect", summary=f"s{index}")
             for index in range(history_len)
         ],
     )
