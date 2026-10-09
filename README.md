@@ -62,7 +62,11 @@ in [landscape.md](landscape.md).
    - a provider key — `OPENROUTER_API_KEY` or `COMMANDCODE_API_KEY`
      (see [Configuration & providers](#configuration--providers));
    - `GH_PAT` — a fine-grained GitHub PAT with **Contents**, **Pull requests**
-     and **Issues** read/write.
+     and **Issues** read/write;
+   - any **MCP token** (e.g. `BRAVE_API_KEY`) — pass it through a generic
+     `EXTRA_SECRET_n_NAME` / `EXTRA_SECRET_n_VALUE` slot pair (two lines in your
+     entrypoint), so you never edit the reusable workflow. See
+     [adoption.md §3.1](docs/adoption.md#31-wiring-extra-secrets-mcp-tokens).
 
 3. **Start using it.** On an issue, comment:
    - `/nebuko run workflow --name default` to start the standard
