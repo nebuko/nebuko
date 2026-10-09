@@ -217,7 +217,7 @@ agents:
 ```
 
 See this repo's [`agent-config.yaml`](../defaults/agents/agent-config.yaml) for the full
-8-agent configuration.
+5-agent configuration.
 
 ---
 

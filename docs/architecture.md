@@ -1,7 +1,7 @@
 # Architecture
 
 High-level system architecture of nebuko: how a GitHub event becomes an
-agent run, the 8-agent model, the orchestration loop, state management, and
+agent run, the 5-agent model, the orchestration loop, state management, and
 the routing cascade. For the internal DDD package layout, see
 [architecture_code.md](./architecture_code.md). For step-by-step details of
 the GitHub Actions job, see [default-workflow.md](./default-workflow.md).
