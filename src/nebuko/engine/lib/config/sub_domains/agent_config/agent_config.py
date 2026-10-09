@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from ..agent_complexity_override.agent_complexity_override import AgentComplexityOverride
 from ..llm_config.llm_config import LLMConfig
+from ..mcp_server_config.mcp_server_config import MCPServerConfig
 
 
 class AgentConfig(BaseModel):
@@ -20,6 +21,8 @@ class AgentConfig(BaseModel):
             "terminal", "file_editor", "task_tracker", "think", "finish",
         ]
     )
+    # Declarative MCP servers attached to this agent's conversation at launch.
+    mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     # Per-agent sampling parameter overrides
     top_p: Optional[float] = None
     top_k: Optional[int] = None

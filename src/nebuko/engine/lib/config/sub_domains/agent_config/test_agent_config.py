@@ -38,6 +38,65 @@ class TestAgentConfig:
         )
         assert agent.tools == ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
+    def test_mcp_servers_default_empty(self):
+        """AgentConfig defaults mcp_servers to an empty list."""
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        agent = AgentConfig(
+            model=llm,
+            prompt_file=".agents/prompts/context.md",
+        )
+        assert agent.mcp_servers == []
+
+    def test_load_config_with_mcp_servers(self):
+        """load_config parses the mcp_servers stanza from YAML."""
+        raw = {
+            "providers": {
+                "openrouter": {
+                    "api_url": "https://openrouter.ai/api/v1",
+                    "api_token_env": "OPENROUTER_API_KEY",
+                }
+            },
+            "llms": {
+                "deepseek": {
+                    "model_path": "openrouter/deepseek/v4",
+                    "provider": "${providers.openrouter}",
+                }
+            },
+            "agents": {
+                "context": {
+                    "model": "${llms.deepseek}",
+                    "prompt_file": ".agents/prompts/context.md",
+                    "mcp_servers": [
+                        {
+                            "name": "brave-search",
+                            "command": "npx",
+                            "args": ["-y", "@brave/brave-search-mcp-server@2.1.4"],
+                            "env": {"BRAVE_API_KEY": "BRAVE_API_KEY"},
+                        }
+                    ],
+                },
+                "dev": {
+                    "model": "${llms.deepseek}",
+                    "prompt_file": ".agents/prompts/dev.md",
+                },
+            },
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            yaml.dump(raw, f)
+            f.flush()
+            config = load_config(f.name)
+
+        assert config.agents["dev"].mcp_servers == []
+        server = config.agents["context"].mcp_servers[0]
+        assert server.name == "brave-search"
+        assert server.command == "npx"
+        assert server.env == {"BRAVE_API_KEY": "BRAVE_API_KEY"}
+
+        os.unlink(f.name)
+
     def test_explicit_tools(self):
         """AgentConfig accepts an explicit tools list."""
         provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")

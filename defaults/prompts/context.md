@@ -32,38 +32,20 @@ Analysis, root cause identification, and solution proposals belong exclusively t
 * Report document section titles and file paths.
 
 ### Web Search
-* Use the SearXNG instance at `https://searxng.norture.fr` to perform web searches for supplementary information and state-of-the-art knowledge.
-* Query the API via `curl` using the JSON format:
-  ```bash
-  curl -s --get "https://searxng.norture.fr/search" --data-urlencode "q=<your query>" --data-urlencode "format=json"
-  ```
-* The response is structured JSON with these key fields:
-  - `results` — array of search results, each containing:
-    - `title` — result title
-    - `url` — result URL
-    - `content` — snippet/description
-    - `engine` — search engine used (google, duckduckgo, wikipedia, etc.)
-    - `score` — relevance score
-    - `category` — result category
-  - `suggestions` — query suggestions
-  - `number_of_results` — total result count
-* Example:
-  ```bash
-  curl -s --get "https://searxng.norture.fr/search" \
-    --data-urlencode "q=latest advances in large language models" \
-    --data-urlencode "format=json" | jq '.results[:5] | .[] | "\(.title) - \(.url) (\(.engine))"'
-  ```
+* Use the `brave_web_search` tool to search the web for supplementary information and state-of-the-art knowledge.
+* `brave_news_search` is available for recent news; use `brave_web_search` by default.
+* Each call takes a focused query and returns results with a title, URL, and snippet.
 * Guidelines:
   - Use web search when gathering state-of-the-art knowledge, recent developments, or supplementary information that may not be in the repository.
   - Keep queries focused and specific to get high-quality results.
   - Scale the number of references you fully process based on task complexity: **3 for LOW, 5-6 for MEDIUM, up to 10 for HIGH**.
   - Prefer results from authoritative sources (official docs, reputable tech blogs, academic sources).
   - Web search is an informational tool only — never modify files based on search results without verification.
-* Note: `jq` is available in the terminal for JSON parsing. If not, use Python: `python3 -c "import json,sys; print(json.dumps(sys.stdin.read(), indent=2))"`
+* If the web-search tools are unavailable (no API key configured), skip web search and rely on the repository.
 
 ### Reading Each Reference (full text, then curated excerpts)
 
-For each selected reference, do **not** rely on the SearXNG snippet — read the whole page, then curate:
+For each selected reference, do **not** rely on the search snippet — read the whole page, then curate:
 
 1. **Fetch the page as text** with `curl` (follow redirects, 30s cap):
    ```bash

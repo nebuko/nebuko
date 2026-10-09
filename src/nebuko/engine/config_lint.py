@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse
@@ -45,6 +46,7 @@ _RULE_UNKNOWN_TOOL = "C3-unknown-tool"
 _RULE_PROMPT_FILE = "C4-prompt-file"
 _RULE_SKILL_FILE = "C5-skill-file"
 _RULE_UNREFERENCED = "C6-unreferenced-entry"
+_RULE_MCP_SERVERS = "C7-mcp-servers"
 
 RULE_SEVERITY: dict[str, str] = {
     _RULE_SCHEMA: _SEVERITY_ERROR,
@@ -53,6 +55,7 @@ RULE_SEVERITY: dict[str, str] = {
     _RULE_PROMPT_FILE: _SEVERITY_ERROR,
     _RULE_SKILL_FILE: _SEVERITY_ERROR,
     _RULE_UNREFERENCED: _SEVERITY_WARNING,
+    _RULE_MCP_SERVERS: _SEVERITY_ERROR,
 }
 
 # Canonical tool names accepted at run time. Source of truth:
@@ -76,6 +79,11 @@ _MISSING = object()
 # Stand-in substituted for a broken ref before Pydantic validation, so an
 # unresolvable reference is reported by C2 instead of crashing C1.
 _PLACEHOLDER = "__lint_placeholder__"
+
+# Mirrors ``MCPServerConfig._ENV_VAR_NAME``: an MCP ``env`` entry names the OS
+# env var holding a secret, never the secret itself. Duplicated here so the pure
+# linter need not import the config package's Pydantic entities.
+_ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _LAYER_NOUNS = (("llms", "llm"), ("providers", "provider"))
 
@@ -130,6 +138,90 @@ def _iter_agents(raw: dict) -> Iterator[tuple[str, dict]]:
     for name, agent in agents.items():
         if isinstance(agent, dict):
             yield str(name), agent
+
+
+def _mcp_io_issues(entry: dict, location: str) -> list[LintIssue]:
+    """C7: validate ``args`` and ``env`` shapes for one MCP server entry."""
+    issues: list[LintIssue] = []
+    args = entry.get("args")
+    if args is not None and not (
+        isinstance(args, list) and all(isinstance(arg, str) for arg in args)
+    ):
+        issues.append(
+            _make_issue(
+                _RULE_MCP_SERVERS,
+                "mcp server args must be a list of strings",
+                f"{location}.args",
+                "Use a YAML list of command-line arguments",
+            )
+        )
+    env = entry.get("env")
+    if env is None:
+        return issues
+    if not isinstance(env, dict):
+        issues.append(
+            _make_issue(
+                _RULE_MCP_SERVERS,
+                "mcp server env must map child var -> OS env var name",
+                f"{location}.env",
+                "See docs/configuration.md",
+            )
+        )
+        return issues
+    for child_var, source_name in env.items():
+        if not (
+            isinstance(child_var, str)
+            and _ENV_VAR_NAME.match(child_var)
+            and isinstance(source_name, str)
+            and _ENV_VAR_NAME.match(source_name)
+        ):
+            issues.append(
+                _make_issue(
+                    _RULE_MCP_SERVERS,
+                    "mcp server env values must be environment variable names, "
+                    "not literal secrets",
+                    f"{location}.env.{child_var}",
+                    "Set the value in the OS env / CI secrets and reference its name",
+                )
+            )
+    return issues
+
+
+def _mcp_server_issues(entry: Any, location: str) -> list[LintIssue]:
+    """C7: report every field-shape problem in one MCP server entry at once."""
+    if not isinstance(entry, dict):
+        return [
+            _make_issue(
+                _RULE_MCP_SERVERS,
+                "mcp server entry must be a mapping",
+                location,
+                "Use keys name, command, args, env",
+            )
+        ]
+    issues: list[LintIssue] = []
+    for field in ("name", "command"):
+        value = entry.get(field)
+        if not isinstance(value, str) or not value.strip():
+            issues.append(
+                _make_issue(
+                    _RULE_MCP_SERVERS,
+                    f"mcp server {field} must be a non-empty string",
+                    f"{location}.{field}",
+                    "See docs/configuration.md",
+                )
+            )
+    issues.extend(_mcp_io_issues(entry, location))
+    transport = entry.get("transport")
+    if transport is not None and transport != "stdio":
+        issues.append(
+            _make_issue(
+                _RULE_MCP_SERVERS,
+                f"unsupported mcp transport '{transport}'",
+                f"{location}.transport",
+                "Only 'stdio' is supported",
+            )
+        )
+    return issues
 
 
 def _lookup(root: Any, dotted: str) -> Any:
@@ -282,6 +374,7 @@ class ConfigLinter:
         issues.extend(self._check_refs(raw))
         issues.extend(self._check_schema(raw))
         issues.extend(self._check_tools(raw))
+        issues.extend(self._check_mcp_servers(raw))
         issues.extend(self._check_prompt_files(raw, root, prompt_dirs))
         issues.extend(self._check_skill_files(raw, root, skill_dirs))
         issues.extend(self._check_unreferenced(raw))
@@ -365,6 +458,41 @@ class ConfigLinter:
                             f"Use one of: {known}",
                         )
                     )
+        return issues
+
+    def _check_mcp_servers(self, raw: dict) -> list[LintIssue]:
+        """C7: every ``mcp_servers`` entry must be a well-formed server spec."""
+        issues: list[LintIssue] = []
+        for name, agent in _iter_agents(raw):
+            servers = agent.get("mcp_servers")
+            if servers is None:
+                continue
+            if not isinstance(servers, list):
+                issues.append(
+                    _make_issue(
+                        _RULE_MCP_SERVERS,
+                        "mcp_servers must be a list",
+                        f"agents.{name}.mcp_servers",
+                        "Use a YAML list of server entries",
+                    )
+                )
+                continue
+            seen: set[str] = set()
+            for index, entry in enumerate(servers):
+                location = f"agents.{name}.mcp_servers[{index}]"
+                issues.extend(_mcp_server_issues(entry, location))
+                server_name = entry.get("name") if isinstance(entry, dict) else None
+                if isinstance(server_name, str):
+                    if server_name in seen:
+                        issues.append(
+                            _make_issue(
+                                _RULE_MCP_SERVERS,
+                                f"duplicate mcp server name '{server_name}'",
+                                f"{location}.name",
+                                "Give each server a unique name",
+                            )
+                        )
+                    seen.add(server_name)
         return issues
 
     def _check_prompt_files(

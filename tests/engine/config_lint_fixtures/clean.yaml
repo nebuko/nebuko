@@ -13,3 +13,9 @@ agents:
     prompt_file: ".agents/prompts/a.md"
     skills: ["skill-a"]
     tools: ["think", "finish"]
+    mcp_servers:
+      - name: "brave-search"
+        command: "npx"
+        args: ["-y", "@brave/brave-search-mcp-server@2.0.1"]
+        env:
+          BRAVE_API_KEY: "BRAVE_API_KEY"

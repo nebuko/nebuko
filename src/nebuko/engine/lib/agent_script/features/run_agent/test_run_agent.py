@@ -13,8 +13,10 @@ from unittest.mock import MagicMock, patch
 from openhands.sdk.llm.exceptions import LLMServiceUnavailableError
 
 from agent_script.features.run_agent.run_agent import (
+    _build_mcp_servers,
     _discard_token,
     _perform_wind_down,
+    _resolve_mcp_env,
     _resolve_security_policy,
     _run_supervised,
     run_agent,
@@ -438,6 +440,107 @@ class TestRunAgentSystemChannelIntegration(unittest.TestCase):
         self.assertEqual(
             mock_agent.call_args.kwargs["security_policy_filename"],
             "security_policy.j2",
+        )
+
+
+class TestMCPServerWiring(unittest.TestCase):
+    """``mcp_servers`` config → SDK server handles (issue #823)."""
+
+    def _spec(self, name="brave-search", env=None, args=None):
+        from config import MCPServerConfig
+
+        return MCPServerConfig(
+            name=name,
+            command="npx",
+            args=args if args is not None else ["-y", "@brave/brave-search-mcp-server@2.0.1"],
+            env=env if env is not None else {"BRAVE_API_KEY": "BRAVE_API_KEY"},
+        )
+
+    def test_resolve_mcp_env_returns_values_and_missing(self):
+        with patch.dict(
+            "agent_script.features.run_agent.run_agent.os.environ",
+            {"BRAVE_API_KEY": "secret-value"},
+            clear=True,
+        ):
+            resolved, missing = _resolve_mcp_env(
+                {"BRAVE_API_KEY": "BRAVE_API_KEY", "OTHER": "UNSET_VAR"}
+            )
+        self.assertEqual(resolved, {"BRAVE_API_KEY": "secret-value"})
+        self.assertEqual(missing, ["UNSET_VAR"])
+
+    def test_build_mcp_servers_none_config_is_empty(self):
+        self.assertEqual(_build_mcp_servers(None), {})
+
+    def test_build_mcp_servers_no_servers_is_empty(self):
+        self.assertEqual(
+            _build_mcp_servers(SimpleNamespace(mcp_servers=[])), {}
+        )
+
+    def test_build_mcp_servers_resolves_env_into_handle(self):
+        cfg = SimpleNamespace(mcp_servers=[self._spec()])
+        with patch.dict(
+            "agent_script.features.run_agent.run_agent.os.environ",
+            {"BRAVE_API_KEY": "secret-value"},
+            clear=True,
+        ):
+            servers = _build_mcp_servers(cfg)
+
+        self.assertEqual(list(servers), ["brave-search"])
+        server = servers["brave-search"]
+        self.assertEqual(server.command, "npx")
+        self.assertIn("@brave/brave-search-mcp-server@2.0.1", server.args)
+        self.assertEqual(
+            server.env["BRAVE_API_KEY"].get_secret_value(), "secret-value"
+        )
+        # Resolved values are frozen literal so the SDK does not re-expand them.
+        self.assertTrue(server.literal_values)
+
+    def test_missing_env_skips_only_that_server(self):
+        cfg = SimpleNamespace(
+            mcp_servers=[
+                self._spec(name="needs-key", env={"API_KEY": "ABSENT_VAR"}),
+                self._spec(name="keyless", env={}),
+            ]
+        )
+        with patch.dict(
+            "agent_script.features.run_agent.run_agent.os.environ", {}, clear=True
+        ):
+            servers = _build_mcp_servers(cfg)
+        self.assertEqual(list(servers), ["keyless"])
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_run_agent_attaches_mcp_config(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        mock_conversation_cls.return_value = _make_conversation("finished")
+
+        with patch.dict(
+            "agent_script.features.run_agent.run_agent.os.environ",
+            {"ROLE_NAME": "context", "BRAVE_API_KEY": "secret-value"},
+            clear=True,
+        ), patch(
+            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            return_value=None,
+        ):
+            run_agent(
+                llm_config={},
+                prompt="do the thing",
+                agent_cfg=SimpleNamespace(
+                    tools=["finish"], mcp_servers=[self._spec()]
+                ),
+            )
+
+        mcp_config = mock_agent.call_args.kwargs["mcp_config"]
+        self.assertEqual(list(mcp_config), ["brave-search"])
+        self.assertEqual(
+            mcp_config["brave-search"].env["BRAVE_API_KEY"].get_secret_value(),
+            "secret-value",
         )
 
 

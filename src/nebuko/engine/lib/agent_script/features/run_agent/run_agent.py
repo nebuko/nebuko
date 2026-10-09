@@ -13,6 +13,7 @@ import os
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.conversation import get_agent_final_response
+from openhands.sdk.mcp import MCPServer
 from openhands.tools.preset.default import get_default_condenser
 from openhands.sdk.tool.spec import Tool
 from openhands.sdk.tool.registry import register_tool
@@ -83,6 +84,55 @@ def _ensure_scaffold_branch_tool_registered() -> None:
 
     register_tool("ScaffoldBranchReportTool", ScaffoldBranchReportTool)
     _scaffold_branch_tool_registered = True
+
+
+def _resolve_mcp_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """Resolve each child env var to the value of the OS env var it names.
+
+    Returns the resolved child environment and the names of any OS env vars
+    that are unset or empty (so the caller can skip that server).
+    """
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    for child_var, source_name in env.items():
+        value = os.environ.get(source_name)
+        if value:
+            resolved[child_var] = value
+        else:
+            missing.append(source_name)
+    return resolved, missing
+
+
+def _build_mcp_servers(agent_cfg) -> dict[str, MCPServer]:
+    """Turn declarative ``mcp_servers`` into SDK server handles.
+
+    Each entry's ``env`` maps a child-process variable to the *name* of the OS
+    env var holding its value; an unset reference skips that server with a
+    warning so a missing secret degrades one capability instead of failing
+    the whole run.
+    """
+    if agent_cfg is None or not getattr(agent_cfg, "mcp_servers", None):
+        return {}
+
+    servers: dict[str, MCPServer] = {}
+    for spec in agent_cfg.mcp_servers:
+        resolved_env, missing = _resolve_mcp_env(spec.env)
+        if missing:
+            logger.warning(
+                f"MCP server '{spec.name}' skipped — unset env var(s): "
+                f"{', '.join(missing)}"
+            )
+            continue
+        server = MCPServer(
+            command=spec.command,
+            args=list(spec.args),
+            env=dict(resolved_env),
+            transport=spec.transport,
+        )
+        # Values are already resolved from the OS env; mark them literal so the
+        # SDK's ${VAR} expansion pass cannot re-interpret a resolved secret.
+        servers[spec.name] = server.as_literal()
+    return servers
 
 
 def _resolve_security_policy() -> str:
@@ -228,6 +278,13 @@ def run_agent(
         f"builtins={include_default_tools}"
     )
 
+    # ── Declarative MCP servers ──────────────────────────────────
+    mcp_servers = _build_mcp_servers(agent_cfg)
+    if mcp_servers:
+        logger.info(
+            f"Attaching MCP servers for {role_name}: {sorted(mcp_servers)}"
+        )
+
     # ── System prompt config ─────────────────────────────────────
     system_prompt_kwargs = (
         {} if role_name in ("context", "dev") else {"cli_mode": True}
@@ -237,6 +294,7 @@ def run_agent(
         llm=llm,
         tools=sdk_tools,
         include_default_tools=include_default_tools,
+        mcp_config=mcp_servers,
         system_prompt_kwargs=system_prompt_kwargs,
         security_policy_filename=_resolve_security_policy(),
         condenser=get_default_condenser(llm=llm),
