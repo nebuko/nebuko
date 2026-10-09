@@ -101,9 +101,11 @@ Three independent guards prevent runaway automation. All live in
 
 Counts `<!-- bot-agent-{name} -->` markers across recent issue comments (the
 universal bot marker itself is excluded). When the count reaches the threshold
-(input `circuit_breaker_threshold`, default **15**), the run is skipped and a
-warning comment is posted asking a human to review the issue. Output:
-`CIRCUIT_BREAKER_TRIPPED=true/false`.
+(input `circuit_breaker_threshold`, operative default **25**), the run is
+skipped and a warning comment is posted asking a human to review the issue.
+Output: `CIRCUIT_BREAKER_TRIPPED=true/false`. A human can raise (or lower) the
+budget for a single issue with `/nebuko update circuit-breaker --value <n>`
+(issue #839); the override wins over the workflow parameter.
 
 ### Loop Guard — `loop_guard.py`
 

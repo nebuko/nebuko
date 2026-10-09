@@ -93,7 +93,7 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 |-------|------|---------|---------|
 | `agent_config_path` | string | `agent-config.yaml` | Path to your layered config (section 5). |
 | `runs_on` | string | `ubuntu-latest` | Runner label used by the jobs (section 6). |
-| `circuit_breaker_threshold` | number | `15` | Bot-marker count that trips the circuit breaker. |
+| `circuit_breaker_threshold` | number | `25` | Bot-marker count that trips the circuit breaker (per-issue override: `/nebuko update circuit-breaker --value <n>`). |
 | `pin_comment` | boolean | `false` | Pin every agent-step comment for verbatim context injection. |
 | `history_comment_count` | number | `5` | Most recent comments injected into each agent call. |
 | `python_version` | string | `3.13` | Python version installed on the runner. |
