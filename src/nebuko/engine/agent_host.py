@@ -164,13 +164,18 @@ class InProcessAgentHost:
                 len(deliverable),
                 len(raw_answer),
             )
-        return {
+        state = _load_state(work / _STATE_FILE)
+        result = {
             "answer": raw_answer,
             "deliverable": deliverable,
             "final_message": _read_text(work / _FINAL_MESSAGE_FILE),
-            "state": _load_state(work / _STATE_FILE),
+            "state": state,
             "console_log": console_log or _read_text(work / _CONSOLE_LOG_FILE),
         }
+        routing = _routing_payload(conversation, state)
+        if routing:
+            result["dispatch"] = routing
+        return result
 
     def _elicit_report(self, conversation: Any) -> None:
         """Take the hand: one engine-elicited report turn, then harvest (issue #830).
@@ -215,6 +220,48 @@ class InProcessAgentHost:
 def _report_payload(conversation: Any) -> EngineToolPayload | None:
     """The report turn's harvested ``finish`` payload, if the turn produced one."""
     return getattr(conversation, _REPORT_PAYLOAD_ATTR, None)
+
+
+def _routing_payload(conversation: Any, state: Any) -> dict[str, Any] | None:
+    """The run's typed routing decision, in the engine's dispatch shape (#830).
+
+    The report turn replaces ``final_message.txt`` — the artefact the engine's
+    ``route`` phase scrapes for the legacy ``AGENT_RUN_CONFIG`` sentinel — so
+    the routing must be handed over structurally instead. The report turn's
+    harvested ``dispatch_next`` payload is the canonical channel; when the turn
+    returns only ``finish``, the dispatch ``build_output`` resolved into the
+    run's workflow state (itself sourced from the typed ``dispatch_next`` tool)
+    is used. Runs without a report turn keep the legacy text scrape unchanged.
+    """
+    harvested = getattr(conversation, _REPORT_ROUTING_ATTR, None)
+    if harvested is not None:
+        direct = _drop_blanks(harvested.fields)
+        if direct:
+            return direct
+    if _report_payload(conversation) is None:
+        return None
+    return _state_routing_fields(state)
+
+
+def _drop_blanks(fields: Mapping[str, Any]) -> dict[str, Any]:
+    """Populated entries only, so a blank argument never overrides a fallback."""
+    return {key: value for key, value in fields.items() if value}
+
+
+def _state_routing_fields(state: Any) -> dict[str, Any] | None:
+    """The workflow state's resolved dispatch as dispatch payload fields."""
+    dispatch = getattr(state, "dispatch", None)
+    if dispatch is None:
+        return None
+    return _drop_blanks(
+        {
+            "status": dispatch.status,
+            "complexity": dispatch.complexity,
+            "branch": dispatch.branch,
+            "reason": dispatch.reason,
+            "agent": dispatch.task_hint,
+        }
+    ) or None
 
 
 def _harvest_report(conversation: Any, tool_name: str) -> EngineToolPayload | None:

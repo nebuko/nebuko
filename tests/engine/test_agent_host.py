@@ -23,6 +23,7 @@ from nebuko.engine.agent_host import (
     _REPORT_ROUTING_ATTR,
 )
 from nebuko.engine.agent_runner import EngineAgentUnavailable
+from nebuko.engine.models import to_routing_decision
 
 ENTRY_POINT = (
     Path("src") / "nebuko" / "engine" / "lib" / "agent_script" / "agent_script.py"
@@ -151,14 +152,24 @@ class _FakeConversation:
         pass
 
 
-def _host_for(repo_root: Path, conversation: object, *, latest_answer: str) -> InProcessAgentHost:
+def _host_for(
+    repo_root: Path,
+    conversation: object,
+    *,
+    latest_answer: str,
+    state_dispatch: dict[str, Any] | None = None,
+) -> InProcessAgentHost:
     """A host whose ``run_agent`` returns ``conversation``."""
 
     def _run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
         return conversation
 
     return _host(
-        repo_root, events=[], latest_answer=latest_answer, run_agent=_run_agent
+        repo_root,
+        events=[],
+        latest_answer=latest_answer,
+        run_agent=_run_agent,
+        state_dispatch=state_dispatch,
     )
 
 
@@ -168,16 +179,22 @@ def _host(
     events: list[Any],
     latest_answer: str,
     run_agent: Any = None,
+    state_dispatch: dict[str, Any] | None = None,
 ) -> InProcessAgentHost:
     """Build a host whose injected pipeline writes real artefact files."""
 
     def _build_output(conversation, metrics, args, prev_state=None):
         Path("latest_answer.md").write_text(latest_answer, encoding="utf-8")
         Path("final_message.txt").write_text("finish note", encoding="utf-8")
-        Path("workflow_state.json").write_text(
-            json.dumps({"version": 1, "workflow": "w", "step": "s", "agent": "dev"}),
-            encoding="utf-8",
-        )
+        state: dict[str, Any] = {
+            "version": 1,
+            "workflow": "w",
+            "step": "s",
+            "agent": "dev",
+        }
+        if state_dispatch is not None:
+            state["dispatch"] = state_dispatch
+        Path("workflow_state.json").write_text(json.dumps(state), encoding="utf-8")
 
     def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
         return SimpleNamespace(state=SimpleNamespace(events=events))
@@ -386,3 +403,103 @@ class TestEngineElicitedReportTurn:
         assert result["deliverable"] == "Full architecture proposal"
         assert getattr(conversation, _REPORT_PAYLOAD_ATTR, None) is None
         assert getattr(conversation, _REPORT_ROUTING_ATTR, None) is None
+
+    def test_exposes_the_typed_routing_payload_to_the_engine(
+        self, tmp_path: Path
+    ) -> None:
+        """#830: ``route`` reads the typed dispatch, not the report-turn prose.
+
+        The report turn replaces ``final_message.txt`` — the artefact ``route``
+        scrapes for the legacy sentinel — so without this hand-off a ``hold``
+        run would silently default to ``advance``.
+        """
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FakeConversation(
+            events=[_end_tool_turn("finish", "note")],
+            report_events=[
+                _finish_report_event("Full report"),
+                _dispatch_report_event(
+                    status="hold", complexity="high", reason="await approval"
+                ),
+            ],
+        )
+        host = _host_for(repo_root, conversation, latest_answer="note")
+
+        result = host.run("prompt")
+
+        assert result["dispatch"] == {
+            "status": "hold",
+            "complexity": "high",
+            "reason": "await approval",
+        }
+        decision = to_routing_decision(result["dispatch"])
+        assert (decision.status, decision.complexity, decision.reason) == (
+            "hold",
+            "high",
+            "await approval",
+        )
+
+    def test_typed_routing_payload_beats_the_state_fallback(
+        self, tmp_path: Path
+    ) -> None:
+        """The report turn's own dispatch wins over ``build_output``'s resolution."""
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FakeConversation(
+            events=[_end_tool_turn("finish", "note")],
+            report_events=[
+                _finish_report_event("Full report"),
+                _dispatch_report_event(status="hold", reason="await approval"),
+            ],
+        )
+        host = _host_for(
+            repo_root,
+            conversation,
+            latest_answer="note",
+            state_dispatch={"status": "advance", "task_hint": "review"},
+        )
+
+        assert host.run("prompt")["dispatch"] == {
+            "status": "hold",
+            "reason": "await approval",
+        }
+
+    def test_routes_from_the_state_when_the_report_returns_only_finish(
+        self, tmp_path: Path
+    ) -> None:
+        """A report turn with no ``dispatch_next`` still routes structurally.
+
+        ``build_output`` resolves the run's dispatch from the typed
+        ``dispatch_next`` tool into the workflow state; the host hands that
+        resolution to ``route`` so the ``AGENT_RUN_CONFIG`` sentinel is never
+        needed after a report turn.
+        """
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FakeConversation(
+            events=[_end_tool_turn("finish", "note")],
+            report_events=[_finish_report_event("Full report")],
+        )
+        host = _host_for(
+            repo_root,
+            conversation,
+            latest_answer="note",
+            state_dispatch={"status": "hold", "reason": "await approval"},
+        )
+
+        result = host.run("prompt")
+
+        assert result["dispatch"] == {"status": "hold", "reason": "await approval"}
+
+    def test_no_dispatch_key_without_a_report_turn(self, tmp_path: Path) -> None:
+        """The legacy path is untouched: routing keeps the sentinel scrape."""
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        host = _host(
+            repo_root,
+            events=[_end_tool_turn("finish", "note")],
+            latest_answer="note",
+        )
+
+        assert "dispatch" not in host.run("prompt")
