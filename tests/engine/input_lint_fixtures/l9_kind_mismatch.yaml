@@ -1,0 +1,13 @@
+name: l9-kind
+description: "The call site supplies a str where the callee declares an exec"
+trigger:
+  agents: [dev]
+steps:
+  - name: call_callee
+    workflow: callee
+    inputs:
+      diff:
+        str: not-a-command
+      project:
+        str: nebuko
+    next: null

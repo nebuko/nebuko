@@ -1,0 +1,16 @@
+name: callee
+description: "A callee declaring two typed inputs"
+trigger:
+  agents: [dev]
+inputs:
+  - name: diff
+    kind: exec
+  - name: project
+    kind: str
+steps:
+  - name: work
+    agent: dev
+    inputs:
+      diff: input.diff
+      project: input.project
+    next: null
