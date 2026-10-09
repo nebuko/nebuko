@@ -100,6 +100,7 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 | `enable_uv_cache` | boolean | `true` | Enable the `uv` dependency cache. |
 | `prompt_body` | string | `""` | Prompt/body text for programmatic (`workflow_call`) callers. |
 | `CALLER_AUTH` | string | `on` | When `on` (default), only OWNER/MEMBER/COLLABORATOR authors may trigger from issues/comments; set to `off` to allow anyone. |
+| `EXTRA_SECRET_1_NAME` … `EXTRA_SECRET_9_NAME` | string | `""` | Env var name materialized from the matching `EXTRA_SECRET_n_VALUE` secret — use for MCP tokens (section 3.1). |
 
 ### Secrets
 
@@ -109,8 +110,45 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 | `OPENROUTER_API_KEY` | optional | Provider key, used as the fallback LLM key. |
 | `COMMANDCODE_API_KEY` | optional | CommandCode subscription provider. |
 | `LOCAL_VLLM_API_TOKEN` | optional | Local vLLM provider. |
+| `BRAVE_API_KEY` | optional | Brave Search MCP token (the named alias of the slot pattern in section 3.1). |
+| `EXTRA_SECRET_1_VALUE` … `EXTRA_SECRET_9_VALUE` | optional | Values materialized into the env vars named by the `EXTRA_SECRET_n_NAME` inputs (section 3.1). |
 
 At least one provider secret must be wired for the agents to reach an LLM.
+
+### 3.1 Wiring extra secrets (MCP tokens)
+
+MCP servers need their own private tokens. You can hand the engine **any** such
+token without editing the reusable workflow: add a repository secret, then point
+one of nine generic slots at the env var name the MCP expects. The `with:` input
+carries the *name*, the `secrets:` block carries the *value*:
+
+```yaml
+jobs:
+  agent:
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
+    with:
+      agent_config_path: "agent-config.yaml"
+      EXTRA_SECRET_1_NAME: "BRAVE_API_KEY"       # env var the MCP reads
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      EXTRA_SECRET_1_VALUE: ${{ secrets.BRAVE_API_KEY }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+```
+
+- Slot `n` pairs `EXTRA_SECRET_n_NAME` with `EXTRA_SECRET_n_VALUE`; indices run
+  `1`–`9`.
+- Empty slots are ignored; on a duplicate name the lowest populated slot wins.
+- Names reserved for the runner (`GITHUB_*`, `ACTIONS_*`, `RUNNER_*`, `PATH`,
+  `HOME`, `GITHUB_TOKEN`, `GH_TOKEN`) are dropped, so a slot cannot clobber
+  engine internals.
+- Precedence: a slot value (written to `$GITHUB_ENV`) overrides a same-named
+  job-level alias such as the named `BRAVE_API_KEY`; a name the engine step
+  binds explicitly (`LOCAL_VLLM_API_TOKEN`) shadows `$GITHUB_ENV`, so mapping a
+  slot onto it has no effect.
+
+Adding an MCP token is therefore a repository secret plus two lines in *your*
+entrypoint — never an edit to `nebuko-workflow.yaml`. See
+[ADR-0008](./adr/0008-mcp-secret-env-injection.md) for the rationale.
 
 ---
 

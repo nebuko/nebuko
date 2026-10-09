@@ -48,6 +48,51 @@ on:
         required: false
         type: string
         default: 'on'
+      EXTRA_SECRET_1_NAME:
+        description: 'Env var name materialized from the EXTRA_SECRET_1_VALUE secret (issue #834)'
+        required: false
+        type: string
+        default: ''
+      EXTRA_SECRET_2_NAME:
+        description: 'Env var name materialized from the EXTRA_SECRET_2_VALUE secret (issue #834)'
+        required: false
+        type: string
+        default: ''
+      EXTRA_SECRET_3_NAME:
+        description: 'Env var name materialized from the EXTRA_SECRET_3_VALUE secret (issue #834)'
+        required: false
+        type: string
+        default: ''
+      EXTRA_SECRET_4_NAME:
+        description: 'Env var name materialized from the EXTRA_SECRET_4_VALUE secret (issue #834)'
+        required: false
+        type: string
+        default: ''
+      EXTRA_SECRET_5_NAME:
+        description: 'Env var name materialized from the EXTRA_SECRET_5_VALUE secret (issue #834)'
+        required: false
+        type: string
+        default: ''
+      EXTRA_SECRET_6_NAME:
+        description: 'Env var name materialized from the EXTRA_SECRET_6_VALUE secret (issue #834)'
+        required: false
+        type: string
+        default: ''
+      EXTRA_SECRET_7_NAME:
+        description: 'Env var name materialized from the EXTRA_SECRET_7_VALUE secret (issue #834)'
+        required: false
+        type: string
+        default: ''
+      EXTRA_SECRET_8_NAME:
+        description: 'Env var name materialized from the EXTRA_SECRET_8_VALUE secret (issue #834)'
+        required: false
+        type: string
+        default: ''
+      EXTRA_SECRET_9_NAME:
+        description: 'Env var name materialized from the EXTRA_SECRET_9_VALUE secret (issue #834)'
+        required: false
+        type: string
+        default: ''
     secrets:
       COMMANDCODE_API_KEY:
         description: 'API key for Command Code LLM provider (optional - only needed if you want to use it as provider)'
@@ -64,6 +109,33 @@ on:
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
+      EXTRA_SECRET_1_VALUE:
+        description: 'Value for the env var named by the EXTRA_SECRET_1_NAME input (issue #834)'
+        required: false
+      EXTRA_SECRET_2_VALUE:
+        description: 'Value for the env var named by the EXTRA_SECRET_2_NAME input (issue #834)'
+        required: false
+      EXTRA_SECRET_3_VALUE:
+        description: 'Value for the env var named by the EXTRA_SECRET_3_NAME input (issue #834)'
+        required: false
+      EXTRA_SECRET_4_VALUE:
+        description: 'Value for the env var named by the EXTRA_SECRET_4_NAME input (issue #834)'
+        required: false
+      EXTRA_SECRET_5_VALUE:
+        description: 'Value for the env var named by the EXTRA_SECRET_5_NAME input (issue #834)'
+        required: false
+      EXTRA_SECRET_6_VALUE:
+        description: 'Value for the env var named by the EXTRA_SECRET_6_NAME input (issue #834)'
+        required: false
+      EXTRA_SECRET_7_VALUE:
+        description: 'Value for the env var named by the EXTRA_SECRET_7_NAME input (issue #834)'
+        required: false
+      EXTRA_SECRET_8_VALUE:
+        description: 'Value for the env var named by the EXTRA_SECRET_8_NAME input (issue #834)'
+        required: false
+      EXTRA_SECRET_9_VALUE:
+        description: 'Value for the env var named by the EXTRA_SECRET_9_NAME input (issue #834)'
+        required: false
 
 permissions:
     contents: write
@@ -123,6 +195,11 @@ jobs:
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
+            # The named Brave alias lives at job level, not on the engine step, so
+            # the EXTRA_SECRET_n materialize step can fill/override it through
+            # $GITHUB_ENV (issue #834). A step-level binding would shadow the
+            # materialized value when the named secret is not passed.
+            BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
         steps:
             - name: Clean global git config
               run:
@@ -162,6 +239,31 @@ jobs:
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+            # Materialize caller-declared secret slots into env vars (issue #834).
+            # Only the 18 generic slot refs enter this step's environment: GH_PAT
+            # and the named engine secrets never do. Empty slots make it a no-op.
+            - name: "Materialize extra secret slots as env vars"
+              env:
+                EXTRA_SECRET_1_NAME: ${{ inputs.EXTRA_SECRET_1_NAME }}
+                EXTRA_SECRET_1_VALUE: ${{ secrets.EXTRA_SECRET_1_VALUE }}
+                EXTRA_SECRET_2_NAME: ${{ inputs.EXTRA_SECRET_2_NAME }}
+                EXTRA_SECRET_2_VALUE: ${{ secrets.EXTRA_SECRET_2_VALUE }}
+                EXTRA_SECRET_3_NAME: ${{ inputs.EXTRA_SECRET_3_NAME }}
+                EXTRA_SECRET_3_VALUE: ${{ secrets.EXTRA_SECRET_3_VALUE }}
+                EXTRA_SECRET_4_NAME: ${{ inputs.EXTRA_SECRET_4_NAME }}
+                EXTRA_SECRET_4_VALUE: ${{ secrets.EXTRA_SECRET_4_VALUE }}
+                EXTRA_SECRET_5_NAME: ${{ inputs.EXTRA_SECRET_5_NAME }}
+                EXTRA_SECRET_5_VALUE: ${{ secrets.EXTRA_SECRET_5_VALUE }}
+                EXTRA_SECRET_6_NAME: ${{ inputs.EXTRA_SECRET_6_NAME }}
+                EXTRA_SECRET_6_VALUE: ${{ secrets.EXTRA_SECRET_6_VALUE }}
+                EXTRA_SECRET_7_NAME: ${{ inputs.EXTRA_SECRET_7_NAME }}
+                EXTRA_SECRET_7_VALUE: ${{ secrets.EXTRA_SECRET_7_VALUE }}
+                EXTRA_SECRET_8_NAME: ${{ inputs.EXTRA_SECRET_8_NAME }}
+                EXTRA_SECRET_8_VALUE: ${{ secrets.EXTRA_SECRET_8_VALUE }}
+                EXTRA_SECRET_9_NAME: ${{ inputs.EXTRA_SECRET_9_NAME }}
+                EXTRA_SECRET_9_VALUE: ${{ secrets.EXTRA_SECRET_9_VALUE }}
+              run: uv run --extra runtime python -m nebuko.engine.lib.secret_env
+
             # Stage B (issue #713): the orchestration that used to live in ~30
             # bash steps (normalize → resolve_config → guards → prompt → agent →
             # validate → publish → state → route) is now the single Stage A
@@ -177,7 +279,6 @@ jobs:
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                 LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
                 COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
-                BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 PIN_COMMENT: ${{ inputs.pin_comment }}
                 HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
