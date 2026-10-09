@@ -8,6 +8,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Optional
 
@@ -31,6 +32,7 @@ from resolve_workflow import (
 from validate_output import has_agent_run_config_marker
 from workflow_state import (
     FunctionCall,
+    GateDecision,
     SUPPORTED_FUNCTIONS,
     extract_dispatch_from_state,
     extract_state_from_body,
@@ -42,6 +44,10 @@ from ..parse_trigger.parse_trigger import (
     extract_debug_flag,
     extract_machine_trigger,
     normalize_resume_input,
+)
+from ...sub_domains.author_identity.author_identity import (
+    AuthorIdentity,
+    build_author_identity,
 )
 from ...sub_domains.workflow_command.workflow_command import (
     WorkflowCommand,
@@ -57,6 +63,7 @@ __all__ = [
     "_resolve_function_call_path",
     "_resolve_handoff_decision",
     "_resolve_machine_trigger_path",
+    "_resolve_gate_decision_path",
 ]
 
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
@@ -166,6 +173,20 @@ def _resolve_resume_path(
             "REASON": f"resume: step is not on hold (dispatch.status='{dispatch.status if dispatch else 'none'}')",
         }
 
+    # A human_gate hold is released ONLY by the dedicated gate command
+    # (issue #648): /nebuko resume is a non-release path here, so it stays
+    # held and points the human at the correct command. This keeps a gated
+    # step's transition an engine-owned state mutation driven by a typed,
+    # identity-verified decision rather than a resume re-invocation.
+    if dispatch.status == "hold" and _is_human_gate_hold(dispatch.reason):
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": (
+                f"resume: step '{prev_state.step}' is held by a human gate — "
+                "use `/nebuko approve gate` or `/nebuko reject gate` to release it"
+            ),
+        }
+
     wf_name = prev_state.workflow
     if not wf_name or not _SAFE_WF_NAME_RE.match(wf_name):
         return {
@@ -248,6 +269,248 @@ def _resolve_resume_path(
         "config_human_resume_input": human_input,
     }
 
+    return config
+
+
+#: CI event author-identity env vars (wired in nebuko-workflow.yaml, issue
+#: #648 step 8). Identity is sourced only from the GitHub event — never from
+#: comment body markers, which are agent-writable and cannot attest authorship.
+_AUTHOR_LOGIN_ENV = "TRIGGER_AUTHOR_LOGIN"
+_AUTHOR_TYPE_ENV = "TRIGGER_AUTHOR_TYPE"
+_AUTHOR_ASSOCIATION_ENV = "TRIGGER_AUTHOR_ASSOCIATION"
+#: Optional deciding-comment id for the audit link.
+_TRIGGER_COMMENT_ID_ENV = "TRIGGER_COMMENT_ID"
+
+
+def build_author_identity_from_env(trigger_body: str) -> AuthorIdentity:
+    """Build an ``AuthorIdentity`` from the CI event env (issue #648).
+
+    Reads the login/type/association forwarded by CI. They default to empty
+    when not wired yet, which keeps ``may_decide_gate`` default-deny (an empty
+    association is not in the allowlist).
+    """
+    return build_author_identity(
+        login=os.environ.get(_AUTHOR_LOGIN_ENV, "").strip(),
+        user_type=os.environ.get(_AUTHOR_TYPE_ENV, "").strip(),
+        association=os.environ.get(_AUTHOR_ASSOCIATION_ENV, "").strip(),
+        trigger_body=trigger_body,
+    )
+
+
+def _trigger_comment_id() -> Optional[int]:
+    """Deciding comment id from the CI env, or None when unavailable."""
+    raw = os.environ.get(_TRIGGER_COMMENT_ID_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _is_human_gate_hold(reason: Optional[str]) -> bool:
+    """True when a hold dispatch was produced by the human-gate intercept."""
+    return (reason or "").startswith("human_gate:")
+
+
+def _resolve_gate_decision_path(
+    prev_state: Optional["WorkflowState"],
+    wf_cmd: WorkflowCommand,
+    author: AuthorIdentity,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> dict:
+    """Resolve a ``/nebuko approve gate`` / ``/nebuko reject gate`` command.
+
+    Engine-owned gate release (issue #648). Handled inline and never
+    dispatched to an agent. Validation (all must pass): the workflow is held
+    at a ``human_gate:<step>``; the author is an authorized human
+    (``AuthorIdentity.may_decide_gate``, Policy A); no recorded decision
+    already binds this exact hold (single-shot). On success a
+    :class:`GateDecision` is built and the workflow routes per the locked
+    decisions: approved → the gated step's ``on_result: approved`` successor;
+    rejected with feedback → re-run the gated step itself (the decision rides
+    along; the gate re-arms when the re-run completes); rejected without
+    feedback → the ``on_result: rejected`` successor.
+
+    Returns a routed config carrying ``config_gate_decision`` (serialized) so
+    the consuming run persists it, or a ``SKIP_AGENT`` dict.
+    """
+    rejection = _gate_hold_rejection_reason(prev_state, author)
+    if rejection:
+        return {"SKIP_AGENT": "true", "REASON": rejection}
+
+    decision = _build_gate_decision(prev_state, wf_cmd, author)
+    config = _route_gate_decision(
+        prev_state, decision, workflows_dir, local_workflows_dir
+    )
+    if config.get("SKIP_AGENT") == "true":
+        return config
+    config["config_gate_decision"] = decision.model_dump_json()
+    return config
+
+
+def _gate_hold_rejection_reason(
+    prev_state: Optional["WorkflowState"],
+    author: AuthorIdentity,
+) -> Optional[str]:
+    """Why this author/command may not decide the gate, or None when it may.
+
+    Fail-closed: a missing state, a step not held at a gate, an unauthorized
+    author, or a hold that already carries a decision (single-shot replay) all
+    yield a reason and the command becomes inert.
+    """
+    if prev_state is None:
+        return "gate: no prior workflow state found"
+    dispatch = prev_state.dispatch
+    if (
+        dispatch is None
+        or dispatch.status != "hold"
+        or not _is_human_gate_hold(dispatch.reason)
+    ):
+        return "gate: workflow is not held at a human_gate step"
+    if not author.may_decide_gate():
+        return (
+            f"gate: author '{author.login or 'unknown'}' is not authorized "
+            "to decide a gate"
+        )
+    position = list(prev_state.position or [])
+    if any(
+        decision.is_for(prev_state.workflow, prev_state.step, position)
+        for decision in (prev_state.gate_history or [])
+    ):
+        return "gate: this hold already has a recorded decision (single-shot)"
+    return None
+
+
+def _build_gate_decision(
+    prev_state: "WorkflowState",
+    wf_cmd: WorkflowCommand,
+    author: AuthorIdentity,
+) -> GateDecision:
+    """Build the attributed decision for the current hold instance."""
+    return GateDecision(
+        status="approved" if wf_cmd.action == "approve" else "rejected",
+        workflow=prev_state.workflow,
+        target_step=prev_state.step,
+        decided_by=author.login,
+        decided_at=datetime.now(timezone.utc),
+        feedback=wf_cmd.params.get("feedback", "") or "",
+        comment_id=_trigger_comment_id(),
+        position=list(prev_state.position or []),
+    )
+
+
+def _gate_base_config(prev_state: "WorkflowState") -> dict:
+    """Empty routed config carrying the current workflow/step/parent context."""
+    return {
+        "task": "",
+        "config_complexity": "",
+        "config_reasoning": "none",
+        "config_temperature": "",
+        "config_round": "",
+        "config_model": "",
+        "config_skills": "",
+        "config_top_p": "",
+        "config_top_k": "",
+        "config_repetition_penalty": "",
+        "config_debug": "",
+        "config_workflow": prev_state.workflow,
+        "config_step": prev_state.step or "",
+        "config_branch": "",
+        "config_parent_workflow": prev_state.parent_workflow or "",
+        "config_parent_workflow_step": prev_state.parent_workflow_step or "",
+    }
+
+
+def _route_gate_decision(
+    prev_state: "WorkflowState",
+    decision: GateDecision,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> dict:
+    """Route a validated decision to its target step (issue #648)."""
+    config = _gate_base_config(prev_state)
+    wf_name = prev_state.workflow
+    step_name = prev_state.step
+    if decision.status == "rejected" and decision.feedback:
+        return _rerun_gated_step(
+            config,
+            wf_name,
+            step_name,
+            workflows_dir,
+            local_workflows_dir,
+            prev_state.scaffold_branch,
+        )
+    wf_result = resolve_next_from_workflow(
+        wf_name,
+        step_name,
+        workflows_dir,
+        branch_result=decision.status,
+        parent_workflow=prev_state.parent_workflow or "",
+        parent_workflow_step=prev_state.parent_workflow_step or "",
+        local_workflows_dir=local_workflows_dir,
+        scaffold_branch=prev_state.scaffold_branch,
+        history=prev_state.history,
+    )
+    if not wf_result:
+        return _workflow_next_step_skip_reason(wf_name, step_name, workflows_dir)
+    if wf_result.get("SKIP_AGENT") == "true":
+        return wf_result
+    return _apply_gate_successor(config, wf_result)
+
+
+def _rerun_gated_step(
+    config: dict,
+    wf_name: str,
+    step_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+    scaffold_branch: Optional[str] = None,
+) -> dict:
+    """Route a reject-with-feedback back to the gated step itself.
+
+    The step's agent re-runs with the decision/feedback in context; the gate
+    re-arms when the re-run completes, so fresh human validation is required.
+    """
+    try:
+        wf_def = _load_workflow_by_reference(
+            wf_name, workflows_dir, local_workflows_dir, scaffold_branch
+        )
+    except Exception as exc:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"gate: could not load workflow '{wf_name}' ({exc.__class__.__name__})",
+        }
+    step_def = _find_step(wf_def, step_name)
+    if step_def is None or not step_def.agent:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": f"gate: gated step '{step_name}' is not runnable",
+        }
+    config["task"] = step_def.agent
+    config["config_workflow"] = wf_name
+    config["config_step"] = step_name
+    return config
+
+
+def _apply_gate_successor(config: dict, wf_result: dict) -> dict:
+    """Apply an ``on_result`` successor (approved|rejected) to the config."""
+    if wf_result.get("run_script"):
+        config["run_script"] = {
+            "path": wf_result.get("script_path", ""),
+            "args_str": wf_result.get("script_args_str", ""),
+            "timeout_minutes": wf_result.get("timeout_minutes"),
+        }
+        config["config_step"] = wf_result.get("step", config["config_step"])
+        if wf_result.get("branch"):
+            config["config_branch"] = wf_result["branch"]
+        return config
+    config["task"] = wf_result["task"]
+    config["config_step"] = wf_result.get("step", config["config_step"])
+    if wf_result.get("branch"):
+        config["config_branch"] = wf_result["branch"]
+    _apply_wf_marker(config, wf_result)
     return config
 
 

@@ -346,25 +346,26 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             dispatch = Dispatch(status="advance")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement", False)
+                result = apply_human_gate_intercept(dispatch, "wf", "implement")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "hold")
         self.assertEqual(result.reason, "human_gate:implement")
 
-    def test_gate_step_advance_resume_bypasses(self):
-        """A /nebuko resume run bypasses the gate and passes advance through."""
+    def test_gate_step_advance_resume_held(self):
+        """Issue #648: even a /nebuko-resume-triggered run is held (no bypass)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
                 "wf",
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
-            env = {"WORKFLOWS_DIR": tmpdir}
+            env = {"WORKFLOWS_DIR": tmpdir, "HUMAN_RESUME_INPUT": "/nebuko resume"}
             dispatch = Dispatch(status="advance")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement", True)
+                result = apply_human_gate_intercept(dispatch, "wf", "implement")
         self.assertIsNotNone(result)
-        self.assertEqual(result.status, "advance")
+        self.assertEqual(result.status, "hold")
+        self.assertEqual(result.reason, "human_gate:implement")
 
     def test_non_gate_step_advance_unchanged(self):
         """A step without human_gate advances normally."""
@@ -377,7 +378,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             dispatch = Dispatch(status="advance")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "plan", False)
+                result = apply_human_gate_intercept(dispatch, "wf", "plan")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "advance")
 
@@ -392,13 +393,29 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             dispatch = Dispatch(status="soft_kill")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement", False)
+                result = apply_human_gate_intercept(dispatch, "wf", "implement")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "hold")
         self.assertEqual(result.reason, "human_gate:implement")
 
-    def test_gate_step_soft_kill_resume_bypasses(self):
-        """A /nebuko resume on a gated step passes its soft_kill retry through."""
+    def test_gate_step_soft_kill_resume_held(self):
+        """Issue #648: a resume-triggered soft_kill on a gated step still holds."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir, "HUMAN_RESUME_INPUT": "/nebuko resume"}
+            dispatch = Dispatch(status="soft_kill")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "wf", "implement")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "hold")
+        self.assertEqual(result.reason, "human_gate:implement")
+
+    def test_gate_step_branch_bearing_becomes_hold_with_inert_branch(self):
+        """A branch-bearing advance on a gated step holds, and its branch is inert."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -406,11 +423,29 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
-            dispatch = Dispatch(status="soft_kill")
+            dispatch = Dispatch(status="advance", branch="approved")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement", True)
+                result = apply_human_gate_intercept(dispatch, "wf", "implement")
         self.assertIsNotNone(result)
-        self.assertEqual(result.status, "soft_kill")
+        self.assertEqual(result.status, "hold")
+        self.assertEqual(result.reason, "human_gate:implement")
+        self.assertIsNone(result.branch)
+
+    def test_non_gate_step_branch_preserved(self):
+        """A branch-bearing dispatch on a non-gated step is left untouched."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    next: implement\n",
+            )
+            env = {"WORKFLOWS_DIR": tmpdir}
+            dispatch = Dispatch(status="advance", branch="approved")
+            with mock.patch.dict(os.environ, env, clear=False):
+                result = apply_human_gate_intercept(dispatch, "wf", "plan")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status, "advance")
+        self.assertEqual(result.branch, "approved")
 
     def test_loop_not_intercepted(self):
         """loop outcomes are never intercepted by the gate."""
@@ -423,7 +458,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             dispatch = Dispatch(status="loop")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement", False)
+                result = apply_human_gate_intercept(dispatch, "wf", "implement")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "loop")
 
@@ -438,7 +473,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             dispatch = Dispatch(status="terminate")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement", False)
+                result = apply_human_gate_intercept(dispatch, "wf", "implement")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "terminate")
 
@@ -452,7 +487,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             )
             env = {"WORKFLOWS_DIR": tmpdir}
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(None, "wf", "implement", False)
+                result = apply_human_gate_intercept(None, "wf", "implement")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "hold")
         self.assertEqual(result.reason, "human_gate:implement")
@@ -460,7 +495,7 @@ class TestHumanGateIntercept(unittest.TestCase):
     def test_missing_workflow_name_never_crashes(self):
         """Missing workflow name degrades to no-op (no crash, dispatch unchanged)."""
         dispatch = Dispatch(status="advance")
-        result = apply_human_gate_intercept(dispatch, "", "implement", False)
+        result = apply_human_gate_intercept(dispatch, "", "implement")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "advance")
 
@@ -470,7 +505,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             dispatch = Dispatch(status="advance")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "does-not-exist", "implement", False)
+                result = apply_human_gate_intercept(dispatch, "does-not-exist", "implement")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "advance")
 
@@ -486,7 +521,8 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
     @staticmethod
     def _real_workflows_dir():
         from pathlib import Path
-        return str(Path(__file__).resolve().parents[5] / "workflows")
+        # Shipped workflows live at <repo_root>/defaults/workflows.
+        return str(Path(__file__).resolve().parents[7] / "defaults" / "workflows")
 
     def setUp(self):
         self.env = {"WORKFLOWS_DIR": self._real_workflows_dir()}
@@ -494,22 +530,23 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
     def test_real_yaml_gated_step_intercepts_advance(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
             result = apply_human_gate_intercept(
-                Dispatch(status="advance"), "spec-driven-impl", "stub_approval", False
+                Dispatch(status="advance"), "spec-driven-impl", "stub_approval"
             )
         self.assertEqual(result.status, "hold")
         self.assertEqual(result.reason, "human_gate:stub_approval")
 
-    def test_real_yaml_gated_step_resume_bypasses(self):
+    def test_real_yaml_gated_step_resume_held(self):
+        """Issue #648: no resume bypass — the real gated step always holds."""
         with mock.patch.dict(os.environ, self.env, clear=False):
             result = apply_human_gate_intercept(
-                Dispatch(status="advance"), "spec-driven-impl", "stub_approval", True
+                Dispatch(status="advance"), "spec-driven-impl", "stub_approval"
             )
-        self.assertEqual(result.status, "advance")
+        self.assertEqual(result.status, "hold")
 
     def test_real_yaml_non_gated_step_unchanged(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
             result = apply_human_gate_intercept(
-                Dispatch(status="advance"), "spec-driven-impl", "implement", False
+                Dispatch(status="advance"), "spec-driven-impl", "implement"
             )
         self.assertEqual(result.status, "advance")
 

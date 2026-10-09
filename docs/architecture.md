@@ -184,8 +184,12 @@ every agent via the `skills:` list in `agent-config.yaml` — no per-prompt edit
 ```
 trigger body
 │
+├─ /nebuko approve gate ────────────► engine-owned gate decision (approved),
+│  /nebuko reject gate                rejects re-run the gated step (with
+│                                     feedback) or take on_result: rejected
 ├─ /nebuko resume ──────────────────► held step re-run with human input,
 │                                     or advance if no active dispatch
+│                                     (inert on a human_gate:* hold)
 ├─ /nebuko force-step step --name <step>
 │                                    ► jump to <step> of the active workflow
 │                                     (replay/fork within the current run)
@@ -228,12 +232,20 @@ of silently starting at the first step.
 
 A security boundary applies **before** the workflow state is posted: when the
 *completing* step is defined with `human_gate: true`, the engine (in
-`build_output.py`) overrides the agent's `advance` dispatch to `hold`
+`build_output.py`) overrides every advancing dispatch to `hold`
 (reason `human_gate:<step>`), so every subsequent trigger sees a held
-workflow and the chain stops. The override is skipped when the completing run
-was itself triggered by `/nebuko resume` — the human's resume is the
-authorization that releases the gate. `terminate` is never intercepted, and
-`loop` retries are not intercepted (the gate fires on step transitions). See
+workflow and the chain stops. There is **no bypass** — including the former
+`/nebuko resume` bypass, which has been removed (issue #648). `terminate` is
+never intercepted, and `loop` retries are not intercepted (the gate fires on
+step transitions).
+
+A gated step is released only by an engine-owned `GateDecision`, recorded from
+an identity-verified human command (`/nebuko approve gate` /
+`/nebuko reject gate`) parsed at ingestion time. The author identity comes from
+the GitHub event (`TRIGGER_AUTHOR_*` env), never from comment-body markers — so
+agent-authored text, machine tokens, and a bot-authored command are all inert.
+The decision routes the workflow directly (via the gated step's `on_result`
+conditions) and is single-shot per hold instance. See
 [workflows.md — Human Gates](./workflows.md#human-gates).
 
 ### Human-action notification (issue #795)

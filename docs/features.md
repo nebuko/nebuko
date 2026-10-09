@@ -23,7 +23,9 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 |---------|--------|
 | `@@<agent>` | Run the named agent directly (`architect`, `context`, `dev`, `review`, ...). If the agent matches a workflow's `trigger.agents`, that workflow's first step runs. |
 | `/nebuko run workflow --name <name> [--step <step>]` | Start (or switch to) the named workflow, regardless of current state. `--step` seeds a **fresh** run directly at `<step>` instead of the first step (issue #789) — useful to enter `plan-orchestration` at `plan`/`scaffold` without replaying `architect`. An unknown or unsafe step name fails loudly. Human-only. |
-| `/nebuko resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. |
+| `/nebuko resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. On a `human_gate:*` hold it is **inert** (points at the gate commands) — use `/nebuko approve gate` / `/nebuko reject gate` there. |
+| `/nebuko approve gate [--feedback "..."]` | Release a `human_gate` hold: record an engine-owned **`GateDecision`** (`approved`) and route via the gated step's `on_result: approved` successor. Handled inline by the engine, never routed to an agent. Authorized humans only (`OWNER`/`MEMBER`/`COLLABORATOR`), always-on regardless of `CALLER_AUTH` (issue #648). |
+| `/nebuko reject gate [--feedback "..."]` | Release a `human_gate` hold as **rejected**: with `--feedback` the gated step is **re-run** with the feedback injected (gate re-arms on completion); without feedback it routes via `on_result: rejected`. Same identity rules as `approve gate`. |
 | `/nebuko force-step step --name <step>` | Jump directly to `<step>` of the **active** workflow, regardless of state. Unlike `run --step`, this replays/forks within the current run (it requires an active workflow). |
 | `/nebuko delete comments [--issue <id>] [--from <comment-id>]` | Human-only batch deletion of issue comments. `--issue <id>` selects the target issue (mandatory on the CLI surface; auto-filled with the invoking issue when the command is posted in that issue). Optional `--from <comment-id>` deletes that comment **and every later one**; omit it to delete **all** comments. Terminal command: it runs the deterministic deletion step and no agent. Requires `GH_PAT` with `issues:write`. |
 | `/nebuko clean comments` | Alias of `/nebuko delete comments` (issue #679). Terminal; runs the deterministic deletion step and no agent. |
@@ -32,11 +34,12 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 
 **Precedence:** human commands always override state-based routing (see the
 cascade in [architecture.md — Routing Cascade](./architecture.md#routing-cascade)):
-`resume` > `force-step` > `delete comments` > `update circuit-breaker` > `run workflow` >
-`@@mention` > dispatch-based routing > next-step > bot fallback. This guarantee
-exists so explicit human intent is never absorbed by an active workflow's
-`dispatch` object. `delete comments` and `update circuit-breaker` are
-**terminal** human commands: they run a deterministic step and never invoke an
+`approve/reject gate` > `resume` > `force-step` > `delete comments` >
+`update circuit-breaker` > `run workflow` > `@@mention` > dispatch-based
+routing > next-step > bot fallback. This guarantee exists so explicit human
+intent is never absorbed by an active workflow's `dispatch` object.
+`delete comments` and `update circuit-breaker` are **terminal** human commands:
+they run a deterministic step and never invoke an
 agent.
 
 Note: **bot agents cannot use `@@mention`** (only humans may); bots hand off via

@@ -123,7 +123,7 @@ graph-level invariants below are checked offline by
 | `steps[].skill` | step | string[] | no | Skills attached to the step prompt (files in `defaults/skills/`). |
 | `steps[].prompt` | step | string | no | Standing instruction injected into this step's agent context (multi-line YAML blocks supported). See [workflows.md](./workflows.md#step-instructions-prompt). |
 | `steps[].complexity` | step | string | no | Declared complexity tier for this step's agent invocation: `low`, `medium`, or `high`. A dispatch `complexity` overrides it; otherwise it selects `agents.<name>.complexity_overrides.<tier>` and the tier temperature floor (issue #787; see [configuration.md](./configuration.md#complexity-overrides-per-tier-configuration)). |
-| `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts the agent's `advance` and holds the workflow until a human releases it with `/nebuko resume` (see [workflows.md](./workflows.md#human-gates)). |
+| `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts every advancing dispatch and holds the workflow until an identity-verified human releases it with `/nebuko approve gate` / `/nebuko reject gate` (see [workflows.md](./workflows.md#human-gates)). |
 | `steps[].inputs` | step | map | no | Call-site wiring (issue #813). On a `workflow` call step the keys are the callee's declared inputs; on an `agent` consumer step the values are `input.<name>` / `<step>.<out>` references. Each value is one of `exec` (argv), `str` (constant), or a bare string meaning a `ref`. |
 | `steps[].outputs` | step | string[] | no | Outputs this step emits, referenced downstream as `<step>.<name>` (issue #813; a bare string coerces to a one-element list). |
 
@@ -265,6 +265,8 @@ is authoritative.
 | `pull_request` | PullRequestInfo \| null | Same shape as `issue`, for PR contexts. |
 | `dispatch` | Dispatch \| null | Outcome + runtime preferences of the current agent (see [Dispatch Object](#dispatch-object)). |
 | `resolution` | StepResolution \| null | Full context of the step-resolution decision (debugging): resolved role, prompt location, matched rule, applied config, timestamp. |
+| `gate_decision` | GateDecision \| null | Latest engine-owned human-gate decision (issue #648): `status` (`approved`/`rejected`), `decided_by`, `decided_at`, `feedback`, `comment_id`, and the `position` hold instance it consumes. |
+| `gate_history` | GateDecision[] | Append-only audit of every gate decision (issue #648). |
 
 ### HistoryEntry
 

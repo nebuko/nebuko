@@ -25,7 +25,15 @@ from resolve_config.sub_domains.workflow_command.workflow_command import (  # no
 
 class TestTables:
     def test_actions(self):
-        assert ACTIONS == ("run", "resume", "force-step", "delete", "update")
+        assert ACTIONS == (
+            "run",
+            "resume",
+            "force-step",
+            "delete",
+            "update",
+            "approve",
+            "reject",
+        )
 
     def test_resource_by_action(self):
         assert RESOURCE_BY_ACTION == {
@@ -34,6 +42,8 @@ class TestTables:
             "resume": None,
             "delete": "comments",
             "update": "circuit-breaker",
+            "approve": "gate",
+            "reject": "gate",
         }
 
     def test_flags_by_action(self):
@@ -43,6 +53,8 @@ class TestTables:
             "resume": {"feedback"},
             "delete": {"issue"},
             "update": {"value"},
+            "approve": {"feedback"},
+            "reject": {"feedback"},
         }
 
 
@@ -396,6 +408,40 @@ class TestCommandRegistry:
         # command (issue #839); registration makes it a command-prefix
         # short-circuit so it never reaches the agent-trigger path.
         assert COMMAND_REGISTRY["update"] == "local"
+
+    def test_gate_commands_are_engine_class(self):
+        # approve/reject release a human gate inside the engine; they must
+        # never be dispatched to an agent (issue #648).
+        assert COMMAND_REGISTRY["approve"] == "engine"
+        assert COMMAND_REGISTRY["reject"] == "engine"
+
+
+class TestGateCommands:
+    """`/nebuko approve gate` / `/nebuko reject gate` parsing (issue #648)."""
+
+    def test_approve_gate_with_feedback(self):
+        cmd = parse_workflow_command("/nebuko approve gate --feedback fix the X section")
+        assert cmd == WorkflowCommand(
+            action="approve", resource="gate", params={"feedback": "fix the X section"}
+        )
+
+    def test_reject_gate_without_feedback(self):
+        cmd = parse_workflow_command("/nebuko reject gate")
+        assert cmd == WorkflowCommand(action="reject", resource="gate", params={})
+
+    def test_wrong_resource_is_malformed(self):
+        assert parse_workflow_command("/nebuko approve workflow") is None
+
+    def test_missing_resource_is_malformed(self):
+        assert parse_workflow_command("/nebuko approve") is None
+
+    def test_unknown_flag_is_malformed(self):
+        assert parse_workflow_command("/nebuko approve gate --name x") is None
+
+    def test_classify_approve_gate_is_command(self):
+        intent = classify_comment("/nebuko approve gate")
+        assert intent.kind == "command"
+        assert intent.command == "approve"
 
 
 class TestClassifyComment:
