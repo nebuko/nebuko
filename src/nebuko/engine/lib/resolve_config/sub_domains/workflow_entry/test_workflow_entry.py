@@ -12,7 +12,7 @@ from resolve_config.sub_domains.workflow_entry.workflow_entry import (  # noqa: 
 
 def _wf(*steps: WorkflowStep) -> WorkflowDefinition:
     return WorkflowDefinition(
-        name="wf", description="test", trigger={"agents": ["genius"]}, steps=list(steps)
+        name="wf", description="test", trigger={"agents": ["architect"]}, steps=list(steps)
     )
 
 
@@ -22,7 +22,7 @@ def _agent(name: str, agent: str) -> WorkflowStep:
 
 class TestWorkflowEntryPointResolve:
     def test_empty_step_resolves_first_step(self):
-        wf = _wf(_agent("one", "genius"), _agent("two", "dev"))
+        wf = _wf(_agent("one", "architect"), _agent("two", "dev"))
 
         def resolver(step):
             return {"task": step.agent, "config_workflow": "wf", "config_step": step.name}
@@ -30,12 +30,12 @@ class TestWorkflowEntryPointResolve:
         entry = WorkflowEntryPoint(workflow="wf").resolve(wf, resolver)
 
         assert entry.is_valid()
-        assert entry.task == "genius"
+        assert entry.task == "architect"
         assert entry.config_workflow == "wf"
         assert entry.config_step == "one"
 
     def test_named_step_resolves_that_step(self):
-        wf = _wf(_agent("one", "genius"), _agent("two", "dev"))
+        wf = _wf(_agent("one", "architect"), _agent("two", "dev"))
         seen = []
 
         def resolver(step):
@@ -49,7 +49,7 @@ class TestWorkflowEntryPointResolve:
         assert entry.config_step == "two"
 
     def test_unknown_step_is_invalid(self):
-        wf = _wf(_agent("one", "genius"))
+        wf = _wf(_agent("one", "architect"))
 
         entry = WorkflowEntryPoint(workflow="wf", step="ghost").resolve(
             wf, lambda step: {"task": step.agent}
@@ -86,7 +86,7 @@ class TestWorkflowEntryPointResolve:
         assert entry.config_parent_workflow_step == "mount"
 
     def test_resolver_skip_reason_strips_legacy_prefix(self):
-        wf = _wf(_agent("one", "genius"))
+        wf = _wf(_agent("one", "architect"))
 
         entry = WorkflowEntryPoint(workflow="wf", step="one").resolve(
             wf, lambda step: {"skip_reason": "force-next-step: not scaffolded"}
@@ -96,7 +96,7 @@ class TestWorkflowEntryPointResolve:
         assert entry.skip_reason == "not scaffolded"
 
     def test_resolver_without_runnable_source_is_invalid(self):
-        wf = _wf(_agent("one", "genius"))
+        wf = _wf(_agent("one", "architect"))
 
         entry = WorkflowEntryPoint(workflow="wf", step="one").resolve(
             wf, lambda step: {}
@@ -106,7 +106,7 @@ class TestWorkflowEntryPointResolve:
         assert "no runnable source" in entry.skip_reason
 
     def test_script_entry_is_valid(self):
-        wf = _wf(_agent("one", "genius"))
+        wf = _wf(_agent("one", "architect"))
         script = {"path": "x.sh", "args_str": "", "timeout_minutes": 1}
 
         entry = WorkflowEntryPoint(workflow="wf", step="one").resolve(

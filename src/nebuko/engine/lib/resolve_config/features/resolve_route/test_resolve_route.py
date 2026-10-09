@@ -16,7 +16,7 @@ class TestCountConsecutiveSameAgent:
     def test_counts_trailing_run(self):
         from workflow_state import HistoryEntry
         history = [
-            HistoryEntry(step="s1", agent="genius"),
+            HistoryEntry(step="s1", agent="architect"),
             HistoryEntry(step="s2", agent="dev"),
             HistoryEntry(step="s3", agent="dev"),
             HistoryEntry(step="s4", agent="dev"),
@@ -25,7 +25,7 @@ class TestCountConsecutiveSameAgent:
 
     def test_no_run(self):
         from workflow_state import HistoryEntry
-        history = [HistoryEntry(step="s1", agent="genius")]
+        history = [HistoryEntry(step="s1", agent="architect")]
         assert count_consecutive_same_agent(history, "dev") == 0
 
     def test_empty_history(self):
@@ -41,10 +41,10 @@ class TestResolveFunctionCallPath:
         from workflow_state import FunctionCall
 
         fc = FunctionCall.model_validate(
-            {"agent_name": "ctx", "complexity": "high"}
+            {"agent_name": "context", "complexity": "high"}
         )
         config = _resolve_function_call_path(fc, "/tmp/workflows")
-        assert config["task"] == "ctx"
+        assert config["task"] == "context"
         assert config["config_complexity"] == "high"
         # Hand-off runs outside any workflow context
         assert config["config_workflow"] == ""
@@ -86,7 +86,7 @@ class TestResolveFunctionCallPath:
         from workflow_state import FunctionCall
 
         # Bypass registry validation to simulate drift
-        fc = FunctionCall.model_construct(function="explode", agent_name="ctx")
+        fc = FunctionCall.model_construct(function="explode", agent_name="context")
         config = _resolve_function_call_path(fc, "/tmp")
         assert config["SKIP_AGENT"] == "true"
         assert "explode" in config["REASON"]
@@ -105,16 +105,16 @@ class TestResolveFunctionCallPathWorkflowContext:
         "name: spec\n"
         "description: test\n"
         "trigger:\n"
-        "  agents: [genius]\n"
+        "  agents: [architect]\n"
         "steps:\n"
         "  - name: analyze\n"
-        "    agent: genius\n"
+        "    agent: architect\n"
         "    next: context\n"
         "  - name: context\n"
-        "    agent: ctx\n"
+        "    agent: context\n"
         "    next: plan\n"
         "  - name: plan\n"
-        "    agent: genius\n"
+        "    agent: architect\n"
         "    next: null\n"
     )
 
@@ -122,13 +122,13 @@ class TestResolveFunctionCallPathWorkflowContext:
         from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
         from workflow_state import FunctionCall, WorkflowState
 
-        # genius (step=analyze) hands off to ctx via function_call while
+        # architect (step=analyze) hands off to context via function_call while
         # workflow 'spec' is active — the exact #506 trigger shape.
-        prev = WorkflowState(workflow="spec", step="analyze", agent="genius")
-        fc = FunctionCall(agent_name="ctx")
+        prev = WorkflowState(workflow="spec", step="analyze", agent="architect")
+        fc = FunctionCall(agent_name="context")
         config = _resolve_function_call_path(fc, self._workflows_dir(tmp_path, self.SPEC_YAML), prev)
-        assert config["task"] == "ctx"
-        # The defect this fixes: empty values made ctx post the stale
+        assert config["task"] == "context"
+        # The defect this fixes: empty values made context post the stale
         # caller step, dead-ending the next re-trigger on the loop guard.
         assert config["config_workflow"] == "spec"
         assert config["config_step"] == "context"
@@ -137,27 +137,27 @@ class TestResolveFunctionCallPathWorkflowContext:
         from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
         from workflow_state import FunctionCall, WorkflowState
 
-        # genius at plan calls dev directly; the linear successor of plan
-        # belongs to ctx, so the helper falls back to the first step owned
+        # architect at plan calls dev directly; the linear successor of plan
+        # belongs to context, so the helper falls back to the first step owned
         # by dev (build).
         yaml = (
             "name: spec\n"
             "description: test\n"
             "trigger:\n"
-            "  agents: [genius]\n"
+            "  agents: [architect]\n"
             "steps:\n"
             "  - name: plan\n"
-            "    agent: genius\n"
+            "    agent: architect\n"
             "    next: review\n"
             "  - name: review\n"
-            "    agent: ctx\n"
+            "    agent: context\n"
             "    next: build\n"
             "  - name: build\n"
             "    agent: dev\n"
             "    next: null\n"
         )
         d = self._workflows_dir(tmp_path, yaml)
-        prev = WorkflowState(workflow="spec", step="plan", agent="genius")
+        prev = WorkflowState(workflow="spec", step="plan", agent="architect")
         config = _resolve_function_call_path(FunctionCall(agent_name="dev"), d, prev)
         assert config["config_step"] == "build"
 
@@ -165,7 +165,7 @@ class TestResolveFunctionCallPathWorkflowContext:
         from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
         from workflow_state import FunctionCall, WorkflowState
 
-        prev = WorkflowState(workflow="spec", step="analyze", agent="genius")
+        prev = WorkflowState(workflow="spec", step="analyze", agent="architect")
         config = _resolve_function_call_path(
             FunctionCall(agent_name="debug"),
             self._workflows_dir(tmp_path, self.SPEC_YAML),
@@ -179,9 +179,9 @@ class TestResolveFunctionCallPathWorkflowContext:
         from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
         from workflow_state import FunctionCall, WorkflowState
 
-        prev = WorkflowState(workflow="ghost", step="analyze", agent="genius")
+        prev = WorkflowState(workflow="ghost", step="analyze", agent="architect")
         config = _resolve_function_call_path(
-            FunctionCall(agent_name="ctx"), str(tmp_path), prev
+            FunctionCall(agent_name="context"), str(tmp_path), prev
         )
         assert config["config_workflow"] == "ghost"
         assert config["config_step"] == ""
@@ -191,7 +191,7 @@ class TestResolveFunctionCallPathWorkflowContext:
         from workflow_state import FunctionCall
 
         config = _resolve_function_call_path(
-            FunctionCall(agent_name="ctx"), self._workflows_dir(tmp_path, self.SPEC_YAML)
+            FunctionCall(agent_name="context"), self._workflows_dir(tmp_path, self.SPEC_YAML)
         )
         assert config["config_workflow"] == ""
         assert config["config_step"] == ""
@@ -228,23 +228,23 @@ class TestWorkflowCommandPrecedence:
         from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
-        local = self._dir(tmp_path, "local", {"foo.yaml": self._wf_yaml("ctx")})
+        local = self._dir(tmp_path, "local", {"foo.yaml": self._wf_yaml("context")})
         config = _resolve_human_path(
             "/nebuko run workflow --name foo", None, None, str(base), local_workflows_dir=str(local), workflow_command=self._run_cmd("foo")
         )
-        assert config["task"] == "ctx"
+        assert config["task"] == "context"
         assert config["config_workflow"] == "foo"
         assert "SKIP_AGENT" not in config
 
     def test_builtin_used_when_local_absent(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
-        base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("genius")})
+        base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("architect")})
         local = self._dir(tmp_path, "local", {})
         config = _resolve_human_path(
             "/nebuko run workflow --name foo", None, None, str(base), local_workflows_dir=str(local), workflow_command=self._run_cmd("foo")
         )
-        assert config["task"] == "genius"
+        assert config["task"] == "architect"
         assert config["config_workflow"] == "foo"
 
     def test_missing_everywhere_falls_back_to_mention_with_skip_reason(self, tmp_path):
@@ -290,9 +290,9 @@ class TestWorkflowCommandPrecedence:
         "name: foo\n"
         'description: "test"\n'
         "trigger:\n"
-        "  agents: [genius]\n"
+        "  agents: [architect]\n"
         "steps:\n"
-        "  - name: one\n    agent: genius\n    next: two\n"
+        "  - name: one\n    agent: architect\n    next: two\n"
         "  - name: two\n    agent: dev\n    next: null\n"
     )
 
@@ -327,7 +327,7 @@ class TestWorkflowCommandPrecedence:
             "/nebuko run workflow --name foo", None, None, str(base),
             local_workflows_dir=str(local), workflow_command=self._run_cmd("foo"),
         )
-        assert config["task"] == "genius"
+        assert config["task"] == "architect"
         assert config["config_workflow"] == "foo"
         assert config["config_step"] == ""
 
@@ -373,7 +373,7 @@ _GATED_HANDOFF_WF_YAML = (
     "name: spec-driven-impl\n"
     "description: test\n"
     "trigger:\n"
-    "  agents: [genius]\n"
+    "  agents: [architect]\n"
     "steps:\n"
     "  - name: stub\n"
     "    agent: dev\n"
@@ -382,7 +382,7 @@ _GATED_HANDOFF_WF_YAML = (
     "    agent: review\n"
     "    next: stub_approval\n"
     "  - name: stub_approval\n"
-    "    agent: genius\n"
+    "    agent: architect\n"
     "    human_gate: true\n"
     "    next: implement\n"
     "  - name: implement\n"
@@ -401,10 +401,10 @@ class TestHandoffDecisionContract:
         from resolve_config.features.resolve_route.resolve_route import HandoffDecision
 
         decision = HandoffDecision(
-            target_agent="genius", target_step="stub_approval", reason_code="gate_hold"
+            target_agent="architect", target_step="stub_approval", reason_code="gate_hold"
         )
         assert (decision.target_agent, decision.target_step, decision.reason_code) == (
-            "genius",
+            "architect",
             "stub_approval",
             "gate_hold",
         )
@@ -468,7 +468,7 @@ class TestGatePrecedenceOverFunctionCall:
 
     def test_function_call_across_a_gate_resolves_to_the_gate(self, tmp_path):
         # `stub_review` (review) approved and carries a hand-off to `dev`; its
-        # workflow successor is `stub_approval` (genius, human_gate). The gate
+        # workflow successor is `stub_approval` (architect, human_gate). The gate
         # must win — the call must not jump it to a consumed `stub` step.
         result = self._resolve(
             tmp_path,
@@ -482,7 +482,7 @@ class TestGatePrecedenceOverFunctionCall:
             },
         )
         assert result["SKIP_AGENT"] == "false"
-        assert result["TASK"] == "genius"
+        assert result["TASK"] == "architect"
         assert result["WORKFLOW_STEP"] == "stub_approval"
 
     def test_function_call_without_a_forward_step_is_a_no_op(self, tmp_path):
@@ -513,7 +513,7 @@ class TestGatePrecedenceOverFunctionCall:
                 "workflow": "spec-driven-impl",
                 "step": "implement",
                 "agent": "dev",
-                "function_call": {"agent_name": "ctx"},
+                "function_call": {"agent_name": "context"},
             },
         )
         assert result["TASK"] == "review"
@@ -555,7 +555,7 @@ class TestGatePrecedenceOverFunctionCall:
                 "function_call": {"agent_name": "dev"},
             },
         )
-        assert result["TASK"] == "genius"
+        assert result["TASK"] == "architect"
         assert result["WORKFLOW_STEP"] == "stub_approval"
 
 
@@ -563,16 +563,16 @@ _CALLBACK_WF_YAML = (
     "name: cb\n"
     "description: test\n"
     "trigger:\n"
-    "  agents: [genius]\n"
+    "  agents: [architect]\n"
     "steps:\n"
     "  - name: context\n"
-    "    agent: ctx\n"
+    "    agent: context\n"
     "    next: build\n"
     "  - name: build\n"
     "    agent: dev\n"
     "    next: null\n"
     "  - name: answer\n"
-    "    agent: genius\n"
+    "    agent: architect\n"
     "    next: null\n"
 )
 
@@ -586,14 +586,14 @@ class TestCallbackReturnTarget:
 
         (tmp_path / "cb.yaml").write_text(_CALLBACK_WF_YAML)
         return WorkflowState(
-            workflow="cb", step="context", agent="ctx", callback=callback
+            workflow="cb", step="context", agent="context", callback=callback
         ), str(tmp_path)
 
     def test_advance_with_no_target_returns_callback_step(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
 
-        state, wf_dir = self._state(tmp_path, "genius")
-        assert _callback_return_target(state, None, wf_dir) == ("genius", "answer")
+        state, wf_dir = self._state(tmp_path, "architect")
+        assert _callback_return_target(state, None, wf_dir) == ("architect", "answer")
 
     def test_no_callback_returns_none(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
@@ -604,14 +604,14 @@ class TestCallbackReturnTarget:
     def test_callback_equal_to_self_is_noop(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
 
-        state, wf_dir = self._state(tmp_path, "ctx")
+        state, wf_dir = self._state(tmp_path, "context")
         assert _callback_return_target(state, None, wf_dir) is None
 
     def test_explicit_target_outranks_callback(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
         from workflow_state import Dispatch
 
-        state, wf_dir = self._state(tmp_path, "genius")
+        state, wf_dir = self._state(tmp_path, "architect")
         dispatch = Dispatch(status="advance", task_hint="dev")
         assert _callback_return_target(state, dispatch, wf_dir) is None
 
@@ -619,7 +619,7 @@ class TestCallbackReturnTarget:
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
         from workflow_state import Dispatch
 
-        state, wf_dir = self._state(tmp_path, "genius")
+        state, wf_dir = self._state(tmp_path, "architect")
         assert _callback_return_target(state, Dispatch(status="hold"), wf_dir) is None
 
     def test_callback_absent_from_workflow_falls_through(self, tmp_path):
@@ -662,21 +662,21 @@ class TestCallbackReturnAddressEndToEnd:
         return resolve_config(body, prompt_base, workflows_dir, is_bot=True)
 
     def test_callee_advance_routes_back_to_caller_not_forward_edge(self, tmp_path):
-        # ctx was reached via genius's function_call (callback=genius) and ends
-        # with a bare advance. The workflow forward edge is ctx->dev(build);
-        # the callback must win and route back to genius(answer).
+        # context was reached via architect's function_call (callback=architect) and ends
+        # with a bare advance. The workflow forward edge is context->dev(build);
+        # the callback must win and route back to architect(answer).
         result = self._resolve(
             tmp_path,
             {
                 "version": 1,
                 "workflow": "cb",
                 "step": "context",
-                "agent": "ctx",
-                "callback": "genius",
+                "agent": "context",
+                "callback": "architect",
                 "dispatch": {"status": "advance"},
             },
         )
-        assert result["TASK"] == "genius"
+        assert result["TASK"] == "architect"
         assert result["WORKFLOW_STEP"] == "answer"
 
     def test_callee_without_callback_continues_workflow_edge(self, tmp_path):
@@ -688,7 +688,7 @@ class TestCallbackReturnAddressEndToEnd:
                 "version": 1,
                 "workflow": "cb",
                 "step": "context",
-                "agent": "ctx",
+                "agent": "context",
                 "dispatch": {"status": "advance"},
             },
         )
@@ -710,21 +710,21 @@ class TestFunctionCallPathCallbackDefault:
         from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
         from workflow_state import FunctionCall, WorkflowState
 
-        prev = WorkflowState(workflow="spec", step="analyze", agent="genius")
+        prev = WorkflowState(workflow="spec", step="analyze", agent="architect")
         config = _resolve_function_call_path(
-            FunctionCall(agent_name="ctx"),
+            FunctionCall(agent_name="context"),
             self._workflows_dir(tmp_path, self.SPEC_YAML),
             prev,
         )
-        assert config["config_callback"] == "genius"
+        assert config["config_callback"] == "architect"
 
     def test_explicit_callback_overrides_default(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
         from workflow_state import FunctionCall, WorkflowState
 
-        prev = WorkflowState(workflow="spec", step="analyze", agent="genius")
+        prev = WorkflowState(workflow="spec", step="analyze", agent="architect")
         config = _resolve_function_call_path(
-            FunctionCall(agent_name="ctx", callback="issue"),
+            FunctionCall(agent_name="context", callback="issue"),
             self._workflows_dir(tmp_path, self.SPEC_YAML),
             prev,
         )
@@ -734,9 +734,9 @@ class TestFunctionCallPathCallbackDefault:
         from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
         from workflow_state import FunctionCall, WorkflowState
 
-        prev = WorkflowState(workflow="spec", step="analyze", agent="genius")
+        prev = WorkflowState(workflow="spec", step="analyze", agent="architect")
         config = _resolve_function_call_path(
-            FunctionCall(agent_name="genius"),
+            FunctionCall(agent_name="architect"),
             self._workflows_dir(tmp_path, self.SPEC_YAML),
             prev,
         )
@@ -747,7 +747,7 @@ class TestFunctionCallPathCallbackDefault:
         from workflow_state import FunctionCall
 
         config = _resolve_function_call_path(
-            FunctionCall(agent_name="ctx"),
+            FunctionCall(agent_name="context"),
             self._workflows_dir(tmp_path, self.SPEC_YAML),
         )
         assert config["config_callback"] == ""
@@ -765,14 +765,14 @@ class TestWorkflowCommandPerStepComplexity:
         "name: tiered\n"
         'description: "tiered"\n'
         "trigger:\n"
-        "  agents: [genius]\n"
+        "  agents: [architect]\n"
         "steps:\n"
         "  - name: analyze\n"
-        "    agent: genius\n"
+        "    agent: architect\n"
         "    complexity: low\n"
         "    next: plan\n"
         "  - name: plan\n"
-        "    agent: genius\n"
+        "    agent: architect\n"
         "    next: null\n"
     )
 

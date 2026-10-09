@@ -112,14 +112,14 @@ class TestExtractMetricsFromComment(unittest.TestCase):
         self.assertEqual(metric.dispatch_recall_count, 2)
 
     def test_step_without_metrics_skipped(self):
-        body = _state_body({"step": "analyze", "agent": "genius", "summary": "s"})
+        body = _state_body({"step": "analyze", "agent": "architect", "summary": "s"})
         self.assertEqual(extract_metrics_from_comment(body), [])
 
     def test_no_state_returns_empty(self):
         self.assertEqual(extract_metrics_from_comment("Just a normal comment."), [])
 
     def test_bot_marker_without_state(self):
-        body = "<!-- bot-agent-genius -->\nSome answer"
+        body = "<!-- bot-agent-architect -->\nSome answer"
         self.assertEqual(extract_metrics_from_comment(body), [])
 
     def test_malformed_state_json_skipped(self):
@@ -155,7 +155,7 @@ class TestDeduplicateMetrics(unittest.TestCase):
         dupes = [
             Metrics(start_time="t0", end_time="t1", agent_role="dev"),
             Metrics(start_time="t0", end_time="t1", agent_role="dev"),
-            Metrics(start_time="t0", end_time="t1", agent_role="genius"),
+            Metrics(start_time="t0", end_time="t1", agent_role="architect"),
         ]
         result = deduplicate_metrics(dupes)
         self.assertEqual(len(result), 2)
@@ -172,7 +172,7 @@ class TestMetricsSchema(unittest.TestCase):
         return Metrics(
             run_id="test-run-123",
             model_name="gpt-4",
-            agent_role="genius",
+            agent_role="architect",
             input_tokens=1000,
             output_tokens=500,
             max_context_window=8192,
@@ -323,7 +323,7 @@ class TestAggregateByModel(unittest.TestCase):
         return Metrics(
             run_id="test-run",
             model_name=model,
-            agent_role="genius",
+            agent_role="architect",
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             max_context_window=max_context_window,
@@ -468,40 +468,40 @@ class TestAggregateByAgent(unittest.TestCase):
         )
 
     def test_single_agent_single_run(self):
-        metrics = [self._make_metric("genius")]
+        metrics = [self._make_metric("architect")]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["runs"], 1)
-        self.assertEqual(result["genius"]["total_input_tokens"], 100)
+        self.assertEqual(result["architect"]["runs"], 1)
+        self.assertEqual(result["architect"]["total_input_tokens"], 100)
 
     def test_single_agent_multiple_runs(self):
         metrics = [
-            self._make_metric("genius", input_tokens=100, output_tokens=50),
-            self._make_metric("genius", input_tokens=200, output_tokens=100),
+            self._make_metric("architect", input_tokens=100, output_tokens=50),
+            self._make_metric("architect", input_tokens=200, output_tokens=100),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["runs"], 2)
-        self.assertEqual(result["genius"]["total_input_tokens"], 300)
+        self.assertEqual(result["architect"]["runs"], 2)
+        self.assertEqual(result["architect"]["total_input_tokens"], 300)
 
     def test_multiple_agents(self):
         metrics = [
-            self._make_metric("genius", input_tokens=100),
+            self._make_metric("architect", input_tokens=100),
             self._make_metric("dev", input_tokens=200),
-            self._make_metric("genius", input_tokens=150),
+            self._make_metric("architect", input_tokens=150),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["runs"], 2)
-        self.assertEqual(result["genius"]["total_input_tokens"], 250)
+        self.assertEqual(result["architect"]["runs"], 2)
+        self.assertEqual(result["architect"]["total_input_tokens"], 250)
         self.assertEqual(result["dev"]["runs"], 1)
         self.assertEqual(result["dev"]["total_input_tokens"], 200)
 
     def test_review_fix_requests_aggregation(self):
         """Review fix requests should be summed across runs."""
         metrics = [
-            self._make_metric("genius", review_fix_requests=2),
-            self._make_metric("genius", review_fix_requests=3),
+            self._make_metric("architect", review_fix_requests=2),
+            self._make_metric("architect", review_fix_requests=3),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["review_fix_requests_sum"], 5)
+        self.assertEqual(result["architect"]["review_fix_requests_sum"], 5)
 
     def test_review_fix_requests_dev_zero(self):
         """Dev agent should have 0 review fix requests."""
@@ -509,48 +509,48 @@ class TestAggregateByAgent(unittest.TestCase):
         result = aggregate_by_agent(metrics)
         self.assertEqual(result["dev"]["review_fix_requests_sum"], 0)
 
-    def test_review_fix_requests_ctx_zero(self):
-        """Ctx agent should have 0 review fix requests."""
-        metrics = [self._make_metric("ctx", review_fix_requests=0)]
+    def test_review_fix_requests_context_zero(self):
+        """Context agent should have 0 review fix requests."""
+        metrics = [self._make_metric("context", review_fix_requests=0)]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["ctx"]["review_fix_requests_sum"], 0)
+        self.assertEqual(result["context"]["review_fix_requests_sum"], 0)
 
     def test_review_fix_requests_default_zero(self):
         """Review fix requests should default to 0 when not present."""
-        metrics = [self._make_metric("genius")]
+        metrics = [self._make_metric("architect")]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["review_fix_requests_sum"], 0)
+        self.assertEqual(result["architect"]["review_fix_requests_sum"], 0)
 
     def test_metrics_object_aggregation(self):
         """Metrics objects should aggregate correctly."""
         metrics = [
-            self._make_metric("genius", input_tokens=100, output_tokens=50),
-            self._make_metric("genius", input_tokens=200, output_tokens=100),
+            self._make_metric("architect", input_tokens=100, output_tokens=50),
+            self._make_metric("architect", input_tokens=200, output_tokens=100),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["runs"], 2)
-        self.assertEqual(result["genius"]["total_input_tokens"], 300)
-        self.assertEqual(result["genius"]["total_output_tokens"], 150)
+        self.assertEqual(result["architect"]["runs"], 2)
+        self.assertEqual(result["architect"]["total_input_tokens"], 300)
+        self.assertEqual(result["architect"]["total_output_tokens"], 150)
 
     def test_legacy_dict_aggregation(self):
         """Legacy dict metrics should still aggregate correctly."""
         metrics = [
-            {"agent_role": "genius", "input_tokens": 100, "output_tokens": 50},
-            {"agent_role": "genius", "input_tokens": 200, "output_tokens": 100},
+            {"agent_role": "architect", "input_tokens": 100, "output_tokens": 50},
+            {"agent_role": "architect", "input_tokens": 200, "output_tokens": 100},
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["runs"], 2)
-        self.assertEqual(result["genius"]["total_input_tokens"], 300)
-        self.assertEqual(result["genius"]["total_output_tokens"], 150)
+        self.assertEqual(result["architect"]["runs"], 2)
+        self.assertEqual(result["architect"]["total_input_tokens"], 300)
+        self.assertEqual(result["architect"]["total_output_tokens"], 150)
 
     def test_cost_aggregation_metrics_objects(self):
         """Cost should sum across runs per agent."""
         metrics = [
-            self._make_metric("genius", cost=0.01),
-            self._make_metric("genius", cost=0.02),
+            self._make_metric("architect", cost=0.01),
+            self._make_metric("architect", cost=0.02),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertAlmostEqual(result["genius"]["total_cost"], 0.03)
+        self.assertAlmostEqual(result["architect"]["total_cost"], 0.03)
 
     def test_cost_aggregation_legacy_dicts(self):
         """Legacy dicts without a cost key default to zero."""
@@ -712,11 +712,11 @@ class TestGenerateSummaryTable(unittest.TestCase):
 class TestGetAgentDisplayName(unittest.TestCase):
     """Test get_agent_display_name function."""
 
-    def test_genius(self):
-        self.assertEqual(get_agent_display_name("genius"), "Genius")
+    def test_architect(self):
+        self.assertEqual(get_agent_display_name("architect"), "Architect")
 
-    def test_ctx(self):
-        self.assertEqual(get_agent_display_name("ctx"), "Ctx")
+    def test_context(self):
+        self.assertEqual(get_agent_display_name("context"), "Context")
 
     def test_dev(self):
         self.assertEqual(get_agent_display_name("dev"), "Dev")
@@ -745,34 +745,34 @@ class TestAggregateByAgent(unittest.TestCase):
         }
 
     def test_single_agent_single_run(self):
-        metrics = [self._make_metric("genius")]
+        metrics = [self._make_metric("architect")]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["runs"], 1)
-        self.assertEqual(result["genius"]["total_input_tokens"], 100)
-        self.assertEqual(result["genius"]["total_output_tokens"], 50)
+        self.assertEqual(result["architect"]["runs"], 1)
+        self.assertEqual(result["architect"]["total_input_tokens"], 100)
+        self.assertEqual(result["architect"]["total_output_tokens"], 50)
 
     def test_single_agent_multiple_runs(self):
         metrics = [
-            self._make_metric("genius", input_tokens=100, output_tokens=50),
-            self._make_metric("genius", input_tokens=200, output_tokens=100),
+            self._make_metric("architect", input_tokens=100, output_tokens=50),
+            self._make_metric("architect", input_tokens=200, output_tokens=100),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["runs"], 2)
-        self.assertEqual(result["genius"]["total_input_tokens"], 300)
-        self.assertEqual(result["genius"]["total_output_tokens"], 150)
+        self.assertEqual(result["architect"]["runs"], 2)
+        self.assertEqual(result["architect"]["total_input_tokens"], 300)
+        self.assertEqual(result["architect"]["total_output_tokens"], 150)
 
     def test_multiple_agents(self):
         metrics = [
-            self._make_metric("genius", input_tokens=100),
-            self._make_metric("ctx", input_tokens=200),
+            self._make_metric("architect", input_tokens=100),
+            self._make_metric("context", input_tokens=200),
             self._make_metric("dev", input_tokens=150),
-            self._make_metric("genius", input_tokens=50),
+            self._make_metric("architect", input_tokens=50),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["runs"], 2)
-        self.assertEqual(result["genius"]["total_input_tokens"], 150)
-        self.assertEqual(result["ctx"]["runs"], 1)
-        self.assertEqual(result["ctx"]["total_input_tokens"], 200)
+        self.assertEqual(result["architect"]["runs"], 2)
+        self.assertEqual(result["architect"]["total_input_tokens"], 150)
+        self.assertEqual(result["context"]["runs"], 1)
+        self.assertEqual(result["context"]["total_input_tokens"], 200)
         self.assertEqual(result["dev"]["runs"], 1)
         self.assertEqual(result["dev"]["total_input_tokens"], 150)
 
@@ -788,11 +788,11 @@ class TestAggregateByAgent(unittest.TestCase):
 
     def test_mixed_with_and_without_agent_role(self):
         metrics = [
-            self._make_metric("genius", input_tokens=100),
+            self._make_metric("architect", input_tokens=100),
             {"model_name": "gpt-4", "input_tokens": 200},  # no agent_role
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["runs"], 1)
+        self.assertEqual(result["architect"]["runs"], 1)
         self.assertEqual(result["unknown"]["runs"], 1)
 
 
@@ -801,7 +801,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
 
     def _make_aggregated(self):
         return {
-            "genius": {
+            "architect": {
                 "runs": 2,
                 "total_input_tokens": 300,
                 "total_output_tokens": 150,
@@ -815,7 +815,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
             },
-            "ctx": {
+            "context": {
                 "runs": 1,
                 "total_input_tokens": 200,
                 "total_output_tokens": 100,
@@ -858,18 +858,18 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
     def test_agent_display_names(self):
         result = generate_agent_summary_table(self._make_aggregated())
         result_str = "\n".join(result)
-        self.assertIn("| Genius ", result_str)
-        self.assertIn("| Ctx ", result_str)
+        self.assertIn("| Architect ", result_str)
+        self.assertIn("| Context ", result_str)
         self.assertIn("| Dev ", result_str)
 
     def test_agent_sort_order(self):
         result = generate_agent_summary_table(self._make_aggregated())
         result_str = "\n".join(result)
-        genius_pos = result_str.index("| Genius ")
-        ctx_pos = result_str.index("| Ctx ")
+        architect_pos = result_str.index("| Architect ")
+        context_pos = result_str.index("| Context ")
         dev_pos = result_str.index("| Dev ")
-        self.assertLess(genius_pos, ctx_pos)
-        self.assertLess(ctx_pos, dev_pos)
+        self.assertLess(architect_pos, context_pos)
+        self.assertLess(context_pos, dev_pos)
 
     def test_totals_line(self):
         result = generate_agent_summary_table(self._make_aggregated())
@@ -881,7 +881,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
 
     def test_single_run_singular(self):
         agg = {
-            "genius": {
+            "architect": {
                 "runs": 1,
                 "total_input_tokens": 100,
                 "total_output_tokens": 50,
@@ -904,21 +904,21 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
     def test_average_latency(self):
         result = generate_agent_summary_table(self._make_aggregated())
         result_str = "\n".join(result)
-        # genius: 2000/2 = 1000ms avg
-        genius_line = [l for l in result if "Genius" in l][0]
-        self.assertIn("| 1000 ", genius_line)
+        # architect: 2000/2 = 1000ms avg
+        architect_line = [l for l in result if "Architect" in l][0]
+        self.assertIn("| 1000 ", architect_line)
 
     def test_average_tool_calls(self):
         result = generate_agent_summary_table(self._make_aggregated())
-        genius_line = [l for l in result if "Genius" in l][0]
-        self.assertIn("5.0", genius_line)
+        architect_line = [l for l in result if "Architect" in l][0]
+        self.assertIn("5.0", architect_line)
 
     def test_tool_errors_column(self):
         """Test that tool errors column shows correct values."""
         result = generate_agent_summary_table(self._make_aggregated())
         # All per-tool error dicts are empty, so all should show 0
         for line in result:
-            if any(name in line for name in ["Genius", "Ctx", "Dev"]):
+            if any(name in line for name in ["| Architect ", "| Context ", "| Dev "]):
                 self.assertIn("| 0 ", line)
 
     def test_fix_requests_column_header(self):
@@ -931,13 +931,13 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         """Test that Fix Requests column shows 0 when no fix requests."""
         result = generate_agent_summary_table(self._make_aggregated())
         for line in result:
-            if any(name in line for name in ["Genius", "Ctx", "Dev"]):
+            if any(name in line for name in ["| Architect ", "| Context ", "| Dev "]):
                 self.assertIn("| 0 ", line)
 
     def test_fix_requests_column_with_values(self):
         """Test that Fix Requests column shows correct values."""
         agg = {
-            "genius": {
+            "architect": {
                 "runs": 2,
                 "total_input_tokens": 300,
                 "total_output_tokens": 150,
@@ -967,15 +967,15 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             },
         }
         result = generate_agent_summary_table(agg)
-        genius_line = [l for l in result if "Genius" in l][0]
+        architect_line = [l for l in result if "Architect" in l][0]
         dev_line = [l for l in result if "Dev" in l][0]
-        self.assertIn("| 5 ", genius_line)
+        self.assertIn("| 5 ", architect_line)
         self.assertIn("| 0 ", dev_line)
 
     def test_backward_compatible_without_fix_requests(self):
         """Agent table should show 0 for agents without review_fix_requests_sum."""
         agg = {
-            "genius": {
+            "architect": {
                 "runs": 1,
                 "total_input_tokens": 100,
                 "total_output_tokens": 50,
@@ -997,7 +997,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
     def test_cost_column_and_total(self):
         """Agent table should include a Cost column and sum costs in totals."""
         agg = {
-            "genius": {
+            "architect": {
                 "runs": 1,
                 "total_input_tokens": 100,
                 "total_output_tokens": 50,
@@ -1298,49 +1298,49 @@ class TestPerToolAggregationAgent(unittest.TestCase):
     def test_merge_per_tool_across_runs(self):
         """Per-tool calls should be summed across runs for same agent."""
         metrics = [
-            self._make_metric("genius", tool_calls_per_tool={"terminal": 10}),
-            self._make_metric("genius", tool_calls_per_tool={"terminal": 5, "bash": 3}),
+            self._make_metric("architect", tool_calls_per_tool={"terminal": 10}),
+            self._make_metric("architect", tool_calls_per_tool={"terminal": 5, "bash": 3}),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["tool_calls_per_tool"]["terminal"], 15)
-        self.assertEqual(result["genius"]["tool_calls_per_tool"]["bash"], 3)
+        self.assertEqual(result["architect"]["tool_calls_per_tool"]["terminal"], 15)
+        self.assertEqual(result["architect"]["tool_calls_per_tool"]["bash"], 3)
 
     def test_merge_errors_per_tool_across_runs(self):
         """Errors per tool should be summed across runs."""
         metrics = [
-            self._make_metric("genius", errors_per_tool={"terminal": 2}),
-            self._make_metric("genius", errors_per_tool={"terminal": 1, "file_editor": 0}),
+            self._make_metric("architect", errors_per_tool={"terminal": 2}),
+            self._make_metric("architect", errors_per_tool={"terminal": 1, "file_editor": 0}),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["errors_per_tool"]["terminal"], 3)
-        self.assertEqual(result["genius"]["errors_per_tool"]["file_editor"], 0)
+        self.assertEqual(result["architect"]["errors_per_tool"]["terminal"], 3)
+        self.assertEqual(result["architect"]["errors_per_tool"]["file_editor"], 0)
 
     def test_merge_tokens_per_tool_across_runs(self):
         """Tokens per tool should be summed across runs."""
         metrics = [
-            self._make_metric("genius", tokens_per_tool={
+            self._make_metric("architect", tokens_per_tool={
                 "terminal": {"input": 1000, "output": 500, "cache_hit": 200, "reasoning": 10}
             }),
-            self._make_metric("genius", tokens_per_tool={
+            self._make_metric("architect", tokens_per_tool={
                 "terminal": {"input": 500, "output": 250, "cache_hit": 100, "reasoning": 5}
             }),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["tokens_per_tool"]["terminal"]["input"], 1500)
-        self.assertEqual(result["genius"]["tokens_per_tool"]["terminal"]["output"], 750)
-        self.assertEqual(result["genius"]["tokens_per_tool"]["terminal"]["cache_hit"], 300)
-        self.assertEqual(result["genius"]["tokens_per_tool"]["terminal"]["reasoning"], 15)
+        self.assertEqual(result["architect"]["tokens_per_tool"]["terminal"]["input"], 1500)
+        self.assertEqual(result["architect"]["tokens_per_tool"]["terminal"]["output"], 750)
+        self.assertEqual(result["architect"]["tokens_per_tool"]["terminal"]["cache_hit"], 300)
+        self.assertEqual(result["architect"]["tokens_per_tool"]["terminal"]["reasoning"], 15)
 
     def test_backward_compatible_without_per_tool(self):
         """Old metrics without per-tool data should still work."""
         metrics = [
-            self._make_metric("genius"),  # no per-tool fields
-            self._make_metric("genius"),
+            self._make_metric("architect"),  # no per-tool fields
+            self._make_metric("architect"),
         ]
         result = aggregate_by_agent(metrics)
-        self.assertEqual(result["genius"]["tool_calls_per_tool"], {})
-        self.assertEqual(result["genius"]["errors_per_tool"], {})
-        self.assertEqual(result["genius"]["tokens_per_tool"], {})
+        self.assertEqual(result["architect"]["tool_calls_per_tool"], {})
+        self.assertEqual(result["architect"]["errors_per_tool"], {})
+        self.assertEqual(result["architect"]["tokens_per_tool"], {})
 
 
 class TestPerToolAggregationModel(unittest.TestCase):
@@ -1390,7 +1390,7 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
 
     def _make_aggregated_with_per_tool(self):
         return {
-            "genius": {
+            "architect": {
                 "runs": 2,
                 "total_input_tokens": 300,
                 "total_output_tokens": 150,
@@ -1404,7 +1404,7 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
                 "errors_per_tool": {"terminal": 2, "file_editor": 0},
                 "tokens_per_tool": {},
             },
-            "ctx": {
+            "context": {
                 "runs": 1,
                 "total_input_tokens": 200,
                 "total_output_tokens": 100,
@@ -1430,20 +1430,20 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
     def test_agent_table_shows_tool_errors(self):
         """Agent table should show correct tool error counts."""
         result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
-        genius_line = [l for l in result if "Genius" in l][0]
-        # genius has 2 terminal errors + 0 file_editor errors = 2 total
-        self.assertIn("| 2 ", genius_line)
+        architect_line = [l for l in result if "Architect" in l][0]
+        # architect has 2 terminal errors + 0 file_editor errors = 2 total
+        self.assertIn("| 2 ", architect_line)
 
     def test_agent_table_shows_per_tool_calls(self):
         """Agent table should show formatted per-tool calls."""
         result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
-        genius_line = [l for l in result if "Genius" in l][0]
-        self.assertIn("file_editor: 8, terminal: 15", genius_line)
+        architect_line = [l for l in result if "Architect" in l][0]
+        self.assertIn("file_editor: 8, terminal: 15", architect_line)
 
     def test_agent_table_backward_compatible(self):
         """Agent table should show N/A for agents without per-tool data."""
         agg = {
-            "genius": {
+            "architect": {
                 "runs": 1,
                 "total_input_tokens": 100,
                 "total_output_tokens": 50,
@@ -1472,16 +1472,16 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
     def test_model_table_shows_tool_errors(self):
         """Model table should show correct tool error counts."""
         result = generate_model_summary_table(self._make_aggregated_with_per_tool())
-        # Both genius and ctx have errors
+        # Both architect and context have errors
         for line in result:
-            if "Genius" in line or "Ctx" in line:
+            if "| Architect " in line or "| Context " in line:
                 # Should contain error count
                 self.assertTrue(any(c.isdigit() for c in line))
 
     def test_model_table_cost_column(self):
         """Model table should include a Cost column populated from total_cost."""
         agg = self._make_aggregated_with_per_tool()
-        agg["genius"]["total_cost"] = 0.2500
+        agg["architect"]["total_cost"] = 0.2500
         result_str = "\n".join(generate_model_summary_table(agg))
         self.assertIn("Cost (USD)", result_str)
         self.assertIn("$0.2500", result_str)

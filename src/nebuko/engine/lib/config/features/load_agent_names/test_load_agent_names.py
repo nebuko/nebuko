@@ -75,7 +75,7 @@ class TestLoadAgentNames:
             os.unlink(f.name)
 
     def test_direct_module_matches_facade(self):
-        path = _write_config({"genius": {}, "po": {}})
+        path = _write_config({"architect": {}, "po": {}})
         try:
             assert load_agent_names_direct(path) == load_agent_names(path)
         finally:

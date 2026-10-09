@@ -22,7 +22,7 @@ class TestAgentConfig:
         agent = AgentConfig(
             model=llm,
             temperature=0.2,
-            prompt_file=".agents/prompts/genius.md",
+            prompt_file=".agents/prompts/architect.md",
             skills=["python"],
         )
         assert agent.temperature == 0.2
@@ -34,7 +34,7 @@ class TestAgentConfig:
         llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
         agent = AgentConfig(
             model=llm,
-            prompt_file=".agents/prompts/genius.md",
+            prompt_file=".agents/prompts/architect.md",
         )
         assert agent.tools == ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
@@ -44,7 +44,7 @@ class TestAgentConfig:
         llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
         agent = AgentConfig(
             model=llm,
-            prompt_file=".agents/prompts/ctx.md",
+            prompt_file=".agents/prompts/context.md",
             tools=["terminal", "think", "finish"],
         )
         assert agent.tools == ["terminal", "think", "finish"]
@@ -55,18 +55,18 @@ class TestAgentConfig:
         llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
         agent = AgentConfig(
             model=llm,
-            prompt_file=".agents/prompts/genius.md",
+            prompt_file=".agents/prompts/architect.md",
             tools=[],
         )
         assert agent.tools == []
 
-    def test_restricted_tools_genius_pattern(self):
-        """Genius/issue pattern: think + finish only."""
+    def test_restricted_tools_architect_pattern(self):
+        """Architect/issue pattern: think + finish only."""
         provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
         llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
         agent = AgentConfig(
             model=llm,
-            prompt_file=".agents/prompts/genius.md",
+            prompt_file=".agents/prompts/architect.md",
             tools=["think", "finish"],
         )
         assert agent.tools == ["think", "finish"]
@@ -87,10 +87,10 @@ class TestAgentConfig:
                 }
             },
             "agents": {
-                "genius": {
+                "architect": {
                     "model": "${llms.deepseek}",
                     "temperature": 0.2,
-                    "prompt_file": ".agents/prompts/genius.md",
+                    "prompt_file": ".agents/prompts/architect.md",
                     "skills": [],
                     "tools": ["think", "finish"],
                 },
@@ -108,7 +108,7 @@ class TestAgentConfig:
             f.flush()
             config = load_config(f.name)
 
-        assert config.agents["genius"].tools == ["think", "finish"]
+        assert config.agents["architect"].tools == ["think", "finish"]
         assert config.agents["dev"].tools == [
             "terminal", "file_editor", "task_tracker", "think", "finish",
         ]
@@ -121,7 +121,7 @@ class TestAgentConfig:
         llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
         agent = AgentConfig(
             model=llm,
-            prompt_file=".agents/prompts/genius.md",
+            prompt_file=".agents/prompts/architect.md",
         )
         assert agent.complexity_overrides == {}
 
@@ -131,7 +131,7 @@ class TestAgentConfig:
         llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
         agent = AgentConfig(
             model=llm,
-            prompt_file=".agents/prompts/genius.md",
+            prompt_file=".agents/prompts/architect.md",
             complexity_overrides={
                 "low": {"temperature": 0.0},
                 "high": {"temperature": 0.9, "reasoning": "xhigh"},
@@ -148,6 +148,6 @@ class TestAgentConfig:
         with pytest.raises(ValidationError):
             AgentConfig(
                 model=llm,
-                prompt_file=".agents/prompts/genius.md",
+                prompt_file=".agents/prompts/architect.md",
                 complexity_overrides={"critical": {"temperature": 0.9}},
             )

@@ -24,7 +24,7 @@ class TestAgentStartNotice:
         assert notice.render().splitlines()[0] == "<!-- bot-agent-review -->"
 
     def test_render_uses_role_and_run_url_verbatim(self):
-        notice = AgentStartNotice(agent="ctx", role="context", run_url="https://example.test/run")
+        notice = AgentStartNotice(agent="context", role="context", run_url="https://example.test/run")
         assert notice.render().splitlines()[1] == (
             f"{brand().logo_mark()} **context agent started** — [View workflow run logs](https://example.test/run)"
         )
@@ -35,7 +35,7 @@ class TestAgentStartNotice:
     def test_is_immutable(self):
         notice = AgentStartNotice(agent="dev", role="dev", run_url=RUN_URL)
         try:
-            notice.agent = "genius"
+            notice.agent = "architect"
         except Exception as exc:  # pydantic raises ValidationError on frozen models
             assert "frozen" in str(exc).lower()
         else:  # pragma: no cover - frozen models never reach this branch

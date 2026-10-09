@@ -1,6 +1,6 @@
 # Plan Orchestration Workflow
 # Full lifecycle for a multi-step plan sharing a single PR:
-# genius (architect) → ctx → genius (plan, human approval gate) → dev (scaffold)
+# architect (architect) → context → architect (plan, human approval gate) → dev (scaffold)
 # → dynamically mounted per-step sub-workflow (tmp_impl/workflow.yaml)
 # → dev (cleanup) → review (final PR review, loops on rejection).
 
@@ -8,19 +8,19 @@ name: plan-orchestration
 description: "Full lifecycle — architect, context, plan, scaffold, execute, cleanup, final review"
 
 trigger:
-  agents: [genius]
+  agents: [architect]
 
 steps:
   - name: architect
-    agent: genius
+    agent: architect
     next: context
 
   - name: context
-    agent: ctx
+    agent: context
     next: plan
 
   - name: plan
-    agent: genius
+    agent: architect
     human_gate: true
     conditions:
       - on_result: approved
@@ -45,7 +45,7 @@ steps:
       Inputs:
       - The issue number N (from `$TARGET_NUMBER` or the issue context).
       - The approved structured plan: the `<planWorkflow>` JSON block in the
-        @@genius comment on this issue:
+        @@architect comment on this issue:
         <planWorkflow>
         {"issue": N, "steps": [{"title": "...", "instructions": "...", "complexity": "medium", "model": null}, ...]}
         </planWorkflow>
@@ -96,7 +96,7 @@ steps:
         from the branch.
 
       Escalation protocol: if the `<planWorkflow>` block is missing, malformed, or
-      references an unclear step, STOP and report the blocker to @@genius. Do NOT
+      references an unclear step, STOP and report the blocker to @@architect. Do NOT
       guess at step content and do NOT implement anything.
 
       Finish with a concise summary and end your message with (no `agent` field,

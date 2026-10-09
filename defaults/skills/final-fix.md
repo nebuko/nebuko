@@ -25,4 +25,4 @@ You are in final-fix mode for a branch-mounted dynamic plan workflow (issue #462
 ## Escalation Protocol
 
 If a piece of feedback conflicts with the architect plan or the issue requirements → note the conflict in your summary and implement the interpretation most consistent with the original plan; flag it for the reviewer in your message.
-If a fix would require an architectural change → stop and report to @@genius instead of guessing.
+If a fix would require an architectural change → stop and report to @@architect instead of guessing.

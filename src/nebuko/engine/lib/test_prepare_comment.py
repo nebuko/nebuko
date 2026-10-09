@@ -69,7 +69,7 @@ class TestCleanMessage(unittest.TestCase):
     def test_strips_multiple_agent_run_configs(self):
         raw = (
             "First part\n"
-            "<agentRunConfig>{\"task\": \"genius\"}</agentRunConfig>\n"
+            "<agentRunConfig>{\"task\": \"architect\"}</agentRunConfig>\n"
             "Middle part\n"
             "<agentRunConfig>{\"task\": \"dev\"}</agentRunConfig>\n"
             "Last part"
@@ -134,31 +134,31 @@ class TestEscapeAgentTriggers(unittest.TestCase):
     """Test @@agent trigger escaping (issue #482)."""
 
     def test_escapes_single_trigger(self):
-        result = escape_agent_triggers("Hello @@genius thanks")
-        self.assertIn("@@\u200bgenius", result)
-        self.assertNotIn("hello @@genius".replace("h", "H"), result)
+        result = escape_agent_triggers("Hello @@architect thanks")
+        self.assertIn("@@\u200barchitect", result)
+        self.assertNotIn("hello @@architect".replace("h", "H"), result)
 
     def test_no_raw_trigger_after_escape(self):
-        result = escape_agent_triggers("Ping @@genius and @@dev now")
-        self.assertNotIn("@@genius", result)
+        result = escape_agent_triggers("Ping @@architect and @@dev now")
+        self.assertNotIn("@@architect", result)
         self.assertNotIn("@@dev", result)
-        self.assertIn("@@\u200bgenius", result)
+        self.assertIn("@@\u200barchitect", result)
         self.assertIn("@@\u200bdev", result)
 
     def test_escapes_multiple_tokens(self):
-        result = escape_agent_triggers("@@ctx then @@dev then @@review")
-        self.assertNotIn("@@ctx", result)
+        result = escape_agent_triggers("@@context then @@dev then @@review")
+        self.assertNotIn("@@context", result)
         self.assertNotIn("@@dev", result)
         self.assertNotIn("@@review", result)
 
     def test_escapes_at_start_of_string(self):
-        result = escape_agent_triggers("@@genius start")
-        self.assertEqual(result, "@@\u200bgenius start")
+        result = escape_agent_triggers("@@architect start")
+        self.assertEqual(result, "@@\u200barchitect start")
 
     def test_does_not_escape_mid_word(self):
         # Only escape when @@ is preceded by start/whitespace (lookbehind rule)
-        result = escape_agent_triggers("x@@genius is a mid-word occurrence")
-        self.assertEqual(result, "x@@genius is a mid-word occurrence")
+        result = escape_agent_triggers("x@@architect is a mid-word occurrence")
+        self.assertEqual(result, "x@@architect is a mid-word occurrence")
 
     def test_no_tokens_unchanged(self):
         text = "No triggers here, just plain @mentions and @@ without name."
@@ -194,7 +194,7 @@ class TestNeutralizeHumanPings(unittest.TestCase):
     def test_leaves_agent_triggers_to_escape_agent_triggers(self):
         # ``@@`` tokens are owned by ``escape_agent_triggers``; this helper must
         # not touch them so the two transformations stay independently testable.
-        text = "ping @@genius and @@dev now"
+        text = "ping @@architect and @@dev now"
         self.assertEqual(neutralize_human_pings(text), text)
 
     def test_no_mentions_unchanged(self):
@@ -504,10 +504,10 @@ class TestPrepareCommentLatestAnswerETL(TestPrepareCommentIntegration):
         self.assertEqual(result.count(block), 1)
 
 
-class TestPrepareCommentCtxCollapse(TestPrepareCommentIntegration):
-    """ctx-role reports get sections collapsed into <details> (issue #557)."""
+class TestPrepareCommentContextCollapse(TestPrepareCommentIntegration):
+    """context-role reports get sections collapsed into <details> (issue #557)."""
 
-    CTX_REPORT = (
+    CONTEXT_REPORT = (
         "## 🔍 Context Collection Report — posting pipeline\n\n"
         "Exec summary line one.\nExec summary line two.\n\n"
         "### FILES FOUND\n"
@@ -531,9 +531,9 @@ class TestPrepareCommentCtxCollapse(TestPrepareCommentIntegration):
             os.environ["ROLE_NAME"] = self._saved_role
         super().tearDown()
 
-    def test_ctx_report_sections_collapsed(self):
-        os.environ["ROLE_NAME"] = "ctx"
-        self._write("final_message.txt", self.CTX_REPORT)
+    def test_context_report_sections_collapsed(self):
+        os.environ["ROLE_NAME"] = "context"
+        self._write("final_message.txt", self.CONTEXT_REPORT)
         prepare_comment()
         result = _strip_answer_header(self._read("github_comment.md"))
         self.assertEqual(result.count("<details>"), 4)
@@ -547,16 +547,16 @@ class TestPrepareCommentCtxCollapse(TestPrepareCommentIntegration):
         idx_details = result.index("<details>")
         self.assertLess(idx_summary, idx_details)
 
-    def test_non_ctx_report_untouched(self):
+    def test_non_context_report_untouched(self):
         os.environ["ROLE_NAME"] = "dev"
-        self._write("final_message.txt", self.CTX_REPORT)
+        self._write("final_message.txt", self.CONTEXT_REPORT)
         prepare_comment()
         result = self._read("github_comment.md")
         self.assertNotIn("<details>", result)
         self.assertIn("### FILES FOUND", result)
 
-    def test_ctx_body_without_sections_passes_through(self):
-        os.environ["ROLE_NAME"] = "ctx"
+    def test_context_body_without_sections_passes_through(self):
+        os.environ["ROLE_NAME"] = "context"
         plain = "Just a short answer, no sections."
         self._write("final_message.txt", plain)
         prepare_comment()

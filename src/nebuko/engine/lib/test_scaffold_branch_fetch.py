@@ -75,10 +75,10 @@ class _ScaffoldFixture:
             "name: parent\n"
             "description: Parent with a branch-mounted child\n"
             "trigger:\n"
-            "  agents: [genius]\n"
+            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
-            "    agent: genius\n"
+            "    agent: architect\n"
             "    next: subtask\n"
             "  - name: subtask\n"
             f"    workflow: {CHILD_REF}\n"
@@ -194,7 +194,7 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
         try:
             os.chdir(self.fixture.worktree)
             result = resolve_workflow_routing(
-                {"task": "genius", "workflow": "parent", "step": "subtask"},
+                {"task": "architect", "workflow": "parent", "step": "subtask"},
                 str(self.fixture.worktree),
                 str(self.prompt_base),
                 # Deliberately bogus: must be ignored when the local hit wins.
@@ -209,7 +209,7 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
     def test_miss_with_scaffold_branch_fetches_child(self):
         """Child absent locally, present on scaffold branch -> fetched entry."""
         result = self._routing(
-            {"task": "genius", "workflow": "parent", "step": "subtask"},
+            {"task": "architect", "workflow": "parent", "step": "subtask"},
             scaffold_branch=SCAFFOLD_BRANCH,
         )
         self.assertEqual(result["SKIP_AGENT"], "false")
@@ -228,7 +228,7 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
     def test_miss_without_scaffold_branch_clean_skip(self):
         """No scaffold_branch in state -> clean skip, reason names the gap."""
         result = self._routing(
-            {"task": "genius", "workflow": "parent", "step": "subtask"},
+            {"task": "architect", "workflow": "parent", "step": "subtask"},
             scaffold_branch=None,
         )
         self.assertEqual(result["SKIP_AGENT"], "true")
@@ -239,7 +239,7 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
     def test_miss_with_missing_branch_upstream_clean_skip(self):
         """Scaffold branch absent upstream -> clean skip, no exception."""
         result = self._routing(
-            {"task": "genius", "workflow": "parent", "step": "subtask"},
+            {"task": "architect", "workflow": "parent", "step": "subtask"},
             scaffold_branch="feature/does-not-exist",
         )
         self.assertEqual(result["SKIP_AGENT"], "true")
@@ -256,7 +256,7 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
             "version": 1,
             "workflow": "parent",
             "step": "analyze",
-            "agent": "genius",
+            "agent": "architect",
             "scaffold_branch": SCAFFOLD_BRANCH,
         }
         body = (
@@ -287,7 +287,7 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
             "version": 1,
             "workflow": "parent",
             "step": "analyze",
-            "agent": "genius",
+            "agent": "architect",
         }
         body = (
             "/nebuko force-step step --name subtask\n\n"

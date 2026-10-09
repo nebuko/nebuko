@@ -15,7 +15,7 @@ Adding Nebuko to a repository gives you:
 
 - **Orchestration on your own issues and PRs** — start a workflow
   (`/nebuko run workflow --name default`), or mention an agent directly
-  (`@@genius`, `@@ctx`, `@@dev`, `@@review`) from an issue body or comment.
+  (`@@architect`, `@@context`, `@@dev`, `@@review`) from an issue body or comment.
 - **Nebuko branding in the thread** — every orchestrator comment is prefixed
   with the theme-adaptive Nebuko logo mark (a `<picture>` block serving
   `mark-light.svg` / `mark-dark.svg`), exactly as on this project's own issues.
@@ -172,9 +172,9 @@ llms:
     default_temperature: 0.7
 
 agents:
-  genius:
+  architect:
     model: "${llms.my-model}"
-    prompt_file: ".agents/prompts/genius.md"
+    prompt_file: ".agents/prompts/architect.md"
     tools: ["think", "finish"]
 
   dev:
@@ -219,9 +219,9 @@ llms:
     default_temperature: 0.7
 
 agents:
-  genius:
+  architect:
     model: "${llms.qwen}"
-    prompt_file: ".agents/prompts/genius.md"
+    prompt_file: ".agents/prompts/architect.md"
     tools: ["think", "finish"]
 ```
 

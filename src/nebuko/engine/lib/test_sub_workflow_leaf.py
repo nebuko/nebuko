@@ -35,10 +35,10 @@ PLAN_ORCHESTRATION_YAML = """
 name: plan-orchestration
 description: Top-level orchestration
 trigger:
-  agents: [genius]
+  agents: [architect]
 steps:
   - name: scaffold
-    agent: genius
+    agent: architect
     next: sub_impl
   - name: sub_impl
     workflow: tmp_impl/workflow.yaml
@@ -169,7 +169,7 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
     def _routing(self, workflow, step):
         def run(workflows_dir):
             return resolve_workflow_routing(
-                {"task": "genius", "workflow": workflow, "step": step},
+                {"task": "architect", "workflow": workflow, "step": step},
                 workflows_dir,
                 str(self.prompt_base),
                 scaffold_branch=SCAFFOLD_BRANCH,

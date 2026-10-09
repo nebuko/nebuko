@@ -46,7 +46,7 @@ class DispatchNextAction(Action):
     agent: Optional[str] = Field(
         default=None,
         description=(
-            "Optional explicit target agent name (e.g. 'ctx', 'dev'). "
+            "Optional explicit target agent name (e.g. 'context', 'dev'). "
             "If omitted, the workflow engine resolves the next agent from "
             "the workflow definition."
         ),

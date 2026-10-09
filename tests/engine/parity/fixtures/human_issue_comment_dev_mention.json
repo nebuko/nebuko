@@ -29,7 +29,7 @@
   },
   "history": [
     {
-      "body": "@@genius analyze the engine extraction",
+      "body": "@@architect analyze the engine extraction",
       "created_at": "2026-10-01T07:40:00Z",
       "user": {
         "login": "olivier-norture",
@@ -37,7 +37,7 @@
       }
     },
     {
-      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-genius -->\n*Genius answer*",
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-architect -->\n*Architect answer*",
       "created_at": "2026-10-01T07:41:00Z",
       "user": {
         "login": "github-actions[bot]",

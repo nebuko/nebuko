@@ -1,10 +1,10 @@
 name: l3-duplicate-ids
 description: "L3: two steps share the name 'dup'"
 trigger:
-  agents: [genius]
+  agents: [architect]
 steps:
   - name: dup
-    agent: genius
+    agent: architect
     next: done
   - name: done
     agent: dev

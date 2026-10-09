@@ -74,9 +74,9 @@ def scaffold_dir(tmp_path: Path) -> Path:
     _write(tmp_path, "plan-orchestration", {
         "name": "plan-orchestration",
         "description": "Top-level orchestration",
-        "trigger": {"agents": ["genius"]},
+        "trigger": {"agents": ["architect"]},
         "steps": [
-            {"name": "scaffold", "agent": "genius", "next": "sub_impl"},
+            {"name": "scaffold", "agent": "architect", "next": "sub_impl"},
             {"name": "sub_impl", "workflow": "tmp-impl", "next": "sub_clean"},
             {"name": "sub_clean", "agent": "dev", "next": None},
         ],

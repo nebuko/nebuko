@@ -34,7 +34,7 @@ Agents are introduced as **coworkers**: they talk to you and to the other agents
 
 ### Agents with a role and a personality
 
-Every agent is defined **as code** in `agent-config.yaml`: provider, LLM model and sampling parameters, a prompt file carrying its role/personality, the skills it may use, and the tools it may call. Nine agents ship today — among them `genius` (principal engineer), `ctx` (context collector), `dev` (execution developer), `review` (senior code reviewer), `issue` (issue refinement).
+Every agent is defined **as code** in `agent-config.yaml`: provider, LLM model and sampling parameters, a prompt file carrying its role/personality, the skills it may use, and the tools it may call. Nine agents ship today — among them `architect` (principal engineer), `context` (context collector), `dev` (execution developer), `review` (senior code reviewer), `issue` (issue refinement).
 
 ### Skills, granted to agents
 
@@ -48,10 +48,10 @@ A workflow is a declarative YAML document that **forces the AI onto a dedicated 
 name: spec-driven-impl
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     next: context
   - name: plan
-    agent: genius
+    agent: architect
     human_gate: true        # a human must approve before anything is built
     conditions:
       - on_result: approved

@@ -36,9 +36,9 @@ class TestWorkflowStep:
     """Test WorkflowStep Pydantic model."""
 
     def test_simple_step(self):
-        step = WorkflowStep(name="analyze", agent="genius", next="context")
+        step = WorkflowStep(name="analyze", agent="architect", next="context")
         assert step.name == "analyze"
-        assert step.agent == "genius"
+        assert step.agent == "architect"
         assert step.next == "context"
         assert step.conditions is None
 
@@ -71,13 +71,13 @@ class TestWorkflowStep:
         assert step.skill is None
 
     def test_prompt_parses_plain_string(self):
-        step = WorkflowStep(name="analyze", agent="genius", prompt="Be concise.")
+        step = WorkflowStep(name="analyze", agent="architect", prompt="Be concise.")
         assert step.prompt == "Be concise."
 
     def test_prompt_parses_multiline_block_verbatim(self):
         step = WorkflowStep(
             name="analyze",
-            agent="genius",
+            agent="architect",
             prompt=(
                 "Analyze the transcription and provide me:\n"
                 "a short summary (~5-10 sentences)\n"
@@ -113,7 +113,7 @@ class TestWorkflowStep:
         assert step.human_gate is False
 
     def test_human_gate_can_be_true(self):
-        step = WorkflowStep(name="spec_approval", agent="genius", human_gate=True)
+        step = WorkflowStep(name="spec_approval", agent="architect", human_gate=True)
         assert step.human_gate is True
 
     def test_human_gate_with_conditions(self):
@@ -123,7 +123,7 @@ class TestWorkflowStep:
         ]
         step = WorkflowStep(
             name="stub_approval",
-            agent="genius",
+            agent="architect",
             human_gate=True,
             conditions=conditions,
         )
@@ -140,7 +140,7 @@ class TestWorkflowStep:
         ]
         step = WorkflowStep(
             name="stub_approval",
-            agent="genius",
+            agent="architect",
             human_gate=True,
             conditions=conditions,
             next="implement",
@@ -272,9 +272,9 @@ class TestWorkflowStepScript:
 
     def test_existing_agent_step_unaffected(self):
         # Backward compatibility: plain agent steps parse exactly as before.
-        step = WorkflowStep(name="analyze", agent="genius", next="context")
+        step = WorkflowStep(name="analyze", agent="architect", next="context")
         assert step.script is None
-        assert step.agent == "genius"
+        assert step.agent == "architect"
 
 
 class TestWorkflowStepComplexity:
@@ -296,7 +296,7 @@ class TestWorkflowStepComplexity:
     def test_complexity_coexists_with_existing_fields(self):
         step = WorkflowStep(
             name="analyze",
-            agent="genius",
+            agent="architect",
             complexity="low",
             skill=["call-agent"],
             next="context",

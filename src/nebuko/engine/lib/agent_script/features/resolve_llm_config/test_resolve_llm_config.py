@@ -438,9 +438,9 @@ agents:
 
     def test_unknown_role_without_llm_model_raises(self):
         os.environ["ROLE_NAME"] = "unknown"
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(ValueError) as context:
             resolve_llm_config(None, "prompt")
-        self.assertIn("LLM_MODEL", str(ctx.exception))
+        self.assertIn("LLM_MODEL", str(context.exception))
 
     def test_llm_model_env_is_the_documented_fallback(self):
         os.environ["ROLE_NAME"] = "unknown"

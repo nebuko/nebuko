@@ -17,13 +17,13 @@ class TestAppConfig:
         agent = AgentConfig(
             model=llm,
             temperature=0.2,
-            prompt_file=".agents/prompts/genius.md",
+            prompt_file=".agents/prompts/architect.md",
         )
         config = AppConfig(
             providers={"openrouter": provider},
             llms={"deepseek": llm},
-            agents={"genius": agent},
+            agents={"architect": agent},
         )
         assert "openrouter" in config.providers
         assert "deepseek" in config.llms
-        assert "genius" in config.agents
+        assert "architect" in config.agents

@@ -7,8 +7,8 @@
   "history": [
     {
       "step": "analyze",
-      "agent": "genius",
-      "summary": "Phase A initiated: requested @@\u200bctx (high complexity) to collect resolver/guards code, command config, exit-code-20 definition, command parsing path, recent refactoring diffs, and tests. Awaiting context return to draft the architecture proposal for the 'clean comments' exit-code-20 bug.",
+      "agent": "architect",
+      "summary": "Phase A initiated: requested @@\u200bcontext (high complexity) to collect resolver/guards code, command config, exit-code-20 definition, command parsing path, recent refactoring diffs, and tests. Awaiting context return to draft the architecture proposal for the 'clean comments' exit-code-20 bug.",
       "position": [
         {
           "workflow": "default",
@@ -22,7 +22,7 @@
     },
     {
       "step": "context",
-      "agent": "ctx",
+      "agent": "context",
       "summary": "Context collection report posted above (engine skip\u2192ExitCode.TERMINAL=20 path, `clean comments`/`delete comments` resolver contract, orphaned `DELETE_COMMENTS`/`RUN_SCRIPT` env consumers, tests, docs, and 5 external exit-code references). Dispatch recorded: advance, complexity=high.",
       "position": [
         {
@@ -32,12 +32,12 @@
       ],
       "dispatch": {
         "complexity": "high",
-        "reason": "Context collection complete: engine skip\u2192TERMINAL(20) path, clean comments skip contract, orphaned DELETE_COMMENTS/RUN_SCRIPT env consumers, tests, docs, and external exit-code references gathered for genius."
+        "reason": "Context collection complete: engine skip\u2192TERMINAL(20) path, clean comments skip contract, orphaned DELETE_COMMENTS/RUN_SCRIPT env consumers, tests, docs, and external exit-code references gathered for architect."
       }
     },
     {
       "step": "plan",
-      "agent": "genius",
+      "agent": "architect",
       "summary": "Architecture proposal for the `clean comments` exit-code-20 bug has been posted (state marker `phase=proposal,status=awaiting_approval`) and the workflow is held for human review. The Object Design Anchor \u2014 `DeterministicStep` + `StepResult` frozen dataclasses in `src/nebuko/engine/models.py`, execu",
       "position": [
         {
@@ -52,7 +52,7 @@
     },
     {
       "step": "plan",
-      "agent": "genius",
+      "agent": "architect",
       "summary": "Phase B complete: human approval (\"sounds good proceed\") confirmed; posted the detailed implementation plan (5 steps, MEDIUM complexity, no splitPlan \u2014 bug fix) with the mandatory Object Design Contract (`DeterministicStep`, `StepResult` in `src/nebuko/engine/models.py`; `delete_issue_comments` on t",
       "position": [
         {

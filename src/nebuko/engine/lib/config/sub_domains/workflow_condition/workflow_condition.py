@@ -18,7 +18,7 @@ class WorkflowCondition(BaseModel):
 
     Custom values (e.g. ``needs_more_info``) are supported for workflow-specific
     branching. The semantic evaluation of "approved" vs "rejected" is the
-    responsibility of the agent (typically the genius agent in approval steps),
+    responsibility of the agent (typically the architect agent in approval steps),
     not the workflow engine.
     """
 

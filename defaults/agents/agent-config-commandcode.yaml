@@ -22,10 +22,10 @@ llms:
 # Tools: terminal, file_editor, task_tracker (SDK tools)
 #        think, finish (built-in defaults)
 agents:
-  genius:
+  architect:
     model: "${llms.mimo-2_6-pro}"
     temperature: 0.4
-    prompt_file: ".agents/prompts/genius.md"
+    prompt_file: ".agents/prompts/architect.md"
     skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
     complexity_overrides:
@@ -42,10 +42,10 @@ agents:
     skills: ["posting-contract"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch"]
 
-  ctx:
+  context:
     model: "${llms.deepseek-v4_1-flash}"
     temperature: 0.1
-    prompt_file: ".agents/prompts/ctx.md"
+    prompt_file: ".agents/prompts/context.md"
     skills: ["call-agent", "posting-contract"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
 
@@ -56,26 +56,8 @@ agents:
     skills: ["posting-contract"]
     tools: ["think", "finish", "dispatch_next", "terminal"]
 
-  issue:
-    model: "${llms.deepseek-v4_1-flash}"
-    prompt_file: ".agents/prompts/issue.md"
-    skills: ["call-agent", "posting-contract"]
-    tools: ["think", "finish", "dispatch_next"]
-
-  issue-reviewer:
-    model: "${llms.deepseek-v4_1-flash}"
-    prompt_file: ".agents/prompts/issue-reviewer.md"
-    skills: ["posting-contract"]
-    tools: ["think", "finish", "dispatch_next"]
-
-  debug:
-    model: "${llms.deepseek-v4_1-flash}"
-    prompt_file: ".agents/prompts/debug.md"
-    skills: ["posting-contract"]
-    tools: ["terminal", "file_editor", "think", "finish", "dispatch_next"]
-
   po:
     model: "${llms.deepseek-v4_1-flash}"
     prompt_file: ".agents/prompts/po.md"
-    skills: ["posting-contract"]
+    skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish", "dispatch_next"]

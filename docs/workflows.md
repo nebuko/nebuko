@@ -16,13 +16,13 @@ branch or stop**:
 ```yaml
 name: my-workflow
 trigger:
-  agents: [genius]            # @@genius in an issue body can start it
+  agents: [architect]            # @@architect in an issue body can start it
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     next: plan
   - name: plan
-    agent: genius
+    agent: architect
     conditions:               # evaluated in order
       - on_result: approved
         next: implement
@@ -64,7 +64,7 @@ requirements.
 ```yaml
 steps:
   - name: analyze
-    agent: genius
+    agent: architect
     prompt: |
       Analyze the transcription and provide me:
       a short summary (~5-10 sentences)
@@ -114,12 +114,12 @@ architecture `plan` step can run `high`:
 ```yaml
 steps:
   - name: analyze
-    agent: genius
-    complexity: low      # triage + ctx-query drafting is cheap
+    agent: architect
+    complexity: low      # triage + context-query drafting is cheap
     next: context
 
   - name: plan
-    agent: genius
+    agent: architect
     complexity: high     # architecture work deserves the top tier
     next: stub
 ```
@@ -255,35 +255,34 @@ Security notes:
 | `plan-orchestration` | [`plan-orchestration.yaml`](../defaults/workflows/plan-orchestration.yaml) | Full multi-step plan lifecycle sharing one PR |
 | `spec-driven` | [`spec-driven.yaml`](../defaults/workflows/spec-driven.yaml) | Spec → stub (human-gated) → implement |
 | `spec-driven-impl` | [`spec-driven-impl.yaml`](../defaults/workflows/spec-driven-impl.yaml) | Plan → stub (human-gated) → implement |
-| `debug` | [`debug.yaml`](../defaults/workflows/debug.yaml) | Direct single-agent debug call |
 | `demo-composition` | [`demo-composition.yaml`](../defaults/workflows/demo-composition.yaml) | Demo of sub-workflow composition |
 
 ### default
 
 ```
-analyze (genius) → context (ctx) → plan (genius) ──approved──► implement (dev) → review (review) ◆
+analyze (architect) → context (context) → plan (architect) ──approved──► implement (dev) → review (review) ◆
                                                     │rejected
                                                     └────────► context (loop)
 ```
 
-Trigger: `@@genius`. The standard development cycle used when a human hands a
+Trigger: `@@architect`. The standard development cycle used when a human hands a
 problem to the system. The `plan` step can loop back to `context` when the
 plan is rejected (insufficient context).
 
 Example trigger:
 
 ```
-@@genius implement retry logic in the circuit breaker
+@@architect implement retry logic in the circuit breaker
 ```
 
 ### think
 
 ```
-analyze (genius) → context (ctx) → plan (genius) ◆
+analyze (architect) → context (context) → plan (architect) ◆
                                 └─ rejected ─► context (loop)
 ```
 
-Trigger: `@@genius`. Pure analysis — ends after the plan/answer is produced;
+Trigger: `@@architect`. Pure analysis — ends after the plan/answer is produced;
 nothing is implemented. Use for "help me understand / define X" requests.
 
 ### review-only
@@ -311,7 +310,7 @@ started directly — it is referenced per-step from a dynamically generated
 ### plan-orchestration
 
 ```
-architect (genius) → context (ctx) → plan (genius) ──approved──► scaffold (dev, prompt_replace)
+architect (architect) → context (context) → plan (architect) ──approved──► scaffold (dev, prompt_replace)
                                                    │rejected                │
                                                    └────► plan (loop)       ▼
                                                             sub_impl (workflow: tmp_impl/workflow.yaml)
@@ -326,10 +325,10 @@ architect (genius) → context (ctx) → plan (genius) ──approved──► s
                                                                     └►◆◄────────────────┘
 ```
 
-Trigger: `@@genius`. The full lifecycle for a **multi-step plan that shares a
+Trigger: `@@architect`. The full lifecycle for a **multi-step plan that shares a
 single PR** (issue #462):
 
-1. `architect` / `context` / `plan` — genius produces a structured plan; a
+1. `architect` / `context` / `plan` — architect produces a structured plan; a
    human approves it (reject → re-plan loop).
 2. `scaffold` — dev converts the approved `<planWorkflow>` JSON into
    `tmp_impl/workflow.yaml`, a per-step sub-workflow.
@@ -359,7 +358,7 @@ workflow without replaying `architect`:
 /nebuko run workflow --name plan-orchestration --step plan
 ```
 
-Use `--step plan` to have genius convert/re-validate the existing plan and
+Use `--step plan` to have architect convert/re-validate the existing plan and
 re-arm the human gate; `--step scaffold` converts it directly (bypassing the
 gate — `run` is human-only, so that is an explicit human choice). `--step
 sub_impl` requires `tmp_impl/workflow.yaml` to be scaffolded already, else the
@@ -371,15 +370,15 @@ entry fails loudly rather than starting from the first step.
 spec (po) ──rejected──► spec
      │approved
      ▼
-architect_prepare_ctx (genius) → ctx_architect (ctx) → architect_review_ctx (genius)
+architect_prepare_context (architect) → context_architect (context) → architect_review_context (architect)
                                                         │rejected
-                                                        └► ctx_architect (loop)
+                                                        └► context_architect (loop)
      │approved/default
      ▼
 stub (dev, skill: stub-only) ◄──rejected── stub_review (review)
      │                                       │approved/default
      ▼                                       ▼
-                          stub_approval (genius, human_gate) ◄──rejected
+                          stub_approval (architect, human_gate) ◄──rejected
      │approved/default                            │
      ▼                                            ▼
 implement (dev) ──rejected── review (review) → ◆
@@ -394,37 +393,28 @@ logic). Review rejects send the dev back to fixing stubs or implementation.
 ### spec-driven-impl
 
 ```
-analyze (genius) → context (ctx) → plan (genius) ──approved──► stub (dev, stub-only)
+analyze (architect) → context (context) → plan (architect) ──approved──► stub (dev, stub-only)
                                                    │rejected          │
                                                    └► context         ▼
                                                             stub_review (review)
                                                                      │
-                                                     stub_approval (genius, human_gate)
+                                                     stub_approval (architect, human_gate)
                                                                      │approved
                                                                      ▼
                                                           implement (dev) ◆
 ```
 
-Trigger: `@@genius`. Same gate structure as `spec-driven`, but starts from the
+Trigger: `@@architect`. Same gate structure as `spec-driven`, but starts from the
 standard analyze/context/plan chain instead of a PO spec. The stub review +
 human approval is the quality gate before implementation.
-
-### debug
-
-```
-debug (debug) ◆
-```
-
-Trigger: `@@debug`. Single-agent call — the debug agent investigates unusual
-agent behavior from past run logs and artifacts.
 
 ### demo-composition
 
 ```
-analyze (genius) → subtask (workflow: review-only) → finalize (genius) ◆
+analyze (architect) → subtask (workflow: review-only) → finalize (architect) ◆
 ```
 
-Trigger: `@@genius`. Minimal example of **sub-workflow composition**: the
+Trigger: `@@architect`. Minimal example of **sub-workflow composition**: the
 `subtask` step mounts the entire `review-only` workflow as one step of the
 parent.
 
@@ -438,10 +428,10 @@ Create `workflows/<name>.yaml`:
 name: my-workflow
 description: "What this workflow does"
 trigger:
-  agents: [genius]
+  agents: [architect]
 steps:
   - name: step_one
-    agent: genius
+    agent: architect
     next: step_two
   - name: step_two
     agent: dev

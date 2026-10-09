@@ -36,7 +36,7 @@ from workflow_state.features.get_last_state.get_last_state import extract_state_
 
 # Agent role marker emitted at the top of every agent comment (e.g. bot-agent-dev).
 BOT_AGENT_ROLE_REGEX = re.compile(r"<!--\s*bot-agent-([a-z0-9_-]+)\s*-->")
-# Human workflow trigger (e.g. @@dev, @@genius) used to count human commands.
+# Human workflow trigger (e.g. @@dev, @@architect) used to count human commands.
 HUMAN_COMMAND_REGEX = re.compile(r"@@[a-z][a-z0-9_-]*")
 
 
@@ -267,8 +267,8 @@ def aggregate_by_model(all_metrics):
 
 
 AGENT_DISPLAY_NAMES = {
-    "genius": "Genius",
-    "ctx": "Ctx",
+    "architect": "Architect",
+    "context": "Context",
     "dev": "Dev",
 }
 
@@ -441,7 +441,7 @@ def generate_agent_summary_table(aggregated):
     grand_cost = 0.0
 
     # Define a stable sort order for known agents
-    agent_order = {"genius": 0, "ctx": 1, "dev": 2}
+    agent_order = {"architect": 0, "context": 1, "dev": 2}
 
     for agent in sorted(aggregated.keys(), key=lambda a: agent_order.get(a, 99)):
         agg = aggregated[agent]

@@ -220,9 +220,9 @@ def _build_result(
         wf_result.get("STEP_COMPLEXITY", ""),
     )
 
-    # Determine complexity for dev/ctx agents
+    # Determine complexity for dev/context agents
     complexity = "N/A"
-    if role_name in ("dev", "ctx"):
+    if role_name in ("dev", "context"):
         complexity = effective_complexity
 
     # Build matched rule identifier for debugging
@@ -245,7 +245,7 @@ def _build_result(
         # CONFIG_COMPLEXITY drives the runtime tier machinery (issue #787):
         # resolve_llm_config applies agents.<name>.complexity_overrides.<tier>
         # and the complexity->temperature floor. Emitted for every role, not
-        # just dev/ctx, so cheap tiers also apply to genius/review steps.
+        # just dev/context, so cheap tiers also apply to architect/review steps.
         "CONFIG_COMPLEXITY": effective_complexity,
         "LLM_REASONING": config.get("config_reasoning", "none"),
         "AGENT_ROUND": config.get("config_round", ""),

@@ -230,7 +230,7 @@ def run_agent(
 
     # ── System prompt config ─────────────────────────────────────
     system_prompt_kwargs = (
-        {} if role_name in ("ctx", "dev") else {"cli_mode": True}
+        {} if role_name in ("context", "dev") else {"cli_mode": True}
     )
 
     agent = Agent(

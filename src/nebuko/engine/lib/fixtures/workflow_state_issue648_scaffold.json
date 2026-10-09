@@ -6,8 +6,8 @@
   "history": [
     {
       "step": "architect",
-      "agent": "genius",
-      "summary": "Delegated context collection to @@ctx (complexity: high). Asked for the human_gate enforcement code, the approval-classification/gatekeeper logic, the slash-command parser and registry, the workflow state machine, and a scope list of files affected.",
+      "agent": "architect",
+      "summary": "Delegated context collection to @@context (complexity: high). Asked for the human_gate enforcement code, the approval-classification/gatekeeper logic, the slash-command parser and registry, the workflow state machine, and a scope list of files affected.",
       "position": [
         {
           "workflow": "plan-orchestration",
@@ -20,7 +20,7 @@
     },
     {
       "step": "context",
-      "agent": "ctx",
+      "agent": "context",
       "summary": "Context collection for issue #648 complete (complexity: high). Mapped the sole human_gate enforcement point, agent-side approval classification, the /workflow command value object + registry, and a scope list.",
       "position": [
         {
@@ -34,7 +34,7 @@
     },
     {
       "step": "plan",
-      "agent": "genius",
+      "agent": "architect",
       "summary": "Architecture proposal for #648 posted (state: phase=proposal, awaiting_approval).",
       "position": [
         {
@@ -48,7 +48,7 @@
     },
     {
       "step": "",
-      "agent": "genius",
+      "agent": "architect",
       "summary": "Human approved the #648 proposal; posted the detailed sequential plan-orchestration plan (5 steps, single PR).",
       "comment_ids": [
         5855593562

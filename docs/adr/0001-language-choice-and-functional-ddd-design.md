@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-09-22
-**Deciders:** Olivier Norture (author), @genius (architecture)
+**Deciders:** Olivier Norture (author), @architect (architecture)
 **Scope:** `gitflow-ai` (now Nebuko) open-source + commercial (Apache-2.0) refactoring baseline
 **Records the thinking from:** issue #627
 
