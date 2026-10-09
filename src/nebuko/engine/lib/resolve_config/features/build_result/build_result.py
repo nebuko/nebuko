@@ -47,6 +47,15 @@ def _attach_position(
         # emitted tail with the carried-forward base so the full mount chain
         # survives to the next job (issue #813).
         return _splice_entry_position(result, config.get("config_position"))
+    emitted = config.get("config_position_json")
+    if emitted:
+        # Nested entry (issue #822): the resolver descended a dotted selector
+        # and emitted the exact chain; keep it rather than rebuilding from the
+        # lossy flat parent pair (which only records the outermost level).
+        return result | {
+            "WORKFLOW_POSITION": emitted,
+            "WORKFLOW_POSITION_PATH": config.get("config_position_path") or "",
+        }
     leaf_wf = result.get("WORKFLOW_NAME", "")
     leaf_step = result.get("WORKFLOW_STEP", "")
     if not leaf_wf:
