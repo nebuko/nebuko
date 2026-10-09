@@ -138,6 +138,59 @@ def merge_handoff_sentinels(*sources: str) -> str:
     return f"<!-- AGENT_RUN_CONFIG {last_payload} -->"
 
 
+# Typed sections rendered into the engine-owned hand-off sentinel, in the
+# canonical ``AgentRunConfig`` shape (issue #830). Only the fields the sentinel
+# contract defines are carried; a falsy/unset field is omitted so the rendered
+# payload stays minimal and JSON-stable.
+_DISPATCH_SENTINEL_FIELDS = ("status", "branch", "complexity", "reason", "workflow", "step")
+_FUNCTION_CALL_SENTINEL_FIELDS = ("function", "agent_name", "complexity", "reason", "callback")
+
+
+def render_handoff_sentinel(state: WorkflowState | None) -> str:
+    # @stub-protected: signature defined by architect — do not modify
+    """Render the AGENT_RUN_CONFIG sentinel from the run's typed dispatch.
+
+    The engine owns the routing decision as structured data
+    (``workflow_state.dispatch`` / ``function_call``); rendering the hand-off
+    sentinel from those fields — instead of scraping it out of agent prose —
+    makes the posted sentinel deterministic (issue #830). Return "" when the
+    state carries no decision, so the legacy scrape still applies.
+
+    Args:
+        state: The run's ``workflow_state.json`` artifact, or ``None``.
+
+    Returns:
+        A single "<!-- AGENT_RUN_CONFIG ... -->" block, or "".
+    """
+    payload = _handoff_sentinel_payload(state)
+    if payload is None:
+        return ""
+    return f"<!-- AGENT_RUN_CONFIG {json.dumps(payload)} -->"
+
+
+def _handoff_sentinel_payload(state: WorkflowState | None) -> dict[str, object] | None:
+    """The canonical sentinel payload from the state's typed decision, or None."""
+    if state is None:
+        return None
+    payload: dict[str, object] = {}
+    dispatch = _populated_fields(getattr(state, "dispatch", None), _DISPATCH_SENTINEL_FIELDS)
+    if dispatch:
+        payload["dispatch"] = dispatch
+    function_call = _populated_fields(
+        getattr(state, "function_call", None), _FUNCTION_CALL_SENTINEL_FIELDS
+    )
+    if function_call:
+        payload["function_call"] = function_call
+    return payload or None
+
+
+def _populated_fields(source: object, fields: tuple[str, ...]) -> dict[str, object]:
+    """The truthy ``fields`` of a pydantic section model, as a plain dict."""
+    if source is None:
+        return {}
+    return {field: value for field in fields if (value := getattr(source, field, None))}
+
+
 def _read_latest_answer(path: str = LATEST_ANSWER_FILE) -> str:
     """Read the latest-answer artifact; return "" if missing/unreadable."""
     if not os.path.isfile(path):
@@ -461,6 +514,7 @@ def _select_fallback_body(
     trigger_author: str = "",
     role_name: str | None = None,
     recall_count: int = 0,
+    engine_sentinel: str = "",
 ) -> str:
     """The four-path publish fallback chain over explicit inputs.
 
@@ -480,6 +534,10 @@ def _select_fallback_body(
         role_name: Role for the context collapse; ``None`` reads the environment.
         recall_count: The run's ``dispatch_recall_count`` (from the workflow
             state); flags post-recall finish-fallbacks in CI logs (issue #558).
+        engine_sentinel: The engine-rendered hand-off sentinel
+            (:func:`render_handoff_sentinel`). When set it is authoritative;
+            the legacy prose scrape (:func:`merge_handoff_sentinels`) only runs
+            as a fallback (issue #830).
 
     Returns:
         The cleaned body, without the answer-comment header.
@@ -523,7 +581,9 @@ def _select_fallback_body(
             if body_raw.strip():
                 cleaned = clean_message(body_raw)
                 if cleaned:
-                    merged_sentinel = merge_handoff_sentinels(latest_raw, raw)
+                    # The engine's typed sentinel wins; only when it is absent
+                    # (legacy/agent-authored runs) do we scrape the prose.
+                    merged_sentinel = engine_sentinel or merge_handoff_sentinels(latest_raw, raw)
                     if merged_sentinel:
                         cleaned += "\n\n" + merged_sentinel
                     print(f"Using latest answer ({len(cleaned)} characters)", flush=True)
@@ -536,6 +596,8 @@ def _select_fallback_body(
             # Latest-answer artifact empty/missing → finish message is the
             # posted body: flag post-recall fallbacks for visibility (#558).
             _warn_post_recall_fallback(recall_count)
+            if engine_sentinel:
+                cleaned += "\n\n" + engine_sentinel
             print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
             return finalized(cleaned)
 
@@ -603,6 +665,7 @@ def build_comment_body(
         trigger_author=trigger_author,
         role_name=role_name,
         recall_count=_posted_recall_count(state),
+        engine_sentinel=render_handoff_sentinel(state),
     )
 
 
