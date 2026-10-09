@@ -40,8 +40,13 @@ def _attach_position(
     absent base — that rebuild is what previously truncated a nested run.
     """
     if result.get("WORKFLOW_POSITION"):
-        # Entry path already emitted the position (resolver fidelity).
-        return result
+        # Entry path already emitted the position (resolver fidelity). The
+        # resolver rebuilds that chain from the *current* run's workflow only,
+        # so a depth-2 entry (entering a leaf from a middle workflow that is
+        # itself mounted) drops every ancestor above the caller; underpin the
+        # emitted tail with the carried-forward base so the full mount chain
+        # survives to the next job (issue #813).
+        return _splice_entry_position(result, config.get("config_position"))
     leaf_wf = result.get("WORKFLOW_NAME", "")
     leaf_step = result.get("WORKFLOW_STEP", "")
     if not leaf_wf:
@@ -62,6 +67,31 @@ def _attach_position(
         scaffold_branch=scaffold_branch,
         local_workflows_dir=local_workflows_dir,
     )
+
+
+def _splice_entry_position(result: dict, base: Optional[WorkflowPosition]) -> dict:
+    """Underpin a resolver-emitted entry position with the carried-forward base.
+
+    The resolver's entry path rebuilds the chain with ``_build_position_chain``
+    starting from the *current* run's workflow, so entering a leaf from a middle
+    workflow that is itself mounted truncates every ancestor above the caller.
+    Those enclosing frames are exactly what the carried-forward position still
+    records, so the emitted tail is spliced beneath the deepest base frame owned
+    by its first element. A missing/foreign base leaves the emitted pair as-is
+    (the top-level and legacy cases, which the resolver already renders whole).
+    """
+    if not isinstance(base, WorkflowPosition) or not base.refs:
+        return result
+    entry = WorkflowPosition.from_env(result.get("WORKFLOW_POSITION", ""))
+    if entry is None or not entry.refs:
+        return result
+    index = _deepest_workflow_index(base.refs, entry.refs[0].workflow)
+    if index is None:
+        return result
+    merged = WorkflowPosition(
+        version=base.version, refs=[*base.refs[:index], *entry.refs]
+    )
+    return result | _position_pair_from_value(merged)
 
 
 def _carry_forward_position(
