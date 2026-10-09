@@ -65,7 +65,7 @@ class TestFormatCollapsedSection(unittest.TestCase):
 
 
 class TestStripStateSection(unittest.TestCase):
-    """Strip tolerates the legacy emoji, the new logo, and bare labels."""
+    """Strip tolerates legacy labels, all brands, and bot routing markers."""
 
     def test_strips_legacy_emoji_labelled_section(self):
         body = _body("🤖 Workflow State (v1)") + "Human content"
@@ -79,12 +79,63 @@ class TestStripStateSection(unittest.TestCase):
         body = _body("Workflow State") + "Human content"
         self.assertEqual(strip_state_section(body), "Human content")
 
+    def test_strips_marker_block_with_custom_summary_label(self):
+        """Removal anchors on the state markers, not the human label (issue #844)."""
+        body = _body("Totally Rebranded State") + "Human content"
+        self.assertEqual(strip_state_section(body), "Human content")
+
+    def test_strips_legacy_labelled_block_without_markers(self):
+        """Label fallback still handles comments that predate the markers."""
+        legacy = (
+            "<details>\n"
+            "<summary>🤖 Workflow State (v1)</summary>\n"
+            "\n"
+            "```json\n{}\n```\n"
+            "\n"
+            "</details>\n"
+            "Human content"
+        )
+        self.assertEqual(strip_state_section(legacy), "Human content")
+
     def test_preserves_unrelated_details_block(self):
         body = _body("🤖 Workflow State (v1)") + "<details><summary>Other</summary>\nkept\n</details>"
         self.assertEqual(
             strip_state_section(body),
             "<details><summary>Other</summary>\nkept\n</details>",
         )
+
+    def test_preserves_unrelated_blocks_around_the_state_block(self):
+        body = (
+            "<details><summary>Other</summary>\nkept\n</details>\n"
+            + _body(f"{brand().logo_mark()} Workflow State (v2)")
+            + "\nHuman content\n"
+            "<details><summary>After</summary>\nkept too\n</details>"
+        )
+
+        stripped = strip_state_section(body)
+
+        self.assertIn("<details><summary>Other</summary>\nkept\n</details>", stripped)
+        self.assertIn("<details><summary>After</summary>\nkept too\n</details>", stripped)
+        self.assertIn("Human content", stripped)
+        self.assertNotIn("WORKFLOW_STATE", stripped)
+
+    def test_removes_bot_routing_marker_lines(self):
+        body = (
+            "<!-- bot-workflow-terminal -->\n"
+            "<!-- bot-agent-architect -->\n"
+            "<!-- workflow-continue -->\n"
+            + _body(f"{brand().logo_mark()} Workflow State (v6)")
+            + "\n*Architect answer*\n"
+        )
+        self.assertEqual(strip_state_section(body), "*Architect answer*")
+
+    def test_removes_human_action_marker_line(self):
+        body = "<!-- bot-workflow-terminal -->\n<!-- bot-human-action -->\nHuman content"
+        self.assertEqual(strip_state_section(body), "Human content")
+
+    def test_clean_body_is_unchanged(self):
+        body = "Just a normal comment.\n\nWith a list:\n- one\n- two"
+        self.assertEqual(strip_state_section(body), body)
 
     def test_round_trip_restores_body_for_both_generations(self):
         state = WorkflowState(workflow="default", step="analyze", agent="architect")
