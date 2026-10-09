@@ -1,0 +1,14 @@
+name: l9-ref
+description: "A ref forwards a str input into an exec-declared parameter"
+trigger:
+  agents: [dev]
+inputs:
+  - name: project
+    kind: str
+steps:
+  - name: call_callee
+    workflow: callee
+    inputs:
+      diff: input.project
+      project: input.project
+    next: null

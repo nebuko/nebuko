@@ -2,8 +2,9 @@
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 
+from ..workflow.input_binding import InputBinding
 from ..workflow_condition.workflow_condition import WorkflowCondition
 from .script_step_spec import ScriptStepSpec
 
@@ -52,6 +53,23 @@ class WorkflowStep(BaseModel):
     # complexity->temperature floor. None = inherit the dispatch
     # complexity, else "medium".
     complexity: Optional[Literal["low", "medium", "high"]] = None  # @stub-protected
+    # Call-site input wiring (issue #813): binds this step's required values.
+    # On a ``workflow`` call step the keys are the callee's declared inputs; on
+    # an ``agent`` consumer step the values are ``input.<name>`` /
+    # ``<step>.<out>`` references resolved against the current frame scope.
+    # @stub-protected
+    inputs: Optional[dict[str, InputBinding]] = None
+    # Outputs this step emits (issue #813), referenced downstream as
+    # ``<step>.<name>``. A bare string coerces to a one-element list.
+    # @stub-protected
+    outputs: Optional[list[str]] = None
+
+    @field_validator("outputs", mode="before")
+    @classmethod
+    def _coerce_step_outputs(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [value]
+        return value
 
     @model_validator(mode="after")
     def _validate_step_source(self) -> "WorkflowStep":

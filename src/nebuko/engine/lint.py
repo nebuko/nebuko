@@ -39,6 +39,10 @@ _RULE_CONDITION = "L4-condition-key"
 _RULE_TERMINAL = "L5-terminal-consistency"
 _RULE_HUMAN_GATE = "L6-human-gate"
 _RULE_NO_TERMINAL = "L7-no-terminal"
+# Typed-input wiring (issue #813): L8/L9 are errors, L10 is a warning.
+_RULE_INPUT_BINDING = "L8-input-binding"
+_RULE_INPUT_KIND = "L9-input-kind"
+_RULE_INPUT_REF = "L10-input-ref"
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -158,6 +162,7 @@ class WorkflowLinter:
             self._check_terminal_consistency,
             self._check_human_gates,
             self._check_has_terminal,
+            self._check_input_wiring,
         ):
             issues.extend(check(graph))
         if self._strict:
@@ -363,3 +368,164 @@ class WorkflowLinter:
                 hint="Add a step with 'next: null' to end the workflow",
             )
         ]
+
+    # @stub-protected: additive rule (issue #813) — existing signatures untouched
+    def _check_input_wiring(self, graph) -> list[LintIssue]:
+        """L8–L10: the typed-input wiring must type-check (issue #813).
+
+        A workflow is a typed function, so its call sites are checked like a
+        compiler checks a function call: every declared input bound exactly
+        once, binding kinds matching the declaration (a ``ref`` being
+        kind-preserving), and every reference resolvable in scope. The check is
+        offline — a callee is resolved from the linted file's own directory, and
+        an unresolvable callee is skipped rather than guessed at.
+        """
+        definition = graph.definition
+        declared = {spec.name: spec for spec in definition.inputs}
+        steps = {step.name: step for step in definition.steps}
+        workflows_dir = str(graph.path.parent)
+
+        issues: list[LintIssue] = []
+        for step in definition.steps:
+            issues.extend(
+                self._check_step_bindings(graph, step, declared, steps, workflows_dir)
+            )
+        issues.extend(self._check_declared_inputs_used(graph, declared))
+        return issues
+
+    def _check_step_bindings(
+        self, graph, step, declared, steps, workflows_dir
+    ) -> list[LintIssue]:
+        """L8–L10 for one step: call-site signatures or consumer references."""
+        bindings = step.inputs or {}
+        if step.workflow or step.repo:
+            return self._check_call_site(graph, step, bindings, declared, workflows_dir)
+        return self._check_consumer(graph, step, bindings, declared, steps)
+
+    def _check_call_site(
+        self, graph, step, bindings, declared, workflows_dir
+    ) -> list[LintIssue]:
+        """A ``workflow`` call step must bind its callee's declared signature."""
+        callee = self._load_callee(step.path or step.workflow, workflows_dir)
+        if callee is None:
+            return []  # unresolvable callee is L1's concern, not a wiring defect
+        signature = {spec.name: spec for spec in callee.inputs}
+        issues: list[LintIssue] = []
+        for name, binding in bindings.items():
+            if name not in signature:
+                issues.append(self._input_issue(
+                    graph, step, _RULE_INPUT_BINDING, _SEVERITY_ERROR,
+                    f"step '{step.name}' binds '{name}', which the callee "
+                    f"'{callee.name}' does not declare",
+                    "Bind a declared input or remove the binding",
+                ))
+                continue
+            target = signature[name]
+            kind = self._binding_kind(binding, declared)
+            if kind is not None and kind != target.kind:
+                issues.append(self._input_issue(
+                    graph, step, _RULE_INPUT_KIND, _SEVERITY_ERROR,
+                    f"step '{step.name}' binds input '{name}' as '{kind}' but "
+                    f"'{callee.name}' declares it as '{target.kind}'",
+                    "Match the declared kind (a ref must be kind-preserving)",
+                ))
+        for name, spec in signature.items():
+            if spec.required and name not in bindings:
+                issues.append(self._input_issue(
+                    graph, step, _RULE_INPUT_BINDING, _SEVERITY_ERROR,
+                    f"step '{step.name}' does not bind required input '{name}' "
+                    f"of '{callee.name}'",
+                    "Bind the input at this call site",
+                ))
+        return issues
+
+    def _check_consumer(
+        self, graph, step, bindings, declared, steps
+    ) -> list[LintIssue]:
+        """An ``agent`` step's bindings must resolve against the frame scope."""
+        issues: list[LintIssue] = []
+        for name, binding in bindings.items():
+            if binding.source != "ref":
+                continue  # a literal provider runs here; nothing to resolve
+            ref = str(binding.ref)
+            owner, _, wanted = ref.partition(".")
+            if owner == "input":
+                if wanted not in declared:
+                    issues.append(self._consumer_issue(graph, step, ref))
+            else:
+                outputs = (steps.get(owner).outputs or ()) if owner in steps else None
+                if outputs is None or wanted not in outputs:
+                    issues.append(self._consumer_issue(graph, step, ref))
+        return issues
+
+    def _consumer_issue(self, graph, step, ref) -> LintIssue:
+        return self._input_issue(
+            graph, step, _RULE_INPUT_REF, _SEVERITY_WARNING,
+            f"step '{step.name}' references '{ref}', which is not in scope",
+            "Declare the input, or reference a step that declares that output",
+        )
+
+    def _check_declared_inputs_used(self, graph, declared) -> list[LintIssue]:
+        """L10 (warning): a declared input should be consumed or forwarded."""
+        referenced = {
+            str(binding.ref)
+            for step in graph.definition.steps
+            for binding in (step.inputs or {}).values()
+            if binding.source == "ref"
+        }
+        return [
+            LintIssue(
+                rule=_RULE_INPUT_REF,
+                severity=_SEVERITY_WARNING,
+                message=(
+                    f"declared input '{name}' is never consumed or forwarded by "
+                    "any step"
+                ),
+                step=None,
+                location=str(graph.path),
+                hint="Wire it into a step or drop it from the signature",
+            )
+            for name in declared
+            if f"input.{name}" not in referenced
+        ]
+
+    def _input_issue(
+        self, graph, step, rule, severity, message, hint
+    ) -> LintIssue:
+        return LintIssue(
+            rule=rule,
+            severity=severity,
+            message=message,
+            step=step.name,
+            location=_location(graph, step.name),
+            hint=hint,
+        )
+
+    @staticmethod
+    def _binding_kind(binding, declared) -> str | None:
+        """The kind a binding supplies, or ``None`` when it cannot be known.
+
+        An ``exec``/``str`` literal states its own kind; a ``ref`` to an
+        ``input.<name>`` inherits that input's declared kind (kind-preserving);
+        a ``ref`` to a step output has no declared kind yet.
+        """
+        source = binding.source
+        if source in ("exec", "str"):
+            return source
+        ref = str(binding.ref or "")
+        owner, _, wanted = ref.partition(".")
+        if owner == "input" and wanted in declared:
+            return declared[wanted].kind
+        return None
+
+    @staticmethod
+    def _load_callee(reference: str, workflows_dir: str):
+        """Resolve a callee from the linted file's directory only (offline)."""
+        if not reference:
+            return None
+        _ensure_runtime()
+        from resolve_workflow import _load_workflow_by_reference
+
+        return _load_workflow_by_reference(
+            reference, workflows_dir, workflows_dir, None, {},
+        )

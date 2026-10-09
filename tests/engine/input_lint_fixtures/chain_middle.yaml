@@ -1,0 +1,15 @@
+name: chain-middle
+description: "Declares its parameters and forwards them unchanged"
+trigger:
+  agents: [dev]
+inputs:
+  - name: run_test
+    kind: exec
+outputs:
+  - patch_ready
+steps:
+  - name: build
+    workflow: chain-leaf
+    inputs:
+      run_test: input.run_test
+    next: null

@@ -102,6 +102,11 @@ graph-level invariants below are checked offline by
 |-----|-------|------|----------|-------------|
 | `name` | file | string | yes | Workflow name (must match the filename). |
 | `description` | file | string | no | Human-readable description. |
+| `inputs` | file | list | no | Typed parameters this workflow requires — its function signature (issue #813). Each entry is a `name`/`kind`/`required` spec. See [workflows.md](./workflows.md#typed-inputs-and-outputs). |
+| `inputs[].name` | input | string | yes | Parameter name, referenced downstream through `input.<name>`. |
+| `inputs[].kind` | input | `exec`\|`str` | yes | `exec` = a deterministic provider command materialized by the engine; `str` = a constant. |
+| `inputs[].required` | input | bool | no | When true (default), a failed/absent value fails the consuming step deterministically, before the agent runs. |
+| `outputs` | file | string[] | no | Values this workflow returns to its caller, referenced there as `<call-step>.<name>` (issue #813; a bare string coerces to a one-element list). The return path is pending [#756](https://github.com/nebuko/nebuko/issues/756). |
 | `trigger.agents` | file | string[] | no | Which `@@mention`s can start this workflow. |
 | `steps` | file | list | yes | Ordered list of steps. |
 | `steps[].name` | step | string | yes | Unique step name. |
@@ -119,6 +124,8 @@ graph-level invariants below are checked offline by
 | `steps[].prompt` | step | string | no | Standing instruction injected into this step's agent context (multi-line YAML blocks supported). See [workflows.md](./workflows.md#step-instructions-prompt). |
 | `steps[].complexity` | step | string | no | Declared complexity tier for this step's agent invocation: `low`, `medium`, or `high`. A dispatch `complexity` overrides it; otherwise it selects `agents.<name>.complexity_overrides.<tier>` and the tier temperature floor (issue #787; see [configuration.md](./configuration.md#complexity-overrides-per-tier-configuration)). |
 | `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts the agent's `advance` and holds the workflow until a human releases it with `/nebuko resume` (see [workflows.md](./workflows.md#human-gates)). |
+| `steps[].inputs` | step | map | no | Call-site wiring (issue #813). On a `workflow` call step the keys are the callee's declared inputs; on an `agent` consumer step the values are `input.<name>` / `<step>.<out>` references. Each value is one of `exec` (argv), `str` (constant), or a bare string meaning a `ref`. |
+| `steps[].outputs` | step | string[] | no | Outputs this step emits, referenced downstream as `<step>.<name>` (issue #813; a bare string coerces to a one-element list). |
 
 Minimal valid workflow:
 
@@ -148,6 +155,11 @@ steps:
   `conditions[]` can route on it (e.g., `on_result: fail → dev`). **A failing
   script still advances** the workflow in v1 — it does not hold or terminate;
   the successor (usually an agent) receives the raw failure output.
+- A workflow's declared `inputs`/`outputs` make it a typed function: every
+  declared input must be bound **exactly once** at each `workflow` call site, a
+  binding's kind must match the declaration (a `ref` is kind-preserving), and
+  every reference must resolve in scope. `python -m engine lint` checks this
+  offline (rules [L8–L10](./lint.md#rule-reference)).
 
 Script step example:
 
@@ -160,6 +172,63 @@ steps:
       timeout_minutes: 15     # optional, default 30
     next: review
 ```
+
+Typed inputs example — a super-parent pushes concrete commands, a middle
+workflow **forwards** them, and the leaf **consumes** them (block style is
+canonical; a bare-string value is a `ref`):
+
+```yaml
+# super-parent.yaml — the composition root supplies the arguments
+name: super-parent
+steps:
+  - name: spec-driven
+    workflow: spec-driven
+    inputs:
+      setup_dev_env:
+        exec: ["nix", "develop", "-c", "true"]
+      run_test:
+        exec: ["nix", "develop", "-c", "pytest", "."]
+```
+
+```yaml
+# spec-driven.yaml — declares its parameters and forwards them unchanged
+name: spec-driven
+inputs:
+  - name: setup_dev_env
+    kind: exec
+  - name: run_test
+    kind: exec
+outputs:
+  - patch_ready
+steps:
+  - name: build
+    workflow: spec-driven-impl
+    inputs:
+      setup_dev_env: input.setup_dev_env   # bare string ⇒ ref (kind-preserving)
+      run_test: input.run_test
+```
+
+```yaml
+# spec-driven-impl.yaml — the leaf consumes; `exec` runs just-in-time here
+name: spec-driven-impl
+inputs:
+  - name: setup_dev_env
+    kind: exec
+  - name: run_test
+    kind: exec
+steps:
+  - name: stub_and_implement
+    agent: dev
+    inputs:
+      setup_dev_env: input.setup_dev_env
+      run_test: input.run_test        # materialized immediately before the agent
+    outputs: [patch_ready]
+```
+
+Forwarding an `exec` input forwards the **command spec, not its output**: the
+engine materializes it exactly once, at the deepest consuming step's
+prompt-assembly seam, so freshness is depth-invariant. See
+[ADR-0009](./adr/0009-workflows-as-typed-functions.md).
 
 ---
 
@@ -297,6 +366,7 @@ Variables the orchestrator sets/consumes per run:
 | `PARENT_WORKFLOW_STEP` | `resolve_config` | Step in the parent workflow that mounted a sub-workflow. |
 | `WORKFLOW_POSITION` | `resolve_config` / `resolve_workflow` | Single-line JSON of the run's full mount stack (`WorkflowState.position`). |
 | `WORKFLOW_POSITION_PATH` | `resolve_config` / `resolve_workflow` | Human-readable `wf/step\|wf/step\|...` rendering of `WORKFLOW_POSITION`. |
+| `STEP_INPUTS` | `resolve_config` | Single-line JSON of a resolved step's typed-input wiring (issue #813): the consumer step's own bindings plus the call-frame chain (each frame's callee, call step and frozen bindings) derived from the carried-forward `WORKFLOW_POSITION`. Emitted only when the run actually wires something. Empty/absent otherwise. |
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables verbose debug logging. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |

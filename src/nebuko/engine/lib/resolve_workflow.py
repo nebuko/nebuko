@@ -890,6 +890,152 @@ def build_workflow_position(
     )
 
 
+def _bindings_payload(bindings: dict) -> dict:
+    """Serialize an ``InputBinding`` map for the STEP_INPUTS JSON (issue #813)."""
+    return {
+        name: binding.model_dump(by_alias=True, exclude_none=True)
+        for name, binding in bindings.items()
+    }
+
+
+def build_step_inputs(workflow: WorkflowDefinition, step: WorkflowStep) -> str:
+    """Serialize a step's declared input wiring for the engine (issue #813).
+
+    ``consumer`` is the step's own ``inputs:`` bindings; ``specs`` is the
+    owning workflow's declared input signature, carrying the ``required``
+    policy the engine applies when a provider fails. ``frames`` are attached
+    later (:func:`attach_call_frames`) once the run's final position is known.
+    Empty string when the step declares no inputs, so un-wired steps keep
+    their existing resolver output verbatim.
+    """
+    if not step.inputs:
+        return ""
+    payload = {
+        "consumer": _bindings_payload(step.inputs),
+        "specs": {
+            spec.name: {"kind": spec.kind, "required": spec.required}
+            for spec in workflow.inputs
+        },
+    }
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def _ref_matches_name(reference: str, workflow_name: str) -> bool:
+    """True when a step's ``workflow``/``path`` reference names ``workflow_name``.
+
+    Cheap string test only: an exact name match, a filename match, or a matching
+    path stem. A path like ``tmp_impl/workflow.yaml`` whose declared name differs
+    from its stem needs the loader fallback in :func:`_mount_step_among`.
+    """
+    if reference == workflow_name:
+        return True
+    path = Path(reference)
+    return path.stem == workflow_name or path.name in (
+        workflow_name,
+        f"{workflow_name}.yaml",
+        f"{workflow_name}.yml",
+    )
+
+
+def _mount_step_among(
+    workflow: WorkflowDefinition,
+    inner_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+    scaffold_branch: Optional[str],
+) -> Optional[WorkflowStep]:
+    """Find the step of ``workflow`` that mounts ``inner_name``.
+
+    The mount chain's *workflow* names are accurate but its intermediate *step*
+    names are not (the chain builder follows first steps, not the actual mount),
+    so the frame's call step must be recovered from the outer workflow's own
+    steps. Falls back to loading each mount candidate when the reference is a
+    path whose declared name differs from its filename stem.
+    """
+    candidates = [s for s in workflow.steps if (s.workflow or s.path)]
+    for step in candidates:
+        if _ref_matches_name(step.workflow or step.path, inner_name):
+            return step
+    for step in candidates:
+        child = _load_workflow_by_reference(
+            step.workflow or step.path, workflows_dir, local_workflows_dir,
+            scaffold_branch,
+        )
+        if child is not None and child.name == inner_name:
+            return step
+    return None
+
+
+def derive_call_frames(
+    position_json: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
+) -> list:
+    """Call frames enclosing the current run (issue #813).
+
+    Each consecutive pair in the mount chain ``outer -> inner`` is a call
+    boundary: the ``outer`` step's declared ``inputs`` are the frozen call-site
+    bindings for the ``inner`` workflow. Frames are listed outermost-first so an
+    inner binding can reference an outer one — the kind-preserving lazy
+    forwarding that lets a super-parent push a parameter through an arbitrary
+    number of layers. Unresolvable frames are skipped (a diagnostic gap, never a
+    resolution failure).
+    """
+    position = (
+        WorkflowPosition.from_env(position_json)
+        if isinstance(position_json, str)
+        else position_json
+    )
+    if position is None or len(position.refs) < 2:
+        return []
+    frames: list = []
+    for outer, inner in zip(position.refs, position.refs[1:]):
+        call_wf = _load_workflow_by_reference(
+            outer.workflow, workflows_dir, local_workflows_dir, scaffold_branch,
+        )
+        if call_wf is None:
+            continue
+        call_step = _mount_step_among(
+            call_wf, inner.workflow, workflows_dir, local_workflows_dir,
+            scaffold_branch,
+        )
+        if call_step is None or not call_step.inputs:
+            continue
+        frames.append({
+            "callee": inner.workflow,
+            "call_step": call_step.name,
+            "bindings": _bindings_payload(call_step.inputs),
+        })
+    return frames
+
+
+def attach_call_frames(
+    step_inputs_json: str,
+    position_json: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
+) -> str:
+    """Return ``step_inputs_json`` with the run's call frames attached.
+
+    Only the frames matter here — the consumer/specs payload was built at step
+    resolution, but the accurate mount chain is only known once the run's final
+    position has been computed (issue #813).
+    """
+    frames = derive_call_frames(
+        position_json, workflows_dir, local_workflows_dir, scaffold_branch,
+    )
+    if not frames:
+        return step_inputs_json
+    try:
+        payload = json.loads(step_inputs_json)
+    except ValueError:
+        return step_inputs_json
+    payload["frames"] = frames
+    return json.dumps(payload, separators=(",", ":"))
+
+
 # @stub-protected: signature defined by architect — do not modify
 @dataclass(frozen=True)
 class SubWorkflowLeaf:

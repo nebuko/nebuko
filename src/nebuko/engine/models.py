@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
@@ -25,6 +25,7 @@ __all__ = [
     "RunOutcome",
     "DeterministicStep",
     "StepResult",
+    "WorkflowCallFrame",
     "NebukoManifest",
     "to_routing_decision",
     "circuit_breaker_update_notice",
@@ -254,6 +255,48 @@ def circuit_breaker_update_notice(value: int, agent_calls: int) -> str:
         f"⚙️ Circuit-breaker limit set to **{value}** for this issue.\n\n"
         f"Current usage is {agent_calls} agent calls; the issue is unlocked."
     )
+
+
+# @stub-protected
+@dataclass(frozen=True)
+class WorkflowCallFrame:
+    """One live sub-workflow invocation — the function call frame (issue #813).
+
+    Pushed when a ``workflow`` call step enters a child workflow and popped at
+    the child's terminal step. Frames make workflows behave as typed functions:
+    ``bindings`` are the frozen call-site parameter values, ``materialized``
+    holds the values resolved just-in-time at the consuming step (an ``exec``
+    binding runs there, not at the call boundary, so fresh context is injected
+    immediately before the model runs), and ``outputs`` carries only the
+    callee's declared return values back to the caller.
+
+    Bindings are duck-typed: each one exposes ``resolve(scope) -> str``, so
+    this leaf module never imports the config sub-domain.
+    """
+
+    callee: str
+    repo_ref: str = ""
+    call_step: str = ""
+    bindings: Mapping[str, Any] = field(default_factory=dict)
+    materialized: Mapping[str, str] = field(default_factory=dict)
+    outputs: Mapping[str, str] = field(default_factory=dict)
+
+    # @stub-protected
+    def materialize(self, name: str, scope: Mapping[str, str]) -> "WorkflowCallFrame":
+        """Return a new frame with ``name``'s binding resolved against ``scope``.
+
+        A frozen frame is never mutated; the caller threads the returned frame.
+        Raises whatever the binding's ``resolve`` raises (exec failure or an
+        unresolved reference) so the caller can apply the ``required`` policy.
+        """
+        binding = self.bindings[name]
+        value = binding.resolve(dict(scope))
+        return replace(self, materialized={**self.materialized, name: value})
+
+    # @stub-protected
+    def pop(self) -> dict[str, str]:
+        """Return the callee's declared outputs — and nothing else."""
+        return dict(self.outputs)
 
 
 def to_routing_decision(args: Mapping[str, Any]) -> RoutingDecision:
