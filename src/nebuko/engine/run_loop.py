@@ -21,6 +21,7 @@ from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from nebuko.engine.input_wiring import (
+    MAX_CALL_FRAMES,
     Materialization,
     StepInputs,
     materialize as materialize_inputs,
@@ -934,6 +935,13 @@ class Engine:
             return [], self._input_failure_outcome(str(exc), phases)
         if step_inputs is None:
             return [], None
+        if step_inputs.depth_exceeded():
+            detail = (
+                f"call-frame depth {len(step_inputs.frames)} exceeds the "
+                f"limit of {MAX_CALL_FRAMES}"
+            )
+            log.error("[phase:action] sub-workflow call depth exceeded: %s", detail)
+            return [], self._call_depth_outcome(detail, phases)
         results = materialize_inputs(step_inputs)
         failures = step_inputs.required_failures(results)
         if failures:
@@ -945,6 +953,24 @@ class Engine:
     def _input_failure_outcome(self, detail: str, phases: list[str]) -> RunOutcome:
         """Terminal outcome for an unsatisfied required input (issue #813)."""
         reason = f"required step input failed: {detail}"
+        posted = self._post_terminal_notice(reason)
+        return RunOutcome(
+            exit_code=ExitCode.TERMINAL,
+            routing=RoutingDecision(status="hold", reason=reason),
+            prompt=None,
+            posted_body=posted,
+            state=None,
+            phases=tuple(phases),
+        )
+
+    def _call_depth_outcome(self, detail: str, phases: list[str]) -> RunOutcome:
+        """Terminal outcome for an over-deep sub-workflow call chain (issue #813).
+
+        The frame-stack analogue of the loop guard: the engine — not the model —
+        refuses to forward parameters past :data:`MAX_CALL_FRAMES`, so a
+        pathological nesting fails the step deterministically before the agent.
+        """
+        reason = f"sub-workflow call depth exceeded: {detail}"
         posted = self._post_terminal_notice(reason)
         return RunOutcome(
             exit_code=ExitCode.TERMINAL,

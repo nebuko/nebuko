@@ -36,6 +36,13 @@ STEP_INPUTS_KEY = "STEP_INPUTS"
 #: Default wall-clock budget for a materialized ``exec`` provider command.
 EXEC_TIMEOUT_SECONDS = 600
 
+#: Maximum number of nested sub-workflow call frames a single run may carry.
+#: Kind-preserving lazy forwarding lets a parameter cross an arbitrary number
+#: of layers, so the frame chain needs the same explicit bound the resolver's
+#: leaf descent already has (``_MAX_SUB_WORKFLOW_DEPTH``) — a too-deep chain
+#: fails the step deterministically instead of forwarding unboundedly.
+MAX_CALL_FRAMES = 5
+
 
 class InputWiringError(Exception):
     """Raised on a malformed ``STEP_INPUTS`` payload (never on a provider failure)."""
@@ -97,6 +104,10 @@ class StepInputs:
             for result in results
             if not result.ok and bool(self.specs.get(result.name, {}).get("required", True))
         ]
+
+    def depth_exceeded(self) -> bool:
+        """True when the call-frame chain nests deeper than :data:`MAX_CALL_FRAMES`."""
+        return len(self.frames) > MAX_CALL_FRAMES
 
 
 def _get(resolved: Any, key: str) -> Any:

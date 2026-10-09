@@ -244,6 +244,72 @@ Security notes:
 
 ---
 
+## Typed Inputs and Outputs
+
+A workflow is a **typed function** (issue #813): it declares `inputs` (its
+parameters) and `outputs` (its return values), and the caller supplies concrete
+values at each `workflow` call site. This is how the engine guarantees a step
+receives the artifacts it needs — the plan, a `git diff`, test results —
+**deterministically**, without the model spending turns fetching them or
+hallucinating their absence (see [ADR-0009](./adr/0009-workflows-as-typed-functions.md)).
+
+```yaml
+# leaf.yaml — declares what it needs and what it returns
+name: leaf
+inputs:
+  - name: run_test
+    kind: exec        # exec = a deterministic provider command the engine runs
+  - name: greeting
+    kind: str         # str  = a constant passed through
+outputs:
+  - patch_ready
+steps:
+  - name: implement
+    agent: dev
+    inputs:
+      run_test: input.run_test   # materialized just before this agent runs
+      greeting: input.greeting
+    outputs: [patch_ready]
+```
+
+```yaml
+# caller.yaml — binds the arguments at the call site
+name: caller
+steps:
+  - name: build
+    workflow: leaf
+    inputs:
+      run_test:
+        exec: ["pytest", "."]    # a literal command binding (block style)
+      greeting:
+        str: "hello"
+```
+
+Mechanics:
+
+1. **Call-site binding** — a `workflow` call step passes one value per declared
+   input. A binding has exactly one source key: `exec` (argv), `str`
+   (constant), or a bare string meaning a **`ref`** (`diff: input.diff`).
+2. **Kind-preserving lazy forwarding** — a `ref` to an `exec` input forwards the
+   **command spec, not its output**. A super-parent can push a command through a
+   middle workflow to a leaf; materialization happens **exactly once, at the
+   deepest consuming step**, so freshness is depth-invariant.
+3. **Mandatory injection** — right before the consuming agent step, the engine
+   runs each `exec` and injects the captured stdout as a labeled context block.
+   `required: true` (default) fails the step **before the agent is invoked** if
+   the command fails; `required: false` injects `_(unavailable: …)_`.
+4. **Declared-outputs return** — only the callee's declared `outputs` cross back
+   into the caller, referenced as `<call-step>.<name>`.
+5. **Bounded nesting** — the call-frame chain is capped (`MAX_CALL_FRAMES`); an
+   over-deep chain fails the step deterministically before the agent runs.
+
+Wiring is checked offline by [`python -m engine lint`](./lint.md) (rules
+[L8–L10](./lint.md#rule-reference)): every declared input bound exactly once per
+call site, kinds matched, references resolvable in scope, and every declared
+input consumed or forwarded.
+
+---
+
 ## Built-in Workflows
 
 | Workflow | File | One-line description |

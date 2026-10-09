@@ -1706,6 +1706,84 @@ class TestBuildPromptStepReplacement:
         assert "ROLE DEV FLOW" in prompt
 
 
+class TestStepInputSeam:
+    """The engine materializes declared inputs *before* the agent (issue #813).
+
+    These pin the run-loop seam the resolver's ``STEP_INPUTS`` feeds: a
+    three-level kind-preserving lazy forwarding injects one forced block, a
+    failed ``required`` input is terminal without invoking the agent, and an
+    over-deep call-frame chain is refused the same deterministic way.
+    """
+
+    @staticmethod
+    def _frame(callee: str, call_step: str, bindings: dict) -> dict:
+        return {"callee": callee, "call_step": call_step, "bindings": bindings}
+
+    @staticmethod
+    def _step_inputs(frames, consumer, specs=None) -> dict:
+        return {
+            "STEP_INPUTS": json.dumps(
+                {"frames": frames, "consumer": consumer, "specs": specs or {}}
+            )
+        }
+
+    def test_three_level_forwarding_injects_one_forced_block(self, tmp_path):
+        engine = _engine(tmp_path)
+        role = tmp_path / "dev.md"
+        role.write_text("ROLE DEV FLOW", encoding="utf-8")
+        frames = [
+            self._frame(
+                "spec-driven", "call_spec",
+                {"run_test": {"exec": ["sh", "-c", "echo 1 passed"]}},
+            ),
+            self._frame("spec-driven-impl", "build", {"run_test": "input.run_test"}),
+        ]
+        resolved = {
+            "PROMPT_LOCATION": str(role),
+            **self._step_inputs(frames, {"run_test": "input.run_test"}),
+        }
+
+        results, failure = engine._materialize_inputs(resolved, ["action"])
+
+        assert failure is None
+        assert [result.body for result in results] == ["1 passed\n"]
+        prompt = engine.build_prompt(resolved, [], results)
+        assert "## Step inputs (deterministic)" in prompt
+        assert "1 passed" in prompt
+
+    def test_required_input_failure_is_terminal_before_the_agent(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = self._step_inputs(
+            [],
+            {"diff": {"exec": ["sh", "-c", "exit 2"]}},
+            {"diff": {"kind": "exec", "required": True}},
+        )
+
+        _, failure = engine._materialize_inputs(resolved, ["action"])
+
+        assert failure is not None
+        assert failure.exit_code == ExitCode.TERMINAL
+        assert "required step input failed" in failure.routing.reason
+
+    def test_over_deep_call_chain_is_terminal_before_the_agent(self, tmp_path):
+        from nebuko.engine.input_wiring import MAX_CALL_FRAMES
+
+        engine = _engine(tmp_path)
+        frames = [
+            self._frame(f"wf-{i}", f"s{i}", {})
+            for i in range(MAX_CALL_FRAMES + 1)
+        ]
+
+        results, failure = engine._materialize_inputs(
+            self._step_inputs(frames, {"x": {"str": "v"}}), ["action"]
+        )
+
+        assert results == []
+        assert failure is not None
+        assert failure.exit_code == ExitCode.TERMINAL
+        assert "sub-workflow call depth exceeded" in failure.routing.reason
+
+
 class TestEntryPoints:
     def test_main_takes_an_argv_sequence(self):
         assert list(inspect.signature(main).parameters) == ["argv"]

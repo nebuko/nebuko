@@ -110,6 +110,9 @@ stable. Either way there is no hallucinated context.
   blocks — see the ADR-0003 amendment.
 - **`exec` inputs run repo-local commands in the CI job**, the same trust model
   as #541; no new exposure.
+- **Nesting is bounded.** The call-frame chain is capped (`MAX_CALL_FRAMES`,
+  parity with the resolver's sub-workflow depth guard); an over-deep chain
+  fails the step deterministically, before the agent runs.
 - **Existing workflows are unchanged**: `inputs`/`outputs` default to empty and
   the resolver emits `STEP_INPUTS` only when a run actually wires something.
 - **Open dependency:** `<step>.<out>` consumption and the declared-outputs

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).parents[1] / "src" / "nebuko" / "engine" / "lib"))
 
 from nebuko.engine.input_wiring import (  # noqa: E402
+    MAX_CALL_FRAMES,
     InputWiringError,
     Materialization,
     StepInputs,
@@ -179,6 +180,29 @@ class TestRequiredPolicy:
         )
         results = materialize(step_inputs)
         assert len(step_inputs.required_failures(results)) == 1
+
+
+class TestCallFrameDepthGuard:
+    """The frame chain is bounded so nested forwarding cannot run away."""
+
+    def _frames(self, count: int) -> list:
+        return [
+            {"callee": f"wf-{i}", "call_step": f"s{i}", "bindings": {}}
+            for i in range(count)
+        ]
+
+    def _step_inputs(self, count: int) -> StepInputs:
+        return StepInputs.from_resolved(
+            {"STEP_INPUTS": _payload(
+                frames=self._frames(count), consumer={"x": {"str": "v"}},
+            )}
+        )
+
+    def test_chain_at_the_limit_is_allowed(self):
+        assert self._step_inputs(MAX_CALL_FRAMES).depth_exceeded() is False
+
+    def test_chain_past_the_limit_is_flagged(self):
+        assert self._step_inputs(MAX_CALL_FRAMES + 1).depth_exceeded() is True
 
 
 class TestRender:
