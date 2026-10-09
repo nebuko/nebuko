@@ -1783,6 +1783,93 @@ class TestStepInputSeam:
         assert failure.exit_code == ExitCode.TERMINAL
         assert "sub-workflow call depth exceeded" in failure.routing.reason
 
+    def test_resolver_emission_feeds_the_engine_seam(self, tmp_path):
+        """End-to-end: the trio's YAML is resolved, then materialized (issue #813).
+
+        The resolver emits ``STEP_INPUTS`` from the carried-forward mount chain
+        and the engine runs the forwarded ``exec`` exactly once at the
+        consuming step — the same path a live run takes, without mocking either
+        side.
+        """
+        import tempfile
+
+        from config import StepRef, WorkflowPosition
+        from resolve_config.features.build_result.build_result import _build_result
+        from resolve_workflow import TASK_TO_PROMPT
+
+        prompt_base = tempfile.mkdtemp()
+        for name in set(TASK_TO_PROMPT.values()):
+            Path(prompt_base, name).write_text("# prompt", encoding="utf-8")
+        self._write_trio(tmp_path)
+
+        base = WorkflowPosition(refs=[
+            StepRef(workflow="super-parent", step="call_spec"),
+            StepRef(workflow="spec-driven", step="build"),
+        ])
+        resolved = _build_result(
+            {
+                "task": "dev",
+                "config_workflow": "spec-driven",
+                "config_step": "build",
+                "config_position": base,
+            },
+            prompt_base,
+            str(tmp_path),
+        )
+
+        engine = _engine(tmp_path)
+        results, failure = engine._materialize_inputs(resolved, ["action"])
+
+        assert failure is None
+        assert [result.body for result in results] == ["1 passed\n"]
+        prompt = engine.build_prompt(resolved, [], results)
+        assert "1 passed" in prompt
+
+    @staticmethod
+    def _write_trio(workflows_dir) -> None:
+        from pathlib import Path as _Path
+
+        (_Path(workflows_dir) / "super-parent.yaml").write_text(
+            "name: super-parent\n"
+            "description: root\n"
+            "trigger:\n  agents: [dev]\n"
+            "steps:\n"
+            "  - name: call_spec\n"
+            "    workflow: spec-driven\n"
+            "    inputs:\n"
+            "      run_test:\n"
+            '        exec: ["echo", "1 passed"]\n',
+            encoding="utf-8",
+        )
+        (_Path(workflows_dir) / "spec-driven.yaml").write_text(
+            "name: spec-driven\n"
+            "description: middle\n"
+            "trigger:\n  agents: [dev]\n"
+            "inputs:\n"
+            "  - name: run_test\n"
+            "    kind: exec\n"
+            "steps:\n"
+            "  - name: build\n"
+            "    workflow: spec-driven-impl\n"
+            "    inputs:\n"
+            "      run_test: input.run_test\n",
+            encoding="utf-8",
+        )
+        (_Path(workflows_dir) / "spec-driven-impl.yaml").write_text(
+            "name: spec-driven-impl\n"
+            "description: leaf\n"
+            "trigger:\n  agents: [dev]\n"
+            "inputs:\n"
+            "  - name: run_test\n"
+            "    kind: exec\n"
+            "steps:\n"
+            "  - name: stub\n"
+            "    agent: dev\n"
+            "    inputs:\n"
+            "      run_test: input.run_test\n",
+            encoding="utf-8",
+        )
+
 
 class TestEntryPoints:
     def test_main_takes_an_argv_sequence(self):

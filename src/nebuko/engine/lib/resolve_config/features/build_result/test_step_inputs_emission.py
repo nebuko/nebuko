@@ -179,3 +179,42 @@ steps:
             "WORKFLOW_STEP": "inspect",
         }
         assert _attach_step_inputs(result, {}, workflows_dir, None) == result
+
+    def test_depth_two_entry_splices_the_full_mount_chain(self):
+        """Entering the leaf from a mounted middle workflow keeps every ancestor.
+
+        The resolver's entry path rebuilds the position from the *current*
+        run's workflow, so entering ``spec-driven-impl`` from ``spec-driven``
+        alone would drop ``super-parent``; the carried-forward base underpins
+        the emitted tail so the super-parent frame survives (issue #813).
+        """
+        prompt_base, workflows_dir = _make_dirs()
+        self._trio(workflows_dir)
+        base = WorkflowPosition(refs=[
+            StepRef(workflow="super-parent", step="call_spec"),
+            StepRef(workflow="spec-driven", step="build"),
+        ])
+
+        result = _build_result(
+            {
+                "task": "dev",
+                "config_workflow": "spec-driven",
+                "config_step": "build",
+                "config_position": base,
+            },
+            prompt_base,
+            workflows_dir,
+        )
+
+        assert result["WORKFLOW_NAME"] == "spec-driven-impl"
+        refs = json.loads(result["WORKFLOW_POSITION"])["refs"]
+        assert [(r["workflow"], r["step"]) for r in refs] == [
+            ("super-parent", "call_spec"),
+            ("spec-driven", "build"),
+            ("spec-driven-impl", "stub"),
+        ]
+        frames = json.loads(result["STEP_INPUTS"])["frames"]
+        assert [frame["callee"] for frame in frames] == [
+            "spec-driven", "spec-driven-impl",
+        ]
+        assert frames[0]["call_step"] == "call_spec"
