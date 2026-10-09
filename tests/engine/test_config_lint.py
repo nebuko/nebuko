@@ -1,7 +1,7 @@
 """Spec-scenario tests for the agent-config linter (issue #774).
 
 The workflow linter (``nebuko.engine.lint``) covers graph-level defects; these
-scenarios pin the sibling ``ConfigLinter`` contract (rules C1–C6) for the layered
+scenarios pin the sibling ``ConfigLinter`` contract (rules C1–C7) for the layered
 agent-config: every fixture is a complete providers → llms → agents mapping so
 the other rules stay quiet unless they are the subject of the scenario.
 """
@@ -26,6 +26,7 @@ RULE_SEVERITY_EXPECTED = {
     "C4-prompt-file": "error",
     "C5-skill-file": "error",
     "C6-unreferenced-entry": "warning",
+    "C7-mcp-servers": "error",
 }
 
 FILE_RULES = ("C4-prompt-file", "C5-skill-file")
@@ -80,6 +81,7 @@ class TestConfigLinterContract:
             "_check_refs",
             "_check_schema",
             "_check_tools",
+            "_check_mcp_servers",
             "_check_prompt_files",
             "_check_skill_files",
             "_check_unreferenced",
@@ -131,6 +133,21 @@ class TestRuleScenarios:
             "providers.p_unused",
         }
         assert all(issue.severity == "warning" for issue in issues)
+
+    def test_c7_flags_every_malformed_mcp_server(self):
+        issues = _by_rule(_lint("c7_mcp_servers.yaml"), "C7-mcp-servers")
+        locations = {issue.location for issue in issues}
+        assert locations == {
+            "agents.a.mcp_servers[0].name",
+            "agents.a.mcp_servers[0].command",
+            "agents.a.mcp_servers[0].args",
+            "agents.a.mcp_servers[0].env.BRAVE_API_KEY",
+            "agents.a.mcp_servers[0].env.2BAD",
+            "agents.a.mcp_servers[2].name",
+            "agents.a.mcp_servers[2].transport",
+        }
+        assert all(issue.severity == "error" for issue in issues)
+        assert _by_rule(_lint("clean.yaml"), "C7-mcp-servers") == []
 
     def test_a_clean_config_reports_no_issues(self):
         assert _lint("clean.yaml") == []
