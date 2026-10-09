@@ -31,5 +31,5 @@ nebuko = "nebuko.engine.run_loop:main"
 where = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "src/nebuko/engine/lib"]
+pythonpath = ["src", "src/nebuko/engine/lib", "scripts"]
 testpaths = ["tests"]
