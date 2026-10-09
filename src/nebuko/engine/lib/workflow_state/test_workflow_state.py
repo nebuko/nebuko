@@ -159,3 +159,37 @@ class TestStateMetricsCost(unittest.TestCase):
         """Legacy metric dicts without 'cost' still load (backward compat)."""
         metrics = StateMetrics.from_full_metrics_dict({"input_tokens": 10})
         self.assertEqual(metrics.cost, 0.0)
+
+
+class TestStateMetricsProviderHealth(unittest.TestCase):
+    """TPS/TTFT survive the workflow-state metrics mirror (issue #829)."""
+
+    def test_provider_health_extracted_from_full_metrics_dict(self):
+        metrics = StateMetrics.from_full_metrics_dict(
+            {
+                "input_tokens": 10,
+                "tokens_per_second": 137.5,
+                "time_to_first_token": 0.62,
+            }
+        )
+        self.assertEqual(metrics.tokens_per_second, 137.5)
+        self.assertEqual(metrics.time_to_first_token, 0.62)
+
+    def test_provider_health_default_to_none(self):
+        metrics = StateMetrics.from_full_metrics_dict({"input_tokens": 10})
+        self.assertIsNone(metrics.tokens_per_second)
+        self.assertIsNone(metrics.time_to_first_token)
+
+    def test_provider_health_round_trips_from_metrics_to_dict(self):
+        from metrics_schema import Metrics
+
+        original = Metrics(
+            run_id="r1",
+            model_name="gpt-4",
+            agent_role="dev",
+            tokens_per_second=137.5,
+            time_to_first_token=0.62,
+        )
+        metrics = StateMetrics.from_full_metrics_dict(original.to_dict())
+        self.assertEqual(metrics.tokens_per_second, 137.5)
+        self.assertEqual(metrics.time_to_first_token, 0.62)
