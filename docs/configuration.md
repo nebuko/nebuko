@@ -112,6 +112,7 @@ llms:
 | `skills` | string[] | Skills attached to the agent by default. |
 | `complexity_overrides` | mapping<`low` \| `medium` \| `high`, object> | Per-tier partial overrides of model/sampling/reasoning. See [Complexity Overrides](#complexity-overrides-per-tier-configuration). |
 | `tools` | string[] | Tool whitelist: `terminal`, `file_editor`, `task_tracker` (SDK tools) plus `think`, `finish` (built-in defaults). See [agents-and-skills.md](./agents-and-skills.md). |
+| `mcp_servers` | object[] | MCP servers attached to the agent's conversation (see [MCP Servers](#mcp-servers)). |
 
 Example:
 
@@ -123,6 +124,47 @@ agents:
     skills: []
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 ```
+
+---
+
+## MCP Servers
+
+`mcp_servers` attaches [Model Context Protocol](https://modelcontextprotocol.io)
+servers to an agent's conversation. Each entry is a stdio process spec; the
+server's tools become available to the agent alongside its `tools` whitelist.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Stable handle for the server. |
+| `command` | string | Executable to launch (`npx`, `uvx`, `docker`, or a binary path). |
+| `args` | string[] | Command arguments (default `[]`). |
+| `env` | mapping<string, string> | Child-process env var → **name** of the OS env var holding the value (never the literal secret). |
+| `transport` | string | Always `stdio` for now (default `stdio`). |
+
+Unresolved `env` references (the named OS env var is unset) cause the server to
+be skipped with a warning — a missing key degrades that one capability rather
+than failing the run.
+
+Example — Brave Search MCP web search for the `context` agent:
+
+```yaml
+agents:
+  context:
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
+    mcp_servers:
+      - name: "brave-search"
+        command: "npx"
+        args:
+          - "-y"
+          - "@brave/brave-search-mcp-server@2.1.4"
+          - "--enabled-tools"
+          - "brave_web_search"
+          - "brave_news_search"
+        env:
+          BRAVE_API_KEY: "BRAVE_API_KEY"   # child var ← OS env var name
+```
+
+Set `BRAVE_API_KEY` in the environment (or as a CI secret) to enable it.
 
 ---
 

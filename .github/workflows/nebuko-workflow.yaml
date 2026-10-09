@@ -58,6 +58,9 @@ on:
       LOCAL_VLLM_API_TOKEN:
         description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
         required: false
+      BRAVE_API_KEY:
+        description: 'Brave Search API key (optional — only needed for the Brave Search MCP web-search tool)'
+        required: false
       GH_PAT:
         description: 'GitHub Personal Access Token for API access'
         required: true
@@ -174,6 +177,7 @@ jobs:
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                 LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
                 COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+                BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 PIN_COMMENT: ${{ inputs.pin_comment }}
                 HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
