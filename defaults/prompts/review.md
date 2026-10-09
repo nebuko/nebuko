@@ -36,8 +36,7 @@ Choose ONE of the following paths:
 
 **If the code is approved:**
 - Summarize what you reviewed and confirm it looks good.
-- **Explicitly ping the original issue author** (`@<issue_author>`) to let them know the PR is ready for final human review. This is critical — do NOT skip the human ping.
-- End your message with: `@<issue_author> ready for human review.`
+- Do **NOT** ping any human. Human notification is the workflow engine's job: when the workflow stops for a human (a gate, a hold, or the end of the workflow) the engine posts the ping to the workflow starter itself (issue #795).
 - Also include the AGENT_RUN_CONFIG sentinel for workflow tracking:
   ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
@@ -76,7 +75,7 @@ When in the `final_review` step of the `plan-orchestration` workflow:
   - Nothing required by the original architecture plan is missing.
 * **On approval:**
   - Summarize what was verified across all steps.
-  - **Explicitly ping the original issue author** (`@<issue_author>`) — do NOT skip the human ping. End your message with: `@<issue_author> ready for human review.`
+  - Do **NOT** ping any human — the engine posts the human notification itself when the workflow stops for a human (issue #795).
   - Dispatch:
     ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "approved"}} -->
@@ -102,7 +101,7 @@ When in the `final_review` step of the `plan-orchestration` workflow:
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "round": 2} -->
     ```
     (Increment the `round` counter for each dev→review→dev cycle.)
-  - If approved: Include the human ping `@<issue_author> ready for human review.` in your message body, and optionally add:
+  - If approved: Do **NOT** ping any human — the engine posts the human notification itself. Optionally add:
     ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
     ```

@@ -7,6 +7,7 @@ from .sub_domains.llm_config.llm_config import LLMConfig
 from .sub_domains.agent_complexity_override.agent_complexity_override import AgentComplexityOverride
 from .sub_domains.agent_config.agent_config import AgentConfig
 from .sub_domains.agent_start_notice.agent_start_notice import AgentStartNotice
+from .sub_domains.human_action_notice.human_action_notice import HumanActionNotice
 from .sub_domains.app_config.app_config import AppConfig
 
 # Workflow Config sub-domains
@@ -51,6 +52,7 @@ __all__ = [
     "AgentComplexityOverride",
     "AgentConfig",
     "AgentStartNotice",
+    "HumanActionNotice",
     "AppConfig",
     # Workflow Config entities
     "WorkflowCondition",
