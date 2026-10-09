@@ -11,6 +11,10 @@ from resolve_workflow import (
     resolve_workflow_routing,
     build_workflow_position,
     build_workflow_position_value,
+    attach_call_frames,
+    build_step_inputs,
+    _find_workflow_step,
+    _load_workflow_by_reference,
     _position_pair_from_value,
     resolve_complexity_tier,
     TASK_TO_PROMPT,
@@ -282,4 +286,42 @@ def _build_result(
     }
     result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")
     result["WORKFLOW_POSITION_PATH"] = wf_result.get("WORKFLOW_POSITION_PATH", "")
-    return _attach_position(result, config, workflows_dir, local_workflows_dir)
+    result = _attach_position(result, config, workflows_dir, local_workflows_dir)
+    return _attach_step_inputs(result, config, workflows_dir, local_workflows_dir)
+
+
+def _attach_step_inputs(
+    result: dict,
+    config: dict,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> dict:
+    """Emit a resolved step's declared input wiring as ``STEP_INPUTS`` (issue #813).
+
+    The payload is the step's own ``inputs:`` bindings plus its workflow's
+    declared input signature (the ``required`` policy). The mount-chain frames
+    are derived from the run's *final* position — the carried-forward chain is
+    the only place the immediate caller of each level is recorded accurately,
+    which is what makes kind-preserving lazy forwarding work across nesting.
+    Steps that declare no inputs are left untouched, keeping their resolver
+    output byte-identical.
+    """
+    wf_name = result.get("WORKFLOW_NAME") or ""
+    step_name = result.get("WORKFLOW_STEP") or ""
+    if not wf_name or not step_name:
+        return result
+    scaffold_branch = config.get("config_scaffold_branch") or None
+    workflow = _load_workflow_by_reference(
+        wf_name, workflows_dir, local_workflows_dir, scaffold_branch,
+    )
+    step = _find_workflow_step(workflow, step_name) if workflow else None
+    if step is None or not step.inputs:
+        return result
+    result["STEP_INPUTS"] = attach_call_frames(
+        build_step_inputs(workflow, step),
+        result.get("WORKFLOW_POSITION", ""),
+        workflows_dir,
+        local_workflows_dir,
+        scaffold_branch,
+    )
+    return result
