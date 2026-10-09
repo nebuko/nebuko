@@ -106,7 +106,7 @@ graph-level invariants below are checked offline by
 | `inputs[].name` | input | string | yes | Parameter name, referenced downstream through `input.<name>`. |
 | `inputs[].kind` | input | `exec`\|`str` | yes | `exec` = a deterministic provider command materialized by the engine; `str` = a constant. |
 | `inputs[].required` | input | bool | no | When true (default), a failed/absent value fails the consuming step deterministically, before the agent runs. |
-| `outputs` | file | string[] | no | Values this workflow returns to its caller, referenced there as `<call-step>.<name>` (issue #813; a bare string coerces to a one-element list). |
+| `outputs` | file | string[] | no | Values this workflow returns to its caller, referenced there as `<call-step>.<name>` (issue #813; a bare string coerces to a one-element list). The return path is pending [#756](https://github.com/nebuko/nebuko/issues/756). |
 | `trigger.agents` | file | string[] | no | Which `@@mention`s can start this workflow. |
 | `steps` | file | list | yes | Ordered list of steps. |
 | `steps[].name` | step | string | yes | Unique step name. |

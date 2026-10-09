@@ -298,15 +298,32 @@ Mechanics:
    runs each `exec` and injects the captured stdout as a labeled context block.
    `required: true` (default) fails the step **before the agent is invoked** if
    the command fails; `required: false` injects `_(unavailable: …)_`.
-4. **Declared-outputs return** — only the callee's declared `outputs` cross back
-   into the caller, referenced as `<call-step>.<name>`.
-5. **Bounded nesting** — the call-frame chain is capped (`MAX_CALL_FRAMES`); an
-   over-deep chain fails the step deterministically before the agent runs.
+4. **Declared-outputs return** *(intended — not yet shipped; see Status
+   below)* — only the callee's declared `outputs` cross back into the caller,
+   referenced as `<call-step>.<name>`.
+5. **Bounded nesting** — the call-frame chain is capped (`MAX_CALL_FRAMES`);
+   an over-deep chain fails the step deterministically before the agent runs.
+   The frame chain is derived from the run's carried-forward mount position and
+   decoded at the engine's input-materialization seam, where the cap is
+   enforced.
 
 Wiring is checked offline by [`python -m engine lint`](./lint.md) (rules
 [L8–L10](./lint.md#rule-reference)): every declared input bound exactly once per
 call site, kinds matched, references resolvable in scope, and every declared
 input consumed or forwarded.
+
+**Status — what is shipped.** The **input path is complete**: declared
+`inputs`, call-site binding with the bare-string `ref` shorthand,
+kind-preserving lazy forwarding, just-in-time `exec` materialization at the
+prompt-assembly seam, mandatory injection, fail-before-agent on a `required`
+failure, the `MAX_CALL_FRAMES` depth bound, and lint rules L8–L10. The
+**output path is forward-looking**: the declared-outputs return
+(`<call-step>.<name>`) and the output-side lint checks depend on declared step
+outputs ([#756](https://github.com/nebuko/nebuko/issues/756)), which is not yet
+implemented. Today the `outputs` / `steps[].outputs` fields are parsed and
+validated, and `<step>.<name>` references are checked where the referenced
+output is already declared, but nothing yet populates the values at run time —
+an unresolved reference degrades to `_(unavailable: …)_` rather than failing.
 
 ---
 

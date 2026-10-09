@@ -69,6 +69,16 @@ run:
    marks the call step failed — frame discarded, **no partial state bleed** —
    and the caller's `conditions` branch on it.
 
+*Implementation note (v1).* Steps 1–3 and 5 ship: the frame chain is **derived
+at resolve time** from the run's carried-forward mount position and decoded at
+the engine's input-materialization seam (not a mutable run-loop push/pop
+stack), where each binding is frozen and the `MAX_CALL_FRAMES` bound is
+enforced. Step 4 — the declared-outputs **return** — is the forward-looking
+part: it needs declared step outputs to populate `current_context`, which is
+[#756](https://github.com/nebuko/nebuko/issues/756) and is not yet implemented.
+Until then `<call-step>.<out>` references resolve only where an output is
+already declared, and otherwise degrade to `_(unavailable: …)_`.
+
 ### Kind-preserving lazy forwarding
 
 Forwarding a parameter is explicit (`run_test: input.run_test`). Forwarding an
