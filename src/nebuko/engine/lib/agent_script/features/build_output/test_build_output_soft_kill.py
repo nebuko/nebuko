@@ -141,7 +141,8 @@ class TestBuildOutputSoftKill(unittest.TestCase):
         self.assertIsNotNone(state.dispatch)
         self.assertEqual(state.dispatch.status, "hold")
 
-    def test_gate_step_keeps_soft_kill_on_human_resume(self):
+    def test_gate_step_holds_soft_kill_even_on_human_resume(self):
+        """Issue #648: a resume-triggered soft_kill is still held (no bypass)."""
         self._write_gated_workflow("gated")
         with patch.dict(
             os.environ,
@@ -150,7 +151,7 @@ class TestBuildOutputSoftKill(unittest.TestCase):
         ):
             state = self._build(_timed_out())["workflow_state"]
         self.assertIsNotNone(state.dispatch)
-        self.assertEqual(state.dispatch.status, "soft_kill")
+        self.assertEqual(state.dispatch.status, "hold")
 
     def _write_gated_workflow(self, name):
         path = os.path.join(self._tmp.name, f"{name}.yaml")

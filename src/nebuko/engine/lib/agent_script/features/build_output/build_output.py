@@ -30,6 +30,7 @@ from validate_output import (
 from workflow_state import (
     Dispatch,
     FunctionCall,
+    GateDecision,
     IssueInfo,
     PullRequestInfo,
     StepResolution,
@@ -226,6 +227,25 @@ def _soft_kill_dispatch() -> Dispatch:  # @stub-protected
     )
 
 
+def _parse_gate_decision_env() -> Optional[GateDecision]:
+    """Parse the engine-owned gate decision from the ``GATE_DECISION`` env.
+
+    Emitted by the gate-decision resolution in ``resolve_config`` (issue
+    #648) as a serialized :class:`GateDecision`. Parsed here so
+    ``build_state`` can persist it in workflow state — the decision is
+    recorded outside the agent loop and is the only artifact that releases a
+    gate. A malformed value is ignored (logged) rather than aborting the run.
+    """
+    raw = os.environ.get("GATE_DECISION", "").strip()
+    if not raw:
+        return None
+    try:
+        return GateDecision.model_validate_json(raw)
+    except Exception:
+        logger.warning("Ignoring malformed GATE_DECISION env value")
+        return None
+
+
 def _no_action_dispatch(diagnostic: str = "") -> Dispatch:
     """Synthesize the safe no-action fallback for a decision-less run (#765).
 
@@ -334,30 +354,30 @@ def apply_human_gate_intercept(
     dispatch: Optional[Dispatch],
     workflow_name: str,
     workflow_step: str,
-    is_human_resume: bool,
 ) -> Optional[Dispatch]:
-    """Enforce the human_gate security boundary (issue #506).
+    """Enforce the human_gate security boundary (issues #506, #648).
 
     A step marked ``human_gate: true`` in the workflow YAML may never advance
-    on its own: an ``advance`` dispatch (or missing dispatch, which resolves
-    to advance downstream) is overridden to ``hold`` unless the run was
-    triggered by a human ``/nebuko resume`` (``is_human_resume``). Loop,
-    hold, and terminate outcomes are never intercepted. A ``soft_kill``
-    dispatch (issue #704) is treated like ``advance``: on a gated step the
-    gate wins and the run holds for a human instead of auto-retrying.
+    on its own. There is **no** second release path: an ``advance`` dispatch
+    (or a missing dispatch, which resolves to advance downstream) is
+    overridden to ``hold``, and the only way past the gate is a recorded
+    :class:`GateDecision` written by an identity-verified
+    ``/nebuko approve gate`` / ``/nebuko reject gate`` command — never by a
+    re-invocation of the agent. Loop, hold, and terminate outcomes are never
+    intercepted. A ``soft_kill`` dispatch (issue #704) is treated like
+    ``advance``: on a gated step the gate wins and the run holds for a human
+    instead of auto-retrying. An agent-supplied ``branch`` is inert on a gated
+    step — it is cleared so it cannot leak into the held state.
 
     Args:
         dispatch: Dispatch extracted from the agent output (may be None).
         workflow_name: Active workflow name (WORKFLOW_NAME env).
         workflow_step: Step just executed (WORKFLOW_STEP env).
-        is_human_resume: True when the run was triggered by /nebuko resume.
 
     Returns:
         The (possibly overridden) Dispatch.
     """
     if dispatch is not None and dispatch.status not in ("advance", "soft_kill"):
-        return dispatch
-    if is_human_resume:
         return dispatch
     if not _load_gated_step_def(workflow_name, workflow_step):
         return dispatch
@@ -368,7 +388,11 @@ def apply_human_gate_intercept(
     if dispatch is None:
         dispatch = Dispatch()
     return dispatch.model_copy(
-        update={"status": "hold", "reason": f"human_gate:{workflow_step}"}
+        update={
+            "status": "hold",
+            "reason": f"human_gate:{workflow_step}",
+            "branch": None,
+        }
     )
 
 
@@ -1006,10 +1030,12 @@ def build_output(
         dispatch = _soft_kill_dispatch()
         logger.info("Graceful timeout — dispatch overridden with soft_kill status")
 
-    # ── Human gate intercept (issue #506) ────────────────────────
-    # The trigger source is the sole authorization: a resume-triggered run
-    # (HUMAN_RESUME_INPUT present) passes; anything else on a gated step is
-    # held for human review.
+    # ── Human gate intercept (issues #506, #648) ─────────────────
+    # A gated step's dispatch is always overridden to hold: the gate is
+    # released ONLY by an engine-owned GateDecision recorded from an
+    # identity-verified `/nebuko approve gate` / `/nebuko reject gate`.
+    # The run's trigger source is no longer an authorization input, so an
+    # agent (or a human-echoed command) can never release the gate here.
     is_human_resume = bool(os.environ.get("HUMAN_RESUME_INPUT", "").strip())
     # Engine soft-kill retry marker (issue #704): emitted only by the
     # soft-kill retry resolution. Forwarded to build_state so the per-step
@@ -1023,7 +1049,6 @@ def build_output(
         dispatch,
         workflow_name=workflow_name,
         workflow_step=workflow_step,
-        is_human_resume=is_human_resume,
     )
 
     # ── Recovery log: capture execution trace on failure ──────────
@@ -1068,6 +1093,7 @@ def build_output(
         position=position,
         soft_retry_attempt=soft_retry_attempt,
         is_human_resume=is_human_resume,
+        gate_decision=_parse_gate_decision_env(),
     )
     logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
 

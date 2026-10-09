@@ -259,10 +259,12 @@ def extract_machine_trigger(trigger_body: str) -> Optional[Tuple[str, Optional[s
     return None
 
 
-#: Sentinel value for a bare `/nebuko resume` (no feedback text). A bare
-#: resume still carries the authorization signal for human_gate steps
-#: (issue #506) — HUMAN_RESUME_INPUT must be non-empty so the gate
-#: interceptor recognizes the run as human-triggered.
+#: Sentinel value for a bare `/nebuko resume` (no feedback text). It keeps the
+#: resume's feedback channel distinguishable from "no resume at all" so a
+#: bare resume still carries human input forward. It no longer has any
+#: gate-authorization meaning (issue #648): a human_gate hold is released only
+#: by an engine-owned GateDecision from `/nebuko approve gate` /
+#: `/nebuko reject gate`.
 BARE_RESUME_INPUT = "__resumed__"
 
 
