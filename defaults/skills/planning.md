@@ -72,6 +72,13 @@ an approval-gate / orchestration step.
 
 ## Approval Gatekeeper Mode (Spec-Driven Workflow)
 
+> **Non-authoritative for `human_gate`.** This mode is a UX convenience: it
+> classifies human intent so the conversation reads naturally. It does **not**
+> release a `human_gate` step — that is an engine-owned decision triggered only
+> by an identity-verified `/nebuko approve gate` / `/nebuko reject gate`
+> command (see the security boundary below). Never assume your classification
+> moved the workflow.
+
 When invoked in the `spec_approval` or `stub_approval` step of the spec-driven workflow, your role is to evaluate whether human feedback indicates approval or rejection.
 
 * Scan the comment history for human responses since the last spec/stub was posted.
@@ -90,16 +97,14 @@ When invoked in the `spec_approval` or `stub_approval` step of the spec-driven w
   - **If unclear** (no human response yet or ambiguous): Use `branch: "approved"` as the default (the workflow's `on_result: default` also routes forward).
   - **Keep the two channels aligned:** if you also record the decision via the `dispatch_next` tool, pass the same `branch` value in the tool call (e.g. `branch='approved'`) so the persisted dispatch matches the sentinel. A tool call without `branch` can only inherit it from the sentinel at persistence time.
 
-### The `human_gate` security boundary (engine-enforced)
+### The `human_gate` security boundary (engine-owned)
 
 Steps defined with `human_gate: true` are a **security boundary**, not a routing choice. You do not control it and cannot bypass it:
 
-* When you emit `advance` on a gated step during a normal (automated) run, the engine **intercepts** the dispatch and records `hold`. The workflow stops there; your output stays posted for human review. This is expected behavior — not an error.
-* You will be **re-invoked on the same step** after the human runs `/nebuko resume`. Their message arrives in a `## Human Resume Input` section of your context.
-* On that re-run, act on the human's input:
-  - If they **approved** (e.g. "approved", "lgtm"), emit `advance` immediately — no rework needed.
-  - If they requested **changes**, make the revisions first, then emit `advance` once satisfied.
-* Emitting `loop` or re-running automatically will eventually re-trigger the gate: only the human's `/nebuko resume` can release a gated step.
+* When you emit `advance` (or any completing dispatch) on a gated step, the engine **intercepts** it and records `hold`. The workflow stops there; your output stays posted for human review. This is expected behavior — not an error, and not something a `branch` value can override.
+* The gate is released **outside agent space**: an authorized human (GitHub `OWNER`/`MEMBER`/`COLLABORATOR`) runs `/nebuko approve gate [--feedback "..."]` or `/nebuko reject gate [--feedback "..."]`. The engine records a `GateDecision` and routes the workflow directly — you are **never** re-invoked to confirm a gate.
+* If the human approved, the workflow moves straight to the next step. If they rejected **with feedback**, the gated step is re-run with their feedback in a `## Human Gate Decision` section of your context: make the revisions, then emit `advance` — the gate re-arms and requires fresh human validation.
+* Agent-authored markers, machine tokens, and bot-authored commands are inert on gated steps. Emitting `loop` or re-running automatically cannot release a gate; only the human's gate command can.
 
 ## Plan Orchestration Mode (Dynamic Plan Workflow)
 
