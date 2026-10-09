@@ -27,6 +27,15 @@ runtime = [
 [project.scripts]
 nebuko = "nebuko.engine.run_loop:main"
 
+[dependency-groups]
+# Test tooling. `dev` is a default uv group, so `uv sync` / `uv run` provision
+# pytest + pytest-mock automatically — agents and humans must not install them
+# ad hoc (issue #851).
+dev = [
+    "pytest>=8",
+    "pytest-mock>=3",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

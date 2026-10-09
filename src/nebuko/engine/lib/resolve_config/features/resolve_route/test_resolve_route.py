@@ -529,7 +529,8 @@ class TestGatePrecedenceOverFunctionCall:
         prompt_base.mkdir()
         for name in TASK_TO_PROMPT.values():
             (prompt_base / name).write_text("# prompt")
-        workflows_dir = str(Path(__file__).resolve().parents[7] / "defaults" / "workflows")
+        from default_paths import config_dir
+        workflows_dir = config_dir("workflows")
         block = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps(state)

@@ -1169,8 +1169,9 @@ class TestEmptyWorkflowDefinition:
 
 
 def _real_workflows_dir() -> Path:
-    """Return the path to the real workflows/ directory in the repo root."""
-    return Path(__file__).resolve().parents[2] / "workflows"
+    """The shipped workflow dir, resolved the same way the runtime does."""
+    from default_paths import config_dir
+    return Path(config_dir("workflows"))
 
 
 class TestDefaultWorkflowWithRealFile:
