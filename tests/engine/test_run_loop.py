@@ -218,6 +218,76 @@ class TestGuardsPhase:
         assert str(verdict["CIRCUIT_BREAKER_TRIPPED"]).lower() == "true"
 
 
+def _bot_marker_comments(count: int) -> list:
+    from nebuko.engine.models import CommentEntry
+
+    return [
+        CommentEntry(
+            author="bot",
+            body=f"{BOT_AGENT_MARKER}\ncall {index}",
+            created_at="2026-10-01T07:47:47Z",
+        )
+        for index in range(count)
+    ]
+
+
+def _circuit_breaker_state_comment(limit: int):
+    from nebuko.engine.models import CommentEntry
+    from workflow_state import CircuitBreakerState, to_git_comment
+
+    state = WorkflowState(circuit_breaker=CircuitBreakerState(limit=limit))
+    return CommentEntry(
+        author="bot", body=to_git_comment(state), created_at="2026-10-01T07:47:47Z"
+    )
+
+
+class TestCircuitBreakerLimitOverride:
+    """Per-issue breaker override (issue #839): persisted state wins over env.
+
+    The breaker mechanism recounts markers every run and compares against the
+    *effective* threshold, so raising the override above the current call count
+    un-trips the issue with no separate reset verb.
+    """
+
+    def test_absent_state_uses_the_env_threshold(self, tmp_path):
+        engine = _engine(tmp_path)  # CIRCUIT_BREAKER_THRESHOLD=3
+
+        verdict = engine.guard(_trigger(), _bot_marker_comments(6))
+
+        assert str(verdict["CIRCUIT_BREAKER_TRIPPED"]).lower() == "true"
+
+    def test_state_override_raises_the_threshold(self, tmp_path):
+        engine = _engine(tmp_path)
+        history = _bot_marker_comments(6) + [_circuit_breaker_state_comment(10)]
+
+        verdict = engine.guard(_trigger(), history)
+
+        assert str(verdict["CIRCUIT_BREAKER_TRIPPED"]).lower() == "false"
+
+    def test_state_override_can_tighten_the_threshold(self, tmp_path):
+        engine = _engine(tmp_path)
+        history = _bot_marker_comments(4) + [_circuit_breaker_state_comment(2)]
+
+        verdict = engine.guard(_trigger(), history)
+
+        assert str(verdict["CIRCUIT_BREAKER_TRIPPED"]).lower() == "true"
+
+    def test_raising_the_override_un_trips_a_tripped_issue(self, tmp_path):
+        engine = _engine(tmp_path)
+        history = _bot_marker_comments(6)
+
+        assert (
+            str(engine.guard(_trigger(), history)["CIRCUIT_BREAKER_TRIPPED"]).lower()
+            == "true"
+        )
+
+        unlocked = history + [_circuit_breaker_state_comment(10)]
+        assert (
+            str(engine.guard(_trigger(), unlocked)["CIRCUIT_BREAKER_TRIPPED"]).lower()
+            == "false"
+        )
+
+
 class TestSoftKillRetry:
     """End-to-end restart of a soft-killed step (issue #793).
 

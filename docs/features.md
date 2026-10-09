@@ -27,15 +27,17 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 | `/nebuko force-step step --name <step>` | Jump directly to `<step>` of the **active** workflow, regardless of state. Unlike `run --step`, this replays/forks within the current run (it requires an active workflow). |
 | `/nebuko delete comments [--issue <id>] [--from <comment-id>]` | Human-only batch deletion of issue comments. `--issue <id>` selects the target issue (mandatory on the CLI surface; auto-filled with the invoking issue when the command is posted in that issue). Optional `--from <comment-id>` deletes that comment **and every later one**; omit it to delete **all** comments. Terminal command: it runs the deterministic deletion step and no agent. Requires `GH_PAT` with `issues:write`. |
 | `/nebuko clean comments` | Alias of `/nebuko delete comments` (issue #679). Terminal; runs the deterministic deletion step and no agent. |
+| `/nebuko update circuit-breaker --value <n>` | Human-only, per-issue circuit-breaker override (issue #839). Persists `limit = <n>` in the issue's `workflow_state`; the guard then uses `state override → CIRCUIT_BREAKER_THRESHOLD env → 25`. Raising the value above the current agent-call count **un-trips** the issue; lowering it tightens a runaway issue. Terminal, agent-free: it consumes no call budget. Bots are ignored. |
 | `DEBUG=true` | Enables verbose debug logging for the run. |
 
 **Precedence:** human commands always override state-based routing (see the
 cascade in [architecture.md — Routing Cascade](./architecture.md#routing-cascade)):
-`resume` > `force-step` > `delete comments` > `run workflow` >
+`resume` > `force-step` > `delete comments` > `update circuit-breaker` > `run workflow` >
 `@@mention` > dispatch-based routing > next-step > bot fallback. This guarantee
 exists so explicit human intent is never absorbed by an active workflow's
-`dispatch` object. `delete comments` is a **terminal** human command: it runs
-the deterministic deletion step and never invokes an agent.
+`dispatch` object. `delete comments` and `update circuit-breaker` are
+**terminal** human commands: they run a deterministic step and never invoke an
+agent.
 
 Note: **bot agents cannot use `@@mention`** (only humans may); bots hand off via
 the `AGENT_RUN_CONFIG` sentinel ([reference.md](./reference.md#agent_run_config)).
@@ -99,9 +101,11 @@ Three independent guards prevent runaway automation. All live in
 
 Counts `<!-- bot-agent-{name} -->` markers across recent issue comments (the
 universal bot marker itself is excluded). When the count reaches the threshold
-(input `circuit_breaker_threshold`, default **15**), the run is skipped and a
-warning comment is posted asking a human to review the issue. Output:
-`CIRCUIT_BREAKER_TRIPPED=true/false`.
+(input `circuit_breaker_threshold`, operative default **25**), the run is
+skipped and a warning comment is posted asking a human to review the issue.
+Output: `CIRCUIT_BREAKER_TRIPPED=true/false`. A human can raise (or lower) the
+budget for a single issue with `/nebuko update circuit-breaker --value <n>`
+(issue #839); the override wins over the workflow parameter.
 
 ### Loop Guard — `loop_guard.py`
 

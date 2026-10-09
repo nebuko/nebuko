@@ -27,6 +27,7 @@ __all__ = [
     "StepResult",
     "NebukoManifest",
     "to_routing_decision",
+    "circuit_breaker_update_notice",
 ]
 
 
@@ -125,12 +126,13 @@ class StepResult:
 class DeterministicStep:
     """An agent-free step the resolver hands to the engine to execute directly."""
 
-    kind: Literal["delete_comments", "run_script"]
+    kind: Literal["delete_comments", "run_script", "update_circuit_breaker"]
     issue: str = ""  # delete_comments: target issue
     from_comment: str = ""  # delete_comments: --from boundary ("" = all)
     script_path: str = ""  # run_script
     script_args: str = ""
     timeout_minutes: int | None = None
+    circuit_breaker_value: int = 0  # update_circuit_breaker: new per-issue limit
 
     # @stub-protected
     @classmethod
@@ -157,6 +159,12 @@ class DeterministicStep:
                 script_args=str(resolved.get("SCRIPT_ARGS") or ""),
                 timeout_minutes=int(timeout) if timeout.isdigit() else None,
             )
+        if _is_true(resolved.get("UPDATE_CIRCUIT_BREAKER")):
+            raw = str(resolved.get("UPDATE_CIRCUIT_BREAKER_VALUE") or "").strip()
+            return cls(
+                kind="update_circuit_breaker",
+                circuit_breaker_value=int(raw) if raw.isascii() and raw.isdigit() else 0,
+            )
         return None
 
     # @stub-protected
@@ -173,9 +181,49 @@ class DeterministicStep:
                     detail=f"deleted {deleted} comments on issue {self.issue}",
                     affected=deleted,
                 )
+            if self.kind == "update_circuit_breaker":
+                return self._execute_circuit_breaker_update(adapter)
             return self._execute_script()
         except Exception as exc:  # noqa: BLE001 - a step failure is data, not a crash
             return StepResult(step_kind=self.kind, ok=False, detail=str(exc), affected=0)
+
+    def _execute_circuit_breaker_update(self, adapter: Any) -> StepResult:
+        """Persist the new per-issue breaker limit and post a confirmation.
+
+        The override must survive into the next run, and on GitHub the only
+        cross-run carrier is the comment history (the disk hand-off is
+        per-runner). So the step loads the previous state, applies the limit,
+        and posts it wrapped around a human confirmation — the guard of the
+        next run reads it back via ``extract_state``.
+        """
+        from nebuko.engine.paths import ensure_import_path
+
+        ensure_import_path()
+        from circuit_breaker import count_bot_markers
+        from workflow_state.features.comment.to_git_comment import (
+            wrap_comment_with_state,
+        )
+        from workflow_state.workflow_state import WorkflowState
+
+        prev = adapter.load_state() or WorkflowState()
+        new_state = prev.model_copy(
+            update={
+                "circuit_breaker": prev.circuit_breaker.with_limit(
+                    self.circuit_breaker_value
+                )
+            }
+        )
+        history = adapter.load_history() or []
+        agent_calls = max(0, count_bot_markers(list(history)) // 2)
+        detail = circuit_breaker_update_notice(self.circuit_breaker_value, agent_calls)
+        adapter.post(wrap_comment_with_state(new_state, detail))
+        adapter.save_state(new_state)
+        return StepResult(
+            step_kind=self.kind,
+            ok=True,
+            detail=detail,
+            affected=self.circuit_breaker_value,
+        )
 
     def _execute_script(self) -> StepResult:
         timeout = self.timeout_minutes * 60 if self.timeout_minutes else None
@@ -188,6 +236,24 @@ class DeterministicStep:
             detail=f"script exited with code {completed.returncode}",
             affected=completed.returncode,
         )
+
+
+def circuit_breaker_update_notice(value: int, agent_calls: int) -> str:
+    """Human-facing confirmation for a per-issue circuit-breaker update.
+
+    Notes explicitly when the new limit does not clear the current usage, so a
+    human does not mistake a no-op for an unlock.
+    """
+    if value <= agent_calls:
+        return (
+            f"⚙️ Circuit-breaker limit set to **{value}** for this issue.\n\n"
+            f"⚠️ Current usage is {agent_calls} agent calls, so the breaker is "
+            f"still tripped; raise the limit above {agent_calls} to unlock."
+        )
+    return (
+        f"⚙️ Circuit-breaker limit set to **{value}** for this issue.\n\n"
+        f"Current usage is {agent_calls} agent calls; the issue is unlocked."
+    )
 
 
 def to_routing_decision(args: Mapping[str, Any]) -> RoutingDecision:

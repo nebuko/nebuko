@@ -811,10 +811,11 @@ class Engine:
         if _is_true(verdict.get("SKIP_AGENT")):
             return verdict
 
+        threshold = self._effective_threshold(history)
         verdict.update(
             check_circuit_breaker(
                 trigger.number,
-                self._threshold(),
+                threshold,
                 repo=self._repo(trigger) or "",
                 dry_run=True,
                 history=history,
@@ -831,7 +832,7 @@ class Engine:
             )
             self.adapter.post(
                 circuit_breaker_warning(
-                    int(verdict.get("AGENT_CALLS") or 0), self._threshold()
+                    int(verdict.get("AGENT_CALLS") or 0), threshold
                 )
             )
         return verdict
@@ -1256,6 +1257,34 @@ class Engine:
             return int(raw)
         except ValueError:
             return 25
+
+    @staticmethod
+    def _state_from_history(history: Sequence[CommentEntry]) -> WorkflowState | None:
+        """Latest workflow state embedded in ``history``; None when absent/unparseable."""
+        if not history:
+            return None
+        try:
+            ensure_import_path()
+            from resolve_config.features.fetch_state.fetch_state import extract_state
+
+            return extract_state(history)
+        except Exception:  # noqa: BLE001 - a missing/corrupt state is not fatal
+            return None
+
+    def _effective_threshold(self, history: Sequence[CommentEntry]) -> int:
+        """Resolve the breaker limit for this issue (issue #839).
+
+        Precedence: persisted per-issue override → ``CIRCUIT_BREAKER_THRESHOLD``
+        workflow parameter → 25. An absent or unparseable state falls back to
+        today's env-only behavior, so hosts without the feature are unchanged;
+        raising the override above the current call count un-trips the issue on
+        the next run because the trip verdict is recomputed fresh.
+        """
+        env_default = self._threshold()
+        state = self._state_from_history(history)
+        if state is None:
+            return env_default
+        return state.circuit_breaker.effective(env_default)
 
     def _base_prompt(self, resolved: Any) -> str:
         location = self._get(resolved, "PROMPT_LOCATION")

@@ -2,7 +2,7 @@
 
 import pytest
 
-from circuit_breaker import count_bot_markers, check_circuit_breaker
+from circuit_breaker import count_bot_markers, check_circuit_breaker, circuit_breaker_warning
 
 
 class TestCountBotMarkers:
@@ -93,3 +93,17 @@ class TestCheckCircuitBreakerDryRun:
         )
         assert result["CIRCUIT_BREAKER_TRIPPED"] == "false"
         assert result["AGENT_CALLS"] == "0"
+
+
+class TestCircuitBreakerWarning:
+    """The trip warning names the per-issue unlock command (issue #839)."""
+
+    def test_warning_reports_the_counts(self):
+        warning = circuit_breaker_warning(agent_calls=30, threshold=25)
+
+        assert "30/25" in warning
+
+    def test_warning_names_the_update_command(self):
+        warning = circuit_breaker_warning(agent_calls=30, threshold=25)
+
+        assert "/nebuko update circuit-breaker --value <n>" in warning

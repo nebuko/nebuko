@@ -2,7 +2,7 @@ from typing import Optional, Any
 
 from config import POSITION_STATE_VERSION, StepRef, WorkflowPosition
 
-from ...workflow_state import WorkflowState, SoftRetryState
+from ...workflow_state import WorkflowState, SoftRetryState, CircuitBreakerState
 from ...sub_domains.issue_info.issue_info import IssueInfo
 from ...sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from ...sub_domains.history_entry.history_entry import HistoryEntry
@@ -147,6 +147,7 @@ def build_state(
         base_issue = None
         base_pr = None
         base_started_by = None
+        base_circuit_breaker = CircuitBreakerState()
     else:
         base_version = prev_state.version
         base_history = list(prev_state.history)
@@ -159,6 +160,7 @@ def build_state(
         base_issue = prev_state.issue
         base_pr = prev_state.pull_request
         base_started_by = prev_state.started_by
+        base_circuit_breaker = prev_state.circuit_breaker
 
     # Build history entry for the current step
     # Normalize the position block to the flat v3 refs list (issue #638);
@@ -282,4 +284,8 @@ def build_state(
         started_by=new_started_by,
         position=position_refs,
         soft_retry=new_soft_retry,
+        # Per-issue circuit-breaker policy (issue #839): carried forward
+        # verbatim. It is written only by the ``update circuit-breaker``
+        # command, never by a normal transition.
+        circuit_breaker=base_circuit_breaker,
     )
