@@ -48,6 +48,17 @@ agents:
     prompt_file: ".agents/prompts/context.md"
     skills: ["call-agent", "posting-contract"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
+    mcp_servers:
+      - name: "brave-search"
+        command: "npx"
+        args:
+          - "-y"
+          - "@brave/brave-search-mcp-server@2.1.4"
+          - "--enabled-tools"
+          - "brave_web_search"
+          - "brave_news_search"
+        env:
+          BRAVE_API_KEY: "BRAVE_API_KEY"
 
   review:
     model: "${llms.glm-5_3-flash}"
