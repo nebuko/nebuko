@@ -108,6 +108,11 @@ def destructive_entry_numbers(entries: Sequence[TriageEntry]) -> tuple[int, ...]
     return tuple(e.issue_number for e in entries if e.disposition in DESTRUCTIVE_DISPOSITIONS)
 
 
+def migrate_entries(entries: Sequence[TriageEntry]) -> tuple[TriageEntry, ...]:
+    """The ``migrate`` subset of ``entries`` — the only rows safe to transfer."""
+    return tuple(entry for entry in entries if entry.disposition == "migrate")
+
+
 def transfer_entries(
     repo: str,
     dest: str,
@@ -116,9 +121,10 @@ def transfer_entries(
 ) -> dict[int, int]:
     """Transfer ``migrate`` rows from ``repo`` to ``dest``.
 
-    Returns the old -> new issue-number map.  Raises :class:`PermissionError` if
-    any entry is destructive (human-owned) so a stray flag can never delete or
-    move a sensitive row.
+    Returns the old -> new issue-number map.  Pass :func:`migrate_entries` output:
+    a ``delete``/``scrub`` row anywhere in ``entries`` raises
+    :class:`PermissionError` (they carry secrets or internal endpoints and are
+    human-owned), so a stray flag can never move a sensitive row.
     """
     refused = destructive_entry_numbers(entries)
     if refused:
@@ -171,7 +177,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ensure_labels(args.repo, LABELS)
         apply_entries(args.repo, MANIFEST)
     if args.transfer:
-        mapping = transfer_entries(args.repo, args.dest, MANIFEST)
+        mapping = transfer_entries(args.repo, args.dest, migrate_entries(MANIFEST))
         args.migration_map.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
     if not (args.apply_labels or args.transfer):
         print(

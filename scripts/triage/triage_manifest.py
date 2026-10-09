@@ -3,6 +3,8 @@
 Every entry is reviewable data: the disposition is the recommended human/agent
 action, and ``labels`` is the additive label set to apply.  ``delete`` and ``scrub``
 dispositions are human-owned: the applier never deletes or edits issue content.
+Their ``needs-scrub`` label *is* applied (labels are additive and hide nothing),
+which makes ``label:needs-scrub`` the single human review queue.
 
 Issue #229 ("test"/"aaa", junk) was already deleted upstream and is intentionally
 absent; the repository has no live junk issue.

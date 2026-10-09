@@ -18,6 +18,8 @@ from triage.apply_triage import (
     destructive_entry_numbers,
     ensure_labels,
     label_args,
+    main,
+    migrate_entries,
     run_command,
     transfer_entries,
 )
@@ -92,6 +94,20 @@ def test_apply_entries_only_adds_labels_never_mutates_content() -> None:
         assert flags <= {"--repo", "--add-label"}, "applier must not mutate issue content"
 
 
+def test_apply_entries_labels_destructive_rows_without_deleting() -> None:
+    """The human queue is a label: destructive rows are labelled, never actioned."""
+    runner = RecordingRunner()
+    entries = (TriageEntry(739, "delete", ("needs-scrub",), "secret", "why"),)
+
+    apply_entries("nebuko/nebuko", entries, runner)
+
+    assert len(runner.commands) == 1
+    command = runner.commands[0]
+    assert command[:3] == ["gh", "issue", "edit"]
+    assert "739" in command
+    assert "needs-scrub" in command
+
+
 def test_label_args_expands_every_label() -> None:
     entry = TriageEntry(7, "migrate", ("research", "strategy"), "research", "why")
     assert label_args(entry) == ["--add-label", "research", "--add-label", "strategy"]
@@ -120,6 +136,29 @@ def test_transfer_refuses_destructive_rows_without_calling_runner() -> None:
         transfer_entries("nebuko/nebuko", ARCHIVE_REPO, entries, runner)
 
     assert runner.commands == []
+
+
+def test_migrate_entries_selects_only_transfer_safe_rows() -> None:
+    subset = migrate_entries(MANIFEST)
+    assert subset
+    assert all(entry.disposition == "migrate" for entry in subset)
+    assert destructive_entry_numbers(subset) == ()
+
+
+def test_main_transfer_path_passes_only_migrate_rows(monkeypatch, tmp_path) -> None:
+    seen: list[TriageEntry] = []
+
+    def fake_transfer(repo, dest, entries, runner=run_command):
+        seen.extend(entries)
+        return {}
+
+    monkeypatch.setattr("triage.apply_triage.transfer_entries", fake_transfer)
+    out = tmp_path / "migration_map.json"
+
+    assert main(["--transfer", "--migration-map", str(out)]) == 0
+
+    assert seen and all(entry.disposition == "migrate" for entry in seen)
+    assert json.loads(out.read_text()) == {}
 
 
 # --- transfer_entries --------------------------------------------------------
