@@ -20,6 +20,12 @@ from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
+from nebuko.engine.input_wiring import (
+    Materialization,
+    StepInputs,
+    materialize as materialize_inputs,
+    render as render_inputs,
+)
 from nebuko.engine.models import (
     DeterministicStep,
     ExitCode,
@@ -543,8 +549,17 @@ class Engine:
             # prepended the header there, and the run's authoritative state is
             # the agent's own output, which is not known before it runs.
 
+            # Deterministic step inputs (issue #813): the engine — not the
+            # model — runs the declared providers and injects their captured
+            # output. A failing ``required`` input fails the step here, before
+            # the agent is invoked, so the model can never review a context it
+            # silently failed to obtain.
+            input_results, input_failure = self._materialize_inputs(resolved, phases)
+            if input_failure is not None:
+                return input_failure
+
             self._enter(phases, "prompt")
-            prompt = self.build_prompt(resolved, history)
+            prompt = self.build_prompt(resolved, history, input_results)
 
             self._enter(phases, "agent")
             # Resolve the legacy comment/validation bridge once, before the
@@ -872,22 +887,73 @@ class Engine:
         return {"SKIP_AGENT": "false"}
 
     # @stub-protected
-    def build_prompt(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
+    def build_prompt(
+        self,
+        resolved: Any,
+        history: Sequence[CommentEntry],
+        input_results: Sequence[Materialization] = (),
+    ) -> str:
         """Build the agent prompt from the resolved config and history.
 
         A step that declares prompt replacement drops the role prompt entirely:
         only the step prompt carries the instruction, so the role's generic flow
         cannot redefine the step's scope (issue #784). Every other step keeps the
         additive ``role prompt + step prompt`` behaviour.
+
+        Deterministically materialized step inputs (issue #813) are injected as
+        labeled blocks between the step prompt and the user request, alongside
+        the recency window and pinned comments — the model never has to fetch
+        them.
         """
         step_prompt = self._step_prompt(resolved)
         replacing = bool(step_prompt) and self._step_prompt_replaces(resolved)
         sections = [] if replacing else [self._base_prompt(resolved)]
         if step_prompt:
             sections.append(f"{_STEP_HEADER}\n\n{step_prompt}")
+        rendered_inputs = render_inputs(list(input_results))
+        if rendered_inputs:
+            sections.append(rendered_inputs)
         sections.append(_USER_REQUEST_HEADER)
         sections.append(self._render_context(resolved, history))
         return "\n\n".join(section for section in sections if section)
+
+    def _materialize_inputs(
+        self, resolved: Any, phases: list[str]
+    ) -> tuple[list[Materialization], "RunOutcome | None"]:
+        """Resolve this step's declared inputs before the agent runs (issue #813).
+
+        Returns the materialized blocks together with a terminal outcome when a
+        ``required`` input failed; the caller then never invokes the agent. A
+        malformed payload is terminal too — silently dropping the wiring would
+        defeat the determinism the feature exists to provide.
+        """
+        try:
+            step_inputs = StepInputs.from_resolved(resolved)
+        except Exception as exc:  # noqa: BLE001 - a bad payload is terminal
+            log.error("[phase:action] invalid step inputs: %s", exc)
+            return [], self._input_failure_outcome(str(exc), phases)
+        if step_inputs is None:
+            return [], None
+        results = materialize_inputs(step_inputs)
+        failures = step_inputs.required_failures(results)
+        if failures:
+            detail = "; ".join(f"{f.name}: {f.detail}" for f in failures)
+            log.error("[phase:action] required step inputs failed: %s", detail)
+            return results, self._input_failure_outcome(detail, phases)
+        return results, None
+
+    def _input_failure_outcome(self, detail: str, phases: list[str]) -> RunOutcome:
+        """Terminal outcome for an unsatisfied required input (issue #813)."""
+        reason = f"required step input failed: {detail}"
+        posted = self._post_terminal_notice(reason)
+        return RunOutcome(
+            exit_code=ExitCode.TERMINAL,
+            routing=RoutingDecision(status="hold", reason=reason),
+            prompt=None,
+            posted_body=posted,
+            state=None,
+            phases=tuple(phases),
+        )
 
     def _step_prompt_replaces(self, resolved: Any) -> bool:
         """True when the run's step prompt replaces the role prompt (issue #784)."""
