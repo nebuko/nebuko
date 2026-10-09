@@ -10,6 +10,7 @@ from .sub_domains.agent_config.agent_config import AgentConfig
 from .sub_domains.agent_start_notice.agent_start_notice import AgentStartNotice
 from .sub_domains.human_action_notice.human_action_notice import HumanActionNotice
 from .sub_domains.app_config.app_config import AppConfig
+from .sub_domains.history_window.history_window import HistoryWindowConfig
 
 # Workflow Config sub-domains
 from .sub_domains.workflow.input_binding import (
@@ -62,6 +63,7 @@ __all__ = [
     "AgentStartNotice",
     "HumanActionNotice",
     "AppConfig",
+    "HistoryWindowConfig",
     # Workflow Config entities
     "WorkflowCondition",
     "WorkflowInputSpec",

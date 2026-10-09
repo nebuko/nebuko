@@ -152,19 +152,54 @@ def collapse_sections(body: str, section_headings: list[str]) -> str:
     return "\n".join(result_lines)
 
 
-def strip_state_section(body: str) -> str:
-    """Remove the workflow state collapsed section from a comment body, returning just the human-readable content.
+# A run of characters that stays inside one ``<details>`` element: the tempered
+# dot refuses to cross the element's own closing tag, so a marker-bearing block
+# is matched as a whole without ever swallowing a neighbouring block.
+_INSIDE_DETAILS = r"(?:(?!</details>).)*?"
 
-    Only targets the specific <details> block whose <summary> ends in
-    'Workflow State', preserving any other legitimate <details> blocks in the
-    content. Three prefix generations are tolerated so historical comments
-    keep parsing (issue #778): the legacy '🤖' emoji, the theme-adaptive
-    '<picture>' logo mark, and a bare label.
+_MARKER_STATE_BLOCK_RE = re.compile(
+    r"<details>"
+    + _INSIDE_DETAILS
+    + re.escape(STATE_MARKER_START)
+    + _INSIDE_DETAILS
+    + re.escape(STATE_MARKER_END)
+    + _INSIDE_DETAILS
+    + r"</details>\s*",
+    flags=re.DOTALL,
+)
+
+_LABEL_STATE_BLOCK_RE = re.compile(
+    r"<details>\s*<summary>(?:🤖|<picture>.*?</picture>|<img[^>]*>)?\s*Workflow State.*?</details>\s*",
+    flags=re.DOTALL,
+)
+
+_BOT_MARKER_LINE_RE = re.compile(
+    r"(?m)^[ \t]*<!--[ \t]*"
+    r"(?:bot-workflow-terminal|bot-agent-[A-Za-z0-9\-]+|bot-human-action|workflow-continue)"
+    r"[ \t]*-->[ \t]*\n?"
+)
+
+
+def strip_state_section(body: str) -> str:
+    """Remove workflow state and bot routing noise from a comment body.
+
+    Returns just the human-readable content. Removal is content-anchored, so it
+    survives re-branding and state-version changes (issue #844):
+
+    1. The collapsed ``<details>`` block carrying the
+       ``WORKFLOW_STATE_START``/``WORKFLOW_STATE_END`` markers — the canonical,
+       version-proof anchor. The block is matched without crossing its own
+       closing tag, so unrelated ``<details>`` blocks are never swallowed.
+    2. Fallback for legacy comments whose state block predates the markers: the
+       block whose ``<summary>`` label ends in ``Workflow State``. Three prefix
+       generations stay tolerated (issue #778): the legacy '🤖' emoji, the
+       theme-adaptive ``<picture>`` logo mark, and a bare label.
+    3. Standalone bot routing marker lines (``bot-workflow-terminal``,
+       ``bot-agent-*``, ``workflow-continue``).
+
+    Any other content is preserved byte-for-byte (modulo the trailing strip).
     """
-    cleaned = re.sub(
-        r"<details>\s*<summary>(?:🤖|<picture>.*?</picture>|<img[^>]*>)?\s*Workflow State.*?</details>\s*",
-        "",
-        body,
-        flags=re.DOTALL,
-    )
+    cleaned = _MARKER_STATE_BLOCK_RE.sub("", body)
+    cleaned = _LABEL_STATE_BLOCK_RE.sub("", cleaned)
+    cleaned = _BOT_MARKER_LINE_RE.sub("", cleaned)
     return cleaned.strip()
