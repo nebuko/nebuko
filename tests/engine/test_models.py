@@ -16,12 +16,26 @@ from nebuko.engine.models import (
     StepResult,
     Trigger,
 )
+from workflow_state.workflow_state import WorkflowState
+from workflow_state import from_body
 
 
 def _trigger(**overrides):
     values = {"author": "olivier-norture", "body": "@@dev fix it", "type": "issue_comment", "number": 590}
     values.update(overrides)
     return Trigger(**values)
+
+
+def _bot_marker_history(count: int) -> list[CommentEntry]:
+    """Bot comments carrying one ``bot-agent-`` marker each."""
+    return [
+        CommentEntry(
+            author="bot",
+            body="<!-- bot-agent-dev -->",
+            created_at="2026-10-01T07:47:47Z",
+        )
+        for _ in range(count)
+    ]
 
 
 class TestTrigger:
@@ -129,6 +143,28 @@ class _RecordingAdapter:
         return self.deleted
 
 
+class _CircuitBreakerAdapter:
+    """Port stand-in recording the breaker-update state hand-off."""
+
+    def __init__(self, state=None, history=None):
+        self._state = state
+        self._history = history or []
+        self.posted: list[str] = []
+        self.saved = None
+
+    def load_state(self):
+        return self._state
+
+    def load_history(self, *, limit: int | None = None):
+        return self._history
+
+    def post(self, body: str) -> None:
+        self.posted.append(body)
+
+    def save_state(self, state) -> None:
+        self.saved = state
+
+
 class TestStepResult:
     def test_field_order_matches_the_frozen_contract(self):
         assert [f.name for f in dataclasses.fields(StepResult)] == [
@@ -185,6 +221,21 @@ class TestDeterministicStepFromResolved:
         assert step is not None
         assert step.timeout_minutes is None
 
+    def test_parses_the_update_circuit_breaker_contract(self):
+        step = DeterministicStep.from_resolved(
+            {"UPDATE_CIRCUIT_BREAKER": "true", "UPDATE_CIRCUIT_BREAKER_VALUE": "35"}
+        )
+        assert step == DeterministicStep(
+            kind="update_circuit_breaker", circuit_breaker_value=35
+        )
+
+    def test_update_circuit_breaker_non_numeric_value_defaults_to_zero(self):
+        step = DeterministicStep.from_resolved(
+            {"UPDATE_CIRCUIT_BREAKER": "true", "UPDATE_CIRCUIT_BREAKER_VALUE": "abc"}
+        )
+        assert step is not None
+        assert step.circuit_breaker_value == 0
+
     def test_delete_wins_on_a_pathological_overlap(self):
         step = DeterministicStep.from_resolved(
             {
@@ -205,6 +256,7 @@ class TestDeterministicStepFromResolved:
             {"SKIP_AGENT": "true", "REASON": "nothing to do"},
             {"DELETE_COMMENTS": "false"},
             {"RUN_SCRIPT": "false"},
+            {"UPDATE_CIRCUIT_BREAKER": "false"},
         ],
     )
     def test_returns_none_when_no_step_is_present(self, resolved):
@@ -270,3 +322,43 @@ class TestDeterministicStepExecute:
 
         assert result.ok is False
         assert result.affected == 0
+
+    def test_update_circuit_breaker_persists_the_limit_and_posts_state(self):
+        adapter = _CircuitBreakerAdapter()
+        result = DeterministicStep(
+            kind="update_circuit_breaker", circuit_breaker_value=35
+        ).execute(adapter)
+
+        assert result.ok is True
+        assert result.affected == 35
+        assert adapter.saved is not None
+        assert adapter.saved.circuit_breaker.limit == 35
+        # The confirmation must carry the state so the next run's guard reads
+        # the override back from the comment history.
+        embedded = from_body(adapter.posted[0])
+        assert embedded is not None
+        assert embedded.circuit_breaker.limit == 35
+        assert "Circuit-breaker limit set to **35**" in adapter.posted[0]
+
+    def test_update_circuit_breaker_warns_when_value_does_not_clear_usage(self):
+        adapter = _CircuitBreakerAdapter(
+            state=WorkflowState(), history=_bot_marker_history(6)
+        )
+
+        result = DeterministicStep(
+            kind="update_circuit_breaker", circuit_breaker_value=2
+        ).execute(adapter)
+
+        assert result.ok is True
+        assert "still tripped" in adapter.posted[0]
+
+    def test_update_circuit_breaker_reports_unlocked_when_leaving_headroom(self):
+        adapter = _CircuitBreakerAdapter(
+            state=WorkflowState(), history=_bot_marker_history(6)
+        )
+
+        DeterministicStep(
+            kind="update_circuit_breaker", circuit_breaker_value=10
+        ).execute(adapter)
+
+        assert "the issue is unlocked" in adapter.posted[0]

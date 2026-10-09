@@ -69,6 +69,41 @@ def _delete_comments_env(issue_param: Optional[str], issue_number: Optional[int]
     }
 
 
+def _update_circuit_breaker_env(value_param: Optional[str]) -> dict:
+    """Resolve an agent-free circuit-breaker limit update to its env contract.
+
+    Serves ``/nebuko update circuit-breaker --value <n>`` (issue #839): a
+    human-only, per-issue policy update that raises or lowers the breaker's
+    call budget without touching the ``circuit_breaker_threshold`` workflow
+    parameter. The deterministic step posts the updated workflow state (so the
+    next run's guard reads the new limit) and a confirmation; no agent runs and
+    no call budget is consumed, because the local path emits no
+    ``bot-agent-`` markers.
+
+    The parser guarantees ``--value`` is present and ASCII-numeric, so the only
+    value rejected here is ``0`` (a breaker limit must be at least 1). Unlike
+    :func:`_delete_comments_env`, a rejected value does not fall through to the
+    agent cascade: it returns a ``COMMAND_ERROR`` contract so the engine posts
+    the usage hint instead of booting an agent.
+    """
+    value = (value_param or "").strip()
+    if not (value.isascii() and value.isdigit()) or int(value) < 1:
+        usage = "/nebuko update circuit-breaker --value <n>"
+        return {
+            "SKIP_AGENT": "true",
+            "COMMAND_ERROR": "true",
+            "REASON": f"invalid circuit-breaker value; expected {usage}",
+        }
+    return {
+        "TASK": f"Update circuit-breaker limit to {value}",
+        "ROLE_NAME": "script",
+        "AGENT_SELECTED": "false",
+        "SKIP_AGENT": "true",
+        "UPDATE_CIRCUIT_BREAKER": "true",
+        "UPDATE_CIRCUIT_BREAKER_VALUE": value,
+    }
+
+
 def resolve_config(
     trigger_body: str,
     prompt_base: str,
@@ -145,6 +180,15 @@ def resolve_config(
         delete_env = _delete_comments_env(wf_cmd.params.get("issue"), issue_number)
         if delete_env is not None:
             return delete_env
+
+    # /nebuko update circuit-breaker --value <n> — human-only per-issue
+    # circuit-breaker policy update (issue #839). Agent-free: the deterministic
+    # step posts the new state so the next run's guard reads the raised limit.
+    # Must short-circuit before the agent-trigger cascade, otherwise the command
+    # would boot an agent; the ``not is_bot`` gate is mandatory (a bot raising
+    # its own budget is a self-rearming loop).
+    if wf_cmd is not None and wf_cmd.action == "update" and not is_bot:
+        return _update_circuit_breaker_env(wf_cmd.params.get("value"))
 
     # /nebuko clean comments — registry alias of the agent-free comment
     # maintenance path (issues #674/#679). `clean` is a registered local

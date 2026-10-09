@@ -58,7 +58,9 @@ def circuit_breaker_warning(agent_calls: int, threshold: int) -> str:
     return (
         f"\n⚠️ **Circuit Breaker Activated**\n\n"
         f"Agent call limit reached ({agent_calls}/{threshold}). "
-        f"No further agents will be triggered until a human intervenes.\n"
+        f"No further agents will be triggered until a human intervenes.\n\n"
+        f"To raise the limit for this issue, a human can run "
+        f"`/nebuko update circuit-breaker --value <n>`.\n"
     )
 
 

@@ -929,6 +929,73 @@ class TestCleanCommentsCommand(unittest.TestCase):
         self.assertNotIn("DELETE_COMMENTS", result)
 
 
+class TestUpdateCircuitBreakerCommand(unittest.TestCase):
+    """Human `/nebuko update circuit-breaker --value <n>` arm (issue #839).
+
+    The command is human-only and agent-free: it emits the
+    ``UPDATE_CIRCUIT_BREAKER`` env contract (no agent selected, no call budget
+    consumed). ``circuit_breaker`` is accepted as an alias spelling of the
+    canonical ``circuit-breaker`` resource.
+    """
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        return prompt_base, workflows_dir
+
+    def _resolve(self, body, issue_number=None):
+        prompt_base, workflows_dir = self._setup_dirs()
+        return resolve_config(
+            body, prompt_base, workflows_dir, is_bot=False,
+            issue_number=issue_number,
+        )
+
+    def test_valid_command_emits_contract(self):
+        result = self._resolve("/nebuko update circuit-breaker --value 35")
+        self.assertEqual(result["UPDATE_CIRCUIT_BREAKER"], "true")
+        self.assertEqual(result["UPDATE_CIRCUIT_BREAKER_VALUE"], "35")
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["AGENT_SELECTED"], "false")
+        self.assertEqual(result["ROLE_NAME"], "script")
+
+    def test_underscore_resource_alias_is_accepted(self):
+        result = self._resolve("/nebuko update circuit_breaker --value 35")
+        self.assertEqual(result["UPDATE_CIRCUIT_BREAKER"], "true")
+        self.assertEqual(result["UPDATE_CIRCUIT_BREAKER_VALUE"], "35")
+
+    def test_zero_value_is_rejected_with_usage(self):
+        result = self._resolve("/nebuko update circuit-breaker --value 0")
+        self.assertNotIn("UPDATE_CIRCUIT_BREAKER", result)
+        self.assertEqual(result["COMMAND_ERROR"], "true")
+        self.assertEqual(result["SKIP_AGENT"], "true")
+
+    def test_non_numeric_value_is_rejected_with_usage(self):
+        # Malformed commands route through the generic command-error path
+        # (issue #804): a usage notice, never an agent.
+        result = self._resolve("/nebuko update circuit-breaker --value abc")
+        self.assertNotIn("UPDATE_CIRCUIT_BREAKER", result)
+        self.assertEqual(result["COMMAND_ERROR"], "true")
+
+    def test_missing_value_is_not_a_command(self):
+        result = self._resolve("/nebuko update circuit-breaker")
+        self.assertNotIn("UPDATE_CIRCUIT_BREAKER", result)
+
+    def test_unknown_resource_is_not_a_command(self):
+        result = self._resolve("/nebuko update workflow --value 35")
+        self.assertNotIn("UPDATE_CIRCUIT_BREAKER", result)
+
+    def test_bot_trigger_does_not_route_to_update(self):
+        # A bot raising its own budget would be a self-rearming loop.
+        result = self._resolve(
+            "<!-- bot-workflow-terminal -->\n"
+            "/nebuko update circuit-breaker --value 35"
+        )
+        self.assertNotIn("UPDATE_CIRCUIT_BREAKER", result)
+
+
 class TestForceNextStepSubWorkflow(unittest.TestCase):
     """force-next-step must run a step regardless of its shape (issue #599).
 
