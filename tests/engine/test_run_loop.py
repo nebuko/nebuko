@@ -1659,6 +1659,83 @@ class TestIssueBodyContext:
         )
 
 
+class TestHistoryWindowInjection:
+    """Issue #844: bound the injected thread and drop engine bookkeeping.
+
+    The recency window is the sole bound on prompt size (ADR-0003, no
+    summarizer), so the injected thread must be capped and every comment body
+    must reach the prompt without the collapsed workflow-state block or the bot
+    routing markers.
+    """
+
+    def test_engine_defaults_to_the_bounded_window(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        assert engine.history_limit == 5
+
+    def test_main_wires_the_window_from_the_environment(
+        self, tmp_path, monkeypatch, mocker
+    ):
+        import nebuko.engine.run_loop as run_loop
+
+        monkeypatch.setenv("HISTORY_COMMENT_COUNT", "2")
+        run = mocker.patch.object(
+            run_loop.Engine,
+            "run",
+            autospec=True,
+            return_value=mocker.Mock(exit_code=0),
+        )
+
+        run_loop.main(["--adapter", "local", "--run-dir", str(tmp_path)])
+
+        engine = run.call_args[0][0]
+        assert engine.history_limit == 2
+
+    def test_run_loads_the_thread_with_the_bounded_window(self, tmp_path, monkeypatch, mocker):
+        engine = _engine(tmp_path)
+        spy = mocker.spy(engine.adapter, "load_history")
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "true", "REASON": "no-op"})
+
+        engine.run()
+
+        assert spy.call_args.kwargs["limit"] == 5
+
+    def test_render_history_strips_engine_bookkeeping(self, tmp_path):
+        from nebuko.engine.models import CommentEntry
+
+        engine = _engine(tmp_path)
+        history = [
+            CommentEntry(
+                author="bot",
+                body="human readable\n\n" + _soft_kill_comment_body(),
+                created_at="2026-10-01T07:47:47Z",
+            )
+        ]
+
+        rendered = engine._render_context({_TRIGGER_KEY: _trigger()}, history)
+
+        assert "human readable" in rendered
+        assert "### bot — 2026-10-01T07:47:47Z" in rendered
+        assert WORKFLOW_STATE_MARKER not in rendered
+        assert "WORKFLOW_STATE_END" not in rendered
+        assert "Workflow State" not in rendered
+        assert "<!-- bot-workflow-terminal -->" not in rendered
+        assert "<!-- bot-agent-dev -->" not in rendered
+        assert "<!-- workflow-continue -->" not in rendered
+
+    def test_render_context_strips_a_state_bearing_trigger(self, tmp_path):
+        trigger = _trigger(body="do the rebase\n\n" + _soft_kill_comment_body())
+        engine = _engine(tmp_path, trigger)
+
+        rendered = engine._render_context({_TRIGGER_KEY: trigger}, [])
+
+        assert "do the rebase" in rendered
+        assert "**Author:** olivier-norture" in rendered
+        assert WORKFLOW_STATE_MARKER not in rendered
+        assert "<!-- bot-workflow-terminal -->" not in rendered
+        assert "<!-- bot-agent-dev -->" not in rendered
+
+
 class TestBuildPromptStepReplacement:
     """A step's prompt can replace the role prompt (issue #784)."""
 

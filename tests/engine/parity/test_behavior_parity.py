@@ -108,7 +108,16 @@ def _engine_for(fixture: Mapping[str, Any], run_dir: Path, monkeypatch) -> Engin
         "get_issue_comments",
         lambda *args, **kwargs: list(adapter.load_history()),
     )
-    return Engine(adapter=adapter, repo_root=REPO_ROOT, env=dict(fixture.get("env", {})))
+    # The oracle replays decisions recorded when the legacy pipeline injected the
+    # whole thread; the bounded recency window (issue #844) is engine behavior
+    # change, not part of the recorded contract, so it is pinned off here. The
+    # window itself is covered by tests/engine/test_run_loop.py.
+    return Engine(
+        adapter=adapter,
+        repo_root=REPO_ROOT,
+        env=dict(fixture.get("env", {})),
+        history_limit=None,
+    )
 
 
 def _driver_decisions(engine: Engine) -> dict:
