@@ -1415,6 +1415,9 @@ class Engine:
         task = self._get(resolved, "TASK")
         if task:
             parts.append(f"**Task:** {task}")
+        gate_section = _render_gate_decision(self._get(resolved, "GATE_DECISION"))
+        if gate_section:
+            parts.append(gate_section)
         parts.append("## Recent thread\n\n" + _render_history(history))
         return "\n\n".join(part for part in parts if part)
 
@@ -1524,6 +1527,33 @@ def _agent_facing_body(body: str) -> str:
     from workflow_state.features.comment.to_git_comment import strip_state_section
 
     return strip_state_section(body)
+
+
+def _render_gate_decision(raw: Any) -> str:
+    """Render the ``## Human Gate Decision`` section (issue #648), or ``""``.
+
+    A gate release is an engine-owned ``GateDecision`` recorded outside the
+    agent loop; the engine forwards it as a serialized ``GATE_DECISION`` value.
+    Surface it so the routed step (the re-run gated step, or the successor
+    chosen by ``on_result``) reads the human's decision and feedback directly.
+    """
+    if not raw:
+        return ""
+    try:
+        payload = json.loads(raw if isinstance(raw, str) else str(raw))
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(payload, Mapping):
+        return ""
+    lines = ["## Human Gate Decision", f"**Status:** {payload.get('status', '')}"]
+    if payload.get("decided_by"):
+        lines.append(f"**Decided by:** {payload['decided_by']}")
+    feedback = str(payload.get("feedback") or "").strip()
+    if feedback:
+        lines.append(f"**Feedback:**\n{feedback}")
+    if payload.get("comment_id"):
+        lines.append(f"**Comment:** #{payload['comment_id']}")
+    return "\n\n".join(lines)
 
 
 def _render_history(history: Sequence[CommentEntry]) -> str:

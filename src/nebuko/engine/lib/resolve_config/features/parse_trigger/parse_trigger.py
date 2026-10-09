@@ -33,10 +33,25 @@ __all__ = [
     "WorkflowCommand",
     "normalize_resume_input",
     "BARE_RESUME_INPUT",
+    "MACHINE_TOKENS",
+    "is_machine_comment",
     "extract_debug_flag",
     "_parse_trigger_body",
     "build_trigger_commands",
 ]
+
+#: Tokens that mark a comment as machine-authored. A body carrying any of
+#: them is ineligible to carry a gate decision (issue #648), even when its
+#: author passes the identity check — defence in depth against a compromised
+#: human account echoing agent output.
+MACHINE_TOKENS: tuple[str, ...] = (
+    "<!-- bot-workflow-terminal -->",
+    "<!-- bot-agent-",
+    "<!-- bot-trigger",
+    "<!-- bot-subtask-complete",
+    "<!-- bot-summarizer-trigger -->",
+    "AGENT_RUN_CONFIG",
+)
 
 #: Universal bot marker prefixed to every CI-posted comment (issue #474).
 UNIVERSAL_BOT_MARKER = "<!-- bot-workflow-terminal -->"
@@ -73,6 +88,23 @@ def is_bot_comment(trigger_body: str) -> bool:
     return has_universal_bot_marker(trigger_body) or (
         "<!-- bot-agent-" in first_lines
     )
+
+
+def is_machine_comment(trigger_body: str) -> bool:
+    """Check whether a body carries any machine-token marker.
+
+    Unlike :func:`is_bot_comment` (which only inspects the first lines for the
+    universal/agent marker), this scans the whole body for every known
+    machine token — the gate-decision path must reject a comment that merely
+    *echoes* an agent token anywhere in its text (issue #648).
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        True if any token from :data:`MACHINE_TOKENS` appears in the body.
+    """
+    return any(token in trigger_body for token in MACHINE_TOKENS)
 
 
 def is_plain_mention_trigger(trigger_body: str) -> bool:
@@ -227,10 +259,12 @@ def extract_machine_trigger(trigger_body: str) -> Optional[Tuple[str, Optional[s
     return None
 
 
-#: Sentinel value for a bare `/nebuko resume` (no feedback text). A bare
-#: resume still carries the authorization signal for human_gate steps
-#: (issue #506) — HUMAN_RESUME_INPUT must be non-empty so the gate
-#: interceptor recognizes the run as human-triggered.
+#: Sentinel value for a bare `/nebuko resume` (no feedback text). It keeps the
+#: resume's feedback channel distinguishable from "no resume at all" so a
+#: bare resume still carries human input forward. It no longer has any
+#: gate-authorization meaning (issue #648): a human_gate hold is released only
+#: by an engine-owned GateDecision from `/nebuko approve gate` /
+#: `/nebuko reject gate`.
 BARE_RESUME_INPUT = "__resumed__"
 
 

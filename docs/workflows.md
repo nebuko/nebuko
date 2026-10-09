@@ -148,22 +148,58 @@ thing that can lower its cost — this is the motivating case for the field
 
 `human_gate: true` is a security boundary enforced by the engine — not a
 routing choice made by the agent. It guarantees that **no LLM can advance the
-workflow past a gated step on its own**; only a human action releases it.
+workflow past a gated step on its own**; only an identity-verified human
+command releases it.
+
+A gate release is an **engine-owned state mutation** (`GateDecision`), never an
+agent action. The releasing command is recognized at comment-ingestion time and
+keyed on the **GitHub event author** — never on comment-body markers, which are
+agent-writable.
 
 Mechanics:
 
-1. The gated step's agent finishes and emits `advance`. The engine intercepts
-   the dispatch and records `hold` (reason `human_gate:<step>`). The workflow
-   stops; the step's output stays posted on the issue for human review.
-2. A human reviews the output and runs `/nebuko resume [optional feedback]`.
-   This re-runs the gated step with the human's text injected into the agent's
-   context.
-3. On that re-run the gate does **not** fire again — the human's resume is the
-   authorization. If the agent approves immediately it advances to the next
-   step; if it must rework based on the feedback, the result still advances
-   once it emits `advance`.
-4. If the agent `loop`s after a resume, the flow is auto-triggered again, and
-   the final `advance` re-triggers the gate: fresh human validation is required.
+1. The gated step's agent finishes and emits `advance` (or any other
+   completing dispatch). The engine intercepts it and records `hold` (reason
+   `human_gate:<step>`). The workflow stops; the step's output stays posted on
+   the issue for human review. **Every** advancing dispatch is intercepted —
+   the gate has no bypass.
+2. An authorized human (GitHub `OWNER` / `MEMBER` / `COLLABORATOR`) reviews the
+   output and runs one of:
+
+   ```
+   /nebuko approve gate [--feedback "..."]
+   /nebuko reject gate  [--feedback "..."]
+   ```
+
+   The command is handled **inline by the engine** and is never routed to an
+   agent.
+3. The engine records a `GateDecision` (`status`, `decided_by`, `decided_at`,
+   `feedback`, and the exact hold instance it consumes) — the only artifact
+   that can move the workflow past the gate — and routes from it:
+   - **approved** → the gated step's `on_result: approved` successor;
+   - **rejected with feedback** → the gated step is **re-run** with the
+     feedback injected into its context; the gate re-arms when that run
+     completes, so fresh human validation is required;
+   - **rejected without feedback** → the `on_result: rejected` successor.
+4. Decisions are **single-shot**: a `GateDecision` binds to exactly one
+   `(workflow, step, position)` hold instance and is consumed on routing, so
+   replaying an old command is a no-op.
+
+**Non-authoritative agent classification.** Agents may still read and classify
+human intent for UX (a role prompt may note "the human approved"), but that
+classification is **not** what releases a gate — only the engine-recorded
+`GateDecision` does.
+
+**Identity is authoritative.** A gate command is accepted only when its GitHub
+event author is a non-bot user whose `author_association` is
+`OWNER` / `MEMBER` / `COLLABORATOR`, and the comment body carries no machine
+token (`<!-- bot-... -->`, `AGENT_RUN_CONFIG`, …). A comment authored by the CI
+bot that merely *contains* `/nebuko approve gate` is inert, and so is a
+privileged human echoing agent output that carries a machine token.
+
+**`/nebuko resume` is unchanged for non-gated holds.** It still releases a
+`soft_kill` exhaustion halt (issue #704), but on a `human_gate:*` hold it is a
+no-op that points at the gate commands — one release path per hold class.
 
 **Engine-owned human notification (issue #795).** Agents never ping a human.
 When a run stops for human attention the engine itself posts one

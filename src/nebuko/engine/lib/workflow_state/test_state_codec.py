@@ -13,12 +13,14 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import StepRef  # noqa: E402
 from workflow_state import Dispatch, HistoryEntry, WorkflowState  # noqa: E402
 from workflow_state.state_codec import PrevStateLoad, WorkflowStateCodec  # noqa: E402
+from workflow_state.sub_domains.gate_decision import GateDecision  # noqa: E402
 
 HANDOFF_FILE = "prev_workflow_state.json"
 
@@ -133,6 +135,74 @@ class TestCodecRoundTripPreservesPerEntryDispatch(unittest.TestCase):
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.state.history[1].dispatch.task_hint, "architect")
+
+
+def _gate_decision(status: str, step: str = "plan") -> GateDecision:
+    """A deterministic engine-owned gate decision (issue #648)."""
+    return GateDecision(
+        status=status,
+        workflow="plan-orchestration",
+        target_step=step,
+        decided_by="olivier-norture",
+        decided_at=datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc),
+        feedback="please revise the X section" if status == "rejected" else "",
+        comment_id=809,
+        position=_branch_mounted_leaf_position(),
+    )
+
+
+def _state_with_gate_decisions() -> WorkflowState:
+    """State carrying the latest decision plus the full audit."""
+    approved = _gate_decision("approved", "plan")
+    rejected = _gate_decision("rejected", "stub_approval")
+    return WorkflowState(
+        version=9,
+        workflow="plan-orchestration",
+        step="sub_impl",
+        agent="dev",
+        phase="execution",
+        gate_decision=rejected,
+        gate_history=[approved, rejected],
+        position=_branch_mounted_leaf_position(),
+    )
+
+
+class TestCodecRoundTripPreservesGateDecisions(unittest.TestCase):
+    """The lossless hand-off must carry the engine-owned gate state (#648).
+
+    Gate decisions are the only artifact that releases a ``human_gate``
+    step, so both the comment-body codec and the disk hand-off
+    (``save_prev``/``load_prev``) must round-trip them unchanged.
+    """
+
+    def test_compact_roundtrip_preserves_gate_decision_and_history(self):
+        codec = WorkflowStateCodec()
+
+        restored = codec.decode(codec.encode(_state_with_gate_decisions(), compact=True))
+
+        self.assertEqual(restored.gate_decision.status, "rejected")
+        self.assertEqual(restored.gate_decision.decided_by, "olivier-norture")
+        self.assertEqual(restored.gate_decision.position, _branch_mounted_leaf_position())
+        self.assertEqual([d.status for d in restored.gate_history], ["approved", "rejected"])
+
+    def test_disk_handoff_preserves_gate_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            codec = WorkflowStateCodec(runner_temp=tmp)
+
+            codec.save_prev(_state_with_gate_decisions())
+            result = codec.load_prev()
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.state.gate_decision.comment_id, 809)
+        self.assertEqual(len(result.state.gate_history), 2)
+
+    def test_state_without_gate_decisions_roundtrips_to_defaults(self):
+        codec = WorkflowStateCodec()
+
+        restored = codec.decode(codec.encode(_state_v7(), compact=True))
+
+        self.assertIsNone(restored.gate_decision)
+        self.assertEqual(restored.gate_history, [])
 
 
 class TestMalformedPositionNeverSilentlyDropped(unittest.TestCase):

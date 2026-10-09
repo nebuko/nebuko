@@ -10,6 +10,7 @@ from resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
     extract_machine_trigger,
     extract_mention_agent,
     is_bot_comment,
+    is_machine_comment,
     is_plain_mention_trigger,
     normalize_resume_input,
     BARE_RESUME_INPUT,
@@ -207,3 +208,30 @@ class TestBuildTriggerCommands:
         assert tc.debug is False
         assert tc.mention_agent is None
         assert tc.workflow_command is None
+
+
+class TestIsMachineComment:
+    """Whole-body machine-token detection for the gate path (issue #648)."""
+
+    def test_plain_human_body(self):
+        assert is_machine_comment("/nebuko approve gate") is False
+
+    def test_universal_bot_marker(self):
+        assert is_machine_comment("<!-- bot-workflow-terminal -->\nhello") is True
+
+    def test_agent_marker_anywhere_in_body(self):
+        # is_bot_comment only checks the first lines; is_machine_comment must
+        # catch a token echoed deep in the body.
+        body = ("prose\n" * 20) + "<!-- bot-agent-dev -->"
+        assert is_machine_comment(body) is True
+
+    def test_agent_run_config_token(self):
+        assert is_machine_comment('{"AGENT_RUN_CONFIG": {}}') is True
+
+    def test_bot_trigger_token(self):
+        assert is_machine_comment("<!-- bot-trigger: dev -->") is True
+
+    def test_subtask_and_summarizer_tokens(self):
+        assert is_machine_comment("<!-- bot-subtask-complete: 1 -->") is True
+        assert is_machine_comment("<!-- bot-summarizer-trigger -->") is True
+

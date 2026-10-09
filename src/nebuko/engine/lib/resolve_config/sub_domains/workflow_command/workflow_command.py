@@ -17,6 +17,10 @@ Canonical actions (issue #635):
   - ``update``     resource ``circuit-breaker`` — set the per-issue
                    circuit-breaker call limit (issue #839); ``--value`` required
                    and numeric, human-only, agent-free
+  - ``approve``    resource ``gate`` — release a human gate as approved
+                   (issue #648); ``--feedback`` optional
+  - ``reject``     resource ``gate`` — release a human gate as rejected
+                   (issue #648); ``--feedback`` optional
 
 Only the ``/nebuko``-prefixed form is recognized as a command; a bare
 ``clean comments`` line is not one (issue #679).
@@ -101,7 +105,15 @@ class CommandParseResult:
     usage: Optional[str]  # @stub-protected  (correction hint, iff malformed)
 
 
-ACTIONS: Tuple[str, ...] = ("run", "resume", "force-step", "delete", "update")
+ACTIONS: Tuple[str, ...] = (
+    "run",
+    "resume",
+    "force-step",
+    "delete",
+    "update",
+    "approve",
+    "reject",
+)
 
 RESOURCE_BY_ACTION: Dict[str, Optional[str]] = {
     "run": "workflow",
@@ -109,6 +121,8 @@ RESOURCE_BY_ACTION: Dict[str, Optional[str]] = {
     "resume": None,
     "delete": "comments",
     "update": "circuit-breaker",
+    "approve": "gate",
+    "reject": "gate",
 }
 
 FLAGS_BY_ACTION: Dict[str, Set[str]] = {
@@ -117,14 +131,18 @@ FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "resume": {"feedback"},
     "delete": {"issue"},
     "update": {"value"},
+    "approve": {"feedback"},
+    "reject": {"feedback"},
 }
 
 #: Classification outcome for a single issue comment (issue #679).
 CommentKind = Literal["command", "agent_trigger", "none"]
 
 #: Command class: ``"workflow"`` commands bootstrap the agent pipeline,
-#: ``"local"`` commands run only their deterministic script (issue #679).
-CommandClass = Literal["workflow", "local"]
+#: ``"local"`` commands run only their deterministic script (issue #679),
+#: ``"engine"`` commands are handled inline by ``resolve_config`` and are
+#: **never** dispatched to an agent (issue #648).
+CommandClass = Literal["workflow", "local", "engine"]
 
 #: Single source of truth for recognized commands (issue #679). Maps a command
 #: name to its command class. Only the ``/nebuko``-prefixed form is
@@ -140,6 +158,8 @@ COMMAND_REGISTRY: Dict[str, CommandClass] = {
     "delete": "local",
     "clean": "local",
     "update": "local",
+    "approve": "engine",
+    "reject": "engine",
 }
 
 #: Required flags per action (absent ⇒ malformed ⇒ None).
@@ -247,6 +267,8 @@ _USAGE_BY_ACTION: Dict[str, str] = {
     "delete": "/nebuko delete comments [--issue <number>]",
     "clean": "/nebuko clean comments [--issue <number>]",
     "update": "/nebuko update circuit-breaker --value <n>",
+    "approve": "/nebuko approve gate [--feedback <text>]",
+    "reject": "/nebuko reject gate [--feedback <text>]",
 }
 
 #: Usage shown when the action is missing or unrecognized.
@@ -254,7 +276,8 @@ _USAGE_UNKNOWN_ACTION = (
     "unrecognized command; expected one of: "
     "/nebuko run workflow --name <workflow>, /nebuko resume, "
     "/nebuko force-step step --name <step>, /nebuko delete comments, "
-    "/nebuko update circuit-breaker --value <n>"
+    "/nebuko update circuit-breaker --value <n>, /nebuko approve gate, "
+    "/nebuko reject gate"
 )
 
 #: Usage shown for a leading ``/`` that is not a ``/nebuko`` invocation.

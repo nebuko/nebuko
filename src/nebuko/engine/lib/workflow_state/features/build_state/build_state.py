@@ -10,6 +10,7 @@ from ...sub_domains.state_metrics.state_metrics import StateMetrics
 from ...sub_domains.step_resolution.step_resolution import StepResolution
 from ...sub_domains.dispatch.dispatch import Dispatch
 from ...sub_domains.function_call import FunctionCall
+from ...sub_domains.gate_decision.gate_decision import GateDecision
 
 def _position_refs(position: Optional[dict]) -> list[StepRef]:
     """Normalize a position input to the flat v3 refs list (issue #638).
@@ -74,6 +75,7 @@ def build_state(
     position: Optional[dict] = None,
     soft_retry_attempt: bool = False,
     is_human_resume: bool = False,
+    gate_decision: Optional[GateDecision] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -131,6 +133,10 @@ def build_state(
         is_human_resume: True when this run was started by an explicit human
             ``/nebuko resume``. An explicit human resume starts a fresh
             per-step budget (``attempts=0``) since the human has taken over.
+        gate_decision: A new engine-owned gate decision (issue #648) produced
+            by an identity-verified ``/nebuko approve|reject gate`` command.
+            Recorded as the latest decision and appended to ``gate_history``;
+            None carries the previous values forward.
 
     Returns:
         A new WorkflowState instance.
@@ -148,6 +154,8 @@ def build_state(
         base_pr = None
         base_started_by = None
         base_circuit_breaker = CircuitBreakerState()
+        base_gate_decision: Optional[GateDecision] = None
+        base_gate_history: list[GateDecision] = []
     else:
         base_version = prev_state.version
         base_history = list(prev_state.history)
@@ -161,6 +169,8 @@ def build_state(
         base_pr = prev_state.pull_request
         base_started_by = prev_state.started_by
         base_circuit_breaker = prev_state.circuit_breaker
+        base_gate_decision = prev_state.gate_decision
+        base_gate_history = list(prev_state.gate_history)
 
     # Build history entry for the current step
     # Normalize the position block to the flat v3 refs list (issue #638);
@@ -219,6 +229,17 @@ def build_state(
     # carried forward verbatim. A later (chained, bot-triggered) run must not
     # re-point the human ping at its own trigger author.
     new_started_by = started_by if prev_state is None else base_started_by
+
+    # Human_gate decision (issue #648): when this run was started by an
+    # identity-verified gate command, record the new decision as the latest
+    # and append it to the full audit trail. Otherwise carry the previous
+    # values forward — a decision persists until a new one supersedes it.
+    if gate_decision is not None:
+        new_gate_decision: Optional[GateDecision] = gate_decision
+        new_gate_history = base_gate_history + [gate_decision]
+    else:
+        new_gate_decision = base_gate_decision
+        new_gate_history = base_gate_history
 
     # Preserve per-step soft-kill retry accounting across transitions (issue
     # #704). The counter is default-filled from the previous state so a
@@ -288,4 +309,6 @@ def build_state(
         # verbatim. It is written only by the ``update circuit-breaker``
         # command, never by a normal transition.
         circuit_breaker=base_circuit_breaker,
+        gate_decision=new_gate_decision,
+        gate_history=new_gate_history,
     )
