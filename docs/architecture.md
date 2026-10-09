@@ -139,20 +139,35 @@ Key properties:
 
 ---
 
-## Agent Answer & Posting Pipeline (issue #522)
+## Agent Answer & Posting Pipeline (issues #522, #830)
 
 A single uniform mechanism decides what gets posted to the issue, identical
 for every agent (no per-agent code paths):
 
-1. **Capture layer** (`build_output.py`) — after the run, the agent's **last
-   substantive text answer** (latest assistant `MessageEvent`, latest-wins) is
-   written to `latest_answer.md`. `finish` tool actions are excluded: under the
-   shared `posting-contract` skill, the finish message is a short status note.
-2. **ETL layer** (`prepare_comment.py`) — one parser for all agents:
+1. **Control-plane schema** (`engine_tools.py`) — the engine declares the
+   control plane as data: `DEFAULT_ENGINE_TOOLS` classifies `finish`
+   (`final_message`, field `message`) and `dispatch_next` (`routing`, fields
+   `status`/`branch`/`complexity`/`reason`). `EngineToolRegistry.harvest` reads
+   those typed fields structurally — no prose/regex heuristics, no per-role
+   configuration.
+2. **Report turn** (`agent_host.py`) — when the work loop ends (any exit
+   reason) the engine takes the hand and issues one elicitation turn whose
+   answer channel is the control plane (`_call_finish` / `_call_dispatch`). The
+   harvested `finish.message` is the deliverable; the typed `dispatch_next`
+   fields are the routing decision. This is what makes the posted answer
+   independent of where the agent placed its prose (the #822 truncation bug).
+3. **Capture layer** (`build_output.py` + `answer_capture.py`) — the harness
+   freezes the deliverable at the first end-tool boundary
+   (`AnswerCapture.freeze_report_payload`, source `report_finish`). Deterministic
+   fallback chain when the report turn cannot run: standalone text answer →
+   work-loop `finish.message` → the boundary turn's thought, each one visibly
+   `source`-marked in the snapshot. `extract_latest_answer()` keeps its
+   stub-protected signature and reads the same typed payload first.
+4. **ETL layer** (`prepare_comment.py`) — one parser for all agents:
 
    | Input | Posted body |
    |---|---|
-   | `latest_answer.md` non-empty | The latest answer (the deliverable) |
+   | `latest_answer.md` / captured deliverable non-empty | The report turn's typed `finish.message` (the deliverable) |
    | missing/empty | The finish message → byte-identical legacy behavior |
 
    Invariants enforced regardless of agent:
@@ -165,10 +180,11 @@ for every agent (no per-agent code paths):
    Size handling is unchanged: 10k-char split → part files → 60k truncate →
    multi-part posting.
 
-**Shared contract** — the rule "last text answer = full deliverable; `finish`
-message = 2–3 sentence status + hand-off sentinel" lives in a single skill
-file, [`skills/posting-contract.md`](../defaults/skills/posting-contract.md), attached to
-every agent via the `skills:` list in `agent-config.yaml` — no per-prompt edits.
+**Shared contract** — the rule "the report turn's `finish.message` is the
+deliverable; the work-loop finish message is an optional note" lives in a single
+skill file, [`skills/posting-contract.md`](../defaults/skills/posting-contract.md),
+attached to every agent via the `skills:` list in `agent-config.yaml` — no
+per-prompt edits.
 
 > **TODO (follow-up):** a global `core_skills` key in `agent-config.yaml` that
 > applies to every agent automatically, so new agents don't have to remember

@@ -613,6 +613,30 @@ def _finish_action_event(text: str) -> "object":
     )
 
 
+def _finish_event_with_thought(thought: str, message: str) -> "object":
+    """Build a finish-turn ActionEvent carrying both turn text and a typed message.
+
+    This is the issue #822 shape: the model wrote a one-line lead-in as the turn
+    text and put the full report in the ``finish`` ``message`` argument.
+    """
+    from openhands.sdk.event import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall, TextContent
+    from openhands.sdk.tool.builtins.finish import FinishAction
+
+    tool_call = MessageToolCall(
+        id="tc-finish-report", name="finish", arguments="{}", origin="completion"
+    )
+    return ActionEvent(
+        source="agent",
+        tool_name="finish",
+        thought=[TextContent(text=thought)],
+        tool_call_id="tc-finish-report",
+        tool_call=tool_call,
+        llm_response_id="r-report",
+        action=FinishAction(message=message),
+    )
+
+
 def _dispatch_action_event(text: str) -> "object":
     """Build a dispatch_next-turn ActionEvent carrying the deliverable in thought.
 
@@ -723,6 +747,42 @@ class TestExtractLatestAnswer(unittest.TestCase):
     def test_blank_dispatch_next_turn_thought_returns_empty(self):
         events = [_dispatch_action_event("   \n  ")]
         self.assertEqual(extract_latest_answer(events), "")
+
+    # --- issue #830 regression: full report lives in finish.message, the turn
+    # text is only a one-line lead-in (#822) ---
+
+    def test_typed_finish_message_captured_when_no_standalone_answer(self):
+        events = [
+            _finish_event_with_thought(
+                "Work pushed and PR updated. Here is my wind-down summary.",
+                "# Full report\n\nBody with the complete deliverable.",
+            )
+        ]
+        self.assertEqual(
+            extract_latest_answer(events),
+            "# Full report\n\nBody with the complete deliverable.",
+        )
+
+    def test_standalone_answer_still_wins_over_a_typed_finish_note(self):
+        """The documented contract is preserved when a real answer exists."""
+        from openhands.sdk.tool.builtins.finish import FinishAction
+        from openhands.sdk.event import ActionEvent
+        from openhands.sdk.llm.message import MessageToolCall
+
+        tool_call = MessageToolCall(
+            id="tc-finish-note", name="finish", arguments="{}", origin="completion"
+        )
+        note = ActionEvent(
+            source="agent",
+            tool_name="finish",
+            thought=[],
+            tool_call_id="tc-finish-note",
+            tool_call=tool_call,
+            llm_response_id="r-note",
+            action=FinishAction(message="Scaffolding complete, handing off."),
+        )
+        events = [_msg_event("# Report\n\nBody only."), note]
+        self.assertEqual(extract_latest_answer(events), "# Report\n\nBody only.")
 
 
 def _outcome_with_offset(offset) -> "object":

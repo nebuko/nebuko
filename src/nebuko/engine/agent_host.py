@@ -20,6 +20,7 @@ import io
 import logging
 import os
 import tempfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Iterator, Mapping
@@ -36,6 +37,7 @@ from nebuko.engine.agent_runner import (
     _read_text,
 )
 from nebuko.engine.answer_capture import AnswerCapture
+from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS, EngineToolPayload
 from nebuko.engine.paths import ensure_import_path
 
 __all__ = ["InProcessAgentHost"]
@@ -43,6 +45,30 @@ __all__ = ["InProcessAgentHost"]
 log = logging.getLogger(__name__)
 
 _MISSING = object()
+
+#: Conversation attributes the report turn stows its results on (issue #830),
+#: mirroring how ``run_agent`` stows ``run_outcome`` for ``build_output``.
+_REPORT_PAYLOAD_ATTR = "nebuko_report_payload"
+_REPORT_ROUTING_ATTR = "nebuko_report_routing"
+_REPORT_OFFSET_ATTR = "nebuko_report_event_offset"
+
+#: Engine-elicited report turn (issue #830). After the work loop ends the
+#: engine takes the hand and asks for the deliverable in the control plane's
+#: typed slots, so the posted answer never depends on where the agent placed
+#: its prose (the #822 root cause). One turn carries both control calls.
+_REPORT_PROMPT = (
+    "Engine report turn - the work phase is over; do not call any work tool "
+    "(no terminal, file_editor, think, ...). Reply by calling the control-plane "
+    "tools only:\n"
+    "1. `finish` with `message` set to your COMPLETE, self-contained "
+    "deliverable for this run - the full report that must be posted on the "
+    "GitHub issue (not a one-line status note).\n"
+    "2. `dispatch_next` with your routing decision (status, and branch/"
+    "complexity/reason when they apply).\n"
+    "Put no deliverable prose outside the `finish` message."
+)
+
+_REPORT_TURN_TIMEOUT_S = 240.0
 
 
 class InProcessAgentHost:
@@ -91,7 +117,7 @@ class InProcessAgentHost:
                 _child_env(script, self._env, repo_root=self._repo_root)
             ), contextlib.chdir(workdir):
                 with _capture_console() as console:
-                    conversation = _run_pipeline(pipeline, prompt, self._repo_root)
+                    conversation = _run_pipeline(pipeline, prompt, self._repo_root, self)
                     console_log = console.getvalue()
             return self._capture_artifacts(work, conversation, console_log)
 
@@ -118,6 +144,10 @@ class InProcessAgentHost:
         for event in getattr(getattr(conversation, "state", None), "events", None) or []:
             capture.on_event(event)
 
+        report = _report_payload(conversation)
+        if report is not None:
+            capture.freeze_report_payload(report)
+
         raw_answer = _read_text(work / _LATEST_ANSWER_FILE)
         deliverable = capture.deliverable(raw_answer)
         snapshot = capture.snapshot
@@ -137,21 +167,114 @@ class InProcessAgentHost:
             "console_log": console_log or _read_text(work / _CONSOLE_LOG_FILE),
         }
 
+    def _elicit_report(self, conversation: Any) -> None:
+        """Take the hand: one engine-elicited report turn, then harvest (issue #830).
 
-def _run_pipeline(pipeline: SimpleNamespace, prompt: str, workspace: Path) -> Any:
-    """Drive the legacy steps (resolve -> run -> metrics -> build) in-process.
+        The work loop has ended; the engine starts a final LLM request that
+        targets the control-plane slots and records the harvested payloads on
+        the conversation (mirroring how ``run_agent`` stows ``run_outcome``).
+        Best-effort: a failed or absent turn leaves the capture on its fixed
+        fallback chain and never aborts the run.
+        """
+        if conversation is None:
+            return
+        setattr(conversation, _REPORT_OFFSET_ATTR, _event_count(conversation))
+        try:
+            _send_and_run(conversation, _REPORT_PROMPT)
+        except Exception as error:  # noqa: BLE001 - degrade to the fallback chain
+            log.warning("[phase:agent] report turn failed: %s", error)
+            return
+        finish = self._call_finish(conversation)
+        routing = self._call_dispatch(conversation)
+        if finish is not None:
+            setattr(conversation, _REPORT_PAYLOAD_ATTR, finish)
+            log.info(
+                "[phase:agent] report turn harvested finish.message (%d chars)",
+                len(finish.fields.get("message", "") or ""),
+            )
+        if routing is not None:
+            setattr(conversation, _REPORT_ROUTING_ATTR, routing)
+        if finish is None and routing is None:
+            log.warning("[phase:agent] report turn returned no control-plane call")
+
+    def _call_finish(self, conversation: Any) -> EngineToolPayload | None:
+        """Engine-started report turn's ``finish`` payload: the final message."""
+        return _harvest_report(conversation, "finish")
+
+    def _call_dispatch(self, conversation: Any) -> EngineToolPayload | None:
+        """Engine-started report turn's ``dispatch_next`` payload: the routing."""
+        return _harvest_report(conversation, "dispatch_next")
+
+
+def _report_payload(conversation: Any) -> EngineToolPayload | None:
+    """The report turn's harvested ``finish`` payload, if the turn produced one."""
+    return getattr(conversation, _REPORT_PAYLOAD_ATTR, None)
+
+
+def _harvest_report(conversation: Any, tool_name: str) -> EngineToolPayload | None:
+    """Harvest a typed control-plane payload from the report turn's events only."""
+    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
+    events = _events(conversation)
+    payload = None
+    for event in events[offset:]:
+        if getattr(event, "tool_name", None) != tool_name:
+            continue
+        harvested = DEFAULT_ENGINE_TOOLS.harvest(
+            tool_name, getattr(event, "action", None)
+        )
+        if harvested is not None:
+            payload = harvested
+    return payload
+
+
+def _send_and_run(conversation: Any, prompt: str) -> None:
+    """Send ``prompt`` and run one bounded pass (report turn, issue #830).
+
+    Runs ``conversation.run`` on a worker thread so a hung turn cannot consume
+    the whole job budget: on timeout the engine interrupts the conversation,
+    the turn ends, and the caller keeps the deterministic fallback chain.
+    """
+    conversation.send_message(prompt)
+    worker = threading.Thread(target=conversation.run, daemon=True)
+    worker.start()
+    worker.join(_REPORT_TURN_TIMEOUT_S)
+    if worker.is_alive():
+        log.warning("[phase:agent] report turn exceeded its budget - interrupting")
+        with contextlib.suppress(Exception):
+            conversation.interrupt()
+        worker.join(30.0)
+
+
+def _event_count(conversation: Any) -> int:
+    return len(_events(conversation))
+
+
+def _events(conversation: Any) -> list:
+    return list(getattr(getattr(conversation, "state", None), "events", None) or [])
+
+
+def _run_pipeline(
+    pipeline: SimpleNamespace,
+    prompt: str,
+    workspace: Path,
+    host: "InProcessAgentHost" | None = None,
+) -> Any:
+    """Drive the legacy steps (resolve -> run -> report -> metrics -> build).
 
     ``args`` mirrors the legacy entry point's argparse namespace; the facade
     steps treat it as informational (only ``prompt_location`` is read, and the
     prompt is passed explicitly here). ``workspace`` is the real checkout the
     agent must operate on, passed explicitly so the conversation does not bind
-    to the host's temporary cwd (issue #766).
+    to the host's temporary cwd (issue #766). ``host`` drives the engine-elicited
+    report turn between the work loop and output building (issue #830).
     """
     args = SimpleNamespace(prompt_location=None)
     llm_config, resolved_prompt, agent_cfg = pipeline.resolve_llm_config(args, prompt)
     conversation = pipeline.run_agent(
         llm_config, resolved_prompt, args, agent_cfg=agent_cfg, workspace=workspace
     )
+    if host is not None:
+        host._elicit_report(conversation)
     metrics = pipeline.collect_and_save_metrics(conversation, agent_cfg)
     pipeline.build_output(
         conversation, metrics, args, prev_state=pipeline.load_prev_state_or_recover()

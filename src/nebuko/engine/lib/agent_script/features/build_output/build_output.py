@@ -13,6 +13,8 @@ from openhands.sdk.llm.message import content_to_str
 from openhands.sdk.tool.builtins.finish import FinishTool
 from pydantic import ValidationError
 
+from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS
+
 from config import (
     is_self_function_call,
     load_workflow,
@@ -619,10 +621,9 @@ def _terminal_turn_answer(event, tool_name: str) -> str:
     When the LLM emits the full answer and a ``finish`` / ``dispatch_next``
     tool call in the same turn (the issue #553/#555 regression path), the SDK
     stores the text in ``ActionEvent.thought`` and emits no standalone
-    ``MessageEvent``. The action's own arguments are never consulted: under
-    the posting-contract skill the ``finish`` message is a short status note
-    and the ``dispatch_next`` reason is one-sentence routing metadata, while
-    the turn's text carries the full deliverable. Action events of any other
+    ``MessageEvent``. This is the *fallback* source: the engine-tool typing
+    (``_typed_finish_message``) is read first, and only when it is absent does
+    the turn text stand in for the deliverable. Action events of any other
     tool return ``""`` so mid-run commentary attached to other tool calls is
     never mistaken for the answer.
     """
@@ -631,26 +632,47 @@ def _terminal_turn_answer(event, tool_name: str) -> str:
     return "".join(content_to_str(event.thought)).strip()
 
 
+def _typed_finish_message(event) -> str:
+    """The typed ``finish.message`` of a terminal turn, or ``""`` (issue #830).
+
+    The control plane is classified declaratively by
+    :data:`~nebuko.engine.engine_tools.DEFAULT_ENGINE_TOOLS`: ``finish``'s
+    ``message`` argument is the canonical final message (the engine-elicited
+    report turn fills it). Reading the typed payload structurally — instead of
+    guessing from prose placement — is what makes the posted answer
+    deterministic (the #822 truncation bug was a report left in
+    ``finish.message`` while the extractor read the one-line turn text).
+    """
+    if not isinstance(event, ActionEvent) or event.tool_name != FINISH_TOOL_NAME:
+        return ""
+    payload = DEFAULT_ENGINE_TOOLS.harvest(event.tool_name, getattr(event, "action", None))
+    if payload is None or payload.payload_kind != "final_message":
+        return ""
+    return (payload.fields.get("message") or "").strip()
+
+
 def extract_latest_answer(events: list) -> str:
     # @stub-protected: signature defined by architect — do not modify
     """Extract the agent's latest full text answer from conversation events.
 
-    Contract (capture layer, issue #522; regression fixes for issues #553
-    and #555):
-      * Return the text of the LAST assistant ``MessageEvent`` whose text
-        content is non-empty after stripping (latest-wins: each newer
-        answer replaces the previous one).
-      * Additionally consider the text of the agent's ``finish`` and
-        ``dispatch_next`` turns (carried in ``ActionEvent.thought``): when
-        the full answer and one of those tool calls share a turn, the SDK
-        emits no standalone ``MessageEvent`` for it — previously such
-        answers were lost and posting fell back to the short finish
-        message. Agents commonly place their full deliverable on the same
-        turn as the mandatory pre-finish ``dispatch_next`` call.
+    Contract (capture layer, issue #522; regression fixes for issues #553,
+    #555 and #830):
+      * **Legacy latest-wins scan** — the text of the last assistant
+        ``MessageEvent`` with non-empty content, or the turn text of the
+        agent's ``finish`` / ``dispatch_next`` turns (carried in
+        ``ActionEvent.thought``). When the full answer and one of those tool
+        calls share a turn, the SDK emits no standalone ``MessageEvent`` for
+        it — previously such answers were lost and posting fell back to the
+        short finish message.
+      * **Typed engine-tool message when no standalone answer exists
+        (issue #830).** A standalone text answer is the documented
+        deliverable and always wins. But when the agent produced no such
+        answer, a typed ``finish.message`` is the canonical final message:
+        the #822 bug was a full report left in ``finish.message`` while the
+        turn text was a one-line lead-in, which the latest-wins scan
+        published. The engine-elicited report turn fills this slot.
       * All other tool actions are ignored — their accompanying text is
-        mid-run commentary, not a deliverable. Agents may call these
-        tools mid-flow or emit a final status text after them; answers are
-        considered in order.
+        mid-run commentary, not a deliverable.
       * Return ``""`` when no agent text answer exists; callers then fall
         back to the finish message (byte-identical legacy behavior).
 
@@ -666,6 +688,8 @@ def extract_latest_answer(events: list) -> str:
     # posting-contract skill agents may post the deliverable before calling
     # them, and the report must still be captured then.
     latest = ""
+    latest_message = ""
+    typed_finish = ""
     for event in events or []:
         if not isinstance(event, (MessageEvent, ActionEvent)):
             continue
@@ -673,13 +697,22 @@ def extract_latest_answer(events: list) -> str:
             if event.source != "agent":
                 continue
             text = "".join(content_to_str(event.llm_message.content)).strip()
+            if text:
+                latest_message = text
         else:
+            typed_text = _typed_finish_message(event)
+            if typed_text:
+                typed_finish = typed_text
             text = (
                 _terminal_turn_answer(event, FINISH_TOOL_NAME)
                 or _terminal_turn_answer(event, DISPATCH_NEXT_TOOL_NAME)
             )
         if text:
             latest = text
+    # A standalone text answer is the documented deliverable; the typed
+    # engine-tool message only stands in when the agent produced none.
+    if typed_finish and not latest_message:
+        return typed_finish
     return latest
 
 
