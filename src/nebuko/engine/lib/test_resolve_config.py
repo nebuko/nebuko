@@ -59,7 +59,7 @@ class TestExtractMentionAgent:
         assert result is None
 
     def test_all_agent_types(self):
-        for agent in ("architect", "context", "dev", "review", "issue", "issue-reviewer"):
+        for agent in ("architect", "context", "dev", "review", "po"):
             result = extract_mention_agent(f"Hello @@{agent} help me")
             assert result == agent
 

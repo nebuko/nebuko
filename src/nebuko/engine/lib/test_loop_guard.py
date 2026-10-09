@@ -29,7 +29,7 @@ class TestDetectSameAgentLoop:
         assert detect_same_agent_loop(body, "issue-reviewer") is True
 
     def test_all_agents(self):
-        for agent in ("architect", "context", "dev", "review", "issue", "issue-reviewer"):
+        for agent in ("architect", "context", "dev", "review", "po"):
             body = f"<!-- bot-agent-{agent} -->"
             assert detect_same_agent_loop(body, agent) is True
             assert detect_same_agent_loop(body, "other") is False
@@ -62,9 +62,11 @@ class TestDetectHumanPlusAgentPing:
         body = "@alice @@po please draft the spec"
         assert detect_human_plus_agent_ping(body) is True
 
-    def test_debug_mention_with_human_ping(self):
+    def test_removed_agent_mention_not_an_agent_ping(self):
+        # `debug` was retired in issue #828: `@@debug` is no longer a roster
+        # mention, so it must not register as an agent ping.
         body = "@alice @@debug investigate"
-        assert detect_human_plus_agent_ping(body) is True
+        assert detect_human_plus_agent_ping(body) is False
 
     def test_po_mention_without_human_ping(self):
         body = "@@po please draft the spec"

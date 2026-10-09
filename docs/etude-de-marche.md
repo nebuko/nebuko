@@ -32,7 +32,7 @@
 
 ## 2. Le produit
 
-### 2.1 Architecture : huit agents aux rôles distincts
+### 2.1 Architecture : cinq agents aux rôles distincts
 
 Le système s'appuie sur l'architecture multi-agents d'OpenHands [52][44] :
 
@@ -42,9 +42,9 @@ Le système s'appuie sur l'architecture multi-agents d'OpenHands [52][44] :
 | `@@context` (Context Agent) | Collecte de contexte profond (code, issues, PRs, docs) avec localisation et extraits | **Lecture seule** — ne modifie jamais le code |
 | `@@dev` (Execution Developer) | Implémentation, tests, validation | Exécute les plans |
 | `@@review` (Senior Code Reviewer) | Inspection des diffs, bugs, régressions, verdict | Terminal pour `git diff`, **pas de modification** |
-| `@@issue` (Issue Refinement Agent) | Aide les humains à produire des issues claires et actionnables | Itératif avec l'humain [52] |
+| `@@po` (Product Owner) | Specs WHEN/IF/THEN et raffinement d'issues avec l'humain | Itératif avec l'humain [52] |
 
-Trois rôles de support complètent ce noyau : `issue-reviewer` (revue d'issues terminées pour optimiser workflows et prompts), `debug` (investigation des exécutions passées) et `po` (spécifications WHEN/IF/THEN du workflow *spec-driven*).
+Le `@@review` assure en outre les rétrospectives d'issues terminées (analyse des métriques et patterns de résolution) pour optimiser workflows et prompts.
 
 Chaque agent est défini déclarativement (rôle, personnalité, modèle, skills) et connaît le reste de la *roster*. Le mécanisme central est la **délégation par `@@mention`** : n'importe quel agent peut, à n'importe quelle étape, déléguer (« j'ai besoin du contexte sur X », « `@@dev`, implémente ce stub », « `@@review`, vérifie ce diff ») ; le résultat rebondit dans la même filature d'issue, où l'agent appelant reprend [50].
 

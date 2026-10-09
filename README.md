@@ -82,9 +82,8 @@ your own runner.
 
 **Agents with a role and a personality** — defined as code in the config:
 provider, model and sampling parameters, a prompt file, the skills it may use and
-the tools it may call. Eight agents ship today — `architect` (principal engineer),
-`context` (context), `dev` (implementation), `review`, `issue`, `issue-reviewer`,
-`debug` and `po`.
+the tools it may call. Five agents ship today — `architect` (principal engineer),
+`context` (context), `dev` (implementation), `review` and `po`.
 
 **Skills, granted to agents** — a markdown procedure file, granted per agent in
 the same config. Adding a capability is a one-line diff.

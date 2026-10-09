@@ -27,7 +27,7 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 | `/nebuko force-step step --name <step>` | Jump directly to `<step>` of the **active** workflow, regardless of state. Unlike `run --step`, this replays/forks within the current run (it requires an active workflow). |
 | `/nebuko delete comments [--issue <id>] [--from <comment-id>]` | Human-only batch deletion of issue comments. `--issue <id>` selects the target issue (mandatory on the CLI surface; auto-filled with the invoking issue when the command is posted in that issue). Optional `--from <comment-id>` deletes that comment **and every later one**; omit it to delete **all** comments. Terminal command: it runs the deterministic deletion step and no agent. Requires `GH_PAT` with `issues:write`. |
 | `/nebuko clean comments` | Alias of `/nebuko delete comments` (issue #679). Terminal; runs the deterministic deletion step and no agent. |
-| `DEBUG=true` | Routes to the debug/recovery path instead of normal routing. |
+| `DEBUG=true` | Enables verbose debug logging for the run. |
 
 **Precedence:** human commands always override state-based routing (see the
 cascade in [architecture.md — Routing Cascade](./architecture.md#routing-cascade)):

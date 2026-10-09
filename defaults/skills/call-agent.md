@@ -21,7 +21,7 @@ Rules:
 
 - **One function call per message.** If several appear, the last valid one wins — but do not rely on that; emit exactly one.
 - `function` must be a registered name. Currently only `call_agent` is registered.
-- `agent_name` must be a known agent roster name: `architect`, `context`, `dev`, `review`, `issue`, `issue-reviewer`, `debug`, `po`.
+- `agent_name` must be a known agent roster name: `architect`, `context`, `dev`, `review`, `po`.
 - `complexity` (optional, default `"medium"`): `low`, `medium`, or `high`.
 - `callback` (optional): the **return address** — the agent to run once the callee finishes without a decision of its own. It defaults to the **emitting caller**, so you usually omit it; set it explicitly only to route the return somewhere other than yourself. A `callback` equal to `agent_name` is a no-op.
 - The call is **one-shot**: it is consumed by the next run and cleared from the workflow state, so it can never re-fire.

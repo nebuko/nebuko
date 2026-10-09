@@ -37,24 +37,21 @@ callers can select the runner via the `runs_on` workflow input (e.g.
 
 ---
 
-## The 8-Agent Model
+## The 5-Agent Model
 
 | Agent | Role | Tools |
 |-------|------|-------|
 | `architect` | Principal engineer — analysis, architecture, planning; delegates everything else. Never writes code. | think, finish |
 | `context` | Context collection — locates files, extracts snippets, reports sources. Read-only; never modifies code. | terminal, file_editor, task_tracker, think, finish |
 | `dev` | Execution developer — implements plans, writes tests, opens PRs. | terminal, file_editor, task_tracker, think, finish |
-| `review` | Senior code reviewer — inspects diffs, issues approved/rejected verdicts. | think, finish |
-| `issue` | Issue refinement — iteratively refines issue drafts with humans. | think, finish |
-| `issue-reviewer` | Reviews completed issues for workflow/prompt optimizations. | think, finish |
-| `debug` | Investigates unusual agent behavior from past run logs/artifacts. | terminal, file_editor, think, finish |
-| `po` | Product owner — writes WHEN/IF/THEN specs (used by the `spec-driven` workflow). | think, finish |
+| `review` | Senior code reviewer — inspects diffs, issues approved/rejected verdicts; also runs issue retrospectives. | think, finish |
+| `po` | Product owner — writes WHEN/IF/THEN specs and refines issue drafts with humans. | think, finish |
 
 Each agent = a prompt file (`.agents/prompts/{agent}.md`) + a model reference +
 a tool whitelist, declared in [`agent-config.yaml`](../defaults/agents/agent-config.yaml).
-Tools are a security boundary: planning agents (`architect`, `review`, `issue`,
-...) physically cannot touch files, while execution agents (`dev`, `context`,
-`debug`) can. Full details in [agents-and-skills.md](./agents-and-skills.md).
+Tools are a security boundary: planning agents (`architect`, `review`, `po`)
+physically cannot touch files, while execution agents (`dev`, `context`)
+can. Full details in [agents-and-skills.md](./agents-and-skills.md).
 
 ---
 
@@ -203,7 +200,7 @@ trigger body
 Precedence rationale: explicit human intent must never be absorbed by an
 active workflow's `dispatch` object. If no state is found in the current body,
 the router fetches the last state from the issue comment history first.
-`DEBUG=true` in a body routes to the debug/recovery path instead.
+`DEBUG=true` in a body enables verbose debug logging for that run instead.
 
 ### Entering a workflow at a dedicated step (issue #789)
 

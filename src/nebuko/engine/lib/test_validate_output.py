@@ -320,9 +320,10 @@ class TestValidateAgentRunConfig:
         result = validate_agent_run_config('{"task": "po"}')
         assert result.is_valid is True
 
-    def test_debug_task_valid(self):
+    def test_debug_task_now_invalid(self):
+        # `debug` was retired in issue #828.
         result = validate_agent_run_config('{"task": "debug"}')
-        assert result.is_valid is True
+        assert result.is_valid is False
 
     def test_missing_task(self):
         result = validate_agent_run_config('{"complexity": "high"}')

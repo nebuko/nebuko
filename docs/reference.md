@@ -297,7 +297,7 @@ Variables the orchestrator sets/consumes per run:
 | `PARENT_WORKFLOW_STEP` | `resolve_config` | Step in the parent workflow that mounted a sub-workflow. |
 | `WORKFLOW_POSITION` | `resolve_config` / `resolve_workflow` | Single-line JSON of the run's full mount stack (`WorkflowState.position`). |
 | `WORKFLOW_POSITION_PATH` | `resolve_config` / `resolve_workflow` | Human-readable `wf/step\|wf/step\|...` rendering of `WORKFLOW_POSITION`. |
-| `DEBUG` | user (`DEBUG=true` in body) / flag | Enables debug-mode routing (recover) and verbose logs. |
+| `DEBUG` | user (`DEBUG=true` in body) / flag | Enables verbose debug logging. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |
 | `COMMANDCODE_API_KEY` | repo secret (optional) | CommandCode subscription token — see [subscription-plans.md](./subscription-plans.md). |
@@ -318,4 +318,4 @@ writes to `GITHUB_ENV` the same way.
 | `<!-- bot-agent-script -->` | Pseudo-role marker for deterministic `script` steps (issue #541): the step output is posted under this fixed tag so repeated runs update rather than duplicate, and circuit-breaker marker counting stays intact. |
 | `<!-- AGENT_RUN_CONFIG ... -->` | Dispatch sentinel — see [AGENT_RUN_CONFIG](#agent_run_config). Canonical regex in `validate_output.py`: `<!--(?:[ \t])*AGENT_RUN_CONFIG[ \t]+(\{.*?\})(?:[ \t])*-->` (single-line, no DOTALL). |
 | `<!-- WORKFLOW_STATE_START -->` ... `<!-- WORKFLOW_STATE_END -->` | Collapsed JSON workflow-state section — see [WORKFLOW_STATE v1](#workflow_state-v1). Per-step agent metrics live in its `history` entries. |
-| `<!-- issue-agent-state: round=N,status=S -->` | Issue-refinement agent state markers (see `AGENTS.md`). |
+| `<!-- po-agent-state: round=N,status=S -->` | Issue-refinement agent state markers (see `AGENTS.md`). |

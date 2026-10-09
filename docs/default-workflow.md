@@ -26,9 +26,7 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 | `context` | `@@context` | Context builder — gathers repository context |
 | `dev` | `@@dev` | Execution developer — implements code changes |
 | `review` | `@@review` | Code reviewer — reviews PRs |
-| `issue` | `@@issue` | Issue processor |
-| `issue-reviewer` | `@@issue-reviewer` | Issue reviewer |
-| `debug` | `@@debug` | Debug specialist |
+| `po` | `@@po` | Product owner — specs and issue refinement |
 
 ---
 

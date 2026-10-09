@@ -98,12 +98,16 @@ class TestExtractMentionAgent:
     def test_mention_po(self):
         assert extract_mention_agent("@@po please write the spec") == "po"
 
-    def test_mention_debug(self):
-        assert extract_mention_agent("@@debug investigate this") == "debug"
+    def test_removed_agent_mentions_no_longer_route(self):
+        # debug/issue/issue-reviewer were retired in issue #828.
+        assert extract_mention_agent("@@debug investigate this") is None
+        assert extract_mention_agent("@@issue open a ticket") is None
+        assert extract_mention_agent("@@issue-reviewer take a look") is None
 
-    def test_issue_prefix_not_shadowing_issue_reviewer(self):
-        assert extract_mention_agent("@@issue-reviewer take a look") == "issue-reviewer"
-        assert extract_mention_agent("@@issue open a ticket") == "issue"
+    def test_legacy_agent_mentions_still_route(self):
+        # Deprecated names resolve to their renamed successors (issue #828).
+        assert extract_mention_agent("@@genius plan this") == "architect"
+        assert extract_mention_agent("@@ctx gather context") == "context"
 
     def test_all_configured_agents_mentionable(self):
         from config import load_agent_names

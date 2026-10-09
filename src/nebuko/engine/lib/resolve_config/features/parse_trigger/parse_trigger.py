@@ -150,8 +150,8 @@ _mention_re_cache: Optional["re.Pattern[str]"] = None
 def _mention_re() -> "re.Pattern[str]":
     """Compiled ``@@`` mention regex built from the live agent roster (cached).
 
-    Names are ordered longest-first so ``issue-reviewer`` is matched before
-    ``issue`` (no prefix shadowing). The non-capturing group keeps
+    Names are ordered longest-first so a longer name is matched before any of
+    its prefixes (no prefix shadowing). The non-capturing group keeps
     ``re.findall`` returning the whole ``@@name`` token, exactly as the
     previous hard-coded pattern did. Deprecated names (issue #828) are matched
     too so historical mentions keep routing.

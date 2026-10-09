@@ -417,8 +417,7 @@ _ROLE_DISPLAY_NAMES = {
     "context": "Context",
     "dev": "Developer",
     "review": "Reviewer",
-    "issue": "Issue",
-    "issue-reviewer": "Issue Reviewer",
+    "po": "Product Owner",
 }
 
 

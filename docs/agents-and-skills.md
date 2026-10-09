@@ -1,6 +1,6 @@
 # Agents & Skills
 
-The system ships with 8 agents and 5 reusable skills. Each agent is declared
+The system ships with 5 agents and 5 reusable skills. Each agent is declared
 in [`agent-config.yaml`](../defaults/agents/agent-config.yaml) (model, prompt file, tool
 whitelist) and defined by a system prompt in `.agents/prompts/{agent}.md`.
 Skills are standalone prompt files in `skills/` that can be attached to a
@@ -16,15 +16,12 @@ workflow step via `skill: [...]` — see
 | `architect` | Principal engineer — plans and delegates, never codes | think, finish | `architect.md` | analyze, plan, architect, spec gates |
 | `context` | Read-only context collector | terminal, file_editor, task_tracker, think, finish | `context.md` | context, context_architect |
 | `dev` | Execution developer — implements and opens PRs | terminal, file_editor, task_tracker, think, finish | `dev.md` | implement, scaffold, sub_clean, final_fix |
-| `review` | Senior code reviewer — approves/rejects | think, finish | `review.md` | review, stub_review, final_review |
-| `issue` | Refines issue drafts with humans | think, finish | `issue.md` | invoked directly via `@@issue` |
-| `issue-reviewer` | Reviews completed issues for workflow optimizations | think, finish | `issue-reviewer.md` | ad-hoc |
-| `debug` | Investigates past agent-run logs/artifacts | terminal, file_editor, think, finish | `debug.md` | debug workflow, recover path |
-| `po` | Product owner — WHEN/IF/THEN specs | think, finish | `po.md` | spec (spec-driven) |
+| `review` | Senior code reviewer — approves/rejects; runs issue retrospectives | think, finish | `review.md` | review, stub_review, final_review |
+| `po` | Product owner — WHEN/IF/THEN specs and issue refinement | think, finish | `po.md` | spec (spec-driven), issue refinement |
 
-Behavior notes per agent live at the top of each prompt file; the issue agent's
-behavior contract (question format, state markers, delegation rules) is also
-documented in [`AGENTS.md`](../AGENTS.md).
+Behavior notes per agent live at the top of each prompt file; the product
+owner's issue-refinement behavior contract (question format, state markers,
+delegation rules) is also documented in [`AGENTS.md`](../AGENTS.md).
 
 ---
 
@@ -65,29 +62,21 @@ scope.
 Inspects diffs for bugs, edge cases, regressions, security, and maintainability,
 then returns an explicit verdict (`approved` / `rejected`) that drives
 conditional workflow routing. Uses the same high-quality LLM class as
-`@@architect` — accuracy over cost.
-
-### issue — Issue Refinement Agent
-Iteratively refines issue drafts with the human: rephrases first, asks
-1–5 grouped questions per round with proposed answers, and may delegate context
-collection to `@@context` (max one call per round). Tracks progress across stateless
-runs via `<!-- issue-agent-state -->` markers (see
-[reference.md — Bot Marker Conventions](./reference.md#bot-marker-conventions)).
-
-### issue-reviewer
-Analyzes *completed* issues and their resolution trajectories — agent metrics,
+`@@architect` — accuracy over cost. Also owns **issue retrospectives**: it
+analyzes *completed* issues and their resolution trajectories — agent metrics,
 collaboration patterns, resolution quality — and produces recommendations for
 prompt and process improvements.
-
-### debug
-Investigates unusual agent behavior: extracts run IDs from comments, downloads
-GHA artifacts, analyzes `console.log` files, and posts structured checkpoint
-comments so an analysis survives interruptions and can be resumed.
 
 ### po — Product Owner
 Reads a feature request and produces a structured natural-language
 specification using WHEN/IF/THEN scenarios. Used by the `spec-driven`
-workflow; the spec is reviewed by a human before any code is written.
+workflow; the spec is reviewed by a human before any code is written. Also
+owns **issue refinement**: it iteratively refines issue drafts with the human,
+rephrases first, asks 1–5 grouped questions per round with proposed answers,
+and may delegate context collection to `@@context` (max one call per round),
+tracking progress across stateless runs via `<!-- po-agent-state -->`
+markers (see
+[reference.md — Bot Marker Conventions](./reference.md#bot-marker-conventions)).
 
 ---
 
@@ -115,22 +104,21 @@ step-level skills override/augment them.
 Tools form a hard security boundary — the OpenHands SDK only instantiates the
 tools whitelisted in the agent's config.
 
-| Tool | architect | context | dev | review | issue | issue-reviewer | debug | po |
-|------|:------:|:---:|:---:|:------:|:-----:|:--------------:|:-----:|:--:|
-| `terminal` | | ✓ | ✓ | | | | ✓ | |
-| `file_editor` | | ✓ | ✓ | | | | ✓ | |
-| `task_tracker` | | ✓ | ✓ | | | | | |
-| `think` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `finish` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Tool | architect | context | dev | review | po |
+|------|:------:|:---:|:---:|:------:|:--:|
+| `terminal` | | ✓ | ✓ | | |
+| `file_editor` | | ✓ | ✓ | | |
+| `task_tracker` | | ✓ | ✓ | | |
+| `think` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `finish` | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 (`think` and `finish` are built-in defaults present for every agent.)
 
-Rationale: planning and judgment roles (`architect`, `review`, `issue`,
-`issue-reviewer`, `po`) can *only reason and reply* — they cannot
-accidentally modify the repository. Context/execution roles (`context`, `dev`,
-`debug`) need full tool access. Note `context` has shell access but its prompt
-forbids modification — read-only-by-policy, unlike `architect`'s read-only-by-
-enforcement.
+Rationale: planning and judgment roles (`architect`, `review`, `po`) can
+*only reason and reply* — they cannot accidentally modify the repository.
+Context/execution roles (`context`, `dev`) need full tool access. Note
+`context` has shell access but its prompt forbids modification —
+read-only-by-policy, unlike `architect`'s read-only-by-enforcement.
 
 ---
 

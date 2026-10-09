@@ -54,26 +54,8 @@ agents:
     skills: ["posting-contract"]
     tools: ["think", "finish", "dispatch_next"]
 
-  issue:
-    model: "${llms.deepseek-v4_1-flash}"
-    prompt_file: ".agents/prompts/issue.md"
-    skills: ["call-agent", "posting-contract"]
-    tools: ["think", "finish", "dispatch_next"]
-
-  issue-reviewer:
-    model: "${llms.deepseek-v4_1-flash}"
-    prompt_file: ".agents/prompts/issue-reviewer.md"
-    skills: ["posting-contract"]
-    tools: ["think", "finish", "dispatch_next"]
-
-  debug:
-    model: "${llms.deepseek-v4_1-flash}"
-    prompt_file: ".agents/prompts/debug.md"
-    skills: ["posting-contract"]
-    tools: ["terminal", "file_editor", "think", "finish", "dispatch_next"]
-
   po:
     model: "${llms.deepseek-v4_1-flash}"
     prompt_file: ".agents/prompts/po.md"
-    skills: ["posting-contract"]
+    skills: ["call-agent", "posting-contract"]
     tools: ["think", "finish", "dispatch_next"]

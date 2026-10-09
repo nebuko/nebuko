@@ -255,7 +255,6 @@ Security notes:
 | `plan-orchestration` | [`plan-orchestration.yaml`](../defaults/workflows/plan-orchestration.yaml) | Full multi-step plan lifecycle sharing one PR |
 | `spec-driven` | [`spec-driven.yaml`](../defaults/workflows/spec-driven.yaml) | Spec → stub (human-gated) → implement |
 | `spec-driven-impl` | [`spec-driven-impl.yaml`](../defaults/workflows/spec-driven-impl.yaml) | Plan → stub (human-gated) → implement |
-| `debug` | [`debug.yaml`](../defaults/workflows/debug.yaml) | Direct single-agent debug call |
 | `demo-composition` | [`demo-composition.yaml`](../defaults/workflows/demo-composition.yaml) | Demo of sub-workflow composition |
 
 ### default
@@ -408,15 +407,6 @@ analyze (architect) → context (context) → plan (architect) ──approved─
 Trigger: `@@architect`. Same gate structure as `spec-driven`, but starts from the
 standard analyze/context/plan chain instead of a PO spec. The stub review +
 human approval is the quality gate before implementation.
-
-### debug
-
-```
-debug (debug) ◆
-```
-
-Trigger: `@@debug`. Single-agent call — the debug agent investigates unusual
-agent behavior from past run logs and artifacts.
 
 ### demo-composition
 

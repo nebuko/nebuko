@@ -56,9 +56,6 @@ TASK_TO_PROMPT = {
     "context": "context.md",
     "dev": "dev.md",
     "review": "review.md",
-    "issue": "issue.md",
-    "issue-reviewer": "issue-reviewer.md",
-    "debug": "debug.md",
     "po": "po.md",
 }
 

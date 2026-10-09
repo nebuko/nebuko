@@ -321,7 +321,7 @@ _LOOP_VERDICT_BODIES = (
 
 
 @pytest.mark.parametrize("body", _LOOP_VERDICT_BODIES)
-@pytest.mark.parametrize("task", ["dev", "architect", "issue-reviewer", ""])
+@pytest.mark.parametrize("task", ["dev", "architect", "po", ""])
 def test_loop_verdict_matches_the_legacy_replay(body, task):
     """Drift check: ``Engine._loop_verdict`` ≡ the legacy replay, branch for branch."""
     resolved = {
