@@ -14,6 +14,7 @@ from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.state_metrics.state_metrics import StateMetrics
 from .sub_domains.step_resolution.step_resolution import StepResolution
 from .sub_domains.function_call import FunctionCall, SUPPORTED_FUNCTIONS
+from .sub_domains.gate_decision.gate_decision import GateDecision
 
 # Features
 from .features.build_state.build_state import build_state
@@ -57,6 +58,7 @@ __all__ = [
     "StepResolution",
     "FunctionCall",
     "SUPPORTED_FUNCTIONS",
+    "GateDecision",
     # Features
     "build_state",
     "state_to_json",

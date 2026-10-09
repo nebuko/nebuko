@@ -29,9 +29,11 @@ from .features.parse_trigger.parse_trigger import (
     _parse_trigger_body,
 )
 from .features.resolve_route.resolve_route import (
+    build_author_identity_from_env,
     _resolve_resume_path,
     _resolve_dispatch_path,
     _resolve_function_call_path,
+    _resolve_gate_decision_path,
     _resolve_handoff_decision,
     _resolve_machine_trigger_path,
     _resolve_human_path,
@@ -229,7 +231,20 @@ def resolve_config(
     ci_mention = has_universal_bot_marker(trigger_body) and is_plain_mention_trigger(
         trigger_body
     )
-    if (
+    if wf_cmd is not None and wf_cmd.action in ("approve", "reject"):
+        # Engine-owned gate release (/nebuko approve|reject gate, issue #648).
+        # Placed before the resume branches: a human_gate hold is released
+        # only here, never by /nebuko resume. Handled inline — never
+        # dispatched to an agent. Identity is sourced from the CI event env
+        # (author login/type/association), never from body markers.
+        config = _resolve_gate_decision_path(
+            prev_state,
+            wf_cmd,
+            build_author_identity_from_env(trigger_body),
+            workflows_dir,
+            local_workflows_dir=local_workflows_dir,
+        )
+    elif (
         wf_cmd is not None
         and wf_cmd.action == "resume"
         and prev_state

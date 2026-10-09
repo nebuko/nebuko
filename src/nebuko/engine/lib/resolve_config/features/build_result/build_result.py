@@ -312,6 +312,11 @@ def _build_result(
         # it to ``build_state`` so the per-step budget is consumed for genuine
         # retries and never for a human/manual trigger.
         "SOFT_RETRY_ATTEMPT": config.get("config_soft_retry_attempt", ""),
+        # Engine-owned gate decision (issue #648): set only by the
+        # ``/nebuko approve|reject gate`` resolution. ``build_output`` parses it
+        # and ``build_state`` persists it — the release is recorded in workflow
+        # state, outside the agent loop.
+        "GATE_DECISION": config.get("config_gate_decision", ""),
         "SKIP_AGENT": "false",
     }
     result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")
