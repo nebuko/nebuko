@@ -99,6 +99,7 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 | `python_version` | string | `3.13` | Python version installed on the runner. |
 | `enable_uv_cache` | boolean | `true` | Enable the `uv` dependency cache. |
 | `prompt_body` | string | `""` | Prompt/body text for programmatic (`workflow_call`) callers. |
+| `checkout_ref` | string | `""` | Explicit ref (SHA, tag, or branch) for the workspace checkout. When empty, the checkout follows the workflow's own commit if the workflow is checking out its own repo (issue #862), else the event default. |
 | `CALLER_AUTH` | string | `on` | When `on` (default), only OWNER/MEMBER/COLLABORATOR authors may trigger from issues/comments; set to `off` to allow anyone. |
 | `EXTRA_SECRET_1_NAME` … `EXTRA_SECRET_9_NAME` | string | `""` | Env var name materialized from the matching `EXTRA_SECRET_n_VALUE` secret — use for MCP tokens (section 3.1). |
 

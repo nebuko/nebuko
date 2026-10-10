@@ -44,10 +44,19 @@ The workflow defines three jobs:
 
 ### Step 1: Checkout Repository
 
-**Input:** Repository context from the GitHub event.  
+**Input:** Repository context from the GitHub event; the `checkout_ref` input;
+`job.workflow_repository` / `job.workflow_sha`.  
 **Output:** Local copy of the repository in `$GITHUB_WORKSPACE`.
 
-Standard `actions/checkout@v5` to clone the target repository.
+Standard `actions/checkout@v5` to clone the target repository. The ref is
+resolved with precedence (issue #862): an explicit `checkout_ref` input wins;
+otherwise, when the workflow file lives in the repository being checked out
+(same-repo/vendored case), the checkout is pinned to the workflow's own commit
+(`job.workflow_sha`) so a workflow pinned via `uses: …@<sha1|tag>` operates on
+the same version; otherwise the checkout falls back to `actions/checkout`'s
+event default. A pinned SHA yields a detached HEAD — `ensure_pr` treats that as
+"no branch to push" and skips, so the agent must create its feature branch
+before handing off.
 
 ---
 
