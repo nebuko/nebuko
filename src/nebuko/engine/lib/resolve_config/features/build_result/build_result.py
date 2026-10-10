@@ -208,9 +208,19 @@ def _build_result(
                 "COMMAND_ERROR": "true",
             }
         # Enriched reason: carries /nebuko failure detail (name + searched
-        # directories) when available (issue #529).
-        skip_reason = config.get("config_skip_reason") or "No valid task found"
-        return {"SKIP_AGENT": "true", "REASON": skip_reason}
+        # directories) when available (issue #529). A recorded resolution
+        # failure is a real config error, so it stays unclassified and keeps
+        # the terminal exit.
+        skip_reason = config.get("config_skip_reason")
+        if skip_reason:
+            return {"SKIP_AGENT": "true", "REASON": skip_reason}
+        # Nothing resolved to dispatch and no failure was recorded: the
+        # workflow simply has no next agent — a benign stop (issue #853).
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": "No valid task found",
+            "SKIP_KIND": "no_next_agent",
+        }
 
     # Validate task
     if task not in TASK_TO_PROMPT:

@@ -9,7 +9,7 @@ from __future__ import annotations
 import shlex
 import subprocess
 from dataclasses import dataclass, field, replace
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict
@@ -23,6 +23,8 @@ __all__ = [
     "RoutingDecision",
     "ExitCode",
     "RunOutcome",
+    "SkipKind",
+    "SkipOutcome",
     "DeterministicStep",
     "StepResult",
     "WorkflowCallFrame",
@@ -105,6 +107,56 @@ class RunOutcome:
     posted_body: str | None
     state: WorkflowState | None
     phases: tuple[str, ...]  # ordered "[phase:*]" markers actually emitted
+
+
+# @stub-protected
+class SkipKind(Enum):
+    """Why a run stopped without dispatching an agent."""
+
+    NO_NEXT_AGENT = "no_next_agent"  # benign — nothing left to dispatch
+    TERMINAL = "terminal"  # benign — terminal marker / workflow exhausted
+    CONFIG_ERROR = "config_error"  # failure — workflow not found / bad config
+
+
+# @stub-protected
+@dataclass(frozen=True)
+class SkipOutcome:
+    """The typed verdict for a run that stops without dispatching an agent.
+
+    Single source of truth for *why* the guards phase skipped the agent and the
+    exit code that follows: a benign verdict (``NO_NEXT_AGENT`` / ``TERMINAL``)
+    is a deliberate no-op and must not fail the host run, while a
+    ``CONFIG_ERROR`` keeps the existing terminal failure exit. Resolver verdicts
+    may omit the kind — an unclassified reason defaults to ``CONFIG_ERROR`` so
+    behaviour is never softened by accident.
+    """
+
+    kind: SkipKind
+    reason: str
+
+    # @stub-protected
+    @property
+    def is_benign(self) -> bool:
+        return self.kind in (SkipKind.NO_NEXT_AGENT, SkipKind.TERMINAL)
+
+    # @stub-protected
+    @property
+    def exit_code(self) -> ExitCode:
+        return ExitCode.ADVANCE if self.is_benign else ExitCode.TERMINAL
+
+    @classmethod
+    def from_verdict(cls, verdict: Mapping[str, Any]) -> "SkipOutcome":
+        """Build the verdict from a guards-phase ``SKIP_AGENT`` dict.
+
+        Unknown/missing ``SKIP_KIND`` falls back to ``CONFIG_ERROR`` (the
+        fail-safe), and the human-readable ``REASON`` is preserved verbatim.
+        """
+        raw_kind = str(verdict.get("SKIP_KIND") or "").strip()
+        try:
+            kind = SkipKind(raw_kind) if raw_kind else SkipKind.CONFIG_ERROR
+        except ValueError:
+            kind = SkipKind.CONFIG_ERROR
+        return cls(kind=kind, reason=str(verdict.get("REASON") or ""))
 
 
 def _is_true(value: Any) -> bool:

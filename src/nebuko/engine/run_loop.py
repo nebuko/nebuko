@@ -32,6 +32,7 @@ from nebuko.engine.models import (
     ExitCode,
     RoutingDecision,
     RunOutcome,
+    SkipOutcome,
     Trigger,
     to_routing_decision,
 )
@@ -118,6 +119,12 @@ def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
         # the guards branch can tell it apart from a routine resolver skip.
         if _is_true(resolved.get("COMMAND_ERROR")):
             verdict["COMMAND_ERROR"] = "true"
+        # The resolver classifies *why* it skipped (benign end-of-workflow vs a
+        # real config failure, issue #853); carry the kind so the guards branch
+        # can pick the matching exit code.
+        kind = resolved.get("SKIP_KIND")
+        if kind:
+            verdict["SKIP_KIND"] = str(kind)
         return verdict
     return None
 
@@ -557,6 +564,21 @@ class Engine:
             verdict = _resolver_skip_verdict(resolved) or self.guard(trigger, history)
             if _is_true(verdict.get("SKIP_AGENT")):
                 reason = str(verdict.get("REASON") or "agent skipped")
+                skip = SkipOutcome.from_verdict({**dict(verdict), "REASON": reason})
+                if skip.is_benign:
+                    # A workflow that has no next agent (or reached its terminal
+                    # step) is a deliberate no-op, not a failure: record the
+                    # reason in the workflow state and exit 0 so the host run
+                    # stays green (issue #853).
+                    log.info("[phase:guards] no next agent — %s", reason)
+                    return RunOutcome(
+                        exit_code=skip.exit_code,
+                        routing=RoutingDecision(status="terminate", reason=reason),
+                        prompt=None,
+                        posted_body=None,
+                        state=self._record_terminal_skip(skip),
+                        phases=tuple(phases),
+                    )
                 log.info("[phase:guards] skipping agent — %s", reason)
                 # Two terminal skips owe the thread a human ping: an exhausted
                 # soft-kill halt (issue #793) and a malformed/unknown human
@@ -1588,6 +1610,26 @@ class Engine:
             return self.adapter.load_state()
         except Exception:  # noqa: BLE001 - a missing/corrupt state is not fatal
             return None
+
+    def _record_terminal_skip(self, skip: SkipOutcome) -> WorkflowState | None:
+        """Merge a benign stop reason into the persisted workflow state.
+
+        ``current_context`` gains ``terminal_reason`` so a later reader can tell
+        a deliberate end-of-workflow stop from a crash; the rest of the previous
+        state is preserved untouched (issue #853). A missing previous state is
+        left alone — there is nothing to annotate.
+        """
+        state = self._previous_state()
+        if state is None:
+            return None
+        context = dict(state.current_context)
+        context["terminal_reason"] = skip.reason
+        updated = state.model_copy(update={"current_context": context})
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:guards] could not persist terminal skip state")
+        return updated
 
     def _dispatch_payload(self, agent_result: Any) -> dict[str, Any]:
         if isinstance(agent_result, Mapping):

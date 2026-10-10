@@ -22,7 +22,13 @@ class TestBuildResult:
     def test_empty_task_skips(self):
         prompt_base, workflows_dir = _make_dirs()
         result = _build_result({"task": ""}, prompt_base, workflows_dir)
-        assert result == {"SKIP_AGENT": "true", "REASON": "No valid task found"}
+        # The no-task fallback with no recorded failure is a benign stop
+        # (issue #853), so it carries the ``no_next_agent`` kind.
+        assert result == {
+            "SKIP_AGENT": "true",
+            "REASON": "No valid task found",
+            "SKIP_KIND": "no_next_agent",
+        }
 
     def test_command_error_outranks_skip_reason(self):
         """A malformed command's usage wins and flags the notice (issue #804)."""
