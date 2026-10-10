@@ -21,6 +21,7 @@ from config import StepRef  # noqa: E402
 from workflow_state import Dispatch, HistoryEntry, WorkflowState  # noqa: E402
 from workflow_state.state_codec import PrevStateLoad, WorkflowStateCodec  # noqa: E402
 from workflow_state.sub_domains.gate_decision import GateDecision  # noqa: E402
+from workflow_state.workflow_state import STATE_SCHEMA_VERSION  # noqa: E402
 
 HANDOFF_FILE = "prev_workflow_state.json"
 
@@ -38,7 +39,8 @@ def _branch_mounted_leaf_position() -> list[StepRef]:
 def _state_v7() -> WorkflowState:
     """The trigger-side state the runtime failed to carry forward."""
     return WorkflowState(
-        version=7,
+        run_id=7,
+        schema_version=STATE_SCHEMA_VERSION,
         workflow="plan-orchestration",
         step="scaffold",
         agent="dev",
@@ -53,12 +55,13 @@ def _state_v7() -> WorkflowState:
 
 
 class TestCodecRoundTrip(unittest.TestCase):
-    def test_roundtrip_preserves_version_and_history(self):
+    def test_roundtrip_preserves_run_id_and_history(self):
         codec = WorkflowStateCodec()
 
         restored = codec.decode(codec.encode(_state_v7(), compact=True))
 
-        self.assertEqual(restored.version, 7)
+        self.assertEqual(restored.run_id, 7)
+        self.assertEqual(restored.schema_version, STATE_SCHEMA_VERSION)
         self.assertEqual(len(restored.history), 5)
         self.assertEqual(restored.scaffold_branch, "feature/issue-648-scaffold")
 
@@ -86,7 +89,7 @@ class TestCodecRoundTrip(unittest.TestCase):
 def _state_with_per_entry_dispatch() -> WorkflowState:
     """A state whose history entries each carry their own dispatch (issue #685)."""
     return WorkflowState(
-        version=4,
+        run_id=4,
         workflow="spec-driven-impl",
         step="plan",
         agent="architect",
@@ -156,7 +159,7 @@ def _state_with_gate_decisions() -> WorkflowState:
     approved = _gate_decision("approved", "plan")
     rejected = _gate_decision("rejected", "stub_approval")
     return WorkflowState(
-        version=9,
+        run_id=9,
         workflow="plan-orchestration",
         step="sub_impl",
         agent="dev",
@@ -248,7 +251,7 @@ class TestLoadPrev(unittest.TestCase):
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.detail, "")
-        self.assertEqual(result.state.version, 7)
+        self.assertEqual(result.state.run_id, 7)
         self.assertEqual(len(result.state.history), 5)
 
 

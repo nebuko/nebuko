@@ -299,7 +299,7 @@ class TestImportBootstrap:
             "from workflow_state.workflow_state import WorkflowState\n"
             "adapter.read_trigger()\n"
             "print(adapter.load_state())\n"
-            "adapter.save_state(WorkflowState(version=1, workflow='spec-driven-impl', "
+            "adapter.save_state(WorkflowState(run_id=1, workflow='spec-driven-impl', "
             "step='stub', agent='dev'))\n"
         )
         env = {**os.environ, "PYTHONPATH": str(repo_root / "src"), "RUNNER_TEMP": str(tmp_path)}
@@ -335,7 +335,7 @@ class TestSaveState:
         adapter = _adapter(tmp_path, client)
 
         adapter.save_state(
-            WorkflowState(version=1, workflow="spec-driven-impl", step="stub", agent="dev")
+            WorkflowState(run_id=1, workflow="spec-driven-impl", step="stub", agent="dev")
         )
 
         assert (tmp_path / "prev_workflow_state.json").is_file()
@@ -357,7 +357,7 @@ def _state_comment(*, history_len: int = 2):
         for index in range(history_len)
     ]
     state = WorkflowState(
-        version=7,
+        run_id=7,
         workflow="spec-driven-impl",
         step="plan",
         agent="architect",
@@ -401,8 +401,8 @@ class TestStagePrevState:
         load = WorkflowStateCodec().load_prev()
         assert load.status == "ok"
         assert load.state is not None
-        assert (load.state.version, load.state.workflow, load.state.step) == (
-            previous.version,
+        assert (load.state.run_id, load.state.workflow, load.state.step) == (
+            previous.run_id,
             previous.workflow,
             previous.step,
         )
@@ -476,7 +476,7 @@ class TestHistoryIncrementRegression:
             summary="stub posted",
         )
 
-        assert new_state.version == previous.version + 1
+        assert new_state.run_id == previous.run_id + 1
         assert len(new_state.history) == len(previous.history) + 1
         assert (new_state.workflow, new_state.step) == ("spec-driven-impl", "stub")
         assert new_state.history[-1].step == "stub"
@@ -487,6 +487,6 @@ class TestHistoryIncrementRegression:
 
         state = build_state(None, workflow="", step="", agent="architect", summary="s")
 
-        assert state.version == 3
+        assert state.run_id == 1
         assert len(state.history) == 1
         assert state.history[0].step == ""

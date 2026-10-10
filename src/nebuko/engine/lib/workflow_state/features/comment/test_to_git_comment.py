@@ -35,7 +35,7 @@ class TestFormatCollapsedSection(unittest.TestCase):
         state = WorkflowState(workflow="default", step="analyze", agent="architect")
         section = format_collapsed_section(state)
         self.assertIn(
-            f"<summary>{brand().logo_mark()} Workflow State (v1)</summary>",
+            f"<summary>{brand().logo_mark()} Workflow State (run 0)</summary>",
             section,
         )
         self.assertNotIn("🤖", section)

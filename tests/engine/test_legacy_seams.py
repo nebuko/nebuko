@@ -20,7 +20,7 @@ def _entry(body: str, author: str = "bot") -> CommentEntry:
 
 
 def _state_body(step: str) -> str:
-    return to_git_comment(WorkflowState(version=1, workflow="spec-driven-impl", step=step, agent="dev"))
+    return to_git_comment(WorkflowState(run_id=1, workflow="spec-driven-impl", step=step, agent="dev"))
 
 
 class TestEventNormalizer:

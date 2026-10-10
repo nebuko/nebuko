@@ -11,7 +11,8 @@ class TestWorkflowStateSchema(unittest.TestCase):
 
     def test_minimal_state(self):
         state = WorkflowState(workflow="test", step="analyze", agent="architect")
-        self.assertEqual(state.version, 1)
+        self.assertEqual(state.run_id, 0)
+        self.assertEqual(state.schema_version, 0)
         self.assertEqual(state.phase, "")
         self.assertEqual(state.history, [])
         self.assertEqual(state.pinned_comment_ids, [])
@@ -22,7 +23,8 @@ class TestWorkflowStateSchema(unittest.TestCase):
             workflow="default",
             step="implement",
             agent="dev",
-            version=5,
+            run_id=5,
+            schema_version=4,
             phase="execution",
             history=[
                 HistoryEntry(
@@ -37,7 +39,7 @@ class TestWorkflowStateSchema(unittest.TestCase):
             parent_workflow="spec-driven-design",
             parent_workflow_step="stub_phase",
         )
-        self.assertEqual(state.version, 5)
+        self.assertEqual(state.run_id, 5)
         self.assertEqual(len(state.history), 1)
         self.assertIn(12345, state.pinned_comment_ids)
         # Per-step metrics live on the history entry (issue #792), not the root.
@@ -49,7 +51,7 @@ class TestWorkflowStateSchema(unittest.TestCase):
         state = WorkflowState(workflow="test", agent="architect")
         self.assertEqual(state.step, "")
         self.assertEqual(state.phase, "")
-        self.assertEqual(state.version, 1)
+        self.assertEqual(state.run_id, 0)
 
     def test_to_json_round_trip_preserves_position(self):
         """Populated v3 position + history position survive to_json ->

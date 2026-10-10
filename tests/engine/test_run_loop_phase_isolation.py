@@ -39,7 +39,7 @@ def _engine(tmp_path) -> Engine:
 def _state():
     from workflow_state.workflow_state import WorkflowState
 
-    return WorkflowState(version=13, workflow="default", step="plan", agent="dev")
+    return WorkflowState(run_id=13, workflow="default", step="plan", agent="dev")
 
 
 def _soft_kill_result(answer: str = "work in progress"):

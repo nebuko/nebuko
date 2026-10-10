@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import Any, Optional
 
-from config import StepRef, WorkflowPosition
+from config import POSITION_STATE_VERSION, StepRef, WorkflowPosition
 
 # Import domain entities first (no circular dependency)
 from .sub_domains.history_entry.history_entry import HistoryEntry
@@ -121,6 +121,14 @@ class CircuitBreakerState(BaseModel):  # @stub-protected
         return self.model_copy(update={"limit": value})
 
 
+# Payload shape generation of the state document (issue #821). Distinct from
+# the ``WorkflowPosition`` block's own ``version`` (that one is the position
+# block's shape marker, pinned to ``POSITION_STATE_VERSION``). Bumped when the
+# top-level state shape changes: v1 flat -> v2 recursive position -> v3
+# universal position -> v4 (``run_id`` + ``schema_version`` split).
+STATE_SCHEMA_VERSION = 4
+
+
 class WorkflowState(BaseModel):
     """
     Structured workflow state embedded in GitHub comments.
@@ -130,7 +138,14 @@ class WorkflowState(BaseModel):
     full-snapshot state (Strategy 1 + summarization).
 
     Fields:
-        version: Monotonically increasing version number for each state update.
+        run_id: Monotonically increasing invocation counter — the Nth state
+            update in this workflow run (issue #821). Carried across the
+            trigger->agent hand-off so an anomaly (a reset) is detectable.
+        schema_version: Payload shape generation (issue #821). The
+            ``STATE_SCHEMA_VERSION`` this state was written at. Defaults to
+            ``0`` on a bare model; a legacy blob that still carries the
+            conflated ``version`` key is read as generation ``3`` (its actual
+            shape).
         workflow: Name of the active workflow (e.g., "spec-driven-design").
         step: Current step name within the workflow.
         agent: Agent role executing the current step.
@@ -182,7 +197,8 @@ class WorkflowState(BaseModel):
             is a bot comment) still pings the human who is on the hook.
     """
 
-    version: int = 1
+    run_id: int = 0
+    schema_version: int = 0
     workflow: str = ""
     step: str = ""
     agent: str = ""
@@ -255,6 +271,31 @@ class WorkflowState(BaseModel):
             refs = position.refs if position else []
         new_data["position"] = refs
         return new_data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_version(cls, data: Any) -> Any:
+        """Split the legacy conflated ``version`` into ``run_id`` /
+        ``schema_version`` (issue #821).
+
+        A single ``version`` field used to carry two meanings: the payload
+        shape generation (floored at ``POSITION_STATE_VERSION``) and the
+        state-update counter. Old blobs — posted comments, the
+        ``$RUNNER_TEMP`` hand-off, fixtures — still carry it. Map it to the
+        counter (``run_id``) so monotonicity across the trigger->agent
+        boundary is preserved, and infer the legacy shape generation (v3)
+        when ``schema_version`` is absent. Operates on a copy so the caller's
+        raw dict (e.g. a freshly ``json.load``-ed state file) is never
+        mutated.
+        """
+        if not isinstance(data, dict) or "version" not in data:
+            return data
+        new_data = dict(data)
+        legacy = new_data.pop("version")
+        new_data.setdefault("run_id", legacy)
+        new_data.setdefault("schema_version", POSITION_STATE_VERSION)
+        return new_data
+
 
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json

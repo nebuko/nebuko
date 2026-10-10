@@ -951,7 +951,7 @@ class TestStatePhase:
         from workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(
-            version=3, workflow="spec-driven-impl", step="implement", agent="dev"
+            run_id=3, workflow="spec-driven-impl", step="implement", agent="dev"
         )
 
     def test_persists_the_agents_own_state_artifact(self, tmp_path, monkeypatch):
@@ -1014,7 +1014,7 @@ class TestPreviousStateHandoff:
             for index in range(history_len)
         ]
         return WorkflowState(
-            version=3,
+            run_id=3,
             workflow="spec-driven-impl",
             step="plan",
             agent="architect",
@@ -1162,7 +1162,7 @@ class TestWorkflowIdentityBackfill:
         from workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(
-            version=3,
+            run_id=3,
             workflow="spec-driven-impl",
             step="plan",
             agent="architect",
@@ -1587,7 +1587,7 @@ class TestWorkflowStateAnswerComment:
         from workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(
-            version=6,
+            run_id=6,
             workflow="spec-driven-impl",
             step="implement",
             agent="dev",
