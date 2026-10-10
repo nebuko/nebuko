@@ -299,6 +299,77 @@ class TestEnsurePr(unittest.TestCase):
         self.assertTrue(result.error)
         self.assertIn("git exploded", result.message)
 
+    def test_gh_calls_share_one_transport(self):
+        """#805: PR lookup and PR creation ride a single transport so the write
+        pacing/budget state (and its backoff) is shared across the whole flow."""
+        recorded = []
+
+        class _Result:
+            ok = True
+            status = 200
+            detail = ""
+
+            def __init__(self, payload):
+                self.payload = payload
+
+        class _FakeTransport:
+            def call(self, args, *, mutative=False, cwd=None, timeout=None):
+                recorded.append((list(args), mutative))
+                if args[:2] == ["pr", "create"]:
+                    return _Result("https://github.com/acme/repo/pull/102")
+                if args[:1] == ["api"]:
+                    return _Result('"main"')
+                return _Result("")
+
+        instances = []
+
+        def factory(*a, **k):
+            transport = _FakeTransport()
+            instances.append(transport)
+            return transport
+
+        env = {"TARGET_NUMBER": "805", "GITHUB_BASE_REF": ""}
+        with patch(
+            "agent_script.features.ensure_pr.ensure_pr._run_git",
+            side_effect=_default_git_response,
+        ), patch(
+            "agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
+            side_effect=factory,
+        ), patch.dict("os.environ", env):
+            result = ensure_pr()
+
+        self.assertFalse(result.error)
+        self.assertEqual(result.pr_url, "https://github.com/acme/repo/pull/102")
+        # Exactly one transport instance, shared by the lookup and the write.
+        self.assertEqual(len(instances), 1)
+        by_head = [args[:2] for args, _ in recorded]
+        self.assertIn(["pr", "list"], by_head)
+        self.assertIn(["pr", "create"], by_head)
+        mutative = {tuple(args[:2]): m for args, m in recorded}
+        self.assertTrue(mutative[("pr", "create")])
+        self.assertFalse(mutative[("pr", "list")])
+
+    def test_run_gh_raises_when_transport_cannot_deliver(self):
+        """A dropped content-creation write must surface as a failure, never an
+        empty success that silently loses the PR (issue #805)."""
+
+        class _FailedResult:
+            ok = False
+            status = 403
+            detail = "secondary rate limit"
+            payload = ""
+
+        class _FailTransport:
+            def call(self, *a, **k):
+                return _FailedResult()
+
+        with patch(
+            "agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
+            return_value=_FailTransport(),
+        ):
+            with self.assertRaises(RuntimeError):
+                _run_gh(["pr", "create"])
+
     def test_result_is_immutable(self):
         result = EnsurePrResult(skipped=True)
         with self.assertRaises(Exception):

@@ -160,6 +160,7 @@ class PhaseResult:
     ok: bool
     body: str = ""
     error: str | None = None
+    error_type: type | None = None
 
 
 # Legacy bridge modules live directly under ``LIB_DIR`` and are imported by
@@ -212,6 +213,29 @@ def _neutralize_agent_triggers(content: str) -> str:
     return _AGENT_TRIGGER_RE.sub(
         lambda match: match.group(0).replace("@@", "@@\u200b", 1), content
     )
+
+
+def _gha_error(message: str) -> None:
+    """Emit a GitHub Actions error annotation so a lost deliverable is visible.
+
+    A failed publish that only logs to stderr still leaves a green-looking job;
+    the annotation (plus the non-zero exit) is what makes the failure legible in
+    the Actions summary (issue #805).
+    """
+    print(f"::error::{message}")
+
+
+def _is_publish_error(exc_type: type | None) -> bool:
+    """True when ``exc_type`` is the adapter's ``PublishError`` (issue #805).
+
+    Compared by identity against the class object rather than by name so a
+    rename of the exception cannot silently disable the honest-publish path.
+    """
+    if exc_type is None:
+        return False
+    from nebuko.adapters.github import PublishError
+
+    return issubclass(exc_type, PublishError)
 
 
 # The bash guard reads the caller with ``sed -n 's/.*<!-- bot-agent-\([a-z]*\)
@@ -464,6 +488,12 @@ class Engine:
     _bridge: dict[str, SimpleNamespace] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # The comment body ``publish`` built but could not deliver (issue #805),
+    # held so the fallback can stage it as a durable artifact. Engine-internal,
+    # so it is excluded from ``__init__``/equality/repr.
+    _publish_state: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
 
     # @stub-protected
     def _run_deterministic_step(
@@ -499,6 +529,8 @@ class Engine:
         prompt: str | None = None
         posted_body: str | None = None
         state: WorkflowState | None = None
+        publish_failed = False
+        self._publish_state.clear()
         try:
             self._enter(phases, "normalize")
             trigger = self.normalize()
@@ -611,7 +643,10 @@ class Engine:
             if publication.ok:
                 posted_body = publication.body
             else:
-                posted_body = self._publish_fallback(agent_result, publication.error)
+                posted_body = self._publish_fallback(
+                    agent_result, publication.error, publication.error_type
+                )
+                publish_failed = _is_publish_error(publication.error_type)
 
             # State and routing run regardless of a best-effort phase crash
             # (issue #766): ``build_output`` already overrode the dispatch with
@@ -653,7 +688,9 @@ class Engine:
         # hold, or the terminal step — pings the workflow starter here, after
         # the agent's own comment so the notice is the newest one on the thread.
         # Only a run that actually ran its agent (the ``publish`` phase was
-        # reached) can demand action; a guard/terminal skip never does.
+        # reached) can demand action; a guard/terminal skip never does. Emitted
+        # before the honest-publish check below so a dropped deliverable still
+        # reaches the human.
         notice = self.human_action_notice(
             routing=routing,
             agent_ran="publish" in phases,
@@ -662,6 +699,22 @@ class Engine:
         )
         if notice is not None:
             self.notify_human_action(notice)
+
+        # A deliverable that could not be published must not look like a green
+        # run (issue #805). State and routing have already advanced above, so the
+        # workflow journal survives; only the process signal is made honest.
+        if publish_failed:
+            reason = "comment publish failed: " + (
+                publication.error or "unknown error"
+            )
+            return RunOutcome(
+                exit_code=ExitCode.ERROR,
+                routing=RoutingDecision(status="hold", reason=reason),
+                prompt=prompt,
+                posted_body=posted_body,
+                state=state,
+                phases=tuple(phases),
+            )
 
         return RunOutcome(
             exit_code=_exit_code_for(routing),
@@ -690,20 +743,31 @@ class Engine:
             value = fn()
         except Exception as exc:  # noqa: BLE001 - best-effort phase
             log.exception("[phase:%s] failed: %s", name, exc)
-            return PhaseResult(name=name, ok=False, error=str(exc))
+            return PhaseResult(
+                name=name, ok=False, error=str(exc), error_type=type(exc)
+            )
         return PhaseResult(
             name=name, ok=True, body="" if value is None else str(value)
         )
 
     # @stub-protected
-    def _publish_fallback(self, agent_result: Any, error: str | None) -> str:
-        """Post a minimal, trigger-safe notice when ``publish`` itself crashed.
+    def _publish_fallback(
+        self, agent_result: Any, error: str | None, error_type: type | None = None
+    ) -> str:
+        """Publish a durable, trigger-safe fallback when ``publish`` failed.
 
-        ``publish`` is best-effort (legacy ``if: always()``). When the comment
-        bridge is unreachable (issue #766), the run must still leave a resumable
-        message on the thread rather than aborting before the state journal. This
-        notice is built without ``prepare_comment`` and never raises.
+        ``publish`` is best-effort (legacy ``if: always()``). Two failure classes
+        reach here: a broken comment bridge (issue #766) and a comment write the
+        transport could not deliver after retries (issue #805). In both cases the
+        run must leave a resumable message on the thread rather than aborting
+        before the state journal. When the failure is a *write* failure, the
+        final body is additionally staged as an artifact so the deliverable
+        survives even if this fallback post is also rate-limited. Never raises.
         """
+        if _is_publish_error(error_type):
+            self._publish_state["failed"] = True
+            self._stage_failed_comment()
+            _gha_error(f"comment publish failed: {error or 'unknown error'}")
         body = (
             f"@{self._trigger_author()} the engine could not prepare the agent's "
             f"comment ({error or 'unknown error'}). The agent's output follows.\n"
@@ -715,6 +779,24 @@ class Engine:
         except Exception as exc:  # noqa: BLE001 - the fallback is best-effort
             log.warning("[phase:publish] crash-notice post failed: %s", exc)
         return notice
+
+    def _stage_failed_comment(self) -> None:
+        """Persist the undelivered comment body as a run artifact (issue #805).
+
+        Best-effort: a staging failure must not mask the publish failure that
+        triggered it. The body is only written when ``publish`` got far enough to
+        build one; a bridge crash has nothing to stage.
+        """
+        body = self._publish_state.get("body")
+        if not body:
+            return
+        try:
+            from nebuko.adapters.github import COMMENT_BODY_ARTIFACT
+
+            self.adapter.write_artifact(COMMENT_BODY_ARTIFACT, body)
+            log.info("[phase:publish] staged undelivered comment as %s", COMMENT_BODY_ARTIFACT)
+        except Exception as exc:  # noqa: BLE001 - staging is best-effort
+            log.warning("[phase:publish] could not stage undelivered comment: %s", exc)
 
     # @stub-protected
     def _post_terminal_notice(self, reason: str) -> str:
@@ -1292,6 +1374,7 @@ class Engine:
         # must never carry a raw ``@@agent`` token, or it re-arms the very gate
         # that started this run (issue #482).
         escaped = bridge.escape_agent_triggers(body)
+        self._publish_state["body"] = escaped
         self.adapter.post(escaped)
         return escaped
 
@@ -1301,6 +1384,11 @@ class Engine:
         state = self._build_state(agent_result)
         if state is None:
             return None
+        if self._publish_state.get("failed") and not state.publish_failed:
+            # The journal must record that this run's deliverable was lost
+            # (issue #805), so a later reader can tell a green run from a
+            # published one.
+            state = state.model_copy(update={"publish_failed": True})
         self.adapter.save_state(state)
         return state
 

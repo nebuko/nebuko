@@ -29,6 +29,7 @@ For the high-level pitch and quick overview, see the root
 | [default-workflow.md](./default-workflow.md) | Operators | Step-by-step reference of the GitHub Actions orchestrator (jobs, steps, data flow). |
 | [architecture_code.md](./architecture_code.md) | Contributors | Internal DDD package-by-feature layout of the Python code. |
 | [github-api-limits.md](./github-api-limits.md) | Operators | GitHub REST rate limits relevant to the comment-based state machine. |
+| [adr/0005-github-api-budget.md](./adr/0005-github-api-budget.md) | Operators | How many workflow runs/hour the default 7-agent flow affords, and the GitHub API guard policy. |
 
 Business documents (not user documentation): `etude-de-marche.md` (market
 study, in French), and the root `landscape.md` (product positioning — "what

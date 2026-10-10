@@ -228,6 +228,10 @@ class WorkflowState(BaseModel):
     circuit_breaker: CircuitBreakerState = Field(  # @stub-protected
         default_factory=CircuitBreakerState
     )
+    # Set by the engine when the run's answer comment could not be delivered
+    # (issue #805). Defaults to False so legacy blobs without this key load
+    # unchanged; serialized only when True (``exclude_defaults``).
+    publish_failed: bool = False  # @stub-protected
 
     @model_validator(mode="before")
     @classmethod
