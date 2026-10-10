@@ -430,3 +430,65 @@ class TestBuildStateStartedBy(unittest.TestCase):
         )
         restored = WorkflowState.model_validate_json(state.model_dump_json())
         self.assertEqual(restored.started_by, "olivier-norture")
+
+
+class TestBuildStateWorkflowRef(unittest.TestCase):
+    """Workflow provenance field (issue #862): the pinned ref of the reusable
+    workflow that defined the run, threaded from ``NEBUKO_WORKFLOW_REF``.
+    """
+
+    REF = "o/r/.github/workflows/nebuko-workflow.yaml@refs/tags/v1.2"
+
+    def test_recorded_on_first_run(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            workflow_ref=self.REF,
+        )
+        self.assertEqual(state.workflow_ref, self.REF)
+
+    def test_defaults_to_none(self):
+        state = build_state(None, workflow="default", step="analyze", agent="architect")
+        self.assertIsNone(state.workflow_ref)
+
+    def test_carried_forward_when_later_run_has_no_ref(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            workflow_ref=self.REF,
+        )
+        nxt = build_state(prev, workflow="default", step="context", agent="context")
+        self.assertEqual(nxt.workflow_ref, self.REF)
+
+    def test_a_later_ref_overwrites_the_previous_one(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            workflow_ref=self.REF,
+        )
+        newer = "o/r/.github/workflows/nebuko-workflow.yaml@refs/heads/main"
+        nxt = build_state(
+            prev,
+            workflow="default",
+            step="context",
+            agent="context",
+            workflow_ref=newer,
+        )
+        self.assertEqual(nxt.workflow_ref, newer)
+
+    def test_legacy_state_without_field_loads_none(self):
+        data = {
+            "version": 3,
+            "workflow": "default",
+            "step": "analyze",
+            "agent": "architect",
+            "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
+        }
+        state = WorkflowState.model_validate(data)
+        self.assertIsNone(state.workflow_ref)
