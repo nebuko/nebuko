@@ -46,6 +46,24 @@ def _capture(*events: object, end_tools: frozenset[str] | None = None) -> Answer
     return capture
 
 
+def _duck_end_tool(tool_name: str, *, thought: str = "", action: object = None) -> object:
+    """A duck-typed control-plane turn carrying an engine-tool action.
+
+    The leaf module reads the event structurally, so a plain object exercises
+    the same typed-harvest path as a real SDK ``ActionEvent`` without the SDK's
+    action-type validation (used for the routing-payload cases).
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        tool_name=tool_name,
+        source="agent",
+        thought=[SimpleNamespace(text=thought)] if thought else None,
+        action=action,
+    )
+
+
+
 class TestDeliverableSelection:
     def test_agent_message_is_the_deliverable(self):
         capture = _capture(_msg_event("  Full report  "))
@@ -146,3 +164,71 @@ class TestPlatformFreeDuckTyping:
             _Fake(tool_name="finish"),
         )
         assert capture.deliverable() == "report"
+
+
+class TestTypedEngineToolPayloads:
+    """#822: the deliverable is the engine tool's *typed* message, not prose."""
+
+    def test_typed_finish_message_beats_the_turn_thought(self):
+        """The #822 repro: the report is in ``finish.message``; the turn text is
+        a one-liner. The typed payload must win."""
+        from types import SimpleNamespace
+
+        report = "## Wind-down\n\n- Rebased\n- Wrote feature X\n- Tests: 115 passed"
+        capture = _capture(
+            _duck_end_tool(
+                "finish",
+                thought="Work pushed and PR updated. Here is my wind-down summary.",
+                action=SimpleNamespace(message=report),
+            )
+        )
+        assert capture.deliverable() == report
+        assert capture.snapshot.source == "work_loop_finish"
+
+    def test_a_standalone_message_beats_a_work_loop_typed_message(self):
+        """The documented contract holds: a standalone text answer wins over a
+        work-loop ``finish.message`` (which may be only a status note)."""
+        from types import SimpleNamespace
+
+        capture = _capture(
+            _msg_event("standalone deliverable"),
+            _duck_end_tool("finish", action=SimpleNamespace(message="status note")),
+        )
+        assert capture.deliverable() == "standalone deliverable"
+
+    def test_freeze_report_payload_is_authoritative(self):
+        """The explicit report-turn freeze marks the source and wins outright."""
+        from nebuko.engine.engine_tools import EngineToolPayload
+
+        capture = _capture(_msg_event("work-loop draft"), _action_event("finish", "note"))
+        capture.freeze_report_payload(
+            EngineToolPayload(
+                tool_name="finish", payload_kind="final_message", fields={"message": "Report via engine"}
+            )
+        )
+        assert capture.deliverable() == "Report via engine"
+        assert capture.snapshot.source == "report_finish"
+
+    def test_a_routing_payload_is_never_a_deliverable(self):
+        """``dispatch_next``'s typed fields are routing metadata, not a report —
+        the shared-turn thought remains the captured deliverable."""
+        from types import SimpleNamespace
+
+        capture = _capture(
+            _duck_end_tool(
+                "dispatch_next",
+                thought="Full proposal",
+                action=SimpleNamespace(
+                    status="hold", branch="", complexity="high", reason="awaiting review"
+                ),
+            )
+        )
+        assert capture.deliverable("fallback") == "Full proposal"
+
+    def test_a_real_sdk_finish_action_is_harvested(self):
+        from openhands.sdk.tool.builtins.finish import FinishAction
+
+        capture = _capture(
+            _duck_end_tool("finish", thought="note", action=FinishAction(message="Full report"))
+        )
+        assert capture.deliverable() == "Full report"
