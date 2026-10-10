@@ -15,13 +15,12 @@ from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.context import AgentContext
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.sdk.mcp import MCPServer
-from openhands.sdk.tool.spec import Tool
-from openhands.sdk.tool.registry import register_tool
 
 from agent_script.sub_domains.token_budget.condenser import (
     build_condenser,
     resolve_token_budget_policy,
 )
+from agent_script.sub_domains.tool_resolution.tool_resolution import resolve_toolset
 
 from agent_script.features.dispatch_check import has_dispatch_decision
 from agent_script.features.run_agent.dispatch_recall import (
@@ -54,47 +53,6 @@ logger = get_logger(__name__)
 
 # SDK sentinel for the built-in security policy (agent/base.py).
 _DEFAULT_SECURITY_POLICY = "security_policy.j2"
-
-# Module-level guard: register_tool logs a warning on re-registration, so in
-# long-lived processes (or repeated test runs) we register only once.
-_dispatch_tool_registered = False
-
-
-def _ensure_dispatch_tool_registered() -> None:
-    """Register the ``dispatch_next`` ToolDefinition with the SDK registry.
-
-    Idempotent — safe to call on every agent run.
-    """
-    global _dispatch_tool_registered
-    if _dispatch_tool_registered:
-        return
-    from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
-        DispatchNextTool,
-    )
-
-    register_tool("DispatchNextTool", DispatchNextTool)
-    _dispatch_tool_registered = True
-
-
-# Module-level guard: register_tool logs a warning on re-registration, so in
-# long-lived processes (or repeated test runs) we register only once.
-_scaffold_branch_tool_registered = False
-
-
-def _ensure_scaffold_branch_tool_registered() -> None:
-    """Register the ``report_scaffold_branch`` ToolDefinition with the SDK registry.
-
-    Idempotent — safe to call on every agent run.
-    """
-    global _scaffold_branch_tool_registered
-    if _scaffold_branch_tool_registered:
-        return
-    from agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
-        ScaffoldBranchReportTool,
-    )
-
-    register_tool("ScaffoldBranchReportTool", ScaffoldBranchReportTool)
-    _scaffold_branch_tool_registered = True
 
 
 def _resolve_mcp_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
@@ -275,27 +233,10 @@ def run_agent(
     default_tool_list = ["terminal", "file_editor", "task_tracker", "think", "finish"]
     agent_tools = agent_cfg.tools if agent_cfg is not None else default_tool_list
 
-    sdk_tool_names = {"terminal", "file_editor", "task_tracker"}
-    builtin_tool_map = {"think": "ThinkTool", "finish": "FinishTool"}
-
-    sdk_tools = []
-    include_default_tools = []
-    dispatch_tool_enabled = False
-
-    for tool_name in agent_tools:
-        if tool_name in sdk_tool_names:
-            sdk_tools.append(Tool(name=tool_name))
-        elif tool_name in builtin_tool_map:
-            include_default_tools.append(builtin_tool_map[tool_name])
-        elif tool_name == "dispatch_next":
-            _ensure_dispatch_tool_registered()
-            sdk_tools.append(Tool(name="DispatchNextTool"))
-            dispatch_tool_enabled = True
-        elif tool_name == "report_scaffold_branch":
-            _ensure_scaffold_branch_tool_registered()
-            sdk_tools.append(Tool(name="ScaffoldBranchReportTool"))
-        else:
-            logger.warning(f"Unknown tool '{tool_name}' for agent '{role_name}' — skipping")
+    resolved = resolve_toolset(agent_tools, role_name)
+    sdk_tools = list(resolved.sdk_tools)
+    include_default_tools = list(resolved.builtin_tools)
+    dispatch_tool_enabled = resolved.dispatch_tool_enabled
 
     logger.info(
         f"Creating {role_name} agent with tools: sdk={[t.name for t in sdk_tools]}, "
