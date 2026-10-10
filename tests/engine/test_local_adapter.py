@@ -145,7 +145,7 @@ class TestState:
         assert adapter.load_state() is None
 
     def test_save_then_load_round_trips_the_workflow_state(self, adapter, run_dir):
-        state = WorkflowState(version=1, workflow="spec-driven-impl", step="stub", agent="dev")
+        state = WorkflowState(run_id=1, workflow="spec-driven-impl", step="stub", agent="dev")
 
         adapter.save_state(state)
 

@@ -9,7 +9,7 @@ def format_collapsed_section(state: WorkflowState) -> str:
 
     Output:
     <details>
-    <summary>{logo} Workflow State (v{version})</summary>
+    <summary>{logo} Workflow State (run {run_id})</summary>
 
     ```json
     { ... }
@@ -30,7 +30,7 @@ def format_collapsed_section(state: WorkflowState) -> str:
     from config import brand
 
     json_str = state_to_json(state, compact=False)
-    summary_label = f"{brand().logo_mark()} Workflow State (v{state.version})"
+    summary_label = f"{brand().logo_mark()} Workflow State (run {state.run_id})"
 
     lines = [
         "<details>",

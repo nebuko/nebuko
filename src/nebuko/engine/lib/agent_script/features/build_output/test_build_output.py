@@ -838,7 +838,7 @@ class TestExtractLatestAnswerRecallOffset(unittest.TestCase):
                  bo, "apply_human_gate_intercept",
                  side_effect=lambda dispatch, **kw: dispatch,
              ), \
-             mock.patch.object(bo, "build_state", return_value=NS(version=1)), \
+             mock.patch.object(bo, "build_state", return_value=NS(run_id=1)), \
              mock.patch.object(bo, "split_message", return_value=[]), \
              mock.patch.object(bo, "_write_output_files", side_effect=_fake_write):
             with tempfile.TemporaryDirectory() as tmp:
@@ -1125,9 +1125,9 @@ class TestLoadPrevStateHandoff(unittest.TestCase):
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     @staticmethod
-    def _state(version=7):
+    def _state(run_id=7):
         return WorkflowState(
-            version=version,
+            run_id=run_id,
             workflow="plan-orchestration",
             step="scaffold",
             agent="dev",
@@ -1145,7 +1145,7 @@ class TestLoadPrevStateHandoff(unittest.TestCase):
 
         state = load_prev_state_or_recover(fetch_comments=fake_fetch)
         self.assertIsNotNone(state)
-        self.assertEqual(state.version, 7)
+        self.assertEqual(state.run_id, 7)
         self.assertEqual(calls["args"], ("owner/repo", 648))
 
     def test_valid_handoff_does_not_fetch_comments(self):
@@ -1158,17 +1158,17 @@ class TestLoadPrevStateHandoff(unittest.TestCase):
 
         state = load_prev_state_or_recover(fetch_comments=fail_fetch)
         self.assertIsNotNone(state)
-        self.assertEqual(state.version, 7)
+        self.assertEqual(state.run_id, 7)
 
     def test_invalid_handoff_falls_back_to_comments(self):
         with open(os.path.join(self._tmp, "prev_workflow_state.json"), "w") as f:
             f.write("{ not valid json")
 
         state = load_prev_state_or_recover(
-            fetch_comments=lambda _r, _n: [self._comment(self._state(version=9))]
+            fetch_comments=lambda _r, _n: [self._comment(self._state(run_id=9))]
         )
         self.assertIsNotNone(state)
-        self.assertEqual(state.version, 9)
+        self.assertEqual(state.run_id, 9)
 
     def test_default_recovery_reads_a_bounded_tail(self):
         """The comment recovery path must not re-paginate the whole thread (#805)."""
@@ -1178,12 +1178,12 @@ class TestLoadPrevStateHandoff(unittest.TestCase):
 
         with patch(
             "build_output.get_issue_comments",
-            return_value=[self._comment(self._state(version=11))],
+            return_value=[self._comment(self._state(run_id=11))],
         ) as fetch:
             state = load_prev_state_or_recover()
 
         self.assertIsNotNone(state)
-        self.assertEqual(state.version, 11)
+        self.assertEqual(state.run_id, 11)
         fetch.assert_called_once_with("owner/repo", 648, limit=state_tail_limit())
 
     def test_missing_repo_env_returns_none(self):
@@ -1224,7 +1224,7 @@ class TestBuildOutputPrevStateIntegration(unittest.TestCase):
     @staticmethod
     def _recovered_v7() -> WorkflowState:
         return WorkflowState(
-            version=7,
+            run_id=7,
             workflow="plan-orchestration",
             step="scaffold",
             agent="dev",
@@ -1257,7 +1257,7 @@ class TestBuildOutputPrevStateIntegration(unittest.TestCase):
         result = self._run(prev_state=self._recovered_v7())
 
         state = result["workflow_state"]
-        self.assertEqual(state.version, 8)
+        self.assertEqual(state.run_id, 8)
         self.assertEqual(
             [h.step for h in state.history],
             [f"step_{i}" for i in range(5)] + ["sub_impl"],
@@ -1273,12 +1273,12 @@ class TestBuildOutputPrevStateIntegration(unittest.TestCase):
         }
         recovered = load_prev_state_or_recover(fetch_comments=lambda *_a: [comment])
         self.assertIsNotNone(recovered)
-        self.assertEqual(recovered.version, 7)
+        self.assertEqual(recovered.run_id, 7)
 
         result = self._run(prev_state=recovered)
 
         state = result["workflow_state"]
-        self.assertEqual(state.version, 8)
+        self.assertEqual(state.run_id, 8)
         self.assertEqual(
             [h.step for h in state.history],
             [f"step_{i}" for i in range(5)] + ["sub_impl"],
@@ -1293,7 +1293,7 @@ class TestBuildOutputPrevStateIntegration(unittest.TestCase):
             result = self._run(prev_state=self._recovered_v7())
 
         loader.assert_not_called()
-        self.assertEqual(result["workflow_state"].version, 8)
+        self.assertEqual(result["workflow_state"].run_id, 8)
 
     def test_absent_handoff_does_not_invent_history(self):
         import build_output as bo
@@ -1302,7 +1302,7 @@ class TestBuildOutputPrevStateIntegration(unittest.TestCase):
             result = self._run(prev_state=None)
 
         state = result["workflow_state"]
-        self.assertEqual(state.version, 3)
+        self.assertEqual(state.run_id, 1)
         self.assertEqual(len(state.history), 1)
 
 

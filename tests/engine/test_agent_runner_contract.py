@@ -75,7 +75,7 @@ def test_artifacts_are_read_back_from_the_child_working_directory(tmp_path: Path
 
     assert result["answer"] == "hello engine"
     assert result["final_message"] == "final: hello engine"
-    assert result["state"].version == 1
+    assert result["state"].run_id == 1
     assert result["state"].agent == "dev"
     assert "stub entry point ran from" in result["console_log"]
 

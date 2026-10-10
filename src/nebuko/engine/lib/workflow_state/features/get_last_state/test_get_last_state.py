@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 
 from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
 from workflow_state import STATE_MARKER_START, STATE_MARKER_END
+from workflow_state.workflow_state import STATE_SCHEMA_VERSION
 from workflow_state.features.get_last_state.get_last_state import (
     extract_latest_state_from_comments,
     _enrich_history_with_comment_ids,
@@ -14,10 +15,11 @@ from workflow_state.features.get_last_state.get_last_state import (
 )
 
 
-def _make_state_json(history_entries=None, version=1):
+def _make_state_json(history_entries=None, run_id=1):
     """Build a minimal WorkflowState JSON dict."""
     return json.dumps({
-        "version": version,
+        "run_id": run_id,
+        "schema_version": STATE_SCHEMA_VERSION,
         "workflow": "default",
         "step": "analyze",
         "agent": "architect",
@@ -31,18 +33,18 @@ def _make_comment(body: str, comment_id: int) -> dict:
     return {"id": comment_id, "body": body}
 
 
-def _make_state_comment(comment_id: int, history_entries=None, version=1, agent=None) -> dict:
+def _make_state_comment(comment_id: int, history_entries=None, run_id=1, agent=None) -> dict:
     """Create a comment containing a valid state block (optionally with a bot-agent marker)."""
-    json_str = _make_state_json(history_entries, version)
+    json_str = _make_state_json(history_entries, run_id)
     body = f"{STATE_MARKER_START}\n{json_str}\n{STATE_MARKER_END}"
     if agent:
         body = f"<!-- bot-agent-{agent} -->\n\n{body}"
     return _make_comment(body, comment_id)
 
 
-def _make_agent_state_comment(comment_id: int, history_entries, version=1, agent="context") -> dict:
+def _make_agent_state_comment(comment_id: int, history_entries, run_id=1, agent="context") -> dict:
     """Create a state comment carrying the ``bot-agent-{agent}`` marker."""
-    return _make_state_comment(comment_id, history_entries, version, agent=agent)
+    return _make_state_comment(comment_id, history_entries, run_id, agent=agent)
 
 
 def _make_part_comment(part: int, total: int, agent: str, comment_id: int) -> dict:
@@ -151,7 +153,7 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
     def test_single_state_comment_enriches_history(self):
         """Agent B reads Agent A's comment → history[0].comment_ids is set."""
         entry_a = {"step": "analyze", "agent": "architect", "summary": "Analysis done"}
-        comment_123 = _make_state_comment(123, history_entries=[entry_a], version=1)
+        comment_123 = _make_state_comment(123, history_entries=[entry_a], run_id=1)
 
         result = extract_latest_state_from_comments([comment_123])
 
@@ -163,13 +165,13 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         """Agent C reads Agent A and B's comments → both history entries get comment_ids."""
         entry_a = {"step": "analyze", "agent": "architect", "summary": "Analysis"}
         entry_b = {"step": "plan", "agent": "architect", "summary": "Planning"}
-        comment_123 = _make_state_comment(123, history_entries=[entry_a], version=1)
-        comment_456 = _make_state_comment(456, history_entries=[entry_a, entry_b], version=2)
+        comment_123 = _make_state_comment(123, history_entries=[entry_a], run_id=1)
+        comment_456 = _make_state_comment(456, history_entries=[entry_a, entry_b], run_id=2)
 
         result = extract_latest_state_from_comments([comment_123, comment_456])
 
         self.assertIsNotNone(result)
-        self.assertEqual(result.version, 2)
+        self.assertEqual(result.run_id, 2)
         self.assertEqual(len(result.history), 2)
         self.assertEqual(result.history[0].comment_ids, [123])
         self.assertEqual(result.history[1].comment_ids, [456])
@@ -181,7 +183,7 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
 
     def test_empty_history_not_affected(self):
         """State with empty history should be returned unchanged."""
-        comment = _make_state_comment(100, history_entries=[], version=1)
+        comment = _make_state_comment(100, history_entries=[], run_id=1)
         result = extract_latest_state_from_comments([comment])
         self.assertIsNotNone(result)
         self.assertEqual(len(result.history), 0)
@@ -192,7 +194,7 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         entry_b = {"step": "plan", "agent": "architect"}
         entry_c = {"step": "implement", "agent": "dev"}
         # Only one state comment but history has 3 entries
-        comment = _make_state_comment(123, history_entries=[entry_a, entry_b, entry_c], version=1)
+        comment = _make_state_comment(123, history_entries=[entry_a, entry_b, entry_c], run_id=1)
         result = extract_latest_state_from_comments([comment])
         self.assertEqual(result.history[0].comment_ids, [123])
         self.assertEqual(result.history[1].comment_ids, [])
@@ -202,8 +204,8 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         """Stored comment_ids values survive enrichment unchanged; only empty entries get enriched."""
         entry_a = {"step": "analyze", "agent": "architect", "comment_ids": [789]}
         entry_b = {"step": "plan", "agent": "architect", "comment_ids": []}
-        comment_123 = _make_state_comment(123, history_entries=[entry_a], version=1)
-        comment_456 = _make_state_comment(456, history_entries=[entry_a, entry_b], version=2)
+        comment_123 = _make_state_comment(123, history_entries=[entry_a], run_id=1)
+        comment_456 = _make_state_comment(456, history_entries=[entry_a, entry_b], run_id=2)
 
         result = extract_latest_state_from_comments([comment_123, comment_456])
 
@@ -216,8 +218,8 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         """A legacy snapshot storing scalar comment_id survives enrichment intact."""
         entry_a = {"step": "analyze", "agent": "architect", "comment_id": 789}
         entry_b = {"step": "plan", "agent": "architect"}
-        comment_123 = _make_state_comment(123, history_entries=[entry_a], version=1)
-        comment_456 = _make_state_comment(456, history_entries=[entry_a, entry_b], version=2)
+        comment_123 = _make_state_comment(123, history_entries=[entry_a], run_id=1)
+        comment_456 = _make_state_comment(456, history_entries=[entry_a, entry_b], run_id=2)
 
         result = extract_latest_state_from_comments([comment_123, comment_456])
 
@@ -227,9 +229,9 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
     def test_non_state_comments_are_ignored(self):
         """Regular comments without state markers don't affect enrichment."""
         entry_a = {"step": "analyze", "agent": "architect"}
-        comment_123 = _make_state_comment(123, history_entries=[entry_a], version=1)
+        comment_123 = _make_state_comment(123, history_entries=[entry_a], run_id=1)
         noise_comment = _make_comment("This is just noise", 999)
-        comment_456 = _make_state_comment(456, history_entries=[entry_a], version=2)
+        comment_456 = _make_state_comment(456, history_entries=[entry_a], run_id=2)
 
         result = extract_latest_state_from_comments([comment_123, noise_comment, comment_456])
 
@@ -240,13 +242,13 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         """A comment with valid JSON but invalid WorkflowState schema must not be counted
         as a state comment, preventing index alignment shifts."""
         entry_a = {"step": "analyze", "agent": "architect"}
-        comment_123 = _make_state_comment(123, history_entries=[entry_a], version=1)
+        comment_123 = _make_state_comment(123, history_entries=[entry_a], run_id=1)
         # Valid JSON inside state markers, but missing required fields → invalid WorkflowState
         invalid_json = json.dumps({"not_a_state": True})
         invalid_comment = _make_comment(
             f"{STATE_MARKER_START}\n{invalid_json}\n{STATE_MARKER_END}", 777
         )
-        comment_456 = _make_state_comment(456, history_entries=[entry_a], version=2)
+        comment_456 = _make_state_comment(456, history_entries=[entry_a], run_id=2)
 
         result = extract_latest_state_from_comments([comment_123, invalid_comment, comment_456])
 
@@ -267,7 +269,7 @@ class TestExtractLatestStateFromComments(unittest.TestCase):
         result = extract_latest_state_from_comments(comments)
 
         self.assertIsNotNone(result)
-        self.assertEqual(result.version, 2)
+        self.assertEqual(result.run_id, 2)
         # context entry picks up all three parts of its multi-part message
         self.assertEqual(result.history[0].comment_ids, [500, 501, 502])
         # architect entry keeps its stored (legacy-coerced) ID

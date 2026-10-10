@@ -1103,7 +1103,7 @@ def build_output(
         is_human_resume=is_human_resume,
         gate_decision=_parse_gate_decision_env(),
     )
-    logger.info(f"Built workflow state v{new_state.version} for step={workflow_step}")
+    logger.info(f"Built workflow state run {new_state.run_id} for step={workflow_step}")
 
     # ── Split plan handling ──────────────────────────────────────
     if split_plan_json is None:
