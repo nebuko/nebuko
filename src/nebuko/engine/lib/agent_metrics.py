@@ -670,9 +670,9 @@ def collect_issue_data(comments, all_metrics, issue_body, issue_closed_at):
 def build_human_metrics_section(comments, all_metrics, issue_body, issue_closed_at):
     """Compute and render the human-metrics section for the resume.
 
-    Reading speed (200 wpm) and the empty allowlist ("any non-bot author is
-    human") are hardcoded defaults for now, per product decision; no workflow
-    variable is wired.
+    Reading speed (200 wpm), the empty allowlist ("any non-bot author is
+    human"), and the context-agent reading-time exclusion are hardcoded
+    defaults for now, per product decision; no workflow variable is wired.
     """
     config = HumanMetricsConfig()
     issue_data = collect_issue_data(comments, all_metrics, issue_body, issue_closed_at)
