@@ -24,6 +24,13 @@ published a one-line lead-in).
    signal completion to the SDK, but its `message` is **not** the deliverable and
    is not posted. Keep it to a one-line status note.
 
+   *Wind-down exception:* when the run trips its soft time budget the engine
+   injects the wind-down prompt, whose step 4 asks for the checkpoint report
+   (work completed / current state / blocking point / remaining work) in the
+   `finish` message — the report turn may never run because the remaining budget
+   is spent winding down. In a wind-down run that `finish.message` **is** the
+   deliverable and the engine harvests and posts it (issues #822/#830).
+
 3. **`dispatch_next` fields are routing metadata.**
    `status` / `branch` / `complexity` / `reason` carry the next-step decision.
    Never put the deliverable in `reason` — it is one sentence of routing

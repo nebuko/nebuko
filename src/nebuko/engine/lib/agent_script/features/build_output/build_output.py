@@ -621,14 +621,26 @@ def _terminal_turn_answer(event, tool_name: str) -> str:
     When the LLM emits the full answer and a ``finish`` / ``dispatch_next``
     tool call in the same turn (the issue #553/#555 regression path), the SDK
     stores the text in ``ActionEvent.thought`` and emits no standalone
-    ``MessageEvent``. This is the *fallback* source: the engine-tool typing
-    (``_typed_finish_message``) is read first, and only when it is absent does
-    the turn text stand in for the deliverable. Action events of any other
-    tool return ``""`` so mid-run commentary attached to other tool calls is
-    never mistaken for the answer.
+    ``MessageEvent``. Where the deliverable lives differs by tool:
+
+      * ``finish`` — the typed ``message`` argument is the deliverable (issue
+        #822/#830: the wind-down contract and the engine-elicited report turn
+        put the full report there, while the turn text is a one-line lead-in).
+        The turn text is only a fallback for a finish call whose action or
+        message is absent/empty (the #553 shape, and ``get_agent_final_response``'s
+        own guard).
+      * ``dispatch_next`` — its arguments are one-sentence routing metadata, so
+        the turn text stands in for the deliverable (the #555 shape).
+
+    Action events of any other tool return ``""`` so mid-run commentary
+    attached to other tool calls is never mistaken for the answer.
     """
     if not isinstance(event, ActionEvent) or event.tool_name != tool_name:
         return ""
+    if tool_name == FINISH_TOOL_NAME:
+        typed = _typed_finish_message(event)
+        if typed:
+            return typed
     return "".join(content_to_str(event.thought)).strip()
 
 
@@ -657,20 +669,20 @@ def extract_latest_answer(events: list) -> str:
 
     Contract (capture layer, issue #522; regression fixes for issues #553,
     #555 and #830):
-      * **Legacy latest-wins scan** — the text of the last assistant
-        ``MessageEvent`` with non-empty content, or the turn text of the
-        agent's ``finish`` / ``dispatch_next`` turns (carried in
-        ``ActionEvent.thought``). When the full answer and one of those tool
-        calls share a turn, the SDK emits no standalone ``MessageEvent`` for
-        it — previously such answers were lost and posting fell back to the
-        short finish message.
-      * **Typed engine-tool message when no standalone answer exists
-        (issue #830).** A standalone text answer is the documented
-        deliverable and always wins. But when the agent produced no such
-        answer, a typed ``finish.message`` is the canonical final message:
-        the #822 bug was a full report left in ``finish.message`` while the
-        turn text was a one-line lead-in, which the latest-wins scan
-        published. The engine-elicited report turn fills this slot.
+      * **Latest-wins scan** — the text of the last assistant
+        ``MessageEvent`` with non-empty content, or the answer of the agent's
+        ``finish`` / ``dispatch_next`` turns. When the full answer and one of
+        those tool calls share a turn, the SDK emits no standalone
+        ``MessageEvent`` for it — previously such answers were lost and
+        posting fell back to the short finish message.
+      * **``finish`` turns answer with their typed ``finish.message``
+        (issues #822/#830).** The wind-down contract and the engine-elicited
+        report turn put the full deliverable in that argument while the turn
+        text is a one-line lead-in; reading the argument is what stops the
+        posted answer being truncated. The turn text is used only when the
+        action or its message is absent/empty.
+      * **``dispatch_next`` turns answer with their turn text** — their
+        arguments are routing metadata and must never be posted as the answer.
       * All other tool actions are ignored — their accompanying text is
         mid-run commentary, not a deliverable.
       * Return ``""`` when no agent text answer exists; callers then fall
@@ -688,8 +700,6 @@ def extract_latest_answer(events: list) -> str:
     # posting-contract skill agents may post the deliverable before calling
     # them, and the report must still be captured then.
     latest = ""
-    latest_message = ""
-    typed_finish = ""
     for event in events or []:
         if not isinstance(event, (MessageEvent, ActionEvent)):
             continue
@@ -697,22 +707,32 @@ def extract_latest_answer(events: list) -> str:
             if event.source != "agent":
                 continue
             text = "".join(content_to_str(event.llm_message.content)).strip()
-            if text:
-                latest_message = text
         else:
-            typed_text = _typed_finish_message(event)
-            if typed_text:
-                typed_finish = typed_text
             text = (
                 _terminal_turn_answer(event, FINISH_TOOL_NAME)
                 or _terminal_turn_answer(event, DISPATCH_NEXT_TOOL_NAME)
             )
         if text:
             latest = text
-    # A standalone text answer is the documented deliverable; the typed
-    # engine-tool message only stands in when the agent produced none.
-    if typed_finish and not latest_message:
-        return typed_finish
+    return latest
+
+
+def extract_standalone_answer(events: list) -> str:
+    """The agent's latest standalone text answer (latest-wins), or ``""``.
+
+    Unlike :func:`extract_latest_answer`, control-plane turns are ignored: this
+    is the prose channel the scaffold-plan skill historically writes the
+    ``SCAFFOLD_BRANCH`` marker on. It is kept as its own source so the marker
+    fallback keeps seeing that turn even though ``extract_latest_answer`` now
+    prefers a terminator's typed message (issues #822/#636).
+    """
+    latest = ""
+    for event in events or []:
+        if not isinstance(event, MessageEvent) or event.source != "agent":
+            continue
+        text = "".join(content_to_str(event.llm_message.content)).strip()
+        if text:
+            latest = text
     return latest
 
 
@@ -934,8 +954,9 @@ def build_output(
     final_message = get_agent_final_response(conversation.state.events)
 
     # ── Latest-answer capture (issue #522) ────────────────────────
-    # The full deliverable is the agent's last text answer; the finish
-    # message remains the status note used for dispatch/summary below.
+    # The full deliverable is the agent's last answer: a standalone message,
+    # or — for a ``finish`` terminator — its typed ``finish.message`` (the
+    # #822/#830 shape), or the turn text for ``dispatch_next``.
     # Recall-aware capture (issue #558): events after the recorded
     # pre-recall offset belong to the engine-injected recall turns and are
     # excluded so their short routing/status text cannot clobber the
@@ -946,9 +967,17 @@ def build_output(
     # The file write is deferred until after SCAFFOLD_BRANCH stripping
     # (issue #636) so the persisted answer contains clean text.
     run_outcome = _get_run_outcome(conversation)
-    latest_answer = extract_latest_answer(
-        _recall_aware_events(conversation.state.events, run_outcome)
-    )
+    recall_events = _recall_aware_events(conversation.state.events, run_outcome)
+    latest_answer = extract_latest_answer(recall_events)
+    # The ``SCAFFOLD_BRANCH`` prose marker is written on a standalone text turn
+    # (the scaffold-plan skill's channel), which the deliverable above may no
+    # longer represent once the finish terminator's typed message takes
+    # precedence — keep that turn as its own source so the marker fallback
+    # stays intact (issue #636).
+    standalone_answer = extract_standalone_answer(recall_events)
+    # Prose marker source for the SCAFFOLD_BRANCH search/strip below: the
+    # standalone turn when present, else the deliverable.
+    marker_answer = standalone_answer or latest_answer
 
     # ── Scaffold branch marker (issue #604; dual-source since #636) ─
     # The marker contract targets the agent's latest answer, but the
@@ -965,7 +994,7 @@ def build_output(
             getattr(conversation, "id", None)
         )
         result = extract_scaffold_branch_any(
-            final_message, latest_answer, tool_branch=tool_branch
+            final_message, marker_answer, tool_branch=tool_branch
         )
         scaffold_branch = result.branch
         if scaffold_branch:
@@ -973,7 +1002,7 @@ def build_output(
                 f"SCAFFOLD_BRANCH persisted from {result.source}: {scaffold_branch}"
             )
         elif "SCAFFOLD_BRANCH:" in (final_message or "") or "SCAFFOLD_BRANCH:" in (
-            latest_answer or ""
+            marker_answer or ""
         ):
             # Marker present but malformed in every source — warn, never
             # crash the run.
@@ -1155,7 +1184,7 @@ def build_output(
     if scaffold_branch:
         marker_in_prose = (
             "SCAFFOLD_BRANCH:" in (final_message or "")
-            or "SCAFFOLD_BRANCH:" in (latest_answer or "")
+            or "SCAFFOLD_BRANCH:" in (marker_answer or "")
         )
         latest_answer = strip_scaffold_branch(latest_answer)
         final_message = strip_scaffold_branch(final_message)
