@@ -229,6 +229,7 @@ jobs:
               uses: actions/checkout@v5
               with:
                 persist-credentials: false
+                ref: 647b30ed58f96f9c97d22eb784a9d871ff7805ea
 
             - name: Set up Python
               uses: actions/setup-python@v6
