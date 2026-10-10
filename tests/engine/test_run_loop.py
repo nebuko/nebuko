@@ -518,6 +518,167 @@ class TestDeterministicActionPhase:
         assert outcome.exit_code == ExitCode.TERMINAL
 
 
+class TestBenignNoNextAgentExit:
+    """Issue #853: a workflow with no next agent stops green, not with exit 20."""
+
+    def test_no_next_agent_exits_zero_and_records_the_reason(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        engine.adapter.save_state(
+            WorkflowState.model_validate(
+                {
+                    "version": 7,
+                    "workflow": "default",
+                    "step": "review",
+                    "agent": "review",
+                    "current_context": {"last_run_status": "success"},
+                }
+            )
+        )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "REASON": "No valid task found",
+                "SKIP_KIND": "no_next_agent",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body is None
+        assert "agent" not in outcome.phases
+        assert outcome.state is not None
+        # The reason is recorded in the state alongside the existing context.
+        assert outcome.state.current_context["terminal_reason"] == "No valid task found"
+        assert outcome.state.current_context["last_run_status"] == "success"
+
+    def test_a_terminal_step_skip_exits_zero(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "REASON": "Terminal step 'review' has no next in workflow 'default'",
+                "SKIP_KIND": "terminal",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body is None
+
+    def test_a_config_error_skip_still_exits_terminal(self, tmp_path, monkeypatch):
+        """Regression guard: a real config failure keeps the terminal exit (20)."""
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "REASON": "Resolution failed: workflow file 'nope.yaml' not found",
+                "SKIP_KIND": "config_error",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert outcome.posted_body is None
+
+    def test_an_unclassified_skip_keeps_the_terminal_contract(self, tmp_path, monkeypatch):
+        """Fail-safe: a reason without a kind must never be softened to exit 0."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "true", "REASON": "mystery"})
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+
+    def test_the_real_resolver_marks_an_empty_task_as_no_next_agent(self, tmp_path):
+        """End-to-end: the resolver classifies its no-task fallback as benign."""
+        engine = _engine(tmp_path, _trigger(body="just some prose", number=853))
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert resolved.get("SKIP_KIND") == "no_next_agent"
+
+    def test_a_mis_typed_kind_never_swallows_a_soft_kill_ping(self, tmp_path, monkeypatch):
+        """Regression guard (issue #853): a notice-bearing skip outranks a benign kind.
+
+        If the classifier ever mis-labelled an exhausted soft-kill halt benign,
+        gating the benign branch on the notice flags must still keep the human
+        ping and the failing exit (not exit 0 with no notice).
+        """
+        engine = _engine(tmp_path, _trigger(body=_soft_kill_comment_body(), number=793))
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SOFT_RETRY_EXHAUSTED": "true",
+                "SKIP_KIND": "terminal",
+                "REASON": (
+                    "Soft time-kill: step 'implement' exhausted its retry budget "
+                    "(2/2); halting the workflow for a human to resume with /nebuko resume."
+                ),
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert outcome.posted_body is not None
+        assert "/nebuko resume" in outcome.posted_body
+
+    def test_a_mis_typed_kind_never_swallows_a_command_error(self, tmp_path, monkeypatch):
+        """Regression guard (issue #853): a benign kind must not hide a command error."""
+        engine = _engine(
+            tmp_path, _trigger(body="/nebuko run workflow --default", number=804)
+        )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "COMMAND_ERROR": "true",
+                "SKIP_KIND": "terminal",
+                "REASON": "/nebuko run workflow --name <workflow> [--step <step>]",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert outcome.posted_body is not None
+        assert "@olivier-norture" in outcome.posted_body
+
+    def test_a_benign_skip_without_a_previous_state_annotates_nothing(
+        self, tmp_path, monkeypatch
+    ):
+        """``_record_terminal_skip`` leaves a missing prior state alone (returns None)."""
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "REASON": "No valid task found",
+                "SKIP_KIND": "no_next_agent",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.state is None
+
+
 class TestRoutePhase:
     def test_maps_the_dispatch_payload(self, tmp_path):
         engine = _engine(tmp_path)

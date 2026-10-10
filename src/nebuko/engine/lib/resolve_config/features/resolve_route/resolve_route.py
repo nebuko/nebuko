@@ -718,15 +718,23 @@ def _resolve_dispatch_path(
             if dispatch_status == "hold":
                 return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
             elif dispatch_status == "terminate":
-                return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
+                # Deliberate end-of-flow stop: benign, must not fail the run.
+                return {
+                    "SKIP_AGENT": "true",
+                    "REASON": "Dispatch status: terminate",
+                    "SKIP_KIND": "terminal",
+                }
             elif dispatch_status == "loop":
                 config["task"] = prev_state.agent or ""
             elif dispatch_status == "advance":
                 config["task"] = agent_hint
             else:
+                # Unknown dispatch status at an exhausted workflow: the step is
+                # terminal, so treat it as a benign end-of-flow stop.
                 return {
                     "SKIP_AGENT": "true",
                     "REASON": "Terminal step reached",
+                    "SKIP_KIND": "terminal",
                 }
     else:
         config["task"] = agent_hint
@@ -1754,7 +1762,12 @@ def _resolve_bot_fallback_path(
     elif dispatch.status == "hold":
         return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
     elif dispatch.status == "terminate":
-        return {"SKIP_AGENT": "true", "REASON": "Dispatch status: terminate"}
+        # Deliberate end-of-flow stop: benign, must not fail the run.
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": "Dispatch status: terminate",
+            "SKIP_KIND": "terminal",
+        }
 
     return config
 
@@ -1921,9 +1934,11 @@ def _workflow_next_step_skip_reason(
             "REASON": f"Resolution failed: step '{current_step}' not found in workflow '{wf_name}'",
         }
     if _is_terminal_step(step_def):
+        # The step exists and has no successor: a benign end-of-workflow stop.
         return {
             "SKIP_AGENT": "true",
             "REASON": f"Terminal step '{current_step}' has no next in workflow '{wf_name}'",
+            "SKIP_KIND": "terminal",
         }
     # Step has a `next` (or conditions) but no successor resolved —
     # e.g. target step missing from the workflow definition.

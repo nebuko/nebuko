@@ -13,6 +13,8 @@ from nebuko.engine.models import (
     ExitCode,
     RoutingDecision,
     RunOutcome,
+    SkipKind,
+    SkipOutcome,
     StepResult,
     Trigger,
 )
@@ -362,3 +364,52 @@ class TestDeterministicStepExecute:
         ).execute(adapter)
 
         assert "the issue is unlocked" in adapter.posted[0]
+
+
+class TestSkipOutcome:
+    """The typed guards-skip verdict carried to the exit path (issue #853)."""
+
+    def test_benign_kinds_map_to_exit_zero(self):
+        for kind in (SkipKind.NO_NEXT_AGENT, SkipKind.TERMINAL):
+            outcome = SkipOutcome(kind=kind, reason="done")
+
+            assert outcome.is_benign is True
+            assert outcome.exit_code == ExitCode.ADVANCE
+
+    def test_config_error_is_not_benign_and_keeps_terminal(self):
+        outcome = SkipOutcome(kind=SkipKind.CONFIG_ERROR, reason="workflow not found")
+
+        assert outcome.is_benign is False
+        assert outcome.exit_code == ExitCode.TERMINAL
+
+    def test_from_verdict_reads_the_kind(self):
+        outcome = SkipOutcome.from_verdict(
+            {
+                "SKIP_AGENT": "true",
+                "REASON": "No valid task found",
+                "SKIP_KIND": "no_next_agent",
+            }
+        )
+
+        assert outcome.kind is SkipKind.NO_NEXT_AGENT
+        assert outcome.reason == "No valid task found"
+        assert outcome.is_benign is True
+
+    def test_from_verdict_defaults_to_config_error_when_unclassified(self):
+        outcome = SkipOutcome.from_verdict(
+            {"SKIP_AGENT": "true", "REASON": "nothing to do"}
+        )
+
+        assert outcome.kind is SkipKind.CONFIG_ERROR
+        assert outcome.exit_code == ExitCode.TERMINAL
+
+    def test_from_verdict_defaults_to_config_error_on_unknown_kind(self):
+        outcome = SkipOutcome.from_verdict({"SKIP_KIND": "banana", "REASON": "?"})
+
+        assert outcome.kind is SkipKind.CONFIG_ERROR
+
+    def test_is_frozen(self):
+        outcome = SkipOutcome(kind=SkipKind.TERMINAL, reason="done")
+
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            outcome.reason = "changed"
