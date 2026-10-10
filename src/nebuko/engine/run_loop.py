@@ -69,6 +69,12 @@ _RUN_RESOLVED_KEY = "resolved"
 _USER_REQUEST_HEADER = "--- USER REQUEST / GITHUB CONTEXT ---"
 _STEP_HEADER = "## Current step prompt"
 
+# Per-issue LLM session id that the provider runtime reads back out of the
+# environment to decorate provider requests (e.g. OpenCode Go's session header).
+# The engine owns the value: it is the trigger's issue number, stamped once per
+# run so the session stays stable across engine turns.
+_LLM_SESSION_ID_ENV = "LLM_SESSION_ID"
+
 _EXIT_CODE_BY_STATUS = {
     "advance": ExitCode.ADVANCE,
     "loop": ExitCode.ADVANCE,
@@ -422,6 +428,22 @@ def _ensure_child_identity(
         )
     if not env.get("TARGET_NUMBER"):
         env["TARGET_NUMBER"] = number
+    return env
+
+
+def _stamp_llm_session_id(env: dict[str, str]) -> dict[str, str]:
+    """Stamp the per-issue LLM session id the provider runtime forwards.
+
+    The engine owns the value — it is the trigger's issue number, the same
+    identity :func:`_ensure_child_identity` has already validated — so a provider
+    that declares a session header (e.g. OpenCode Go) sends a stable per-issue id
+    from the first run. A per-issue value never enters repo config; the request
+    path only ever reads it back out of the environment. An undeterminable
+    number is left unstamped rather than sent as an empty header.
+    """
+    number = env.get("TARGET_NUMBER")
+    if number and not env.get(_LLM_SESSION_ID_ENV):
+        env[_LLM_SESSION_ID_ENV] = number
     return env
 
 
@@ -1210,10 +1232,13 @@ class Engine:
         The child then gets the workflow identity the resolver drops on a bare
         human mention (from the seeded previous state) and the ``REPO_NAME``/
         ``TARGET_NUMBER`` its comment-based state recovery needs (issue #739).
+        The trigger's issue number is also stamped as the LLM session id the
+        provider runtime forwards to session-aware gateways.
         """
         env = {**self.env, **resolved_env_overlay(self._handoff_config())}
         env = _backfill_workflow_identity(env, self._seeded_prev_state.get("state"))
         env = _ensure_child_identity(env, self._active_trigger())
+        env = _stamp_llm_session_id(env)
         env.update(self._artifacts().child_log_env())
         return _anchor_config_path(env, self.repo_root)
 

@@ -25,6 +25,7 @@ from nebuko.engine.run_loop import (
     _backfill_workflow_identity,
     _ensure_child_identity,
     _exit_code_for,
+    _stamp_llm_session_id,
     _TRIGGER_KEY,
     main,
     resolved_env_overlay,
@@ -2042,3 +2043,29 @@ class TestEntryPoints:
         assert engine.main is main
         assert engine.Engine is Engine
         assert tuple(engine.PHASES) == PHASES
+
+
+class TestLlmSessionIdStamp:
+    """The engine stamps the trigger's issue id for session-aware gateways (#854).
+
+    The value is the same validated issue number ``_ensure_child_identity``
+    already seeds as ``TARGET_NUMBER``, so no second validation path exists.
+    """
+
+    def test_stamps_the_validated_trigger_number(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, trigger=_trigger(number=854))
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+
+        assert engine._agent_env()["LLM_SESSION_ID"] == "854"
+
+    def test_does_not_clobber_an_ambient_session_id(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path, env={"LLM_SESSION_ID": "explicit"})
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+
+        assert engine._agent_env()["LLM_SESSION_ID"] == "explicit"
+
+    def test_the_pure_stamp_matches_the_child_number(self):
+        assert _stamp_llm_session_id({"TARGET_NUMBER": "854"})["LLM_SESSION_ID"] == "854"
+
+    def test_the_pure_stamp_is_a_noop_without_a_number(self):
+        assert "LLM_SESSION_ID" not in _stamp_llm_session_id({})
