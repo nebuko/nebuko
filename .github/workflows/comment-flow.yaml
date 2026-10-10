@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   agent:
-    uses: ./.github/workflows/nebuko-workflow.yaml
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@647b30ed58f96f9c97d22eb784a9d871ff7805ea
     with:
       runs_on: "self-hosted"
       agent_config_path: "defaults/agents/agent-config-commandcode.yaml"
