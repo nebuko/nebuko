@@ -15,9 +15,13 @@ from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.context import AgentContext
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.sdk.mcp import MCPServer
-from openhands.tools.preset.default import get_default_condenser
 from openhands.sdk.tool.spec import Tool
 from openhands.sdk.tool.registry import register_tool
+
+from agent_script.sub_domains.token_budget.condenser import (
+    build_condenser,
+    resolve_token_budget_policy,
+)
 
 from agent_script.features.dispatch_check import has_dispatch_decision
 from agent_script.features.run_agent.dispatch_recall import (
@@ -318,7 +322,7 @@ def run_agent(
         system_prompt_kwargs=system_prompt_kwargs,
         security_policy_filename=_resolve_security_policy(),
         agent_context=_build_agent_context(role_name),
-        condenser=get_default_condenser(llm=llm),
+        condenser=build_condenser(llm, resolve_token_budget_policy(agent_cfg)),
     )
 
     # ── Token telemetry capture (issue #829) ─────────────────────

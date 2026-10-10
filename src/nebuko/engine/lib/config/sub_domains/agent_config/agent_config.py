@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from ..agent_complexity_override.agent_complexity_override import AgentComplexityOverride
 from ..llm_config.llm_config import LLMConfig
 from ..mcp_server_config.mcp_server_config import MCPServerConfig
+from ..token_budget.token_budget import TokenBudgetPolicy
 
 
 class AgentConfig(BaseModel):
@@ -26,6 +27,8 @@ class AgentConfig(BaseModel):
     )
     # Declarative MCP servers attached to this agent's conversation at launch.
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
+    # Token-budget / compaction policy for this role (issue #851).
+    token_budget: TokenBudgetPolicy = Field(default_factory=TokenBudgetPolicy)
     # Per-agent sampling parameter overrides
     top_p: Optional[float] = None
     top_k: Optional[int] = None

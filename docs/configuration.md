@@ -114,6 +114,7 @@ llms:
 | `complexity_overrides` | mapping<`low` \| `medium` \| `high`, object> | Per-tier partial overrides of model/sampling/reasoning. See [Complexity Overrides](#complexity-overrides-per-tier-configuration). |
 | `tools` | string[] | Tool whitelist: `terminal`, `file_editor`, `task_tracker` (SDK tools) plus `think`, `finish`, `dispatch_next` (built-in defaults). See [agents-and-skills.md](./agents-and-skills.md). |
 | `mcp_servers` | object[] | MCP servers attached to the agent's conversation (see [MCP Servers](#mcp-servers)). |
+| `token_budget` | object | Compaction / prompt-leanness policy (see [Token Budget](#token-budget)). |
 
 Example:
 
@@ -125,6 +126,35 @@ agents:
     prompt_file: "defaults/prompts/dev.md"
     skills: ["posting-contract", "git-pr-workflow"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
+```
+
+---
+
+## Token Budget
+
+`token_budget` controls how an agent's context is compacted and how lean its
+per-call prompt surface is (issue #851). Compaction is a **late safety valve**
+that runs on the agent's own model: it is never triggered early by a small
+event count, and the summarizer's spend is metered under `usage_id="condenser"`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `compaction_max_size` | int \| null | `240` | Event count that triggers compaction. |
+| `compaction_max_tokens` | int \| null | 80% of the route input limit | Token count that triggers compaction. |
+| `compaction_keep_first` | int | `4` | Leading events compaction always preserves. |
+| `compaction_model` | string \| null | agent's model | Summarizer model (default shares the conversation's prompt cache). |
+| `prompt_profile` | `full` \| `lean` | `full` | `lean` trims per-call tool/prompt overhead. |
+| `require_batched_recon` | bool | `false` | Require reconnaissance to be batched into single multi-action turns. |
+
+Example:
+
+```yaml
+agents:
+  dev:
+    model: "${llms.qwen-3-6-27b}"
+    token_budget:
+      prompt_profile: "lean"
+      require_batched_recon: true
 ```
 
 ---
