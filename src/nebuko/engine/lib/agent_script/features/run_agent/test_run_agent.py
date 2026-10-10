@@ -113,7 +113,7 @@ class TestRunAgentIntegration(unittest.TestCase):
         convo = _make_conversation("finished")
         mock_conversation_cls.return_value = convo
 
-        with patch("agent_script.features.run_agent.run_agent.get_default_condenser", return_value=None):
+        with patch("agent_script.features.run_agent.run_agent.build_condenser", return_value=None):
             result = run_agent(llm_config={}, prompt="do the thing")
         self.assertIs(result, convo)
         self.assertIsInstance(convo.run_outcome, RunOutcome)
@@ -136,7 +136,7 @@ class TestRunAgentIntegration(unittest.TestCase):
         mock_conversation_cls.return_value = _make_conversation("finished")
 
         with patch(
-            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            "agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(llm_config={}, prompt="do the thing")
@@ -179,7 +179,7 @@ class TestRunAgentIntegration(unittest.TestCase):
             "agent_script.features.run_agent.run_agent._run_supervised",
             side_effect=fake_supervised,
         ), patch(
-            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            "agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             result = run_agent(llm_config={}, prompt="do the thing")
@@ -222,7 +222,7 @@ class TestRunAgentIntegration(unittest.TestCase):
             "agent_script.features.run_agent.run_agent._run_supervised",
             side_effect=fake_supervised,
         ), patch(
-            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            "agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             result = run_agent(llm_config={}, prompt="do the thing")
@@ -259,7 +259,7 @@ class TestRunAgentIntegration(unittest.TestCase):
             "agent_script.features.run_agent.run_agent._run_supervised",
             side_effect=fake_supervised,
         ), patch(
-            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            "agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(llm_config={}, prompt="do the thing")
@@ -296,7 +296,7 @@ class TestRunAgentIntegration(unittest.TestCase):
             "agent_script.features.run_agent.run_agent._run_supervised",
             side_effect=fake_supervised,
         ), patch(
-            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            "agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ), patch(
             "agent_script.features.run_agent.run_agent.has_dispatch_decision",
@@ -338,7 +338,7 @@ class TestRunAgentIntegration(unittest.TestCase):
             "agent_script.features.run_agent.run_agent._run_supervised",
             return_value=(RunWatchdog(50.0, lambda: None), None),
         ), patch(
-            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            "agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ), patch(
             "agent_script.features.run_agent.run_agent.has_dispatch_decision",
@@ -413,7 +413,7 @@ class TestRunAgentSystemChannelIntegration(unittest.TestCase):
                     "ROLE_NAME": "dev",
                 }
             ), patch(
-                "agent_script.features.run_agent.run_agent.get_default_condenser",
+                "agent_script.features.run_agent.run_agent.build_condenser",
                 return_value=None,
             ):
                 run_agent(llm_config={}, prompt="do the thing")
@@ -437,7 +437,7 @@ class TestRunAgentSystemChannelIntegration(unittest.TestCase):
             "agent_script.features.run_agent.run_agent.os.environ",
             {"ROLE_NAME": "dev"},
         ), patch(
-            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            "agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(llm_config={}, prompt="do the thing")
@@ -529,7 +529,7 @@ class TestMCPServerWiring(unittest.TestCase):
             {"ROLE_NAME": "context", "BRAVE_API_KEY": "secret-value"},
             clear=True,
         ), patch(
-            "agent_script.features.run_agent.run_agent.get_default_condenser",
+            "agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(
