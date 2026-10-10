@@ -19,6 +19,9 @@ from pydantic import BaseModel
 DEFAULT_COMPACTION_MAX_SIZE = 240
 #: Fraction of the effective input limit at which token-based compaction fires.
 COMPACTION_TOKEN_FRACTION = 0.8
+#: Floor for the *derived* token trigger: a limit of 0 must never configure the
+#: valve to fire at zero tokens. Explicit ``compaction_max_tokens`` still wins.
+MIN_COMPACTION_MAX_TOKENS = 1
 
 
 class TokenBudgetPolicy(BaseModel):
@@ -64,10 +67,16 @@ class TokenBudgetPolicy(BaseModel):
 
         Always returns a number: a ``None`` that would leave the token valve
         "never firing" is a forbidden outcome (issue #851 contract invariant 2).
+        The derived value is floored at ``MIN_COMPACTION_MAX_TOKENS`` so a zero
+        input limit cannot arm the valve at zero tokens; an explicit
+        ``compaction_max_tokens`` is still honoured verbatim.
         """
         if self.compaction_max_tokens is not None:
             return self.compaction_max_tokens
-        return int(COMPACTION_TOKEN_FRACTION * effective_input_limit)
+        return max(
+            MIN_COMPACTION_MAX_TOKENS,
+            int(COMPACTION_TOKEN_FRACTION * effective_input_limit),
+        )
 
     def resolved_compaction_model(self, role_model: str) -> str:  # @stub-protected
         """Summarizer model: ``compaction_model`` or the role's own model.

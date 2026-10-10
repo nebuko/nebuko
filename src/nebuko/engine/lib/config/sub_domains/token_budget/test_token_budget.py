@@ -8,6 +8,7 @@ from config import TokenBudgetPolicy
 from config.sub_domains.token_budget.token_budget import (
     COMPACTION_TOKEN_FRACTION,
     DEFAULT_COMPACTION_MAX_SIZE,
+    MIN_COMPACTION_MAX_TOKENS,
 )
 
 
@@ -25,6 +26,14 @@ class TestDefaults:
         assert policy.resolved_max_tokens(100_000) == int(
             COMPACTION_TOKEN_FRACTION * 100_000
         )
+
+    def test_derived_max_tokens_clamps_to_positive_minimum(self):
+        policy = TokenBudgetPolicy()
+        assert policy.resolved_max_tokens(0) == MIN_COMPACTION_MAX_TOKENS
+
+    def test_explicit_zero_max_tokens_still_wins(self):
+        policy = TokenBudgetPolicy(compaction_max_tokens=0)
+        assert policy.resolved_max_tokens(100_000) == 0
 
     def test_compaction_model_defaults_to_role_model(self):
         policy = TokenBudgetPolicy()
