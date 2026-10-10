@@ -1711,6 +1711,19 @@ class TestBuildHumanMetricsSection(unittest.TestCase):
         # one human intervention after the implementation turn
         self.assertIn("| 1 |", section)
 
+    def test_reading_time_excludes_context_agent_reports(self):
+        body = " ".join(["word"] * 200)  # 200 body words -> 1.0 min @ 200 wpm
+        context_report = (
+            "<!-- bot-workflow-terminal -->\n<!-- bot-agent-context -->\n"
+            + " ".join(["context"] * 400)  # excluded, else it would add 2.0 min
+        )
+        comments = [
+            {"body": context_report, "user": {"login": "alice"},
+             "created_at": "2026-09-01T10:01:00Z"},
+        ]
+        section = build_human_metrics_section(comments, [], body, None)
+        self.assertIn("| Estimated human reading time | 1.0 min |", section)
+
 
 if __name__ == "__main__":
     unittest.main()
