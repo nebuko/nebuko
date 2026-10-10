@@ -13,6 +13,7 @@ Canonical actions (issue #635):
   - ``delete``     resource ``comments`` — batch-delete issue comments (issue #644);
                    ``--issue`` and ``--from`` optional, both numeric
   - ``clean``      resource ``comments`` — local maintenance command (issue #679);
+                   alias of ``delete``, so ``--issue``/``--from`` apply too;
                    runs its script and starts no agent
   - ``update``     resource ``circuit-breaker`` — set the per-issue
                    circuit-breaker call limit (issue #839); ``--value`` required
@@ -27,11 +28,13 @@ Only the ``/nebuko``-prefixed form is recognized as a command; a bare
 
 Malformed input (unknown action, wrong/missing resource, unknown or
 duplicate flag, missing required flag) yields ``None`` from
-:func:`parse_workflow_command` so routing falls through to the normal
-cascade; :func:`parse_command` is the typed sibling that keeps the failure
-category and a user-facing usage hint (issue #804). Old positional forms
-(``/nebuko default``, ``/nebuko force-next-step <step>``) deliberately do not
-parse.
+:func:`parse_workflow_command`; :func:`parse_command` is the typed sibling
+that keeps the failure category and a user-facing usage hint (issue #804).
+A malformed ``/nebuko`` invocation is a *command attempt*: the resolver
+answers it with that usage hint and never consults the workflow-continuation
+cascade (issue #867), so an active dispatch can never absorb it. Old
+positional forms (``/nebuko default``, ``/nebuko force-next-step <step>``)
+deliberately do not parse.
 """
 
 import re
@@ -129,14 +132,17 @@ FLAGS_BY_ACTION: Dict[str, Set[str]] = {
     "run": {"name", "step"},
     "force-step": {"name"},
     "resume": {"feedback"},
-    "delete": {"issue"},
+    "delete": {"issue", "from"},
     "update": {"value"},
     "approve": {"feedback"},
     "reject": {"feedback"},
 }
 
-#: Classification outcome for a single issue comment (issue #679).
-CommentKind = Literal["command", "agent_trigger", "none"]
+#: Classification outcome for a single issue comment (issues #679/#867).
+#: ``"command_attempt"`` is a malformed ``/nebuko`` invocation: recognized as
+#: an intent, never as a command, and answered with a usage hint by the
+#: resolver without consulting the workflow-continuation cascade.
+CommentKind = Literal["command", "command_attempt", "agent_trigger", "none"]
 
 #: Command class: ``"workflow"`` commands bootstrap the agent pipeline,
 #: ``"local"`` commands run only their deterministic script (issue #679),
@@ -176,7 +182,7 @@ _MULTIWORD_FLAGS = {"feedback"}
 #: Per-action flags whose value must be all digits (issue #644). A
 #: non-numeric value makes the command malformed (⇒ None).
 _NUMERIC_FLAGS_BY_ACTION: Dict[str, Set[str]] = {
-    "delete": {"issue"},
+    "delete": {"issue", "from"},
     "update": {"value"},
 }
 
@@ -264,8 +270,8 @@ _USAGE_BY_ACTION: Dict[str, str] = {
     "run": "/nebuko run workflow --name <workflow> [--step <step>]",
     "resume": "/nebuko resume [--feedback <text>]",
     "force-step": "/nebuko force-step step --name <step>",
-    "delete": "/nebuko delete comments [--issue <number>]",
-    "clean": "/nebuko clean comments [--issue <number>]",
+    "delete": "/nebuko delete comments [--issue <number>] [--from <comment-id>]",
+    "clean": "/nebuko clean comments [--issue <number>] [--from <comment-id>]",
     "update": "/nebuko update circuit-breaker --value <n>",
     "approve": "/nebuko approve gate [--feedback <text>]",
     "reject": "/nebuko reject gate [--feedback <text>]",
@@ -406,24 +412,35 @@ def _numeric_flags_valid(params: Dict[str, str], action: str) -> bool:
 # @stub-protected: signature defined by architect — do not modify
 @dataclass(frozen=True)
 class CommentIntent:
-    """Immutable outcome of classifying a single issue comment (issue #679).
+    """Immutable outcome of classifying a single issue comment (issues #679/#867).
 
     Downstream routing consumes this instead of re-deriving intent from the
-    raw text, so a recognized command is a first-class short-circuit that can
-    never reach the agent-trigger path.
+    raw text. A recognized command is a first-class short-circuit that can
+    never reach the agent-trigger path; a malformed ``/nebuko`` invocation is a
+    distinct ``"command_attempt"`` so the resolver can answer it with the
+    grammar's usage hint without consulting the workflow-continuation cascade.
 
     Attributes:
-        kind: ``"command"`` for a recognized command; ``"agent_trigger"``
-            when the comment carries an explicit agent trigger (human
-            ``@@mention`` or CI machine token); ``"none"`` otherwise.
+        kind: ``"command"`` for a recognized command; ``"command_attempt"``
+            for a malformed ``/nebuko`` invocation (recognized intent, invalid
+            grammar); ``"agent_trigger"`` when the comment carries an explicit
+            agent trigger (human ``@@mention`` or CI machine token);
+            ``"none"`` otherwise.
         command: Normalised command name when ``kind == "command"``
-            (e.g. ``"clean"``), else ``None``.
+            (e.g. ``"clean"``); for ``"command_attempt"`` the recognized verb
+            when the action itself was valid (e.g. ``"clean"``), else ``None``.
         raw: Original comment body, kept for logging/diagnostics.
+        usage: Per-verb correction hint for ``"command_attempt"`` (aggregate
+            help for an unknown action); ``None`` otherwise.
+        detail: Machine-stable failure category for ``"command_attempt"``
+            (mirrors :data:`CommandDetail`); ``None`` otherwise.
     """
 
     kind: CommentKind  # @stub-protected
     command: Optional[str]  # @stub-protected
     raw: str  # @stub-protected
+    usage: Optional[str] = None  # @stub-protected
+    detail: Optional[str] = None  # @stub-protected
 
 
 #: Human ``@@mention`` agent triggers. Mirrors the marker grammar owned by
@@ -444,18 +461,36 @@ def _has_agent_trigger(body: str) -> bool:
     return bool(_MENTION_RE.search(body) or _MACHINE_TRIGGER_RE.search(body))
 
 
+def _attempted_action(body: str) -> Optional[str]:
+    """The recognized verb of a ``/nebuko`` line, or ``None`` if absent/unknown.
+
+    Carries the attempted action on a ``command_attempt`` intent even when the
+    flags are invalid (issue #867); a malformed *action* has no verb. Matching
+    mirrors :func:`parse_command`: first line, anchored prefix, first token.
+    """
+    first_line = body.split("\n", 1)[0].strip()
+    match = _COMMAND_RE.match(first_line)
+    if not match:
+        return None
+    tokens = match.group(1).split()
+    if not tokens or tokens[0] not in COMMAND_REGISTRY:
+        return None
+    return tokens[0]
+
+
 # @stub-protected: signature defined by architect — do not modify
 def classify_comment(body: str) -> CommentIntent:
-    """Classify an issue comment into command / agent-trigger / none.
+    """Classify an issue comment into command / command-attempt / trigger / none.
 
-    Delegates to :func:`parse_workflow_command`, so a comment is a ``"command"``
-    only when it is a **well-formed** registered command (including
-    ``/nebuko clean comments``): malformed invocations — unknown action,
-    wrong/missing resource, unknown flag — parse to ``None`` and fall through to
-    ``"none"`` rather than over-matching. A recognized command must
-    short-circuit the agent-trigger path. Otherwise a body carrying an explicit
-    agent trigger (human ``@@mention`` or CI machine token) is an
-    ``"agent_trigger"``; anything else is ``"none"``.
+    A comment is a ``"command"`` only when it is a **well-formed** registered
+    command (including ``/nebuko clean comments``). A malformed ``/nebuko``
+    invocation — unknown action, wrong/missing resource, unknown flag — is a
+    ``"command_attempt"`` (issue #867): the grammar alone decides it, so the
+    intent carries the usage hint and failure category for a terminal answer
+    that never consults the workflow-continuation cascade. A leading ``/`` that
+    is not a ``/nebuko`` attempt falls through unchanged. Otherwise a body
+    carrying an explicit agent trigger (human ``@@mention`` or CI machine token)
+    is an ``"agent_trigger"``; anything else is ``"none"``.
 
     Only the ``/nebuko``-prefixed form is recognized as a command — the
     real-world trigger payload for issue #679 is ``/nebuko clean comments``
@@ -469,9 +504,21 @@ def classify_comment(body: str) -> CommentIntent:
     Returns:
         A frozen :class:`CommentIntent`.
     """
-    wf_cmd = parse_workflow_command(body)
-    if wf_cmd is not None and wf_cmd.action in COMMAND_REGISTRY:
-        return CommentIntent(kind="command", command=wf_cmd.action, raw=body)
+    parse = parse_command(body)
+    if (
+        parse.status == "valid"
+        and parse.command is not None
+        and parse.command.action in COMMAND_REGISTRY
+    ):
+        return CommentIntent(kind="command", command=parse.command.action, raw=body)
+    if parse.status == "malformed" and parse.detail != "unknown_command":
+        return CommentIntent(
+            kind="command_attempt",
+            command=_attempted_action(body),
+            raw=body,
+            usage=parse.usage,
+            detail=parse.detail,
+        )
     if _has_agent_trigger(body):
         return CommentIntent(kind="agent_trigger", command=None, raw=body)
     return CommentIntent(kind="none", command=None, raw=body)
