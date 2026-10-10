@@ -1053,6 +1053,54 @@ class TestRunLoop:
         assert "agent" not in outcome.phases
         assert outcome.exit_code == ExitCode.TERMINAL
 
+    def test_posts_the_terminal_skip_reason_when_the_workflow_is_missing(self, tmp_path, monkeypatch):
+        """A failed ``/workflow`` resolution reaches the issue comment (issue #725).
+
+        ``resolve_config`` reports the miss as ``SKIP_AGENT=true`` with the
+        ``"/workflow '<name>': Workflow file not found ..."`` reason, but the
+        ``guards`` phase currently returns ``posted_body=None``, so the reason
+        dies in the logs. The terminal outcome must carry the reason through the
+        adapter, reusing the legacy "Workflow stopped" skip comment.
+        """
+        engine = _engine(tmp_path)
+        reason = (
+            "/workflow 'spec-driven-impll': Workflow file not found: "
+            "'spec-driven-impll.yaml' (searched: "
+            "['/runner/workflows/spec-driven-impll.yaml'])"
+        )
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "true", "REASON": reason})
+        invoked = []
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: invoked.append(prompt))
+
+        outcome = engine.run()
+
+        assert invoked == []
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert outcome.posted_body is not None
+        assert "spec-driven-impll" in outcome.posted_body
+        assert "Workflow file not found" in outcome.posted_body
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
+        assert "Workflow file not found" in journal
+
+    def test_keeps_routine_guard_skips_silent(self, tmp_path, monkeypatch):
+        """Only a resolver ``REASON`` is posted; routine guard skips stay silent.
+
+        The legacy job exported ``REASON`` from ``resolve_config`` alone, so a
+        same-agent loop / human-ping skip never posted a terminal comment. The
+        fix must keep that distinction (issue #725).
+        """
+        trigger = _trigger(body=f"<!-- bot-workflow-terminal -->\n{BOT_AGENT_MARKER}\n@@dev continue")
+        engine = _engine(tmp_path, trigger)
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "false", "TASK": "dev"})
+        invoked = []
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: invoked.append(prompt))
+
+        outcome = engine.run()
+
+        assert invoked == []
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert outcome.posted_body is None
+
     def test_records_an_unrecoverable_failure_as_the_error_exit_code(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
 
