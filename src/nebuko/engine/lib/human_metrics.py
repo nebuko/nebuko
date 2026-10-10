@@ -64,6 +64,11 @@ class HumanMetricsConfig:
     human_logins: frozenset[str] = frozenset()
     bot_login_suffixes: tuple[str, ...] = ("[bot]",)
     implementation_agent_roles: tuple[str, ...] = ("dev", "stub")
+    # Author roles whose comments never count toward reading time. Context-agent
+    # reports are consumed by the architect, not read by the reporter, so they
+    # are excluded (issue #864). Both spellings are listed because
+    # ``parse_agent_role`` returns the raw marker value without legacy aliasing.
+    reading_excluded_agent_roles: tuple[str, ...] = ("context", "ctx")
     # @stub-protected
 
 
@@ -119,6 +124,22 @@ class HumanMetrics:
 
 
 # @stub-protected
+def _reading_corpus(issue: IssueData, config: HumanMetricsConfig) -> str:
+    """Gather the text a human is expected to read for one issue.
+
+    Scope: the issue body plus every comment, except comments authored by an
+    excluded agent role. Context-agent reports are excluded (issue #864): the
+    architect consumes them, the reporter does not read them.
+    """
+    counted = (
+        comment.body
+        for comment in issue.comments
+        if comment.agent_role not in config.reading_excluded_agent_roles
+    )
+    return issue.body + " " + " ".join(counted)
+
+
+# @stub-protected
 class HumanMetricsAnalyzer:
     """Pure computation of human metrics from already-collected issue data."""
 
@@ -149,11 +170,13 @@ class HumanMetricsAnalyzer:
         if self._config.reading_speed_wpm <= 0:
             unavailable["reading_time_seconds"] = "reading speed must be greater than zero"
             return None
-        # Every comment counts — the human reads agent output too — but markup
-        # that never renders as prose (HTML comments, collapsed <details> blocks)
-        # is stripped first, as it otherwise dominates the word count.
-        raw_text = issue.body + " " + " ".join(c.body for c in issue.comments)
-        words = len(_strip_non_rendered_markup(raw_text).split())
+        # Every comment counts — the human reads agent output too — except
+        # context-agent reports, which the architect consumes on the reader's
+        # behalf (issue #864, handled by ``_reading_corpus``). Markup that never
+        # renders as prose (HTML comments, collapsed <details> blocks) is
+        # stripped first, as it otherwise dominates the word count.
+        clean_text = _strip_non_rendered_markup(_reading_corpus(issue, self._config))
+        words = len(clean_text.split())
         return words / self._config.reading_speed_wpm * 60
 
     def _wall_clock(self, issue: IssueData, unavailable: dict) -> float | None:
@@ -325,7 +348,7 @@ class HumanMetricsRenderer:
         lines.append(
             "> _Human metrics are estimates/proxies derived from issue text and workflow "
             f"timestamps (reading speed: {self._config.reading_speed_wpm} wpm; scope: issue body "
-            "+ all comments, non-rendered markup excluded). Agent time spent is a proxy for "
-            "human effort avoided, not a measured saving._"
+            "+ all comments except context-agent reports, non-rendered markup excluded). "
+            "Agent time spent is a proxy for human effort avoided, not a measured saving._"
         )
         return "\n".join(lines)

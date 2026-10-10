@@ -5,7 +5,8 @@ Covers the scenarios S1-S9 of the frozen spec:
 - S1 human comment count (any human comment counts, incl. gate approvals)
 - S2 human intervention count after the first implementation turn
 - S3 human command count vs. agent tool invocations
-- S4 reading-time estimate (configurable wpm; scope = body + all comments, non-rendered markup stripped)
+- S4 reading-time estimate (configurable wpm; scope = body + all comments
+  except context-agent reports, non-rendered markup stripped)
 - S5 wall-clock duration (first agent start -> close)
 - S6 agent time spent (benefit proxy, no counterfactual baseline)
 - S7 human response latency (agent turn -> next human reply)
@@ -85,6 +86,12 @@ class TestConfigDefaults(unittest.TestCase):
         self.assertEqual(config.bot_login_suffixes, ("[bot]",))
         self.assertEqual(config.implementation_agent_roles, ("dev", "stub"))
 
+    def test_reading_excluded_agent_roles_defaults(self):
+        # Both spellings: parse_agent_role returns the raw marker value.
+        self.assertEqual(
+            HumanMetricsConfig().reading_excluded_agent_roles, ("context", "ctx")
+        )
+
 
 class TestHumanCommentCount(unittest.TestCase):
     """S1: human comment count, incl. short gate/approval replies."""
@@ -159,7 +166,7 @@ class TestCommandCounts(unittest.TestCase):
 
 
 class TestReadingTime(unittest.TestCase):
-    """S4: reading time = words(body + all comments, markup stripped) / wpm."""
+    """S4: reading time = words(body + all comments but context reports) / wpm."""
 
     def test_reading_time_counts_body_and_all_comments(self):
         analyzer = HumanMetricsAnalyzer(
@@ -193,6 +200,40 @@ class TestReadingTime(unittest.TestCase):
         # 1 visible word / 200 wpm * 60; every markup payload is stripped.
         self.assertAlmostEqual(
             analyzer.analyze(issue).reading_time_seconds, 1 / 200 * 60
+        )
+
+    def test_reading_time_excludes_context_agent_reports(self):
+        analyzer = HumanMetricsAnalyzer(HumanMetricsConfig(reading_speed_wpm=200))
+        issue = _issue(
+            [
+                _human("alice", "one two"),
+                _agent("openhands", "long context report words here", role="context"),
+                _agent("openhands", "dev turn output", role="dev"),
+            ],
+            body="hello",
+        )
+        # body 1 + human 2 + dev 3 = 6 words; the 5-word context report is excluded.
+        self.assertAlmostEqual(
+            analyzer.analyze(issue).reading_time_seconds, 6 / 200 * 60
+        )
+
+    def test_reading_time_excludes_legacy_ctx_role(self):
+        analyzer = HumanMetricsAnalyzer(HumanMetricsConfig(reading_speed_wpm=200))
+        issue = _issue(
+            [_agent("openhands", "ctx report body words", role="ctx")],
+            body="visible body",
+        )
+        # Only the 2 body words count; the legacy "ctx" report is excluded.
+        self.assertAlmostEqual(
+            analyzer.analyze(issue).reading_time_seconds, 2 / 200 * 60
+        )
+
+    def test_reading_time_keeps_unmarked_agent_comments(self):
+        # A comment with no agent_role (predates the marker system) still counts.
+        analyzer = HumanMetricsAnalyzer(HumanMetricsConfig(reading_speed_wpm=200))
+        issue = _issue([_agent("openhands", "three words here", role=None)])
+        self.assertAlmostEqual(
+            analyzer.analyze(issue).reading_time_seconds, 3 / 200 * 60
         )
 
 
@@ -371,6 +412,8 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Human metrics", rendered)
         self.assertIn("3", rendered)
         self.assertIn("estimate", rendered.lower())
+        # The scope footer must state the context-report exclusion, or it lies.
+        self.assertIn("except context-agent reports", rendered)
 
 
 if __name__ == "__main__":
