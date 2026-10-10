@@ -3,7 +3,12 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from workflow_state import WorkflowState, HistoryEntry, StateMetrics
+from workflow_state import (
+    WorkflowState,
+    HistoryEntry,
+    StateMetrics,
+    workflow_ref_from_env,
+)
 from workflow_state.sub_domains.gate_decision import GateDecision
 
 class TestWorkflowStateSchema(unittest.TestCase):
@@ -268,3 +273,65 @@ class TestStateMetricsProviderHealth(unittest.TestCase):
         metrics = StateMetrics.from_full_metrics_dict(original.to_dict())
         self.assertEqual(metrics.tokens_per_second, 137.5)
         self.assertEqual(metrics.time_to_first_token, 0.62)
+
+
+class TestWorkflowRefProvenance(unittest.TestCase):
+    """The pinned ref of the reusable workflow survives the state codec
+    (issue #862). It is provenance only: the checkout pin is resolved by the
+    workflow YAML, but a run should record which workflow version produced it.
+    """
+
+    def test_defaults_to_none(self):
+        state = WorkflowState(workflow="default", step="analyze", agent="architect")
+        self.assertIsNone(state.workflow_ref)
+
+    def test_legacy_blob_without_field_loads_none(self):
+        data = {
+            "version": 3,
+            "workflow": "default",
+            "step": "analyze",
+            "agent": "architect",
+            "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
+        }
+        state = WorkflowState.model_validate(data)
+        self.assertIsNone(state.workflow_ref)
+
+    def test_round_trip_preserves_value(self):
+        import json
+        from workflow_state.workflow_state import to_json
+
+        ref = "octocat/hello-world/.github/workflows/nebuko-workflow.yaml@refs/tags/v1.2"
+        state = WorkflowState(
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            workflow_ref=ref,
+        )
+        raw = json.loads(to_json(state))
+        self.assertEqual(raw["workflow_ref"], ref)
+        back = WorkflowState.model_validate(raw)
+        self.assertEqual(back.workflow_ref, ref)
+
+    def test_to_json_omits_none_workflow_ref(self):
+        import json
+        from workflow_state.workflow_state import to_json
+
+        state = WorkflowState(workflow="default", step="analyze", agent="architect")
+        self.assertNotIn("workflow_ref", json.loads(to_json(state)))
+
+
+class TestWorkflowRefFromEnv(unittest.TestCase):
+    """``NEBUKO_WORKFLOW_REF`` -> ``workflow_ref`` (issue #862)."""
+
+    def test_returns_value_when_present(self):
+        ref = "o/r/.github/workflows/nebuko-workflow.yaml@refs/heads/main"
+        self.assertEqual(workflow_ref_from_env({"NEBUKO_WORKFLOW_REF": ref}), ref)
+
+    def test_absent_maps_to_none(self):
+        self.assertIsNone(workflow_ref_from_env({}))
+
+    def test_empty_string_maps_to_none(self):
+        self.assertIsNone(workflow_ref_from_env({"NEBUKO_WORKFLOW_REF": ""}))
+
+    def test_whitespace_only_maps_to_none(self):
+        self.assertIsNone(workflow_ref_from_env({"NEBUKO_WORKFLOW_REF": "   "}))

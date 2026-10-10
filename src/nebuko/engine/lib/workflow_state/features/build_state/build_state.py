@@ -81,6 +81,7 @@ def build_state(
     soft_retry_attempt: bool = False,
     is_human_resume: bool = False,
     gate_decision: Optional[GateDecision] = None,
+    workflow_ref: Optional[str] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -141,6 +142,10 @@ def build_state(
             by an identity-verified ``/nebuko approve|reject gate`` command.
             Recorded as the latest decision and appended to ``gate_history``;
             None carries the previous values forward.
+        workflow_ref: Pinned ref of the reusable workflow that defined this run
+            (issue #862), read from ``job.workflow_ref``. None preserves the
+            previous value (``None`` on legacy blobs), so a run hosted outside
+            the reusable workflow records nothing.
 
     Returns:
         A new WorkflowState instance.
@@ -157,6 +162,7 @@ def build_state(
         base_issue = None
         base_pr = None
         base_started_by = None
+        base_workflow_ref = None
         base_circuit_breaker = CircuitBreakerState()
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
@@ -172,6 +178,7 @@ def build_state(
         base_issue = prev_state.issue
         base_pr = prev_state.pull_request
         base_started_by = prev_state.started_by
+        base_workflow_ref = prev_state.workflow_ref
         base_circuit_breaker = prev_state.circuit_breaker
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
@@ -233,6 +240,14 @@ def build_state(
     # carried forward verbatim. A later (chained, bot-triggered) run must not
     # re-point the human ping at its own trigger author.
     new_started_by = started_by if prev_state is None else base_started_by
+
+    # Workflow provenance (issue #862): the pinned ref of the reusable workflow
+    # that defined this run, from ``job.workflow_ref``. A run that carries the
+    # env var records it; a run without it preserves the previous value (and
+    # stays None on legacy blobs).
+    new_workflow_ref = (
+        workflow_ref if workflow_ref is not None else base_workflow_ref
+    )
 
     # Human_gate decision (issue #648): when this run was started by an
     # identity-verified gate command, record the new decision as the latest
@@ -308,6 +323,7 @@ def build_state(
         function_call=function_call,
         callback=callback,
         started_by=new_started_by,
+        workflow_ref=new_workflow_ref,
         position=position_refs,
         soft_retry=new_soft_retry,
         # Per-issue circuit-breaker policy (issue #839): carried forward

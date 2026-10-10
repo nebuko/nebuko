@@ -38,6 +38,18 @@ that calls the reusable orchestrator from this repository:
 uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
 ```
 
+Pin the reusable workflow with `@<sha1|tag>` (e.g. `…nebuko-workflow.yaml@v1.2`)
+for a reproducible workflow version. When the workflow is pinned **and** it
+operates on its own repository — the workflow file and the checked-out code live
+in the same repo, e.g. you vendored `nebuko-workflow.yaml` into your repo — the
+workspace checkout automatically follows the same commit as the pinned workflow,
+so the workflow version and the code it runs against stay in lockstep (issue
+#862). For a cross-repo consumer (`uses: nebuko/nebuko/…` from a separate
+project repo) the checkout keeps the event default, since the workflow's commit
+does not exist in your repo. Pass the `checkout_ref` input
+(`with: { checkout_ref: <sha/tag/branch> }`) to override the workspace checkout
+explicitly in any case.
+
 Copy the **complete** file — the `on:` triggers, `permissions:`, and the
 `with:`/`secrets:` blocks — from
 [adoption.md — The entrypoint (copy-paste)](./adoption.md#3-the-entrypoint-copy-paste).

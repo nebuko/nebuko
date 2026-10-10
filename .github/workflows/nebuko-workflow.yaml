@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: ''
+      checkout_ref:
+        description: 'Explicit ref (SHA, tag, or branch) for the workspace checkout. When empty, the checkout follows the workflow''s own commit if the workflow is checking out its own repository; otherwise the event default.'
+        required: false
+        type: string
+        default: ''
       runs_on:
         description: 'Runner label for workflow jobs (default: ubuntu-latest; e.g. "self-hosted" to use your own runners)'
         required: false
@@ -225,9 +230,17 @@ jobs:
                 git config --global --unset-all http.https://github.com/.extraheader || true
                 git config --global --unset-all credential.helper || true
                 
+            # Pin the workspace to the workflow's own commit (issue #862): a
+            # bare checkout follows the event default (main), so a workflow
+            # pinned via ``uses: <repo>/…@<sha1|tag>`` would run a pinned
+            # workflow against a main checkout. ``job.workflow_sha`` is this
+            # workflow file's commit; the same-repo guard keeps a cross-repo
+            # caller (whose checkout repo differs from the workflow repo) on
+            # the event default. ``checkout_ref`` overrides the auto-pin.
             - name: Checkout repository
               uses: actions/checkout@v5
               with:
+                ref: ${{ inputs.checkout_ref || (job.workflow_repository == github.repository && job.workflow_sha) || '' }}
                 persist-credentials: false
 
             - name: Set up Python
@@ -310,6 +323,9 @@ jobs:
                 # runner.temp is absolute and outside the agent's temp workdir.
                 LOG_TO_FILE: "true"
                 LOG_DIR: ${{ runner.temp }}/nebuko-task-logs
+                # Provenance (issue #862): the pinned ref of the reusable
+                # workflow that defined this run, persisted into workflow_state.
+                NEBUKO_WORKFLOW_REF: ${{ job.workflow_ref }}
 
             # One unzipped artifact per staged log (issue #779). Under
             # ``archive: false`` each upload takes a single file and the artifact

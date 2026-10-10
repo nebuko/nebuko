@@ -47,6 +47,7 @@ from .workflow_state import (
     to_git_comment,
     from_body,
     go_next,
+    workflow_ref_from_env,
 )
 
 __all__ = [
@@ -79,4 +80,5 @@ __all__ = [
     "to_git_comment",
     "from_body",
     "go_next",
+    "workflow_ref_from_env",
 ]

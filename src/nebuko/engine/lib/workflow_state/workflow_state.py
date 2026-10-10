@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from config import POSITION_STATE_VERSION, StepRef, WorkflowPosition
 
@@ -195,6 +195,11 @@ class WorkflowState(BaseModel):
             verbatim by every later transition. It is the target of the
             engine's human-action notices, so a chained run (whose own trigger
             is a bot comment) still pings the human who is on the hook.
+        workflow_ref: Pinned ref (SHA, tag, or branch) of the reusable workflow
+            that defined this run (issue #862), captured from ``job.workflow_ref``
+            via the ``NEBUKO_WORKFLOW_REF`` env var. Provenance only — the
+            checkout pin is resolved by the workflow YAML itself. None when the
+            var is absent, so legacy blobs load and serialize unchanged.
     """
 
     run_id: int = 0
@@ -231,6 +236,10 @@ class WorkflowState(BaseModel):
     # Login of whoever started the workflow (issue #795). Captured once (first
     # run) then carried forward; None on legacy blobs, which load unchanged.
     started_by: Optional[str] = None
+    # Pinned ref of the reusable workflow that defined this run (issue #862),
+    # from ``NEBUKO_WORKFLOW_REF`` (``job.workflow_ref``). Provenance only;
+    # None on legacy blobs, which load and serialize unchanged.
+    workflow_ref: Optional[str] = None
     # Flat workflow step path, outermost-first, last ref = the step actually
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.
@@ -297,6 +306,27 @@ class WorkflowState(BaseModel):
         return new_data
 
 
+def workflow_ref_from_env(env: Mapping[str, str]) -> Optional[str]:
+    """Read the reusable workflow's pinned ref from ``NEBUKO_WORKFLOW_REF``.
+
+    Provenance capture (issue #862): the checkout itself is pinned by the
+    workflow YAML (``job.workflow_sha``), but the ref name that the caller
+    requested (``job.workflow_ref``, e.g. ``octocat/hello-world/.github/
+    workflows/nebuko-workflow.yaml@refs/tags/v1.2``) is only available inside
+    the Actions runtime. Forwarding it lets a run record which workflow
+    version produced it. An absent or empty value maps to ``None`` so a run
+    outside the reusable-workflow host records nothing (backward compatible).
+
+    Args:
+        env: Environment mapping (normally ``os.environ``).
+
+    Returns:
+        The non-empty ``NEBUKO_WORKFLOW_REF`` value, or ``None``.
+    """
+    value = (env.get("NEBUKO_WORKFLOW_REF") or "").strip()
+    return value or None
+
+
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json
     return state_to_json(state)
@@ -332,6 +362,7 @@ def go_next(
     dispatch: Optional[Dispatch] = None,
     function_call: Optional[FunctionCall] = None,
     callback: Optional[str] = None,
+    workflow_ref: Optional[str] = None,
 ) -> WorkflowState:
     from .features.build_state.build_state import build_state
     return build_state(
@@ -356,4 +387,5 @@ def go_next(
         dispatch=dispatch,
         function_call=function_call,
         callback=callback,
+        workflow_ref=workflow_ref,
     )

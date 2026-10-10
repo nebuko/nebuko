@@ -37,6 +37,7 @@ from workflow_state import (
     PullRequestInfo,
     StepResolution,
     WorkflowState,
+    workflow_ref_from_env,
 )
 from workflow_state import extract_function_call
 from workflow_state import extract_latest_state_from_comments
@@ -1164,6 +1165,7 @@ def build_output(
         soft_retry_attempt=soft_retry_attempt,
         is_human_resume=is_human_resume,
         gate_decision=_parse_gate_decision_env(),
+        workflow_ref=workflow_ref_from_env(os.environ),
     )
     logger.info(f"Built workflow state run {new_state.run_id} for step={workflow_step}")
 
