@@ -142,7 +142,11 @@ class TestRunAgentIntegration(unittest.TestCase):
             run_agent(llm_config={}, prompt="do the thing")
 
         callbacks = mock_conversation_cls.call_args.kwargs["token_callbacks"]
-        self.assertEqual(callbacks, [_discard_token])
+        # [0] keeps the streaming path live (#775); [1] feeds the token
+        # telemetry collector added in #829.
+        self.assertEqual(len(callbacks), 2)
+        self.assertIs(callbacks[0], _discard_token)
+        self.assertEqual(callbacks[1].__name__, "on_token")
 
     @patch("agent_script.features.run_agent.run_agent.Conversation")
     @patch("agent_script.features.run_agent.run_agent.Agent")

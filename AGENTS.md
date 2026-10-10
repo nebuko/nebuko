@@ -1,24 +1,36 @@
+## Dev environment
+Python library (requires Python >= 3.12). Pick one, from the repo root:
+- **uv (preferred):** `uv sync`. The default `dev` dependency group in
+  `pyproject.toml` installs `pytest` + `pytest-mock`, so this is the *only*
+  setup step. Run everything with `uv run ...`.
+- **nix:** `nix develop`.
 
-## Dev environement
-You can use `nix develop` from the root of the project to get the dev environment.
-Add missing dependencies here for next run.
+Do not install test tooling ad hoc (`pip install pytest`, ...): it is declared in
+`pyproject.toml` and `flake.nix`.
 
 ## Code language
 This project is in Python.
 
 ## Running the test suite
-The full suite is `pytest` with **no path argument**: it collects `tests/` and the
-runtime tests under `engine/lib/**` (relocated out of `.github/scripts/` in issue #769).
-`pytest tests/` alone only runs a subset. The suite needs `pytest-mock` (declared in
-`flake.nix`); the `mocker` fixture errors out when it is missing. Without `nix develop`,
-install them into the checked-in venv: `uv pip install --python .venv/bin/python pytest
-pytest-mock`, then run `.venv/bin/python -m pytest`.
+`pyproject.toml` sets `testpaths = ["tests"]`, so a bare `pytest` collects **only**
+`tests/`. The flat runtime modules under `src/nebuko/engine/lib/**` hold their own
+co-located `test_*.py` files and are **not** collected by default.
 
-Note: in this sandbox the repo-root `workflows/` directory is absent, so ~15
-`resolve_config` / `resolve_workflow_step` / `resolve_route` / `build_output`
-tests that load the "real" workflow files fail even on a clean `origin/main`
-checkout. Judge a regression by diffing the failing-test set against `origin/main`
-rather than expecting a fully green `engine/lib/**` run.
+```bash
+uv run pytest                              # fast gate: tests/ only
+uv run pytest src/nebuko/engine/lib        # runtime engine/lib unit tests
+uv run pytest tests src/nebuko/engine/lib  # everything
+```
+
+Both suites are green on `main` (they only need `defaults/` in the checkout), so a
+failure is a real regression - do not spend turns proving a failure is "pre-existing"
+without first diffing against `origin/main`.
+
+## Where workflows live
+Workflow definitions ship in `defaults/workflows/` (e.g. `default.yaml`); per-repo
+overrides go in `.nebuko/workflows/`. Resolve them through
+`engine/lib/default_paths.py::config_dir("workflows")` - do not hardcode a repo-root
+`workflows/` path (it does not exist).
 
 ## Pushing CI workflow files
 The checkout's GitHub App token lacks the `workflows` permission, so git pushes that
