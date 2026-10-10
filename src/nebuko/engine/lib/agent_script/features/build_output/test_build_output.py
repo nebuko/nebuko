@@ -520,9 +520,8 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
 
     @staticmethod
     def _real_workflows_dir():
-        from pathlib import Path
-        # Shipped workflows live at <repo_root>/defaults/workflows.
-        return str(Path(__file__).resolve().parents[7] / "defaults" / "workflows")
+        from default_paths import config_dir
+        return config_dir("workflows")
 
     def setUp(self):
         self.env = {"WORKFLOWS_DIR": self._real_workflows_dir()}

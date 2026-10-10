@@ -524,8 +524,9 @@ class TestResolveNextAgentFromWorkflow(unittest.TestCase):
 
     @staticmethod
     def _real_workflows_dir():
-        """Return the path to the real workflows/ directory at the repo root."""
-        return str(Path(__file__).resolve().parents[2] / "workflows")
+        """The shipped workflow dir, resolved the same way the runtime does."""
+        from default_paths import config_dir
+        return config_dir("workflows")
 
     def test_task_hint_overrides_workflow(self):
         result = resolve_next_agent_from_workflow("dev", "default", "analyze", self._real_workflows_dir())
@@ -2095,9 +2096,9 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
 
     @staticmethod
     def _real_workflows_dir():
-        """Return path to the real workflows/ directory in the repo root."""
-        from pathlib import Path
-        return Path(__file__).resolve().parents[2] / "workflows"
+        """The shipped workflow dir, resolved the same way the runtime does."""
+        from default_paths import config_dir
+        return config_dir("workflows")
 
     @staticmethod
     def _setup_prompt_base():
@@ -2796,7 +2797,8 @@ class TestBranchRoutingRegression617:
         return prompt_base
 
     def _real_workflows_dir(self):
-        return Path(__file__).resolve().parents[2] / "workflows"
+        from default_paths import config_dir
+        return config_dir("workflows")
 
     def _v6_body(self, dispatch_json):
         state = {

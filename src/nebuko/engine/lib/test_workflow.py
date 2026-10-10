@@ -12,6 +12,12 @@ from pathlib import Path
 import yaml
 
 
+def _real_workflows_dir() -> str:
+    """The shipped workflow dir, resolved the same way the runtime does."""
+    from default_paths import config_dir
+    return config_dir("workflows")
+
+
 # ── Skills Helper Tests ──────────────────────────────────────────────
 
 
@@ -86,7 +92,7 @@ class TestResolveWorkflowRouting:
         resolve = self._import_resolver()
         result = resolve(
             {"task": "context", "workflow": "default", "step": "context"},
-            str(Path(__file__).parents[2] / "workflows"),
+            _real_workflows_dir(),
             ".agents/prompts",
         )
         assert result["ROLE_NAME"] == "context"
@@ -99,7 +105,7 @@ class TestResolveWorkflowRouting:
         resolve = self._import_resolver()
         result = resolve(
             {"task": "architect", "workflow": "default", "step": ""},
-            str(Path(__file__).parents[2] / "workflows"),
+            _real_workflows_dir(),
             ".agents/prompts",
         )
         assert result["ROLE_NAME"] == "architect"
@@ -111,7 +117,7 @@ class TestResolveWorkflowRouting:
         resolve = self._import_resolver()
         result = resolve(
             {"task": "review", "workflow": "nonexistent"},
-            str(Path(__file__).parents[2] / "workflows"),
+            _real_workflows_dir(),
             ".agents/prompts",
         )
         assert result["ROLE_NAME"] == "review"
@@ -142,7 +148,7 @@ class TestResolveWorkflowRouting:
         resolve = self._import_resolver()
         result = resolve(
             {"task": "dev", "workflow": "default", "step": "implment"},
-            str(Path(__file__).parents[2] / "workflows"),
+            _real_workflows_dir(),
             ".agents/prompts",
         )
         assert result["SKIP_AGENT"] == "true"
