@@ -76,6 +76,17 @@ _STEP_HEADER = "## Current step prompt"
 # run so the session stays stable across engine turns.
 _LLM_SESSION_ID_ENV = "LLM_SESSION_ID"
 
+# A resolver skip whose reason reports a failed ``/nebuko`` (or legacy
+# ``/workflow``) resolution — a missing/invalid workflow file or an unknown
+# step — is a config error owed to the thread, unlike a routine resolver skip
+# (issue #458). The resolver prefixes these reasons with the command and the
+# workflow-miss shape also carries the loader's message (issue #725).
+_RESOLUTION_FAILURE_RE = re.compile(
+    r"^/(?:nebuko|workflow)\b"
+    r"|Workflow file not found"
+    r"|not found in workflow\b"
+)
+
 _EXIT_CODE_BY_STATUS = {
     "advance": ExitCode.ADVANCE,
     "loop": ExitCode.ADVANCE,
@@ -106,6 +117,11 @@ def _is_true(value: Any) -> bool:
     return str(value).strip().lower() == "true"
 
 
+def _is_resolution_failure(reason: str) -> bool:
+    """True when a resolver skip reason reports a failed command resolution."""
+    return bool(_RESOLUTION_FAILURE_RE.search(reason))
+
+
 def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
     """The resolver's own skip verdict, which outranks both runtime guards.
 
@@ -116,14 +132,14 @@ def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
     the runtime guards.
     """
     if isinstance(resolved, Mapping) and _is_true(resolved.get("SKIP_AGENT")):
-        verdict = {
-            "SKIP_AGENT": "true",
-            "REASON": str(resolved.get("REASON") or "resolver skipped the agent"),
-        }
-        # A command-caused skip (malformed / unknown human slash command) is
-        # owed a notice on the thread (issue #804); carry the flag through so
-        # the guards branch can tell it apart from a routine resolver skip.
-        if _is_true(resolved.get("COMMAND_ERROR")):
+        reason = str(resolved.get("REASON") or "resolver skipped the agent")
+        verdict = {"SKIP_AGENT": "true", "REASON": reason}
+        # A command-caused skip (malformed / unknown human slash command) or a
+        # failed workflow resolution (issue #725: the ``/workflow`` file was not
+        # found) is owed a notice on the thread (issue #804); carry the flag
+        # through so the guards branch can tell it apart from a routine resolver
+        # skip whose error would otherwise live only in the CI log.
+        if _is_true(resolved.get("COMMAND_ERROR")) or _is_resolution_failure(reason):
             verdict["COMMAND_ERROR"] = "true"
         # The resolver classifies *why* it skipped (benign end-of-workflow vs a
         # real config failure, issue #853); carry the kind so the guards branch
