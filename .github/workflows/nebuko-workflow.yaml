@@ -97,6 +97,9 @@ on:
       COMMANDCODE_API_KEY:
         description: 'API key for Command Code LLM provider (optional - only needed if you want to use it as provider)'
         required: false
+      OPENCODE_GO_API_KEY:
+        description: 'API key for the OpenCode Go LLM provider (optional - only needed if you want to use it as provider)'
+        required: false
       OPENROUTER_API_KEY:
         description: 'Default API key for the LLM provider (used as fallback)'
         required: false
@@ -295,6 +298,7 @@ jobs:
                 LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                 LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
                 COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+                OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
                 LLM_BASE_URL: ${{ env.LLM_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 PIN_COMMENT: ${{ inputs.pin_comment }}
                 HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}

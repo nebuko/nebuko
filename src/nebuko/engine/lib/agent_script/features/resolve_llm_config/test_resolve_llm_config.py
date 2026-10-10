@@ -711,5 +711,102 @@ agents:
             self.assertIn(key, LLM.model_fields)
 
 
+class TestProviderHeaderDecoration(unittest.TestCase):
+    """The provider runtime's headers land in the dict ``LLM(**llm_config)`` gets.
+
+    ``extra_headers`` is an SDK-native field, so the merged map is passed through
+    unchanged; the engine-stamped per-issue session id wins a static collision.
+    """
+
+    CONFIG_TEMPLATE = """\
+providers:
+  opencode_go:
+    api_url: "https://opencode.ai/zen/go/v1"
+    api_token_env: "OPENCODE_GO_API_KEY"
+@IDENTITY@
+llms:
+  go-model:
+    model_path: "openai/deepseek/deepseek-v4.1-flash"
+    provider: "${providers.opencode_go}"
+agents:
+  dev:
+    model: "${llms.go-model}"
+    temperature: 0.1
+    prompt_file: "dev.md"
+"""
+
+    _ENV_KEYS = (
+        "AGENT_CONFIG_PATH",
+        "ROLE_NAME",
+        "CONFIG_MODEL",
+        "CONFIG_TEMPERATURE",
+        "LLM_MODEL",
+        "LLM_BASE_URL",
+        "OPENCODE_GO_API_KEY",
+        "LLM_SESSION_ID",
+    )
+
+    def setUp(self):
+        self._saved = {k: os.environ.get(k) for k in self._ENV_KEYS}
+        for k in self._ENV_KEYS:
+            os.environ.pop(k, None)
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        os.environ["ROLE_NAME"] = "dev"
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
+        os.environ["OPENCODE_GO_API_KEY"] = "secret"
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _resolve(self, identity: str):
+        with open(self._config_path, "w") as f:
+            f.write(self.CONFIG_TEMPLATE.replace("@IDENTITY@", identity))
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+        return cfg
+
+    _FULL_IDENTITY = (
+        '    user_agent: "nebuko/1.0"\n'
+        '    session_header: "x-opencode-session"\n'
+    )
+
+    def test_merges_static_identity_and_issue_session_headers(self):
+        os.environ["LLM_SESSION_ID"] = "854"
+        cfg = self._resolve(self._FULL_IDENTITY)
+        self.assertEqual(
+            cfg["extra_headers"],
+            {"User-Agent": "nebuko/1.0", "x-opencode-session": "854"},
+        )
+
+    def test_no_session_id_keeps_only_the_static_headers(self):
+        cfg = self._resolve(self._FULL_IDENTITY)
+        self.assertEqual(cfg["extra_headers"], {"User-Agent": "nebuko/1.0"})
+
+    def test_engine_session_value_wins_a_static_collision(self):
+        os.environ["LLM_SESSION_ID"] = "854"
+        cfg = self._resolve(
+            '    user_agent: "nebuko/1.0"\n'
+            '    session_header: "x-opencode-session"\n'
+            "    extra_headers:\n"
+            '      x-opencode-session: "static"\n'
+        )
+        self.assertEqual(cfg["extra_headers"]["x-opencode-session"], "854")
+
+    def test_provider_without_identity_fields_sets_no_headers(self):
+        cfg = self._resolve("")
+        self.assertNotIn("extra_headers", cfg)
+
+    def test_extra_headers_is_a_valid_sdk_llm_field(self):
+        """Guard against a typo breaking ``LLM(**llm_config)`` at runtime."""
+        from openhands.sdk import LLM
+
+        self.assertIn("extra_headers", LLM.model_fields)
+
+
 if __name__ == "__main__":
     unittest.main()

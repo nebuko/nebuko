@@ -4,6 +4,9 @@ import os
 
 from openhands.sdk import get_logger
 
+from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
+    build_provider_runtime,
+)
 from agent_script.sub_domains.metrics.cost import CostRates
 
 logger = get_logger(__name__)
@@ -123,6 +126,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     api_url_raw = None
     tier_override = None
     effective_ref = None
+    provider = None
 
     config_complexity = os.getenv("CONFIG_COMPLEXITY", "").lower()
 
@@ -333,5 +337,17 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     # ── Max output tokens ────────────────────────────────────────
     if effective_ref and effective_ref.max_output_tokens is not None:
         llm_config["max_output_tokens"] = effective_ref.max_output_tokens
+
+    # ── Provider HTTP decoration (client identity + issue session) ──
+    # The engine stamps ``LLM_SESSION_ID`` from the trigger's issue number; the
+    # provider's declared header *name* decides whether it is sent. Config never
+    # carries the value. Factory order is significant: the session runtime is
+    # last, so the engine value wins on a key collision.
+    if provider is not None:
+        headers: dict[str, str] = {}
+        for runtime in build_provider_runtime(provider, os.environ):
+            headers.update(runtime.extra_headers())
+        if headers:
+            llm_config["extra_headers"] = headers
 
     return (llm_config, prompt, agent_cfg)
