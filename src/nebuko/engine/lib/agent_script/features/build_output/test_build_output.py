@@ -11,10 +11,12 @@ from build_output import (
     LATEST_ANSWER_FILE,
     _recall_aware_events,
     _resolve_pin,
+    _terminal_turn_answer,
     _write_latest_answer_file,
     agent_run_config_to_dispatch,
     apply_human_gate_intercept,
     extract_latest_answer,
+    extract_standalone_answer,
     is_malformed_final_message,
     load_prev_state_or_recover,
 )
@@ -613,6 +615,30 @@ def _finish_action_event(text: str) -> "object":
     )
 
 
+def _finish_event_with_thought(thought: str, message: str) -> "object":
+    """Build a finish-turn ActionEvent carrying both turn text and a typed message.
+
+    This is the issue #822 shape: the model wrote a one-line lead-in as the turn
+    text and put the full report in the ``finish`` ``message`` argument.
+    """
+    from openhands.sdk.event import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall, TextContent
+    from openhands.sdk.tool.builtins.finish import FinishAction
+
+    tool_call = MessageToolCall(
+        id="tc-finish-report", name="finish", arguments="{}", origin="completion"
+    )
+    return ActionEvent(
+        source="agent",
+        tool_name="finish",
+        thought=[TextContent(text=thought)],
+        tool_call_id="tc-finish-report",
+        tool_call=tool_call,
+        llm_response_id="r-report",
+        action=FinishAction(message=message),
+    )
+
+
 def _dispatch_action_event(text: str) -> "object":
     """Build a dispatch_next-turn ActionEvent carrying the deliverable in thought.
 
@@ -668,8 +694,8 @@ class TestExtractLatestAnswer(unittest.TestCase):
 
     # --- issue #553 regression: finish-turn text lives in ActionEvent.thought ---
 
-    def test_finish_turn_thought_captured_when_no_message_event(self):
-        """Full answer + finish sharing one turn is captured from thought."""
+    def test_finish_turn_thought_captured_when_action_absent(self):
+        """A finish call with no action payload falls back to the turn text."""
         events = [_finish_action_event("  Full research report  ")]
         self.assertEqual(extract_latest_answer(events), "Full research report")
 
@@ -723,6 +749,132 @@ class TestExtractLatestAnswer(unittest.TestCase):
     def test_blank_dispatch_next_turn_thought_returns_empty(self):
         events = [_dispatch_action_event("   \n  ")]
         self.assertEqual(extract_latest_answer(events), "")
+
+    # --- issue #830 regression: full report lives in finish.message, the turn
+    # text is only a one-line lead-in (#822) ---
+
+    def test_typed_finish_message_captured_when_no_standalone_answer(self):
+        events = [
+            _finish_event_with_thought(
+                "Work pushed and PR updated. Here is my wind-down summary.",
+                "# Full report\n\nBody with the complete deliverable.",
+            )
+        ]
+        self.assertEqual(
+            extract_latest_answer(events),
+            "# Full report\n\nBody with the complete deliverable.",
+        )
+
+    def test_typed_finish_message_beats_an_earlier_standalone_answer(self):
+        """#822: the terminator's typed message is the deliverable.
+
+        An earlier one-line ack (or any work-loop message) shares the stream
+        with the wind-down ``finish`` whose ``message`` holds the full report;
+        the report must win rather than the short turn text."""
+        events = [
+            _msg_event("Acknowledged, starting work."),
+            _finish_event_with_thought(
+                "Work pushed and PR updated. Here is my wind-down summary.",
+                "# Full report\n\nBody with the complete deliverable.",
+            ),
+        ]
+        self.assertEqual(
+            extract_latest_answer(events),
+            "# Full report\n\nBody with the complete deliverable.",
+        )
+
+    def test_finish_message_wins_over_an_earlier_richer_standalone_answer(self):
+        """Args win: the finish contract puts the deliverable in ``message``."""
+        events = [
+            _msg_event("# Earlier draft\n\nsuperseded by the final report"),
+            _finish_event_with_thought("", "# Final report\n\nposted body"),
+        ]
+        self.assertEqual(
+            extract_latest_answer(events), "# Final report\n\nposted body"
+        )
+
+    def test_empty_finish_message_falls_back_to_the_turn_text(self):
+        events = [
+            _msg_event("earlier answer"),
+            _finish_event_with_thought("finish report", ""),
+        ]
+        self.assertEqual(extract_latest_answer(events), "finish report")
+
+    def test_later_finish_message_replaces_an_earlier_finish_message(self):
+        events = [
+            _finish_event_with_thought("note one", "# first report"),
+            _finish_event_with_thought("note two", "# second report"),
+        ]
+        self.assertEqual(extract_latest_answer(events), "# second report")
+
+
+class TestTerminalTurnAnswer(unittest.TestCase):
+    """Per-tool source selection on the control-plane turn (issues #822/#830).
+
+    ``finish`` answers with its typed ``message`` argument; ``dispatch_next``
+    answers with its turn text because its arguments are routing metadata.
+    """
+
+    def test_finish_typed_message_is_used(self):
+        event = _finish_event_with_thought("short lead-in", "# Full report")
+        self.assertEqual(_terminal_turn_answer(event, "finish"), "# Full report")
+
+    def test_finish_empty_message_falls_back_to_thought(self):
+        event = _finish_event_with_thought("finish report", "")
+        self.assertEqual(_terminal_turn_answer(event, "finish"), "finish report")
+
+    def test_finish_without_action_falls_back_to_thought(self):
+        event = _finish_action_event("turn-text deliverable")
+        self.assertEqual(
+            _terminal_turn_answer(event, "finish"), "turn-text deliverable"
+        )
+
+    def test_dispatch_next_answers_with_thought_not_args(self):
+        event = _dispatch_action_event("Full context report")
+        self.assertEqual(
+            _terminal_turn_answer(event, "dispatch_next"), "Full context report"
+        )
+
+    def test_other_tool_returns_empty(self):
+        from openhands.sdk.event import ActionEvent
+        from openhands.sdk.llm.message import MessageToolCall, TextContent
+
+        event = ActionEvent(
+            source="agent",
+            tool_name="terminal",
+            thought=[TextContent(text="mid-run commentary")],
+            tool_call_id="tc-x",
+            tool_call=MessageToolCall(
+                id="tc-x", name="terminal", arguments="{}", origin="completion"
+            ),
+            llm_response_id="r-x",
+        )
+        self.assertEqual(_terminal_turn_answer(event, "finish"), "")
+
+
+class TestExtractStandaloneAnswer(unittest.TestCase):
+    """The standalone-text source kept for the SCAFFOLD_BRANCH marker (issue #636)."""
+
+    def test_ignores_control_plane_turns(self):
+        events = [
+            _msg_event("standalone deliverable"),
+            _finish_event_with_thought("lead-in", "# report in finish.message"),
+        ]
+        self.assertEqual(extract_standalone_answer(events), "standalone deliverable")
+
+    def test_latest_standalone_wins_and_user_messages_ignored(self):
+        events = [
+            _msg_event("earlier answer"),
+            _user_event("user interjection"),
+            _msg_event("latest answer"),
+        ]
+        self.assertEqual(extract_standalone_answer(events), "latest answer")
+
+    def test_empty_when_only_control_turns(self):
+        events = [_finish_action_event("finish report")]
+        self.assertEqual(extract_standalone_answer(events), "")
+        self.assertEqual(extract_standalone_answer([]), "")
+        self.assertEqual(extract_standalone_answer(None), "")
 
 
 def _outcome_with_offset(offset) -> "object":
@@ -943,7 +1095,7 @@ class TestBuildOutputScaffoldBranchWiring(unittest.TestCase):
         )
         return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
 
-    def test_marker_only_in_latest_answer_persisted_and_stripped_both(self):
+    def test_marker_only_in_standalone_answer_persisted_and_stripped_both(self):
         finish_note = "Scaffolding complete, handing off."
         answer = (
             "# Report\n\nSCAFFOLD_BRANCH: feature/issue-635-workflow-command\n"
@@ -960,18 +1112,19 @@ class TestBuildOutputScaffoldBranchWiring(unittest.TestCase):
         self.assertIn('"scaffold_branch"', state_json)
         self.assertIn("feature/issue-635-workflow-command", state_json)
 
-        # Posted body: marker stripped, summary line appended.
+        # Posted body: the deliverable is the finish message (the standalone
+        # turn only carries the marker); the summary line is still appended.
         self.assertNotIn("SCAFFOLD_BRANCH:", result["final_message"])
         self.assertIn(
             "Scaffold branch: `feature/issue-635-workflow-command`",
             result["final_message"],
         )
 
-        # Latest-answer file: marker stripped, no raw marker left behind.
+        # Latest-answer file holds the deliverable (finish message), marker-free.
         with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
             written = f.read()
         self.assertNotIn("SCAFFOLD_BRANCH:", written)
-        self.assertIn("# Report", written)
+        self.assertEqual(written, finish_note)
 
     def test_finish_message_marker_still_wins_and_is_stripped(self):
         result = self._run(
@@ -1008,8 +1161,10 @@ class TestBuildOutputScaffoldBranchWiring(unittest.TestCase):
     def test_no_marker_leaves_latest_answer_file_untouched(self):
         result = self._run("Plain finish note.", "# Report\n\nBody only.")
         self.assertIsNone(result["workflow_state"].scaffold_branch)
+        # The file holds the deliverable — the finish message — unchanged, and
+        # no summary line is appended since no marker was seen.
         with open(LATEST_ANSWER_FILE, encoding="utf-8") as f:
-            self.assertEqual(f.read(), "# Report\n\nBody only.")
+            self.assertEqual(f.read(), "Plain finish note.")
 
 
 class TestBuildOutputScaffoldBranchToolWiring(unittest.TestCase):

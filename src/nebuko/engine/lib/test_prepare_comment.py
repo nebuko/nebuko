@@ -12,6 +12,7 @@ for _root in (os.path.dirname(__file__), REPO_ROOT):
         sys.path.insert(0, _root)
 from prepare_comment import (
     LATEST_ANSWER_FILE,
+    WORKFLOW_STATE_FILE,
     _truncate_at_boundary,
     _write_output,
     build_comment_body,
@@ -20,6 +21,7 @@ from prepare_comment import (
     merge_handoff_sentinels,
     neutralize_human_pings,
     prepare_comment,
+    render_handoff_sentinel,
     select_posted_body,
 )
 
@@ -503,6 +505,57 @@ class TestPrepareCommentLatestAnswerETL(TestPrepareCommentIntegration):
         self.assertIn(block, result)
         self.assertEqual(result.count(block), 1)
 
+    # --- issue #830: engine-owned, deterministic hand-off sentinel ---
+
+    def test_typed_finish_report_beats_the_one_line_lead_in(self):
+        """#822 end-to-end: the full report is posted, not the turn-text lead-in.
+
+        ``build_output`` captures ``finish.message`` as ``latest_answer.md``
+        (#822): the wind-down one-liner the model wrote as turn text must not
+        win over the report it typed into the finish argument.
+        """
+        report = "## feat(#822): nested step addressing via dotted StepPath\n\nFull body."
+        self._write(LATEST_ANSWER_FILE, report)
+        self._write(
+            "final_message.txt", "Work pushed and PR updated. Here is my wind-down summary."
+        )
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn("Full body.", result)
+        self.assertNotIn("wind-down summary", result)
+
+    def test_engine_renders_the_sentinel_from_the_typed_state(self):
+        self._write(
+            WORKFLOW_STATE_FILE,
+            json.dumps({"dispatch": {"status": "advance", "complexity": "high"}}),
+        )
+        self._write(LATEST_ANSWER_FILE, "Full report body")
+        self._write("final_message.txt", "Full report body")
+        prepare_comment()
+        result = self._read("github_comment.md")
+        block = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "complexity": "high"}} -->'
+        self.assertIn(block, result)
+        self.assertEqual(result.count("AGENT_RUN_CONFIG"), 1)
+
+    def test_engine_sentinel_wins_over_the_scraped_prose(self):
+        prose = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "loop"}} -->'
+        self._write(WORKFLOW_STATE_FILE, json.dumps({"dispatch": {"status": "hold"}}))
+        self._write(LATEST_ANSWER_FILE, "Full report\n\n" + prose)
+        self._write("final_message.txt", "Status note")
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertEqual(result.count("AGENT_RUN_CONFIG"), 1)
+        self.assertIn('"status": "hold"', result)
+        self.assertNotIn("loop", result)
+
+    def test_scraped_sentinel_still_used_without_a_typed_state(self):
+        prose = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "loop"}} -->'
+        self._write(LATEST_ANSWER_FILE, "Full report\n\n" + prose)
+        self._write("final_message.txt", "Status note")
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn(prose, result)
+
 
 class TestPrepareCommentContextCollapse(TestPrepareCommentIntegration):
     """context-role reports get sections collapsed into <details> (issue #557)."""
@@ -695,6 +748,82 @@ class TestSoftKillReproduction(unittest.TestCase):
         )
 
         self.assertIn("<!-- workflow-continue -->", body)
+
+
+class TestRenderHandoffSentinel(unittest.TestCase):
+    """Issue #830: the engine renders the hand-off sentinel from typed state.
+
+    The posted sentinel is derived from ``workflow_state.dispatch`` /
+    ``function_call`` rather than parsed out of agent prose, so retrieval of the
+    routing decision no longer depends on the model reproducing a sentinel.
+    """
+
+    @staticmethod
+    def _state(dispatch=None, function_call=None):
+        from workflow_state.workflow_state import WorkflowState
+
+        return WorkflowState(dispatch=dispatch, function_call=function_call)
+
+    @staticmethod
+    def _payload(sentinel):
+        marker = "AGENT_RUN_CONFIG "
+        start = sentinel.index(marker) + len(marker)
+        return json.loads(sentinel[start:sentinel.rindex(" -->")])
+
+    def test_no_state_renders_nothing(self):
+        self.assertEqual(render_handoff_sentinel(None), "")
+
+    def test_state_without_a_decision_renders_nothing(self):
+        self.assertEqual(render_handoff_sentinel(self._state()), "")
+
+    def test_dispatch_is_rendered_from_typed_fields(self):
+        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
+
+        state = self._state(dispatch=Dispatch(status="loop", branch="rejected", reason="gate"))
+        dispatch = self._payload(render_handoff_sentinel(state))["dispatch"]
+
+        self.assertEqual(dispatch["status"], "loop")
+        self.assertEqual(dispatch["branch"], "rejected")
+        self.assertEqual(dispatch["reason"], "gate")
+        # Unset/blank fields are omitted, keeping the payload minimal.
+        self.assertNotIn("complexity", dispatch)
+
+    def test_dispatch_carries_the_cross_agent_target_and_pin(self):
+        """#830: ``task_hint``/``pin`` reach the sentinel as ``agent``/``pin``."""
+        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
+
+        state = self._state(
+            dispatch=Dispatch(status="advance", task_hint="review", pin=True)
+        )
+        dispatch = self._payload(render_handoff_sentinel(state))["dispatch"]
+
+        self.assertEqual(dispatch["agent"], "review")
+        self.assertIs(dispatch["pin"], True)
+
+    def test_function_call_is_rendered_alongside_dispatch(self):
+        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
+        from workflow_state.sub_domains.function_call.function_call import FunctionCall
+
+        state = self._state(
+            dispatch=Dispatch(status="advance"),
+            function_call=FunctionCall(
+                function="call_agent", agent_name="review", callback="dev"
+            ),
+        )
+        payload = self._payload(render_handoff_sentinel(state))
+
+        self.assertEqual(payload["dispatch"], {"status": "advance"})
+        self.assertEqual(payload["function_call"]["agent_name"], "review")
+        self.assertEqual(payload["function_call"]["callback"], "dev")
+
+    def test_rendered_sentinel_is_a_single_well_formed_block(self):
+        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
+
+        sentinel = render_handoff_sentinel(self._state(dispatch=Dispatch(status="advance")))
+
+        self.assertTrue(sentinel.startswith("<!-- AGENT_RUN_CONFIG "))
+        self.assertTrue(sentinel.endswith(" -->"))
+        self.assertEqual(sentinel.count("AGENT_RUN_CONFIG"), 1)
 
 
 if __name__ == "__main__":
