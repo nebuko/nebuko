@@ -565,7 +565,15 @@ class Engine:
             if _is_true(verdict.get("SKIP_AGENT")):
                 reason = str(verdict.get("REASON") or "agent skipped")
                 skip = SkipOutcome.from_verdict({**dict(verdict), "REASON": reason})
-                if skip.is_benign:
+                # Two terminal skips owe the thread a human ping and a failing
+                # exit: an exhausted soft-kill halt (issue #793) and a
+                # malformed/unknown human slash command whose feedback would
+                # otherwise live only in the CI log (issue #804). Resolve them
+                # *before* the benign branch so a mis-classified kind can never
+                # silently swallow the ping or soften the exit (issue #853).
+                soft_kill_halt = _is_true(self._get(resolved, "SOFT_RETRY_EXHAUSTED"))
+                command_error = _is_true(verdict.get("COMMAND_ERROR"))
+                if skip.is_benign and not (soft_kill_halt or command_error):
                     # A workflow that has no next agent (or reached its terminal
                     # step) is a deliberate no-op, not a failure: record the
                     # reason in the workflow state and exit 0 so the host run
@@ -580,17 +588,12 @@ class Engine:
                         phases=tuple(phases),
                     )
                 log.info("[phase:guards] skipping agent — %s", reason)
-                # Two terminal skips owe the thread a human ping: an exhausted
-                # soft-kill halt (issue #793) and a malformed/unknown human
-                # slash command whose feedback would otherwise live only in the
-                # CI log (issue #804). A routine resolver skip stays silent as
-                # before; bot-authored bodies are excluded to keep the engine's
-                # own notices from re-entering this path.
-                if _is_true(self._get(resolved, "SOFT_RETRY_EXHAUSTED")):
+                # A routine resolver skip stays silent as before; bot-authored
+                # bodies are excluded to keep the engine's own notices from
+                # re-entering this path.
+                if soft_kill_halt:
                     posted = self._post_soft_kill_halt(reason)
-                elif _is_true(verdict.get("COMMAND_ERROR")) and not _is_bot_trigger(
-                    trigger
-                ):
+                elif command_error and not _is_bot_trigger(trigger):
                     posted = self._post_terminal_notice(reason)
                 else:
                     posted = None
