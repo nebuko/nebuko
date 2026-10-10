@@ -250,7 +250,8 @@ is authoritative.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `version` | int | Monotonically increasing version number (1 in v1). |
+| `run_id` | int | Monotonically increasing invocation counter: the Nth state update in this workflow run (issue #821). Carried across the trigger->agent hand-off so a reset is detectable. |
+| `schema_version` | int | Payload shape generation this state was written at (`STATE_SCHEMA_VERSION`, currently 4). Legacy blobs still carrying the old `version` key are read as generation 3, with that value migrated into `run_id` (issue #821). |
 | `workflow` | string | Name of the active workflow. |
 | `step` | string | Current step name. |
 | `agent` | string | Agent role executing the current step. |
@@ -288,7 +289,8 @@ is authoritative.
 
 ```json
 {
-  "version": 1,
+  "run_id": 1,
+  "schema_version": 4,
   "workflow": "default",
   "step": "context",
   "agent": "context",

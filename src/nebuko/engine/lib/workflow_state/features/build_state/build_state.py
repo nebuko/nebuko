@@ -1,8 +1,13 @@
 from typing import Optional, Any
 
-from config import POSITION_STATE_VERSION, StepRef, WorkflowPosition
+from config import StepRef, WorkflowPosition
 
-from ...workflow_state import WorkflowState, SoftRetryState, CircuitBreakerState
+from ...workflow_state import (
+    WorkflowState,
+    SoftRetryState,
+    CircuitBreakerState,
+    STATE_SCHEMA_VERSION,
+)
 from ...sub_domains.issue_info.issue_info import IssueInfo
 from ...sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from ...sub_domains.history_entry.history_entry import HistoryEntry
@@ -123,8 +128,7 @@ def build_state(
             ``WorkflowPosition.to_state_dict()`` block. Non-empty positions
             are normalized to the flat refs list and recorded on both the new
             history entry and the state (``history[-1].position == position``
-            invariant); a non-empty position also bumps the state version to
-            POSITION_STATE_VERSION.
+            invariant).
         soft_retry_attempt: True only when this run is an *engine-issued*
             soft-kill retry (the ``SOFT_RETRY_ATTEMPT`` marker emitted by
             ``resolve_soft_kill_route``, issue #704). It is the single trigger
@@ -142,7 +146,7 @@ def build_state(
         A new WorkflowState instance.
     """
     if prev_state is None:
-        base_version = 0
+        base_run_id = 0
         base_history: list[HistoryEntry] = []
         base_pinned: list[int] = []
         base_context: dict[str, Any] = {}
@@ -157,7 +161,7 @@ def build_state(
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
     else:
-        base_version = prev_state.version
+        base_run_id = prev_state.run_id
         base_history = list(prev_state.history)
         base_pinned = list(prev_state.pinned_comment_ids)
         base_context = dict(prev_state.current_context)
@@ -249,12 +253,12 @@ def build_state(
         prev_state.soft_retry if prev_state is not None else SoftRetryState()
     )
 
-    # State shape version (issue #638, universalized in #646): position is
-    # now written on every run — top-level runs carry the bare single ref —
-    # so the state is always at least the v3 shape. ``max`` keeps the
-    # counter monotonic. V1 consumers are unaffected (flat fields keep leaf
-    # semantics).
-    state_version = max(POSITION_STATE_VERSION, base_version + 1)
+    # Invocation counter and payload shape generation (issue #821). These are
+    # two distinct meanings that the legacy single ``version`` field conflated:
+    # ``run_id`` counts state updates (first run = 1) and is carried forward so
+    # a reset is detectable, while ``schema_version`` records the shape this
+    # writer emits (a constant). No floor: the counter is truthful.
+    new_run_id = base_run_id + 1
 
     # Invariant: step/agent must not be silently dropped when a previous value
     # is recoverable (issue #458: empty WORKFLOW_STEP env produced states whose
@@ -285,7 +289,8 @@ def build_state(
         new_soft_retry = base_soft_retry
 
     return WorkflowState(
-        version=state_version,
+        run_id=new_run_id,
+        schema_version=STATE_SCHEMA_VERSION,
         workflow=workflow or base_workflow,
         step=effective_step,
         agent=effective_agent,
