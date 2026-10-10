@@ -185,6 +185,12 @@ Mechanics:
    `(workflow, step, position)` hold instance and is consumed on routing, so
    replaying an old command is a no-op.
 
+**Agents complete a gated step with `advance`, never `hold`.** The gate is
+released only by the human command above, so the agent's job is to deliver its
+output and advance; the engine converts that completing dispatch into the hold.
+An explicit `hold` would stop *before* the gate and require a second, non-gate
+resume — the double-approval anti-pattern.
+
 **Non-authoritative agent classification.** Agents may still read and classify
 human intent for UX (a role prompt may note "the human approved"), but that
 classification is **not** what releases a gate — only the engine-recorded
@@ -387,6 +393,12 @@ analyze (architect) → context (context) → plan (architect) ──approved─
 Trigger: `@@architect`. The standard development cycle used when a human hands a
 problem to the system. The `plan` step can loop back to `context` when the
 plan is rejected (insufficient context).
+
+The `plan` step is a single `human_gate:plan`: @@architect emits **one** planning
+artifact — a visible Architecture Summary (design + Object Design Anchor) with
+the dev steps and Object Design Contract collapsed in a `<details>` block — and
+ends with `advance`. The engine intercepts that advance into the gate hold, so
+the human runs exactly **one** `/nebuko approve gate` before @@dev is routed.
 
 Example trigger:
 
