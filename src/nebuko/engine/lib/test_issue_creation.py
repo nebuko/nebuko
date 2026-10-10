@@ -7,10 +7,10 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
-from urllib.error import HTTPError
 
 import pytest
 
+from github_client import ApiCallResult, ApiErrorKind
 from issue_creation import (
     GithubAPIError,
     GitHubClient,
@@ -161,27 +161,38 @@ class TestLoadSplitPlan:
         os.unlink(path)
 
 
-def make_mock_response(data, status=200):
-    """Create a mock urlopen context manager that returns JSON data."""
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(data).encode("utf-8")
-    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-    mock_resp.__exit__ = MagicMock(return_value=False)
-    return mock_resp
+def _ok_result(data) -> ApiCallResult:
+    return ApiCallResult(
+        ok=True, status=200, payload=json.dumps(data), error_kind=None, detail=""
+    )
 
 
-class MockHTTPError(HTTPError):
-    """HTTPError subclass with configurable attributes for testing."""
+def _error_result(status, detail="rate limited") -> ApiCallResult:
+    return ApiCallResult(
+        ok=False,
+        status=status,
+        payload="",
+        error_kind=ApiErrorKind.SECONDARY_RATE_LIMIT,
+        detail=detail,
+    )
 
-    def __init__(self, status=500, body="error"):
-        self.code = status
-        self._body = body
-        super().__init__(
-            url=None, code=status, msg=str(status), hdrs=None, fp=None
+
+class FakeTransport:
+    """Records ``GitHubTransport.call`` invocations and replays scripted results."""
+
+    def __init__(self, *results):
+        self._results = list(results)
+        self.calls = []
+
+    def call(self, args, *, mutative, env=None, input_data=None):
+        self.calls.append(
+            {
+                "args": list(args),
+                "mutative": mutative,
+                "input_data": input_data,
+            }
         )
-
-    def read(self):
-        return self._body.encode("utf-8")
+        return self._results.pop(0) if self._results else _ok_result({})
 
 
 class TestGitHubClient:
@@ -195,42 +206,64 @@ class TestGitHubClient:
             client = GitHubClient(repo="owner/repo", token="explicit-token")
             assert client.token == "explicit-token"
 
-    @patch("issue_creation.urlopen")
-    def test_create_issue(self, mock_urlopen):
-        mock_urlopen.return_value = make_mock_response({"number": 42, "id": 12345})
-        client = GitHubClient(repo="owner/repo", token="test-token")
+    def test_create_issue(self):
+        transport = FakeTransport(_ok_result({"number": 42, "id": 12345}))
+        client = GitHubClient(repo="owner/repo", token="test-token", transport=transport)
+
         result = client.create_issue("Test Issue", "Body", ["label1"])
+
         assert result == {"number": 42, "id": 12345}
-        mock_urlopen.assert_called_once()
+        call = transport.calls[0]
+        assert call["args"] == [
+            "api",
+            "/repos/owner/repo/issues",
+            "--method",
+            "POST",
+            "--input",
+            "-",
+        ]
+        assert call["mutative"] is True
+        assert json.loads(call["input_data"]) == {
+            "title": "Test Issue",
+            "body": "Body",
+            "labels": ["label1"],
+        }
 
-    @patch("issue_creation.urlopen")
-    def test_add_sub_issue(self, mock_urlopen):
-        mock_urlopen.return_value = make_mock_response({})
-        client = GitHubClient(repo="owner/repo", token="test-token")
+    def test_add_sub_issue(self):
+        transport = FakeTransport(_ok_result({}))
+        client = GitHubClient(repo="owner/repo", token="test-token", transport=transport)
+
         client.add_sub_issue(parent_number=10, sub_issue_id=12345, position=1)
-        mock_urlopen.assert_called_once()
 
-    @patch("issue_creation.urlopen")
-    def test_list_sub_issues(self, mock_urlopen):
-        mock_urlopen.return_value = make_mock_response([{"number": 1}, {"number": 2}])
-        client = GitHubClient(repo="owner/repo", token="test-token")
+        call = transport.calls[0]
+        assert call["args"][:2] == ["api", "/repos/owner/repo/issues/10/sub_issues"]
+        assert json.loads(call["input_data"]) == {"sub_issue_id": 12345, "position": 1}
+
+    def test_list_sub_issues(self):
+        transport = FakeTransport(_ok_result([{"number": 1}, {"number": 2}]))
+        client = GitHubClient(repo="owner/repo", token="test-token", transport=transport)
+
         subs = client.list_sub_issues(parent_number=10)
+
         assert len(subs) == 2
         assert subs[0]["number"] == 1
+        assert transport.calls[0]["mutative"] is False
 
-    @patch("issue_creation.urlopen")
-    def test_create_comment(self, mock_urlopen):
-        mock_urlopen.return_value = make_mock_response({"id": 999})
-        client = GitHubClient(repo="owner/repo", token="test-token")
+    def test_create_comment(self):
+        transport = FakeTransport(_ok_result({"id": 999}))
+        client = GitHubClient(repo="owner/repo", token="test-token", transport=transport)
+
         cid = client.create_comment(issue_number=42, body="@@architect")
+
         assert cid == 999
 
-    @patch("issue_creation.urlopen")
-    def test_api_error(self, mock_urlopen):
-        mock_urlopen.side_effect = MockHTTPError(status=403)
-        client = GitHubClient(repo="owner/repo", token="bad-token")
+    def test_api_error_is_raised_with_status(self):
+        transport = FakeTransport(_error_result(403))
+        client = GitHubClient(repo="owner/repo", token="bad-token", transport=transport)
+
         with pytest.raises(GithubAPIError) as exc_info:
             client._request("GET", "/repos/owner/repo/issues")
+
         assert exc_info.value.status_code == 403
 
 
