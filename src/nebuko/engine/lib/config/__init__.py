@@ -5,6 +5,7 @@ from .sub_domains.brand import BRAND, BrandIdentity, brand
 from .sub_domains.provider_config.provider_config import ProviderConfig
 from .sub_domains.llm_config.llm_config import LLMConfig
 from .sub_domains.agent_complexity_override.agent_complexity_override import AgentComplexityOverride
+from .sub_domains.token_budget.token_budget import TokenBudgetPolicy
 from .sub_domains.mcp_server_config.mcp_server_config import MCPServerConfig
 from .sub_domains.agent_config.agent_config import AgentConfig
 from .sub_domains.agent_start_notice.agent_start_notice import AgentStartNotice
@@ -58,6 +59,7 @@ __all__ = [
     "ProviderConfig",
     "LLMConfig",
     "AgentComplexityOverride",
+    "TokenBudgetPolicy",
     "MCPServerConfig",
     "AgentConfig",
     "AgentStartNotice",
