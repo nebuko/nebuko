@@ -6,6 +6,7 @@ constructs the final KEY=value environment variable dict.
 
 from typing import Optional
 
+from complexity_governor.complexity_governor import ComplexityGovernor
 from config import StepRef, WorkflowPosition
 from resolve_workflow import (
     resolve_workflow_routing,
@@ -273,6 +274,14 @@ def _build_result(
         wf_result.get("STEP_COMPLEXITY", ""),
     )
 
+    # Complexity governance overlay (issue #869): apply the governor's clamped
+    # adjustment on top of the untouched base chain (dispatch > step >
+    # "medium"). The adjustment is None unless a boundary drift check fired.
+    complexity_adjustment = config.get("config_complexity_adjustment")
+    effective_complexity = ComplexityGovernor.apply(
+        effective_complexity, complexity_adjustment
+    )
+
     # Determine complexity for dev/context agents
     complexity = "N/A"
     if role_name in ("dev", "context"):
@@ -336,6 +345,14 @@ def _build_result(
         # and ``build_state`` persists it — the release is recorded in workflow
         # state, outside the agent loop.
         "GATE_DECISION": config.get("config_gate_decision", ""),
+        # Complexity governance (issue #869): the pinned policy snapshot and the
+        # boundary drift adjustment. ``build_output`` parses both and
+        # ``build_state`` persists them — the decision is recorded in workflow
+        # state, outside the agent loop.
+        "COMPLEXITY_POLICY": config.get("config_complexity_policy", ""),
+        "COMPLEXITY_ADJUSTMENT": (
+            complexity_adjustment.to_json() if complexity_adjustment else ""
+        ),
         "SKIP_AGENT": "false",
     }
     result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")

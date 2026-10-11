@@ -5,6 +5,17 @@ from .sub_domains.brand import BRAND, BrandIdentity, brand
 from .sub_domains.provider_config.provider_config import ProviderConfig
 from .sub_domains.llm_config.llm_config import LLMConfig
 from .sub_domains.agent_complexity_override.agent_complexity_override import AgentComplexityOverride
+from .sub_domains.complexity_policy.complexity_policy import (
+    BUILTIN_LAYER,
+    TIERS,
+    ComplexityBand,
+    ComplexityPolicy,
+    ComplexityPolicyLayer,
+    Envelope,
+    MetricBound,
+    SignalRule,
+    build_builtin_policy,
+)
 from .sub_domains.token_budget.token_budget import TokenBudgetPolicy
 from .sub_domains.mcp_server_config.mcp_server_config import MCPServerConfig
 from .sub_domains.agent_config.agent_config import AgentConfig
@@ -60,6 +71,15 @@ __all__ = [
     "ProviderConfig",
     "LLMConfig",
     "AgentComplexityOverride",
+    "ComplexityPolicy",
+    "ComplexityPolicyLayer",
+    "ComplexityBand",
+    "SignalRule",
+    "MetricBound",
+    "Envelope",
+    "BUILTIN_LAYER",
+    "TIERS",
+    "build_builtin_policy",
     "TokenBudgetPolicy",
     "MCPServerConfig",
     "AgentConfig",
