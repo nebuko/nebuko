@@ -46,6 +46,22 @@ class TestHistoryWindowConfig:
         assert config.history_comment_count == 0
         assert config.normalized_count() == 5
 
+    def test_render_limit_is_unbounded_when_unset(self):
+        # Issue #872: the thread ledger renders the full relevant flow by default.
+        assert HistoryWindowConfig().render_limit() is None
+        assert HistoryWindowConfig.from_env({}).render_limit() is None
+
+    def test_render_limit_is_unbounded_for_a_non_positive_value(self):
+        assert HistoryWindowConfig(history_comment_count=0).render_limit() is None
+        assert HistoryWindowConfig(history_comment_count=-3).render_limit() is None
+
+    def test_render_limit_caps_a_positive_value(self):
+        assert HistoryWindowConfig(history_comment_count=2).render_limit() == 2
+        assert (
+            HistoryWindowConfig.from_env({"HISTORY_COMMENT_COUNT": "3"}).render_limit()
+            == 3
+        )
+
     def test_is_immutable(self):
         config = HistoryWindowConfig()
         try:

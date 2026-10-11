@@ -248,12 +248,13 @@ is authoritative.
 | Field | Type | Description |
 |-------|------|-------------|
 | `run_id` | int | Monotonically increasing invocation counter: the Nth state update in this workflow run (issue #821). Carried across the trigger->agent hand-off so a reset is detectable. |
-| `schema_version` | int | Payload shape generation this state was written at (`STATE_SCHEMA_VERSION`, currently 4). Legacy blobs still carrying the old `version` key are read as generation 3, with that value migrated into `run_id` (issue #821). |
+| `schema_version` | int | Payload shape generation this state was written at (`STATE_SCHEMA_VERSION`, currently 5). Legacy blobs still carrying the old `version` key are read as generation 3, with that value migrated into `run_id` (issue #821). Generation 5 adds `thread` and the per-step `history[].inputs` ledger (issue #872); older snapshots deserialize with empty defaults. |
 | `workflow` | string | Name of the active workflow. |
 | `step` | string | Current step name. |
 | `agent` | string | Agent role executing the current step. |
 | `phase` | string | High-level phase (`analysis`, `planning`, `execution`, ...). |
 | `history` | HistoryEntry[] | Summarized records of prior steps (see below). |
+| `thread` | ThreadRecord[] | The issue's **thread ledger** (issue #872): one classified, id-keyed metadata record per issue artifact (issue body, command, engine output, agent output, human feedback). Reconciled against the full comment list between runs; the prompt's `## Recent thread` is rendered from the relevant records. |
 | `pinned_comment_ids` | int[] | Comment IDs injected **verbatim** into the next agent's context; every other included comment is injected as a summary/excerpt. |
 | `current_context` | object | Free-form shared data between agents (pending tasks, constraints, decisions, `last_run_status`, ...). |
 | `parent_workflow` | string \| null | Parent workflow name when inside a sub-workflow. Derived view of the second-to-last `position` frame. |
@@ -281,19 +282,56 @@ is authoritative.
 | `dispatch` | Dispatch \| null | Routing decision emitted by this step (same shape as the top-level [Dispatch Object](#dispatch-object)); `null` for legacy entries that predate the field. Makes the history a replayable movement log. |
 | `position` | StepRef[] | The mount stack recorded for this step (issue #638). After every run `history[-1].position` equals `WorkflowState.position`; faithful stacks let the terminal unwind recover the ancestor chain one level at a time (issue #812). |
 | `metrics` | StateMetrics \| null | Metrics of **this step's** agent invocation (full `Metrics` payload; issue #792). `history[-1].metrics` is the single metrics authority. |
+| `inputs` | StepInputRecord[] | The step's materialized deterministic inputs (issue #872): `name`, `binding` (`exec`/`str`/`ref`), `ok`, `detail`, the resolved `value` (capped at `MAX_VALUE_CHARS`), and a `truncated` flag. Empty for legacy entries. |
+
+### ThreadRecord
+
+One metadata-only provenance record per GitHub issue artifact (issue #872) —
+the unit the reconciler dedups on and the renderer draws from. Bodies are **not**
+copied into state; they stay in the thread.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kind` | string | `issue-body` \| `command` \| `engine-output` \| `agent-output` \| `human-feedback`. |
+| `id` | int | GitHub REST id (issue id or comment id). |
+| `url` | string | `html_url` permalink. |
+| `user_id` | int | Author's GitHub user id. |
+| `user_login` | string | Author's login. |
+| `user_name` | string | Author's display name (best-effort; REST payloads omit it, so usually empty). |
+| `created_at` | string | ISO-8601 creation timestamp. |
+| `author_association` | string | GitHub `author_association` (`OWNER`, `MEMBER`, ...). |
+| `trusted` | bool | Whether human feedback may be rendered as trusted context (allowlisted association **and** the run's trigger author). |
+| `deleted` | bool | Set when the id vanishes from the fetched comment list (frozen record kept for audit). |
+
+### StepInputRecord
+
+Persisted form of one materialized step input (issue #872).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Input name. |
+| `binding` | string | Binding kind that produced the value (`exec`/`str`/`ref`). |
+| `ok` | bool | Whether materialization succeeded. |
+| `detail` | string | Failure detail (empty on success). |
+| `value` | string | Resolved value, truncated to `MAX_VALUE_CHARS`. |
+| `truncated` | bool | Whether `value` was capped. |
 
 ### Annotated Example
 
 ```json
 {
   "run_id": 1,
-  "schema_version": 4,
+  "schema_version": 5,
   "workflow": "default",
   "step": "context",
   "agent": "context",
   "phase": "analysis",
   "history": [
-    {"step": "analyze", "agent": "architect", "summary": "Issue analyzed, plan requested", "comment_ids": [1029384], "result": "advance", "dispatch": {"status": "advance", "task_hint": "context", "complexity": "high"}, "metrics": {"run_id": "1bb4941e-0bbf-432b-b79c-0b408feea07f", "model_name": "default", "agent_role": "architect", "input_tokens": 8365, "output_tokens": 1143, "max_context_window": 0, "tool_call_latency_ms": 19685.7, "agent_runtime_ms": 19685.7, "nb_tool_calls": 0, "tool_call_error_rate": 0.0, "review_fix_requests": 0}}
+    {"step": "analyze", "agent": "architect", "summary": "Issue analyzed, plan requested", "comment_ids": [1029384], "result": "advance", "dispatch": {"status": "advance", "task_hint": "context", "complexity": "high"}, "inputs": [{"name": "diff", "binding": "exec", "ok": true, "detail": "", "value": "diff --git ...", "truncated": false}], "metrics": {"run_id": "1bb4941e-0bbf-432b-b79c-0b408feea07f", "model_name": "default", "agent_role": "architect", "input_tokens": 8365, "output_tokens": 1143, "max_context_window": 0, "tool_call_latency_ms": 19685.7, "agent_runtime_ms": 19685.7, "nb_tool_calls": 0, "tool_call_error_rate": 0.0, "review_fix_requests": 0}}
+  ],
+  "thread": [
+    {"kind": "issue-body", "id": 5794187059, "url": "https://github.com/o/r/issues/501", "user_id": 12345, "user_login": "olivier-norture", "user_name": "", "created_at": "2026-10-01T00:00:00Z", "author_association": "OWNER", "trusted": true, "deleted": false},
+    {"kind": "agent-output", "id": 1029384, "url": "https://github.com/o/r/issues/501#issuecomment-1029384", "user_id": 99, "user_login": "nebuko[bot]", "user_name": "", "created_at": "2026-10-02T00:00:00Z", "author_association": "NONE", "trusted": false, "deleted": false}
   ],
   "pinned_comment_ids": [],
   "current_context": {"last_run_status": "success"},
@@ -368,6 +406,7 @@ Variables the orchestrator sets/consumes per run:
 | `WORKFLOW_POSITION` | `resolve_config` / `resolve_workflow` | Single-line JSON of the run's full mount stack (`WorkflowState.position`). |
 | `WORKFLOW_POSITION_PATH` | `resolve_config` / `resolve_workflow` | Human-readable `wf/step\|wf/step\|...` rendering of `WORKFLOW_POSITION`. |
 | `STEP_INPUTS` | `resolve_config` | Single-line JSON of a resolved step's typed-input wiring (issue #813): the consumer step's own bindings plus the call-frame chain (each frame's callee, call step and frozen bindings) derived from the carried-forward `WORKFLOW_POSITION`. Emitted only when the run actually wires something. Empty/absent otherwise. |
+| `HISTORY_COMMENT_COUNT` | reusable workflow (`history_comment_count`) | Thread-context bound (ADR-0003, issues #844/#872). Unset or non-positive → the prompt's `## Recent thread` renders the **full relevant flow** classified from the thread ledger; a positive N caps it to the last N relevant records (pinned comments always added on top). The loop guard's raw-history fallback still uses a positive default (5). |
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables verbose debug logging. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |
