@@ -50,6 +50,7 @@ _MISSING = object()
 #: mirroring how ``run_agent`` stows ``run_outcome`` for ``build_output``.
 _REPORT_PAYLOAD_ATTR = "nebuko_report_payload"
 _REPORT_ROUTING_ATTR = "nebuko_report_routing"
+_REPORT_FUNCTION_CALL_ATTR = "nebuko_report_function_call"
 _REPORT_OFFSET_ATTR = "nebuko_report_event_offset"
 
 #: Engine-elicited report turn (issue #830). After the work loop ends the
@@ -66,6 +67,9 @@ _REPORT_PROMPT = (
     "2. `dispatch_next` with your routing decision (status, plus `agent` when "
     "you are explicitly overriding the workflow's next step, `pin`, and branch/"
     "complexity/reason when they apply).\n"
+    "3. `call_agent` only when you are imperatively naming the exact agent to "
+    "run next (with `agent_name`, plus optional `callback`/`complexity`) "
+    "instead of letting the workflow resolve it.\n"
     "Put no deliverable prose outside the `finish` message."
 )
 
@@ -198,6 +202,7 @@ class InProcessAgentHost:
             return
         finish = self._call_finish(conversation)
         routing = self._call_dispatch(conversation)
+        handoff = self._call_agent(conversation)
         if finish is not None:
             setattr(conversation, _REPORT_PAYLOAD_ATTR, finish)
             log.info(
@@ -206,7 +211,9 @@ class InProcessAgentHost:
             )
         if routing is not None:
             setattr(conversation, _REPORT_ROUTING_ATTR, routing)
-        if finish is None and routing is None:
+        if handoff is not None:
+            setattr(conversation, _REPORT_FUNCTION_CALL_ATTR, handoff)
+        if finish is None and routing is None and handoff is None:
             log.warning("[phase:agent] report turn returned no control-plane call")
 
     def _call_finish(self, conversation: Any) -> EngineToolPayload | None:
@@ -216,6 +223,10 @@ class InProcessAgentHost:
     def _call_dispatch(self, conversation: Any) -> EngineToolPayload | None:
         """Engine-started report turn's ``dispatch_next`` payload: the routing."""
         return _harvest_report(conversation, "dispatch_next")
+
+    def _call_agent(self, conversation: Any) -> EngineToolPayload | None:
+        """Engine-started report turn's ``call_agent`` payload: the hand-off."""
+        return _harvest_report(conversation, "call_agent")
 
 
 def _report_payload(conversation: Any) -> EngineToolPayload | None:
