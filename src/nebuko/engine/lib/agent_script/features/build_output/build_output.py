@@ -70,10 +70,16 @@ from agent_script.features.dispatch_next_tool import (
     clear_run,
     get_recorded_dispatch,
 )
+from agent_script.features.complexity_review_tool import (
+    clear_complexity_review_run,
+    get_recorded_review_request,
+)
 from agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
     clear_scaffold_branch_run,
     get_recorded_scaffold_branch,
 )
+from complexity_governor.complexity_governor import ComplexityAdjustment
+from complexity_governor.integration import ADJUSTMENT_ENV, POLICY_ENV
 
 logger = get_logger(__name__)
 
@@ -246,6 +252,40 @@ def _parse_gate_decision_env() -> Optional[GateDecision]:
         return GateDecision.model_validate_json(raw)
     except Exception:
         logger.warning("Ignoring malformed GATE_DECISION env value")
+        return None
+
+
+def _parse_complexity_adjustment_env() -> Optional[ComplexityAdjustment]:
+    """Parse the boundary complexity adjustment from ``COMPLEXITY_ADJUSTMENT``.
+
+    Emitted by ``resolve_config`` (issue #882) as a serialized
+    :class:`ComplexityAdjustment` computed from run history single source. A
+    malformed value is ignored (logged) rather than aborting the run.
+    """
+    raw = os.environ.get(ADJUSTMENT_ENV, "").strip()
+    if not raw:
+        return None
+    adjustment = ComplexityAdjustment.from_json(raw)
+    if adjustment is None:
+        logger.warning(f"Ignoring malformed {ADJUSTMENT_ENV} env value")
+    return adjustment
+
+
+def _parse_complexity_policy_env():
+    """Parse the pinned complexity policy snapshot from ``COMPLEXITY_POLICY``.
+
+    Emitted by ``resolve_config`` (issue #882) at run start for auditability.
+    A malformed value is ignored (logged) — the snapshot is provenance only.
+    """
+    raw = os.environ.get(POLICY_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        from config import ComplexityPolicy
+
+        return ComplexityPolicy.model_validate_json(raw)
+    except Exception:
+        logger.warning(f"Ignoring malformed {POLICY_ENV} env value")
         return None
 
 
@@ -1090,6 +1130,12 @@ def build_output(
     # the next run in a long-lived process.
     clear_run(getattr(conversation, "id", None))
     clear_scaffold_branch_run(getattr(conversation, "id", None))
+    # Complexity review request recorded by the agent this run (issue #882).
+    # Captured before clearing the registry so it lands on this step's entry.
+    complexity_review_request = get_recorded_review_request(
+        getattr(conversation, "id", None)
+    )
+    clear_complexity_review_run(getattr(conversation, "id", None))
 
     # ── Soft-kill error status (issue #704) ──────────────────────
     # A gracefully timed-out run was interrupted mid-step, so it is an error
@@ -1166,6 +1212,9 @@ def build_output(
         is_human_resume=is_human_resume,
         gate_decision=_parse_gate_decision_env(),
         workflow_ref=workflow_ref_from_env(os.environ),
+        complexity_adjustment=_parse_complexity_adjustment_env(),
+        complexity_review_request=complexity_review_request,
+        complexity_policy=_parse_complexity_policy_env(),
     )
     logger.info(f"Built workflow state run {new_state.run_id} for step={workflow_step}")
 

@@ -467,6 +467,51 @@ def validate_dispatch(data: dict) -> ValidationResult:
     return result
 
 
+def validate_complexity_review(data) -> ValidationResult:
+    """Enforce the ``complexity_review`` request contract (issue #882).
+
+    A review request must carry an evidence bundle with at least one populated
+    family and a non-blank ``feeling`` — a tier change is never free-standing.
+
+    Args:
+        data: A ``ComplexityReviewRequest``/``ComplexityReviewAction`` instance
+            or a dict carrying ``evidence``/``feeling``.
+
+    Returns:
+        ValidationResult listing every contract violation found.
+    """
+    from complexity_governor.evidence import EvidenceBundle, is_empty_evidence
+
+    result = ValidationResult(is_valid=True)
+    if isinstance(data, dict):
+        evidence = data.get("evidence")
+        feeling = data.get("feeling", "")
+    else:
+        evidence = getattr(data, "evidence", None)
+        feeling = getattr(data, "feeling", "")
+
+    if evidence is None:
+        result.add_error("complexity_review: 'evidence' is required")
+    else:
+        if isinstance(evidence, dict):
+            try:
+                evidence = EvidenceBundle.model_validate(evidence)
+            except PydanticValidationError as exc:
+                result.add_error(f"complexity_review: invalid evidence ({exc})")
+                evidence = None
+        if evidence is not None and is_empty_evidence(evidence):
+            result.add_error(
+                "complexity_review: evidence must populate at least one family"
+            )
+
+    if not str(feeling or "").strip():
+        result.add_error(
+            "complexity_review: 'feeling' is required and must not be blank"
+        )
+
+    return result
+
+
 def validate_forbidden_sections(
     text: str, forbidden_headers: Optional[list[str]] = None
 ) -> ValidationResult:

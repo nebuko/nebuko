@@ -230,3 +230,82 @@ class TestConfigComplexityEmission:
         )
         assert result["COMPLEXITY"] == "high"
         assert result["CONFIG_COMPLEXITY"] == "high"
+
+
+class TestComplexityGovernanceOverlay:
+    """The governor adjustment overlays the base tier chain (issue #882)."""
+
+    def _low_step_dirs(self):
+        prompt_base, workflows_dir = _make_dirs()
+        with open(os.path.join(workflows_dir, "lowstep.yaml"), "w") as f:
+            f.write(
+                "name: lowstep\n"
+                "description: low step\n"
+                "trigger:\n"
+                "  agents: [architect]\n"
+                "steps:\n"
+                "  - name: analyze\n"
+                "    agent: architect\n"
+                "    complexity: low\n"
+                "    next: null\n"
+            )
+        return prompt_base, workflows_dir
+
+    def _adjustment(self, delta):
+        from complexity_governor import ComplexityAdjustment, EvidenceBundle
+
+        return ComplexityAdjustment(
+            delta=delta, trigger="evidence-drift", evidence=EvidenceBundle()
+        )
+
+    def test_adjustment_shifts_effective_tier_up(self):
+        prompt_base, workflows_dir = self._low_step_dirs()
+        result = _build_result(
+            {
+                "task": "architect",
+                "config_workflow": "lowstep",
+                "config_step": "analyze",
+                "config_complexity_adjustment": self._adjustment(1),
+                "config_complexity_policy": "{}",
+            },
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["CONFIG_COMPLEXITY"] == "medium"
+        assert result["COMPLEXITY_ADJUSTMENT"]  # serialized snapshot emitted
+
+    def test_no_adjustment_leaves_base_tier(self):
+        prompt_base, workflows_dir = self._low_step_dirs()
+        result = _build_result(
+            {"task": "architect", "config_workflow": "lowstep", "config_step": "analyze"},
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["CONFIG_COMPLEXITY"] == "low"
+        assert result["COMPLEXITY_ADJUSTMENT"] == ""
+
+    def test_adjustment_clamped_at_high(self):
+        prompt_base, workflows_dir = _make_dirs()
+        with open(os.path.join(workflows_dir, "highstep.yaml"), "w") as f:
+            f.write(
+                "name: highstep\n"
+                "description: high step\n"
+                "trigger:\n"
+                "  agents: [architect]\n"
+                "steps:\n"
+                "  - name: analyze\n"
+                "    agent: architect\n"
+                "    complexity: high\n"
+                "    next: null\n"
+            )
+        result = _build_result(
+            {
+                "task": "architect",
+                "config_workflow": "highstep",
+                "config_step": "analyze",
+                "config_complexity_adjustment": self._adjustment(5),
+            },
+            prompt_base,
+            workflows_dir,
+        )
+        assert result["CONFIG_COMPLEXITY"] == "high"

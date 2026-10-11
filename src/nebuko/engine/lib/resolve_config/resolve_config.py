@@ -402,6 +402,26 @@ def resolve_config(
     if prev_state is not None and prev_state.position:
         config["config_position"] = WorkflowPosition(refs=list(prev_state.position))
 
+    # Complexity governance (issue #882): resolve the run's policy once, pin the
+    # snapshot for auditability, and evaluate a boundary drift adjustment over
+    # the prior history. Best-effort — a policy/config failure must never break
+    # routing, so anything unexpected degrades to "no adjustment".
+    try:
+        from complexity_governor.integration import (
+            compute_boundary_adjustment,
+            resolve_run_policy,
+        )
+
+        policy = resolve_run_policy()
+        config["config_complexity_policy"] = policy.model_dump_json()
+        if prev_state is not None:
+            adjustment = compute_boundary_adjustment(prev_state, policy)
+            if adjustment is not None:
+                config["config_complexity_adjustment"] = adjustment
+    except Exception as exc:  # noqa: BLE001 - governance must not break routing
+        if os.environ.get("DEBUG") or debug:
+            print(f"DEBUG complexity governor: {exc}", file=sys.stderr)
+
     # A malformed or unknown human slash command yields no valid task; keep its
     # usage hint on the config so _build_result can turn the terminal skip into
     # an actionable notice (issue #804). Bot bodies are excluded so the engine's

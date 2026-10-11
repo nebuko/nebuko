@@ -16,6 +16,7 @@ from validate_output import (
     validate_agent_run_config,
     validate_forbidden_sections,
     validate_agent_output,
+    validate_complexity_review,
     VALID_DISPATCH_STATUSES,
 )
 from workflow_state.sub_domains.dispatch.dispatch import DISPATCH_STATUSES
@@ -552,3 +553,53 @@ class TestValidateDispatchStatuses(unittest.TestCase):
         # Guards the single-source-of-truth wiring: no duplicated literal may
         # drift from workflow_state.DISPATCH_STATUSES.
         self.assertEqual(VALID_DISPATCH_STATUSES, set(DISPATCH_STATUSES))
+
+
+class TestValidateComplexityReview(unittest.TestCase):
+    """The complexity_review contract (issue #882): evidence + non-blank feeling."""
+
+    def _bundle(self):
+        from complexity_governor import EvidenceBundle, HumanSignals
+
+        return EvidenceBundle(human=HumanSignals(changes_requested=3))
+
+    def test_valid_request_passes(self):
+        result = validate_complexity_review(
+            {"evidence": self._bundle(), "feeling": "loop detected"}
+        )
+        self.assertTrue(result.is_valid)
+
+    def test_missing_evidence_rejected(self):
+        result = validate_complexity_review({"feeling": "loop"})
+        self.assertFalse(result.is_valid)
+        self.assertTrue(any("evidence" in e for e in result.errors))
+
+    def test_empty_evidence_rejected(self):
+        from complexity_governor import EvidenceBundle
+
+        result = validate_complexity_review(
+            {"evidence": EvidenceBundle(), "feeling": "loop"}
+        )
+        self.assertFalse(result.is_valid)
+        self.assertTrue(any("at least one family" in e for e in result.errors))
+
+    def test_blank_feeling_rejected(self):
+        result = validate_complexity_review(
+            {"evidence": self._bundle(), "feeling": "   "}
+        )
+        self.assertFalse(result.is_valid)
+        self.assertTrue(any("feeling" in e for e in result.errors))
+
+    def test_accepts_model_instance(self):
+        from complexity_governor import ComplexityReviewRequest
+
+        request = ComplexityReviewRequest(
+            evidence=self._bundle(), feeling="weird design", suggested_tier="high"
+        )
+        self.assertTrue(validate_complexity_review(request).is_valid)
+
+    def test_rejects_invalid_evidence_dict(self):
+        result = validate_complexity_review(
+            {"evidence": {"human": {"changes_requested": "not-an-int"}}, "feeling": "x"}
+        )
+        self.assertFalse(result.is_valid)

@@ -2,6 +2,12 @@ from typing import Optional, Any
 
 from config import StepRef, WorkflowPosition
 
+from complexity_governor.complexity_governor import (
+    ComplexityAdjustment,
+    ComplexityReviewRequest,
+)
+from config import ComplexityPolicy
+
 from ...workflow_state import (
     WorkflowState,
     SoftRetryState,
@@ -82,6 +88,9 @@ def build_state(
     is_human_resume: bool = False,
     gate_decision: Optional[GateDecision] = None,
     workflow_ref: Optional[str] = None,
+    complexity_adjustment: Optional[ComplexityAdjustment] = None,
+    complexity_review_request: Optional[ComplexityReviewRequest] = None,
+    complexity_policy: Optional[ComplexityPolicy] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -166,6 +175,7 @@ def build_state(
         base_circuit_breaker = CircuitBreakerState()
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
+        base_complexity_policy: Optional[ComplexityPolicy] = None
     else:
         base_run_id = prev_state.run_id
         base_history = list(prev_state.history)
@@ -182,6 +192,7 @@ def build_state(
         base_circuit_breaker = prev_state.circuit_breaker
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
+        base_complexity_policy = prev_state.complexity_policy
 
     # Build history entry for the current step
     # Normalize the position block to the flat v3 refs list (issue #638);
@@ -205,6 +216,8 @@ def build_state(
         position=position_refs,
         dispatch=dispatch,
         metrics=entry_metrics,
+        complexity_adjustment=complexity_adjustment,
+        complexity_review_request=complexity_review_request,
     )
     new_history = base_history + [entry]
 
@@ -259,6 +272,12 @@ def build_state(
     else:
         new_gate_decision = base_gate_decision
         new_gate_history = base_gate_history
+
+    # Resolved complexity policy snapshot (issue #882): pinned at run start and
+    # carried forward; a later run re-pins only when it supplies a fresh one.
+    new_complexity_policy = (
+        complexity_policy if complexity_policy is not None else base_complexity_policy
+    )
 
     # Preserve per-step soft-kill retry accounting across transitions (issue
     # #704). The counter is default-filled from the previous state so a
@@ -332,4 +351,5 @@ def build_state(
         circuit_breaker=base_circuit_breaker,
         gate_decision=new_gate_decision,
         gate_history=new_gate_history,
+        complexity_policy=new_complexity_policy,
     )

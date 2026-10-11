@@ -368,3 +368,33 @@ temperature, and the per-tier floor from
 is then applied on top with `max()`; so a `high` override of `0.1` still
 resolves to `0.3`. `reasoning` only applies while thinking is enabled for the
 resolved model.
+
+### Repo Complexity Policy (`complexity_policy`)
+
+The app config may carry an optional **repo layer** of the complexity policy —
+the same config source that already carries `complexity_overrides`. It merges on
+top of the builtin layer (`builtin` -> `repo`); unset sections inherit the lower
+layer. The resolved policy is pinned into run state for auditability.
+
+```yaml
+complexity_policy:
+  scope: repo
+  target_distribution: { low: 0.70, medium: 0.25, high: 0.05 }
+  max_auto_delta: 1
+  auto_adjust: true
+  # Optional: retune the signal thresholds the governor evaluates.
+  signal_rules:
+    - signal: multi-issue-linkage
+      family: context
+      field: linked_issues
+      threshold: 2
+      direction: gte
+```
+
+The base tier chain is unchanged (`dispatch > step > "medium"`, ADR-0005). On top
+of it the `ComplexityGovernor` overlays a clamped drift adjustment
+(`effective = clamp(base + delta)`, `|delta| <= max_auto_delta`), computed from a
+typed `EvidenceBundle` (LLM metrics + human signals + context signals). Agents
+may request a re-tier via the `complexity_review` tool; the request requires a
+populated `evidence` bundle and a non-blank `feeling`. See
+[ADR-0012](./adr/0012-complexity-governance.md).

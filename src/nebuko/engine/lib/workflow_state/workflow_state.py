@@ -1,7 +1,12 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import Any, Mapping, Optional
 
-from config import POSITION_STATE_VERSION, StepRef, WorkflowPosition
+from config import (
+    POSITION_STATE_VERSION,
+    ComplexityPolicy,
+    StepRef,
+    WorkflowPosition,
+)
 
 # Import domain entities first (no circular dependency)
 from .sub_domains.history_entry.history_entry import HistoryEntry
@@ -257,6 +262,10 @@ class WorkflowState(BaseModel):
     # (issue #805). Defaults to False so legacy blobs without this key load
     # unchanged; serialized only when True (``exclude_defaults``).
     publish_failed: bool = False  # @stub-protected
+    # Resolved complexity policy snapshot (issue #882), pinned at run start for
+    # auditability. Carries builtin->repo provenance. None on legacy blobs,
+    # which load and serialize unchanged.
+    complexity_policy: Optional[ComplexityPolicy] = None  # @stub-protected
 
     @model_validator(mode="before")
     @classmethod
