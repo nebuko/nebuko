@@ -28,7 +28,7 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/architect.md"
     skills: ["call-agent", "posting-contract", "planning", "complexity"]
-    tools: ["think", "finish", "dispatch_next", "complexity_review"]
+    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
     complexity_overrides:
       low:
         model: "${llms.deepseek-v4_1-flash}"
@@ -42,7 +42,7 @@ agents:
     temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
     skills: ["posting-contract", "git-pr-workflow", "complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch", "complexity_review"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
 
   context:
     model: "${llms.deepseek-v4_1-flash}"
@@ -50,7 +50,7 @@ agents:
     temperature: 0.1
     prompt_file: "defaults/prompts/context.md"
     skills: ["call-agent", "posting-contract", "context-research", "complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "complexity_review"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
     mcp_servers:
       - name: "brave-search"
         command: "npx"
@@ -69,11 +69,11 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
     skills: ["posting-contract", "plan-review", "retrospective", "complexity"]
-    tools: ["think", "finish", "dispatch_next", "terminal"]
+    tools: ["think", "finish", "dispatch_next", "call_agent", "terminal"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"
     role: "Product owner — triages and refines issues into actionable specs; never modifies code."
     prompt_file: "defaults/prompts/po.md"
     skills: ["call-agent", "posting-contract", "issue-refinement", "complexity"]
-    tools: ["think", "finish", "dispatch_next", "complexity_review"]
+    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
