@@ -13,13 +13,13 @@ providers:
 # ── LLMs: model paths referencing providers ──
 llms:
   deepseek-v4_1-flash:
-    model_path: "openai/deepseek/deepseek-v4.1-flash"
+    model_path: "openai/deepseek-v4.1-flash"
     provider: "${providers.opencode_go}"
   glm-5_3-flash:
-    model_path: "openai/z-ai/glm-5.3-flash"
+    model_path: "openai/glm-5.3-flash"
     provider: "${providers.opencode_go}"
   mimo-2_6-pro:
-    model_path: "openai/xiaomi/mimo-v2.6-pro"
+    model_path: "openai/mimo-v2.6-pro"
     provider: "${providers.opencode_go}"
     thinking_enabled: true
     preserve_thinking: true
