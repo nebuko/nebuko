@@ -51,7 +51,7 @@ class TestTables:
             "run": {"name", "step"},
             "force-step": {"name"},
             "resume": {"feedback"},
-            "delete": {"issue"},
+            "delete": {"issue", "from"},
             "update": {"value"},
             "approve": {"feedback"},
             "reject": {"feedback"},
@@ -129,16 +129,22 @@ class TestParseValid:
             action="delete", resource="comments", params={"issue": "123"}
         )
 
-    def test_delete_rejects_from_flag(self):
-        # `--from` support was removed in issue #674: delete the whole issue.
-        assert (
-            parse_workflow_command("/nebuko delete comments --issue 123 --from 5811583860")
-            is None
+    def test_delete_accepts_from_flag(self):
+        # `--from` scopes the deletion to that comment and every later one on
+        # the target issue (restored in issue #867; supersedes the #674 removal).
+        cmd = parse_workflow_command(
+            "/nebuko delete comments --issue 123 --from 5811583860"
+        )
+        assert cmd == WorkflowCommand(
+            action="delete",
+            resource="comments",
+            params={"issue": "123", "from": "5811583860"},
         )
 
-    def test_delete_from_only_rejected(self):
-        assert (
-            parse_workflow_command("/nebuko delete comments --from 5811583860") is None
+    def test_delete_accepts_from_only(self):
+        cmd = parse_workflow_command("/nebuko delete comments --from 5811583860")
+        assert cmd == WorkflowCommand(
+            action="delete", resource="comments", params={"from": "5811583860"}
         )
 
     # /nebuko clean comments (issue #679) — registry-local alias of delete;
@@ -151,6 +157,13 @@ class TestParseValid:
         cmd = parse_workflow_command("/nebuko clean comments --issue 123")
         assert cmd == WorkflowCommand(
             action="clean", resource="comments", params={"issue": "123"}
+        )
+
+    def test_clean_from(self):
+        # `clean` is an alias of `delete`, so it inherits `--from` (#867).
+        cmd = parse_workflow_command("/nebuko clean comments --from 6095548211")
+        assert cmd == WorkflowCommand(
+            action="clean", resource="comments", params={"from": "6095548211"}
         )
 
     # /nebuko update circuit-breaker --value <n> (issue #839)
@@ -492,12 +505,23 @@ class TestClassifyComment:
         # `clean comments` line must not be classified as a command (issue #679).
         assert classify_comment("clean comments").kind != "command"
 
-    def test_malformed_clean_is_not_command(self):
-        # A malformed `clean` invocation is not a recognized command and must
-        # not be able to destructively delete comments (issue #679 review).
-        assert classify_comment("/nebuko clean").kind == "none"
-        assert classify_comment("/nebuko clean files").kind == "none"
-        assert classify_comment("/nebuko clean comments --unknown x").kind == "none"
+    def test_malformed_clean_is_a_command_attempt_not_a_command(self):
+        # A malformed `clean` invocation is not a recognized command, so it can
+        # never destructively delete comments (issue #679); it *is* a command
+        # attempt, so the resolver answers with the usage hint and never boots
+        # an agent (issue #867).
+        for body in (
+            "/nebuko clean",
+            "/nebuko clean files",
+            "/nebuko clean comments --unknown x",
+        ):
+            intent = classify_comment(body)
+            assert intent.kind == "command_attempt", body
+            assert intent.command == "clean", body
+            assert intent.usage and intent.usage.startswith(
+                "/nebuko clean comments"
+            ), body
+            assert intent.detail, body
 
     def test_frozen(self):
         intent = CommentIntent(
@@ -505,6 +529,59 @@ class TestClassifyComment:
         )
         with pytest.raises(FrozenInstanceError):
             intent.kind = "none"  # type: ignore[misc]
+
+
+class TestCommandAttempts:
+    """A malformed /nebuko invocation classifies as a command attempt (#867)."""
+
+    MALFORMED_NEBUKO = [
+        "/nebuko",  # bare prefix, no action
+        "/nebuko clean",  # missing resource
+        "/nebuko clean files",  # wrong resource
+        "/nebuko clean comments --unknown x",  # unknown flag
+        "/nebuko clean comments --issue abc",  # non-numeric flag
+        "/nebuko delete comments --from abc",  # non-numeric --from
+        "/nebuko run workflow",  # missing required flag
+        "/nebuko run workflow --name",  # bare flag value
+        "/nebuko resume --feedback a --feedback b",  # duplicate flag
+        "/nebuko frobnicate x",  # unknown action
+        "/nebuko approve --bogus",  # missing resource
+    ]
+
+    def test_every_malformed_nebuko_body_is_a_command_attempt(self):
+        for body in self.MALFORMED_NEBUKO:
+            assert parse_command(body).status == "malformed", body
+            assert classify_comment(body).kind == "command_attempt", body
+
+    def test_attempt_carries_usage_detail_and_verb(self):
+        intent = classify_comment("/nebuko clean comments --bogus x")
+        assert intent.kind == "command_attempt"
+        assert intent.command == "clean"
+        assert intent.detail == "unknown_flag"
+        assert intent.usage == (
+            "/nebuko clean comments [--issue <number>] [--from <comment-id>]"
+        )
+
+    def test_unknown_action_carries_no_verb_but_aggregate_usage(self):
+        intent = classify_comment("/nebuko frobnicate x")
+        assert intent.kind == "command_attempt"
+        assert intent.command is None
+        assert "unrecognized command" in (intent.usage or "")
+        assert intent.detail == "unknown_action"
+
+    def test_foreign_slash_is_not_a_command_attempt(self):
+        # A leading "/" that is not a /nebuko invocation is not our attempt; it
+        # keeps the ADR-0004 fallback path.
+        assert classify_comment("/foo bar").kind == "none"
+
+    def test_prose_is_not_a_command_attempt(self):
+        assert classify_comment("just some prose").kind == "none"
+
+    def test_mention_with_malformed_command_is_a_command_attempt(self):
+        # The attempted command outranks an embedded mention: the grammar alone
+        # decides a /nebuko body (issue #867).
+        intent = classify_comment("/nebuko clean comments --bogus x @@dev please")
+        assert intent.kind == "command_attempt"
 
 
 class TestCommandGrammar:

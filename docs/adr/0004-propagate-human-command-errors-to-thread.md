@@ -2,7 +2,7 @@
 
 **Status:** Accepted — 2026-10-08
 **Decider:** olivier-norture
-**Related:** #804 (this change), #793 (soft-kill halt notice), #529 (enriched skip reason), #635 (command grammar), #679 (`clean` alias)
+**Related:** #804 (this change), #793 (soft-kill halt notice), #529 (enriched skip reason), #635 (command grammar), #679 (`clean` alias) — **extended by** [ADR-0011](./0011-command-attempts-resolved-by-grammar.md) (#867), which resolves a command attempt *before* the cascade
 
 ## Context
 
