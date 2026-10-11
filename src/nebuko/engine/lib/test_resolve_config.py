@@ -793,35 +793,59 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         )
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "789")
 
-    def test_from_flag_treated_as_absent(self):
-        # `--from` support was removed in issue #674: the whole issue is
-        # deleted, so the flag is now unknown and the command is malformed.
+    def test_from_scopes_the_deletion(self):
+        # `--from` was restored in issue #867: delete that comment and every
+        # later one on the target issue (supersedes the #674 removal).
         result = self._resolve(
             "/nebuko delete comments --issue 123 --from 5811583860"
         )
-        self.assertNotIn("DELETE_COMMENTS", result)
+        self.assertEqual(result["DELETE_COMMENTS"], "true")
+        self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "123")
+        self.assertEqual(result["DELETE_COMMENTS_FROM"], "5811583860")
+        self.assertEqual(result["SKIP_AGENT"], "true")
 
-    def test_non_numeric_issue_treated_as_absent(self):
+    def test_non_numeric_issue_is_a_command_error(self):
         result = self._resolve("/nebuko delete comments --issue abc", issue_number=456)
         self.assertNotIn("DELETE_COMMENTS", result)
         self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["COMMAND_ERROR"], "true")
+        self.assertIn("/nebuko delete comments", result["REASON"])
 
     def test_no_issue_and_no_invoking_issue_treated_as_absent(self):
         # Neither --issue nor an invoking issue number: command is absent.
         result = self._resolve("/nebuko delete comments")
         self.assertNotIn("DELETE_COMMENTS", result)
 
-    def test_non_numeric_from_treated_as_absent(self):
+    def test_non_numeric_from_is_a_command_error(self):
         result = self._resolve("/nebuko delete comments --from abc", issue_number=456)
         self.assertNotIn("DELETE_COMMENTS", result)
         self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["COMMAND_ERROR"], "true")
+        self.assertIn("/nebuko delete comments", result["REASON"])
 
-    def test_unicode_digit_issue_treated_as_absent(self):
-        # '²' passes str.isdigit() but int() rejects it; the command must be
-        # treated as absent rather than crashing the resolver (issue #644 review).
+    def test_unicode_digit_issue_is_a_command_error(self):
+        # '²' passes str.isdigit() but int() rejects it; the command is
+        # malformed and answered, never executed or crashed (issues #644/#867).
         result = self._resolve("/nebuko delete comments --issue ²", issue_number=456)
         self.assertNotIn("DELETE_COMMENTS", result)
         self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["COMMAND_ERROR"], "true")
+
+    def test_scoped_delete_beats_active_dispatch(self):
+        # A valid scoped delete must short-circuit before the cascade, exactly
+        # as the unscoped one does (issue #867).
+        body = (
+            "/nebuko delete comments --issue 123 --from 5811583860\n\n"
+            "<!-- WORKFLOW_STATE_START -->\n"
+            '{"version": 1, "dispatch": {"status": "advance", '
+            '"task_hint": "review", "complexity": "high"}}\n'
+            "<!-- WORKFLOW_STATE_END -->"
+        )
+        result = self._resolve(body, issue_number=867)
+        self.assertEqual(result["DELETE_COMMENTS"], "true")
+        self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "123")
+        self.assertEqual(result["DELETE_COMMENTS_FROM"], "5811583860")
+        self.assertEqual(result["AGENT_SELECTED"], "false")
 
     def test_bot_trigger_does_not_route_to_delete(self):
         result = self._resolve(
@@ -897,9 +921,32 @@ class TestCleanCommentsCommand(unittest.TestCase):
         )
         self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "789")
 
-    def test_malformed_clean_is_not_a_command(self):
-        # Review fix (issue #679): a malformed `clean` invocation must not be
-        # treated as a command (which would destructively delete comments).
+    def test_clean_from_scopes_the_deletion(self):
+        # The literal #822 repro: `--from` is now valid and scoped (issue #867).
+        result = self._resolve(
+            "/nebuko clean comments --from 6095548211", issue_number=822
+        )
+        self.assertEqual(result["DELETE_COMMENTS"], "true")
+        self.assertEqual(result["DELETE_COMMENTS_ISSUE"], "822")
+        self.assertEqual(result["DELETE_COMMENTS_FROM"], "6095548211")
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["AGENT_SELECTED"], "false")
+
+    def test_clean_from_beats_active_review_dispatch(self):
+        # Regression #822: an active review dispatch must not absorb the scoped
+        # clean command and boot the review agent.
+        body = "/nebuko clean comments --from 6095548211\n\n" + self._state_block(
+            {"status": "advance", "task_hint": "review", "complexity": "high"}
+        )
+        result = self._resolve(body, issue_number=822)
+        self.assertEqual(result["DELETE_COMMENTS"], "true")
+        self.assertEqual(result["DELETE_COMMENTS_FROM"], "6095548211")
+        self.assertEqual(result["AGENT_SELECTED"], "false")
+
+    def test_malformed_clean_is_a_command_error_not_a_delete(self):
+        # A malformed `clean` invocation must never delete comments (issue
+        # #679); it is a command attempt, so the resolver answers it with the
+        # usage hint and no agent boots (issue #867).
         for body in (
             "/nebuko clean",
             "/nebuko clean files",
@@ -909,6 +956,9 @@ class TestCleanCommentsCommand(unittest.TestCase):
             with self.subTest(body=body):
                 result = self._resolve(body, issue_number=590)
                 self.assertNotIn("DELETE_COMMENTS", result)
+                self.assertEqual(result["SKIP_AGENT"], "true")
+                self.assertEqual(result["COMMAND_ERROR"], "true")
+                self.assertTrue(result["REASON"])
 
     def test_bot_clean_is_ignored(self):
         result = self._resolve(
@@ -927,6 +977,95 @@ class TestCleanCommentsCommand(unittest.TestCase):
 
     def test_clean_not_on_first_line_is_not_a_command(self):
         result = self._resolve("hello\n/nebuko clean comments", issue_number=590)
+        self.assertNotIn("DELETE_COMMENTS", result)
+
+
+class TestCommandAttemptRouting(unittest.TestCase):
+    """A malformed /nebuko command is answered, never absorbed by the cascade.
+
+    Regression for issue #822 (fixed by #867): ``/nebuko clean comments
+    --from <id>`` was malformed, fell through the command short-circuits and was
+    swallowed by an active workflow dispatch, which booted the review agent.
+    Any malformed ``/nebuko`` body now terminates with the ADR-0004 error
+    contract and dispatches no agent.
+    """
+
+    def _setup_dirs(self):
+        prompt_base = tempfile.mkdtemp()
+        workflows_dir = tempfile.mkdtemp()
+        for name in TASK_TO_PROMPT.values():
+            with open(os.path.join(prompt_base, name), "w") as f:
+                f.write(f"# Prompt for {name}")
+        return prompt_base, workflows_dir
+
+    def _resolve(self, body, issue_number=None, is_bot=False):
+        prompt_base, workflows_dir = self._setup_dirs()
+        return resolve_config(
+            body,
+            prompt_base,
+            workflows_dir,
+            is_bot=is_bot,
+            issue_number=issue_number,
+        )
+
+    @staticmethod
+    def _active_review_state():
+        state = {
+            "version": 1,
+            "dispatch": {
+                "status": "advance",
+                "task_hint": "review",
+                "complexity": "high",
+            },
+        }
+        return (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+    def _body(self, command):
+        return command + "\n\n" + self._active_review_state()
+
+    def _assert_command_error(self, body):
+        result = self._resolve(body, issue_number=867)
+        self.assertNotIn("DELETE_COMMENTS", result, body)
+        self.assertEqual(result.get("SKIP_AGENT"), "true", body)
+        self.assertEqual(result.get("COMMAND_ERROR"), "true", body)
+        self.assertTrue(result.get("REASON"), body)
+        return result
+
+    def test_non_numeric_from_is_a_command_error(self):
+        result = self._assert_command_error(
+            self._body("/nebuko clean comments --from abc")
+        )
+        self.assertIn("/nebuko clean comments", result["REASON"])
+
+    def test_unknown_flag_is_a_command_error(self):
+        result = self._assert_command_error(
+            self._body("/nebuko clean comments --bogus x")
+        )
+        self.assertIn("/nebuko clean comments", result["REASON"])
+
+    def test_unknown_action_uses_aggregate_usage(self):
+        result = self._assert_command_error(self._body("/nebuko frobnicate x"))
+        self.assertIn("unrecognized command", result["REASON"])
+
+    def test_approve_bogus_flag_is_a_command_error(self):
+        result = self._assert_command_error(self._body("/nebuko approve --bogus"))
+        self.assertIn("/nebuko approve", result["REASON"])
+
+    def test_command_error_dispatches_no_agent(self):
+        result = self._assert_command_error(
+            self._body("/nebuko clean comments --from abc")
+        )
+        self.assertNotEqual(result.get("AGENT_SELECTED"), "true")
+        self.assertNotIn("TASK", result)
+
+    def test_bot_command_attempt_is_ignored(self):
+        body = "/nebuko clean comments --from abc\n<!-- bot-workflow-terminal -->"
+        result = self._resolve(body, issue_number=867, is_bot=True)
+        self.assertNotIn("COMMAND_ERROR", result)
         self.assertNotIn("DELETE_COMMENTS", result)
 
 

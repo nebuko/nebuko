@@ -43,7 +43,11 @@ from .features.resolve_route.resolve_route import (
 from config import WorkflowPosition, is_self_function_call
 
 
-def _delete_comments_env(issue_param: Optional[str], issue_number: Optional[int]):
+def _delete_comments_env(
+    issue_param: Optional[str],
+    from_comment: Optional[str],
+    issue_number: Optional[int],
+):
     """Resolve an agent-free comment-removal command to its env contract.
 
     Serves ``/nebuko delete comments`` (issue #644) and its registry alias
@@ -55,13 +59,18 @@ def _delete_comments_env(issue_param: Optional[str], issue_number: Optional[int]
     treated as absent (``None``), so routing falls through to the normal
     cascade.
 
-    The parser already rejects non-numeric ``--issue`` values, so the value
-    reaching here is either empty or ASCII digits.
+    ``from_comment`` is the optional ``--from`` comment id (issue #867): when
+    set, it scopes the deletion to that comment and every later one on the
+    target issue (``DELETE_COMMENTS_FROM``); when absent the whole issue is
+    cleared, preserving today's behaviour.
+
+    The parser already rejects non-numeric ``--issue``/``--from`` values, so
+    the values reaching here are either empty or ASCII digits.
     """
     issue = issue_param or (str(issue_number) if issue_number else "")
     if not issue:
         return None
-    return {
+    env = {
         "TASK": f"Delete comments on issue {issue}",
         "ROLE_NAME": "script",
         "AGENT_SELECTED": "false",
@@ -69,6 +78,9 @@ def _delete_comments_env(issue_param: Optional[str], issue_number: Optional[int]
         "DELETE_COMMENTS": "true",
         "DELETE_COMMENTS_ISSUE": issue,
     }
+    if from_comment:
+        env["DELETE_COMMENTS_FROM"] = from_comment
+    return env
 
 
 def _update_circuit_breaker_env(value_param: Optional[str]) -> dict:
@@ -179,7 +191,9 @@ def resolve_config(
     # agent/workflow machinery: resolve it straight to its env contract and
     # return (issue #644). Bot-posted commands are ignored (human-only).
     if wf_cmd is not None and wf_cmd.action == "delete" and not is_bot:
-        delete_env = _delete_comments_env(wf_cmd.params.get("issue"), issue_number)
+        delete_env = _delete_comments_env(
+            wf_cmd.params.get("issue"), wf_cmd.params.get("from"), issue_number
+        )
         if delete_env is not None:
             return delete_env
 
@@ -198,8 +212,9 @@ def resolve_config(
     # matched via the comment classifier. This short-circuit must run *before*
     # the agent-trigger cascade below, otherwise `/nebuko clean comments`
     # falls through and boots context/architect (issue #590). Human-only, like delete.
-    # Flags are forwarded just as for `delete`, so `--issue <n>` targets that
-    # issue rather than silently falling back to the invoking issue.
+    # ``--from`` is forwarded just as for `delete`, so `--issue <n>` targets
+    # that issue and `--from <id>` scopes the deletion (issue #867) rather than
+    # silently falling back to the invoking issue / whole thread.
     command_intent = classify_comment(trigger_body)
     if (
         command_intent.kind == "command"
@@ -209,10 +224,24 @@ def resolve_config(
         clean_cmd = wf_cmd
         clean_env = _delete_comments_env(
             clean_cmd.params.get("issue") if clean_cmd is not None else None,
+            clean_cmd.params.get("from") if clean_cmd is not None else None,
             issue_number,
         )
         if clean_env is not None:
             return clean_env
+
+    # A malformed /nebuko invocation is a *command attempt*: the grammar alone
+    # decides it (issue #867), so it is answered with the usage hint (ADR-0004
+    # contract) and never reaches the workflow-continuation cascade below. This
+    # is what stops an active dispatch from absorbing a mistyped command and
+    # booting an agent (the #822 `clean comments --from <id>` regression).
+    # Human-only: a bot body keeps its normal fallback.
+    if command_intent.kind == "command_attempt" and not is_bot:
+        return {
+            "SKIP_AGENT": "true",
+            "COMMAND_ERROR": "true",
+            "REASON": command_intent.usage or "",
+        }
 
     # Route to appropriate handler based on what was found
     # Human commands (explicit intent) MUST be evaluated before auto-dispatch,
