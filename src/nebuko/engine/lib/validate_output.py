@@ -468,7 +468,7 @@ def validate_dispatch(data: dict) -> ValidationResult:
 
 
 def validate_complexity_review(data) -> ValidationResult:
-    """Enforce the ``complexity_review`` request contract (issue #882).
+    """Enforce the ``complexity_review`` request contract (issue #869).
 
     A review request must carry an evidence bundle with at least one populated
     family and a non-blank ``feeling`` — a tier change is never free-standing.

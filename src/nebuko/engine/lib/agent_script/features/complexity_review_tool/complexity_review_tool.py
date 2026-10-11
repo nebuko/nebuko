@@ -172,7 +172,7 @@ class ComplexityReviewExecutor(ToolExecutor):
 class ComplexityReviewTool(
     ToolDefinition[ComplexityReviewAction, ComplexityReviewObservation]
 ):
-    """Structured complexity-tier review tool (issue #882)."""
+    """Structured complexity-tier review tool (issue #869)."""
 
     @classmethod
     def create(

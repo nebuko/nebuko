@@ -273,7 +273,7 @@ def build_state(
         new_gate_decision = base_gate_decision
         new_gate_history = base_gate_history
 
-    # Resolved complexity policy snapshot (issue #882): pinned at run start and
+    # Resolved complexity policy snapshot (issue #869): pinned at run start and
     # carried forward; a later run re-pins only when it supplies a fresh one.
     new_complexity_policy = (
         complexity_policy if complexity_policy is not None else base_complexity_policy

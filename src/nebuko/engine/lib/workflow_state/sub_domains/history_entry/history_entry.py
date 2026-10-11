@@ -38,12 +38,12 @@ class HistoryEntry(BaseModel):
     # authority (issue #792): the former top-level ``WorkflowState.metrics``
     # snapshot was removed so each step keeps its own record.
     metrics: Optional[StateMetrics] = None  # @stub-protected
-    # Complexity decision applied to THIS step (issue #882): the governor's
+    # Complexity decision applied to THIS step (issue #869): the governor's
     # clamped adjustment over the base tier, with the evidence snapshot that
     # justified it. None when the step ran at its base tier unchanged.
     complexity_adjustment: Optional[ComplexityAdjustment] = None  # @stub-protected
     # Agent-issued complexity review request recorded during THIS step
-    # (issue #882); adjudicated by the governor at the next boundary.
+    # (issue #869); adjudicated by the governor at the next boundary.
     complexity_review_request: Optional[ComplexityReviewRequest] = None  # @stub-protected
 
     @model_validator(mode="before")

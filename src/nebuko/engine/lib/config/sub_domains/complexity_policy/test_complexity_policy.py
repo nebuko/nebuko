@@ -1,4 +1,4 @@
-"""Tests for the layered complexity policy domain (issue #882)."""
+"""Tests for the layered complexity policy domain (issue #869)."""
 
 import sys
 from pathlib import Path

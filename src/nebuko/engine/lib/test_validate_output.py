@@ -556,7 +556,7 @@ class TestValidateDispatchStatuses(unittest.TestCase):
 
 
 class TestValidateComplexityReview(unittest.TestCase):
-    """The complexity_review contract (issue #882): evidence + non-blank feeling."""
+    """The complexity_review contract (issue #869): evidence + non-blank feeling."""
 
     def _bundle(self):
         from complexity_governor import EvidenceBundle, HumanSignals

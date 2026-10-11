@@ -402,7 +402,7 @@ def resolve_config(
     if prev_state is not None and prev_state.position:
         config["config_position"] = WorkflowPosition(refs=list(prev_state.position))
 
-    # Complexity governance (issue #882): resolve the run's policy once, pin the
+    # Complexity governance (issue #869): resolve the run's policy once, pin the
     # snapshot for auditability, and evaluate a boundary drift adjustment over
     # the prior history. Best-effort — a policy/config failure must never break
     # routing, so anything unexpected degrades to "no adjustment".

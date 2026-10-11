@@ -92,7 +92,7 @@ Emit the whole artifact in one turn, in this shape:
 * **Context hand-off** (see §1): end with the `AGENT_RUN_CONFIG` sentinel carrying your complexity estimate.
 * The phrase "task complete" or "task is complete" is FORBIDDEN in your output: if the user asks you to do something, you MUST either delegate to @@dev or ask @@context for more context — never claim completion.
 
-## Complexity Governance (issue #882)
+## Complexity Governance (issue #869)
 
 Complexity is governed **per repo** by a layered policy (`builtin` -> `repo`) and
 adjudicated by the `ComplexityGovernor`. Base tier resolution is unchanged
@@ -112,7 +112,9 @@ Tier guidance (mirrored verbatim from the builtin policy bands):
   burn, or repeated human change-requests. Reach for HIGH only when the evidence
   below actually fires; an unproven HIGH erodes the cost/value of the tier.
 
-Automatic drift signals span all three evidence families (LLM + human + context):
+Automatic drift signals span all three evidence families (LLM + human + context).
+Context signals are supplied by the intake surface via `COMPLEXITY_CONTEXT_SIGNALS`;
+no publisher writes that var yet, so today only the LLM + human rules fire:
 
 | signal | family | field | threshold |
 |---|---|---|---|

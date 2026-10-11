@@ -258,23 +258,24 @@ def _parse_gate_decision_env() -> Optional[GateDecision]:
 def _parse_complexity_adjustment_env() -> Optional[ComplexityAdjustment]:
     """Parse the boundary complexity adjustment from ``COMPLEXITY_ADJUSTMENT``.
 
-    Emitted by ``resolve_config`` (issue #882) as a serialized
+    Emitted by ``resolve_config`` (issue #869) as a serialized
     :class:`ComplexityAdjustment` computed from run history single source. A
-    malformed value is ignored (logged) rather than aborting the run.
+    malformed value is ignored (logged loudly) rather than aborting the run.
     """
     raw = os.environ.get(ADJUSTMENT_ENV, "").strip()
     if not raw:
         return None
-    adjustment = ComplexityAdjustment.from_json(raw)
-    if adjustment is None:
-        logger.warning(f"Ignoring malformed {ADJUSTMENT_ENV} env value")
-    return adjustment
+    try:
+        return ComplexityAdjustment.from_json(raw)
+    except ValueError as exc:
+        logger.warning(f"Ignoring malformed {ADJUSTMENT_ENV} env value: {exc}")
+        return None
 
 
 def _parse_complexity_policy_env():
     """Parse the pinned complexity policy snapshot from ``COMPLEXITY_POLICY``.
 
-    Emitted by ``resolve_config`` (issue #882) at run start for auditability.
+    Emitted by ``resolve_config`` (issue #869) at run start for auditability.
     A malformed value is ignored (logged) — the snapshot is provenance only.
     """
     raw = os.environ.get(POLICY_ENV, "").strip()
@@ -1130,7 +1131,7 @@ def build_output(
     # the next run in a long-lived process.
     clear_run(getattr(conversation, "id", None))
     clear_scaffold_branch_run(getattr(conversation, "id", None))
-    # Complexity review request recorded by the agent this run (issue #882).
+    # Complexity review request recorded by the agent this run (issue #869).
     # Captured before clearing the registry so it lands on this step's entry.
     complexity_review_request = get_recorded_review_request(
         getattr(conversation, "id", None)

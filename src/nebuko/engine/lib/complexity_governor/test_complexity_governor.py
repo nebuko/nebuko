@@ -1,5 +1,6 @@
-"""Tests for the complexity governor + boundary integration (issue #882)."""
+"""Tests for the complexity governor + boundary integration (issue #869)."""
 
+import logging
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from complexity_governor import (  # noqa: E402
     collect_evidence,
     compute_boundary_adjustment,
     distribution_report,
+    load_repo_policy_layer,
 )
 from workflow_state import WorkflowState, to_json  # noqa: E402
 from workflow_state.features.build_state.build_state import build_state  # noqa: E402
@@ -249,4 +251,159 @@ class TestEndToEndDrift:
         assert recorded.evidence.llm["input_tokens"] == 200_000.0
         assert recorded.evidence.human.changes_requested == 2
         assert ComplexityGovernor.apply("low", recorded) == "medium"
+
+
+class TestDriftNoRatchet:
+    """The drift check must not climb a tier per boundary on persistent evidence.
+
+    History entries record the *effective* (post-overlay) tier, so the governor
+    recovers the workflow's *base* tier by subtracting the adjustment recorded on
+    the last entry. Comparing fresh evidence against that stable base makes the
+    correction idempotent: repeated heavy boundaries yield the same clamped delta
+    rather than low -> medium -> high, and the tier decays back once evidence stops.
+    """
+
+    def test_three_consecutive_heavy_boundaries_hold_steady(self):
+        policy = _policy()
+        base_chain = "medium"
+        state = build_state(
+            None,
+            workflow="wf",
+            step="s1",
+            agent="dev",
+            metrics_dict={
+                "complexity": base_chain,
+                "input_tokens": 200_000,
+                "nb_tool_calls": 50,
+                "review_fix_requests": 2,
+            },
+        )
+        effective_tiers = []
+        for step in range(2, 5):
+            adjustment = compute_boundary_adjustment(state, policy)
+            assert adjustment is not None, f"heavy evidence stopped firing at s{step}"
+            assert adjustment.delta == 1
+            effective = ComplexityGovernor.apply(base_chain, adjustment)
+            effective_tiers.append(effective)
+            state = build_state(
+                state,
+                workflow="wf",
+                step=f"s{step}",
+                agent="dev",
+                complexity_adjustment=adjustment,
+                metrics_dict={
+                    "complexity": effective,
+                    "input_tokens": 200_000,
+                    "nb_tool_calls": 50,
+                    "review_fix_requests": 2,
+                },
+            )
+        assert effective_tiers == ["high", "high", "high"]
+
+    def test_evidence_stopping_reverts_to_base(self):
+        policy = _policy()
+        heavy = build_state(
+            None,
+            workflow="wf",
+            step="s1",
+            agent="dev",
+            metrics_dict={
+                "complexity": "medium",
+                "input_tokens": 200_000,
+                "nb_tool_calls": 50,
+            },
+        )
+        adjustment = compute_boundary_adjustment(heavy, policy)
+        assert adjustment is not None and adjustment.delta == 1
+        # s2 ran at the overlaid HIGH, but the token burn has stopped.
+        quiet = build_state(
+            heavy,
+            workflow="wf",
+            step="s2",
+            agent="dev",
+            complexity_adjustment=adjustment,
+            metrics_dict={"complexity": "high", "input_tokens": 1_000, "nb_tool_calls": 2},
+        )
+        revert = compute_boundary_adjustment(quiet, policy)
+        assert revert is not None
+        assert revert.delta == -1
+
+
+class TestFromJsonStrict:
+    """A corrupt snapshot must fail loudly, not coerce into a no-op decision."""
+
+    def test_blank_is_none(self):
+        assert ComplexityAdjustment.from_json("") is None
+        assert ComplexityAdjustment.from_json("   ") is None
+
+    def test_round_trip(self):
+        adj = ComplexityAdjustment(
+            delta=1,
+            trigger="agent-request",
+            evidence=EvidenceBundle(human=HumanSignals(changes_requested=3)),
+            feeling="weird",
+            rationale="r",
+        )
+        assert ComplexityAdjustment.from_json(adj.to_json()) == adj
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "not json",
+            "[]",
+            '{"delta": 1}',  # missing trigger
+            '{"delta": 1, "trigger": "bogus"}',
+            '{"delta": "1", "trigger": "evidence-drift"}',  # coerced delta
+            '{"delta": null, "trigger": "evidence-drift"}',
+            '{"delta": 1, "trigger": "evidence-drift", "evidence": ["nope"]}',
+        ],
+    )
+    def test_malformed_raises(self, raw):
+        with pytest.raises(ValueError):
+            ComplexityAdjustment.from_json(raw)
+
+
+class TestHighGateSemantics:
+    """Pin the HIGH gate's magnitude-weighted, ``any_of``-satisfiable behavior.
+
+    ``_score`` weights each firing rule by its field magnitude, so one heavy
+    observation (large token burn) clears ``min_score`` on its own. Pinning this
+    makes the magnitude weighting an explicit contract rather than an accident.
+    """
+
+    def test_token_burn_alone_classifies_high(self):
+        policy = _policy()
+        evidence = EvidenceBundle(llm={"input_tokens": 150_000.0})
+        assert policy.derive_signals(evidence) == {"high-token-burn"}
+        assert policy.classify(evidence) == "high"
+
+    def test_small_token_burn_stays_low(self):
+        policy = _policy()
+        assert policy.classify(EvidenceBundle(llm={"input_tokens": 1_000.0})) == "low"
+
+
+class TestRepoPolicyLoading:
+    """``load_repo_policy_layer`` reads the agent config named by AGENT_CONFIG_PATH."""
+
+    def test_absent_config_is_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AGENT_CONFIG_PATH", str(tmp_path / "absent.yaml"))
+        assert load_repo_policy_layer() is None
+
+    def test_unreadable_config_is_logged(self, tmp_path, monkeypatch, caplog):
+        # Valid YAML but not a valid AppConfig (no providers/llms/agents).
+        bad = tmp_path / "agent-config.yaml"
+        bad.write_text(
+            "complexity_policy:\n"
+            "  scope: repo\n"
+            "  target_distribution: { low: 1.0, medium: 0.0, high: 0.0 }\n"
+        )
+        monkeypatch.setenv("AGENT_CONFIG_PATH", str(bad))
+        with caplog.at_level(logging.WARNING):
+            assert load_repo_policy_layer() is None
+        assert "complexity policy" in caplog.text.lower()
+
+    def test_unset_path_falls_back_to_layered_lookup(self, monkeypatch):
+        monkeypatch.delenv("AGENT_CONFIG_PATH", raising=False)
+        # The shipped default config declares no repo layer.
+        assert load_repo_policy_layer() is None
 

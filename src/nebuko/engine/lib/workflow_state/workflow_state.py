@@ -262,7 +262,7 @@ class WorkflowState(BaseModel):
     # (issue #805). Defaults to False so legacy blobs without this key load
     # unchanged; serialized only when True (``exclude_defaults``).
     publish_failed: bool = False  # @stub-protected
-    # Resolved complexity policy snapshot (issue #882), pinned at run start for
+    # Resolved complexity policy snapshot (issue #869), pinned at run start for
     # auditability. Carries builtin->repo provenance. None on legacy blobs,
     # which load and serialize unchanged.
     complexity_policy: Optional[ComplexityPolicy] = None  # @stub-protected

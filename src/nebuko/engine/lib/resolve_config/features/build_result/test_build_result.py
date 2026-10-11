@@ -233,7 +233,7 @@ class TestConfigComplexityEmission:
 
 
 class TestComplexityGovernanceOverlay:
-    """The governor adjustment overlays the base tier chain (issue #882)."""
+    """The governor adjustment overlays the base tier chain (issue #869)."""
 
     def _low_step_dirs(self):
         prompt_base, workflows_dir = _make_dirs()
@@ -247,6 +247,22 @@ class TestComplexityGovernanceOverlay:
                 "  - name: analyze\n"
                 "    agent: architect\n"
                 "    complexity: low\n"
+                "    next: null\n"
+            )
+        return prompt_base, workflows_dir
+
+    def _high_step_dirs(self):
+        prompt_base, workflows_dir = _make_dirs()
+        with open(os.path.join(workflows_dir, "highstep.yaml"), "w") as f:
+            f.write(
+                "name: highstep\n"
+                "description: high step\n"
+                "trigger:\n"
+                "  agents: [architect]\n"
+                "steps:\n"
+                "  - name: analyze\n"
+                "    agent: architect\n"
+                "    complexity: high\n"
                 "    next: null\n"
             )
         return prompt_base, workflows_dir
@@ -285,19 +301,7 @@ class TestComplexityGovernanceOverlay:
         assert result["COMPLEXITY_ADJUSTMENT"] == ""
 
     def test_adjustment_clamped_at_high(self):
-        prompt_base, workflows_dir = _make_dirs()
-        with open(os.path.join(workflows_dir, "highstep.yaml"), "w") as f:
-            f.write(
-                "name: highstep\n"
-                "description: high step\n"
-                "trigger:\n"
-                "  agents: [architect]\n"
-                "steps:\n"
-                "  - name: analyze\n"
-                "    agent: architect\n"
-                "    complexity: high\n"
-                "    next: null\n"
-            )
+        prompt_base, workflows_dir = self._high_step_dirs()
         result = _build_result(
             {
                 "task": "architect",

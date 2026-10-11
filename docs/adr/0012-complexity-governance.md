@@ -2,7 +2,7 @@
 
 **Status:** Accepted — 2026-10-11
 **Decider:** olivier-norture
-**Related:** extends [ADR-0005: Per-Step Complexity Selector](./0005-per-step-complexity.md) · issue #882 · #787 (base tier chain) · #659/#662 (`AgentComplexityOverride`) · #767/#772 (runtime tier application)
+**Related:** extends [ADR-0005: Per-Step Complexity Selector](./0005-per-step-complexity.md) · issue #869 · #787 (base tier chain) · #659/#662 (`AgentComplexityOverride`) · #767/#772 (runtime tier application)
 
 ## Context
 
@@ -35,7 +35,11 @@ Introduce a **Complexity Management Subsystem**:
    state for auditability.
 2. **Typed `EvidenceBundle`** mixing three families — `llm` (open vocabulary =
    `metrics_schema` fields), `human` (`HumanSignals`), `context`
-   (`ContextSignals`, including issue linkage).
+   (`ContextSignals`). The `context` family (issue linkage / reopen counts) is
+   **wired but not yet published**: it is read from an optional
+   `COMPLEXITY_CONTEXT_SIGNALS` blob, and until an intake call-site writes that
+   var the `multi-issue-linkage` / `reopened-issue` rules stay dormant. The
+   `llm` and `human` families are live today.
 3. **Declarative `SignalRule`** thresholds (`multi-issue-linkage`,
    `reopened-issue`, `high-token-burn`, `large-scope`, `human-friction`) that a
    repo layer can retune — never executable plugins.
@@ -58,7 +62,16 @@ overlay on top of it and a feedback actuator for the next boundary.
   recorded on the advancing history entry.
 - **Bounded blast radius.** `max_auto_delta` (default 1) plus `[low, high]`
   clamping means the governor can never jump a tier by more than one, and
-  `auto_adjust: false` disables drift entirely.
+  `auto_adjust: false` disables drift entirely. The drift check is evaluated
+  against the entry's recorded **base** tier (`effective - adjustment`), so
+  persistent evidence yields the same clamped correction at each boundary — it
+  neither ratchets a tier per boundary nor oscillates — and decays back once the
+  evidence stops.
+- **Context signals await a publisher.** The `ContextSignals` family
+  (`multi-issue-linkage`, `reopened-issue`) is read from
+  `COMPLEXITY_CONTEXT_SIGNALS`; no call-site publishes that var yet, so those
+  rules do not fire in production until an intake publisher lands. LLM and human
+  evidence are live today.
 - **Agent review is advisory.** The `complexity_review` tool requires a populated
   `evidence` bundle and a non-blank `feeling`; `suggested_tier` is input, not a
   command — the governor clamps it against policy.

@@ -1,4 +1,4 @@
-"""Boundary integration for the complexity governance subsystem (issue #882).
+"""Boundary integration for the complexity governance subsystem (issue #869).
 
 This module is the seam between the pure governor and the run pipeline:
 
@@ -8,14 +8,16 @@ This module is the seam between the pure governor and the run pipeline:
   asks the governor for a drift adjustment at an invocation boundary.
 * :func:`distribution_report` builds the retrospective calibration report.
 
-Issue-linkage context is an intake-surface concern the plan flags as a call-site
-confirmation: :func:`context_signals_from_env` reads an optional
-``COMPLEXITY_CONTEXT_SIGNALS`` JSON blob the intake step may publish. Absent
-that, linkage signals simply never fire (the mechanism is wired; the counts are
-supplied by the caller).
+Issue-linkage context is an **intake-surface concern that is wired but not yet
+published**: :func:`context_signals_from_env` reads an optional
+``COMPLEXITY_CONTEXT_SIGNALS`` JSON blob the intake step may publish, but no
+call-site writes that env var yet. Until a publisher lands, linkage signals
+simply never fire and the counts stay at their zero default (the mechanism is
+wired; the publisher is pending).
 """
 
 import json
+import logging
 import os
 from typing import Optional
 
@@ -32,6 +34,8 @@ from .complexity_governor import (
 )
 from .evidence import ContextSignals, collect_evidence, human_signals_from_state
 
+logger = logging.getLogger(__name__)
+
 #: Env var carrying the resolved policy snapshot into the agent run.
 POLICY_ENV = "COMPLEXITY_POLICY"
 #: Env var carrying the boundary adjustment into the agent run.
@@ -43,16 +47,24 @@ CONTEXT_SIGNALS_ENV = "COMPLEXITY_CONTEXT_SIGNALS"
 def load_repo_policy_layer() -> Optional[ComplexityPolicyLayer]:
     """Read the optional repo policy layer from the agent config, best-effort.
 
-    Returns ``None`` when the config cannot be read or declares no
-    ``complexity_policy`` — a repo need not override the builtin rubric.
+    The config path comes from ``AGENT_CONFIG_PATH`` — set by the workflow job
+    and the engine step, the same env var the agent-config resolvers read —
+    defaulting to the layered ``agent-config.yaml`` lookup. Returns ``None`` when
+    the config declares no ``complexity_policy`` (a repo need not override the
+    builtin rubric) or is absent. A *present but unreadable* config is logged
+    loudly: a misconfigured repo policy must not look like "no policy".
     """
+    path = os.environ.get("AGENT_CONFIG_PATH") or "agent-config.yaml"
     try:
         from config import load_config
 
-        app = load_config(os.environ.get("AGENT_CONFIG_PATH") or "agent-config.yaml")
-        return app.complexity_policy
-    except Exception:
+        app = load_config(path)
+    except FileNotFoundError:
         return None
+    except Exception as exc:  # noqa: BLE001 - governance must not break routing
+        logger.warning("Ignoring unreadable complexity policy at %s: %s", path, exc)
+        return None
+    return app.complexity_policy
 
 
 def resolve_run_policy(

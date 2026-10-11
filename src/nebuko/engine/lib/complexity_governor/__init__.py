@@ -1,4 +1,4 @@
-"""Complexity governance subsystem (issue #882).
+"""Complexity governance subsystem (issue #869).
 
 Layered, repo-tunable complexity policy + a single stateless adjudicator
 (:class:`ComplexityGovernor`) that turns LLM, human, and context evidence into

@@ -29,6 +29,9 @@ from .evidence import EvidenceBundle, is_empty_evidence
 
 Trigger = Literal["evidence-drift", "agent-request"]
 
+#: Runtime guard for :attr:`Trigger` (a ``Literal`` has no runtime membership test).
+VALID_TRIGGERS: tuple[Trigger, ...] = ("evidence-drift", "agent-request")
+
 
 def tier_index(tier: str) -> int:
     """Index of ``tier`` in the ordered ``low < medium < high`` ladder."""
@@ -66,19 +69,39 @@ class ComplexityAdjustment:
 
     @classmethod
     def from_json(cls, raw: str) -> Optional["ComplexityAdjustment"]:
-        """Parse a serialized adjustment; ``None`` for blank/invalid input."""
-        if not raw:
+        """Parse a serialized adjustment; ``None`` for blank input.
+
+        Raises:
+            ValueError: when ``raw`` is non-blank but not a well-formed
+                adjustment. A corrupt snapshot must fail loudly instead of
+                coercing into a plausible-looking no-op decision.
+        """
+        if not raw or not raw.strip():
             return None
         try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return None
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ValueError(f"complexity adjustment is not valid JSON: {exc}") from exc
         if not isinstance(data, dict):
-            return None
+            raise ValueError("complexity adjustment must be a JSON object")
+
+        trigger = data.get("trigger")
+        if trigger not in VALID_TRIGGERS:
+            raise ValueError(f"invalid complexity adjustment trigger: {trigger!r}")
+
+        delta_raw = data.get("delta")
+        if isinstance(delta_raw, bool) or not isinstance(delta_raw, int):
+            raise ValueError(f"invalid complexity adjustment delta: {delta_raw!r}")
+
+        try:
+            evidence = EvidenceBundle.model_validate(data.get("evidence") or {})
+        except Exception as exc:  # noqa: BLE001 - re-raised as a clear ValueError
+            raise ValueError(f"invalid complexity adjustment evidence: {exc}") from exc
+
         return cls(
-            delta=int(data.get("delta", 0)),
-            trigger=data.get("trigger", "evidence-drift"),
-            evidence=EvidenceBundle.model_validate(data.get("evidence") or {}),
+            delta=delta_raw,
+            trigger=trigger,
+            evidence=evidence,
             feeling=data.get("feeling", ""),
             rationale=data.get("rationale", ""),
         )
@@ -138,12 +161,20 @@ class ComplexityGovernor:
     ) -> Optional[ComplexityAdjustment]:  # @stub-protected
         """Automatic drift check over all evidence families at a boundary.
 
-        Returns ``None`` when auto-adjust is disabled or the evidence does not
-        move the tier. Otherwise the delta is clamped to ``policy.max_auto_delta``.
+        Returns ``None`` when auto-adjust is disabled, no evidence fires, no
+        prior tier is recorded, or the evidence does not move the tier. Otherwise
+        the delta is clamped to ``policy.max_auto_delta``.
         """
         if not policy.auto_adjust:
             return None
-        base = self._base_tier(history, policy)
+        if is_empty_evidence(live_evidence):
+            # No evidence, no justified change: ``classify`` would otherwise bias
+            # a signal-free bundle down to ``low`` and spuriously downgrade an
+            # explicitly tiered step.
+            return None
+        base = self._base_tier(history)
+        if base is None:
+            return None
         target = policy.classify(live_evidence)
         delta = _clamp(
             tier_index(target) - tier_index(base),
@@ -205,10 +236,26 @@ class ComplexityGovernor:
         return TIERS[index]
 
     @staticmethod
-    def _base_tier(history, policy: ComplexityPolicy) -> Tier:
-        """The tier the run most recently ran at (fallback ``policy.default_tier``)."""
+    def _base_tier(history) -> Optional[Tier]:
+        """The run's *base* tier at the last boundary, before any governor overlay.
+
+        History entries record the **effective** (post-overlay) tier, so reading
+        that directly would let persistent evidence move the tier again at every
+        boundary — or oscillate as the overlay cancels itself out. Subtracting
+        the adjustment recorded on that entry recovers the tier the workflow
+        genuinely declared (``dispatch > step > medium``), which is the stable
+        reference for a fresh drift check: sustained evidence yields the *same*
+        clamped correction each boundary and decays once the evidence stops.
+
+        Returns ``None`` when no entry carries a tier yet — with no recorded
+        boundary there is nothing to drift from.
+        """
         for entry in reversed(list(history or [])):
-            tier = _effective_tier(entry)
-            if tier is not None:
-                return tier
-        return policy.default_tier
+            effective = _effective_tier(entry)
+            if effective is None:
+                continue
+            adjustment = getattr(entry, "complexity_adjustment", None)
+            delta = int(getattr(adjustment, "delta", 0) or 0)
+            base_index = _clamp(tier_index(effective) - delta, 0, len(TIERS) - 1)
+            return TIERS[base_index]
+        return None

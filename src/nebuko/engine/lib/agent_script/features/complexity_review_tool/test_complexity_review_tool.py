@@ -1,4 +1,4 @@
-"""Tests for the complexity_review tool wiring (issue #882)."""
+"""Tests for the complexity_review tool wiring (issue #869)."""
 
 import sys
 from pathlib import Path

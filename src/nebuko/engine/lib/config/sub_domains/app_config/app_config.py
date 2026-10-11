@@ -14,7 +14,7 @@ class AppConfig(BaseModel):
     """Top-level application config: providers → llms → agents.
 
     ``complexity_policy`` is the optional *repo* layer of the complexity policy
-    (issue #882). It is read from the same YAML as ``agents.<name>`` — the
+    (issue #869). It is read from the same YAML as ``agents.<name>`` — the
     source that already carries ``complexity_overrides`` — and merged on top of
     the builtin layer at run start.
     """

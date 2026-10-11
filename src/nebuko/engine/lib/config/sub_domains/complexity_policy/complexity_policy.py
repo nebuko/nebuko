@@ -1,6 +1,6 @@
 """Layered, repo-tunable complexity policy domain.
 
-The complexity governance subsystem (issue #882) maps a run's *evidence* — LLM
+The complexity governance subsystem (issue #869) maps a run's *evidence* — LLM
 metrics, human interaction signals, and intake context — onto a complexity
 *tier* under a policy resolved from layered config. Two layers exist:
 

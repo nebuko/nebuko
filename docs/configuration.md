@@ -396,5 +396,10 @@ of it the `ComplexityGovernor` overlays a clamped drift adjustment
 (`effective = clamp(base + delta)`, `|delta| <= max_auto_delta`), computed from a
 typed `EvidenceBundle` (LLM metrics + human signals + context signals). Agents
 may request a re-tier via the `complexity_review` tool; the request requires a
-populated `evidence` bundle and a non-blank `feeling`. See
+populated `evidence` bundle and a non-blank `feeling`. The drift check is
+evaluated against the recorded *base* tier, so sustained evidence yields the same
+clamped correction each boundary (no ratchet) and decays once evidence stops.
+The `context` signal family (`linked_issues`, `reopened`) reads an optional
+`COMPLEXITY_CONTEXT_SIGNALS` blob from the intake surface; no call-site publishes
+it yet, so those rules stay dormant until a publisher lands. See
 [ADR-0012](./adr/0012-complexity-governance.md).

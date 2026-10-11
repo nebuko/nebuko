@@ -274,7 +274,7 @@ def _build_result(
         wf_result.get("STEP_COMPLEXITY", ""),
     )
 
-    # Complexity governance overlay (issue #882): apply the governor's clamped
+    # Complexity governance overlay (issue #869): apply the governor's clamped
     # adjustment on top of the untouched base chain (dispatch > step >
     # "medium"). The adjustment is None unless a boundary drift check fired.
     complexity_adjustment = config.get("config_complexity_adjustment")
@@ -345,7 +345,7 @@ def _build_result(
         # and ``build_state`` persists it — the release is recorded in workflow
         # state, outside the agent loop.
         "GATE_DECISION": config.get("config_gate_decision", ""),
-        # Complexity governance (issue #882): the pinned policy snapshot and the
+        # Complexity governance (issue #869): the pinned policy snapshot and the
         # boundary drift adjustment. ``build_output`` parses both and
         # ``build_state`` persists them — the decision is recorded in workflow
         # state, outside the agent loop.
