@@ -1,0 +1,66 @@
+name: spec-driven-impl
+description: "Spec-driven development: plan -> stub -> implement"
+
+trigger:
+  agents: [genius]  # which @@mentions can start this workflow
+
+steps:
+  - name: analyze
+    agent: genius
+    next: context
+    output: ctx_query
+
+  - name: context
+    agent: ctx
+    next: plan
+    input: analyze.ctx_query
+    output: report
+
+  - name: plan
+    agent: genius
+    input: context.report
+    output: design-plan
+    next: stub
+    conditions:
+      - on_result: approved
+        next: stub
+      - on_result: rejected
+        next: context
+      - on_result: default
+        next: stub
+
+  - name: stub
+    agent: dev
+    input: plan.design-plan
+    skill: [stub-only]
+    next: stub_review
+
+  - name: stub_review
+    agent: review
+    next: stub_approval
+    inputs:
+      - stub
+      - plan.design-plan
+      - issue.body
+
+  - name: stub_approval
+    agent: genius
+    human_gate: true
+    conditions:
+      - on_result: approved
+        next: implement
+      - on_result: rejected
+        next: plan
+    next: implement
+
+  - name: implement
+    agent: dev
+    next: review
+    
+  - name: review
+    agent: review
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: implement
+        next: plan
