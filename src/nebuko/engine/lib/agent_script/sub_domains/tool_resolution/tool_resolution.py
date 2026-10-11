@@ -35,6 +35,7 @@ _BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
 
 _DISPATCH_TOOL_NAME = "DispatchNextTool"
 _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
+_COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,27 @@ def _ensure_scaffold_branch_tool_registered() -> None:
     _scaffold_branch_tool_registered = True
 
 
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
+_complexity_review_tool_registered = False
+
+
+def _ensure_complexity_review_tool_registered() -> None:
+    """Register the ``complexity_review`` ToolDefinition with the registry.
+
+    Idempotent — safe to call on every agent run.
+    """
+    global _complexity_review_tool_registered
+    if _complexity_review_tool_registered:
+        return
+    from agent_script.features.complexity_review_tool.complexity_review_tool import (
+        ComplexityReviewTool,
+    )
+
+    register_tool(_COMPLEXITY_REVIEW_TOOL_NAME, ComplexityReviewTool)
+    _complexity_review_tool_registered = True
+
+
 def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolset:
     """Map configured tool names to SDK/builtin specs.
 
@@ -150,6 +172,9 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
         elif tool_name == "report_scaffold_branch":
             _ensure_scaffold_branch_tool_registered()
             sdk_tools.append(Tool(name=_SCAFFOLD_BRANCH_TOOL_NAME))
+        elif tool_name == "complexity_review":
+            _ensure_complexity_review_tool_registered()
+            sdk_tools.append(Tool(name=_COMPLEXITY_REVIEW_TOOL_NAME))
         else:
             logger.warning(
                 f"Unknown tool '{tool_name}' for agent '{role_name}' — skipping"
