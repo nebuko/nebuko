@@ -85,7 +85,11 @@ class TestOrderingAndClassification:
             _issue(),
             [
                 _comment(11, "/nebuko approve gate"),
-                _comment(12, "<!-- bot-agent-dev -->\n*Dev answer*"),
+                _comment(
+                    12,
+                    "<!-- bot-agent-dev -->\n*Dev answer*",
+                    user=_user(99, "nebuko[bot]", "Bot"),
+                ),
                 _comment(13, "just a human thought"),
                 _comment(14, "engine note", user=_user(99, "nebuko[bot]", "Bot")),
             ],
@@ -95,6 +99,16 @@ class TestOrderingAndClassification:
         assert by_id[12] is ThreadRecordKind.AGENT_OUTPUT
         assert by_id[13] is ThreadRecordKind.HUMAN_FEEDBACK
         assert by_id[14] is ThreadRecordKind.ENGINE_OUTPUT
+
+    def test_a_non_bot_quoting_a_marker_is_not_agent_output(self):
+        # GitHub quote-reply copies the marker into the quoted text; a human
+        # author must not be classified as agent output (issue #872 review).
+        ledger = _reconcile(
+            [], _issue(), [_comment(11, "> <!-- bot-agent-dev -->\n> the answer")]
+        )
+        assert {record.id: record.kind for record in ledger}[11] is (
+            ThreadRecordKind.HUMAN_FEEDBACK
+        )
 
     def test_issue_none_yields_comment_only_ledger(self):
         ledger = _reconcile([], None, [_comment(11, "hello")])

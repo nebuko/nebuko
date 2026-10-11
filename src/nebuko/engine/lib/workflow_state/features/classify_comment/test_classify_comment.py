@@ -105,3 +105,40 @@ class TestClassifyHuman:
             classify_comment("use the /foo flag", author_is_bot=False)
             is ThreadRecordKind.HUMAN_FEEDBACK
         )
+
+
+class TestClassifyUntrustedText:
+    """A non-bot author is never classified from bot markers in its text (#872)."""
+
+    def test_a_quoted_agent_marker_is_human_feedback(self):
+        # GitHub quote-reply copies ``<!-- bot-agent-dev -->`` into the quote.
+        assert (
+            classify_comment(
+                "> <!-- bot-agent-dev -->\n> the dev answer", author_is_bot=False
+            )
+            is ThreadRecordKind.HUMAN_FEEDBACK
+        )
+
+    def test_a_quoted_engine_notice_is_human_feedback(self):
+        assert (
+            classify_comment(AGENT_STARTED, author_is_bot=False)
+            is ThreadRecordKind.HUMAN_FEEDBACK
+        )
+
+    def test_a_quoted_runner_error_is_human_feedback(self):
+        assert (
+            classify_comment(RUNNER_ERROR, author_is_bot=False)
+            is ThreadRecordKind.HUMAN_FEEDBACK
+        )
+
+    def test_the_same_body_is_bot_output_for_a_bot_author(self):
+        # The gate is the author, not the text: the identical body stays a
+        # bot-derived kind when a bot actually authored it.
+        assert (
+            classify_comment(AGENT_ANSWER, author_is_bot=True)
+            is ThreadRecordKind.AGENT_OUTPUT
+        )
+        assert (
+            classify_comment(AGENT_STARTED, author_is_bot=True)
+            is ThreadRecordKind.ENGINE_OUTPUT
+        )
