@@ -43,6 +43,7 @@ from config import (
     is_valid_workflow_reference,
     resolve_workflow_reference,
     StepRef,
+    StepPath,
     WorkflowPosition,
 )
 
@@ -747,6 +748,44 @@ def _position_to_json(nodes: list) -> str:
     return json.dumps(block, separators=(",", ":"))
 
 
+def _select_named_or_first(
+    wf: WorkflowDefinition, tail_path: Optional[StepPath]
+) -> Optional[WorkflowStep]:
+    """Entry step of ``wf`` for a nested descent (issue #822).
+
+    When ``tail_path`` names further segments, the next step is the one
+    matching its first segment (``None`` when absent — the caller fails
+    loudly); otherwise the workflow's first step (today's behavior).
+    """
+    if not wf.steps:
+        return None
+    if tail_path is not None and tail_path.segments:
+        name = tail_path.segments[0]
+        return next((s for s in wf.steps if s.name == name), None)
+    return wf.steps[0]
+
+
+def _advance_path(tail_path: Optional[StepPath]) -> Optional[StepPath]:
+    """Drop the consumed segment of ``tail_path`` (issue #822).
+
+    Returns the remaining descent path, or ``None`` once every segment has
+    been consumed — after which descent continues through the child's first
+    step, exactly like a plain single-mount entry.
+    """
+    if tail_path is None or len(tail_path.segments) <= 1:
+        return None
+    return tail_path.model_copy(update={"segments": tail_path.segments[1:]})
+
+
+def _leaf_lookup_error(wf: WorkflowDefinition, pending: Optional[StepPath]) -> "SubWorkflowLeafError":
+    """Fail-loud diagnostic for a missing nested target step (issue #822)."""
+    if pending is not None and pending.segments:
+        return SubWorkflowLeafError(
+            f"step '{pending.segments[0]}' not found in sub-workflow '{wf.name}'"
+        )
+    return SubWorkflowLeafError(f"Sub-workflow '{wf.name}' has no steps")
+
+
 def _build_position_chain(
     start_ref: str,
     start_name: str,
@@ -757,6 +796,7 @@ def _build_position_chain(
     scaffold_branch: Optional[str],
     local_workflows_dir: Optional[str] = None,
     start_path: str = "",
+    tail_path: Optional[StepPath] = None,
 ) -> list:
     """Build the mount-chain position for a sub-workflow entry (issue #618).
 
@@ -770,6 +810,11 @@ def _build_position_chain(
     the ``visited`` name set plus ``_MAX_SUB_WORKFLOW_DEPTH``; an
     unresolvable reference or entryless child stops the chain at the node
     already built.
+
+    ``tail_path`` (issue #822) selects a nested entry: each consumer
+    descends to the segment it names rather than the child's first step, so
+    the recorded position is the addressed chain (e.g.
+    ``tmp-impl/step_3 -> dev-review-loop/review``).
     """
     chain: list = [(start_name, start_path, start_step)]
     ref = start_ref
@@ -787,11 +832,15 @@ def _build_position_chain(
         if child.name in visited:
             break
         visited.add(child.name)
-        chain.append((child.name, ref, child.steps[0].name))
-        leaf = child.steps[0]
+        leaf = _select_named_or_first(child, tail_path)
+        if leaf is None:
+            # Unknown nested target — leaf resolution reports the failure.
+            break
+        chain.append((child.name, ref, leaf.name))
         ref = leaf.workflow or leaf.path or ""
         if leaf.agent or leaf.script is not None or not ref:
             break
+        tail_path = _advance_path(tail_path)
     return chain
 
 
@@ -1196,6 +1245,7 @@ def _resolve_sub_workflow_leaf(
     visited: set,
     parent_skill: Optional[list] = None,
     local_workflows_dir: Optional[str] = None,
+    tail_path: Optional[StepPath] = None,
 ) -> SubWorkflowResolution:
     """Resolve the innermost runnable leaf of a (possibly nested) child.
 
@@ -1204,6 +1254,12 @@ def _resolve_sub_workflow_leaf(
     ``agent`` step, or a deterministic ``script`` step). A child whose first
     step has no runnable source is a leaf in its own right and is surfaced as
     an error (issue #609).
+
+    ``tail_path`` (issue #822) addresses a non-first step: each level
+    descends to the segment it names (``step_3``, then ``review`` …) instead
+    of the child's first step, so a nested selector can re-enter a
+    scaffolded plan at an arbitrary depth. An unknown segment fails loudly
+    rather than silently falling back to the first step.
 
     Two guards bound the descent (review round 2): a *cycle* guard keyed on
     the loaded workflow's canonical ``name`` (plus a pre-load check on the
@@ -1218,9 +1274,10 @@ def _resolve_sub_workflow_leaf(
     """
     entry_ref = entry_step.workflow or entry_step.path or ""
     wf = child_wf
-    leaf = wf.steps[0] if wf.steps else None
+    pending = tail_path
+    leaf = _select_named_or_first(wf, pending)
     if leaf is None:
-        return SubWorkflowLeafError(f"Sub-workflow '{wf.name}' has no steps")
+        return _leaf_lookup_error(wf, pending)
     refs: list[dict[str, str]] = [{"workflow": wf.name, "step": leaf.name}]
     depth = 0
     while leaf is not None and not leaf.agent and leaf.script is None:
@@ -1258,9 +1315,10 @@ def _resolve_sub_workflow_leaf(
         if not parent_skill and leaf.skill:
             parent_skill = leaf.skill
         wf = child
-        leaf = wf.steps[0] if wf.steps else None
+        pending = _advance_path(pending)
+        leaf = _select_named_or_first(wf, pending)
         if leaf is None:
-            return SubWorkflowLeafError(f"Sub-workflow '{wf.name}' has no steps")
+            return _leaf_lookup_error(wf, pending)
         refs.append({"workflow": wf.name, "step": leaf.name})
 
     if leaf is None or not leaf.name:
@@ -1317,6 +1375,7 @@ def _resolve_sub_workflow_entry(
     outer_parent_workflow: str = "",
     outer_parent_step: str = "",
     local_workflows_dir: Optional[str] = None,
+    step_path: Optional[StepPath] = None,
 ) -> Optional[dict]:
     """Resolve entry into a sub-workflow from a step that references another workflow.
 
@@ -1389,12 +1448,14 @@ def _resolve_sub_workflow_entry(
         }
 
     # Descend to the innermost runnable leaf (issue #609): the child's first
-    # step may itself reference a (further nested) sub-workflow.
+    # step may itself reference a (further nested) sub-workflow. A nested
+    # selector (issue #822) walks ``step_path`` instead of the first step.
     leaf = _resolve_sub_workflow_leaf(
         child_wf, current_step, workflows_dir, scaffold_branch,
         fetch_cache, {child_wf.name},
         parent_skill=current_step.skill,
         local_workflows_dir=local_workflows_dir,
+        tail_path=step_path,
     )
     if isinstance(leaf, SubWorkflowLeafError):
         return {"SKIP_AGENT": "true", "REASON": leaf.reason}
@@ -1425,6 +1486,7 @@ def _resolve_sub_workflow_entry(
         fetch_cache, {workflow.name},
         workflows_dir, scaffold_branch,
         local_workflows_dir=local_workflows_dir,
+        tail_path=step_path,
     ))
 
     if leaf.kind == "script":
@@ -1479,6 +1541,7 @@ def resolve_sub_workflow_entry(
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
     local_workflows_dir: Optional[str] = None,
+    step_path: Optional[StepPath] = None,
 ) -> Optional[dict]:
     """Public entry point for sub-workflow entry resolution.
 
@@ -1487,10 +1550,13 @@ def resolve_sub_workflow_entry(
     can force-enter a sub-workflow step with exactly the same child-loading
     and parent-reference logic as the normal happy path. ``scaffold_branch``
     enables fetch-on-miss for branch-mounted children (issue #604).
+    ``step_path`` (issue #822) descends to a nested non-first step instead of
+    the child's first step.
     """
     return _resolve_sub_workflow_entry(
         current_step, workflow, workflows_dir, prompt_base, scaffold_branch,
         local_workflows_dir=local_workflows_dir,
+        step_path=step_path,
     )
 
 

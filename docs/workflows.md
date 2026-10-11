@@ -495,6 +495,30 @@ gate — `run` is human-only, so that is an explicit human choice). `--step
 sub_impl` requires `tmp_impl/workflow.yaml` to be scaffolded already, else the
 entry fails loudly rather than starting from the first step.
 
+**Restarting at a nested plan step (issue #822).** A dotted selector descends
+the mount chain, so you can re-enter the scaffolded plan at a specific item
+without replaying the ones already done. For issue #648 — where plan `step_1`
+and `step_2` are complete — restart at `step_3`:
+
+```
+/nebuko run workflow --name plan-orchestration --step sub_impl.step_3
+```
+
+This seeds a fresh run at `plan-orchestration/sub_impl → tmp-impl/step_3 →
+dev-review-loop/implement`, so it runs `step_3…N` then `sub_clean` →
+`final_review`; `step_1` and `step_2` are never executed. Add one more segment
+to re-enter at a leaf inside the per-step loop — e.g. re-run only `step_3`'s
+review once its implementation is done:
+
+```
+/nebuko run workflow --name plan-orchestration --step sub_impl.step_3.review
+```
+
+Each segment must match the scaffolded step name verbatim (`step_3`, not
+`step3`). An unknown segment, a malformed path, or a mount whose
+`tmp_impl/workflow.yaml` has not been scaffolded fails loudly rather than
+silently starting from the first step.
+
 ### spec-driven
 
 ```

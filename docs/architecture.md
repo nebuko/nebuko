@@ -244,6 +244,17 @@ resolution as `force-step` — so `--step` can also target a sub-workflow mount
 step, and an unknown, unsafe, or not-yet-scaffolded target fails loudly instead
 of silently starting at the first step.
 
+A **dot-separated** selector (`--step sub_impl.step_3`, or
+`sub_impl.step_3.review`, issue #822) generalizes this descent to arbitrary
+depth: segment *i* names a step in the workflow reached by segment *i−1*'s
+mount, so entry can seed a run at any step of a nested sub-workflow graph. The
+selector is parsed by the `StepPath` value object (`.` is reserved as the
+separator, so a step name containing a dot is unaddressable). The position
+chain carried forward (ADR-0006) is emitted for the addressed leaf — e.g.
+`plan-orchestration/sub_impl | tmp-impl/step_3 | dev-review-loop/review`.
+Any unknown segment, malformed path, or un-scaffolded mount fails loudly
+instead of falling back to the child's first step.
+
 ### The `human_gate` intercept
 
 A security boundary applies **before** the workflow state is posted: when the
