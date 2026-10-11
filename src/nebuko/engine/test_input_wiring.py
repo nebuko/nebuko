@@ -65,7 +65,9 @@ class TestMaterialize:
             {"STEP_INPUTS": _payload(consumer={"diff": {"exec": ["echo", "hello"]}})}
         )
         results = materialize(step_inputs)
-        assert results == [Materialization(name="diff", ok=True, body="hello\n")]
+        assert results == [
+            Materialization(name="diff", ok=True, body="hello\n", binding="exec")
+        ]
 
     def test_str_binding_returns_the_constant(self):
         step_inputs = StepInputs.from_resolved(

@@ -10,6 +10,8 @@ from complexity_governor.complexity_governor import (
 
 from ..dispatch.dispatch import Dispatch
 from ..state_metrics.state_metrics import StateMetrics
+from ..step_input_record.step_input_record import StepInputRecord
+
 
 class HistoryEntry(BaseModel):
     """A summarized record of one workflow step."""
@@ -34,6 +36,11 @@ class HistoryEntry(BaseModel):
     artifacts: list[str] = Field(default_factory=list)
     pin: bool = False
     result: Optional[str] = None
+    # Deterministically materialized step inputs of THIS step (issue #872): the
+    # resolved form of the step's declared ``inputs:`` wiring, persisted so the
+    # value the agent was handed is auditable in workflow state. Empty for steps
+    # that declare no inputs and for legacy snapshots.
+    inputs: list[StepInputRecord] = Field(default_factory=list)
     # Metrics of THIS step's agent invocation. This is the single metrics
     # authority (issue #792): the former top-level ``WorkflowState.metrics``
     # snapshot was removed so each step keeps its own record.

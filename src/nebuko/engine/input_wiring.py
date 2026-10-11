@@ -24,7 +24,7 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .models import WorkflowCallFrame
 
@@ -56,6 +56,9 @@ class Materialization:
     ok: bool
     body: str
     detail: str = ""
+    # Binding kind that produced the value ("exec"/"str"/"ref"; issue #872), so a
+    # persisted ``StepInputRecord`` can say how the value was wired.
+    binding: str = ""
 
 
 @dataclass(frozen=True)
@@ -201,12 +204,24 @@ def materialize(
 
     results: list[Materialization] = []
     for name, binding in step_inputs.consumer.items():
+        kind = _binding_kind(binding)
         try:
             body = _force(_resolve_binding(binding, scope))
-            results.append(Materialization(name=name, ok=True, body=body))
+            results.append(
+                Materialization(name=name, ok=True, body=body, binding=kind)
+            )
         except Exception as exc:  # noqa: BLE001 - a provider failure is data
-            results.append(Materialization(name=name, ok=False, body="", detail=str(exc)))
+            results.append(
+                Materialization(
+                    name=name, ok=False, body="", detail=str(exc), binding=kind
+                )
+            )
     return results
+
+
+def _binding_kind(binding: Any) -> str:
+    """The binding's source key ("exec"/"str"/"ref"), or "" when undeterminable."""
+    return str(getattr(binding, "source", "") or "")
 
 
 # @stub-protected
@@ -223,3 +238,34 @@ def render(results: list[Materialization]) -> str:
                 f"#### `{result.name}`\n\n_(unavailable: {result.detail})_"
             )
     return "## Step inputs (deterministic)\n\n" + "\n\n".join(blocks)
+
+
+def to_records(results: Sequence[Materialization]) -> list[dict[str, Any]]:
+    """Serialize this step's materializations for the workflow state (issue #872).
+
+    Returns JSON-friendly dicts (a ``StepInputRecord`` per materialized input) so
+    the advancing step's ``HistoryEntry`` can record what was wired to it. The
+    value is truncated to the entity's cap (a large provider output must not
+    balloon the state snapshot); the entity owns the cap so the two never drift.
+    """
+    from nebuko.engine.paths import ensure_import_path
+
+    ensure_import_path()
+    from workflow_state.sub_domains.step_input_record.step_input_record import (
+        MAX_VALUE_CHARS,
+    )
+
+    records: list[dict[str, Any]] = []
+    for result in results:
+        value = result.body or ""
+        records.append(
+            {
+                "name": result.name,
+                "binding": result.binding,
+                "ok": result.ok,
+                "detail": result.detail,
+                "value": value[:MAX_VALUE_CHARS],
+                "truncated": len(value) > MAX_VALUE_CHARS,
+            }
+        )
+    return records
