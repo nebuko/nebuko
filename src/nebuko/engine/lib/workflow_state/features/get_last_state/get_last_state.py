@@ -115,6 +115,32 @@ def _enrich_pinned_comment_ids(
             pinned_comment_ids.append(cid)
 
 
+def _enrich_step_outputs_with_comment_ids(
+    state: WorkflowState,
+    state_comments: list[dict[str, Any]],
+) -> None:
+    """Backfill step-output locators with the comment that carried each step.
+
+    A step's output is its posted comment (issue #756, ADR-0012). The state
+    embedded in a comment cannot name its own comment id (chicken-and-egg), so
+    the read path fills it in by index alignment: each state comment's embedded
+    ``step`` maps to that comment's id. A stored ``comment_id`` is preserved for
+    steps absent from the thread view; a newer comment for the same step wins.
+    """
+    from ...step_output_record import StepOutputRecord
+
+    for comment in state_comments:
+        comment_id = comment.get("id")
+        if comment_id is None:
+            continue
+        embedded = extract_state_from_body(comment.get("body") or "")
+        if embedded is None or not embedded.step:
+            continue
+        StepOutputRecord(step=embedded.step, comment_id=comment_id).upsert_into(
+            state.current_context
+        )
+
+
 def extract_latest_state_from_comments(comments: list[dict[str, Any]]) -> Optional[WorkflowState]:
     """
     Extract the latest WorkflowState from a list of GitHub comments.
@@ -160,6 +186,8 @@ def extract_latest_state_from_comments(comments: list[dict[str, Any]]) -> Option
                 state = WorkflowState.model_validate(data)
                 # Enrich history entries with comment IDs from prior state comments
                 _enrich_history_with_comment_ids(state.history, state_comments, comments)
+                # Backfill step-output locators with each step's posted comment
+                _enrich_step_outputs_with_comment_ids(state, state_comments)
                 # Derive pinned_comment_ids from pin=True entries (issue #617)
                 _enrich_pinned_comment_ids(state.history, state.pinned_comment_ids)
                 return state

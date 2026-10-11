@@ -22,6 +22,7 @@ from ...sub_domains.step_resolution.step_resolution import StepResolution
 from ...sub_domains.dispatch.dispatch import Dispatch
 from ...sub_domains.function_call import FunctionCall
 from ...sub_domains.gate_decision.gate_decision import GateDecision
+from ...step_output_record import StepOutputRecord
 
 def _position_refs(position: Optional[dict]) -> list[StepRef]:
     """Normalize a position input to the flat v3 refs list (issue #638).
@@ -299,6 +300,14 @@ def build_state(
     # scalar step disagreed with their own history).
     effective_step = _fallback_field(step, prev_state, base_history, "step")
     effective_agent = _fallback_field(agent, prev_state, base_history, "agent")
+
+    # A step's output is its posted comment (issue #756, ADR-0012): record the
+    # locator for the effective step. The comment id is unknown at build time
+    # (the comment is posted after this state is built); it is backfilled at
+    # publish time on the host and by the thread read (index alignment). Latest
+    # run wins, so a loop re-run re-points the locator at the newest comment.
+    if effective_step:
+        StepOutputRecord(step=effective_step, comment_id=None).upsert_into(new_context)
 
     # Per-step soft-kill retry accounting (issue #704). ``build_state`` is the
     # single writer of the counter; every mutation goes through the

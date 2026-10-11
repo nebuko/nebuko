@@ -654,12 +654,19 @@ class Engine:
             # output. A failing ``required`` input fails the step here, before
             # the agent is invoked, so the model can never review a context it
             # silently failed to obtain.
-            input_results, input_failure = self._materialize_inputs(resolved, phases)
+            # Step outputs (issue #756, ADR-0012): a completed step's posted
+            # comment is addressable by its step name. Resolve the scope once
+            # and share it across the two surfaces — the deterministic inputs
+            # seam and ``{{ <step> }}`` prompt references.
+            step_scope = self._step_output_scope(history)
+            input_results, input_failure = self._materialize_inputs(
+                resolved, phases, step_scope
+            )
             if input_failure is not None:
                 return input_failure
 
             self._enter(phases, "prompt")
-            prompt = self.build_prompt(resolved, history, input_results)
+            prompt = self.build_prompt(resolved, history, input_results, step_scope)
 
             self._enter(phases, "agent")
             # Resolve the legacy comment/validation bridge once, before the
@@ -1042,6 +1049,7 @@ class Engine:
         resolved: Any,
         history: Sequence[CommentEntry],
         input_results: Sequence[Materialization] = (),
+        step_scope: Mapping[str, str] | None = None,
     ) -> str:
         """Build the agent prompt from the resolved config and history.
 
@@ -1054,8 +1062,12 @@ class Engine:
         labeled blocks between the step prompt and the user request, alongside
         the recency window and pinned comments — the model never has to fetch
         them.
+
+        ``{{ <step> }}`` references inside the step prompt are resolved against
+        ``step_scope`` in a single pass before assembly (issue #756): the value
+        is the referenced step's state-stripped comment.
         """
-        step_prompt = self._step_prompt(resolved)
+        step_prompt = self._render_step_prompt(self._step_prompt(resolved), step_scope)
         replacing = bool(step_prompt) and self._step_prompt_replaces(resolved)
         sections = [] if replacing else [self._base_prompt(resolved)]
         if step_prompt:
@@ -1068,7 +1080,10 @@ class Engine:
         return "\n\n".join(section for section in sections if section)
 
     def _materialize_inputs(
-        self, resolved: Any, phases: list[str]
+        self,
+        resolved: Any,
+        phases: list[str],
+        step_scope: Mapping[str, str] | None = None,
     ) -> tuple[list[Materialization], "RunOutcome | None"]:
         """Resolve this step's declared inputs before the agent runs (issue #813).
 
@@ -1076,6 +1091,10 @@ class Engine:
         ``required`` input failed; the caller then never invokes the agent. A
         malformed payload is terminal too — silently dropping the wiring would
         defeat the determinism the feature exists to provide.
+
+        ``step_scope`` (issue #756) maps upstream step names to their
+        state-stripped comment bodies, so a binding whose ``ref`` is a bare
+        step name resolves to that step's posted comment.
         """
         try:
             step_inputs = StepInputs.from_resolved(resolved)
@@ -1091,13 +1110,80 @@ class Engine:
             )
             log.error("[phase:action] sub-workflow call depth exceeded: %s", detail)
             return [], self._call_depth_outcome(detail, phases)
-        results = materialize_inputs(step_inputs)
+        results = materialize_inputs(step_inputs, step_scope)
         failures = step_inputs.required_failures(results)
         if failures:
             detail = "; ".join(f"{f.name}: {f.detail}" for f in failures)
             log.error("[phase:action] required step inputs failed: %s", detail)
             return results, self._input_failure_outcome(detail, phases)
         return results, None
+
+    def _step_output_scope(
+        self, history: Sequence[CommentEntry]
+    ) -> dict[str, str]:
+        """Map each completed step name to its state-stripped comment body.
+
+        A step's output *is* its posted comment (issue #756, ADR-0012). The
+        locators persisted in the previous state give the authoritative comment
+        id; the bounded thread read resolves the body. A step whose locator has
+        not been backfilled yet (its state embedded ``comment_id: null``) falls
+        back to the state block carried in its own comment, so it is addressable
+        immediately.
+        """
+        if not history:
+            return {}
+        ensure_import_path()
+        from thread_snapshot import build_comment_index
+        from workflow_state import extract_state_from_body
+        from workflow_state.features.comment.to_git_comment import strip_state_section
+        from workflow_state.features.resolve_step_output.resolve_step_output import (
+            resolve_step_output,
+        )
+        from workflow_state.step_output_record import StepOutputRecord
+
+        comment_index = build_comment_index(
+            [
+                {"id": getattr(entry, "comment_id", None), "body": entry.body}
+                for entry in history
+                if getattr(entry, "comment_id", None) is not None
+            ]
+        )
+        previous = self._previous_state()
+        records = (
+            StepOutputRecord.index(previous.current_context)
+            if previous is not None
+            else {}
+        )
+        scope: dict[str, str] = {}
+        for step in records:
+            result = resolve_step_output(records, comment_index, step)
+            if result.ok and result.body is not None:
+                scope[step] = result.body
+        for entry in history:
+            state = extract_state_from_body(entry.body)
+            if state and state.step and state.step not in scope:
+                scope[state.step] = strip_state_section(entry.body)
+        return scope
+
+    def _render_step_prompt(
+        self, step_prompt: str, step_scope: Mapping[str, str] | None
+    ) -> str:
+        """Substitute ``{{ <step> }}`` refs in ``step_prompt`` (issue #756)."""
+        if not step_prompt or not step_scope:
+            return step_prompt
+        ensure_import_path()
+        from workflow_state.features.resolve_step_output.resolve_step_output import (
+            PROMPT_REF_PATTERN,
+            ResolvedOutput,
+            render_prompt_refs,
+        )
+
+        resolved = {
+            step: ResolvedOutput(step=step, ok=True, body=step_scope[step])
+            for step in PROMPT_REF_PATTERN.findall(step_prompt)
+            if step in step_scope
+        }
+        return render_prompt_refs(step_prompt, resolved)
 
     def _input_failure_outcome(self, detail: str, phases: list[str]) -> RunOutcome:
         """Terminal outcome for an unsatisfied required input (issue #813)."""
@@ -1441,7 +1527,9 @@ class Engine:
         # that started this run (issue #482).
         escaped = bridge.escape_agent_triggers(body)
         self._publish_state["body"] = escaped
-        self.adapter.post(escaped)
+        # Keep the posted comment id so ``persist`` can point this step's output
+        # locator at it (issue #756, ADR-0012).
+        self._publish_state["comment_id"] = self.adapter.post(escaped)
         return escaped
 
     # @stub-protected
@@ -1450,6 +1538,7 @@ class Engine:
         state = self._build_state(agent_result)
         if state is None:
             return None
+        state = self._backfill_step_output(state)
         if self._publish_state.get("failed") and not state.publish_failed:
             # The journal must record that this run's deliverable was lost
             # (issue #805), so a later reader can tell a green run from a
@@ -1457,6 +1546,24 @@ class Engine:
             state = state.model_copy(update={"publish_failed": True})
         self.adapter.save_state(state)
         return state
+
+    def _backfill_step_output(self, state: WorkflowState) -> WorkflowState:
+        """Point the running step's output locator at its just-posted comment.
+
+        The state embedded in a comment cannot name that comment's id
+        (chicken-and-egg), so the host backfills it here, before the hand-off
+        state is saved (issue #756, ADR-0012). The thread read backfills it on
+        hosts whose ``post`` does not return a usable id.
+        """
+        comment_id = self._publish_state.get("comment_id")
+        if not comment_id or not state.step:
+            return state
+        ensure_import_path()
+        from workflow_state.step_output_record import StepOutputRecord
+
+        context = dict(state.current_context)
+        StepOutputRecord(step=state.step, comment_id=comment_id).upsert_into(context)
+        return state.model_copy(update={"current_context": context})
 
     # @stub-protected
     def route(self, agent_result: Any) -> RoutingDecision:

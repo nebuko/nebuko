@@ -55,20 +55,23 @@ class WorkflowStep(BaseModel):
     complexity: Optional[Literal["low", "medium", "high"]] = None  # @stub-protected
     # Call-site input wiring (issue #813): binds this step's required values.
     # On a ``workflow`` call step the keys are the callee's declared inputs; on
-    # an ``agent`` consumer step the values are ``input.<name>`` /
-    # ``<step>.<out>`` references resolved against the current frame scope.
+    # an ``agent`` consumer step the values are ``input.<name>`` / ``<step>``
+    # references resolved against the current frame scope. A list of bare step
+    # names is shorthand for referencing those upstream steps (issue #756).
     # @stub-protected
     inputs: Optional[dict[str, InputBinding]] = None
-    # Outputs this step emits (issue #813), referenced downstream as
-    # ``<step>.<name>``. A bare string coerces to a one-element list.
-    # @stub-protected
-    outputs: Optional[list[str]] = None
 
-    @field_validator("outputs", mode="before")
+    @field_validator("inputs", mode="before")
     @classmethod
-    def _coerce_step_outputs(cls, value: object) -> object:
-        if isinstance(value, str):
-            return [value]
+    def _coerce_inputs_list(cls, value: object) -> object:
+        """List shorthand: ``inputs: [plan, implement]`` names upstream steps.
+
+        Each entry becomes an input whose name is the step and whose binding is
+        a ``ref`` to that step, so the whole posted comment crosses into the
+        deterministic step-inputs block (issue #756).
+        """
+        if isinstance(value, (list, tuple)):
+            return {str(entry): str(entry) for entry in value}
         return value
 
     @model_validator(mode="after")

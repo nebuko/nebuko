@@ -242,8 +242,10 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     def _to_entry(comment: dict[str, Any]) -> CommentEntry:
         from nebuko.engine.models import CommentEntry
 
+        raw_id = comment.get("id")
         return CommentEntry(
             author=(comment.get("user") or {}).get("login", ""),
             body=comment.get("body", "") or "",
             created_at=comment.get("created_at", "") or "",
+            comment_id=str(raw_id) if raw_id is not None else None,
         )

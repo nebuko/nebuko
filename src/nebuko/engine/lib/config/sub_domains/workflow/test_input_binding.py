@@ -56,11 +56,16 @@ class TestInputBindingSchema:
 
     def test_ref_must_match_the_reference_grammar(self):
         with pytest.raises(ValueError, match="grammar"):
-            InputBinding.model_validate({"ref": "not-a-reference"})
+            InputBinding.model_validate({"ref": "9lives!"})
 
-    def test_dotted_step_output_reference_is_accepted(self):
-        binding = InputBinding.model_validate("spec.patch_ready")
+    def test_bare_step_name_is_accepted(self):
+        binding = InputBinding.model_validate("plan")
         assert binding.source == "ref"
+        assert binding.ref == "plan"
+
+    def test_dotted_step_output_reference_is_rejected(self):
+        with pytest.raises(ValueError, match="grammar"):
+            InputBinding.model_validate("spec.patch_ready")
 
 
 class TestInputBindingResolve:
@@ -141,15 +146,20 @@ class TestGrammarExtensions:
         assert definition.inputs == []
         assert definition.outputs == []
 
-    def test_step_wires_inputs_and_outputs(self):
+    def test_step_wires_inputs_and_prompt(self):
         step = WorkflowStep(
             name="inspect",
             agent="dev",
             inputs={"diff": "input.diff"},
-            outputs="patch_ready",
+            prompt="Review {{ plan }}",
         )
         assert step.inputs["diff"].ref == "input.diff"
-        assert step.outputs == ["patch_ready"]
+        assert step.prompt == "Review {{ plan }}"
+
+    def test_step_inputs_list_shorthand_names_upstream_steps(self):
+        step = WorkflowStep(name="review", agent="dev", inputs=["plan", "implement"])
+        assert step.inputs["plan"].ref == "plan"
+        assert step.inputs["implement"].ref == "implement"
 
     def test_step_inputs_default_to_none(self):
         assert WorkflowStep(name="s", agent="dev").inputs is None
