@@ -1971,11 +1971,18 @@ def _render_history(history: Sequence[CommentEntry]) -> str:
     )
 
 
-# Thread-record kinds rendered into the prompt (issue #872). Engine outputs
+# Human-authored thread-record kinds (issue #872). A non-bot ``command`` or
+# ``human-feedback`` only reaches the prompt in full when the record is trusted
+# (allowlisted association *and* the run's trigger author); any other author is
+# quarantined in the unverified appendix, so neither the body text nor the
+# command grammar can be used to smuggle instructions into the trusted flow.
+_TRUST_GATED_THREAD_KINDS = frozenset({"command", "human-feedback"})
+
+# Bot-authored thread-record kinds rendered into the prompt. Engine outputs
 # (agent-started / human-notification / runner-error) are bookkeeping noise and
 # are never rendered. ``issue-body`` is surfaced by the trigger block above, so
 # it is not repeated in the ledger (its body is not captured into ``bodies``).
-_RENDERABLE_THREAD_KINDS = frozenset({"command", "agent-output"})
+_RENDERABLE_THREAD_KINDS = frozenset({"agent-output"})
 
 
 def _kind_value(record: Any) -> str:
@@ -1989,7 +1996,7 @@ def _is_renderable(record: Any) -> bool:
     if getattr(record, "deleted", False):
         return False
     kind = _kind_value(record)
-    if kind == "human-feedback":
+    if kind in _TRUST_GATED_THREAD_KINDS:
         return bool(getattr(record, "trusted", False))
     return kind in _RENDERABLE_THREAD_KINDS
 
@@ -2025,14 +2032,15 @@ def _render_unverified_records(
 ) -> str:
     """One-line summaries of untrusted human comments, framed as unverified.
 
-    Prompt-injection guard (issue #872): a human comment is rendered in full
-    above only when it comes from the run's initiator; any other author is shown
-    here as a truncated, explicitly-untrusted summary so it informs the agent
-    without becoming an instruction.
+    Prompt-injection guard (issue #872): a human-authored record (either a
+    ``command`` or ``human-feedback``) is rendered in full above only when it
+    comes from the run's initiator; any other author is shown here as a
+    truncated, explicitly-untrusted summary so it informs the agent without
+    becoming an instruction.
     """
     rows: list[str] = []
     for record in records:
-        if _kind_value(record) != "human-feedback":
+        if _kind_value(record) not in _TRUST_GATED_THREAD_KINDS:
             continue
         if getattr(record, "trusted", False) or getattr(record, "deleted", False):
             continue
