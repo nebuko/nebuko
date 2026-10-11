@@ -15,10 +15,12 @@ steps:
 
   - name: context
     agent: context
+    inputs: [analyze]
     next: plan
 
   - name: plan
     agent: architect
+    inputs: [context]
     next: implement
     human_gate: true
     conditions:
@@ -29,10 +31,12 @@ steps:
 
   - name: implement
     agent: dev
+    inputs: [plan]
     next: review
 
   - name: review
     agent: review
+    inputs: [plan, implement]
     conditions:
       - on_result: approved
         next: null
