@@ -621,6 +621,38 @@ def get_issue_comments(
     )
 
 
+def get_issue(
+    repo: str,
+    issue_number: int,
+    token: Optional[str] = None,
+    dry_run: bool = False,
+    *,
+    transport: Optional[GitHubTransport] = None,
+) -> Optional[dict]:
+    """Fetch one issue object via gh CLI.
+
+    Returns the issue payload (``id``, ``html_url``, ``author_association``,
+    ``created_at``, ``user``) needed by the workflow-state thread ledger
+    (issue #872), or ``None`` on a failed/unparseable fetch (best-effort: the
+    ledger degrades to comment-only rather than failing the step).
+    """
+    if dry_run:
+        return None
+
+    transport = transport or _default_transport(token)
+    result = transport.call(
+        ["api", f"/repos/{repo}/issues/{issue_number}"], mutative=False
+    )
+    if not result.ok:
+        print(f"Error fetching issue: {result.detail}", file=sys.stderr)
+        return None
+    try:
+        payload = json.loads(result.payload) if result.payload.strip() else None
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def fetch_issue_comments(
     repo: str,
     issue_number: int,
