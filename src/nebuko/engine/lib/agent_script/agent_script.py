@@ -14,6 +14,7 @@ from agent_script import (
     build_output,
     load_prev_state_or_recover,
 )
+from pricing.features.load_price_table.load_price_table import load_price_table
 
 logger = get_logger(__name__)
 
@@ -68,8 +69,11 @@ def main():
     # 5. Run agent
     conversation = run_agent(llm_config, prompt, args, agent_cfg=agent_cfg)
 
-    # 6. Collect metrics
-    metrics = collect_and_save_metrics(conversation, agent_cfg)
+    # 6. Collect metrics — the default price table prices models the config
+    #    leaves unpriced (subscription providers); load is fail-open (#714).
+    metrics = collect_and_save_metrics(
+        conversation, agent_cfg, price_table=load_price_table()
+    )
 
     # 7. Build output
     #    Recover the previous state from issue comments when the per-run disk

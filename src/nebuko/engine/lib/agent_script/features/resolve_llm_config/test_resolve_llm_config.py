@@ -617,9 +617,10 @@ agents:
         self.assertEqual(cfg["litellm_extra_body"]["thinking_token_budget"], 65536)
 
     def test_high_tier_pricing_follows_swapped_model(self):
+        """The swapped model's prices are no longer forwarded to the SDK (#714)."""
         cfg = self._resolve(complexity="high")
-        self.assertAlmostEqual(cfg["input_cost_per_token"], 10.0e-6)
-        self.assertAlmostEqual(cfg["output_cost_per_token"], 40.0e-6)
+        self.assertNotIn("input_cost_per_token", cfg)
+        self.assertNotIn("output_cost_per_token", cfg)
 
     def test_high_tier_max_output_tokens_follows_swapped_model(self):
         cfg = self._resolve(complexity="high")
@@ -631,14 +632,21 @@ agents:
 
     def test_medium_tier_keeps_base_model_attributes(self):
         cfg = self._resolve(complexity="medium")
-        self.assertAlmostEqual(cfg["input_cost_per_token"], 2.0e-6)
+        self.assertNotIn("input_cost_per_token", cfg)
         self.assertEqual(cfg["max_output_tokens"], 8192)
         self.assertEqual(cfg["litellm_extra_body"]["stop"], ["<base-stop>"])
         self.assertEqual(cfg["litellm_extra_body"]["thinking_token_budget"], 4096)
 
 
 class TestPriceForwarding(unittest.TestCase):
-    """Config prices (per million tokens) become per-token SDK costs."""
+    """Config prices are NOT forwarded to the SDK (issue #714).
+
+    The SDK's custom-cost path is cache-blind: forwarding only input/output
+    prices would make LiteLLM price cache tokens at the full input rate and its
+    ``accumulated_cost`` would shadow our cache-aware fallback. Session cost is
+    computed our-side in ``metrics_collector`` instead, so no ``*_cost_per_token``
+    keys must ever reach ``LLM(**llm_config)``.
+    """
 
     CONFIG_TEMPLATE = """\
 providers:
@@ -686,10 +694,10 @@ agents:
         cfg, _, _ = resolve_llm_config(None, "prompt")
         return cfg
 
-    def test_per_million_prices_normalized_to_per_token(self):
+    def test_configured_prices_are_not_forwarded_to_sdk(self):
         cfg = self._resolve("2.0", "8.0")
-        self.assertAlmostEqual(cfg["input_cost_per_token"], 2.0e-6)
-        self.assertAlmostEqual(cfg["output_cost_per_token"], 8.0e-6)
+        self.assertNotIn("input_cost_per_token", cfg)
+        self.assertNotIn("output_cost_per_token", cfg)
 
     def test_unset_prices_leave_keys_absent(self):
         cfg = self._resolve("null", "null")
@@ -697,18 +705,9 @@ agents:
         self.assertNotIn("output_cost_per_token", cfg)
 
     def test_partial_prices_leave_keys_absent(self):
-        """Only one price set must not enable custom pricing — the SDK needs both."""
         cfg = self._resolve("2.0", "null")
         self.assertNotIn("input_cost_per_token", cfg)
         self.assertNotIn("output_cost_per_token", cfg)
-
-    def test_forwarded_keys_are_valid_sdk_llm_fields(self):
-        """Guard against a typo breaking ``LLM(**llm_config)`` at runtime."""
-        from openhands.sdk import LLM
-
-        cfg = self._resolve("2.0", "8.0")
-        for key in ("input_cost_per_token", "output_cost_per_token"):
-            self.assertIn(key, LLM.model_fields)
 
 
 class TestProviderHeaderDecoration(unittest.TestCase):

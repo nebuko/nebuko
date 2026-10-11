@@ -15,6 +15,10 @@ class LLMConfig(BaseModel):
     default_temperature: float = 0.0
     input_price: Optional[float] = None
     output_price: Optional[float] = None
+    # Cache-tier prices (USD per 1M tokens). Unset falls back to the input
+    # price for cost accounting; see ``pricing`` and ``metrics/cost.py``.
+    cache_read_price: Optional[float] = None
+    cache_write_price: Optional[float] = None
     # Reasoning / thinking parameters (Qwen3, vLLM, etc.)
     thinking_enabled: Optional[bool] = None
     preserve_thinking: Optional[bool] = None

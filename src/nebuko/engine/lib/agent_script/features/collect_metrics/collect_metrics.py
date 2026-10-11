@@ -7,6 +7,7 @@ from openhands.sdk import get_logger
 
 from metrics_schema import Metrics
 from agent_script.sub_domains.metrics.metrics_collector import collect_llm_metrics
+from pricing.sub_domains.price_table.price_table import PriceTable
 
 logger = get_logger(__name__)
 
@@ -37,7 +38,10 @@ def save_metrics_json(metrics: Metrics) -> None:
         logger.error(f"Failed to save metrics JSON: {e}")
 
 
-def collect_and_save_metrics(conversation, agent_cfg=None) -> Metrics:
+# @stub-protected: signature defined by architect — do not modify
+def collect_and_save_metrics(
+    conversation, agent_cfg=None, price_table: "PriceTable | None" = None
+) -> Metrics:
     """
     Collect LLM metrics from a conversation and persist them as JSON.
 
@@ -47,11 +51,12 @@ def collect_and_save_metrics(conversation, agent_cfg=None) -> Metrics:
     Args:
         conversation: The OpenHands Conversation object
         agent_cfg: Optional AgentConfig supplying prices for the cost fallback.
+        price_table: Optional default price table filling unset config prices.
 
     Returns:
         Metrics: The collected metrics object
     """
-    metrics = collect_llm_metrics(conversation, agent_cfg)
+    metrics = collect_llm_metrics(conversation, agent_cfg, price_table)
     run_outcome = getattr(conversation, "run_outcome", None)
     if run_outcome is not None and hasattr(run_outcome, "dispatch_recall_count"):
         metrics.dispatch_recall_count = int(run_outcome.dispatch_recall_count or 0)

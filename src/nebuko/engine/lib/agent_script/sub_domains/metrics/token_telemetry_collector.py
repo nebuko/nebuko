@@ -52,6 +52,23 @@ def _as_int(value: Any) -> int:
     return int(value or 0)
 
 
+def _cache_tokens(usage: Any) -> tuple[int, int]:
+    """Cache-read/cache-write token counts from a LiteLLM usage object.
+
+    LiteLLM surfaces these on ``prompt_tokens_details`` (``cached_tokens`` /
+    ``cache_write_tokens``); the private attributes are a fallback for older
+    usage shapes.
+    """
+    details = getattr(usage, "prompt_tokens_details", None)
+    cache_read = getattr(details, "cached_tokens", None) if details else None
+    cache_write = getattr(details, "cache_write_tokens", None) if details else None
+    if cache_read is None:
+        cache_read = getattr(usage, "_cache_read_input_tokens", None)
+    if cache_write is None:
+        cache_write = getattr(usage, "_cache_creation_input_tokens", None)
+    return _as_int(cache_read), _as_int(cache_write)
+
+
 def _call_id(kwargs: dict[str, Any]) -> str:
     """Identify an in-flight call by LiteLLM's per-call id."""
     return str(kwargs.get("litellm_call_id") or "")
@@ -59,12 +76,15 @@ def _call_id(kwargs: dict[str, Any]) -> str:
 
 def _observation(stamps: CallStamps, usage: Any, finished_at: float) -> TokenTelemetry:
     """Build the per-call observation from the bracket and the billed counts."""
+    cache_read, cache_write = _cache_tokens(usage)
     return TokenTelemetry(
         request_started_at=stamps.request_started_at,
         first_token_at=stamps.first_token_at,
         request_finished_at=finished_at,
         prompt_tokens=_as_int(getattr(usage, "prompt_tokens", None)),
         completion_tokens=_as_int(getattr(usage, "completion_tokens", None)),
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
     )
 
 
