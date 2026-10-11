@@ -304,3 +304,33 @@ class TestWorkflowStepComplexity:
         assert step.complexity == "low"
         assert step.skill == ["call-agent"]
         assert step.next == "context"
+
+
+class TestStepOutputsMigration:
+    """The pre-#756 ``steps[].outputs`` key is rejected (issue #756)."""
+
+    def test_legacy_outputs_key_is_rejected_with_a_hint(self):
+        with pytest.raises(ValueError, match="#756"):
+            WorkflowStep(name="plan", agent="architect", next=None, outputs=["doc"])
+
+    def test_step_without_outputs_is_accepted(self):
+        step = WorkflowStep(name="plan", agent="architect", next=None)
+        assert step.prompt is None
+
+
+class TestInputsListShorthand:
+    def test_list_of_step_names_becomes_ref_bindings(self):
+        step = WorkflowStep(
+            name="review",
+            agent="review",
+            inputs=["plan", "implement"],
+            next=None,
+        )
+        assert set(step.inputs) == {"plan", "implement"}
+        assert step.inputs["plan"].ref == "plan"
+
+    def test_prompt_field_round_trips(self):
+        step = WorkflowStep(
+            name="review", agent="review", prompt="see {{ plan }}", next=None
+        )
+        assert step.prompt == "see {{ plan }}"

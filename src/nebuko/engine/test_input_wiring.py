@@ -220,3 +220,48 @@ class TestRender:
             [Materialization(name="diff", ok=False, body="", detail="exit 3")]
         )
         assert "_(unavailable: exit 3)_" in rendered
+
+
+class TestStepScopeResolution:
+    """Bare ``<step>`` refs resolve against ``step_scope`` (issue #756)."""
+
+    def _consumer(self, **consumer):
+        return StepInputs.from_resolved(
+            {"STEP_INPUTS": _payload(consumer=consumer)}
+        )
+
+    def test_bare_step_ref_resolves_to_its_comment(self):
+        step_inputs = self._consumer(plan="plan")
+        result = materialize(step_inputs, {"plan": "THE PLAN COMMENT"})[0]
+        assert result.ok is True
+        assert result.body == "THE PLAN COMMENT"
+
+    def test_missing_step_scope_key_is_unresolved(self):
+        step_inputs = self._consumer(plan="plan")
+        result = materialize(step_inputs, {})[0]
+        assert result.ok is False
+        assert "unresolved" in result.detail
+
+    def test_step_scope_defaults_to_none(self):
+        step_inputs = self._consumer(plan="plan")
+        result = materialize(step_inputs)[0]
+        assert result.ok is False
+
+    def test_input_parameter_takes_precedence_over_step_scope(self):
+        frames = [{
+            "callee": "impl",
+            "call_step": "build",
+            "bindings": {"plan": {"str": "from the frame"}},
+        }]
+        step_inputs = StepInputs.from_resolved(
+            {"STEP_INPUTS": _payload(frames=frames, consumer={"plan": "input.plan"})}
+        )
+        result = materialize(step_inputs, {"input.plan": "FROM COMMENT"})[0]
+        assert result.body == "from the frame"
+
+    def test_two_refs_fan_in(self):
+        step_inputs = self._consumer(plan="plan", implement="implement")
+        results = materialize(
+            step_inputs, {"plan": "P", "implement": "I"}
+        )
+        assert {r.name: r.body for r in results} == {"plan": "P", "implement": "I"}

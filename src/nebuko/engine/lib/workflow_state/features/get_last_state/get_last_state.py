@@ -121,7 +121,7 @@ def _enrich_step_outputs_with_comment_ids(
 ) -> None:
     """Backfill step-output locators with the comment that carried each step.
 
-    A step's output is its posted comment (issue #756, ADR-0012). The state
+    A step's output is its posted comment (issue #756, ADR-0013). The state
     embedded in a comment cannot name its own comment id (chicken-and-egg), so
     the read path fills it in by index alignment: each state comment's embedded
     ``step`` maps to that comment's id. A stored ``comment_id`` is preserved for

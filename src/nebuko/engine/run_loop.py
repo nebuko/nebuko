@@ -654,7 +654,7 @@ class Engine:
             # output. A failing ``required`` input fails the step here, before
             # the agent is invoked, so the model can never review a context it
             # silently failed to obtain.
-            # Step outputs (issue #756, ADR-0012): a completed step's posted
+            # Step outputs (issue #756, ADR-0013): a completed step's posted
             # comment is addressable by its step name. Resolve the scope once
             # and share it across the two surfaces — the deterministic inputs
             # seam and ``{{ <step> }}`` prompt references.
@@ -1123,7 +1123,7 @@ class Engine:
     ) -> dict[str, str]:
         """Map each completed step name to its state-stripped comment body.
 
-        A step's output *is* its posted comment (issue #756, ADR-0012). The
+        A step's output *is* its posted comment (issue #756, ADR-0013). The
         locators persisted in the previous state give the authoritative comment
         id; the bounded thread read resolves the body. A step whose locator has
         not been backfilled yet (its state embedded ``comment_id: null``) falls
@@ -1159,7 +1159,7 @@ class Engine:
             result = resolve_step_output(records, comment_index, step)
             if result.ok and result.body is not None:
                 scope[step] = result.body
-        for entry in history:
+        for entry in reversed(history):
             state = extract_state_from_body(entry.body)
             if state and state.step and state.step not in scope:
                 scope[state.step] = strip_state_section(entry.body)
@@ -1528,7 +1528,7 @@ class Engine:
         escaped = bridge.escape_agent_triggers(body)
         self._publish_state["body"] = escaped
         # Keep the posted comment id so ``persist`` can point this step's output
-        # locator at it (issue #756, ADR-0012).
+        # locator at it (issue #756, ADR-0013).
         self._publish_state["comment_id"] = self.adapter.post(escaped)
         return escaped
 
@@ -1552,7 +1552,7 @@ class Engine:
 
         The state embedded in a comment cannot name that comment's id
         (chicken-and-egg), so the host backfills it here, before the hand-off
-        state is saved (issue #756, ADR-0012). The thread read backfills it on
+        state is saved (issue #756, ADR-0013). The thread read backfills it on
         hosts whose ``post`` does not return a usable id.
         """
         comment_id = self._publish_state.get("comment_id")

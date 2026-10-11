@@ -1,4 +1,4 @@
-"""Declared step outputs are step comments (issue #756, ADR-0012).
+"""Declared step outputs are step comments (issue #756, ADR-0013).
 
 A step's output *is* the comment it posts. This record is the locator that
 points at that comment — ``{step, comment_id}`` — stored under

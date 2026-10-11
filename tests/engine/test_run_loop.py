@@ -1173,13 +1173,25 @@ class TestStatePhase:
 
         outcome = engine.run()
 
-        assert outcome.state == state
+        # The agent's artifact survives; the engine points the running step's
+        # output locator at the comment it just posted (issue #756, ADR-0013).
+        assert (outcome.state.workflow, outcome.state.step, outcome.state.agent) == (
+            "spec-driven-impl",
+            "implement",
+            "dev",
+        )
+        locators = outcome.state.current_context["step_outputs"]
+        assert [entry["step"] for entry in locators] == ["implement"]
+        assert locators[0]["comment_id"]
+        # The agent's own artifact object is never mutated in place.
+        assert state.current_context == {}
         saved = json.loads((tmp_path / "runs" / "run-1" / "state.json").read_text())
         assert (saved["workflow"], saved["step"], saved["agent"]) == (
             "spec-driven-impl",
             "implement",
             "dev",
         )
+        assert saved["current_context"]["step_outputs"][0]["step"] == "implement"
 
     def test_falls_back_to_the_previous_state(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
@@ -1189,7 +1201,16 @@ class TestStatePhase:
 
         outcome = engine.run()
 
-        assert outcome.state == previous
+        assert (outcome.state.workflow, outcome.state.step, outcome.state.agent) == (
+            "spec-driven-impl",
+            "implement",
+            "dev",
+        )
+        assert [e["step"] for e in outcome.state.current_context["step_outputs"]] == [
+            "implement"
+        ]
+        # The state loaded from the adapter is not mutated: the backfill is a copy.
+        assert previous.current_context == {}
 
     def test_never_synthesizes_a_state_without_an_artifact_or_history(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
@@ -2278,3 +2299,52 @@ class TestLlmSessionIdStamp:
 
     def test_the_pure_stamp_is_a_noop_without_a_number(self):
         assert "LLM_SESSION_ID" not in _stamp_llm_session_id({})
+
+
+class TestStepOutputScope:
+    """Step-name data-flow at the engine seam (issue #756, ADR-0013).
+
+    ``_step_output_scope`` builds the step-name -> state-stripped comment map
+    that both the ``inputs`` materializer and prompt rendering consume.
+    """
+
+    @staticmethod
+    def _comment(step, text, comment_id):
+        from nebuko.engine.models import CommentEntry
+        from workflow_state import WorkflowState, to_git_comment
+
+        state = WorkflowState(workflow="w", step=step, agent="dev")
+        body = f"{text}\n\n{to_git_comment(state)}"
+        return CommentEntry(
+            author="bot",
+            body=body,
+            created_at="2026-10-01T07:47:47Z",
+            comment_id=comment_id,
+        )
+
+    def test_scope_maps_a_step_to_its_stripped_comment(self, tmp_path):
+        engine = _engine(tmp_path)
+        history = [self._comment("plan", "THE PLAN", "1")]
+        scope = engine._step_output_scope(history)
+        assert scope["plan"] == "THE PLAN"
+
+    def test_newest_comment_wins_after_a_loop_rerun(self, tmp_path):
+        engine = _engine(tmp_path)
+        history = [
+            self._comment("plan", "FIRST PLAN", "1"),
+            self._comment("plan", "SECOND PLAN", "2"),
+        ]
+        assert engine._step_output_scope(history)["plan"] == "SECOND PLAN"
+
+    def test_empty_history_yields_an_empty_scope(self, tmp_path):
+        assert _engine(tmp_path)._step_output_scope([]) == {}
+
+    def test_render_step_prompt_substitutes_a_known_step(self, tmp_path):
+        engine = _engine(tmp_path)
+        rendered = engine._render_step_prompt("plan: {{ plan }}", {"plan": "P"})
+        assert rendered == "plan: P"
+
+    def test_render_step_prompt_degrades_an_unknown_step(self, tmp_path):
+        engine = _engine(tmp_path)
+        rendered = engine._render_step_prompt("{{ ghost }}", {"plan": "P"})
+        assert rendered == "_(unavailable: ghost)_"

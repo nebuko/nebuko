@@ -1,4 +1,4 @@
-"""Resolve ``{{ <step> }}`` references to step comments (issue #756, ADR-0012).
+"""Resolve ``{{ <step> }}`` references to step comments (issue #756, ADR-0013).
 
 A declared step output is a *name-only address*: the referenced step's full
 posted comment, state-stripped (exactly what agents see). Resolution joins the

@@ -1,0 +1,9 @@
+name: l11-prompt-ref
+description: "A step prompt references a step that does not exist"
+trigger:
+  agents: [review]
+steps:
+  - name: review
+    agent: review
+    prompt: "Review against {{ plan }}"
+    next: null

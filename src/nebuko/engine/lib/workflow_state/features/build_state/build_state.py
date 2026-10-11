@@ -301,7 +301,7 @@ def build_state(
     effective_step = _fallback_field(step, prev_state, base_history, "step")
     effective_agent = _fallback_field(agent, prev_state, base_history, "agent")
 
-    # A step's output is its posted comment (issue #756, ADR-0012): record the
+    # A step's output is its posted comment (issue #756, ADR-0013): record the
     # locator for the effective step. The comment id is unknown at build time
     # (the comment is posted after this state is built); it is backfilled at
     # publish time on the host and by the thread read (index alignment). Latest

@@ -19,7 +19,7 @@ For the high-level pitch and quick overview, see the root
 | [getting-started.md](./getting-started.md) | New users | Prerequisites, setup, first workflow run, troubleshooting. |
 | [architecture.md](./architecture.md) | Everyone | System overview: agents, orchestration loop, state model, routing cascade. |
 | [workflows.md](./workflows.md) | Users & contributors | Declarative workflow engine + all built-in workflows with step graphs. |
-| [lint.md](./lint.md) | Contributors | Offline graph-level linter for workflow YAML: rules L1–L7, CLI usage, exit codes, CI integration. |
+| [lint.md](./lint.md) | Contributors | Offline graph-level linter for workflow YAML: rules L1–L11, CLI usage, exit codes, CI integration. |
 | [agents-and-skills.md](./agents-and-skills.md) | Users & contributors | The 5 agents, the 5 skills, and the tool permission model. |
 | [configuration.md](./configuration.md) | Operators | Layered `agent-config.yaml`: providers → llms → agents, `${ref}` resolution. |
 | [subscription-plans.md](./subscription-plans.md) | Operators | Run agents on a subscription plan (CommandCode today; OpenCode Go planned). |
@@ -31,6 +31,7 @@ For the high-level pitch and quick overview, see the root
 | [github-api-limits.md](./github-api-limits.md) | Operators | GitHub REST rate limits relevant to the comment-based state machine. |
 | [adr/0005-github-api-budget.md](./adr/0005-github-api-budget.md) | Operators | How many workflow runs/hour the default 7-agent flow affords, and the GitHub API guard policy. |
 | [adr/0012-complexity-governance.md](./adr/0012-complexity-governance.md) | Operators | Layered per-repo `ComplexityPolicy`, evidence bundles, and the `ComplexityGovernor` tier adjudicator. |
+| [adr/0013-step-outputs-are-step-comments.md](./adr/0013-step-outputs-are-step-comments.md) | Contributors | A step's output is its posted comment: step-name references, `{{ <step> }}` prompt syntax, locator storage, no truncation. |
 
 Business documents (not user documentation): `etude-de-marche.md` (market
 study, in French), and the root `landscape.md` (product positioning — "what

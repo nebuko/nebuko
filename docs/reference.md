@@ -106,7 +106,7 @@ graph-level invariants below are checked offline by
 | `inputs[].name` | input | string | yes | Parameter name, referenced downstream through `input.<name>`. |
 | `inputs[].kind` | input | `exec`\|`str` | yes | `exec` = a deterministic provider command materialized by the engine; `str` = a constant. |
 | `inputs[].required` | input | bool | no | When true (default), a failed/absent value fails the consuming step deterministically, before the agent runs. |
-| `outputs` | file | string[] | no | Values this workflow returns to its caller, referenced there as `<call-step>.<name>` (issue #813; a bare string coerces to a one-element list). The return path is pending [#756](https://github.com/nebuko/nebuko/issues/756). |
+| `outputs` | file | string[] | no | The workflow's results, each naming a **step** whose posted comment is that result (issue #756; a bare string coerces to a one-element list). Supersedes the pre-#756 opaque `<call-step>.<name>` return values. |
 | `trigger.agents` | file | string[] | no | Which `@@mention`s can start this workflow. |
 | `steps` | file | list | yes | Ordered list of steps. |
 | `steps[].name` | step | string | yes | Unique step name. |
@@ -121,11 +121,10 @@ graph-level invariants below are checked offline by
 | `steps[].conditions[].on_result` | condition | string | yes | Result key reported by the agent (e.g., `approved`, `rejected`, `default`). |
 | `steps[].conditions[].next` | condition | string/null | yes | Target step for that result. |
 | `steps[].skill` | step | string[] | no | Skills attached to the step prompt (files in `defaults/skills/`). |
-| `steps[].prompt` | step | string | no | Standing instruction injected into this step's agent context (multi-line YAML blocks supported). See [workflows.md](./workflows.md#step-instructions-prompt). |
+| `steps[].prompt` | step | string | no | Standing instruction injected into this step's agent context (multi-line YAML blocks supported). May interpolate upstream step comments with `{{ <step> }}` (issue #756). See [workflows.md](./workflows.md#step-instructions-prompt). |
 | `steps[].complexity` | step | string | no | Declared complexity tier for this step's agent invocation: `low`, `medium`, or `high`. A dispatch `complexity` overrides it; otherwise it selects `agents.<name>.complexity_overrides.<tier>` and the tier temperature floor (issue #787; see [configuration.md](./configuration.md#complexity-overrides-per-tier-configuration)). |
 | `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts every advancing dispatch and holds the workflow until an identity-verified human releases it with `/nebuko approve gate` / `/nebuko reject gate` (see [workflows.md](./workflows.md#human-gates)). |
-| `steps[].inputs` | step | map | no | Call-site wiring (issue #813). On a `workflow` call step the keys are the callee's declared inputs; on an `agent` consumer step the values are `input.<name>` / `<step>.<out>` references. Each value is one of `exec` (argv), `str` (constant), or a bare string meaning a `ref`. |
-| `steps[].outputs` | step | string[] | no | Outputs this step emits, referenced downstream as `<step>.<name>` (issue #813; a bare string coerces to a one-element list). |
+| `steps[].inputs` | step | map or list | no | Call-site wiring (issue #813). On a `workflow` call step the keys are the callee's declared inputs; on an `agent` consumer step the values are `input.<name>` (a workflow parameter) or a bare `<step>` (that step's posted comment, issue #756). A list of step names (`inputs: [plan, implement]`) is shorthand for a map of `ref` bindings. Each value is one of `exec` (argv), `str` (constant), or a bare string meaning a `ref`. |
 
 Minimal valid workflow:
 
@@ -199,7 +198,7 @@ inputs:
   - name: run_test
     kind: exec
 outputs:
-  - patch_ready
+  - build
 steps:
   - name: build
     workflow: spec-driven-impl
@@ -222,7 +221,6 @@ steps:
     inputs:
       setup_dev_env: input.setup_dev_env
       run_test: input.run_test        # materialized immediately before the agent
-    outputs: [patch_ready]
 ```
 
 Forwarding an `exec` input forwards the **command spec, not its output**: the

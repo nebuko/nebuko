@@ -10,5 +10,4 @@ steps:
     agent: dev
     inputs:
       run_test: input.run_test
-    outputs: [patch_ready]
     next: null

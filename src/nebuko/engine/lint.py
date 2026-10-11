@@ -20,7 +20,7 @@ import dataclasses
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -43,6 +43,8 @@ _RULE_NO_TERMINAL = "L7-no-terminal"
 _RULE_INPUT_BINDING = "L8-input-binding"
 _RULE_INPUT_KIND = "L9-input-kind"
 _RULE_INPUT_REF = "L10-input-ref"
+# Step-output references (issue #756, ADR-0013): L11 is a warning.
+_RULE_PROMPT_REF = "L11-prompt-ref"
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -88,6 +90,20 @@ def _runtime() -> Any:
     return resolve_workflow
 
 
+def _prompt_ref_pattern() -> Any:
+    """The engine's ``{{ <step> }}`` prompt-reference regex (issue #756).
+
+    Imported from the resolver feature so the lint grammar and the run-time
+    substitution cannot drift apart.
+    """
+    _ensure_runtime()
+    from workflow_state.features.resolve_step_output.resolve_step_output import (
+        PROMPT_REF_PATTERN,
+    )
+
+    return PROMPT_REF_PATTERN
+
+
 def _is_terminal(step: Any) -> bool:
     """Delegate terminality to the runtime resolver — never re-implement it."""
     return bool(_runtime().is_terminal_step(step))
@@ -114,6 +130,20 @@ def _step_targets(step: Any) -> tuple[str, ...]:
         if condition.next is not None:
             targets.append(condition.next)
     return tuple(targets)
+
+
+def _ref_in_scope(
+    ref: str, declared: Mapping[str, Any], steps: Mapping[str, Any]
+) -> bool:
+    """True when a consumer reference resolves (issue #756, ADR-0013).
+
+    ``input.<name>`` names a declared workflow parameter; a bare ``<step>``
+    names a declared step, whose posted comment is the value. ``input`` is the
+    reserved namespace prefix (flagged separately), never a valid step ref.
+    """
+    if ref.startswith("input."):
+        return ref[len("input."):] in declared
+    return ref in steps and ref != "input"
 
 
 def _location(graph: _WorkflowGraph, step_name: str | None) -> str:
@@ -165,6 +195,7 @@ class WorkflowLinter:
             self._check_input_wiring,
         ):
             issues.extend(check(graph))
+        issues.extend(self._check_prompt_refs(graph.definition))
         if self._strict:
             return [_promote_to_error(issue) for issue in issues]
         return issues
@@ -391,6 +422,76 @@ class WorkflowLinter:
                 self._check_step_bindings(graph, step, declared, steps, workflows_dir)
             )
         issues.extend(self._check_declared_inputs_used(graph, declared))
+        if "input" in steps:
+            issues.append(self._reserved_step_name_issue(graph))
+        issues.extend(self._check_declared_outputs(graph, definition, steps))
+        return issues
+
+    def _check_declared_outputs(self, graph, definition, steps) -> list[LintIssue]:
+        """A workflow ``outputs`` entry names a step whose comment is a result.
+
+        The pre-#756 meaning — an opaque value returned as ``<call-step>.<name>``
+        — was removed with the dotted reference grammar (issue #756, ADR-0013):
+        the workflow's results are the comments of the named steps.
+        """
+        issues: list[LintIssue] = []
+        for name in getattr(definition, "outputs", None) or []:
+            if name in steps:
+                continue
+            issues.append(
+                LintIssue(
+                    rule=_RULE_INPUT_REF,
+                    severity=_SEVERITY_WARNING,
+                    message=f"workflow output '{name}' does not name a declared step",
+                    step=None,
+                    location=str(graph.path),
+                    hint="A workflow output is a step whose posted comment is the result",
+                )
+            )
+        return issues
+
+    def _reserved_step_name_issue(self, graph) -> LintIssue:
+        """``input`` names the workflow-parameter namespace, not a step."""
+        return LintIssue(
+            rule=_RULE_INPUT_REF,
+            severity=_SEVERITY_WARNING,
+            message=(
+                "step 'input' shadows the reserved 'input.' namespace used to "
+                "reference workflow parameters"
+            ),
+            step="input",
+            location=_location(graph, "input"),
+            hint="Rename the step; 'input.<name>' addresses workflow inputs",
+        )
+
+    def _check_prompt_refs(self, definition) -> list[LintIssue]:
+        """L11-prompt-ref: every ``{{ <step> }}`` must name an existing step.
+
+        A step's output is its posted comment (issue #756, ADR-0013), so a
+        prompt reference resolves to the referenced step's full comment. A
+        reference to an unknown step degrades to ``_(unavailable: …)_`` at run
+        time; the linter reports it ahead of the run instead.
+        """
+        steps = {step.name for step in definition.steps}
+        pattern = _prompt_ref_pattern()
+        issues: list[LintIssue] = []
+        for step in definition.steps:
+            for ref in pattern.findall(step.prompt or ""):
+                if ref in steps and ref != "input":
+                    continue
+                issues.append(
+                    LintIssue(
+                        rule=_RULE_PROMPT_REF,
+                        severity=_SEVERITY_WARNING,
+                        message=(
+                            f"step '{step.name}' references '{{{{ {ref} }}}}', "
+                            "which is not a declared step"
+                        ),
+                        step=step.name,
+                        location=None,
+                        hint="Reference a declared step name or remove the placeholder",
+                    )
+                )
         return issues
 
     def _check_step_bindings(
@@ -442,27 +543,27 @@ class WorkflowLinter:
     def _check_consumer(
         self, graph, step, bindings, declared, steps
     ) -> list[LintIssue]:
-        """An ``agent`` step's bindings must resolve against the frame scope."""
+        """An ``agent`` step's bindings must resolve against the frame scope.
+
+        Two reference shapes are in scope (issue #756): ``input.<name>`` for a
+        declared workflow parameter, and a bare ``<step>`` naming a step whose
+        posted comment is the value. The pre-#756 ``<step>.<out>`` grammar is
+        rejected at load time, so it never reaches this check.
+        """
         issues: list[LintIssue] = []
         for name, binding in bindings.items():
             if binding.source != "ref":
                 continue  # a literal provider runs here; nothing to resolve
             ref = str(binding.ref)
-            owner, _, wanted = ref.partition(".")
-            if owner == "input":
-                if wanted not in declared:
-                    issues.append(self._consumer_issue(graph, step, ref))
-            else:
-                outputs = (steps.get(owner).outputs or ()) if owner in steps else None
-                if outputs is None or wanted not in outputs:
-                    issues.append(self._consumer_issue(graph, step, ref))
+            if not _ref_in_scope(ref, declared, steps):
+                issues.append(self._consumer_issue(graph, step, ref))
         return issues
 
     def _consumer_issue(self, graph, step, ref) -> LintIssue:
         return self._input_issue(
             graph, step, _RULE_INPUT_REF, _SEVERITY_WARNING,
             f"step '{step.name}' references '{ref}', which is not in scope",
-            "Declare the input, or reference a step that declares that output",
+            "Declare the input, or reference a step whose comment is the value",
         )
 
     def _check_declared_inputs_used(self, graph, declared) -> list[LintIssue]:

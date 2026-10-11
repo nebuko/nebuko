@@ -1,0 +1,9 @@
+name: l10-bad-output
+description: "A workflow output names a step that does not exist"
+trigger:
+  agents: [dev]
+outputs: [ghost]
+steps:
+  - name: work
+    agent: dev
+    next: null

@@ -74,6 +74,25 @@ class WorkflowStep(BaseModel):
             return {str(entry): str(entry) for entry in value}
         return value
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_step_outputs(cls, data: object) -> object:
+        """Reject the pre-#756 ``outputs:`` key with a migration hint.
+
+        A step's output is now its posted comment, addressed by the step name;
+        there is nothing to declare. A leftover ``outputs:`` key would be
+        silently dropped by the schema, hiding a workflow that still expects the
+        removed grammar, so the loader fails loudly instead (issue #756,
+        ADR-0013).
+        """
+        if isinstance(data, dict) and "outputs" in data:
+            raise ValueError(
+                "'outputs' was removed from a step by issue #756; a step's "
+                "output is its posted comment, referenced by the step name. "
+                "Remove the 'outputs' key and reference the step name instead."
+            )
+        return data
+
     @model_validator(mode="after")
     def _validate_step_source(self) -> "WorkflowStep":
         # Script step (issue #541): a distinct, deterministic, non-agent source
