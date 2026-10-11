@@ -1,0 +1,54 @@
+# Default workflow: the standard dev chain
+# architect → context → architect (plan) → dev → review
+
+name: default-with-command
+description: "Standard development workflow: analyze → context → plan → implement → review"
+
+trigger:
+  agents: [architect]  # which @@mentions can start this workflow
+
+steps:
+  - name: analyze
+    agent: architect
+    complexity: low
+    next: context
+
+  - name: context
+    agent: context
+    inputs: [analyze]
+    next: plan
+
+  - name: plan
+    agent: architect
+    inputs: [context]
+    next: implement
+    human_gate: true
+    conditions:
+      - on_result: approved
+        next: implement
+      - on_result: rejected
+        next: context
+
+  - name: implement
+    agent: dev
+    inputs: [plan]
+    next: review
+  
+  - name: git_diff
+    script:
+      path: "git"
+      args: ["diff", "origin/main"]
+  
+  - name: run_tests
+    script:
+      path: "uv"
+      args: ["run", "pytest", "-q", "--tb=no", "-rf"]
+
+  - name: review
+    agent: review
+    inputs: [plan, implement, git_diff, run_tests]
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: implement
