@@ -87,3 +87,55 @@ class TestConsumerRules:
             issue.rule == "L10-input-ref" and "never consumed" in issue.message
             for issue in issues
         )
+
+
+class TestStepOutputRules:
+    """Step-name data-flow lint (issue #756, rules L10/L11)."""
+
+    def test_unknown_step_ref_is_a_warning(self):
+        assert _wiring(_lint("l10_unknown_step_ref.yaml")) == {
+            ("L10-input-ref", "warning", "work")
+        }
+
+    def test_unknown_step_ref_is_promoted_under_strict(self):
+        assert ("L10-input-ref", "error", "work") in _wiring(
+            _lint("l10_unknown_step_ref.yaml", strict=True)
+        )
+
+    def test_reserved_input_step_name_is_reported(self):
+        issues = _lint("l10_reserved_input_step.yaml")
+        assert any(
+            issue.rule == "L10-input-ref" and "reserved" in issue.message
+            for issue in issues
+        )
+
+    def test_file_level_output_must_name_a_step(self):
+        issues = _lint("l10_unknown_output.yaml")
+        assert any(
+            issue.rule == "L10-input-ref" and "workflow output 'ghost'" in issue.message
+            for issue in issues
+        )
+
+    def test_prompt_ref_to_unknown_step_is_reported(self):
+        assert _tuples(_lint("l11_unresolved_prompt_ref.yaml")) == {
+            ("L11-prompt-ref", "warning", "review")
+        }
+
+    def test_prompt_ref_warning_is_promoted_under_strict(self):
+        assert ("L11-prompt-ref", "error", "review") in _tuples(
+            _lint("l11_unresolved_prompt_ref.yaml", strict=True)
+        )
+
+    def test_resolvable_step_and_prompt_refs_are_clean(self):
+        assert _lint("step_refs_clean.yaml", strict=True) == []
+
+
+class TestExampleWorkflowLint:
+    """The documented worked example lints clean under ``--strict`` (#756)."""
+
+    def test_spec_driven_impl_example_is_strict_clean(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        issues = WorkflowLinter(strict=True).lint(
+            repo_root / "defaults" / "workflows" / "spec-driven-impl.yaml"
+        )
+        assert issues == []

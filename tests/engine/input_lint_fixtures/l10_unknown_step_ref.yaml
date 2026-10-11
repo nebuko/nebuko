@@ -1,0 +1,9 @@
+name: l10-step-ref
+description: "A consumer references an upstream step that does not exist"
+trigger:
+  agents: [dev]
+steps:
+  - name: work
+    agent: dev
+    inputs: [ghost]
+    next: null

@@ -9,7 +9,7 @@ runs an agent, mutates a workflow, or touches GitHub.
 |---|---|
 | **Entry point** | `python -m engine lint <paths…>` |
 | **Exit codes** | `0` clean (or warnings only) · `1` at least one error · `2` usage/load failure |
-| **Rule set** | `L1`–`L10` (see [Rule reference](#rule-reference)) |
+| **Rule set** | `L1`–`L11` (see [Rule reference](#rule-reference)) |
 | **Source** | `engine/lint.py` (rules) + `engine/lint_cli.py` (command) |
 
 ---
@@ -120,7 +120,8 @@ want an unreachable step to fail the build.
 | `L7-no-terminal` | error | No step can terminate — every path cycles. |
 | `L8-input-binding` | error | A call-site binding names an input the callee does not declare, or leaves a `required` input unbound. |
 | `L9-input-kind` | error | A call-site binding's kind does not match the callee's declared kind — a `ref` must be kind-preserving. |
-| `L10-input-ref` | warning → error under `--strict` | A consumer references an `input.<name>` / `<step>.<out>` not in scope, or a declared input is never consumed or forwarded. |
+| `L10-input-ref` | warning → error under `--strict` | A consumer references an `input.<name>` or a bare `<step>` not in scope, a step is named `input` (reserved), or a declared input is never consumed or forwarded. |
+| `L11-prompt-ref` | warning → error under `--strict` | A step `prompt` contains a `{{ <step> }}` placeholder that does not name a declared step. |
 
 ### L1 — dangling `next`
 
@@ -294,9 +295,12 @@ inputs:
 ### L10 — unresolvable or unused reference
 
 Two shapes of the same "not wired" defect. First, a consumer `agent` step
-references `input.<name>` or `<step>.<out>` that is not in scope. Second, a
+references `input.<name>` (a workflow parameter) or a bare `<step>` (an upstream
+step whose posted comment is the value; ADR-0013) that is not in scope. A step
+named `input` is flagged too: `input.` is a reserved namespace. Second, a
 declared input is never consumed or forwarded by any step (even via a nested
-call), so the parameter is dead.
+call), so the parameter is dead. A file-level `outputs` entry must name a
+declared step � a workflow's results are the comments of the steps it names.
 
 ```yaml
 # 'run_test' is declared but no step ever references input.run_test
@@ -305,6 +309,27 @@ inputs:
 ```
 
 **Fix:** reference the value from a step, or drop the declaration.
+
+### L11 — unresolved prompt reference
+
+A `steps[].prompt` may interpolate upstream step comments with
+`{{ <step> }}`. L11 fires when a placeholder names something that is not a
+declared step — at run time it would degrade to `_(unavailable: <step>)_`.
+
+```yaml
+steps:
+  - name: implement
+    agent: dev
+    next: null
+
+  - name: review
+    agent: review
+    prompt: "Review against {{ plan }}"   # ← no step named 'plan'
+    next: null
+```
+
+**Fix:** reference a declared step name, or remove the placeholder. (A step's
+output is its posted comment; see [ADR-0013](./adr/0013-step-outputs-are-step-comments.md).)
 
 ---
 

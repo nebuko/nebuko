@@ -18,6 +18,7 @@ from .sub_domains.gate_decision.gate_decision import GateDecision
 
 # Features
 from .features.build_state.build_state import build_state
+from .step_output_record import StepOutputRecord
 from .features.to_json.to_json import state_to_json
 from .features.comment.to_git_comment import format_collapsed_section
 from .features.get_last_state.get_last_state import (

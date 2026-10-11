@@ -6,7 +6,7 @@ inputs:
   - name: run_test
     kind: exec
 outputs:
-  - patch_ready
+  - build
 steps:
   - name: build
     workflow: chain-leaf

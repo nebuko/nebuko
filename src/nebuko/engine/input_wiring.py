@@ -2,7 +2,7 @@
 
 A workflow is a typed function: its declared ``inputs`` are parameters, supplied
 by the caller at a ``workflow`` call site and consumed by downstream ``agent``
-steps through ``input.<name>`` / ``<step>.<out>`` references. This module turns
+steps through ``input.<name>`` / ``<step>`` references. This module turns
 the resolver's ``STEP_INPUTS`` payload into fresh, engine-injected context:
 
 * **frame bindings** (the live sub-workflow call's parameters) are resolved
@@ -179,16 +179,25 @@ def _force(value: Any) -> str:
 
 
 # @stub-protected
-def materialize(step_inputs: StepInputs) -> list[Materialization]:
+def materialize(
+    step_inputs: StepInputs,
+    step_scope: Mapping[str, str] | None = None,
+) -> list[Materialization]:
     """Resolve frame bindings then consumer bindings; never raises for a provider.
 
     A failing provider (non-zero exit, timeout, unresolved reference) yields a
     failed :class:`Materialization`; the caller applies the ``required`` policy.
+
+    ``step_scope`` maps upstream step names to their state-stripped comment
+    bodies (issue #756): a consumer binding whose ``ref`` is a bare step name
+    resolves against it. ``input.<name>`` frame parameters take precedence.
     """
     scope: dict[str, Any] = {}
     for frame in step_inputs.frames:
         for name, binding in frame.bindings.items():
             scope[f"input.{name}"] = _resolve_binding(binding, scope)
+    for step, body in (step_scope or {}).items():
+        scope.setdefault(step, body)
 
     results: list[Materialization] = []
     for name, binding in step_inputs.consumer.items():
