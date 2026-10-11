@@ -16,6 +16,7 @@ from .sub_domains.dispatch.dispatch import Dispatch
 from .sub_domains.gate_decision.gate_decision import GateDecision
 from .sub_domains.function_call import FunctionCall
 from .sub_domains.step_resolution.step_resolution import StepResolution
+from .sub_domains.thread_record.thread_record import ThreadRecord
 
 STATE_MARKER_START = "<!-- WORKFLOW_STATE_START -->"
 STATE_MARKER_END = "<!-- WORKFLOW_STATE_END -->"
@@ -130,8 +131,9 @@ class CircuitBreakerState(BaseModel):  # @stub-protected
 # the ``WorkflowPosition`` block's own ``version`` (that one is the position
 # block's shape marker, pinned to ``POSITION_STATE_VERSION``). Bumped when the
 # top-level state shape changes: v1 flat -> v2 recursive position -> v3
-# universal position -> v4 (``run_id`` + ``schema_version`` split).
-STATE_SCHEMA_VERSION = 4
+# universal position -> v4 (``run_id`` + ``schema_version`` split) -> v5 (thread
+# ledger + per-step input records, issue #872).
+STATE_SCHEMA_VERSION = 5
 
 
 class WorkflowState(BaseModel):
@@ -160,6 +162,11 @@ class WorkflowState(BaseModel):
             is the single metrics authority; issue #792).
         pinned_comment_ids: GitHub comment IDs whose full content should be
             fetched at runtime for high-fidelity context.
+        thread: Categorized ledger of every artifact on the issue (issue body,
+            commands, engine notices, agent answers, human feedback), keyed by
+            its GitHub id — the source of truth the prompt's "Recent thread" is
+            rendered from (issue #872). Empty on legacy blobs, which load
+            unchanged.
         current_context: Free-form context dict for shared data between agents
             (pending tasks, constraints, decisions, etc.).
         parent_workflow: Parent workflow name if currently in a sub-workflow.
@@ -216,6 +223,10 @@ class WorkflowState(BaseModel):
 
     history: list[HistoryEntry] = Field(default_factory=list)
     pinned_comment_ids: list[int] = Field(default_factory=list)
+    # Categorized thread ledger (issue #872). default_factory keeps legacy blobs
+    # without this key loadable; an empty ledger serializes to nothing
+    # (exclude_defaults + collapse), so pre-#872 states round-trip unchanged.
+    thread: list[ThreadRecord] = Field(default_factory=list)
     current_context: dict[str, Any] = Field(default_factory=dict)
     parent_workflow: Optional[str] = None
     parent_workflow_step: Optional[str] = None

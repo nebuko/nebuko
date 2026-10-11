@@ -123,6 +123,33 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return entries
 
     # @stub-protected
+    def load_raw_thread(self) -> tuple[Any, Sequence[dict[str, Any]]]:
+        """Full ``(issue, comments)`` payloads for the thread ledger (issue #872).
+
+        The ledger reconciles the *whole* thread (so a vanished id is safely
+        detected as deleted), not the bounded recency snapshot. The snapshot is
+        reused when it was already fetched unbounded; otherwise the full list is
+        fetched once. The issue object is best-effort (``None`` on failure).
+        """
+        client = self._client_handle()
+        repo = self._require_repo()
+        number = self._issue_number()
+
+        snapshot = self._thread_snapshot()
+        comments: Sequence[dict[str, Any]] = snapshot.comments
+        if self._snapshot_limit is not None:
+            comments = client.get_issue_comments(repo, number)
+
+        getter = getattr(client, "get_issue", None)
+        issue = None
+        if getter is not None:
+            try:
+                issue = getter(repo, number)
+            except Exception:  # noqa: BLE001 - best-effort metadata
+                issue = None
+        return issue, comments
+
+    # @stub-protected
     def _thread_snapshot(self) -> Any:
         """Return the cached per-run snapshot, fetching the thread at most once."""
         if self._snapshot is None:
