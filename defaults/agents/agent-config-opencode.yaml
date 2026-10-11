@@ -73,7 +73,7 @@ agents:
         reasoning: "high"
 
   review:
-    model: "${llms.glm-5_3-flash}"
+    model: "${llms.deepseek-v4_1-flash}"
     role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
