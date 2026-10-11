@@ -73,7 +73,8 @@ When an agent finishes, the engine resolves its successor in this order
    honor it (a deliberate stop, retry, or human gate).
 3. **The registered `callback`** → return to the caller.
 4. **The workflow forward edge** (`steps[].next`) → continue the workflow.
-5. **No target at all** → the **no-action default**: `hold`.
+5. **No target at all** → the **no-action default**: return to the `callback`
+   when a return address is registered, else `hold` (§5).
 
 `dispatch` with `status: advance` and no explicit destination means *"I am
 done — route me by the standard rules above"*. Rule 2 only fires for the
@@ -112,17 +113,30 @@ workflow state as `CONFIG_CALLBACK`), resolved by
 
 ---
 
-## 5. The no-action default → `hold`
+## 5. The no-action default → callback, else `hold`
 
 An agent that ends a run with **no** `dispatch` and **no** `function_call` is
-experiencing contract drift, not a clean completion. Auto-advancing the
-workflow on an unknown state silently misroutes, so the safe response is to
-**hold for a human** and record why:
+experiencing contract drift, not a clean completion. What happens next depends
+on whether the run carries a **return address** (`callback`):
 
-```
-status: hold
-reason: "no-action default: agent emitted no decision"
-```
+- **No return address** (a rudderless top-level run): hold for a human. Auto-
+  advancing the workflow on an unknown state silently misroutes, so the safe
+  response is to stop and record why:
+
+  ```
+  status: hold
+  reason: "no-action default: agent emitted no decision"
+  ```
+
+- **With a return address** (the run was reached through a caller's
+  `function_call`): return to the caller. A callee that produced a deliverable
+  and has a known caller is a *bounded continuation* — the caller re-enters
+  with the report and decides — not a dead-end hold (issue #864):
+
+  ```
+  status: advance
+  reason: "no-action default: agent emitted no decision; returning to caller '<callback>'"
+  ```
 
 If a sentinel marker was present but could not be parsed, the parse diagnostic
 is carried into the reason instead of being swallowed:
@@ -131,8 +145,17 @@ is carried into the reason instead of being swallowed:
 reason: "no-action default: agent emitted no decision and the AGENT_RUN_CONFIG sentinel could not be parsed (<diagnostic>)"
 ```
 
-The factory is `DispatchConfig.no_action_default(reason)`, applied in
-`build_output._resolve_dispatch`.
+**Provenance.** Every synthesized fallback is tagged
+`origin: "engine_fallback"` on the `Dispatch` (an agent-emitted decision
+defaults to `origin: "agent"`), so consumers can tell a fabricated routing
+decision apart from one the agent actually made. The precedence rule 2 (§3)
+is unchanged: an **explicit** agent `hold`/`loop`/`terminate` always outranks
+the callback — only the synthesized fallback returns home.
+
+The factory is `DispatchConfig.fallback_for(callback, diagnostic)`, applied in
+`build_output._resolve_dispatch`. `DispatchConfig.no_action_default(reason)`
+remains as the rudderless compatibility shim (always `hold` +
+`engine_fallback`).
 
 > **Engine-owned human notification (issue #795).** The hold surfaces in the
 > workflow's normal awaiting-human path, and the engine — not the agent — posts
@@ -174,9 +197,11 @@ returns to `issue`.
 
 ### A decision-less agent
 
-An agent posts an answer with no sentinel at all. The engine resolves
-`dispatch = hold` with an observable reason (§5) rather than continuing the
-workflow.
+An agent posts an answer with no sentinel at all. With **no** return address
+the engine resolves `dispatch = hold` (`origin="engine_fallback"`) with an
+observable reason (§5) rather than continuing the workflow. If the run was a
+callee reached through a caller's `function_call`, the same fallback resolves
+`advance` and returns to the caller instead.
 
 ---
 

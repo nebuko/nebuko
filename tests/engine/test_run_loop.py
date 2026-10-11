@@ -709,6 +709,43 @@ class TestRoutePhase:
         assert decision.status == "soft_kill"
         assert _exit_code_for(decision) == ExitCode.ADVANCE
 
+    def test_engine_fallback_advance_exits_advance(self, tmp_path):
+        """Issue #864: a decision-less callee with a return address exits
+        ``ADVANCE`` (0) so its callback return is honored, not a dead-end hold.
+        """
+        engine = _engine(tmp_path)
+
+        decision = engine.route(
+            {
+                "dispatch": {
+                    "status": "advance",
+                    "origin": "engine_fallback",
+                    "reason": "no-action default: agent emitted no decision; "
+                    "returning to caller 'architect'",
+                }
+            }
+        )
+
+        assert decision.status == "advance"
+        assert _exit_code_for(decision) == ExitCode.ADVANCE
+
+    def test_engine_fallback_hold_exits_hold(self, tmp_path):
+        """A rudderless decision-less run still exits ``HOLD`` (10) (#765)."""
+        engine = _engine(tmp_path)
+
+        decision = engine.route(
+            {
+                "dispatch": {
+                    "status": "hold",
+                    "origin": "engine_fallback",
+                    "reason": "no-action default: agent emitted no decision",
+                }
+            }
+        )
+
+        assert decision.status == "hold"
+        assert _exit_code_for(decision) == ExitCode.HOLD
+
 
 class TestHumanActionNotice:
     """The engine owns the human ping (issue #795).

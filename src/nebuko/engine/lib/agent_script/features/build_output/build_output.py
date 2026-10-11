@@ -285,29 +285,27 @@ def _parse_complexity_policy_env():
         return None
 
 
-def _no_action_dispatch(diagnostic: str = "") -> Dispatch:
-    """Synthesize the safe no-action fallback for a decision-less run (#765).
+def _no_action_dispatch(diagnostic: str = "", callback: str = "") -> Dispatch:
+    """Synthesize the decision-less fallback for a run with no decision (#864).
 
-    An agent that ends its run without emitting any decision (no
-    ``dispatch`` and no ``function_call``) is contract drift, not a normal
-    completion — auto-advancing the workflow on an unknown state silently
-    misroutes. The safe response is to ``hold`` for a human and record why.
-    When a sentinel marker was present but could not be parsed, the
-    diagnostic is carried into the reason instead of being swallowed.
+    An agent that ends its run without emitting any decision (no ``dispatch``
+    and no ``function_call``) is contract drift, not a normal completion. When
+    the run carries a **return address** (``callback``, i.e. it was reached
+    through a caller's ``function_call``) the bounded continuation is to
+    ``advance`` back to the caller, which re-enters with the report and decides.
+    Only a rudderless run holds for a human.
 
-    The canonical ``DispatchConfig.no_action_default`` factory owns the
-    fallback status/contract; this adapter maps it onto the ``Dispatch``
-    the workflow engine consumes.
+    The canonical ``DispatchConfig.fallback_for`` factory owns the fallback
+    status/precedence; this adapter maps it onto the ``Dispatch`` the workflow
+    engine consumes, carrying ``origin='engine_fallback'`` so the synthesized
+    decision is distinguishable from an agent-explicit one (#864).
     """
-    if diagnostic:
-        reason = (
-            "no-action default: agent emitted no decision and the "
-            f"AGENT_RUN_CONFIG sentinel could not be parsed ({diagnostic})"
-        )
-    else:
-        reason = "no-action default: agent emitted no decision"
-    default = DispatchConfig.no_action_default(reason)
-    return Dispatch(status=default.status, reason=default.reason)
+    fallback = DispatchConfig.fallback_for(callback, diagnostic)
+    return Dispatch(
+        status=fallback.status,
+        reason=fallback.reason,
+        origin=fallback.origin,
+    )
 
 
 def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
@@ -838,9 +836,10 @@ def _resolve_dispatch(
          free-text sentinel).
       2. Legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel — silent compat
          fallback during the dual-mode migration window.
-      3. Neither — a decision-less run, defaulted to ``hold`` (issue #765,
-         :func:`_no_action_dispatch`) so the engine never auto-advances an
-         unknown state.
+      3. Neither — a decision-less run: the fallback advances back to the
+         registered ``callback`` when there is a return address, else holds
+         (issue #765, #864, :func:`_no_action_dispatch`) so the engine never
+         auto-advances an unknown state.
 
     When the tool call wins, ``branch``/``workflow``/``step`` left unset by
     the tool are merged in from a co-emitted sentinel (issue #618) so the
@@ -916,12 +915,16 @@ def _resolve_dispatch(
     # comment body — dispatch is stored structurally in workflow_state.dispatch.
     final_message = strip_agent_run_config(final_message)
 
-    # No-action default (issue #765): a run that emitted neither a dispatch nor
-    # a function_call is contract drift, not a completion. Default to a hold
-    # (carrying any parse diagnostic) instead of auto-advancing the workflow.
+    # No-action default (issue #765, #864): a run that emitted neither a
+    # dispatch nor a function_call is contract drift, not a completion. With a
+    # return address (``CONFIG_CALLBACK``, set when this run was reached via a
+    # caller's function_call) the bounded continuation is to advance back to
+    # the caller; a rudderless run holds for a human. Either way the decision
+    # is tagged ``engine_fallback``.
     if dispatch is None and function_call is None:
-        dispatch = _no_action_dispatch(diagnostic)
-        logger.warning(f"No action emitted — defaulting to hold: {dispatch.reason}")
+        callback = os.environ.get("CONFIG_CALLBACK", "")
+        dispatch = _no_action_dispatch(diagnostic, callback=callback)
+        logger.warning(f"No action emitted — defaulting to {dispatch.status}: {dispatch.reason}")
 
     return dispatch, function_call, final_message
 

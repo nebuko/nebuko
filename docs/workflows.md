@@ -216,7 +216,7 @@ validation. The notice is classified from the run outcome:
 | Stop | Notice |
 |---|---|
 | `hold`, reason `human_gate:<step>` | *awaiting approval* |
-| `hold`, any other reason (incl. no-action default) | *awaiting input* |
+| `hold`, any other reason (incl. a rudderless no-action default, §5 of [handoff-and-callback.md](./handoff-and-callback.md)) | *awaiting input* |
 | terminal step, on the run that produced its output | *workflow complete* |
 | `soft_kill` while the soft-retry budget remains | none (transient retry) |
 | terminal `SKIP_AGENT` on a follow-up run | none (nothing new to act on) |
