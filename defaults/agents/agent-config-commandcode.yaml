@@ -27,7 +27,7 @@ agents:
     role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
     temperature: 0.4
     prompt_file: "defaults/prompts/architect.md"
-    skills: ["call-agent", "posting-contract", "planning"]
+    skills: ["call-agent", "posting-contract", "planning", "complexity"]
     tools: ["think", "finish", "dispatch_next", "complexity_review"]
     complexity_overrides:
       low:
@@ -41,7 +41,7 @@ agents:
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
-    skills: ["posting-contract", "git-pr-workflow"]
+    skills: ["posting-contract", "git-pr-workflow", "complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch", "complexity_review"]
 
   context:
@@ -49,7 +49,7 @@ agents:
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
     temperature: 0.1
     prompt_file: "defaults/prompts/context.md"
-    skills: ["call-agent", "posting-contract", "context-research"]
+    skills: ["call-agent", "posting-contract", "context-research", "complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "complexity_review"]
     mcp_servers:
       - name: "brave-search"
@@ -68,12 +68,12 @@ agents:
     role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
-    skills: ["posting-contract", "plan-review", "retrospective"]
+    skills: ["posting-contract", "plan-review", "retrospective", "complexity"]
     tools: ["think", "finish", "dispatch_next", "terminal"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"
     role: "Product owner — triages and refines issues into actionable specs; never modifies code."
     prompt_file: "defaults/prompts/po.md"
-    skills: ["call-agent", "posting-contract", "issue-refinement"]
+    skills: ["call-agent", "posting-contract", "issue-refinement", "complexity"]
     tools: ["think", "finish", "dispatch_next", "complexity_review"]

@@ -75,6 +75,10 @@ overlay on top of it and a feedback actuator for the next boundary.
 - **Agent review is advisory.** The `complexity_review` tool requires a populated
   `evidence` bundle and a non-blank `feeling`; `suggested_tier` is input, not a
   command — the governor clamps it against policy.
+- **Guidance ships as one skill.** The tier rubric, drift signals, and the
+  re-tier request contract are delivered by a single dedicated `complexity` skill
+  (`defaults/skills/complexity.md`) attached to the agent roles, rather than
+  duplicated into existing prompts or skills.
 - **Pure and replayable.** `ComplexityGovernor` holds no state; policy and
   evidence pass per call, so every decision is unit-testable and reproducible
   from the persisted bundle.
