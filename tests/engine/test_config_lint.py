@@ -41,6 +41,7 @@ KNOWN_TOOLS_EXPECTED = frozenset(
         "think",
         "finish",
         "dispatch_next",
+        "call_agent",
         "report_scaffold_branch",
         "complexity_review",
     }

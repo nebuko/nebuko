@@ -34,6 +34,7 @@ _SDK_TOOL_NAMES = ("terminal", "file_editor", "task_tracker")
 _BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
 
 _DISPATCH_TOOL_NAME = "DispatchNextTool"
+_CALL_AGENT_TOOL_NAME = "CallAgentTool"
 _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
 _COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
 
@@ -105,6 +106,27 @@ def _ensure_dispatch_tool_registered() -> None:
 
 # Module-level guard: register_tool logs a warning on re-registration, so in
 # long-lived processes (or repeated test runs) we register only once.
+_call_agent_tool_registered = False
+
+
+def _ensure_call_agent_tool_registered() -> None:
+    """Register the ``call_agent`` ToolDefinition with the SDK registry.
+
+    Idempotent — safe to call on every agent run.
+    """
+    global _call_agent_tool_registered
+    if _call_agent_tool_registered:
+        return
+    from agent_script.features.call_agent_tool.call_agent_tool import (
+        CallAgentTool,
+    )
+
+    register_tool(_CALL_AGENT_TOOL_NAME, CallAgentTool)
+    _call_agent_tool_registered = True
+
+
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
 _scaffold_branch_tool_registered = False
 
 
@@ -169,6 +191,9 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
             _ensure_dispatch_tool_registered()
             sdk_tools.append(Tool(name=_DISPATCH_TOOL_NAME))
             dispatch_tool_enabled = True
+        elif tool_name == "call_agent":
+            _ensure_call_agent_tool_registered()
+            sdk_tools.append(Tool(name=_CALL_AGENT_TOOL_NAME))
         elif tool_name == "report_scaffold_branch":
             _ensure_scaffold_branch_tool_registered()
             sdk_tools.append(Tool(name=_SCAFFOLD_BRANCH_TOOL_NAME))
