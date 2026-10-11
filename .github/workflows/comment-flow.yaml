@@ -16,7 +16,7 @@ jobs:
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
     with:
       runs_on: "self-hosted"
-      agent_config_path: "defaults/agents/agent-config-commandcode.yaml"
+      agent_config_path: "defaults/agents/agent-config-opencode.yaml"
       circuit_breaker_threshold: 25
       # Secret slots (issue #834): pair a bare secret with the env var name the
       # MCP expects. Add a repo secret + two lines here, never edit the reusable
