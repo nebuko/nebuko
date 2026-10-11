@@ -154,6 +154,22 @@ def _tmp_impl_scaffold() -> dict:
     }
 
 
+def _tmp_impl_three() -> dict:
+    """A three-step scaffolded plan (issue #822): each ``step_N`` mounts the
+    ``dev-review-loop`` child, so a dotted selector can address ``step_3`` and
+    the loop's ``review`` leaf below it."""
+    return {
+        "name": "tmp-impl",
+        "description": "Dynamically generated per-step execution workflow",
+        "trigger": {"agents": ["dev"]},
+        "steps": [
+            {"name": "step_1", "workflow": "dev-review-loop", "next": "step_2"},
+            {"name": "step_2", "workflow": "dev-review-loop", "next": "step_3"},
+            {"name": "step_3", "workflow": "dev-review-loop", "next": None},
+        ],
+    }
+
+
 # @stub-protected
 @pytest.fixture
 def nested_workflows_dir(tmp_path: Path) -> Path:
@@ -166,12 +182,30 @@ def nested_workflows_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def nested_three_workflows_dir(tmp_path: Path) -> Path:
+    """Nested shape whose scaffolded plan has three steps (issue #822)."""
+    (tmp_path / "dev-review-loop.yaml").write_text(yaml.dump(_dev_review_loop()))
+    (tmp_path / "plan-orchestration.yaml").write_text(yaml.dump(_plan_orchestration()))
+    (tmp_path / "tmp_impl").mkdir()
+    (tmp_path / "tmp_impl" / "workflow.yaml").write_text(yaml.dump(_tmp_impl_three()))
+    return tmp_path
+
+
+@pytest.fixture
 def scaffold_workflows_dir(tmp_path: Path) -> Path:
     """Materialize the issue-#648 scaffold shape: plan-orchestration's
     ``sub_impl`` mounts a branch file whose ``step_1`` is a runnable agent."""
     (tmp_path / "plan-orchestration.yaml").write_text(yaml.dump(_plan_orchestration()))
     (tmp_path / "tmp_impl").mkdir()
     (tmp_path / "tmp_impl" / "workflow.yaml").write_text(yaml.dump(_tmp_impl_scaffold()))
+    return tmp_path
+
+
+@pytest.fixture
+def unscaffolded_workflows_dir(tmp_path: Path) -> Path:
+    """plan-orchestration alone — ``tmp_impl/workflow.yaml`` was never scaffolded."""
+    (tmp_path / "dev-review-loop.yaml").write_text(yaml.dump(_dev_review_loop()))
+    (tmp_path / "plan-orchestration.yaml").write_text(yaml.dump(_plan_orchestration()))
     return tmp_path
 
 
@@ -342,6 +376,114 @@ class TestFullStateRouting:
         assert result.get("WORKFLOW_POSITION_PATH", "").endswith(
             "plan-orchestration/sub_impl|tmp-impl/step_1"
         )
+
+
+# ---------------------------------------------------------------------------
+# Nested step addressing (issue #822)
+# ---------------------------------------------------------------------------
+
+def _run_workflow_body(step_selector: str) -> str:
+    """A human comment whose first line selects a nested plan-orchestration step."""
+    return (
+        f"/nebuko run workflow --name plan-orchestration --step {step_selector}\n"
+    )
+
+
+def _run_selector(selector: str, workflows_dir: Path, prompt_base: str) -> dict:
+    """Resolve ``/nebuko run workflow --step <selector>`` through resolve_config."""
+    return resolve_config(
+        _run_workflow_body(selector), prompt_base, str(workflows_dir), is_bot=False,
+    )
+
+
+class TestNestedStepPathRouting:
+    """``--step sub_impl.step_3[.review]`` descends mounted sub-workflows (issue #822)."""
+
+    def test_plain_mount_step_descends_to_first_step(
+        self, nested_three_workflows_dir: Path, prompt_base: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A single-segment mount selector keeps the legacy first-step descent."""
+        monkeypatch.chdir(nested_three_workflows_dir)
+        result = _run_selector("sub_impl", nested_three_workflows_dir, prompt_base)
+        assert result["TASK"] == "dev"
+        assert result["SKIP_AGENT"] == "false"
+        assert result["WORKFLOW_POSITION_PATH"].endswith(
+            "plan-orchestration/sub_impl|tmp-impl/step_1|dev-review-loop/implement"
+        )
+
+    def test_nested_step_addresses_third_scaffold_step(
+        self, nested_three_workflows_dir: Path, prompt_base: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Issue #648 restart: ``sub_impl.step_3`` seeds plan step_3, skipping 1-2."""
+        monkeypatch.chdir(nested_three_workflows_dir)
+        result = _run_selector(
+            "sub_impl.step_3", nested_three_workflows_dir, prompt_base,
+        )
+        assert result["TASK"] == "dev"
+        assert result["SKIP_AGENT"] == "false"
+        assert result["WORKFLOW_NAME"] == "dev-review-loop"
+        assert result["WORKFLOW_STEP"] == "implement"
+        assert result["WORKFLOW_POSITION_PATH"].endswith(
+            "plan-orchestration/sub_impl|tmp-impl/step_3|dev-review-loop/implement"
+        )
+
+    def test_three_level_selector_addresses_review_leaf(
+        self, nested_three_workflows_dir: Path, prompt_base: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """``sub_impl.step_3.review`` re-enters at just step_3's review."""
+        monkeypatch.chdir(nested_three_workflows_dir)
+        result = _run_selector(
+            "sub_impl.step_3.review", nested_three_workflows_dir, prompt_base,
+        )
+        assert result["TASK"] == "review"
+        assert result["SKIP_AGENT"] == "false"
+        assert result["WORKFLOW_NAME"] == "dev-review-loop"
+        assert result["WORKFLOW_STEP"] == "review"
+        assert result["WORKFLOW_POSITION_PATH"].endswith(
+            "plan-orchestration/sub_impl|tmp-impl/step_3|dev-review-loop/review"
+        )
+
+    def test_unknown_nested_segment_fails_loudly(
+        self, nested_three_workflows_dir: Path, prompt_base: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """An absent nested segment must fail, not silently fall back to step_1."""
+        monkeypatch.chdir(nested_three_workflows_dir)
+        result = _run_selector(
+            "sub_impl.step_9", nested_three_workflows_dir, prompt_base,
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert "step_9" in result.get("REASON", "")
+        assert not result.get("WORKFLOW_POSITION_PATH")
+
+    def test_malformed_selector_fails_loudly(
+        self, nested_three_workflows_dir: Path, prompt_base: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Empty segments (double/leading/trailing dot) are rejected."""
+        monkeypatch.chdir(nested_three_workflows_dir)
+        for selector in ("sub_impl..step_3", "sub_impl.step_3.", ".step_3"):
+            result = _run_selector(
+                selector, nested_three_workflows_dir, prompt_base,
+            )
+            assert result["SKIP_AGENT"] == "true", selector
+            assert "invalid step name" in result.get("REASON", ""), selector
+
+    def test_unscaffolded_mount_fails_loudly(
+        self, unscaffolded_workflows_dir: Path, prompt_base: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A nested selector whose child was never scaffolded fails loudly."""
+        monkeypatch.chdir(unscaffolded_workflows_dir)
+        result = _run_selector(
+            "sub_impl.step_3", unscaffolded_workflows_dir, prompt_base,
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert "tmp_impl/workflow.yaml" in result.get("REASON", "")
+        assert not result.get("WORKFLOW_POSITION_PATH")
 
 
 # ---------------------------------------------------------------------------

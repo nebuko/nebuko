@@ -18,6 +18,7 @@ from config import (
     load_workflow,
     load_workflow_with_dirs,
     WorkflowPosition,
+    StepPath,
     StepRef,
 )
 from resolve_workflow import (
@@ -1362,6 +1363,7 @@ def _sub_workflow_step_entry(
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
     local_workflows_dir: Optional[str] = None,
+    step_path: Optional[StepPath] = None,
 ) -> dict:
     """Step-entry result for a ``workflow``/``repo``/``path`` step (issue #599).
 
@@ -1370,10 +1372,12 @@ def _sub_workflow_step_entry(
     and sets the parent/return fields identically to normal execution.
     ``scaffold_branch`` enables fetch-on-miss for branch-mounted children that
     are absent from the local (default-branch) checkout (issue #604).
+    ``step_path`` (issue #822) descends to a nested non-first step and carries
+    the full emitted position through to the entry result.
     """
     entry = resolve_sub_workflow_entry(
         step, wf_def, workflows_dir, prompt_base, scaffold_branch,
-        local_workflows_dir=local_workflows_dir,
+        local_workflows_dir=local_workflows_dir, step_path=step_path,
     )
     if not entry or entry.get("SKIP_AGENT") == "true":
         reason = (entry or {}).get("REASON", f"step '{step.name}' is not a valid sub-workflow step")
@@ -1384,6 +1388,8 @@ def _sub_workflow_step_entry(
         "config_step": entry["WORKFLOW_STEP"],
         "config_parent_workflow": entry["PARENT_WORKFLOW"],
         "config_parent_workflow_step": entry["PARENT_WORKFLOW_STEP"],
+        "WORKFLOW_POSITION": entry.get("WORKFLOW_POSITION"),
+        "WORKFLOW_POSITION_PATH": entry.get("WORKFLOW_POSITION_PATH", ""),
         "skip_reason": None,
     }
 
@@ -1395,13 +1401,15 @@ def _resolve_step_entry(
     prompt_base: str,
     scaffold_branch: Optional[str] = None,
     local_workflows_dir: Optional[str] = None,
+    step_path: Optional[StepPath] = None,
 ) -> dict:
     """Resolve the dispatchable entry for a force-next-step target (issue #599).
 
     Shape-aware: a step has exactly one of ``agent``/``workflow``/``repo``/
     ``script`` (validated by the WorkflowStep schema). Returns a dict with
     ``task``/``run_script``/``config_*`` overrides when runnable, or
-    ``skip_reason`` when the step cannot be force-run.
+    ``skip_reason`` when the step cannot be force-run. ``step_path`` (issue
+    #822) is the remaining nested descent for a dotted selector.
     """
     if step.agent:
         return _agent_step_entry(step)
@@ -1410,7 +1418,7 @@ def _resolve_step_entry(
     if step.workflow or step.repo or step.path:
         return _sub_workflow_step_entry(
             step, wf_def, workflows_dir, prompt_base, scaffold_branch,
-            local_workflows_dir,
+            local_workflows_dir, step_path,
         )
     return {
         "skip_reason": f"force-next-step: step '{step.name}' has no runnable source",
@@ -1454,6 +1462,10 @@ def _build_force_next_result(
             entry.get("config_parent_workflow_step")
             or (fs_state.parent_workflow_step or "")
         ),
+        # Nested entry emits its full position (issue #822); a plain entry
+        # leaves it empty so ``_attach_position`` rebuilds the chain.
+        "config_position_json": entry.get("WORKFLOW_POSITION") or "",
+        "config_position_path": entry.get("WORKFLOW_POSITION_PATH") or "",
     }
 
 
@@ -1538,25 +1550,35 @@ def _resolve_human_path(
                 "REASON": f"force-step: workflow '{config_workflow}' not found ({e})",
             }
 
-        if not _SAFE_WF_NAME_RE.match(target_step):
+        path = StepPath.parse(target_step)
+        if path is None:
             return {
                 "SKIP_AGENT": "true",
                 "REASON": f"force-step: invalid target step name '{target_step}'",
             }
-        # Explicit target step — resolve its shape-aware entry
-        target_step_def = None
-        for step in wf_def.steps:
-            if step.name == target_step:
-                target_step_def = step
-                break
+        # Explicit target step — resolve its shape-aware entry. A dotted
+        # selector (issue #822) names a mount step whose remaining segments
+        # descend into the mounted child.
+        target_step_def = next(
+            (s for s in wf_def.steps if s.name == path.segments[0]), None
+        )
         if target_step_def is None:
             return {
                 "SKIP_AGENT": "true",
                 "REASON": f"force-step: step '{target_step}' not found in workflow '{config_workflow}'",
             }
+        if path.is_nested and not _is_mount_step(target_step_def):
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": (
+                    f"force-step: step '{path.segments[0]}' is not a "
+                    f"sub-workflow mount; cannot descend '{target_step}'"
+                ),
+            }
+        tail = path.model_copy(update={"segments": path.segments[1:]}) if path.is_nested else None
         entry = _resolve_step_entry(
             target_step_def, wf_def, workflows_dir, prompt_base,
-            scaffold_branch, local_workflows_dir,
+            scaffold_branch, local_workflows_dir, step_path=tail,
         )
         if entry.get("skip_reason"):
             return {"SKIP_AGENT": "true", "REASON": entry["skip_reason"]}
@@ -1587,10 +1609,9 @@ def _resolve_human_path(
             # first step). Issue #609: this also descends a first-step
             # sub-workflow mount (e.g. the scaffold's ``tmp-impl``) to its
             # innermost runnable leaf instead of starting on the mount, and
-            # carries the parent/return fields.
-            if wf_resolved and requested_step and not _SAFE_WF_NAME_RE.match(
-                requested_step
-            ):
+            # carries the parent/return fields. Issue #822: a dotted selector
+            # (``sub_impl.step_3``) descends into the mounted child's steps.
+            if wf_resolved and requested_step and StepPath.parse(requested_step) is None:
                 wf_resolved = False
                 wf_fail_reason = (
                     f"/nebuko '{wf_name}': invalid step name '{requested_step}'"
@@ -1601,9 +1622,9 @@ def _resolve_human_path(
                     workflow=wf_name, step=requested_step
                 ).resolve(
                     wf_def,
-                    lambda target: _resolve_step_entry(
+                    lambda target, tail=None: _resolve_step_entry(
                         target, wf_def, workflows_dir, prompt_base,
-                        scaffold_branch, local_workflows_dir,
+                        scaffold_branch, local_workflows_dir, step_path=tail,
                     ),
                 )
                 if not entry_point.is_valid():
@@ -1644,12 +1665,16 @@ def _resolve_human_path(
         config_parent_workflow = entry_point.config_parent_workflow or ""
         config_parent_workflow_step = entry_point.config_parent_workflow_step or ""
         run_script = entry_point.run_script
+        config_position_json = entry_point.position_json or ""
+        config_position_path = entry_point.position_path or ""
     else:
         config_workflow = wf_name if wf_name and wf_resolved else ""
         config_step = ""
         config_parent_workflow = ""
         config_parent_workflow_step = ""
         run_script = None
+        config_position_json = ""
+        config_position_path = ""
     result = {
         "task": task,
         "run_script": run_script,
@@ -1668,6 +1693,8 @@ def _resolve_human_path(
         "config_branch": "",
         "config_parent_workflow": config_parent_workflow,
         "config_parent_workflow_step": config_parent_workflow_step,
+        "config_position_json": config_position_json,
+        "config_position_path": config_position_path,
     }
     # Diagnostic for the terminal skip comment when /nebuko failed and no
     # mention fallback produced a task (issue #529).
