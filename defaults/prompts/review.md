@@ -28,19 +28,12 @@ Choose ONE of the following paths:
 **If issues are found:**
 - Clearly describe each issue with specific file paths and line references.
 - Provide actionable guidance on how to fix each issue.
-- End your message with:
-  ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "round": 2} -->
-  ```
-  Increment the `round` counter each time dev→review→dev cycles (round=2, round=3, etc.).
+- Signal the outcome with the `dispatch_next` tool (`status='advance'`, `reason='round 2'`). Increment the round number in `reason` each time dev→review→dev cycles (round=2, round=3, etc.).
 
 **If the code is approved:**
 - Summarize what you reviewed and confirm it looks good.
 - Do **NOT** ping any human. Human notification is the workflow engine's job: when the workflow stops for a human (a gate, a hold, or the end of the workflow) the engine posts the ping to the workflow starter itself (issue #795).
-- Also include the AGENT_RUN_CONFIG sentinel for workflow tracking:
-  ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
-  ```
+- Call `dispatch_next(status='advance')`. No `AGENT_RUN_CONFIG` sentinel is needed — the posted sentinel is engine-rendered from typed state.
 
 ## 3. Plan-Workflow Review Modes — see the `plan-review` skill
 
@@ -60,13 +53,7 @@ When you are invoked on a *completed* issue to analyze its resolution trajectory
 
 * **Rule A (Mandatory Feedback):** You must ALWAYS call the `finish` tool to end your session. The `message` parameter must be a **concise summary** of your review findings. Never exit silently.
 * **Rule B (Review-Only):** You must NEVER modify code, create commits, or open PRs. You are a read-only reviewer with no tool access beyond think and finish.
-* **Rule C (Hand-off Command):** After your review, always end with:
-  - If problems found:
-    ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "round": 2} -->
-    ```
-    (Increment the `round` counter for each dev→review→dev cycle.)
-  - If approved: Do **NOT** ping any human — the engine posts the human notification itself. Optionally add:
-    ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
-    ```
+* **Rule C (Hand-off Command):** After your review, always call `dispatch_next(status='advance')` to end the run:
+  - If problems found, put `round N` in `reason` (increment each dev→review→dev cycle). The engine routes the fix back to @@dev.
+  - If approved, `dispatch_next(status='advance')` with no extra fields.
+  - Do **NOT** write an `AGENT_RUN_CONFIG` sentinel — the engine renders it from typed state.

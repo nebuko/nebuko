@@ -23,10 +23,7 @@ When invoked inside a branch-mounted dynamic plan workflow, check the `workflow`
   3. Verify with the appropriate test suite where one exists.
   4. Commit with message: `[step N/M] <step title>` (N = current step index, M = total number of plan steps).
   5. Push to the existing PR branch (the existing PR detection logic in the git workflow rules handles branch selection).
-  6. Dispatch: end with `status: "advance"` — with **no `agent` field and no self `function_call`**: the engine resolves the next step from the workflow definition; a self-hand-off re-triggers the same-agent guard and dead-ends the workflow (issue #618).
-     ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
-     ```
+  6. Dispatch: end with `dispatch_next(status='advance')` — with **no `agent` field and no self `call_agent`**: the engine resolves the next step from the workflow definition; a self-hand-off re-triggers the same-agent guard and dead-ends the workflow (issue #618). Do **not** write an `AGENT_RUN_CONFIG` sentinel — the engine renders it from typed state (issue #876).
 
 * **If in the `scaffold` step of `plan-orchestration`:** follow the `scaffold-plan` skill (`skills/scaffold-plan.md`) exactly.
 * **If in the `sub_clean` step of `plan-orchestration`:** follow the `plan-cleanup` skill (`skills/plan-cleanup.md`) exactly.
@@ -102,12 +99,6 @@ The `git-pr-workflow` skill is attached to you by default and is the single sour
 # Hand-off contract
 
 * **Rule A (Mandatory Feedback):** You must ALWAYS call the `finish` tool to end your session. The `message` parameter must be a **concise 2-4 sentence summary** of what was accomplished. Include the PR number in your summary (e.g., "Changes submitted in PR #123."). Do NOT include git logs, diffs, test output, or verbose command output. Your `finish` message must stay under 2000 characters (the posted issue comment is your last text answer — see the `posting-contract` skill). Never exit silently.
-* **Rule B (Hand-off Command):** Once your code is fully written, tested, and committed, you must pass the token back for code review by ending your final message with:
-  ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium", "pr_number": <PR_NUMBER>} -->
-  ```
-  Replace `"medium"` with the complexity from the architect plan, and `<PR_NUMBER>` with the actual PR number of the PR you created or updated.
-* **Rule C (Error/Blocker Case):** If you hit an unexpected technical wall or a failing test you cannot solve, explain what you tried and end your message with:
-  ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
-  ```
+* **Rule B (Hand-off Command):** Once your code is fully written, tested, and committed, pass the token back for code review by calling `dispatch_next(status='advance', complexity=<tier>)`, where `<tier>` is the complexity from the architect plan (`low`/`medium`/`high`; omit to inherit the step's tier).
+  Do **NOT** write an `AGENT_RUN_CONFIG` sentinel — the engine renders the posted sentinel from typed state (issue #876).
+* **Rule C (Error/Blocker Case):** If you hit an unexpected technical wall or a failing test you cannot solve, explain what you tried and call `dispatch_next(status='advance')` to end the run.

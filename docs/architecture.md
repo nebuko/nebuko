@@ -169,9 +169,11 @@ for every agent (no per-agent code paths):
    | missing/empty | The finish message → byte-identical legacy behavior |
 
    Invariants enforced regardless of agent:
-   - **Hand-off sentinel preservation** — `AGENT_RUN_CONFIG` sentinels are
-     merged from the answer and the finish message into the posted body exactly
-     once (last payload wins), so dispatch/branching always reach the comment.
+   - **Hand-off sentinel preservation** — the posted body carries the
+     engine-rendered `AGENT_RUN_CONFIG` sentinel (built from typed state)
+     exactly once, so dispatch/branching always reach the comment. A legacy
+     sentinel co-emitted by an agent is merged as a compatibility input (last
+     payload wins).
    - **Small state snapshots** — `WorkflowState.summary` stays derived from the
      concise finish message (`[:300]`), keeping snapshots compact.
 

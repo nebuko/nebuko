@@ -8,10 +8,14 @@ environment-variable catalog, and the bot marker conventions.
 
 ## AGENT_RUN_CONFIG
 
-Agents communicate hand-offs using a single-line HTML-comment sentinel that
-carries a compact JSON payload. The canonical matching pattern is defined in
-`engine/lib/validate_output.py`; all consumers (output building, comment
-preparation) reuse it from there.
+`AGENT_RUN_CONFIG` is a single-line HTML-comment sentinel that carries a
+compact JSON payload. It is a durable, **engine-rendered record** of a run's
+hand-off: the engine builds it from typed state (the `dispatch_next` /
+`call_agent` control-plane tools) and appends it to the posted comment exactly
+once. Agents do **not** emit it themselves (issue #876); the parser below is
+retained only as a compatibility input for legacy comments. The canonical
+matching pattern is defined in `engine/lib/validate_output.py`; all consumers
+(output building, comment preparation) reuse it from there.
 
 ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
