@@ -1,8 +1,8 @@
 """Prepare github_comment.md from final_message.txt.
 
 Reads the agent's final message, strips internal XML/HTML tags
-(AGENT_RUN_CONFIG sentinels + legacy <agentRunConfig>, splitPlan), and writes
-the cleaned content to github_comment.md for the peter-evans/comment action.
+(AGENT_RUN_CONFIG sentinels + legacy <agentRunConfig>), and writes the cleaned
+content to github_comment.md for the peter-evans/comment action.
 
 All regex operations use re.DOTALL for robust multi-line matching.
 No bash intermediate — Python reads and writes files directly.
@@ -39,9 +39,6 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
 # The legacy form is no longer a dispatch-parsing path (issue #450);
 # this strip prevents stale raw XML from leaking into rendered comments.
 _LEGACY_AGENT_RUN_CONFIG = re.compile(r"<agentRunConfig>.*?</agentRunConfig>", re.DOTALL)
-
-# <splitPlan> XML block — safety net (already replaced upstream)
-_SPLIT_PLAN = re.compile(r"<splitPlan>.*?</splitPlan>", re.DOTALL)
 
 # Console.log "Message from Agent" separator
 _CONSOLE_MARKER = "Message from Agent " + "\u2500" * 63
@@ -256,8 +253,7 @@ def _posted_recall_count(state: WorkflowState | None) -> int:
 def clean_message(raw: str) -> str:
     """Strip internal XML/HTML tags from an agent message.
 
-    Removes AGENT_RUN_CONFIG sentinels (plus legacy <agentRunConfig> blocks)
-    and <splitPlan> blocks.
+    Removes AGENT_RUN_CONFIG sentinels (plus legacy <agentRunConfig> blocks).
 
     All regex operations use re.DOTALL to handle multi-line content safely.
 
@@ -274,9 +270,6 @@ def clean_message(raw: str) -> str:
     # JSON with special characters (<, >, {, }, $) that break bash echo.
     content = _LEGACY_AGENT_RUN_CONFIG.sub("", content)
     content = strip_agent_run_config(content)
-
-    # Strip <splitPlan> blocks (already replaced with summary upstream).
-    content = _SPLIT_PLAN.sub("", content)
 
     # Clean up residual blank lines from removals (collapse 3+ newlines to 2).
     content = re.sub(r"\n{3,}", "\n\n", content).strip()

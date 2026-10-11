@@ -48,10 +48,6 @@ class TestIsPlainMentionTrigger:
         body = "<!-- bot-workflow-terminal -->\n@@architect"
         assert is_plain_mention_trigger(body) is True
 
-    def test_subtask_completion_notification(self):
-        body = "@@architect <!-- bot-workflow-terminal --> <!-- subtask-complete: 2 -->"
-        assert is_plain_mention_trigger(body) is True
-
     def test_bare_human_mention_is_plain(self):
         # Human comments route via human_mention, but shape detection still
         # matches a bare mention.
@@ -140,22 +136,13 @@ class TestExtractMentionAgent:
 
 
 class TestExtractMachineTrigger:
-    def test_subtask_complete_maps_to_architect_with_index(self):
-        assert extract_machine_trigger(
-            "<!-- bot-subtask-complete: 3 -->"
-        ) == ("architect", "3")
-
     def test_generic_trigger(self):
         assert extract_machine_trigger(
             "<!-- bot-trigger: review -->"
-        ) == ("review", None)
+        ) == "review"
 
     def test_no_token(self):
         assert extract_machine_trigger("plain human comment @@dev") is None
-
-    def test_subtask_complete_beats_generic(self):
-        body = "<!-- bot-subtask-complete: 1 -->\n<!-- bot-trigger: dev -->"
-        assert extract_machine_trigger(body) == ("architect", "1")
 
 
 class TestNormalizeResumeInput:
@@ -231,7 +218,6 @@ class TestIsMachineComment:
     def test_bot_trigger_token(self):
         assert is_machine_comment("<!-- bot-trigger: dev -->") is True
 
-    def test_subtask_and_summarizer_tokens(self):
-        assert is_machine_comment("<!-- bot-subtask-complete: 1 -->") is True
+    def test_summarizer_token(self):
         assert is_machine_comment("<!-- bot-summarizer-trigger -->") is True
 

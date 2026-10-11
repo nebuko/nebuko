@@ -29,7 +29,6 @@ JOURNAL_FILE = "journal.md"
 STATE_FILE = "state.json"
 LATEST_ANSWER_FILE = "latest_answer.md"
 CONSOLE_LOG_FILE = "console.log"
-TASKS_DIR = "tasks"
 
 # Each journal entry is introduced by this boundary line so posted bodies keep
 # their blank lines verbatim; the captured group is the entry timestamp.
@@ -94,23 +93,6 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         (self._run_dir / STATE_FILE).write_text(
             state.model_dump_json(), encoding="utf-8"
         )
-
-    # @stub-protected
-    def create_issue(self, *, title: str, body: str, labels: Sequence[str] = ()) -> int:
-        tasks_dir = self._run_dir / TASKS_DIR
-        tasks_dir.mkdir(parents=True, exist_ok=True)
-        index = len(list(tasks_dir.glob("*.md"))) + 1
-        # Record the title and labels too: ``create_sub_issues`` hands the
-        # creator a ``[Sub-task i/n]`` prefixed title plus the parent label, and
-        # those are part of the sub-task contract Stage D will make runnable
-        # (issue #590 round-4, finding 5).
-        header = [f"# {title}"]
-        if labels:
-            header.append("labels: " + ", ".join(labels))
-        (tasks_dir / f"{index}.md").write_text(
-            "\n\n".join([*header, body]), encoding="utf-8"
-        )
-        return index
 
     # @stub-protected
     def delete_issue_comments(self, issue: str, from_comment: str = "") -> int:

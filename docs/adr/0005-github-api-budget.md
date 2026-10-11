@@ -141,10 +141,10 @@ Reading of the table:
 
 ## 6. Future work
 
-- Unify the remaining clients (`issue_creation.GitHubClient` over raw `urllib`,
-  `ensure_pr`) onto the transport, and route the workflow YAML's raw `curl`
-  content writes off `GITHUB_TOKEN` onto the PAT budget so one policy governs
-  every write.
+- Unify the remaining clients (`ensure_pr` and the workflow YAML's raw `curl`
+  helpers) onto the transport, and route the workflow YAML's raw `curl` content
+  writes off `GITHUB_TOKEN` onto the PAT budget so one policy governs every
+  write.
 - Revisit a native HTTP client if `gh`'s decode behaviour keeps masking real
   HTTP statuses.
 - If the fleet grows past ≈28 runs/hour, add a cross-job write queue (or

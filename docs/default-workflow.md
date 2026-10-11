@@ -15,7 +15,7 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 | Trigger | Condition |
 |---------|-----------|
 | `issues` | Issue opened, edited, assigned, or closed - body must contain an agent mention (`@@architect`, `@@dev`, etc.) or `/nebuko`. Bot-tagged bodies (starting with `<!-- bot-agent-` or `<!-- bot-workflow-terminal -->`) never fire on `@@mentions` |
-| `issue_comment` | New comment - body must contain an agent mention, or a machine trigger token: `"function_call"` (in the posted state JSON), `<!-- workflow-continue -->`, `<!-- bot-subtask-complete: N -->`, `<!-- bot-trigger: agent -->`. `@@mention` firing is suppressed when the comment starts with a bot marker |
+| `issue_comment` | New comment - body must contain an agent mention, or a machine trigger token: `"function_call"` (in the posted state JSON), `<!-- workflow-continue -->`, `<!-- bot-trigger: agent -->`. `@@mention` firing is suppressed when the comment starts with a bot marker |
 | `workflow_call` | Reusable workflow invoked by another workflow; uses `prompt_body` input |
 
 ### Agent Roles
@@ -38,11 +38,10 @@ hold, released by exactly one `/nebuko approve gate`.
 
 ## 2. Jobs
 
-The workflow defines three jobs:
+The workflow defines two jobs:
 
 1. **`run-task`** — Main job that processes triggers and runs agents.
 2. **`agent-metrics`** — Runs when an issue is closed (not a PR), aggregating metrics across all agent runs on that issue.
-3. **`subtask-completion-notifier`** — Runs when a sub-task issue (title starts with `[Sub-task`) is closed; notifies the parent issue.
 
 ---
 
@@ -220,7 +219,7 @@ Updates the git remote URL to embed the PAT, allowing the agent to push branches
 ### Step 15: Run OpenHands Agent
 
 **Input:** `PROMPT_LOCATION`, `AGENT_QUERY_PATH`, `ROLE_NAME`, `COMPLEXITY`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `AGENT_CONFIG_PATH`, `LLM_API_KEY`, `LLM_BASE_URL`, `PR_NUMBER` (optional for review agent).  
-**Output:** Agent execution results written to stdout → `console.log`, structured final message to `final_message.txt`, optional `split_plan.json`, `workflow_state.json`, and optional `final_message_part_{N}.txt` files.
+**Output:** Agent execution results written to stdout → `console.log`, structured final message to `final_message.txt`, `workflow_state.json`, and optional `final_message_part_{N}.txt` files.
 
 Builds the final prompt by concatenating:
 1. The role-specific prompt template (`$PROMPT_LOCATION`).
@@ -286,20 +285,7 @@ Cleans up the acknowledgment comment from Step 11 by marking it as `OUTDATED` vi
 
 ---
 
-### Step 20: Process Split Plan (Issue Decomposition)
-
-**Input:** `split_plan.json` (preferred) or `<splitPlan>...</splitPlan>` in `github_comment.md`. Only for `architect` role.  
-**Output:** Sub-issues created under the parent issue.
-
-Extracts the split plan from the architect agent's output and creates child issues via `issue_creation.py create`. Supports `auto_trigger` flag to automatically trigger agents on sub-issues.
-
-**Split plan source priority:**
-1. `split_plan.json` (pre-extracted by `agent_script.py`).
-2. Parse `<splitPlan>` tags from `github_comment.md` (fallback for single-part messages).
-
----
-
-### Step 21: Post Additional Message Parts
+### Step 20: Post Additional Message Parts
 
 **Input:** `final_message_parts_count.txt`, `final_message_part_{N}.txt` files.  
 **Output:** Additional comments on the issue for messages that exceeded GitHub's comment size limit.
@@ -308,7 +294,7 @@ If the agent's response was split into multiple parts (to stay within GitHub's ~
 
 ---
 
-### Step 22: Upload Logs as Artifacts (unzipped)
+### Step 21: Upload Logs as Artifacts (unzipped)
 
 **Input:** the staged `console.log` and `app.log` files under `${{ runner.temp }}/nebuko-task-logs`.  
 **Output:** two GitHub Actions artifacts named `console.log` and `app.log` (7-day retention).
@@ -335,24 +321,7 @@ fetched raw with a browser or an authenticated `curl` — no zip, no unzip step.
 
 ---
 
-## 5. Job: `subtask-completion-notifier`
-
-**Trigger:** Sub-task issue closed (title starts with `[Sub-task`).  
-**Purpose:** Notifies the parent issue's architect agent that a sub-task is complete.
-
-### Steps:
-1. Extract the 1-based index `N` from the title `[Sub-task N/M]`.
-2. Resolve the parent issue number from the `parent-{N}` label on the sub-task.
-3. Post a comment `<!-- bot-subtask-complete: {zero-index} -->` on the parent issue.
-
-The resolver maps this token directly to the `architect` agent (no `@@architect` needed — the token is one of the machine trigger tokens the CI gate recognizes). Architect detects the marker in the comment and runs sub-task orchestration mode.
-
-**Input:** Issue title, issue labels.  
-**Output:** Comment on parent issue triggering architect agent to evaluate completion status.
-
----
-
-## 6. Concurrency Model
+## 5. Concurrency Model
 
 ```yaml
 group: ${{ github.workflow }}-${{ github.event_name == 'issues' && format('-issue-{0}', github.event.issue.number) || format('-run-{0}', github.run_id) }}
@@ -365,7 +334,7 @@ cancel-in-progress: false
 
 ---
 
-## 7. Permissions
+## 6. Permissions
 
 | Permission | Level | Purpose |
 |-----------|-------|---------|
@@ -375,7 +344,7 @@ cancel-in-progress: false
 
 ---
 
-## 8. Data Flow Diagram
+## 7. Data Flow Diagram
 
 ```
 GitHub Event
@@ -421,19 +390,18 @@ GitHub Event
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
-│ Post-Processing     │ → Split plan → sub-issues, multi-part messages, logs
+│ Post-Processing     │ → Multi-part messages, logs
 └─────────────────────┘
 ```
 
 ---
 
-## 9. Key Files Referenced by This Workflow
+## 8. Key Files Referenced by This Workflow
 
 | File | Purpose |
 |------|---------|
 | `engine/lib/resolve_config.py` | Parses trigger body, resolves agent role, complexity, prompt, skills |
 | `engine/lib/agent_script.py` | Core agent execution — loads prompt, runs OpenHands SDK, produces output |
-| `engine/lib/issue_creation.py` | Creates sub-issues from split plans |
 | `engine/lib/agent_metrics.py` | Aggregates metrics across agent runs on a closed issue |
 | `defaults/prompts/{role}.md` | Role-specific prompt templates |
 | `defaults/skills/{name}.md` | Skill files loaded as additional context |
@@ -441,7 +409,7 @@ GitHub Event
 
 ---
 
-## 10. Environment Variables Summary
+## 9. Environment Variables Summary
 
 ### Input Variables (from workflow inputs/secrets)
 
@@ -475,7 +443,7 @@ GitHub Event
 
 ---
 
-## 11. Bot Marker Conventions
+## 10. Bot Marker Conventions
 
 Every comment posted by CI (any non-human sender) carries a **universal bot
 marker** on its first line:
@@ -499,8 +467,7 @@ comments where consumers need to know which agent wrote it:
 | Acknowledgment comment (Step 11) | line 1 | line 2 |
 | Circuit-breaker comment (Step 10) | line 1 | line 2 (architect) |
 | Terminal skip comment | line 1 | - |
-| Multi-part message posts (Step 21) | every part, line 1 | - |
-| Sub-task completion notification | present | - |
+| Multi-part message posts (Step 20) | every part, line 1 | - |
 | Python emitters via `github_client.post_comment()` | injected by `ensure_bot_marker()` | - |
 
 `github_client.ensure_bot_marker(body)` is the single injection point for the
@@ -521,10 +488,10 @@ extraction, circuit-breaker/summary counting, `query_context.py`) rely only on
 the role marker and are unaffected by the universal marker.
 
 CI plain-mention triggers — a universal-marker comment whose body is only an
-`@@mention` plus HTML-comment markers (e.g. the sub-task completion
-notification `@@architect <!-- subtask-complete: N -->`) — route to the mentioned
-agent even when an active workflow dispatch exists in the comment history,
-matching the pre-marker behavior of their untagged predecessors.
+`@@mention` plus HTML-comment markers (e.g. the sub-issue bootstrap
+`@@architect`) — route to the mentioned agent even when an active workflow
+dispatch exists in the comment history, matching the pre-marker behavior of
+their untagged predecessors.
 
 ### Follow-up (out of scope)
 

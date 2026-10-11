@@ -454,7 +454,7 @@ _MENTION_RE = re.compile(
 
 #: CI machine-trigger tokens (mirrors ``features/parse_trigger``).
 _MACHINE_TRIGGER_RE = re.compile(
-    r"<!--\s*bot-(?:subtask-complete|trigger)\b"
+    r"<!--\s*bot-trigger\b"
 )
 
 

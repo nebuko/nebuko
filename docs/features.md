@@ -3,11 +3,10 @@
 Per-feature deep-dives. Table of contents:
 
 1. [Human Commands](#human-commands)
-2. [Task Decomposition](#task-decomposition)
-3. [Safety Mechanisms](#safety-mechanisms)
-4. [Metrics](#metrics)
-5. [Execution Layer](#execution-layer)
-6. [Remote Workflows (Zero-Copy)](#remote-workflows-zero-copy)
+2. [Safety Mechanisms](#safety-mechanisms)
+3. [Metrics](#metrics)
+4. [Execution Layer](#execution-layer)
+5. [Remote Workflows (Zero-Copy)](#remote-workflows-zero-copy)
 
 ---
 
@@ -61,46 +60,6 @@ makes a mistyped command such as `/nebuko clean comments --from <id>` safe: it
 either executes (with `--from`, the scoped deletion) or gets an answer — it
 never boots an agent. The `--from <comment-id>` scope deletes that comment and
 every later one on the target issue; omit it to delete all comments.
-
----
-
-## Task Decomposition
-
-When `@@architect` judges a task too large for one implementation round, it emits
-a **split plan** as an XML-tagged JSON block inside its final message:
-
-```
-<splitPlan>
-{
-  "tasks": [
-    {"title": "Add retry helper", "body": "...", "labels": ["enhancement"], "dependencies": []},
-    {"title": "Wire retry into breaker", "body": "...", "labels": [], "dependencies": [1]}
-  ],
-  "auto_trigger": true
-}
-</splitPlan>
-```
-
-Pipeline:
-
-1. **Extraction** — `extract_split_plan()` (sub-domain `split_plan`) pulls the
-   block out of the agent's final message; `strip_split_plan()` removes it from
-   the posted comment so humans see clean output.
-2. **Validation & creation** — the GHA *Process Split Plan* step runs
-   `issue_creation.py create --parent N --plan plan.json`, which validates the
-   schema (non-empty `tasks[]`, list-type `dependencies[]`) and creates one
-   sub-issue per task under the parent via the GitHub REST API
-   (`GitHubClient` adapter, Port/Adapter pattern).
-3. **Dependency tracking** — each sub-issue records its dependency list;
-   `list` and `link` subcommands inspect/link the tree.
-4. **Auto-trigger** — with `auto_trigger: true`, ready sub-issues are triggered
-   automatically once their dependencies complete.
-5. **Completion notification** — the `subtask-completion-notifier` GHA job
-   watches sub-issues; when all tasks of a split plan are done, it posts a
-   summary on the parent issue.
-
-`@@architect` resolves the dependency order and triggers ready tasks; each
-sub-issue then runs its own full workflow chain independently.
 
 ---
 
@@ -171,7 +130,7 @@ separate hidden HTML comment):
 The agent execution layer is the `agent_script` package
 (`engine/lib/agent_script/`). Entry point `agent_script.py` orchestrates a
 chain of features: `load_prompt` → `resolve_llm_config` → `run_agent` →
-`build_output` (with `collect_metrics`, `ensure_pr`, `extract_split_plan`).
+`build_output` (with `collect_metrics`, `ensure_pr`).
 
 ### Supervised execution — `run_agent`
 

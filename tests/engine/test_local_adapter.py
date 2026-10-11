@@ -151,23 +151,3 @@ class TestState:
 
         assert (run_dir / STATE_FILE).is_file()
         assert adapter.load_state() == state
-
-
-class TestCreateIssue:
-    def test_writes_a_task_file_instead_of_calling_the_api(self, adapter, run_dir):
-        adapter.create_issue(title="Sub task", body="do the thing", labels=["split-plan"])
-
-        files = sorted((run_dir / "tasks").glob("*.md"))
-
-        assert len(files) == 1
-        content = files[0].read_text()
-        assert "# Sub task" in content
-        assert "labels: split-plan" in content
-        assert "do the thing" in content
-
-    def test_returns_monotonic_indices(self, adapter):
-        first = adapter.create_issue(title="A", body="a")
-        second = adapter.create_issue(title="B", body="b")
-
-        assert isinstance(first, int) and first > 0
-        assert second == first + 1

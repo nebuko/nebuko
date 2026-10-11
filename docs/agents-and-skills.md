@@ -51,8 +51,7 @@ Analyzes requests, designs architecture, drafts plans, and hands off to
 ignore the SDK's generic coding instructions: it is *not* a coding agent and
 must not explore repos or edit files (the tool whitelist enforces this
 regardless). Plans end in an `AGENT_RUN_CONFIG` dispatch that routes the next
-step — including `<splitPlan>` blocks for task decomposition
-([features.md — Task Decomposition](./features.md#task-decomposition)).
+step.
 
 ### context — Context Collection Agent
 Strictly read-only information gathering: locate files, extract snippets with
@@ -112,7 +111,7 @@ for that run.
 | `posting-contract` | [`posting-contract.md`](../defaults/skills/posting-contract.md) | How the final answer is posted to the issue. Default for every agent. |
 | `context-research` | [`context-research.md`](../defaults/skills/context-research.md) | Search strategies and complexity-based exploration depth for `context`. |
 | `git-pr-workflow` | [`git-pr-workflow.md`](../defaults/skills/git-pr-workflow.md) | Rebase/PR mechanics, checkpoints, and git safety rules for `dev`. |
-| `planning` | [`planning.md`](../defaults/skills/planning.md) | Plan decomposition, `<splitPlan>` / `<planWorkflow>` mechanics, and orchestration modes for `architect`. |
+| `planning` | [`planning.md`](../defaults/skills/planning.md) | Plan artifact shape, `<planWorkflow>` mechanics, and orchestration modes for `architect`. |
 | `plan-review` | [`plan-review.md`](../defaults/skills/plan-review.md) | Plan-workflow review modes for `review`. |
 | `retrospective` | [`retrospective.md`](../defaults/skills/retrospective.md) | Issue retrospective mode for `review`. |
 | `issue-refinement` | [`issue-refinement.md`](../defaults/skills/issue-refinement.md) | Issue refinement behavior contract (question format, state markers, delegation) for `po`. |

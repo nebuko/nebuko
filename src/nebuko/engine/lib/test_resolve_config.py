@@ -183,9 +183,9 @@ class TestResolveConfig:
 class TestCIBotMentionRouting:
     """Regression: CI-posted plain mention triggers keep routing to the agent.
 
-    Sub-issue bootstrap ("@@architect") and sub-task completion notifications
-    now carry the universal bot marker (issue #474) and classify as bot.
-    They must still resolve to the mentioned agent, not SKIP_AGENT.
+    Sub-issue bootstrap ("@@architect") notifications now carry the universal
+    bot marker (issue #474) and classify as bot. They must still resolve to the
+    mentioned agent, not SKIP_AGENT.
     """
 
     def _setup_dirs(self):
@@ -206,9 +206,9 @@ class TestCIBotMentionRouting:
         assert result["TASK"] == "architect"
         assert result["ROLE_NAME"] == "architect"
 
-    def test_subtask_completion_routes_to_architect(self):
+    def test_plain_mention_with_extra_marker_routes_to_architect(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        body = "@@architect <!-- bot-workflow-terminal --> <!-- subtask-complete: 2 -->"
+        body = "@@architect <!-- bot-workflow-terminal --> <!-- bot-trigger: architect -->"
 
         result = resolve_config(body, prompt_base, workflows_dir)
 
@@ -255,8 +255,8 @@ class TestCIBotMentionRouting:
         # A body embedding a full WORKFLOW_STATE is not a plain mention
         # trigger (the state JSON counts as non-mention content), so it is
         # resolved via the dispatch path instead of the ci_mention shortcut.
-        # Real CI triggers (sub-task completion, bootstrap) never embed a
-        # state in the trigger body — they arrive as mention-only comments.
+        # Real CI triggers (e.g. the sub-issue bootstrap) never embed a state
+        # in the trigger body — they arrive as mention-only comments.
         prompt_base, workflows_dir = self._setup_dirs()
         body = (
             "<!-- bot-workflow-terminal -->\n"

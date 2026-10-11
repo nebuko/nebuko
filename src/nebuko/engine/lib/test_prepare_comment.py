@@ -88,12 +88,6 @@ class TestCleanMessage(unittest.TestCase):
         self.assertIn("Important summary text", result)
         self.assertNotIn("<agentRunConfig>", result)
 
-    def test_strips_split_plan(self):
-        raw = "Intro<splitPlan>{\"tasks\": []}</splitPlan>Outro"
-        result = clean_message(raw)
-        self.assertNotIn("<splitPlan>", result)
-        self.assertIn("Intro", result)
-
     def test_cleans_residual_blank_lines(self):
         raw = "Para1\n\n\n\n\nPara2"
         result = clean_message(raw)

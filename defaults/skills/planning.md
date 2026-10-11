@@ -43,42 +43,10 @@ the architecture decision and the executable detail together, marked with
      only if the plan genuinely contains no class — and say why in one line.
 
 * Estimate complexity (LOW/MEDIUM/HIGH) and pass it in the dispatch.
-* **Only decompose into sub-issues when ALL of the following are true:**
-  - **Complexity** is estimated as **HIGH**
-  - **5+ genuinely independent steps** exist in the plan
-  - Steps have **no shared files or data dependencies** (tightly coupled changes belong in one PR)
-  - Each step touches **5+ files** OR spans **distinct architectural modules**
-  - If steps are independent use `"dependencies": []` on all tasks; if sequential, each task N+1 must list `"dependencies": [N]`
-* **Never decompose** when any of these anti-patterns apply:
-  - Bug fixes (single root cause → single fix)
-  - Configuration + code changes that must land together
-  - Schema/migration changes paired with application logic updates
-  - Tasks where intermediate state is not meaningful
-* **If decomposition criteria are fully met**, produce a `<splitPlan>` JSON block:
-  ```
-  <splitPlan>
-  {
-    "tasks": [
-      {"title": "Step 1: ...", "body": "...", "dependencies": []},
-      {"title": "Step 2: ...", "body": "...", "dependencies": [0]},
-      {"title": "Step 3: ...", "body": "...", "dependencies": [1]}
-    ],
-    "auto_trigger": true
-  }
-  </splitPlan>
-  ```
-  - The `title` is the sub-issue title (be specific and descriptive).
-  - The `body` contains the detailed implementation instructions for that sub-task.
-  - Set `auto_trigger: true` to automatically start each sub-issue via @@architect.
-  - **Task Dependencies** — Every task **MUST** include a `"dependencies"` array listing indices of prerequisite tasks:
-    - **Sequential execution**: Task 0 has `"dependencies": []`, task N+1 has `"dependencies": [N]`.
-    - **Parallel execution**: All tasks have `"dependencies": []`.
-    - **Mixed ordering**: e.g., tasks 0 and 1 run in parallel (`"dependencies": []`), task 2 waits for both (`"dependencies": [0, 1]`).
-    - **Always include** the `"dependencies"` field — omitting it defaults to empty (parallel), which will likely cause incorrect behavior.
-  - **IMPORTANT:** Do NOT nest split plans deeper than one level. Each sub-issue should be scoped as a self-contained implementation task. If a sub-issue itself requires decomposition, keep that decomposition within the sub-issue's own workflow rather than creating sub-sub-issues via another splitPlan.
-  - **Note:** The `<splitPlan>` block will be automatically extracted and stripped from the posted GitHub comment. A human-readable summary table will be appended instead. The raw JSON is saved as `split_plan.json` for sub-issue creation.
-  - After the `<splitPlan>`, hand off with `dispatch_next(status='advance', complexity='high')` — the gated `plan` step then holds for the human.
-* **If decomposition criteria are NOT fully met**, skip the `<splitPlan>` entirely and hand off directly to @@dev with `dispatch_next(status='advance', complexity='medium')` (or your estimated tier).
+* Hand off to @@dev with `dispatch_next(status='advance', complexity=<tier>)` — the
+  gated `plan` step then holds for the human until the gate is approved. For a
+  plan of 2+ sequential steps that share a single PR, use the **Plan
+  Orchestration Mode** below instead of a plain hand-off.
 
 ## Revision Path (gate rejected with feedback)
 
@@ -133,17 +101,11 @@ Steps defined with `human_gate: true` are a **security boundary**, not a routing
 
 ## Plan Orchestration Mode (Dynamic Plan Workflow)
 
-This mode applies when the approved plan consists of **2+ sequential steps that share a single PR**. It is an alternative to `<splitPlan>`, selected by the decision heuristic below.
-
-### Decision Heuristic — plan-orchestration vs. splitPlan
-
-* **Steps are sequential AND share a single PR** → use **plan-orchestration** (emit `<planWorkflow>`, never `<splitPlan>`).
-* **Steps are independent AND can be parallelized in separate PRs** → use **`<splitPlan>`** as per the decomposition rules above.
-* When both apply, prefer the option with fewer round-trips; when neither clearly applies, default to the standard single-plan hand-off.
+This mode applies when the approved plan consists of **2+ sequential steps that share a single PR**. Emit a `<planWorkflow>` block so the engine scaffolds a branch-mounted dynamic plan workflow; each step then runs its own @@dev round with review in the same PR.
 
 ### On the `architect` step (initial entry into `plan-orchestration`)
 
-* After the architecture proposal is approved and you have drafted the sequential multi-step plan, emit a **structured plan block** instead of `<splitPlan>`:
+* After the architecture proposal is approved and you have drafted the sequential multi-step plan, emit a **structured plan block**:
   ```
   <planWorkflow>
   {"issue": N, "steps": [{"title": "...", "instructions": "...", "complexity": "medium", "model": null}, ...]}
@@ -171,24 +133,6 @@ This mode applies when the approved plan consists of **2+ sequential steps that 
   - When recording the decision via the `dispatch_next` tool as well, pass the same `branch` value in the tool call so the persisted dispatch carries the routing key (see the Approval Gatekeeper section).
 
 * This mode adds no new tool access and does not change your tool-usage restriction.
-
-## Sub-Task Orchestration Mode
-
-When you detect a `<!-- bot-subtask-complete: {index} -->` marker in the current comment, you are in orchestration mode. Do NOT treat this as a regular issue request. Instead:
-
-1. Request @@context to fetch the `<!-- split-plan-state: ... -->` comment on this issue containing the JSON state with `tasks` and `completed` arrays.
-2. Once @@context returns the state, parse it and append `{index}` to the `completed` array.
-3. For each task in `tasks` that is NOT yet in `completed`:
-   - Check if ALL its `dependencies` are now contained in `completed`.
-   - If YES, the task is ready to be triggered.
-4. Delegate all external actions to @@context via the `AGENT_RUN_CONFIG` sentinel:
-   - Ask @@context to post a comment `<!-- bot-trigger: architect -->` on each ready task's issue (`tasks[i].issue_number`) to trigger it. Never post `@@architect` from a bot — the CI gate ignores `@@mentions` in bot messages (use the `function_call` or machine-trigger token instead).
-   - Ask @@context to update the `split-plan-state` comment with the new `completed` array.
-5. If all tasks are now completed, include a summary message: "All sub-tasks complete."
-6. If no tasks are newly ready (still waiting on other dependencies), include a brief status update in your message.
-
-Important: You have no tools — you cannot read comments, post comments, or edit issues yourself. Your role is purely cognitive: perform the dependency resolution logic and delegate all external actions to @@context. Do not attempt to implement any sub-task yourself.
-Note: Your `dependencies` arrays control both initial task triggering (tasks with non-empty `dependencies` are skipped) and post-completion sequencing (tasks trigger only once all dependencies appear in `completed`).
 
 ## Output Discipline
 

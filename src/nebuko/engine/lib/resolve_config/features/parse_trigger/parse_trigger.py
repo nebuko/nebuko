@@ -48,7 +48,6 @@ MACHINE_TOKENS: tuple[str, ...] = (
     "<!-- bot-workflow-terminal -->",
     "<!-- bot-agent-",
     "<!-- bot-trigger",
-    "<!-- bot-subtask-complete",
     "<!-- bot-summarizer-trigger -->",
     "AGENT_RUN_CONFIG",
 )
@@ -111,12 +110,11 @@ def is_plain_mention_trigger(trigger_body: str) -> bool:
     """Check if trigger body is a plain CI command trigger.
 
     A plain trigger consists solely of an @@mention plus optional
-    HTML-comment markers (bot marker, subtask-complete, ...), with no
-    other prose. This identifies CI-posted command triggers (e.g. the
-    "@@architect" sub-issue bootstrap and the sub-task completion
-    notification) that carry the universal bot marker but must still be
-    routed to the mentioned agent — as opposed to agent answer comments,
-    whose prose body disqualifies them here.
+    HTML-comment markers (bot marker, ...), with no other prose. This
+    identifies CI-posted command triggers (e.g. the "@@architect" sub-issue
+    bootstrap) that carry the universal bot marker but must still be routed
+    to the mentioned agent — as opposed to agent answer comments, whose
+    prose body disqualifies them here.
 
     Args:
         trigger_body: Raw trigger body text.
@@ -229,33 +227,27 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
     return None
 
 
-# Machine trigger tokens posted by the CI pipeline itself (issue #478).
-# These replace the legacy machine-posted "@@architect" comments now that
+# Machine trigger token posted by the CI pipeline itself (issue #478).
+# This replaces the legacy machine-posted "@@architect" comments now that
 # @@mentions are blocked for bot-triggered runs.
-_SUBTASK_COMPLETE_RE = re.compile(r"<!--\s*bot-subtask-complete:\s*(\d+)\s*-->")
 _GENERIC_TRIGGER_RE = re.compile(r"<!--\s*bot-trigger:\s*([a-z][a-z-]*)\s*-->")
 
 
-def extract_machine_trigger(trigger_body: str) -> Optional[Tuple[str, Optional[str]]]:
+def extract_machine_trigger(trigger_body: str) -> Optional[str]:
     """Extract a CI-posted machine trigger token from the trigger body.
 
-    Recognized tokens:
-      - ``<!-- bot-subtask-complete: N -->`` → ("architect", "N")
-      - ``<!-- bot-trigger: agent -->``      → ("agent", None) — generic form
+    Recognized token:
+      - ``<!-- bot-trigger: agent -->`` → "agent"
 
     Args:
         trigger_body: Raw trigger body text.
 
     Returns:
-        Tuple of (agent_name, extra) or None when no machine token is present.
-        ``extra`` carries the sub-task index for the subtask-complete token.
+        Agent name string, or None when no machine token is present.
     """
-    match = _SUBTASK_COMPLETE_RE.search(trigger_body)
-    if match:
-        return ("architect", match.group(1))
     match = _GENERIC_TRIGGER_RE.search(trigger_body)
     if match:
-        return (canonical_agent_name(match.group(1)), None)
+        return canonical_agent_name(match.group(1))
     return None
 
 

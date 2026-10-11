@@ -144,9 +144,8 @@ def resolve_config(
          (issues #674/#679).
        - /nebuko command by human → _resolve_human_path.
        - Human @@mention, or CI plain-mention trigger (universal bot marker
-         + mention-only body, e.g. sub-task completion notification) →
-         _resolve_human_path (parity between the two: the mention wins over
-         an active dispatch).
+         + mention-only body) → _resolve_human_path (parity between the two:
+         the mention wins over an active dispatch).
        - State + dispatch → _resolve_dispatch_path.
        - State without dispatch → _resolve_workflow_next_step.
        - Human trigger without state → _resolve_human_path.
@@ -249,12 +248,12 @@ def resolve_config(
     # Check for human commands early (independent of is_bot) so they take
     # priority even when prev_state+dispatch exist.
     human_mention = not is_bot and extract_mention_agent(trigger_body)
-    # CI-posted command triggers (sub-issue bootstrap "@@architect", sub-task
-    # completion notification) now carry the universal bot marker and so
-    # classify as bot. They are plain mention-only triggers (no prose after
-    # the mention) that must still route to the mentioned agent, even when
-    # an active workflow dispatch exists in the comment history — matching
-    # the pre-marker behavior where their bare mention set human_mention.
+    # CI-posted command triggers (sub-issue bootstrap "@@architect") now carry
+    # the universal bot marker and so classify as bot. They are plain
+    # mention-only triggers (no prose after the mention) that must still route
+    # to the mentioned agent, even when an active workflow dispatch exists in
+    # the comment history — matching the pre-marker behavior where their bare
+    # mention set human_mention.
     # Only the universal marker qualifies: legacy bot-agent- comments keep
     # their historical routing (skip unless they embed state/dispatch).
     ci_mention = has_universal_bot_marker(trigger_body) and is_plain_mention_trigger(
@@ -368,9 +367,8 @@ def resolve_config(
         else:
             config = _resolve_function_call_path(prev_state.function_call, workflows_dir, prev_state, local_workflows_dir=local_workflows_dir)
     elif extract_machine_trigger(trigger_body):
-        # CI-posted machine trigger token (bot-subtask-complete /
-        # bot-trigger) — replaces the legacy machine-posted @@architect
-        # comments (issue #478).
+        # CI-posted machine trigger token (bot-trigger) — replaces the legacy
+        # machine-posted @@architect comments (issue #478).
         config = _resolve_machine_trigger_path(trigger_body, workflows_dir)
     elif prev_state and dispatch_obj:
         # Auto-dispatch: workflow state with dispatch object — follow the workflow.
