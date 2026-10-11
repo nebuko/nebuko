@@ -7,6 +7,7 @@ from github_client import GitHubTransport
 from thread_snapshot import (
     STATE_TAIL_FLOOR,
     ThreadSnapshot,
+    build_comment_index,
     build_snapshot,
     load_thread_snapshot,
     state_tail_limit,
@@ -160,3 +161,32 @@ class TestStateTailLimit:
 
     def test_floors_a_non_positive_bound(self):
         assert state_tail_limit({"HISTORY_COMMENT_COUNT": "0"}) == STATE_TAIL_FLOOR
+
+
+class TestBuildCommentIndex:
+    """``build_comment_index`` maps comment id -> state-stripped body (#756)."""
+
+    def test_maps_id_to_body(self):
+        index = build_comment_index([{"id": 5, "body": "hello"}])
+        assert index == {"5": "hello"}
+
+    def test_strips_the_state_section(self):
+        from workflow_state import WorkflowState, to_git_comment
+
+        state = WorkflowState(workflow="w", step="plan", agent="architect")
+        body = f"agent answer\n\n{to_git_comment(state)}"
+        index = build_comment_index([{"id": 7, "body": body}])
+        assert "WORKFLOW_STATE" not in index["7"]
+        assert index["7"].startswith("agent answer")
+
+    def test_html_url_keys_the_same_body(self):
+        index = build_comment_index(
+            [{"id": 5, "html_url": "https://x/5", "body": "hi"}]
+        )
+        assert index["5"] == index["https://x/5"] == "hi"
+
+    def test_comments_without_id_are_skipped(self):
+        assert build_comment_index([{"body": "hi"}]) == {}
+
+    def test_missing_body_is_empty_string(self):
+        assert build_comment_index([{"id": 1}]) == {"1": ""}

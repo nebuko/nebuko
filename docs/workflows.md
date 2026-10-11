@@ -286,7 +286,7 @@ Security notes:
 
 ---
 
-## Typed Inputs and Outputs
+## Typed Inputs and Step Outputs
 
 A workflow is a **typed function** (issue #813): it declares `inputs` (its
 parameters) and `outputs` (its return values), and the caller supplies concrete
@@ -304,14 +304,14 @@ inputs:
   - name: greeting
     kind: str         # str  = a constant passed through
 outputs:
-  - patch_ready
+  - implement
 steps:
   - name: implement
     agent: dev
     inputs:
       run_test: input.run_test   # materialized just before this agent runs
       greeting: input.greeting
-    outputs: [patch_ready]
+    next: null
 ```
 
 ```yaml
@@ -340,32 +340,74 @@ Mechanics:
    runs each `exec` and injects the captured stdout as a labeled context block.
    `required: true` (default) fails the step **before the agent is invoked** if
    the command fails; `required: false` injects `_(unavailable: …)_`.
-4. **Declared-outputs return** *(intended — not yet shipped; see Status
-   below)* — only the callee's declared `outputs` cross back into the caller,
-   referenced as `<call-step>.<name>`.
-5. **Bounded nesting** — the call-frame chain is capped (`MAX_CALL_FRAMES`);
+4. **Bounded nesting** — the call-frame chain is capped (`MAX_CALL_FRAMES`);
    an over-deep chain fails the step deterministically before the agent runs.
    The frame chain is derived from the run's carried-forward mount position and
    decoded at the engine's input-materialization seam, where the cap is
    enforced.
 
 Wiring is checked offline by [`python -m engine lint`](./lint.md) (rules
-[L8–L10](./lint.md#rule-reference)): every declared input bound exactly once per
-call site, kinds matched, references resolvable in scope, and every declared
-input consumed or forwarded.
+[L8–L11](./lint.md#rule-reference)): every declared input bound exactly once per
+call site, kinds matched, references resolvable in scope, every declared
+input consumed or forwarded, and every prompt reference naming a declared step.
 
-**Status — what is shipped.** The **input path is complete**: declared
-`inputs`, call-site binding with the bare-string `ref` shorthand,
-kind-preserving lazy forwarding, just-in-time `exec` materialization at the
-prompt-assembly seam, mandatory injection, fail-before-agent on a `required`
-failure, the `MAX_CALL_FRAMES` depth bound, and lint rules L8–L10. The
-**output path is forward-looking**: the declared-outputs return
-(`<call-step>.<name>`) and the output-side lint checks depend on declared step
-outputs ([#756](https://github.com/nebuko/nebuko/issues/756)), which is not yet
-implemented. Today the `outputs` / `steps[].outputs` fields are parsed and
-validated, and `<step>.<name>` references are checked where the referenced
-output is already declared, but nothing yet populates the values at run time —
-an unresolved reference degrades to `_(unavailable: …)_` rather than failing.
+### Step Outputs — A Step's Output Is Its Comment
+
+Data flow **between steps of the same workflow** needs no declaration: a step's
+output *is* the comment it posts, addressed by the **step name** (issue #756,
+[ADR-0013](./adr/0013-step-outputs-are-step-comments.md)). A downstream step
+consumes an upstream step's comment through either surface, both resolved by the
+engine **before the agent runs**:
+
+- the deterministic `inputs` seam — `inputs: [plan]` (list shorthand) or the
+  alias mapping `inputs: {reviewed_plan: plan}`; and
+- `{{ <step> }}` inside `steps[].prompt`.
+
+```yaml
+steps:
+  - name: plan
+    agent: architect
+    next: implement
+
+  - name: implement
+    agent: dev
+    inputs: [plan]                 # the plan comment, materialized
+
+  - name: review
+    agent: review
+    inputs: [plan, implement]      # fan-in: plan + the dev output
+    prompt: |
+      Review the implementation against the plan.
+      Plan under review: {{ plan }}
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: implement
+        next: plan
+```
+
+- The value is the referenced step's **full comment, state-stripped** — exactly
+  what agents see in the thread. There is **no truncation**; the only bounds are
+  the pre-existing comment-size limits.
+- Only a **locator** (`{step, comment_id}`) is persisted, under
+  `current_context["step_outputs"]` in the `WORKFLOW_STATE` v1 comment — never
+  the body. The body is read back from the bounded thread snapshot.
+- Resolution is **single-pass**: a substituted body is never re-scanned, so a
+  step that quotes `{{ … }}` cannot induce recursion.
+- An unresolved reference degrades to `_(unavailable: <step>)_`; the linter
+  (`L10-input-ref`, `L11-prompt-ref`) reports it ahead of the run.
+- `inputs: [plan]` is a **required** binding: `input.<name>` workflow
+  parameters from ADR-0009 are unchanged and take precedence in the scope.
+
+**Status.** Both paths are shipped: the input path (declared `inputs`,
+call-site binding, kind-preserving forwarding, just-in-time `exec`
+materialization, mandatory injection, `MAX_CALL_FRAMES`) and the step-output
+path (`inputs: [<step>]`, `{{ <step> }}` prompt references, locator storage,
+locator backfill at publish and read time). This supersedes the earlier
+"output path is forward-looking" note: the named-output grammar
+(`outputs:` / `<step>.<name>`) was **removed** in favour of step-name
+references; a leftover `steps[].outputs:` key or dotted ref fails at load time
+with a #756 migration hint.
 
 ---
 

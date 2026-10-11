@@ -72,6 +72,9 @@ class CommentEntry:
     author: str
     body: str
     created_at: str  # ISO-8601 UTC, as emitted by the GitHub API
+    # Platform comment id (issue #756): lets a step's posted comment be located
+    # by name for step-output resolution. ``None`` for a hand-built entry.
+    comment_id: str | None = None
 
 
 # @stub-protected

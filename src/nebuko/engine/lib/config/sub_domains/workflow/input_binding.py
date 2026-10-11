@@ -8,11 +8,12 @@ sources:
 - ``exec`` — a literal command (argv list) run deterministically to capture
   context (the mandatory pre-hook the caller asked for);
 - ``str``  — a constant string;
-- ``ref``  — a reference (``input.<name>`` or ``<step>.<out>``) resolved
+- ``ref``  — a reference (``input.<name>`` or a bare ``<step>``) resolved
   against the caller's frame scope.
 
 A bare string is shorthand for a ``ref`` binding, so ``name: input.foo``
-reads cleanly without a flow mapping.
+reads cleanly without a flow mapping. A bare step name (``plan``) references
+that step's posted comment (issue #756).
 
 ``resolve`` is the side-effecting edge of the wiring: every other derivation
 in the feature is a pure function over the frozen values it returns.
@@ -26,8 +27,16 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# ``input.<name>`` (a frame parameter) or ``<step>.<out>`` (a declared output).
-REF_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*\.[A-Za-z_][A-Za-z0-9_-]*$")
+# ``input.<name>`` (a frame parameter) or a bare ``<step>`` (an upstream step
+# whose posted comment is the value; issue #756).
+REF_PATTERN = re.compile(
+    r"^(?:input\.[A-Za-z_][A-Za-z0-9_-]*|[A-Za-z_][A-Za-z0-9_-]*)$"
+)
+
+# The pre-#756 ``<step>.<out>`` grammar, kept only to emit a migration hint.
+_LEGACY_DOTTED_REF_PATTERN = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_-]*\.[A-Za-z_][A-Za-z0-9_-]*$"
+)
 
 _SOURCE_ATTRS = {"exec": "exec_", "str": "str_", "ref": "ref"}
 
@@ -63,9 +72,15 @@ class InputBinding(BaseModel):
                 "InputBinding must declare exactly one of 'exec', 'str', or 'ref'"
             )
         if self.ref is not None and not REF_PATTERN.match(self.ref):
+            if _LEGACY_DOTTED_REF_PATTERN.match(self.ref):
+                raise ValueError(
+                    f"InputBinding 'ref' {self.ref!r} uses the removed "
+                    "'<step>.<out>' grammar (issue #756); reference the step "
+                    "name ('<step>') instead"
+                )
             raise ValueError(
-                "InputBinding 'ref' must match the 'input.<name>' or "
-                f"'<step>.<out>' grammar, got {self.ref!r}"
+                "InputBinding 'ref' must match the 'input.<name>' or '<step>' "
+                f"grammar, got {self.ref!r}"
             )
         return self
 

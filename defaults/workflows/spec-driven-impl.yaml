@@ -44,10 +44,18 @@ steps:
 
   - name: implement
     agent: dev
+    # A step's output is its posted comment (ADR-0013): `plan` is materialized
+    # as a deterministic step input, its full state-stripped comment.
+    inputs: [plan]
     next: review
-    
+
   - name: review
     agent: review
+    inputs: [plan, implement]  # fan-in: the architect plan + the dev output
+    prompt: |
+      Review the implementation against the plan.
+      Plan under review: {{ plan }}
+      Both step outputs are also materialized above as deterministic inputs.
     conditions:
       - on_result: approved
         next: null

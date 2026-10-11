@@ -158,14 +158,20 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
         parts = _JOURNAL_ENTRY_RE.split(text)
         entries: list[CommentEntry] = []
+        position = 0
         for index in range(1, len(parts) - 1, 2):
             body = parts[index + 1].lstrip("\n").rstrip("\n")
             body = self._strip_injected_marker(body)
+            position += 1
+            # The journal entry's ordinal is its comment id, matching the
+            # ``post`` return (issue #756): step-output locators round-trip
+            # across runs.
             entries.append(
                 CommentEntry(
                     author=self._entry_author(body),
                     body=body,
                     created_at=parts[index].strip(),
+                    comment_id=str(position),
                 )
             )
         return entries

@@ -28,6 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "ThreadSnapshot",
     "STATE_TAIL_FLOOR",
+    "build_comment_index",
     "build_snapshot",
     "load_thread_snapshot",
     "state_tail_limit",
@@ -57,8 +58,42 @@ class ThreadSnapshot:
 
 
 def _state_view(comments: Sequence[Mapping[str, Any]]) -> list:
-    """Project raw comment dicts to the body-only shape state extraction reads."""
-    return [{"body": (comment.get("body") or "")} for comment in comments]
+    """Project raw comment dicts to the shape state extraction reads.
+
+    The ``id`` rides along so the latest state can backfill its step-output
+    locators with the comment ids that carried each step (issue #756).
+    """
+    return [
+        {"body": (comment.get("body") or ""), "id": comment.get("id")}
+        for comment in comments
+    ]
+
+
+def build_comment_index(
+    comments: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    """Map comment id -> agent-facing body for step-output resolution.
+
+    The body is stripped of its workflow-state block and bot routing markers,
+    delegating to ``to_git_comment.strip_state_section`` so an output value is
+    byte-identical to what ``_agent_facing_body`` shows agents. Both the raw
+    ``id`` and the ``html_url`` (when present) key the same body, because the
+    GitHub adapter's ``post`` returns a URL while raw comments carry a numeric
+    id (issue #756).
+    """
+    from workflow_state.features.comment.to_git_comment import strip_state_section
+
+    index: dict[str, str] = {}
+    for comment in comments:
+        identifier = comment.get("id")
+        if identifier is None:
+            continue
+        body = strip_state_section(comment.get("body") or "")
+        index[str(identifier)] = body
+        url = comment.get("html_url")
+        if url:
+            index[str(url)] = body
+    return index
 
 
 def build_snapshot(
