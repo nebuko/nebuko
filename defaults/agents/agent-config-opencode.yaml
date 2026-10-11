@@ -9,6 +9,9 @@ providers:
     api_token_env: "OPENCODE_GO_API_KEY"
     user_agent: "nebuko/1.0"
     session_header: "x-opencode-session"
+    # This gateway rejects the message-level ``name`` field on tool-result
+    # messages; strip it before dispatch (issue #881).
+    drop_message_name: true
 
 # ── LLMs: model paths referencing providers ──
 llms:
