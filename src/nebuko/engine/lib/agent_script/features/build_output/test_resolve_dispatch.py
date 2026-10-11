@@ -4,18 +4,36 @@ The reviewer's round-2 blocking item: a run that calls dispatch_next must
 route from the tool call even when the final message carries a stale or
 different sentinel, and a sentinel-only legacy run must resolve identically
 to today.
+
+Issue #864 adds the callback-aware no-action fallback: a decision-less run
+with a return address (`CONFIG_CALLBACK`) advances back to its caller instead
+of holding.
+
+Debug hook (replay the captured #864 state):
+
+    python3 test_resolve_dispatch.py
 """
 
+import json
+import os
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from build_output import _resolve_dispatch
-from workflow_state import Dispatch, FunctionCall
+from build_output import _resolve_dispatch, _no_action_dispatch
+from workflow_state import Dispatch, FunctionCall, WorkflowState
 
 
 class _FakeConv:
     def __init__(self, conv_id):
         self.id = conv_id
+
+
+FIXTURE_864 = (
+    Path(__file__).resolve().parents[3]
+    / "fixtures"
+    / "workflow_state_issue864_context_hold.json"
+)
 
 
 # Note: the sentinel payload uses the legacy "task" key (mapped to
@@ -137,6 +155,84 @@ class TestResolveDispatch(unittest.TestCase):
             dispatch, function_call, _ = _resolve_dispatch(fake, "answer")
         self.assertEqual(dispatch, recorded)
         self.assertIsNone(function_call)
+
+
+class TestNoActionDispatchFallback(unittest.TestCase):
+    """The callback-aware no-action fallback (#864)."""
+
+    def test_no_callback_holds_with_engine_fallback_origin(self):
+        """A rudderless decision-less run still holds for a human (#765)."""
+        dispatch = _no_action_dispatch()
+        self.assertEqual(dispatch.status, "hold")
+        self.assertEqual(dispatch.origin, "engine_fallback")
+        self.assertIn("no-action default", dispatch.reason)
+
+    def test_callback_advances_to_caller(self):
+        """A decision-less run with a return address advances back (#864)."""
+        dispatch = _no_action_dispatch(callback="architect")
+        self.assertEqual(dispatch.status, "advance")
+        self.assertEqual(dispatch.origin, "engine_fallback")
+        self.assertIn("architect", dispatch.reason)
+        # No explicit destination: the callback gate must be free to fire.
+        self.assertIsNone(dispatch.task_hint)
+        self.assertIsNone(dispatch.workflow)
+        self.assertIsNone(dispatch.step)
+
+    def test_callback_defaults_to_agent_origin(self):
+        """An agent-emitted dispatch is tagged 'agent', not a fallback."""
+        self.assertEqual(Dispatch(status="advance").origin, "agent")
+
+
+class TestIssue864FixtureReplay(unittest.TestCase):
+    """Reproduce the issue's captured decision-less `context` run (#864).
+
+    The fixture is the verbatim `workflow_state` from the issue: a `context`
+    run that ended with the synthesized
+    ``"no-action default: agent emitted no decision"`` hold while carrying
+    ``callback: "architect"``.
+    """
+
+    def _load_state(self) -> WorkflowState:
+        return WorkflowState.model_validate(
+            json.loads(FIXTURE_864.read_text(encoding="utf-8"))
+        )
+
+    def test_fixture_is_the_reported_hold(self):
+        state = self._load_state()
+        self.assertEqual(state.step, "context")
+        self.assertEqual(state.callback, "architect")
+        self.assertEqual(state.dispatch.status, "hold")
+        self.assertIn("no-action default", state.dispatch.reason)
+
+    def test_replay_now_advances_back_to_architect(self):
+        """With the fix, the same run returns to its caller instead of holding.
+
+        The run emitted no structured decision (the tool payload was lost, the
+        sentinel absent) so `_resolve_dispatch` synthesizes the fallback; with
+        `CONFIG_CALLBACK=architect` it must advance back to the caller.
+        """
+        fake = _FakeConv("conv-864")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ), mock.patch.dict(os.environ, {"CONFIG_CALLBACK": "architect"}):
+            dispatch, function_call, _ = _resolve_dispatch(fake, "report body")
+
+        self.assertEqual(dispatch.status, "advance")
+        self.assertEqual(dispatch.origin, "engine_fallback")
+        self.assertIn("architect", dispatch.reason)
+        self.assertIsNone(function_call)
+
+    def test_replay_without_callback_stays_a_hold(self):
+        """Same decision-less run, no return address -> unchanged #765 hold."""
+        fake = _FakeConv("conv-864b")
+        env = {k: v for k, v in os.environ.items() if k != "CONFIG_CALLBACK"}
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ), mock.patch.dict(os.environ, env, clear=True):
+            dispatch, _, _ = _resolve_dispatch(fake, "report body")
+
+        self.assertEqual(dispatch.status, "hold")
+        self.assertEqual(dispatch.origin, "engine_fallback")
 
 
 class TestSentinelRoutingFieldMerge(unittest.TestCase):

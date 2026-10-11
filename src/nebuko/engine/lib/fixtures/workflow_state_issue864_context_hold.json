@@ -1,0 +1,133 @@
+{
+  "run_id": 2,
+  "schema_version": 4,
+  "workflow": "default",
+  "step": "context",
+  "agent": "context",
+  "phase": "analysis",
+  "history": [
+    {
+      "step": "analyze",
+      "agent": "architect",
+      "summary": "## Architect triage \u2014 \"Estimated human reading time seems wrong\"\n\n**Issue (from @olivier-norture):** The *estimated human reading time* metric is inflated \u2014 the reporter reads in roughly 1/2 to 1/3 of the reported estimate. The reporter's hypothesis is that **\"ctx report\"** (context-agent report) co",
+      "position": [
+        {
+          "workflow": "default",
+          "step": "analyze"
+        }
+      ],
+      "dispatch": {
+        "task_hint": "context",
+        "complexity": "medium",
+        "reason": "Fresh triage of the reading-time metric bug; need codebase facts on where reading time is computed and whether ctx-report content is included before proposing an architecture."
+      },
+      "metrics": {
+        "run_id": "47912d84-e7e9-4145-8d1b-42a3eecda8e0",
+        "model_name": "default",
+        "agent_role": "architect",
+        "input_tokens": 37254,
+        "output_tokens": 4432,
+        "tool_call_latency_ms": 10801.787793636322,
+        "agent_runtime_ms": 43207.15,
+        "nb_tool_calls": 5,
+        "start_time": "2026-10-10T14:29:05.525783",
+        "end_time": "2026-10-10T14:29:49.210946+00:00",
+        "agent_runtimes_per_call_ms": [24316.03, 7098.54, 5220.73, 6571.84],
+        "tool_calls_per_tool": {
+          "think": 1,
+          "dispatch_next": 2,
+          "finish": 2
+        },
+        "tokens_per_tool": {
+          "unknown": {
+            "input": 10578,
+            "output": 844,
+            "cache_hit": 0,
+            "reasoning": 77
+          }
+        },
+        "tokens_per_second": 132.16222253116467,
+        "time_to_first_token": 2.2037268402054906
+      }
+    },
+    {
+      "step": "context",
+      "agent": "context",
+      "summary": "# \ud83d\udd0d Context Collection Report \u2014 \"Estimated human reading time seems wrong\" (issue #864)\n\n*Located the reading-time computation in `human_metrics.py`, its wiring in `agent_metrics.py`, the `<details>`-collapse that is supposed to exclude context-report bodies, and a live empirical measurement showing",
+      "position": [
+        {
+          "workflow": "default",
+          "step": "context"
+        }
+      ],
+      "dispatch": {
+        "status": "hold",
+        "reason": "no-action default: agent emitted no decision"
+      },
+      "metrics": {
+        "run_id": "4c4b69d4-7cea-491d-9566-03089f7cc1cd",
+        "model_name": "default",
+        "agent_role": "context",
+        "input_tokens": 1740608,
+        "output_tokens": 29963,
+        "tool_call_latency_ms": 7682.066862923758,
+        "agent_runtime_ms": 268872.34,
+        "nb_tool_calls": 44,
+        "tool_call_error_rate": 2.3255813953488373,
+        "complexity": "medium",
+        "start_time": "2026-10-10T14:30:32.612832",
+        "end_time": "2026-10-10T14:35:59.421957+00:00",
+        "agent_runtimes_per_call_ms": [4025.36, 2579.02, 3197.91, 4362.64, 8292.45, 7394.88, 12244.46, 10929.11, 5255.4, 8152.87, 5974.59, 4462.98, 6419.48, 8459.87, 6438.25, 2981.79, 9287.8, 3083.46, 2793.7, 15887.65, 4900.85, 3226.26, 2668.08, 5126.89, 2456.75, 9915.55, 3010.32, 7778.03, 4088.4, 3511.88, 3386.48, 8831.81, 5754.25, 36210.17, 35782.96],
+        "tool_calls_per_tool": {
+          "terminal": 32,
+          "file_editor": 10,
+          "finish": 1,
+          "dispatch_next": 1
+        },
+        "errors_per_tool": {
+          "unknown": 1
+        },
+        "tokens_per_tool": {
+          "unknown": {
+            "input": 75048,
+            "output": 5926,
+            "cache_hit": 0,
+            "reasoning": 33
+          }
+        },
+        "tokens_per_second": 174.31461254929,
+        "time_to_first_token": 2.374600643943995
+      }
+    }
+  ],
+  "current_context": {
+    "last_run_status": "success"
+  },
+  "dispatch": {
+    "status": "hold",
+    "reason": "no-action default: agent emitted no decision"
+  },
+  "resolution": {
+    "task": "context",
+    "input_workflow": "default",
+    "input_step": "context",
+    "input_complexity": "medium",
+    "role_name": "context",
+    "prompt_location": "/runner/_work/nebuko/nebuko/defaults/prompts/context.md",
+    "agent_selected": "true",
+    "selected_workflow": "default",
+    "selected_step": "context",
+    "next_step": "plan",
+    "reasoning": "none",
+    "matched_rule": "workflow:default/step:context",
+    "timestamp": "2026-10-10T14:35:59.423652+00:00"
+  },
+  "callback": "architect",
+  "workflow_ref": "nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@refs/heads/main",
+  "position": [
+    {
+      "workflow": "default",
+      "step": "context"
+    }
+  ]
+}
