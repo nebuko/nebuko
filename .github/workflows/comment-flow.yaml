@@ -28,3 +28,4 @@ jobs:
       COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
       EXTRA_SECRET_1_VALUE: ${{ secrets.BRAVE_API_KEY }}
       GH_PAT: ${{ secrets.GH_PAT }}
+      OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
