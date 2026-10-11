@@ -1,74 +1,99 @@
 # Planning Skill
 
 Procedural playbook for implementation plans, approval gating, and the plan
-orchestration modes. Use it once your role prompt has established that you are in
-**Phase B** (a proposal exists and a human has responded), or when you are running
-an approval-gate / orchestration step.
+orchestration modes. Attached to @@architect. Use it when @@context has returned
+and you are emitting the **single planning artifact** behind the workflow's one
+`human_gate:plan`, or when you are running an approval-gate / orchestration step.
 
-## Phase B — Implementation Plan (after approval)
+## The Planning Artifact (single turn)
 
-* Scan the comment history to find:
-  1. Your previous proposal (look for `<!-- architect-state: phase=proposal -->`)
-  2. The human's response comment(s) after it
-* Use LLM judgment to classify the human's response:
-  - **Approved**: Keywords like "approved", "looks good", "let's go", "proceed", "sound's good" — or any clear affirmative response
-  - **Changes requested**: Specific feedback about what to change
-  - **Rejected/Unclear**: Negative response or unrelated comment
-* If **APPROVED**:
-  - Draft a detailed, step-by-step technical implementation plan
-  - Include specific files to modify, what to change in each, and the order of changes
-  - Include a mandatory **Object Design Contract** section: for every new/changed class — file path, class name, fields with types, and method signatures each marked `# @stub-protected`. This is the interface contract the **stub step materializes 1:1**; deviations after this point require a new plan. Omit only if the plan genuinely contains no class — and say why in one line.
-  - Estimate complexity (LOW/MEDIUM/HIGH)
-  - **Only decompose into sub-issues when ALL of the following are true:**
-    - **Complexity** is estimated as **HIGH**
-    - **5+ genuinely independent steps** exist in the plan
-    - Steps have **no shared files or data dependencies** (tightly coupled changes belong in one PR)
-    - Each step touches **5+ files** OR spans **distinct architectural modules**
-    - If steps are independent use `"dependencies": []` on all tasks; if sequential, each task N+1 must list `"dependencies": [N]`
-  - **Never decompose** when any of these anti-patterns apply:
-    - Bug fixes (single root cause → single fix)
-    - Configuration + code changes that must land together
-    - Schema/migration changes paired with application logic updates
-    - Tasks where intermediate state is not meaningful
-  - **If decomposition criteria are fully met**, produce a `<splitPlan>` JSON block:
-    ```
-    <splitPlan>
-    {
-      "tasks": [
-        {"title": "Step 1: ...", "body": "...", "dependencies": []},
-        {"title": "Step 2: ...", "body": "...", "dependencies": [0]},
-        {"title": "Step 3: ...", "body": "...", "dependencies": [1]}
-      ],
-      "auto_trigger": true
-    }
-    </splitPlan>
-    ```
-    - The `title` is the sub-issue title (be specific and descriptive).
-    - The `body` contains the detailed implementation instructions for that sub-task.
-    - Set `auto_trigger: true` to automatically start each sub-issue via @@architect.
-    - **Task Dependencies** — Every task **MUST** include a `"dependencies"` array listing indices of prerequisite tasks:
-      - **Sequential execution**: Task 0 has `"dependencies": []`, task N+1 has `"dependencies": [N]`.
-      - **Parallel execution**: All tasks have `"dependencies": []`.
-      - **Mixed ordering**: e.g., tasks 0 and 1 run in parallel (`"dependencies": []`), task 2 waits for both (`"dependencies": [0, 1]`).
-      - **Always include** the `"dependencies"` field — omitting it defaults to empty (parallel), which will likely cause incorrect behavior.
-    - **IMPORTANT:** Do NOT nest split plans deeper than one level. Each sub-issue should be scoped as a self-contained implementation task. If a sub-issue itself requires decomposition, keep that decomposition within the sub-issue's own workflow rather than creating sub-sub-issues via another splitPlan.
-    - **Note:** The `<splitPlan>` block will be automatically extracted and stripped from the posted GitHub comment. A human-readable summary table will be appended instead. The raw JSON is saved as `split_plan.json` for sub-issue creation.
-    - After the `<splitPlan>`, include the normal hand-off:
-      ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "high"} -->
-      ```
-  - **If decomposition criteria are NOT fully met**, skip the `<splitPlan>` entirely and hand off directly to @@dev:
-    ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "complexity": "medium"} -->
-    ```
-* If **CHANGES REQUESTED**:
-  - Revise the proposal based on feedback
-  - Present the revised proposal and ask for approval again
-  - Include the state marker: `<!-- architect-state: phase=proposal,status=awaiting_approval -->`
-  - End the turn with `dispatch_next(status='hold')` on the SAME turn as the revised proposal text (no `AGENT_RUN_CONFIG` sentinel — the turn's text is what gets posted)
-* If **REJECTED or UNCLEAR**:
-  - Ask the human for clarification
-  - End the turn with `dispatch_next(status='hold')` on the SAME turn as the clarification request (no `AGENT_RUN_CONFIG` sentinel)
+The `plan` step is **one** human gate: emit **one** artifact per turn — never a
+separate "architecture proposal" turn followed by an implementation turn. Ship
+the architecture decision and the executable detail together, marked with
+`<!-- architect-state: phase=plan,status=awaiting_gate -->` (fresh) or
+`phase=plan,status=revising` (revision):
+
+1. **Architecture Summary (visible).** Decision-first: the design chosen, the
+   affected subsystems/interfaces, and the trade-offs (2-3 approaches, why one
+   won). It must include the **Object Design Anchor** — *where the change lives*
+   and the **primary class/object** (new or extended) with the file path per repo
+   convention, key fields with types, and a one-line responsibility. Make
+   explicit that the Anchor is the design being approved.
+2. **Implementation Steps + Object Design Contract (collapsed).** Both inside a
+   single `<details>` block so only the summary is visible by default:
+
+   ```
+   <details>
+   <summary>Implementation Steps & Object Design Contract</summary>
+
+   ### Dev Steps
+   1. **`path/to/file`** — what changes and why
+   ...
+
+   ### Object Design Contract
+   ... class/field/method signatures, each marked `# @stub-protected` ...
+   </details>
+   ```
+
+   - **Dev Steps** — ordered: files to modify, what changes in each, the order.
+   - **Object Design Contract** — for every new/changed class: file path, class
+     name, fields with types, and method signatures each marked
+     `# @stub-protected`. This is the interface contract the **stub step
+     materializes 1:1**; deviations after this point require a new plan. Omit
+     only if the plan genuinely contains no class — and say why in one line.
+
+* Estimate complexity (LOW/MEDIUM/HIGH) and pass it in the dispatch.
+* **Only decompose into sub-issues when ALL of the following are true:**
+  - **Complexity** is estimated as **HIGH**
+  - **5+ genuinely independent steps** exist in the plan
+  - Steps have **no shared files or data dependencies** (tightly coupled changes belong in one PR)
+  - Each step touches **5+ files** OR spans **distinct architectural modules**
+  - If steps are independent use `"dependencies": []` on all tasks; if sequential, each task N+1 must list `"dependencies": [N]`
+* **Never decompose** when any of these anti-patterns apply:
+  - Bug fixes (single root cause → single fix)
+  - Configuration + code changes that must land together
+  - Schema/migration changes paired with application logic updates
+  - Tasks where intermediate state is not meaningful
+* **If decomposition criteria are fully met**, produce a `<splitPlan>` JSON block:
+  ```
+  <splitPlan>
+  {
+    "tasks": [
+      {"title": "Step 1: ...", "body": "...", "dependencies": []},
+      {"title": "Step 2: ...", "body": "...", "dependencies": [0]},
+      {"title": "Step 3: ...", "body": "...", "dependencies": [1]}
+    ],
+    "auto_trigger": true
+  }
+  </splitPlan>
+  ```
+  - The `title` is the sub-issue title (be specific and descriptive).
+  - The `body` contains the detailed implementation instructions for that sub-task.
+  - Set `auto_trigger: true` to automatically start each sub-issue via @@architect.
+  - **Task Dependencies** — Every task **MUST** include a `"dependencies"` array listing indices of prerequisite tasks:
+    - **Sequential execution**: Task 0 has `"dependencies": []`, task N+1 has `"dependencies": [N]`.
+    - **Parallel execution**: All tasks have `"dependencies": []`.
+    - **Mixed ordering**: e.g., tasks 0 and 1 run in parallel (`"dependencies": []`), task 2 waits for both (`"dependencies": [0, 1]`).
+    - **Always include** the `"dependencies"` field — omitting it defaults to empty (parallel), which will likely cause incorrect behavior.
+  - **IMPORTANT:** Do NOT nest split plans deeper than one level. Each sub-issue should be scoped as a self-contained implementation task. If a sub-issue itself requires decomposition, keep that decomposition within the sub-issue's own workflow rather than creating sub-sub-issues via another splitPlan.
+  - **Note:** The `<splitPlan>` block will be automatically extracted and stripped from the posted GitHub comment. A human-readable summary table will be appended instead. The raw JSON is saved as `split_plan.json` for sub-issue creation.
+  - After the `<splitPlan>`, hand off with `dispatch_next(status='advance', complexity='high')` — the gated `plan` step then holds for the human.
+* **If decomposition criteria are NOT fully met**, skip the `<splitPlan>` entirely and hand off directly to @@dev with `dispatch_next(status='advance', complexity='medium')` (or your estimated tier).
+
+## Revision Path (gate rejected with feedback)
+
+When the `plan` step is re-run after `/nebuko reject gate --feedback "..."`, your
+context carries a `## Human Gate Decision` section (`**Status:** rejected`,
+`**Feedback:**`). Locate your prior artifact — your own previous comment carrying
+the `<!-- architect-state: ... -->` marker — and revise it in place, addressing
+every point of the feedback while keeping the visible-summary +
+collapsed-`<details>` shape:
+
+* Marker: `<!-- architect-state: phase=plan,status=revising -->`
+* Re-emit the **full** artifact (visible summary + collapsed steps/contract) —
+  never a diff-only reply.
+* End with `dispatch_next(status='advance', complexity=...)` on the SAME turn as
+  the artifact text — the gate re-arms and requires fresh human validation.
 
 ## Approval Gatekeeper Mode (Spec-Driven Workflow)
 
@@ -113,8 +138,8 @@ This mode applies when the approved plan consists of **2+ sequential steps that 
 ### Decision Heuristic — plan-orchestration vs. splitPlan
 
 * **Steps are sequential AND share a single PR** → use **plan-orchestration** (emit `<planWorkflow>`, never `<splitPlan>`).
-* **Steps are independent AND can be parallelized in separate PRs** → use **`<splitPlan>`** as per the Phase B rules above.
-* When both apply, prefer the option with fewer round-trips; when neither clearly applies, default to the standard single-plan hand-off (Phase B).
+* **Steps are independent AND can be parallelized in separate PRs** → use **`<splitPlan>`** as per the decomposition rules above.
+* When both apply, prefer the option with fewer round-trips; when neither clearly applies, default to the standard single-plan hand-off.
 
 ### On the `architect` step (initial entry into `plan-orchestration`)
 

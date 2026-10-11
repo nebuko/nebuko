@@ -43,18 +43,32 @@ published a one-line lead-in).
    visibly marked in the run's answer snapshot — it is not a license to skip the
    report turn.
 
-5. **Awaiting-human endings require an explicit hold.**
-   Proposals, revised proposals, and clarification requests end with
-   `dispatch_next(status='hold')`. Never end a run without a dispatch decision —
-   doing so triggers an engine recall pass whose short status note can clobber a
-   fallback answer (issue #558).
+5. **Ending a turn requires an explicit dispatch decision.**
+   Never end a run without one — doing so triggers an engine recall pass whose
+   short status note can clobber a fallback answer (issue #558). Which decision
+   is correct depends on the step:
+   - **On a `human_gate: true` step the completing dispatch is `advance`.**
+     The engine intercepts it and records the hold (`human_gate:<step>`) — that
+     interception **is** the gate. Emit the deliverable and `advance` together.
+     Never emit an explicit `hold` here: it would pause *before* the gate and
+     force a second, non-gate resume (the double-approval bug).
+   - **On a non-gated step awaiting a human**, an explicit
+     `dispatch_next(status='hold')` is correct (proposal, clarification, or
+     feedback request).
 
-6. **The hand-off sentinel goes last.**
+6. **Collapse verbose detail behind `<details>`.**
+   When a deliverable's detail would bury the decision — dev steps, an Object
+   Design Contract, a long analysis — keep the summary visible and wrap the
+   detail in a single `<details><summary>…</summary> … </details>` block. This
+   matches the engine's `collapse_sections` primitive and keeps the issue thread
+   readable (issue #866).
+
+7. **The hand-off sentinel goes last.**
    End the posted deliverable with the single-line `AGENT_RUN_CONFIG` sentinel
    (per `call-agent` / your agent rules) when a hand-off is required. The ETL
    layer re-appends it to the posted body exactly once.
 
-7. **Size is handled for you.**
+8. **Size is handled for you.**
    Long answers are automatically split into multiple comments (10k chars per
    part, 60k cap). Write at the length the content needs; do not artificially
    compress just to fit.

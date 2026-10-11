@@ -64,8 +64,8 @@ If the issue description is ambiguous or missing critical details:
   `AGENT_RUN_CONFIG` dispatch sentinel, or the `PIN_COMMENT` workflow input/env
   var for a whole run). Pinned comments are injected **verbatim** into the next
   agent's context; all other history is reduced to a summary or short excerpt.
-- End awaiting-human turns with `dispatch_next(status='hold', pin=True)` on the SAME turn as your spec text — never end a run without a dispatch decision (a missing decision triggers an engine recall pass whose short status note can clobber your posted comment). No `AGENT_RUN_CONFIG` sentinel is needed for these endings — the turn's text is what gets posted.
-- Only include an `AGENT_RUN_CONFIG` sentinel when you need to pause for human approval or escalate.
+- On the gated `spec` step, end your turn with `dispatch_next(status='advance', pin=True)` on the SAME turn as your spec text — the engine intercepts the advance and records the `human_gate:spec` hold, which **is** the single approval the human releases with `/nebuko approve gate`. Never emit an explicit `hold` on a gated step: it pauses *before* the gate and forces a second, non-gate resume. Never end a run without a dispatch decision (a missing decision triggers an engine recall pass whose short status note can clobber your posted comment). No `AGENT_RUN_CONFIG` sentinel is needed — the turn's text is what gets posted.
+- Only include an `AGENT_RUN_CONFIG` sentinel when you need to escalate or hand off on a non-gated step.
 
 ## 5. Scope Boundaries
 

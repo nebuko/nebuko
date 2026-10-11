@@ -28,6 +28,12 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 | `review` | `@@review` | Code reviewer — reviews PRs |
 | `po` | `@@po` | Product owner — specs and issue refinement |
 
+The `plan` step of the `default` workflow is a single `human_gate:plan`:
+@@architect delivers one planning artifact (visible Architecture Summary with the
+Object Design Anchor, plus the dev steps and Object Design Contract collapsed in a
+`<details>` block) and advances; the engine converts that advance into the gate
+hold, released by exactly one `/nebuko approve gate`.
+
 ---
 
 ## 2. Jobs
@@ -194,6 +200,9 @@ Runs `query_context.py` which gathers:
 - Comment history (with agent mentions stripped or preserved as context).
 - Labels, assignees, and linked PR references.
 - Any previous workflow state from earlier agent runs.
+- Any engine-recorded `## Human Gate Decision` (approve/reject + feedback) for a
+  re-run gated step, so that step (or its routed successor) reads the human's
+  decision directly.
 
 Produces a consolidated markdown prompt file.
 
