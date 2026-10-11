@@ -60,6 +60,10 @@ class Dispatch(BaseModel):
     pin: bool = False
     debug: bool = False
     reason: Optional[str] = None
+    # Provenance of the decision (issue #864): "agent" for a signal the agent
+    # emitted, "engine_fallback" for the synthesized decision-less default.
+    # Defaults so agent-emitted and legacy dispatches load unchanged.
+    origin: str = "agent"
 
     @field_validator("status")
     @classmethod

@@ -76,10 +76,44 @@ class TestDispatchConfig:
         default = DispatchConfig.no_action_default("no-action default: test")
         assert default.status == "hold"
         assert default.reason == "no-action default: test"
+        assert default.origin == "engine_fallback"
+
+    def test_origin_defaults_to_agent(self):
+        config = DispatchConfig(status="advance")
+        assert config.origin == "agent"
+
+    def test_fallback_for_without_callback_holds(self):
+        """Rudderless run (no return address) holds for a human (#765)."""
+        fallback = DispatchConfig.fallback_for(callback="")
+        assert fallback.status == "hold"
+        assert fallback.origin == "engine_fallback"
+        assert "no-action default" in fallback.reason
+        # Never names an explicit destination, so the callback gate can fire.
+        assert fallback.workflow is None and fallback.step is None
+
+    def test_fallback_for_with_callback_advances_to_caller(self):
+        """Decision-less run with a return address routes back (#864)."""
+        fallback = DispatchConfig.fallback_for(callback="architect")
+        assert fallback.status == "advance"
+        assert fallback.origin == "engine_fallback"
+        assert "architect" in fallback.reason
+        assert fallback.step is None and fallback.workflow is None
+
+    def test_fallback_for_carries_diagnostic_in_reason(self):
+        fallback = DispatchConfig.fallback_for(
+            callback="architect", diagnostic="truncated"
+        )
+        assert fallback.status == "advance"
+        assert "truncated" in fallback.reason
+        assert "architect" in fallback.reason
 
     def test_invalid_status_rejected(self):
         with pytest.raises(ValidationError):
             DispatchConfig(status="teleport")
+
+    def test_invalid_origin_rejected(self):
+        with pytest.raises(ValidationError):
+            DispatchConfig(status="hold", origin="guess")
 
 
 class TestFunctionCallCallback:

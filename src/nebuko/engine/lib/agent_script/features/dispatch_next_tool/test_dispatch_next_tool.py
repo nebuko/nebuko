@@ -67,9 +67,14 @@ class TestDispatchNextActionToDispatch(unittest.TestCase):
         self.assertIsNotNone(d)
         self.assertFalse(d.pin)
 
-    def test_invalid_status_returns_none(self):
+    def test_invalid_status_raises_actionable_error(self):
+        """An invalid status is rejected loudly, not silently dropped (#864)."""
         act = DispatchNextAction(status="bogus")
-        self.assertIsNone(action_to_dispatch(act))
+        with self.assertRaises(ValueError) as ctx:
+            action_to_dispatch(act)
+        message = str(ctx.exception)
+        self.assertIn("advance", message)
+        self.assertIn("hold", message)
 
 
 class TestDispatchNextTool(unittest.TestCase):
@@ -100,6 +105,8 @@ class TestDispatchNextTool(unittest.TestCase):
         tool = DispatchNextTool.create(conversation_id="run-2")[0]
         obs = tool.executor(DispatchNextAction(status="bogus"))
         self.assertTrue(obs.is_error)
+        # The error must be actionable, not a silent drop (issue #864).
+        self.assertIn("advance", obs.text)
         self.assertIsNone(get_recorded_dispatch("run-2"))
 
     def test_latest_dispatch_wins(self):

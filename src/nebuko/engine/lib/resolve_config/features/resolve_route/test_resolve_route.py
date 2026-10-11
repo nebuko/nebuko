@@ -631,6 +631,35 @@ class TestCallbackReturnTarget:
         state, wf_dir = self._state(tmp_path, "review")
         assert _callback_return_target(state, None, wf_dir) is None
 
+    def test_engine_fallback_advance_passes_the_gate(self, tmp_path):
+        """The #864 synthesized fallback (advance, no destination) returns home.
+
+        A decision-less callee with a return address now emits an
+        ``origin='engine_fallback'`` advance carrying no destination fields, so
+        the existing callback gate carries it to the caller.
+        """
+        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from workflow_state import Dispatch
+
+        state, wf_dir = self._state(tmp_path, "architect")
+        dispatch = Dispatch(
+            status="advance",
+            origin="engine_fallback",
+            reason="no-action default: agent emitted no decision; returning to caller 'architect'",
+        )
+        assert _callback_return_target(state, dispatch, wf_dir) == ("architect", "answer")
+
+    def test_agent_explicit_hold_still_outranks_callback(self, tmp_path):
+        """An explicit agent hold is never redirected to the callback (#864)."""
+        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from workflow_state import Dispatch
+
+        state, wf_dir = self._state(tmp_path, "architect")
+        assert (
+            _callback_return_target(state, Dispatch(status="hold", origin="agent"), wf_dir)
+            is None
+        )
+
 
 class TestCallbackReturnAddressEndToEnd:
     """End-to-end callback routing through resolve_config (issue #765)."""
@@ -695,6 +724,33 @@ class TestCallbackReturnAddressEndToEnd:
         )
         assert result["TASK"] == "dev"
         assert result["WORKFLOW_STEP"] == "build"
+
+    def test_engine_fallback_advance_returns_to_caller(self, tmp_path):
+        """The #864 fix end-to-end: a decision-less callee returns home.
+
+        The state carries the synthesized fallback (``advance`` +
+        ``origin='engine_fallback'`` with no destination) that #864 makes the
+        engine emit instead of a bare ``hold``; with ``callback: architect`` the
+        run must resolve back to the caller, not the forward edge.
+        """
+        result = self._resolve(
+            tmp_path,
+            {
+                "version": 1,
+                "workflow": "cb",
+                "step": "context",
+                "agent": "context",
+                "callback": "architect",
+                "dispatch": {
+                    "status": "advance",
+                    "origin": "engine_fallback",
+                    "reason": "no-action default: agent emitted no decision; "
+                    "returning to caller 'architect'",
+                },
+            },
+        )
+        assert result["TASK"] == "architect"
+        assert result["WORKFLOW_STEP"] == "answer"
 
 
 class TestFunctionCallPathCallbackDefault:

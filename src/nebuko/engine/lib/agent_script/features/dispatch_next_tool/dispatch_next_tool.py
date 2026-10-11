@@ -26,6 +26,7 @@ from pydantic import Field
 from rich.text import Text
 
 from workflow_state import Dispatch
+from workflow_state.sub_domains.dispatch.dispatch import DISPATCH_STATUSES
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation.base import BaseConversation
@@ -142,11 +143,13 @@ def reset_registry() -> None:
         _dispatch_registry.clear()
 
 
-def action_to_dispatch(action: DispatchNextAction) -> Optional[Dispatch]:
+def action_to_dispatch(action: DispatchNextAction) -> Dispatch:
     """Map a DispatchNextAction onto the canonical Dispatch model.
 
-    Returns None (and logs) if the payload fails Dispatch validation, so a
-    malformed tool call can never poison downstream routing.
+    Raises ``ValueError`` with an actionable message (listing the valid
+    statuses) when the payload fails ``Dispatch`` validation, so a malformed
+    tool call surfaces to the agent instead of being silently dropped — the
+    capture-loss trigger behind a decision-less run (issue #864).
     """
     try:
         return Dispatch(
@@ -158,8 +161,10 @@ def action_to_dispatch(action: DispatchNextAction) -> Optional[Dispatch]:
             reason=action.reason,
         )
     except Exception as e:  # pydantic ValidationError or similar
-        logger.warning(f"dispatch_next payload failed Dispatch validation: {e}")
-        return None
+        raise ValueError(
+            f"invalid dispatch_next payload ({e}). "
+            f"Valid statuses: {', '.join(sorted(DISPATCH_STATUSES))}."
+        ) from e
 
 
 class DispatchNextExecutor(ToolExecutor):
@@ -171,15 +176,15 @@ class DispatchNextExecutor(ToolExecutor):
         action: DispatchNextAction,
         conversation: "BaseConversation | None" = None,
     ) -> DispatchNextObservation:
-        dispatch = action_to_dispatch(action)
-        if dispatch is None:
-            return DispatchNextObservation.from_text(
-                text=(
-                    "Dispatch rejected: invalid parameters. Re-call dispatch_next "
-                    "with a valid status (advance|loop|hold)."
-                ),
-                is_error=True,
+        try:
+            dispatch = action_to_dispatch(action)
+        except ValueError as e:
+            # Loud, actionable failure (issue #864): a silent drop here is
+            # indistinguishable from the agent never having called the tool.
+            logger.error(
+                f"dispatch_next rejected for run {self._conversation_id}: {e}"
             )
+            return DispatchNextObservation.from_text(text=str(e), is_error=True)
         record_dispatch(self._conversation_id, dispatch)
         return DispatchNextObservation.from_text(
             text=(
