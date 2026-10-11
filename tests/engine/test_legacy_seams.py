@@ -211,28 +211,3 @@ class TestPrepareCommentSeam:
 
         assert prepare_comment(poster=poster) is True
         assert posted and "*Dev answer*" in posted[0]
-
-
-class TestIssueCreationSeam:
-    def test_create_sub_issues_uses_the_injected_creator(self):
-        from issue_creation import SplitPlan, TaskDefinition, create_sub_issues
-
-        calls = []
-
-        def creator(title: str, body: str, labels: list) -> dict:
-            calls.append((title, body, labels))
-            return {"number": len(calls), "id": 100 + len(calls)}
-
-        plan = SplitPlan(tasks=[TaskDefinition(title="task one", body="task one body")])
-
-        created = create_sub_issues(None, plan, 590, create_issue=creator)
-
-        assert [item["number"] for item in created] == [1]
-        assert calls[0][0] == "[Sub-task 1/1] task one"
-        assert calls[0][2] == ["parent-590"]
-
-    @pytest.mark.parametrize("name", ["SplitPlan", "TaskDefinition", "CreateIssue"])
-    def test_module_exposes_the_local_mode_contract(self, name):
-        import issue_creation
-
-        assert hasattr(issue_creation, name)

@@ -28,12 +28,11 @@ state store.
 ```
 
 The orchestrator is `.github/workflows/nebuko-workflow.yaml` — a reusable
-workflow (consumers call it from their own `workflow.yaml`) with three jobs:
-`run-task` (the agent pipeline, ~24 steps), `agent-metrics` (runs on issue
-close), and `subtask-completion-notifier` (notifies a parent issue when a
-sub-issue's split plan completes). It runs on GitHub-hosted runners by default;
-callers can select the runner via the `runs_on` workflow input (e.g.
-`runs_on: "self-hosted"` for their own runners).
+workflow (consumers call it from their own `workflow.yaml`) with two jobs:
+`run-task` (the agent pipeline, ~24 steps) and `agent-metrics` (runs on issue
+close). It runs on GitHub-hosted runners by default; callers can select the
+runner via the `runs_on` workflow input (e.g. `runs_on: "self-hosted"` for their
+own runners).
 
 ---
 
@@ -90,8 +89,7 @@ Each trigger runs the following sequence inside the `run-task` job:
 9. **Persist state** — a fresh full-snapshot `WORKFLOW_STATE` JSON is embedded
    in a collapsed section of the posted comment.
 10. **Route next** — the `dispatch` field in the new state determines the next
-   step (or ends the run). If a `<splitPlan>` was emitted, the
-   **Process Split Plan** step creates sub-issues.
+   step (or ends the run).
 
 **Agent-start acknowledgment (issue #720).** Just before the agent is executed,
 the engine posts the theme-adaptive Nebuko logo mark (issue #778) followed by

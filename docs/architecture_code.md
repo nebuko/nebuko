@@ -245,12 +245,10 @@ engine/lib/agent_script/
 │   ├── collect_metrics/                       # Extract the per-run Metrics payload (folded into the step's history entry)
 │   ├── ensure_pr/                             # Deterministic PR fallback (commit/push/open PR)
 │   ├── extract_recovery_trace/                # Capture the tail of interrupted runs
-│   └── extract_split_plan/                    # Pull <splitPlan> blocks out of the final message
 └── sub_domains/                               # Pure-function bounded contexts
     ├── message_splitter/                      # split_message() — paragraph/line/sentence-boundary splits
     ├── metrics/metrics_collector.py           # Metrics collection helpers
-    ├── prompt/                                # Prompt assembly helpers
-    └── split_plan/                            # extract_split_plan()/strip_split_plan() pure functions
+    └── prompt/                                # Prompt assembly helpers
 ```
 
 **Soft-timeout escalation chain** (issue #489):
@@ -267,6 +265,6 @@ arun() under watchdog ──budget elapsed──► conversation.interrupt()
 
 **Design notes:**
 
-- `sub_domains/` here are *pure function modules* (e.g., `split_message`, `extract_split_plan`) rather than Pydantic entities — the "entity vs behavior" split of §2 still applies, the entities simply have shape.
+- `sub_domains/` here are *pure function modules* (e.g., `split_message`) rather than Pydantic entities — the "entity vs behavior" split of §2 still applies, the entities simply have shape.
 - All external side effects (LLM calls, git, gh CLI) are confined to the feature layer; sub-domain functions are pure I/O and unit-tested in isolation.
 - Feature details for users are in [features.md — Execution Layer](./features.md#execution-layer).

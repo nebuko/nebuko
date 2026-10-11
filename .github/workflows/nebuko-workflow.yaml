@@ -195,7 +195,6 @@ jobs:
                   contains(github.event.comment.body, '/nebuko'))) ||
                 contains(github.event.comment.body, '"function_call"') ||
                 contains(github.event.comment.body, '<!-- workflow-continue -->') ||
-                contains(github.event.comment.body, '<!-- bot-subtask-complete') ||
                 contains(github.event.comment.body, '<!-- bot-trigger:'))) ||
               (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                         github.event.comment.author_association) &&
@@ -400,51 +399,3 @@ jobs:
                   SCRIPT_PATH="src/nebuko/engine/lib/agent_metrics.py"
                 fi
                 python "$SCRIPT_PATH"
-
-    subtask-completion-notifier:
-        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
-        if: |
-          github.event_name == 'issues' &&
-          github.event.action == 'closed' &&
-          startsWith(github.event.issue.title, '[Sub-task')
-        steps:
-            - name: Notify parent issue of sub-task completion
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-                  REPOSITORY: ${{ github.repository }}
-                  ISSUE_NUMBER: ${{ github.event.issue.number }}
-                  ISSUE_TITLE: ${{ github.event.issue.title }}
-              run: |
-                set -euo pipefail
-
-                # Extract 1-based index from title: [Sub-task N/M]
-                INDEX=$(echo "$ISSUE_TITLE" | grep -oP '\[Sub-task \K[0-9]+')
-                ZERO_INDEX=$((INDEX - 1))
-
-                # Resolve parent from parent-{N} label
-                PARENT_NUMBER=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-                  "https://api.github.com/repos/$REPOSITORY/issues/$ISSUE_NUMBER/labels" \
-                  | jq -r '.[] | select(.name | startswith("parent-")) | .name' \
-                  | head -1 \
-                  | sed 's/parent-//')
-
-                if [ -z "$PARENT_NUMBER" ] || [ "$PARENT_NUMBER" = "null" ]; then
-                  echo "ERROR: Could not resolve parent issue number for sub-task #$ISSUE_NUMBER"
-                  echo "Labels on this issue:"
-                  curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-                    "https://api.github.com/repos/$REPOSITORY/issues/$ISSUE_NUMBER/labels" | jq .
-                  exit 1
-                fi
-
-                echo "Sub-task #$ISSUE_NUMBER (index $ZERO_INDEX) completed. Notifying parent #$PARENT_NUMBER"
-
-                HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-                  -H "Authorization: Bearer $GITHUB_TOKEN" \
-                  -H "Accept: application/vnd.github.v3+json" \
-                  "https://api.github.com/repos/$REPOSITORY/issues/$PARENT_NUMBER/comments" \
-                  -d "{\"body\": \"<!-- bot-workflow-terminal --> <!-- bot-subtask-complete: $ZERO_INDEX -->\"}")
-                if [ "$HTTP_STATUS" != "201" ]; then
-                  echo "ERROR: Failed to post comment to parent #$PARENT_NUMBER (HTTP $HTTP_STATUS)"
-                  exit 1
-                fi
-                echo "Successfully posted completion notification to parent #$PARENT_NUMBER"

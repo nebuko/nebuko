@@ -54,11 +54,6 @@ class PlatformAdapter(Protocol):
         ...
 
     # @stub-protected
-    def create_issue(self, *, title: str, body: str, labels: Sequence[str] = ()) -> int:
-        """Create an issue and return its number (local mode: write a task file)."""
-        ...
-
-    # @stub-protected
     def delete_issue_comments(self, issue: str, from_comment: str = "") -> int:
         """Delete every comment on the issue, or ``from_comment`` and all later
         ones, and return the number deleted."""
