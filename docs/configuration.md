@@ -68,7 +68,8 @@ providers:
 | `model_path` | string | Model identifier on the provider (e.g., `openrouter/anthropic/claude-sonnet-5`). |
 | `provider` | `${ref}` | Provider entry from the `providers:` layer. |
 | `default_temperature` | float | Base temperature for the model. |
-| `input_price` / `output_price` | float | Cost per token (USD) — used for metrics/cost accounting. |
+| `input_price` / `output_price` | float | Cost per **1M tokens** (USD) — seeds metrics/cost accounting. |
+| `cache_read_price` / `cache_write_price` | float | Cost per **1M tokens** (USD) for cached prompt tokens; falls back to `input_price` when unset. |
 | `thinking_enabled` | bool | Enables the model's thinking mode (e.g., Qwen flexible thinking). |
 | `preserve_thinking` | bool | Keeps thinking content across turns. |
 | `max_output_tokens` | int | Max output tokens per completion. |

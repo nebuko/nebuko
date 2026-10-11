@@ -27,6 +27,8 @@ class TokenTelemetry:
         request_finished_at: Monotonic timestamp when the final token arrived.
         prompt_tokens: Prompt (input) tokens billed for the call.
         completion_tokens: Completion (output) tokens billed for the call.
+        cache_read_tokens: Prompt tokens served from the provider's cache.
+        cache_write_tokens: Prompt tokens written to the provider's cache.
     """
 
     request_started_at: float
@@ -34,6 +36,8 @@ class TokenTelemetry:
     request_finished_at: float
     prompt_tokens: int
     completion_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
     def time_to_first_token(self) -> float | None:
         """Seconds between request start and first token, or ``None`` when unobservable.

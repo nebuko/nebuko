@@ -16,10 +16,17 @@ from agent_script.sub_domains.metrics.token_telemetry_collector import (
 )
 
 
+class _PromptDetails:
+    def __init__(self, cached_tokens=None, cache_write_tokens=None):
+        self.cached_tokens = cached_tokens
+        self.cache_write_tokens = cache_write_tokens
+
+
 class _Usage:
-    def __init__(self, prompt_tokens=0, completion_tokens=0):
+    def __init__(self, prompt_tokens=0, completion_tokens=0, prompt_tokens_details=None):
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
+        self.prompt_tokens_details = prompt_tokens_details
 
 
 class _Chunk:
@@ -175,3 +182,51 @@ class TestMaybeRegisterLangfuse:
             if "langfuse" in litellm.success_callback:
                 litellm.success_callback.remove("langfuse")
             assert litellm.success_callback == before
+
+
+class TestCacheTokenCapture:
+    """The capture seam carries the provider's cache buckets (issue #714)."""
+
+    def test_cache_read_and_write_are_captured(self):
+        collector = TokenTelemetryCollector()
+        _start(collector, "call-1")
+        collector.on_token(
+            _Chunk(
+                usage=_Usage(
+                    prompt_tokens=100,
+                    completion_tokens=5,
+                    prompt_tokens_details=_PromptDetails(
+                        cached_tokens=40, cache_write_tokens=10
+                    ),
+                )
+            )
+        )
+
+        obs = collector.drain()[0]
+        assert obs.cache_read_tokens == 40
+        assert obs.cache_write_tokens == 10
+
+    def test_absent_cache_details_default_to_zero(self):
+        collector = TokenTelemetryCollector()
+        _start(collector, "call-1")
+        collector.on_token(_Chunk(usage=_Usage(prompt_tokens=10, completion_tokens=1)))
+
+        obs = collector.drain()[0]
+        assert obs.cache_read_tokens == 0
+        assert obs.cache_write_tokens == 0
+
+    def test_private_cache_attrs_are_a_fallback(self):
+        class _PrivateUsage:
+            prompt_tokens = 50
+            completion_tokens = 2
+            prompt_tokens_details = None
+            _cache_read_input_tokens = 20
+            _cache_creation_input_tokens = 7
+
+        collector = TokenTelemetryCollector()
+        _start(collector, "call-1")
+        collector.on_token(_Chunk(usage=_PrivateUsage()))
+
+        obs = collector.drain()[0]
+        assert obs.cache_read_tokens == 20
+        assert obs.cache_write_tokens == 7

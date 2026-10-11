@@ -9,7 +9,6 @@ from openhands.sdk import get_logger
 from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
     build_provider_runtime,
 )
-from agent_script.sub_domains.metrics.cost import CostRates
 
 logger = get_logger(__name__)
 
@@ -305,25 +304,14 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     llm_config["openrouter_app_name"] = _brand.app_name
     llm_config["openrouter_site_url"] = str(_brand.site_url)
 
-    # ── Per-token pricing ────────────────────────────────────────
-    # Normalize the per-million operator prices to per-token costs and flow
-    # them into LLM(**llm_config) so the SDK can compute session cost (LiteLLM
-    # custom_cost_per_token). CostRates yields nothing unless *both* prices are
-    # set — the SDK ignores custom pricing when only one key is present — and
-    # keys are omitted entirely when unset so LiteLLM's built-in model-map
-    # pricing still applies.
-    if effective_ref is not None:
-        rates = CostRates.from_prices(
-            effective_ref.input_price, effective_ref.output_price
-        )
-        if rates is not None:
-            llm_config["input_cost_per_token"] = rates.input_per_token
-            llm_config["output_cost_per_token"] = rates.output_per_token
-            logger.info(
-                f"Per-token pricing set from config prices "
-                f"(input={effective_ref.input_price}, "
-                f"output={effective_ref.output_price} per M tokens)"
-            )
+    # ── Pricing (issue #714) ─────────────────────────────────────
+    # Deliberately NOT forwarded as ``input_cost_per_token`` /
+    # ``output_cost_per_token``: the SDK's custom-cost path is cache-blind
+    # (v1.53 accepts only the two input/output keys), so LiteLLM would price
+    # cache tokens at the full input rate and its ``accumulated_cost`` would
+    # shadow our cache-aware fallback with a 5–10× overestimate. Session cost
+    # is instead computed our-side in ``metrics_collector`` from the resolved
+    # model rates (config prices, completed by the default price table).
 
     # ── Thinking parameters (litellm_extra_body) ─────────────────
     # Qwen3.x flexible thinking rides chat_template_kwargs, not the

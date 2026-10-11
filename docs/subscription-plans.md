@@ -166,10 +166,13 @@ Once a subscription's limits are reached, the metered **OpenCode Zen** provider
   allowance you wanted for interactive use. See
   [CommandCode pricing & limits](https://commandcode.ai/docs/resources/pricing-limits).
 - **CommandCode's Go plan has no API access** — use GOAT or higher.
-- **Cost metrics read `0` unless prices are set.** A subscription is flat-rate,
-  so there is no per-token price to report. `input_price` / `output_price` in
-  the `llms:` stanza drive the cost columns; leave them unset and the metrics
-  report token counts with zero cost. See
+- **Cost metrics fall back to a default price service.** A subscription is
+  flat-rate, so the provider reports no per-token cost. `input_price` /
+  `output_price` / `cache_read_price` / `cache_write_price` in the `llms:` stanza
+  still drive the cost columns and always win where set; any tier left unset is
+  completed from an OpenRouter-backed default price table (fetched once, cached
+  under `~/.nebuko/cache/prices/`, fail-open). Cost reads `0` only when neither
+  the config nor the service knows the model. See
   [features.md — Metrics](./features.md#metrics).
 - **OpenCode Go is not wired yet** — see the client-identity requirement above.
 
