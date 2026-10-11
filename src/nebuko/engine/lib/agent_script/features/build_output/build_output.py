@@ -1,4 +1,4 @@
-"""Build output feature — workflow state building, split plan handling, and output file writing."""
+"""Build output feature — workflow state building and output file writing."""
 
 import json
 import os
@@ -45,11 +45,6 @@ from workflow_state.features.build_state.build_state import build_state
 from workflow_state.features.to_json.to_json import state_to_json
 from workflow_state.state_codec import WorkflowStateCodec
 
-from agent_script.sub_domains.split_plan.split_plan import (
-    extract_split_plan,
-    strip_split_plan,
-    split_plan_summary,
-)
 from agent_script.sub_domains.scaffold_branch.scaffold_branch import (
     extract_scaffold_branch_any,
     scaffold_branch_summary,
@@ -598,23 +593,6 @@ def _parse_position_env() -> Optional[dict]:
     return parse_position_env(os.environ.get("WORKFLOW_POSITION", ""))
 
 
-def _save_split_plan(json_str: str) -> None:
-    """Save split plan JSON to file."""
-    with open("split_plan.json", "w", encoding="utf-8") as f:
-        f.write(json_str)
-    logger.info("Saved split_plan.json for workflow extraction")
-
-
-def _replace_split_plan_with_summary(message: str, json_str: str) -> str:
-    """Strip <splitPlan> from message and replace with human-readable summary."""
-    summary = split_plan_summary(json_str)
-    stripped = strip_split_plan(message)
-    if summary:
-        stripped = stripped.rstrip() + f"\n\n{summary}\n"
-    logger.info("Stripped <splitPlan> from comment, replaced with summary")
-    return stripped
-
-
 def _write_output_files(final_message: str, message_parts: list[str], new_state: WorkflowState) -> None:
     """Write final message parts and workflow state JSON to output files."""
     if not message_parts:
@@ -969,28 +947,25 @@ def build_output(
     metrics: Metrics,
     args=None,
     prev_state: WorkflowState | None = None,
-    split_plan_json: str | None = None,
     scaffold_branch: str | None = None,
 ) -> dict:
     """
     Build workflow state and write output files.
 
     Orchestrates: final response extraction, phase derivation, issue/PR info
-    building, WorkflowState creation, split plan handling, message splitting,
-    and output file writing.
+    building, WorkflowState creation, message splitting, and output file
+    writing.
 
     Args:
         conversation: The completed OpenHands Conversation object.
         metrics: Collected Metrics object.
         args: Parsed argparse namespace (unused, retained for compatibility).
         prev_state: Previous WorkflowState, or None to load from disk.
-        split_plan_json: Pre-extracted split plan JSON, or None to extract from message.
         scaffold_branch: Pre-extracted scaffold branch ref (issue #604), or
             None to extract the SCAFFOLD_BRANCH marker from the message.
 
     Returns:
-        Dict with keys: 'workflow_state', 'split_plan_json', 'final_message',
-        'scaffold_branch'.
+        Dict with keys: 'workflow_state', 'final_message', 'scaffold_branch'.
     """
     # ── Final response ───────────────────────────────────────────
     final_message = get_agent_final_response(conversation.state.events)
@@ -1219,14 +1194,6 @@ def build_output(
     )
     logger.info(f"Built workflow state run {new_state.run_id} for step={workflow_step}")
 
-    # ── Split plan handling ──────────────────────────────────────
-    if split_plan_json is None:
-        split_plan_json = extract_split_plan(final_message) if final_message else None
-
-    if split_plan_json:
-        _save_split_plan(split_plan_json)
-        final_message = _replace_split_plan_with_summary(final_message, split_plan_json)
-
     # ── Scaffold branch marker strip (issue #604; #636) ──────────
     # Strip the raw marker from both the posted comment and the
     # latest-answer file so users never see it. The summary line
@@ -1260,7 +1227,6 @@ def build_output(
 
     return {
         "workflow_state": new_state,
-        "split_plan_json": split_plan_json,
         "scaffold_branch": scaffold_branch,
         "final_message": final_message,
     }

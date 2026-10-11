@@ -129,7 +129,7 @@ The honest bar — what works today versus what is still rough:
 | `human_gate` approval + conditional routing | GitHub only (GitLab, Codeberg, BitBucket, Gitea are the direction) |
 | Human commands (`@@agent`, `/nebuko run workflow`, `/nebuko force-step`, `/nebuko resume`, `/nebuko delete comments`) | Auto-escalation to a stronger model on loop failure |
 | JSON workflow state in comments | GitHub App identity (`nebuko[bot]`) — PAT mode only for now |
-| Split-task sub-issues (`splitPlan`) and task decomposition | OpenCode Go provider — documented, not wired |
+| Dynamic plan workflows (branch-mounted, step-by-step) | OpenCode Go provider — documented, not wired |
 | Complexity-based temperature, per-invocation model override | — |
 | Safety rails: circuit breaker, loop guard, `CALLER_AUTH` | — |
 | Per-step metrics, remote (zero-copy) workflows | — |

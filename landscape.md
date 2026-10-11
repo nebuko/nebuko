@@ -81,7 +81,7 @@ You can use **different models for different purposes** — planning versus codi
 
 ### Split the task
 
-Small is beautiful: an agent facing a huge task can decompose it into **sub-issues** (the `splitPlan` mechanism) and have each smaller task completed by its own dedicated run, instead of one oversized agent session.
+Small is beautiful: an agent facing a huge task can decompose it into **sequential steps** and have each step completed by its own dedicated run — committed and reviewed in the same PR — instead of one oversized agent session.
 
 ---
 
@@ -92,7 +92,7 @@ Small is beautiful: an agent facing a huge task can decompose it into **sub-issu
 | Agents, skills, workflows as code | Managed SaaS on top of the open core |
 | `human_gate` + conditional routing | Multi-platform: GitLab, Codeberg, BitBucket, Gitea |
 | JSON workflow state in comments | Auto-escalation to a stronger model on loop failure |
-| Split-task sub-issues (`splitPlan`) | GitHub App installation as primary setup |
+| Dynamic plan workflows (step-by-step, same PR) | GitHub App installation as primary setup |
 | Complexity-based temperature, model override | Managed workflow marketplace |
 
 The core is open source (Apache-2.0), self-hosted, and runnable with your own LLM key (a move to AGPL v3 for the core is under discussion — see issue #475). The release philosophy is thin, end-to-end slices, each genuinely working, built in public.

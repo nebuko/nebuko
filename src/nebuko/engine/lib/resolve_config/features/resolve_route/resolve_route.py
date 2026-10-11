@@ -1301,19 +1301,17 @@ def _resolve_machine_trigger_path(
 ) -> dict:
     """Resolve config for a CI-posted machine trigger token (issue #478).
 
-    Machine tokens (``bot-subtask-complete`` or the generic
-    ``bot-trigger: <agent>``) replace the legacy machine-posted ``@@architect``
-    comments now that @@mentions are blocked for bot-triggered runs. The
-    target agent is pinned from the token; unknown agents skip with a reason.
+    The generic ``bot-trigger: <agent>`` token replaces the legacy
+    machine-posted ``@@architect`` comments now that @@mentions are blocked for
+    bot-triggered runs. The target agent is pinned from the token; unknown
+    agents skip with a reason.
     """
-    machine = extract_machine_trigger(trigger_body)
-    if not machine:
+    task = extract_machine_trigger(trigger_body)
+    if not task:
         return {"SKIP_AGENT": "true", "REASON": "No machine trigger token found"}
-    task, extra = machine
     if task not in TASK_TO_PROMPT:
         return {"SKIP_AGENT": "true", "REASON": f"Unknown machine trigger agent: {task}"}
-    label = f"Machine trigger: invoking '{task}'" + (f" (subtask {extra})" if extra else "")
-    print(label, file=sys.stderr)
+    print(f"Machine trigger: invoking '{task}'", file=sys.stderr)
     return {
         "task": task,
         "config_workflow": "",

@@ -515,7 +515,7 @@ class TestClassifyComment:
         assert intent.command is None
 
     def test_machine_trigger_is_agent_trigger(self):
-        intent = classify_comment("<!-- bot-subtask-complete: 1 -->")
+        intent = classify_comment("<!-- bot-trigger: dev -->")
         assert intent.kind == "agent_trigger"
 
     def test_free_form_is_none(self):

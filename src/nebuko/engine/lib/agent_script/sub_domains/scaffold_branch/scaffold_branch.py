@@ -23,8 +23,6 @@ text answer** (issue #522) — while the engine also inspects the short
 ``extract_scaffold_branch_any`` searches both, with fixed precedence:
 ``tool`` first, then ``finish_message``, then ``latest_answer``. A
 malformed marker in one source never blocks a valid marker in another.
-
-Mirror of :mod:`agent_script.sub_domains.split_plan.split_plan`.
 """
 
 import re

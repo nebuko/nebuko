@@ -182,15 +182,6 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         WorkflowStateCodec().save_prev(state)
 
     # @stub-protected
-    def create_issue(self, *, title: str, body: str, labels: Sequence[str] = ()) -> int:
-        from issue_creation import GitHubClient
-
-        result = GitHubClient(self._require_repo()).create_issue(title, body, list(labels))
-        if not result:
-            raise RuntimeError(f"Failed to create issue: {title!r}")
-        return int(result["number"])
-
-    # @stub-protected
     def delete_issue_comments(self, issue: str, from_comment: str = "") -> int:
         client = self._client_handle()
         repo = self._require_repo()
