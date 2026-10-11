@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass, field, replace
 from enum import Enum, IntEnum
 from typing import TYPE_CHECKING, Any, Literal, Mapping
@@ -166,6 +167,15 @@ def _is_true(value: Any) -> bool:
     return str(value).strip().lower() == "true"
 
 
+def _as_text(value: bytes | str | None) -> str:
+    """Normalize a possibly-bytes captured stream to ``str``."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
 # @stub-protected
 @dataclass(frozen=True)
 class StepResult:
@@ -175,6 +185,8 @@ class StepResult:
     ok: bool
     detail: str  # human-readable outcome (e.g. "deleted 42 comments on issue 590")
     affected: int  # comments deleted / script exit code
+    output: str = ""  # captured stdout/stderr (run_script; issue #885)
+    duration_seconds: float = 0.0  # wall-clock execution time (run_script)
 
 
 # @stub-protected
@@ -188,6 +200,7 @@ class DeterministicStep:
     script_path: str = ""  # run_script
     script_args: str = ""
     timeout_minutes: int | None = None
+    step_name: str = ""  # run_script: workflow step name (from WORKFLOW_STEP)
     circuit_breaker_value: int = 0  # update_circuit_breaker: new per-issue limit
 
     # @stub-protected
@@ -214,6 +227,7 @@ class DeterministicStep:
                 script_path=str(resolved.get("SCRIPT_PATH") or ""),
                 script_args=str(resolved.get("SCRIPT_ARGS") or ""),
                 timeout_minutes=int(timeout) if timeout.isdigit() else None,
+                step_name=str(resolved.get("WORKFLOW_STEP") or ""),
             )
         if _is_true(resolved.get("UPDATE_CIRCUIT_BREAKER")):
             raw = str(resolved.get("UPDATE_CIRCUIT_BREAKER_VALUE") or "").strip()
@@ -282,15 +296,39 @@ class DeterministicStep:
         )
 
     def _execute_script(self) -> StepResult:
+        """Run the script, capturing combined output and timing it.
+
+        A timeout is data, not a crash (issue #885): it returns ``ok=False`` with
+        the partial output and no exit code, mirroring a non-zero exit. Output is
+        captured merged (stderr folded into stdout) so the posted report shows
+        the interleaved stream a terminal would.
+        """
         timeout = self.timeout_minutes * 60 if self.timeout_minutes else None
-        completed = subprocess.run(
-            [self.script_path, *shlex.split(self.script_args)], timeout=timeout
-        )
+        started = time.monotonic()
+        try:
+            completed = subprocess.run(
+                [self.script_path, *shlex.split(self.script_args)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return StepResult(
+                step_kind=self.kind,
+                ok=False,
+                detail=f"script timed out after {self.timeout_minutes}m",
+                affected=0,
+                output=_as_text(exc.stdout),
+                duration_seconds=time.monotonic() - started,
+            )
         return StepResult(
             step_kind=self.kind,
             ok=completed.returncode == 0,
             detail=f"script exited with code {completed.returncode}",
             affected=completed.returncode,
+            output=completed.stdout or "",
+            duration_seconds=time.monotonic() - started,
         )
 
 

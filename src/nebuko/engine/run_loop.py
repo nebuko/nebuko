@@ -33,6 +33,7 @@ from nebuko.engine.models import (
     RoutingDecision,
     RunOutcome,
     SkipOutcome,
+    StepResult,
     Trigger,
     to_routing_decision,
 )
@@ -48,7 +49,7 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
     from nebuko.adapters.base import PlatformAdapter
-    from config import AgentStartNotice, HumanActionNotice
+    from config import AgentStartNotice, HumanActionNotice, ScriptStartNotice
     from nebuko.engine.artifacts import RunArtifactStager
     from nebuko.engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
@@ -115,6 +116,18 @@ PHASES: tuple[str, ...] = (
 
 def _is_true(value: Any) -> bool:
     return str(value).strip().lower() == "true"
+
+
+def _script_exit_code(result: StepResult) -> int | None:
+    """A script's exit code, or ``None`` when it never produced one (#885).
+
+    ``StepResult.affected`` doubles as the return code for ``run_script``
+    (issue #541). A failed run whose value is zero (a timeout or an ``OSError``
+    from the exec) has no exit code to report.
+    """
+    if result.ok or result.affected != 0:
+        return result.affected
+    return None
 
 
 def _is_resolution_failure(reason: str) -> bool:
@@ -542,7 +555,7 @@ class Engine:
 
     # @stub-protected
     def _run_deterministic_step(
-        self, resolved: Any, phases: list[str]
+        self, resolved: Any, phases: list[str], trigger: Trigger
     ) -> RunOutcome | None:
         """Execute the resolver's deterministic-step contract as ``[phase:action]``.
 
@@ -551,11 +564,18 @@ class Engine:
         ``RunOutcome(exit_code=ExitCode.ADVANCE)``: the deterministic work ran,
         so the process must exit 0 (issue #724) rather than the terminal-20 the
         pure-skip path returns.
+
+        A ``run_script`` step additionally joins the comment lifecycle
+        (issue #885): it posts a start notice and a state-carrying completion
+        comment, so its output is addressable by ``inputs: [...]`` and the
+        workflow chain re-triggers. The other kinds stay poster-less.
         """
         self._enter(phases, "action")
         step = DeterministicStep.from_resolved(resolved)
         if step is None:
             return None
+        if step.kind == "run_script":
+            return self._run_script_step(step, resolved, phases, trigger)
         result = step.execute(self.adapter)
         log.info("[phase:action] %s: %s", result.step_kind, result.detail)
         return RunOutcome(
@@ -565,6 +585,96 @@ class Engine:
             posted_body=result.detail,
             state=None,
             phases=tuple(phases),
+        )
+
+    def _run_script_step(
+        self,
+        step: DeterministicStep,
+        resolved: Any,
+        phases: list[str],
+        trigger: Trigger,
+    ) -> RunOutcome:
+        """Run a script step and post its start + completion comments (#885)."""
+        ensure_import_path()
+        from config import ScriptStepReport
+        from workflow_state.features.comment.to_git_comment import wrap_script_comment
+
+        self.notify_script_started(self._script_start_notice(step, trigger))
+        result = step.execute(self.adapter)
+        log.info("[phase:action] %s: %s", result.step_kind, result.detail)
+
+        state = self._advance_script_state(step, resolved, result)
+        name = step.step_name or state.step
+        body = wrap_script_comment(
+            name,
+            state,
+            ScriptStepReport(
+                step=name,
+                ok=result.ok,
+                exit_code=_script_exit_code(result),
+                duration_seconds=result.duration_seconds,
+                output=result.output,
+            ).render(),
+        )
+        state = self._post_script_output(state, body)
+        return RunOutcome(
+            exit_code=ExitCode.ADVANCE,
+            routing=RoutingDecision(status="terminate", reason=result.detail),
+            prompt=None,
+            posted_body=body,
+            state=state,
+            phases=tuple(phases),
+        )
+
+    def _advance_script_state(
+        self, step: DeterministicStep, resolved: Any, result: StepResult
+    ) -> WorkflowState:
+        """Build the script step's advanced state (issue #885).
+
+        A synthetic ``advance`` dispatch with a ``pass``/``fail`` branch mirrors
+        an agent run's state, so ``conditions: on_result`` and the declared
+        ``next`` route exactly as after an agent step.
+        """
+        ensure_import_path()
+        from workflow_state.features.build_state.build_state import build_state
+        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
+
+        return build_state(
+            self._previous_state(),
+            workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
+            step=step.step_name,
+            agent="script",
+            phase="action",
+            dispatch=Dispatch(
+                status="advance", branch="pass" if result.ok else "fail"
+            ),
+        )
+
+    def _post_script_output(self, state: WorkflowState, body: str) -> WorkflowState:
+        """Post the script output comment and save its backfilled state.
+
+        The comment id is unknown when the state is embedded, so it is
+        backfilled into the persisted locator afterwards — the same seam agent
+        answers use (ADR-0013), which is what makes ``inputs: [...]`` resolve
+        this comment.
+        """
+        self._publish_state["body"] = body
+        self._publish_state["comment_id"] = self.adapter.post(body)
+        new_state = self._backfill_step_output(state)
+        self.adapter.save_state(new_state)
+        return new_state
+
+    def _script_start_notice(
+        self, step: DeterministicStep, trigger: Trigger
+    ) -> ScriptStartNotice:
+        """Build the start acknowledgment for this script step (issue #885)."""
+        ensure_import_path()
+        from config import ScriptStartNotice
+
+        return ScriptStartNotice(
+            step=step.step_name,
+            run_url=self._run_url(trigger),
+            issue_number=trigger.number or None,
         )
 
     # @stub-protected
@@ -593,7 +703,7 @@ class Engine:
             # SKIP_AGENT verdict: the same contract sets SKIP_AGENT=true, so
             # checking the verdict first would collapse a real step into a
             # terminal no-op (issue #724). A completed step exits 0.
-            stepped = self._run_deterministic_step(resolved, phases)
+            stepped = self._run_deterministic_step(resolved, phases, trigger)
             if stepped is not None:
                 return stepped
             # The bash short-circuits on the resolver's SKIP_AGENT before the
@@ -1239,6 +1349,23 @@ class Engine:
             self.adapter.post(notice.render())
         except Exception as exc:  # noqa: BLE001 - a notice must not abort a run
             log.warning("[phase:agent] agent-start notice failed: %s", exc)
+
+    # @stub-protected
+    def notify_script_started(self, notice: ScriptStartNotice) -> None:
+        """Post the acknowledgment comment for this run's script step.
+
+        Mirrors :meth:`notify_agent_started` for deterministic ``script`` steps
+        (issue #885): a missing issue number or a failed post is logged and
+        swallowed — the acknowledgment is informational and must never abort
+        the run.
+        """
+        if notice.issue_number is None:
+            log.warning("[phase:action] no issue number; skipping script-start notice")
+            return
+        try:
+            self.adapter.post(notice.render())
+        except Exception as exc:  # noqa: BLE001 - a notice must not abort a run
+            log.warning("[phase:action] script-start notice failed: %s", exc)
 
     # @stub-protected
     def notify_human_action(self, notice: HumanActionNotice) -> None:

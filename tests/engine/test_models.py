@@ -174,6 +174,8 @@ class TestStepResult:
             "ok",
             "detail",
             "affected",
+            "output",
+            "duration_seconds",
         ]
 
     def test_is_frozen(self):
@@ -222,6 +224,22 @@ class TestDeterministicStepFromResolved:
         )
         assert step is not None
         assert step.timeout_minutes is None
+
+    def test_run_script_carries_the_workflow_step_name(self):
+        step = DeterministicStep.from_resolved(
+            {
+                "RUN_SCRIPT": "true",
+                "SCRIPT_PATH": "git",
+                "SCRIPT_ARGS": "diff origin/main",
+                "WORKFLOW_STEP": "git_diff",
+            }
+        )
+        assert step == DeterministicStep(
+            kind="run_script",
+            script_path="git",
+            script_args="diff origin/main",
+            step_name="git_diff",
+        )
 
     def test_parses_the_update_circuit_breaker_contract(self):
         step = DeterministicStep.from_resolved(
@@ -316,6 +334,45 @@ class TestDeterministicStepExecute:
 
         assert result.ok is True
         assert result.affected == 0
+
+    def test_run_script_captures_merged_output_and_duration(self):
+        result = DeterministicStep(
+            kind="run_script",
+            script_path=sys.executable,
+            script_args='-c "import sys; print(\'out\'); print(\'err\', file=sys.stderr)"',
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is True
+        assert "out" in result.output
+        assert "err" in result.output  # stderr folded into stdout
+        assert result.duration_seconds >= 0.0
+
+    def test_run_script_nonzero_exit_keeps_the_output(self):
+        result = DeterministicStep(
+            kind="run_script",
+            script_path=sys.executable,
+            script_args='-c "import sys; print(\'boom\', file=sys.stderr); sys.exit(2)"',
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is False
+        assert result.affected == 2
+        assert "boom" in result.output
+
+    def test_run_script_timeout_is_data_not_a_crash(self, monkeypatch):
+        import subprocess
+
+        def fake_run(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd="git", timeout=60, output="partial")
+
+        monkeypatch.setattr("nebuko.engine.models.subprocess.run", fake_run)
+        result = DeterministicStep(
+            kind="run_script", script_path="git", timeout_minutes=1
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is False
+        assert result.affected == 0
+        assert "timed out after 1m" in result.detail
+        assert result.output == "partial"
 
     def test_run_script_oserror_becomes_a_result_not_a_crash(self):
         result = DeterministicStep(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,8 @@ from nebuko.engine.run_loop import (
     main,
     resolved_env_overlay,
 )
+from workflow_state import extract_state_from_body
+from workflow_state.step_output_record import StepOutputRecord
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
 WORKFLOW_STATE_MARKER = "<!-- WORKFLOW_STATE_START -->"
@@ -517,6 +520,131 @@ class TestDeterministicActionPhase:
         assert invoked == []
         assert "agent" not in outcome.phases
         assert outcome.exit_code == ExitCode.TERMINAL
+
+
+class TestScriptStepComments:
+    """A ``run_script`` step joins the comment lifecycle (issue #885).
+
+    It posts a start notice (no continue token) and a state-carrying completion
+    comment whose body is registered as the step's output, so ``inputs: [...]``
+    wiring and the workflow-continue gate both work exactly as for an agent
+    step.
+    """
+
+    def _stub_script(
+        self, monkeypatch, script_args: str = '-c "print(\'hello\')"', **extra
+    ) -> None:
+        resolved = {
+            "SKIP_AGENT": "true",
+            "RUN_SCRIPT": "true",
+            "SCRIPT_PATH": sys.executable,
+            "SCRIPT_ARGS": script_args,
+            "WORKFLOW_STEP": "run_tests",
+            "WORKFLOW_NAME": "default",
+        }
+        resolved.update(extra)
+        _stub_resolved(monkeypatch, resolved)
+
+    def test_posts_a_start_notice_and_a_state_carrying_completion(
+        self, tmp_path, monkeypatch
+    ):
+        engine = _engine(tmp_path)
+        self._stub_script(monkeypatch)
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+
+        outcome = engine.run()
+
+        entries = engine.adapter.load_history()
+        assert len(entries) == 2
+
+        start = entries[0].body
+        assert "<!-- bot-command-run_tests -->" in start
+        assert "**run_tests command started**" in start
+        assert "<!-- workflow-continue -->" not in start
+        assert WORKFLOW_STATE_MARKER not in start
+
+        completion = outcome.posted_body
+        assert completion.startswith("<!-- bot-workflow-terminal -->")
+        assert "<!-- bot-command-run_tests -->" in completion
+        assert "<!-- workflow-continue -->" in completion
+        assert "**run_tests command succeeded**" in completion
+        assert "<summary>command output</summary>" in completion
+        assert "hello" in completion
+
+        state = extract_state_from_body(completion)
+        assert state is not None
+        assert state.step == "run_tests"
+        assert state.dispatch is not None
+        assert state.dispatch.status == "advance"
+        assert state.dispatch.branch == "pass"
+
+    def test_registers_the_completion_comment_as_the_step_output(
+        self, tmp_path, monkeypatch
+    ):
+        engine = _engine(tmp_path)
+        self._stub_script(monkeypatch)
+
+        engine.run()
+
+        saved = engine.adapter.load_state()
+        records = {
+            record.step: record
+            for record in StepOutputRecord.load_all(saved.current_context)
+        }
+        assert "run_tests" in records
+        # The completion comment is the journal's second entry.
+        assert records["run_tests"].comment_id == "2"
+
+    def test_the_output_is_addressable_by_downstream_inputs(
+        self, tmp_path, monkeypatch
+    ):
+        engine = _engine(tmp_path)
+        self._stub_script(monkeypatch)
+
+        engine.run()
+
+        scope = engine._step_output_scope(engine.adapter.load_history())
+        assert "run_tests" in scope
+        assert "hello" in scope["run_tests"]
+        # The bot-command tag is stripped from the addressable output, like the
+        # bot-agent tag is for agent steps.
+        assert "bot-command-run_tests" not in scope["run_tests"]
+
+    def test_a_failing_script_reports_failed_and_branches_fail(
+        self, tmp_path, monkeypatch
+    ):
+        engine = _engine(tmp_path)
+        self._stub_script(
+            monkeypatch, script_args='-c "import sys; sys.exit(2)"'
+        )
+
+        outcome = engine.run()
+
+        assert "**run_tests command failed**" in outcome.posted_body
+        assert "exit code 2" in outcome.posted_body
+        state = extract_state_from_body(outcome.posted_body)
+        assert state.dispatch.branch == "fail"
+
+    def test_the_comment_never_echoes_the_command_line(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        self._stub_script(monkeypatch, script_args='-c "import sys; sys.exit(0)"')
+
+        outcome = engine.run()
+
+        assert sys.executable not in outcome.posted_body
+        assert "import sys" not in outcome.posted_body
+
+    def test_script_comments_do_not_count_as_agent_calls(self, tmp_path, monkeypatch):
+        from circuit_breaker import count_bot_markers
+
+        engine = _engine(tmp_path)
+        self._stub_script(monkeypatch)
+
+        engine.run()
+
+        assert count_bot_markers(engine.adapter.load_history()) == 0
 
 
 class TestBenignNoNextAgentExit:
