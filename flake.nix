@@ -18,6 +18,7 @@
           git
           python313
           uv
+          stdenv.cc.cc.lib
         ];
 
       in {
