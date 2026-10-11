@@ -140,6 +140,36 @@ class TestJournal:
         assert [entry.body.rstrip()[-6:] for entry in history] == ["second", "third"]
 
 
+class TestLoadRawThread:
+    """The synthetic thread shapes journal posts as bot output (issue #872)."""
+
+    def test_fresh_run_dir_yields_no_records(self, adapter):
+        assert adapter.load_raw_thread() == (None, [])
+
+    def test_comments_carry_stable_positional_ids_and_bot_authors(self, adapter):
+        adapter.post(f"{TERMINAL_MARKER}\n<!-- bot-agent-dev -->\n*Dev answer*")
+        adapter.post(f"{TERMINAL_MARKER}\n<!-- bot-agent-architect -->\n*Plan*")
+
+        issue, comments = adapter.load_raw_thread()
+
+        assert issue is None
+        assert [comment["id"] for comment in comments] == [1, 2]
+        assert [comment["user"]["type"] for comment in comments] == ["Bot", "Bot"]
+
+    def test_an_agent_answer_classifies_as_agent_output(self, adapter):
+        from workflow_state.features.reconcile_thread import reconcile_thread
+        from workflow_state.sub_domains.thread_record import ThreadRecordKind
+
+        adapter.post(f"{TERMINAL_MARKER}\n<!-- bot-agent-dev -->\n*Dev answer*")
+
+        _, comments = adapter.load_raw_thread()
+        ledger = reconcile_thread(
+            [], issue=None, comments=comments, trigger_user_id=0, trigger_login=""
+        )
+
+        assert ledger[0].kind is ThreadRecordKind.AGENT_OUTPUT
+
+
 class TestState:
     def test_load_state_is_none_before_the_first_save(self, adapter):
         assert adapter.load_state() is None

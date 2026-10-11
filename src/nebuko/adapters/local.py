@@ -75,13 +75,19 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         The local journal carries no GitHub ids, so a stable 1-based positional
         id stands in (the journal is append-only, so existing ids never shift).
         There is no issue object locally, so the ledger is comment-only.
+
+        Every journal entry was produced by the adapter's own ``post`` (the local
+        engine bot), so each is shaped as a bot author — mirroring the GitHub
+        account that posts agent/engine output. The classifier derives the
+        engine/agent kinds from bot-ness (issue #872), so without this a local
+        agent answer would read as human feedback and drop out of the flow.
         """
         comments = [
             {
                 "id": index,
                 "body": entry.body,
                 "created_at": entry.created_at,
-                "user": {"login": entry.author},
+                "user": {"login": entry.author, "type": "Bot"},
             }
             for index, entry in enumerate(self._read_journal(), start=1)
         ]

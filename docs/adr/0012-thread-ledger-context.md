@@ -53,11 +53,12 @@ Two hazards are in scope for the security posture:
    dropped; *classification* decides what is meaningful.
 
 3. **The prompt renders the relevant flow, not a raw tail.** The `## Recent
-   thread` section is rendered from the relevant records (commands, agent
-   output, and trusted human feedback) in chronological order, with engine
-   output and the issue body excluded. Untrusted human comments are surfaced
-   separately as one-line, explicitly-unverified summaries so they inform the
-   agent without reading as instructions.
+   thread` section is rendered from the relevant records — bot agent output, and
+   *trusted* commands and human feedback — in chronological order, with engine
+   output and the issue body excluded. Both human-authored kinds are trust-gated,
+   so an untrusted comment is surfaced separately as a one-line,
+   explicitly-unverified summary instead of being rendered in full: it informs
+   the agent without reading as instructions.
 
 4. **Full relevant flow by default; a cap is an explicit opt-down.**
    `HISTORY_COMMENT_COUNT` changes meaning for the ledger: unset or
@@ -73,13 +74,31 @@ Two hazards are in scope for the security posture:
    a `StepInputRecord` (`name`, `binding`, `ok`, `detail`, `value` capped at
    `MAX_VALUE_CHARS`, `truncated`) on the advancing `HistoryEntry`, so the
    deterministic I/O contract is auditable in the same state snapshot.
+   `build_state(thread=...)` exists as the explicit, pure seam for replacing the
+   ledger wholesale; the engine currently seeds it via `model_copy` on the
+   hand-off state (so the value is carried forward by `base_thread`), and the
+   argument is deliberately kept wired for a future direct writer rather than
+   removed. A `history[].inputs` `value` is written verbatim into the
+   publicly-posted state comment: inputs are deterministic workflow wiring (the
+   same values the workflow YAML already exposes), not free-form secrets, so no
+   extra redaction is applied here — a secret-typed input must not be wired into
+   state in the first place.
 
-6. **Prompt-injection posture.** Human feedback is `trusted` only when its
-   `author_association ∈ {OWNER, MEMBER, COLLABORATOR}` **and** its author
-   matches the run's trigger author (by `user_id`, falling back to
-   `user_login`); the rule fails closed when neither is known. Untrusted human
-   comments are recorded but never rendered as trusted context — they appear
-   only in the flagged "unverified" appendix.
+6. **Prompt-injection posture.** Two independent gates protect the trusted
+   flow:
+   - **Bot-ness gates classification, not the tie-break.** The
+     `engine-output` / `agent-output` kinds are decided only for a bot author; a
+     non-bot author can only ever be a `command` or `human-feedback`. Since
+     GitHub quote-reply copies markers (`<!-- bot-agent-* -->`) into the quoted
+     text, deriving a bot kind from the body alone would let a human comment
+     masquerade as trusted agent output.
+   - **Human-authored kinds are trust-gated at render time.** A `command` or
+     `human-feedback` renders in full only when `trusted`:
+     `author_association ∈ {OWNER, MEMBER, COLLABORATOR}` **and** the author
+     matches the run's trigger author (by `user_id`, falling back to
+     `user_login`); the rule fails closed when neither is known. Any untrusted
+     human comment is recorded but never rendered as trusted context — it
+     appears only in the flagged "unverified" appendix.
 
 ## Edited comments — explicitly out of scope
 
@@ -116,7 +135,14 @@ deferred.
   skips it.
 - **Injection surface is bounded.** Only the run's initiator (with a trusted
   association) contributes trusted human text; every other human comment is
-  quarantined in the unverified appendix.
+  quarantined in the unverified appendix, and a bot kind can only be derived
+  from a bot author.
+- **Comment fetch cost.** Reconciliation requires the *full* comment list, so
+  `load_raw_thread` adds one unbounded comment fetch per run on top of the
+  bounded window it replaces. This is inherent to "review the whole thread
+  between runs"; it is the request count that grows with thread length, not a
+  new per-comment call, and it sits alongside the ADR-0005 comment-API budget
+  (which bounds the *posted* comment tail, not this read).
 - **Edits remain an accepted residual risk** under the current PAT auth path
   (see above).
 - **Schema generation 5.** `STATE_SCHEMA_VERSION` moves 4 → 5; older snapshots

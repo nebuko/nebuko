@@ -7,9 +7,12 @@ the engine's established marker conventions (``<!-- bot-agent-* -->``,
 ``<!-- bot-human-action -->``, the agent-start notice line, the crash-path
 fallback lines, the ``/nebuko`` / ``@@agent`` command grammar).
 
-Priority matters: an *engine* notice is detected before the generic
-``bot-agent-*`` marker because the agent-start acknowledgment also carries a
-``bot-agent-*`` marker but is engine bookkeeping, not an agent's answer.
+Bot-ness gates the marker inspection: the ``engine-output`` / ``agent-output``
+buckets are decided only for a bot author, so a human quoting a marker cannot be
+classified as engine/agent output (issue #872 review). Within the bot branch,
+an *engine* notice is detected before the generic ``bot-agent-*`` marker because
+the agent-start acknowledgment also carries a ``bot-agent-*`` marker but is
+engine bookkeeping, not an agent's answer.
 """
 
 from __future__ import annotations
@@ -38,23 +41,36 @@ _AGENT_MENTION_RE = re.compile(r"@@[a-z][a-z0-9\-]*")
 def classify_comment(body: str, *, author_is_bot: bool) -> ThreadRecordKind:  # @stub-protected
     """Classify one comment body into a :class:`ThreadRecordKind`.
 
+    ``author_is_bot`` is authoritative, not a tie-breaker: the bot-derived
+    buckets (``engine-output`` / ``agent-output``) are decided *only* for a bot
+    author. A non-bot author can therefore only ever be a ``command`` or
+    ``human-feedback`` — a human who quotes an agent/engine marker (GitHub
+    quote-reply copies the marker) stays human feedback and cannot slip into the
+    trusted flow by embedding marker text (prompt-injection guard, issue #872).
+
     Args:
         body: The raw comment body (markers included).
         author_is_bot: Whether the comment's author is a bot account. Resolved
             by the caller so the classifier stays a pure function of text.
 
     Returns:
-        The artifact's kind. Engine notices win over the generic agent marker;
-        a bot comment with no marker is still engine output; a non-bot comment
-        is a command only when it carries the ``/nebuko`` / ``@@agent`` grammar.
+        The artifact's kind. For a bot author, engine notices win over the
+        generic agent marker and a marker-less bot comment is still engine
+        output. For a non-bot author, the ``/nebuko`` / ``@@agent`` grammar
+        yields a command and anything else is human feedback.
     """
     text = body or ""
+    if not author_is_bot:
+        return _classify_human(text)
     if _is_engine_notice(text):
         return ThreadRecordKind.ENGINE_OUTPUT
     if _AGENT_MARKER_RE.search(text):
         return ThreadRecordKind.AGENT_OUTPUT
-    if author_is_bot:
-        return ThreadRecordKind.ENGINE_OUTPUT
+    return ThreadRecordKind.ENGINE_OUTPUT
+
+
+def _classify_human(text: str) -> ThreadRecordKind:
+    """Classify a non-bot comment: a command only by its own grammar."""
     if _is_command(text):
         return ThreadRecordKind.COMMAND
     return ThreadRecordKind.HUMAN_FEEDBACK

@@ -292,7 +292,7 @@ copied into state; they stay in the thread.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `kind` | string | `issue-body` \| `command` \| `engine-output` \| `agent-output` \| `human-feedback`. |
+| `kind` | string | `issue-body` \| `command` \| `engine-output` \| `agent-output` \| `human-feedback`. The `engine-output` / `agent-output` kinds are derived **only** for a bot author; a non-bot author can only be a `command` or `human-feedback`. |
 | `id` | int | GitHub REST id (issue id or comment id). |
 | `url` | string | `html_url` permalink. |
 | `user_id` | int | Author's GitHub user id. |
@@ -300,7 +300,7 @@ copied into state; they stay in the thread.
 | `user_name` | string | Author's display name (best-effort; REST payloads omit it, so usually empty). |
 | `created_at` | string | ISO-8601 creation timestamp. |
 | `author_association` | string | GitHub `author_association` (`OWNER`, `MEMBER`, ...). |
-| `trusted` | bool | Whether human feedback may be rendered as trusted context (allowlisted association **and** the run's trigger author). |
+| `trusted` | bool | Whether a human-authored record (`command` / `human-feedback`) may be rendered as trusted context (allowlisted association **and** the run's trigger author); untrusted records appear only in the flagged unverified appendix. |
 | `deleted` | bool | Set when the id vanishes from the fetched comment list (frozen record kept for audit). |
 
 ### StepInputRecord
