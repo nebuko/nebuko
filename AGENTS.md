@@ -37,3 +37,7 @@ The checkout's GitHub App token lacks the `workflows` permission, so git pushes 
 add/modify `.github/workflows/*` are rejected by GitHub. The `GH_TOKEN` env var has the
 `workflow` scope: clear the global `http.https://github.com/.extraheader` extraheader,
 run `gh auth setup-git`, push, then restore the saved gitconfig.
+
+## Github workflow
+Under `.github/workflows/` the `nebuko-workflow.yaml` is build to be use externally.
+So by contention all repo's workflow related file are prefixed with `internal-`.
