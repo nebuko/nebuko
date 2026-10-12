@@ -10,6 +10,7 @@ from workflow_state.features.comment.to_git_comment import (
     format_collapsed_section,
     strip_state_section,
     wrap_comment_with_state,
+    wrap_script_comment,
 )
 
 
@@ -145,3 +146,32 @@ class TestStripStateSection(unittest.TestCase):
 
         legacy = _body("🤖 Workflow State (v1)") + body
         self.assertEqual(strip_state_section(legacy), body)
+
+    def test_removes_bot_command_marker_line(self):
+        body = "<!-- bot-command-run_tests -->\nRun tests command output"
+        self.assertEqual(strip_state_section(body), "Run tests command output")
+
+
+class TestWrapScriptComment(unittest.TestCase):
+    """The script-step envelope mirrors the agent-answer framing (issue #885)."""
+
+    def test_carries_marker_continue_token_state_and_body(self):
+        state = WorkflowState(workflow="default", step="run_tests", agent="script")
+        body = "*run_tests command succeeded*"
+        wrapped = wrap_script_comment("run_tests", state, body)
+
+        self.assertTrue(wrapped.startswith("<!-- bot-workflow-terminal -->\n"))
+        self.assertIn("<!-- bot-command-run_tests -->", wrapped)
+        self.assertIn("<!-- workflow-continue -->", wrapped)
+        self.assertIn("WORKFLOW_STATE_START", wrapped)
+        self.assertTrue(wrapped.endswith(body))
+        # The bot-command tag is not an agent marker, so it never inflates the
+        # circuit breaker's agent-call count.
+        self.assertNotIn("<!-- bot-agent-", wrapped)
+
+    def test_round_trip_strips_back_to_the_report_body(self):
+        state = WorkflowState(workflow="default", step="run_tests", agent="script")
+        body = "*run_tests command succeeded*\n\n```\nhello\n```"
+        wrapped = wrap_script_comment("run_tests", state, body)
+
+        self.assertEqual(strip_state_section(wrapped), body)

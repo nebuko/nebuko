@@ -126,6 +126,18 @@ class TestBuildResultRunScript:
         assert result["WORKFLOW_STEP"] == "run-tests"
         assert "REASON" not in result
 
+    def test_workflow_step_plumbs_into_the_deterministic_step(self):
+        """WORKFLOW_STEP becomes the step name a script comment is tagged with."""
+        prompt_base, workflows_dir = _make_dirs("")
+        result = _build_result(self._config(), prompt_base, workflows_dir)
+
+        from nebuko.engine.models import DeterministicStep
+
+        step = DeterministicStep.from_resolved(result)
+        assert step is not None
+        assert step.kind == "run_script"
+        assert step.step_name == "run-tests"
+
     def test_empty_timeout_defaults_blank(self):
         cfg = self._config()
         cfg["run_script"]["timeout_minutes"] = None
