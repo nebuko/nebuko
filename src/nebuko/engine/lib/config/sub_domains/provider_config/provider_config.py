@@ -23,6 +23,12 @@ class ProviderConfig(BaseModel):
     user_agent: Optional[str] = None
     session_header: Optional[str] = None
     extra_headers: dict[str, str] = Field(default_factory=dict)
+    # Some OpenAI-compatible gateways reject the message-level ``name`` field the
+    # SDK attaches to tool-result messages ("[unsupported_parameter] ... 'name'
+    # is not supported by this endpoint"). LiteLLM's ``drop_params`` only drops
+    # top-level request params, not fields nested in messages, so providers that
+    # need this must opt in explicitly (issue #881).
+    drop_message_name: bool = False
 
     @field_validator("session_header")
     @classmethod

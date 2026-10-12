@@ -2,6 +2,8 @@
 
 import os
 
+import litellm
+from litellm.integrations.custom_logger import CustomLogger
 from openhands.sdk import get_logger
 
 from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
@@ -92,6 +94,57 @@ def normalize_base_url(url: str | None) -> str | None:
     if trimmed.endswith(_CHAT_COMPLETIONS_SUFFIX):
         trimmed = trimmed[: -len(_CHAT_COMPLETIONS_SUFFIX)]
     return trimmed or url
+
+
+def _strip_message_name(messages):
+    """Return ``messages`` with the message-level ``name`` field dropped.
+
+    Only tool-result messages carry ``name`` (the SDK sets it alongside
+    ``tool_call_id``); other messages are passed through untouched. Pure: the
+    input is never mutated.
+    """
+    return [
+        {k: v for k, v in message.items() if k != "name"}
+        if isinstance(message, dict) and message.get("role") == "tool"
+        else message
+        for message in (messages or [])
+    ]
+
+
+class _MessageNameStripper(CustomLogger):
+    """LiteLLM pre-call hook dropping the tool-message ``name`` field.
+
+    ``drop_params`` / ``additional_drop_params`` operate on top-level request
+    params, never on fields nested inside ``messages``; an OpenAI-compatible
+    gateway that rejects the message-level ``name`` therefore needs this
+    dedicated seam. ``log_pre_api_call`` fires synchronously before every
+    request (streamed included), and its ``complete_input_dict`` is the exact
+    JSON body LiteLLM is about to send, so rewriting ``messages`` there is
+    template-agnostic (issue #881).
+    """
+
+    def log_pre_api_call(self, model, messages, kwargs):
+        complete_input = (kwargs.get("additional_args") or {}).get(
+            "complete_input_dict"
+        )
+        if isinstance(complete_input, dict) and complete_input.get("messages") is not None:
+            complete_input["messages"] = _strip_message_name(complete_input["messages"])
+
+
+_MESSAGE_NAME_STRIPPER: _MessageNameStripper | None = None
+
+
+def _enable_message_name_drop() -> None:
+    """Install the message-``name`` stripper when a provider opted in.
+
+    Idempotent: the process-wide ``litellm.callbacks`` list must not accumulate
+    duplicate registrations across runs.
+    """
+    global _MESSAGE_NAME_STRIPPER
+    if _MESSAGE_NAME_STRIPPER is None:
+        _MESSAGE_NAME_STRIPPER = _MessageNameStripper()
+    if _MESSAGE_NAME_STRIPPER not in litellm.callbacks:
+        litellm.callbacks.append(_MESSAGE_NAME_STRIPPER)
 
 
 def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
@@ -349,5 +402,11 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
             headers.update(runtime.extra_headers())
         if headers:
             llm_config["extra_headers"] = headers
+
+        # Provider opted out of the message-level ``name`` field (issue #881):
+        # gate the pre-call stripper on the provider, never globally, so
+        # providers that rely on ``name`` keep it.
+        if provider.drop_message_name:
+            _enable_message_name_drop()
 
     return (llm_config, prompt, agent_cfg)
