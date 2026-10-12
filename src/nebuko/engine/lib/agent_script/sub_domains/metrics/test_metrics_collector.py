@@ -49,6 +49,29 @@ class _Conversation:
     state = _State()
 
 
+class _TokenUsage:
+    def __init__(self, reasoning_tokens=0):
+        self.reasoning_tokens = reasoning_tokens
+
+
+def _conversation_with(cache_hit_rate, token_usages):
+    """A conversation whose combined metrics carry cache/reasoning signals."""
+    combined = _Combined()
+    combined.cache_hit_rate = cache_hit_rate
+    combined.token_usages = token_usages
+
+    class _Stats:
+        def get_combined_metrics(self):
+            return combined
+
+    class _Conversation:
+        id = "run-1"
+        conversation_stats = _Stats()
+        state = _State()
+
+    return _Conversation()
+
+
 @pytest.fixture(autouse=True)
 def _reset_active_collector():
     previous = seam.get_active_collector()
@@ -104,3 +127,30 @@ class TestCollectLlmMetricsProviderHealth:
 
         assert metrics.tokens_per_second is None
         assert metrics.time_to_first_token is None
+
+
+class TestCollectLlmMetricsCacheAndReasoning:
+    def test_populates_rate_and_reasoning_sum(self):
+        conversation = _conversation_with(
+            0.4819, [_TokenUsage(10000), _TokenUsage(170)]
+        )
+
+        metrics = collect_llm_metrics(conversation)
+
+        assert metrics.error is None
+        assert metrics.cache_hit_rate == pytest.approx(0.4819)
+        assert metrics.reasoning_tokens == 10170
+
+    def test_zero_when_no_signal_available(self):
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.cache_hit_rate == 0.0
+        assert metrics.reasoning_tokens == 0
+
+    def test_none_rate_maps_to_zero(self):
+        conversation = _conversation_with(None, [])
+
+        metrics = collect_llm_metrics(conversation)
+
+        assert metrics.cache_hit_rate == 0.0
+        assert metrics.reasoning_tokens == 0
