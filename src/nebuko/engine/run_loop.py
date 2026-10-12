@@ -49,7 +49,13 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
     from nebuko.adapters.base import PlatformAdapter
-    from config import AgentStartNotice, HumanActionNotice, ScriptStartNotice
+    from config import (
+        AgentStartNotice,
+        HookSpec,
+        HumanActionNotice,
+        ScriptStartNotice,
+    )
+    from nebuko.engine.hook_runner import HookPhase, HookResult
     from nebuko.engine.artifacts import RunArtifactStager
     from nebuko.engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
@@ -789,20 +795,47 @@ class Engine:
             # the child starts from scratch and resets ``history`` to a single
             # entry (issue #726).
             self.stage_prev_state()
-            self.notify_agent_started(self._agent_start_notice(trigger))
+            # Step hooks (issue #884): the current step's ``pre_hook`` runs in
+            # the session workspace before the agent. It is fail-closed: a
+            # failure skips the agent and fails the step through the same
+            # ``failure_reason`` path an agent crash takes.
+            step = self._current_step(resolved)
+            pre_hook = step.pre_hook if step is not None else None
+            post_hook = step.post_hook if step is not None else None
+            pre_failure: str | None = None
+            if pre_hook is not None:
+                pre_result = self._run_hook(pre_hook, "pre")
+                if not pre_result.ok:
+                    pre_failure = f"pre_hook failed: {pre_result.detail}"
+                    log.error("[phase:agent] %s", pre_failure)
+
             failure_reason: str | None = None
-            try:
-                agent_result = self.invoke_agent(prompt)
-            except Exception as exc:  # noqa: BLE001 - never crash the host
-                log.exception("[phase:agent] agent invocation failed: %s", exc)
-                # The bash runs the agent behind ``| tee console.txt``, so a
-                # non-zero exit never fails the step, and "Clean and Prepare
-                # Comment" is guarded by ``if: always()``. A crashed run still
-                # reaches ``prepare_comment`` and posts its structured
-                # fallback; mirror that with an empty result (no artefacts)
-                # instead of aborting silently (issue #590 round-4, finding 2).
-                agent_result = {}
-                failure_reason = str(exc)
+            agent_result: Any = {}
+            if pre_failure is None:
+                self.notify_agent_started(self._agent_start_notice(trigger))
+                try:
+                    agent_result = self.invoke_agent(prompt)
+                except Exception as exc:  # noqa: BLE001 - never crash the host
+                    log.exception("[phase:agent] agent invocation failed: %s", exc)
+                    # The bash runs the agent behind ``| tee console.txt``, so a
+                    # non-zero exit never fails the step, and "Clean and Prepare
+                    # Comment" is guarded by ``if: always()``. A crashed run still
+                    # reaches ``prepare_comment`` and posts its structured
+                    # fallback; mirror that with an empty result (no artefacts)
+                    # instead of aborting silently (issue #590 round-4, finding 2).
+                    agent_result = {}
+                    failure_reason = str(exc)
+            else:
+                failure_reason = pre_failure
+
+            # ``post_hook`` (issue #884) is fail-open and finally-style: it runs
+            # after the agent attempt whether that succeeded, failed, or was
+            # skipped for a failed pre_hook, and its own failure is recorded
+            # without altering the step outcome or routing (v1).
+            if post_hook is not None:
+                post_result = self._run_hook(post_hook, "post")
+                if not post_result.ok:
+                    log.warning("[phase:agent] post_hook failed: %s", post_result.detail)
 
             self._enter(phases, "validate")
             if failure_reason is None:
@@ -1443,6 +1476,47 @@ class Engine:
         return (
             str(roots[-1]),
             str(roots[0]) if len(roots) > 1 else None,
+        )
+
+    def _current_step(self, resolved: Any) -> Any:
+        """The :class:`WorkflowStep` this run executes, for its hooks (#884).
+
+        The resolver hand-off carries the workflow/step *names*, not the step
+        object, so the step is looked up in the same workflow definition the
+        resolver used (mirroring :meth:`_step_is_terminal`'s successor lookup).
+        A missing name or an unloadable definition yields ``None`` — hooks are
+        optional metadata and must never abort an otherwise valid run.
+        """
+        workflow = str(self._get(resolved, "WORKFLOW_NAME") or "")
+        step_name = str(self._get(resolved, "WORKFLOW_STEP") or "")
+        if not (workflow and step_name):
+            return None
+        ensure_import_path()
+        from resolve_workflow import _find_workflow_step, _load_workflow_by_reference
+
+        workflows_dir, local_workflows_dir = self._workflow_dirs()
+        try:
+            definition = _load_workflow_by_reference(
+                workflow, workflows_dir, local_workflows_dir
+            )
+        except Exception:  # noqa: BLE001 - hooks are best-effort step metadata
+            log.warning(
+                "[phase:agent] could not load workflow %r for step hooks",
+                workflow,
+                exc_info=True,
+            )
+            return None
+        if definition is None:
+            return None
+        return _find_workflow_step(definition, step_name)
+
+    # @stub-protected
+    def _run_hook(self, spec: "HookSpec", phase: "HookPhase") -> "HookResult":
+        """Run one step hook in the session workspace; never raises (issue #884)."""
+        from nebuko.engine.hook_runner import HookRunner
+
+        return HookRunner(workspace=self.repo_root, env=self._agent_env()).run(
+            spec, phase
         )
 
     # @stub-protected

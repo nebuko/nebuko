@@ -277,6 +277,107 @@ class TestWorkflowStepScript:
         assert step.agent == "architect"
 
 
+class TestWorkflowStepHooks:
+    """Test the per-step pre/post hooks (issue #884)."""
+
+    def test_minimal_pre_hook(self):
+        step = WorkflowStep(name="implement", agent="dev", pre_hook={"path": "scripts/x.sh"})
+        assert step.pre_hook.path == "scripts/x.sh"
+        assert step.pre_hook.args is None
+        assert step.pre_hook.timeout_minutes is None
+        assert step.post_hook is None
+
+    def test_pre_and_post_hook_round_trip(self):
+        step = WorkflowStep(
+            name="implement",
+            agent="dev",
+            pre_hook={"path": "scripts/init.sh", "args": ["--full"], "timeout_minutes": 10},
+            post_hook={"path": "scripts/stats.sh", "args": ["--json"]},
+        )
+        assert step.pre_hook.path == "scripts/init.sh"
+        assert step.pre_hook.args == ["--full"]
+        assert step.pre_hook.timeout_minutes == 10
+        assert step.post_hook.path == "scripts/stats.sh"
+        assert step.post_hook.args == ["--json"]
+
+    def test_hooks_default_to_none(self):
+        # Backward compatibility: a plain agent step parses exactly as before.
+        step = WorkflowStep(name="analyze", agent="architect", next="context")
+        assert step.pre_hook is None
+        assert step.post_hook is None
+
+    def test_hook_absolute_path_rejected(self):
+        with pytest.raises(ValueError, match="repo-relative"):
+            WorkflowStep(name="bad", agent="dev", pre_hook={"path": "/etc/passwd"})
+
+    def test_hook_traversal_path_rejected(self):
+        with pytest.raises(ValueError, match="repo-relative"):
+            WorkflowStep(name="bad", agent="dev", post_hook={"path": "../outside.sh"})
+
+    def test_hook_nested_traversal_path_rejected(self):
+        with pytest.raises(ValueError, match="repo-relative"):
+            WorkflowStep(
+                name="bad", agent="dev", pre_hook={"path": "scripts/../secrets/x.sh"}
+            )
+
+    def test_hook_dotdot_prefixed_filename_allowed(self):
+        step = WorkflowStep(name="ok", agent="dev", pre_hook={"path": "scripts/..bar.sh"})
+        assert step.pre_hook.path == "scripts/..bar.sh"
+
+    def test_hook_timeout_zero_rejected(self):
+        with pytest.raises(ValueError, match="positive"):
+            WorkflowStep(
+                name="bad",
+                agent="dev",
+                pre_hook={"path": "scripts/x.sh", "timeout_minutes": 0},
+            )
+
+    def test_hook_timeout_negative_rejected(self):
+        with pytest.raises(ValueError, match="positive"):
+            WorkflowStep(
+                name="bad",
+                agent="dev",
+                post_hook={"path": "scripts/x.sh", "timeout_minutes": -3},
+            )
+
+    def test_hooks_rejected_on_script_step(self):
+        with pytest.raises(ValueError, match="cannot declare 'pre_hook' or 'post_hook'"):
+            WorkflowStep(
+                name="bad",
+                script={"path": "scripts/test.sh"},
+                pre_hook={"path": "scripts/x.sh"},
+            )
+
+    def test_hooks_rejected_on_workflow_step(self):
+        with pytest.raises(ValueError, match="only valid on an 'agent' step"):
+            WorkflowStep(
+                name="bad",
+                workflow="review-only",
+                pre_hook={"path": "scripts/x.sh"},
+            )
+
+    def test_hooks_rejected_on_repo_step(self):
+        with pytest.raises(ValueError, match="only valid on an 'agent' step"):
+            WorkflowStep(
+                name="bad",
+                repo="https://example.com/repo.git",
+                ref="main",
+                post_hook={"path": "scripts/x.sh"},
+            )
+
+    def test_hook_coexists_with_existing_agent_fields(self):
+        step = WorkflowStep(
+            name="implement",
+            agent="dev",
+            next="review",
+            skill=["python"],
+            pre_hook={"path": "scripts/x.sh"},
+        )
+        assert step.next == "review"
+        assert step.skill == ["python"]
+        assert step.pre_hook.path == "scripts/x.sh"
+
+
 class TestWorkflowStepComplexity:
     """Test the per-step declared complexity tier (issue #787)."""
 

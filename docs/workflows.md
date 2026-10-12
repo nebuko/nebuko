@@ -307,6 +307,67 @@ Security notes:
 
 ---
 
+## Step Hooks
+
+An **agent** step can declare two deterministic hooks that run **in the session
+workspace** around the agent invocation (issue #884):
+
+- `pre_hook` runs immediately **before** the agent is invoked (e.g. initialize a
+  dev environment);
+- `post_hook` runs immediately **after** the agent attempt completes (e.g.
+  gather files/stats).
+
+Both use the same shape as a `script` step — a repo-relative `path`, an optional
+argv `args` list, and an optional `timeout_minutes`. The hook's YAML key is the
+discriminator; there is no separate `kind` field.
+
+```yaml
+steps:
+  - name: implement
+    agent: dev
+    pre_hook:
+      path: scripts/init-dev-env.sh   # required, repo-relative
+      args: ["--full"]                # optional argv list (no shell interpolation)
+      timeout_minutes: 10             # optional, >= 1 (default 30, capped at 60)
+    post_hook:
+      path: scripts/collect-stats.sh
+```
+
+Lifecycle (inside `[phase:agent]`, after the pre-agent state is staged):
+
+1. `pre_hook` runs in the session workspace with the run's environment. It is
+   **fail-closed**: a non-zero exit, timeout, or failed exec **skips the agent**
+   and fails the step through the same path as an agent crash (the run posts its
+   usual failure notice and holds).
+2. The agent is invoked (`notify_agent_started` + the model run).
+3. `post_hook` runs in a finally-style position — after the agent attempt
+   returns, raises, or is skipped for a failed `pre_hook`. It is **fail-open**:
+   its own failure/timeout is logged (`post_hook failed: …`) but **never** changes
+   the step's outcome, dispatch, or routing.
+
+Failure semantics summary:
+
+| Hook | When it runs | On its own failure |
+| --- | --- | --- |
+| `pre_hook` | before the agent | agent skipped, step fails (fail-closed) |
+| `post_hook` | after the agent attempt (finally-style) | recorded, outcome unchanged (fail-open) |
+
+Scope and security:
+
+- Hooks are valid on **`agent` steps only**; declaring them on a `script`,
+  `workflow`, or `repo` step is rejected at parse time.
+- `path` must be repo-relative: absolute paths and `..` segments are rejected at
+  parse time (the same rule as `script.path`).
+- Hooks run in the same CI job and session workspace with the job's full
+  environment and permissions — the same trust level as the workflow YAML and the
+  `script` step. Sandboxed execution is a deferred enhancement.
+
+v1 boundaries (deferred): string shorthand (`pre_hook: scripts/x.sh`), ordered
+lists of hooks, hooks on `script`/`workflow`/`repo` steps, an `on_fail` /
+`stop_on_fail` policy field, and posting hook output as a separate comment.
+
+---
+
 ## Typed Inputs and Step Outputs
 
 A workflow is a **typed function** (issue #813): it declares `inputs` (its

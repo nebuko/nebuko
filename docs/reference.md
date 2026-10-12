@@ -116,6 +116,11 @@ graph-level invariants below are checked offline by
 | `steps[].script.path` | script | string | yes (with `script`) | Repo-relative path of the script to run. Absolute paths and `..` segments are rejected. |
 | `steps[].script.args` | script | string[] | no | Arguments passed to the script (argv list, no shell interpolation). |
 | `steps[].script.timeout_minutes` | script | int | no | Execution timeout in minutes (≥ 1; default 30, capped at 60). |
+| `steps[].pre_hook` | step | object | no | Deterministic command run in the session workspace immediately **before** the agent is invoked (issue #884). Fail-closed: a non-zero exit or timeout skips the agent and fails the step. Valid on `agent` steps only. |
+| `steps[].post_hook` | step | object | no | Deterministic command run in the session workspace immediately **after** the agent attempt completes (issue #884). Fail-open and finally-style: it runs even when the agent fails, and its own failure is recorded without changing the step outcome or routing. Valid on `agent` steps only. |
+| `steps[].pre_hook.path` / `steps[].post_hook.path` | hook | string | yes (with hook) | Repo-relative path of the hook script. Absolute paths and `..` segments are rejected. |
+| `steps[].pre_hook.args` / `steps[].post_hook.args` | hook | string[] | no | Arguments passed to the hook (argv list, no shell interpolation). |
+| `steps[].pre_hook.timeout_minutes` / `steps[].post_hook.timeout_minutes` | hook | int | no | Hook timeout in minutes (≥ 1; default 30, capped at 60). |
 | `steps[].next` | step | string/null | no | Next step name, or `null` for terminal. |
 | `steps[].conditions` | step | list | no | Conditional routing, evaluated in order. |
 | `steps[].conditions[].on_result` | condition | string | yes | Result key reported by the agent (e.g., `approved`, `rejected`, `default`). |
@@ -154,6 +159,11 @@ steps:
   `conditions[]` can route on it (e.g., `on_result: fail → dev`). **A failing
   script still advances** the workflow in v1 — it does not hold or terminate;
   the successor (usually an agent) receives the raw failure output.
+- `pre_hook` / `post_hook` bracket an **agent** step's invocation only: they are
+  rejected on `script`, `workflow`, and `repo` steps. `pre_hook` is fail-closed
+  (a failure skips the agent and fails the step); `post_hook` is fail-open (a
+  failure is recorded but never changes the outcome or routing). See
+  [workflows.md](./workflows.md#step-hooks).
 - A workflow's declared `inputs`/`outputs` make it a typed function: every
   declared input must be bound **exactly once** at each `workflow` call site, a
   binding's kind must match the declaration (a `ref` is kind-preserving), and

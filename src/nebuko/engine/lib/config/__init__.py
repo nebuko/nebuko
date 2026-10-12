@@ -34,6 +34,7 @@ from .sub_domains.workflow.input_binding import (
 )
 from .sub_domains.workflow.workflow_input_spec import WorkflowInputSpec
 from .sub_domains.workflow_condition.workflow_condition import WorkflowCondition
+from .sub_domains.workflow_step.hook_spec import HookSpec
 from .sub_domains.workflow_step.script_step_spec import ScriptStepSpec
 from .sub_domains.workflow_step.workflow_step import WorkflowStep
 from .sub_domains.workflow_trigger.workflow_trigger import WorkflowTrigger
@@ -97,6 +98,7 @@ __all__ = [
     "InputBinding",
     "InputMaterializationError",
     "INPUT_REF_PATTERN",
+    "HookSpec",
     "ScriptStepSpec",
     "WorkflowStep",
     "WorkflowTrigger",

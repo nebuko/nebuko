@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import re
 import sys
 from pathlib import Path
@@ -2513,3 +2514,161 @@ class TestStepOutputScope:
         engine = _engine(tmp_path)
         rendered = engine._render_step_prompt("{{ ghost }}", {"plan": "P"})
         assert rendered == "_(unavailable: ghost)_"
+
+
+# Workflow template for the step-hook tests (issue #884): ``{body}`` is where
+# the optional ``pre_hook:`` / ``post_hook:`` blocks are spliced.
+_HOOKED_WORKFLOW_TEMPLATE = """\
+name: hooked
+description: "step-hook test workflow"
+trigger:
+  agents: [dev]
+steps:
+  - name: implement
+    agent: dev
+{body}    next: null
+"""
+
+
+def _hook_workflow(pre_hook: str = "", post_hook: str = "") -> str:
+    body = ""
+    if pre_hook:
+        body += f"    pre_hook:\n      path: {pre_hook}\n"
+    if post_hook:
+        body += f"    post_hook:\n      path: {post_hook}\n"
+    return _HOOKED_WORKFLOW_TEMPLATE.format(body=body)
+
+
+def _write_hook_script(root: Path, rel: str, body: str) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _stub_hooked_resolver(monkeypatch, workflow: str = "hooked") -> None:
+    _stub_resolved(
+        monkeypatch,
+        {
+            "SKIP_AGENT": "false",
+            "WORKFLOW_NAME": workflow,
+            "WORKFLOW_STEP": "implement",
+            "ROLE_NAME": "dev",
+            "TASK": "dev",
+        },
+    )
+
+
+def _hooked_engine(tmp_path, monkeypatch, *, pre_hook="", post_hook=""):
+    """An engine over a temp repo whose ``hooked`` workflow carries the hooks."""
+    workflows = tmp_path / ".nebuko" / "workflows"
+    workflows.mkdir(parents=True, exist_ok=True)
+    (workflows / "hooked.yaml").write_text(
+        _hook_workflow(pre_hook, post_hook), encoding="utf-8"
+    )
+    _stub_hooked_resolver(monkeypatch)
+    adapter = LocalAdapter(tmp_path / "runs" / "run-1", trigger=_trigger())
+    return Engine(
+        adapter=adapter,
+        repo_root=tmp_path,
+        env={"GITHUB_REPOSITORY": "olivier-norture/git-flow-ai"},
+    )
+
+
+def _marker_agent(self, prompt):
+    """Agent stub that records its call in ``order.txt`` and advances."""
+    (self.repo_root / "order.txt").open("a", encoding="utf-8").write("agent\n")
+    return _agent_result("done")
+
+
+class TestStepHooks:
+    """The pre/post hook lifecycle around an agent step (issue #884)."""
+
+    def test_pre_and_post_hooks_bracket_the_agent(self, tmp_path, monkeypatch):
+        _write_hook_script(tmp_path, "scripts/pre.sh", "echo pre >> order.txt\n")
+        _write_hook_script(tmp_path, "scripts/post.sh", "echo post >> order.txt\n")
+        engine = _hooked_engine(
+            tmp_path, monkeypatch, pre_hook="scripts/pre.sh", post_hook="scripts/post.sh"
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", _marker_agent)
+
+        outcome = engine.run()
+
+        assert (tmp_path / "order.txt").read_text().split() == ["pre", "agent", "post"]
+        assert outcome.exit_code == ExitCode.ADVANCE
+
+    def test_failing_pre_hook_skips_the_agent_and_fails_the_step(
+        self, tmp_path, monkeypatch
+    ):
+        _write_hook_script(tmp_path, "scripts/pre.sh", "exit 4\n")
+        _write_hook_script(tmp_path, "scripts/post.sh", "echo ran >> post.txt\n")
+        engine = _hooked_engine(
+            tmp_path, monkeypatch, pre_hook="scripts/pre.sh", post_hook="scripts/post.sh"
+        )
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: pytest.fail("agent ran despite a failing pre_hook"),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert "pre_hook failed" in outcome.routing.reason
+        assert "exited with code 4" in outcome.routing.reason
+        # ``post_hook`` is finally-style: it still runs after the failed pre gate.
+        assert (tmp_path / "post.txt").exists()
+
+    def test_post_hook_runs_when_the_agent_raises(self, tmp_path, monkeypatch):
+        _write_hook_script(tmp_path, "scripts/post.sh", "echo post >> order.txt\n")
+        engine = _hooked_engine(tmp_path, monkeypatch, post_hook="scripts/post.sh")
+
+        def boom(self, prompt):
+            raise RuntimeError("agent blew up")
+
+        monkeypatch.setattr(Engine, "invoke_agent", boom)
+
+        outcome = engine.run()
+
+        assert (tmp_path / "order.txt").read_text().split() == ["post"]
+        assert outcome.exit_code == ExitCode.ERROR
+        assert "agent blew up" in outcome.routing.reason
+
+    def test_failing_post_hook_does_not_change_the_outcome(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        _write_hook_script(tmp_path, "scripts/post.sh", "exit 9\n")
+        engine = _hooked_engine(tmp_path, monkeypatch, post_hook="scripts/post.sh")
+        monkeypatch.setattr(Engine, "invoke_agent", _marker_agent)
+        caplog.set_level(logging.WARNING)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.routing.status == "advance"
+        assert "post_hook failed" in caplog.text
+
+    def test_agent_step_without_hooks_is_unaffected(self, tmp_path, monkeypatch):
+        engine = _hooked_engine(tmp_path, monkeypatch)
+        monkeypatch.setattr(Engine, "invoke_agent", _marker_agent)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert (tmp_path / "order.txt").read_text().split() == ["agent"]
+
+    def test_unresolvable_step_hooks_do_not_block_the_agent(self, tmp_path, monkeypatch):
+        # No workflow file on disk: ``_current_step`` yields None, so hooks are
+        # silently absent and the agent still runs.
+        _stub_hooked_resolver(monkeypatch, workflow="ghost")
+        adapter = LocalAdapter(tmp_path / "runs" / "run-1", trigger=_trigger())
+        engine = Engine(
+            adapter=adapter,
+            repo_root=tmp_path,
+            env={"GITHUB_REPOSITORY": "olivier-norture/git-flow-ai"},
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", _marker_agent)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
