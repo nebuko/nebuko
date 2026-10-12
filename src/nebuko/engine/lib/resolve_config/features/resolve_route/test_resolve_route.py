@@ -550,6 +550,110 @@ class TestGatePrecedenceOverFunctionCall:
         assert result["WORKFLOW_STEP"] == "stub_approval"
 
 
+_GATED_HOLD_WF_YAML = (
+    "name: gated\n"
+    "description: test\n"
+    "trigger:\n"
+    "  agents: [architect]\n"
+    "steps:\n"
+    "  - name: plan\n"
+    "    agent: architect\n"
+    "    next: implement\n"
+    "    human_gate: true\n"
+    "  - name: implement\n"
+    "    agent: dev\n"
+    "    next: review\n"
+    "  - name: review\n"
+    "    agent: review\n"
+    "    next: null\n"
+)
+
+
+class TestHumanGateHoldPrecedence:
+    """A persisted ``human_gate`` hold blocks auto-advance (issues #885, #887).
+
+    The exact inversion this fix closes: before the guard, a ``hold`` whose
+    reason named a gate was ignored whenever the workflow forward edge
+    resolved (``plan -> implement``), so the bot advanced to ``dev``.
+    """
+
+    @staticmethod
+    def _dirs(tmp_path):
+        from resolve_workflow import TASK_TO_PROMPT
+
+        prompt_base = tmp_path / "prompts"
+        workflows_dir = tmp_path / "workflows"
+        prompt_base.mkdir()
+        workflows_dir.mkdir()
+        for name in TASK_TO_PROMPT.values():
+            (prompt_base / name).write_text("# prompt")
+        (workflows_dir / "gated.yaml").write_text(_GATED_HOLD_WF_YAML)
+        return str(prompt_base), str(workflows_dir)
+
+    def _resolve(self, tmp_path, state):
+        import json as _json
+
+        from resolve_config import resolve_config
+
+        block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        prompt_base, workflows_dir = self._dirs(tmp_path)
+        body = "<!-- bot-workflow-terminal -->\n" + block
+        return resolve_config(body, prompt_base, workflows_dir, is_bot=True)
+
+    def _state(self, **dispatch):
+        return {
+            "version": 1,
+            "workflow": "gated",
+            "step": "plan",
+            "agent": "architect",
+            "dispatch": dispatch,
+        }
+
+    def test_gate_hold_outranks_a_resolvable_successor(self, tmp_path):
+        # plan -> implement resolves, but the human_gate hold must still win.
+        result = self._resolve(
+            tmp_path,
+            self._state(status="hold", reason="human_gate:plan"),
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert "human_gate:plan" in result["REASON"]
+        assert "approve gate" in result["REASON"]
+        assert "reject gate" in result["REASON"]
+
+    def test_gate_hold_result_never_names_the_successor(self, tmp_path):
+        result = self._resolve(
+            tmp_path,
+            self._state(status="hold", reason="human_gate:plan"),
+        )
+        assert result.get("TASK") != "dev"
+        assert result.get("WORKFLOW_STEP") != "implement"
+
+    def test_non_gate_hold_keeps_existing_behavior(self, tmp_path):
+        # Out of scope (plan scopes the guard to human_gate:*): a plain hold
+        # on a step with a resolvable successor still advances.
+        result = self._resolve(
+            tmp_path,
+            self._state(status="hold", reason="no-action default"),
+        )
+        assert result.get("TASK") == "dev"
+        assert result.get("WORKFLOW_STEP") == "implement"
+
+    def test_gate_hold_outranks_a_persisted_function_call(self, tmp_path):
+        # Issue #887 round 2: a held gate whose state also carries a
+        # function_call must not let the hand-off branch route to the callee.
+        state = self._state(status="hold", reason="human_gate:plan")
+        state["function_call"] = {"agent_name": "dev"}
+        result = self._resolve(tmp_path, state)
+        assert result["SKIP_AGENT"] == "true"
+        assert "human_gate:plan" in result["REASON"]
+        assert result.get("TASK") != "dev"
+        assert result.get("WORKFLOW_STEP") != "implement"
+
+
 _CALLBACK_WF_YAML = (
     "name: cb\n"
     "description: test\n"

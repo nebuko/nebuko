@@ -391,6 +391,21 @@ def _load_gated_step_def(
     return False
 
 
+def _dispatch_is_human_gate_hold(dispatch: Optional[Dispatch]) -> bool:
+    """True when a dispatch is the human-gate intercept's ``hold``.
+
+    The intercept (``apply_human_gate_intercept``) is the sole producer of a
+    ``status == "hold"`` whose reason names a gate, and ``resolve_route``
+    detects the same shape, so this mirror is what keeps the persisted state
+    and the router in agreement (issue #887).
+    """
+    return bool(
+        dispatch is not None
+        and dispatch.status == "hold"
+        and (dispatch.reason or "").startswith("human_gate:")
+    )
+
+
 def apply_human_gate_intercept(
     dispatch: Optional[Dispatch],
     workflow_name: str,
@@ -1233,6 +1248,17 @@ def build_output(
         workflow_name=workflow_name,
         workflow_step=workflow_step,
     )
+    # Consistency fix (issue #887): when the intercept converts a completing
+    # dispatch to a human_gate hold, the persisted resolution must not keep
+    # advertising the ungated forward edge (``next_step`` from WORKFLOW_NEXT).
+    # The hold is released only by a gate command, so no reader may follow that
+    # edge; the routing guard in resolve_route no longer trusts it either.
+    if dispatch is not None and _dispatch_is_human_gate_hold(dispatch):
+        resolution = resolution.model_copy(update={"next_step": ""})
+        # The gate supersedes any agent-named hand-off (issue #887 round 2): a
+        # persisted ``function_call`` would otherwise let the next bot trigger
+        # route straight to the callee, past the unreleased gate.
+        function_call = None
 
     # ── Recovery log: capture execution trace on failure ──────────
     if is_graceful_timeout or not final_message or is_malformed_final_message(final_message):

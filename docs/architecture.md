@@ -275,6 +275,19 @@ The decision routes the workflow directly (via the gated step's `on_result`
 conditions) and is single-shot per hold instance. See
 [workflows.md — Human Gates](./workflows.md#human-gates).
 
+A persisted `human_gate` hold also **blocks auto-advance on every bot routing
+path** (issues #885, #887): the resolver checks the gate-hold precedence
+*before* resolving the workflow forward edge, so a stale `next_step` on a held
+state (`plan -> implement`) can never route the run past an unreleased gate.
+This precedence is applied on the dispatch path, the state-only bot fallback,
+*and* the agent hand-off (`function_call`) branch — a held step's own gate
+outranks any `call_agent` it persisted, so no hand-off can jump the gate. The
+intercept additionally empties `resolution.next_step` and drops any
+`function_call` on the held state, so the persisted snapshot advertises neither
+an ungated forward edge nor a callee. See `resolve_route.py`
+(`_human_gate_hold_result`, `_resolve_handoff_decision`) and
+`build_output.py` (`_dispatch_is_human_gate_hold`).
+
 ### Human-action notification (issue #795)
 
 Notification is an orchestration concern, not an agent one: a run reports its
