@@ -819,6 +819,42 @@ class TestRenderHandoffSentinel(unittest.TestCase):
         self.assertTrue(sentinel.endswith(" -->"))
         self.assertEqual(sentinel.count("AGENT_RUN_CONFIG"), 1)
 
+    def test_rendered_sentinel_round_trips_through_the_compat_parsers(self):
+        """#876: the engine-rendered sentinel is isomorphic to what the legacy
+        parsers (``agent_run_config_to_dispatch`` / ``extract_function_call``)
+        recover, so the durable record stays backwards-compatible."""
+        from build_output import agent_run_config_to_dispatch
+        from workflow_state import extract_function_call
+        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
+        from workflow_state.sub_domains.function_call.function_call import FunctionCall
+
+        state = self._state(
+            dispatch=Dispatch(
+                status="advance", task_hint="review", complexity="high", branch="approved"
+            ),
+            function_call=FunctionCall(
+                function="call_agent", agent_name="review", callback="dev"
+            ),
+        )
+        sentinel = render_handoff_sentinel(state)
+        payload = self._payload(sentinel)
+
+        # ``to_routing_decision`` reads the dispatch's cross-agent target as
+        # ``agent`` — the field the hand-off names (issue #876).
+        self.assertEqual(payload["dispatch"]["agent"], "review")
+
+        # The legacy dispatch parser recovers the same typed decision (the
+        # routing fields it understands: status/complexity/branch).
+        dispatch = agent_run_config_to_dispatch(json.dumps(payload))
+        self.assertEqual(dispatch.status, "advance")
+        self.assertEqual(dispatch.complexity, "high")
+        self.assertEqual(dispatch.branch, "approved")
+
+        # …and the legacy function_call extractor recovers the hand-off.
+        function_call = extract_function_call(payload)
+        self.assertEqual(function_call.agent_name, "review")
+        self.assertEqual(function_call.callback, "dev")
+
 
 if __name__ == "__main__":
     unittest.main()

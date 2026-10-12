@@ -65,6 +65,10 @@ from agent_script.features.dispatch_next_tool import (
     clear_run,
     get_recorded_dispatch,
 )
+from agent_script.features.call_agent_tool import (
+    clear_run as clear_call_agent_run,
+    get_recorded_function_call,
+)
 from agent_script.features.complexity_review_tool import (
     clear_complexity_review_run,
     get_recorded_review_request,
@@ -803,6 +807,10 @@ def _merge_sentinel_routing_fields(
     channels are complementary instead of the tool silently truncating a
     richer sentinel. A non-``None`` value the tool explicitly set is never
     overridden.
+
+    **Frozen as compatibility-only (issue #876).** Agents no longer emit the
+    sentinel; it survives only as a legacy input. Each merge logs a deprecation
+    warning — the phase-3 gate metric for removing this path entirely.
     """
     if not final_message:
         return tool_dispatch
@@ -821,8 +829,25 @@ def _merge_sentinel_routing_fields(
             updates[field] = sentinel_value
     if not updates:
         return tool_dispatch
-    logger.info(f"Merged sentinel routing fields into tool dispatch: {updates}")
+    logger.warning(
+        "[deprecation] merged legacy AGENT_RUN_CONFIG sentinel routing fields "
+        f"into the tool dispatch: {updates} (issue #876 — the sentinel is a "
+        "compat input only)"
+    )
     return tool_dispatch.model_copy(update=updates)
+
+
+def _typed_function_call(conversation) -> Optional[FunctionCall]:
+    """The run's recorded typed ``call_agent`` hand-off, if the tool was called.
+
+    The structured replacement for the sentinel-carried ``function_call``
+    (issue #876, PR-2). Returns ``None`` when the tool was not called, so
+    resolution falls back to the ``dispatch_next`` target / legacy sentinel.
+    """
+    conv_id = getattr(conversation, "id", None)
+    if conv_id is None:
+        return None
+    return get_recorded_function_call(conv_id)
 
 
 def _resolve_dispatch(
@@ -830,13 +855,16 @@ def _resolve_dispatch(
 ) -> tuple[Optional[Dispatch], Optional[FunctionCall], str]:
     """Resolve the run's dispatch decision from the structured signal first.
 
-    Resolution priority (issue #524):
+    Resolution priority (issue #524, extended by #876):
       1. ``dispatch_next`` tool call — a boolean check on structured data,
          immune to long-context format drops (the failure mode of the
          free-text sentinel).
-      2. Legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel — silent compat
+      2. Typed ``call_agent`` tool call — an explicit agent-to-agent hand-off
+         with no ``dispatch_next`` sibling still *is* a decision (advance to
+         the named agent).
+      3. Legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel — silent compat
          fallback during the dual-mode migration window.
-      3. Neither — a decision-less run: the fallback advances back to the
+      4. Neither — a decision-less run: the fallback advances back to the
          registered ``callback`` when there is a return address, else holds
          (issue #765, #864, :func:`_no_action_dispatch`) so the engine never
          auto-advances an unknown state.
@@ -845,9 +873,9 @@ def _resolve_dispatch(
     the tool are merged in from a co-emitted sentinel (issue #618) so the
     richer sentinel can no longer be silently truncated.
 
-    When the tool call names an explicit ``agent`` target, a matching
-    ``FunctionCall(call_agent)`` is also populated so the state's
-    ``function_call`` field stays filled for every downstream routing path.
+    The ``function_call`` is typed-first (issue #876): a recorded ``call_agent``
+    call wins over the ``dispatch_next`` target, which in turn wins over the
+    sentinel-scraped hand-off.
 
     Sentinels are always stripped from ``final_message`` so they never leak
     into the visible comment body.
@@ -858,14 +886,18 @@ def _resolve_dispatch(
 
     conv_id = getattr(conversation, "id", None)
     tool_dispatch = get_recorded_dispatch(conv_id) if conv_id is not None else None
+    typed_function_call = _typed_function_call(conversation)
 
     if tool_dispatch is not None:
         dispatch = _merge_sentinel_routing_fields(tool_dispatch, final_message)
         # Explicit cross-agent targeting flows through function_call in the
-        # routing chain; keep that field populated when the tool names a target.
-        # The shared helper validates the name against the agent roster and
-        # logs a warning on typos (issue #524).
-        if dispatch.task_hint:
+        # routing chain. The typed call_agent tool wins; otherwise the
+        # dispatch_next target is promoted to a call_agent hand-off. The shared
+        # helper validates the name against the agent roster and logs a warning
+        # on typos (issue #524).
+        if typed_function_call is not None:
+            function_call = typed_function_call
+        elif dispatch.task_hint:
             # Lazy import: dispatch_check imports from this module at top
             # level, so a module-level import here would be circular.
             from agent_script.features.dispatch_check import (
@@ -883,6 +915,20 @@ def _resolve_dispatch(
             f"Dispatch resolved via dispatch_next tool: status={dispatch.status}, "
             f"agent={dispatch.task_hint or '-'}"
         )
+    elif typed_function_call is not None:
+        # A typed call_agent without a dispatch_next sibling is itself the
+        # decision: advance to the named agent (issue #876). The hand-off
+        # carries the caller's declared complexity.
+        dispatch = Dispatch(
+            status="advance",
+            task_hint=typed_function_call.agent_name,
+            complexity=typed_function_call.complexity or "",
+        )
+        function_call = typed_function_call
+        logger.info(
+            "Dispatch resolved via typed call_agent tool: "
+            f"agent={typed_function_call.agent_name}"
+        )
     elif final_message:
         if has_unterminated_agent_run_config(final_message):
             diagnostic = "unterminated AGENT_RUN_CONFIG sentinel (truncated output)"
@@ -895,9 +941,10 @@ def _resolve_dispatch(
             function_call = extract_function_call(json.loads(extract_result.payload))
             if dispatch is not None:
                 diagnostic = ""
-                logger.info(
-                    "Dispatch resolved via legacy AGENT_RUN_CONFIG sentinel "
-                    "(dispatch_next tool not called)"
+                logger.warning(
+                    "[deprecation] Dispatch resolved via legacy AGENT_RUN_CONFIG "
+                    "sentinel (dispatch_next/call_agent tools not called); the "
+                    "sentinel is a compat input only (issue #876)"
                 )
             else:
                 diagnostic = "AGENT_RUN_CONFIG payload failed Dispatch validation"
@@ -927,6 +974,50 @@ def _resolve_dispatch(
         logger.warning(f"No action emitted — defaulting to {dispatch.status}: {dispatch.reason}")
 
     return dispatch, function_call, final_message
+
+
+def _neutralize_self_and_pin(
+    dispatch: Optional[Dispatch],
+    function_call: Optional[FunctionCall],
+    role_name: str,
+) -> tuple[Optional[Dispatch], Optional[FunctionCall]]:
+    """Neutralize a self hand-off and force the PO escalation pin (issue #876).
+
+    Two pure decisions applied to the resolved ``(dispatch, function_call)``:
+
+    1. **Self hand-off (issue #618, defect 2a):** when the ``function_call``
+       targets the running agent it must not outrank the plain dispatch /
+       workflow-next routing. Drop the ``function_call`` *and* the promoted
+       ``task_hint`` the typed ``call_agent`` branch copied onto the dispatch —
+       otherwise ``agent_host._routing_payload`` would re-derive an ``agent``
+       target from the neutralized hand-off and re-route to the running agent.
+    2. **PO escalation pin (issue #876 review):** the typed ``call_agent`` tool
+       exposes no ``pin`` field, so an imperatively escalating PO would lose the
+       verbatim pin its spec-comment contract requires. Force ``dispatch.pin``
+       engine-side on a PO hand-off.
+
+    Returns the possibly-updated ``(dispatch, function_call)`` pair; neither
+    input is mutated (``model_copy``).
+    """
+    if function_call is not None and is_self_function_call(function_call, role_name):
+        logger.info(
+            f"Self function_call neutralized (agent={role_name}); "
+            f"keeping plain dispatch for workflow-next routing"
+        )
+        function_call = None
+        if dispatch is not None and dispatch.task_hint == role_name:
+            dispatch = dispatch.model_copy(update={"task_hint": None})
+
+    if (
+        role_name == "po"
+        and function_call is not None
+        and function_call.function == "call_agent"
+        and dispatch is not None
+    ):
+        logger.info("PO imperative hand-off — forcing dispatch pin (issue #876)")
+        dispatch = dispatch.model_copy(update={"pin": True})
+
+    return dispatch, function_call
 
 
 def _resolve_pin(dispatch: Optional[Dispatch]) -> bool:
@@ -1093,21 +1184,17 @@ def build_output(
         conversation, final_message
     )
 
-    # Self function_call neutralization (issue #618, defect 2a): a self
-    # hand-off (agent dispatches to itself) must not outrank the plain
-    # dispatch / workflow-next routing. Drop the function_call and keep
-    # the plain dispatch so the router falls through to workflow-next.
-    if function_call is not None and is_self_function_call(function_call, role_name):
-        logger.info(
-            f"Self function_call neutralized (agent={role_name}); "
-            f"keeping plain dispatch for workflow-next routing"
-        )
-        function_call = None
+    # Self function_call neutralization (issue #618, defect 2a) + PO escalation
+    # pin (issue #876 review): both decisions live in the pure helper so they
+    # are directly unit-testable.
+    dispatch, function_call = _neutralize_self_and_pin(dispatch, function_call, role_name)
 
     # Clear the run-scoped dispatch registry on every exit path (issue #524):
     # build_output runs exactly once per agent run, so this must not leak into
     # the next run in a long-lived process.
     clear_run(getattr(conversation, "id", None))
+    # Typed call_agent hand-off registry (issue #876) — same lifecycle.
+    clear_call_agent_run(getattr(conversation, "id", None))
     clear_scaffold_branch_run(getattr(conversation, "id", None))
     # Complexity review request recorded by the agent this run (issue #869).
     # Captured before clearing the registry so it lands on this step's entry.

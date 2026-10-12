@@ -95,17 +95,11 @@ When invoked in the `spec_approval` or `stub_approval` step of the spec-driven w
 * Classify the human's response as:
   - **Approved**: Keywords like "approved", "looks good", "let's go", "proceed", "sound's good" — or any clear affirmative response
   - **Rejected**: Keywords like "rejected", "no", "not good", "changes needed" — or any clear negative response
-* Emit a dispatch with the `branch` field set to your classification:
-  - **On approval:**
-    ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "approved"}} -->
-    ```
-  - **On rejection:**
-    ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "rejected"}} -->
-    ```
-  - **If unclear** (no human response yet or ambiguous): Use `branch: "approved"` as the default (the workflow's `on_result: default` also routes forward).
-  - **Keep the two channels aligned:** if you also record the decision via the `dispatch_next` tool, pass the same `branch` value in the tool call (e.g. `branch='approved'`) so the persisted dispatch matches the sentinel. A tool call without `branch` can only inherit it from the sentinel at persistence time.
+* Record the decision with the `dispatch_next` tool, setting the `branch` field to your classification:
+  - **On approval:** `dispatch_next(status="advance", branch="approved")`
+  - **On rejection:** `dispatch_next(status="advance", branch="rejected")`
+  - **If unclear** (no human response yet or ambiguous): use `branch="approved"` as the default (the workflow's `on_result: default` also routes forward).
+  - Do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders it from the typed `dispatch_next` call (issue #876), so the persisted dispatch and the durable record stay aligned.
 
 ### The `human_gate` security boundary (engine-owned)
 
@@ -131,23 +125,14 @@ This mode applies when the approved plan consists of **2+ sequential steps that 
   - One entry per sequential plan step, in execution order.
   - `instructions` must be detailed and self-contained (the @@dev agent scaffolds skill files from this text alone).
   - `complexity` is one of `low` / `medium` / `high`; `model` is `null` unless a specific model is required for that step.
-* End with:
-  ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "approved", "workflow": "plan-orchestration", "step": "architect"}} -->
-  ```
+* Record the decision with the `dispatch_next` tool: `dispatch_next(status="advance", branch="approved", workflow="plan-orchestration", step="architect")`. Do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders it from the typed call (issue #876).
 
 ### On the `plan` step (re-invoked after human response)
 
 * Classify the human's response using the same approval-gatekeeper logic as the section above:
-  - **Approved** → include the full `<planWorkflow>` block (refined per any feedback) and end with:
-    ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "approved", "workflow": "plan-orchestration", "step": "plan"}} -->
-    ```
-  - **Rejected / changes requested** → explain the revisions needed and end with:
-    ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", "branch": "rejected", "workflow": "plan-orchestration", "step": "plan"}} -->
-    ```
-  - When recording the decision via the `dispatch_next` tool as well, pass the same `branch` value in the tool call so the persisted dispatch carries the routing key (see the Approval Gatekeeper section).
+  - **Approved** → include the full `<planWorkflow>` block (refined per any feedback) and call `dispatch_next(status="advance", branch="approved", workflow="plan-orchestration", step="plan")`
+  - **Rejected / changes requested** → explain the revisions needed and call `dispatch_next(status="advance", branch="rejected", workflow="plan-orchestration", step="plan")`
+  - Do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders it from the typed `dispatch_next` call (issue #876).
 
 * This mode adds no new tool access and does not change your tool-usage restriction.
 

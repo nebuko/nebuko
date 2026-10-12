@@ -32,8 +32,10 @@ __all__ = [
 ]
 
 # ``final_message`` — the tool's argument is the agent's final message (finish);
-# ``routing`` — the tool's arguments carry the workflow routing decision.
-PayloadKind = Literal["final_message", "routing"]
+# ``routing`` — the tool's arguments carry the workflow routing decision;
+# ``handoff`` — the tool's arguments carry an imperative agent-to-agent
+# hand-off (call_agent), surfaced under a ``function_call`` key.
+PayloadKind = Literal["final_message", "routing", "handoff"]
 
 # Work-loop role of an engine tool: ``terminator`` ends the run (finish);
 # ``hidden`` is a control signal the work loop keeps running past (dispatch_next).
@@ -144,6 +146,15 @@ DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
             # prose sentinel used to provide; dropping them here silently
             # reverts a hand-off to the workflow's default next step (#830).
             payload_fields=("status", "branch", "complexity", "reason", "agent", "pin"),
+        ),
+        # Typed replacement for the sentinel-carried ``function_call``
+        # hand-off (issue #876). Its harvested fields are surfaced under a
+        # ``function_call`` key; the routing decision itself stays
+        # status-only (``RoutingDecision``).
+        "call_agent": EngineToolSpec(
+            name="call_agent",
+            payload_kind="handoff",
+            payload_fields=("function", "agent_name", "callback", "task", "complexity"),
         ),
     }
 )

@@ -28,7 +28,7 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/architect.md"
     skills: ["call-agent", "posting-contract", "planning", "complexity"]
-    tools: ["think", "finish", "dispatch_next", "complexity_review"]
+    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
     complexity_overrides:
       low:
         model: "${llms.deepseek-v4_1-flash}"
@@ -42,7 +42,7 @@ agents:
     temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
     skills: ["posting-contract", "git-pr-workflow", "complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch", "complexity_review"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
     complexity_overrides:
       low:
         reasoning: "low"
@@ -55,12 +55,23 @@ agents:
     temperature: 0.1
     prompt_file: "defaults/prompts/context.md"
     skills: ["call-agent", "posting-contract", "context-research", "complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "complexity_review"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
     complexity_overrides:
       low:
         reasoning: "low"
       high:
         reasoning: "high"
+    mcp_servers:
+      - name: "brave-search"
+        command: "npx"
+        args:
+          - "-y"
+          - "@brave/brave-search-mcp-server@2.1.4"
+          - "--enabled-tools"
+          - "brave_web_search"
+          - "brave_news_search"
+        env:
+          BRAVE_API_KEY: "BRAVE_API_KEY"
 
   review:
     model: "${llms.glm-5_3-flash}"
@@ -68,11 +79,11 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
     skills: ["posting-contract", "plan-review", "retrospective", "complexity"]
-    tools: ["terminal", "think", "finish", "dispatch_next", "complexity_review"]
+    tools: ["terminal", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"
     role: "Product owner — triages and refines issues into actionable specs; never modifies code."
     prompt_file: "defaults/prompts/po.md"
     skills: ["call-agent", "posting-contract", "issue-refinement", "complexity"]
-    tools: ["think", "finish", "dispatch_next", "complexity_review"]
+    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]

@@ -30,6 +30,7 @@ from agent_script.features.build_output.build_output import (
     agent_run_config_to_dispatch,
 )
 from agent_script.features.dispatch_next_tool import get_recorded_dispatch
+from agent_script.features.call_agent_tool import get_recorded_function_call
 from validate_output import extract_dispatch_resilient
 
 logger = get_logger(__name__)
@@ -39,11 +40,12 @@ def has_dispatch_decision(conversation, final_message: Optional[str]) -> bool:
     """True when the run already produced a dispatch decision.
 
     Mirrors ``build_output._resolve_dispatch``'s priority: a recorded
-    ``dispatch_next`` tool call wins; otherwise a legacy sentinel in the
+    ``dispatch_next`` tool call wins; a recorded typed ``call_agent`` hand-off
+    is itself a decision (issue #876); otherwise a legacy sentinel in the
     final message counts only if it both parses AND maps to a valid
     ``Dispatch`` (identical to the resolver — a present-but-unparseable or
     invalid sentinel does NOT count, so those runs still get recalled).
-    Both sources empty means no decision yet.
+    All sources empty means no decision yet.
 
     Args:
         conversation: Object exposing the run id (``conversation.id``); the
@@ -52,8 +54,13 @@ def has_dispatch_decision(conversation, final_message: Optional[str]) -> bool:
             available to scan (tool call still checked).
     """
     conv_id = getattr(conversation, "id", None)
-    if conv_id is not None and get_recorded_dispatch(conv_id) is not None:
-        return True
+    if conv_id is not None:
+        if get_recorded_dispatch(conv_id) is not None:
+            return True
+        if get_recorded_function_call(conv_id) is not None:
+            # A typed call_agent hand-off is itself the routing decision
+            # (issue #876) — suppress the recall pass, same as dispatch_next.
+            return True
     if not final_message:
         return False
     extract_result = extract_dispatch_resilient(final_message)

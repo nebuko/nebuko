@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from build_output import _resolve_dispatch, _no_action_dispatch
+from build_output import _resolve_dispatch, _no_action_dispatch, _neutralize_self_and_pin
 from workflow_state import Dispatch, FunctionCall, WorkflowState
 
 
@@ -285,6 +285,149 @@ class TestSentinelRoutingFieldMerge(unittest.TestCase):
             )
         self.assertEqual(dispatch, recorded)
         self.assertIsNone(dispatch.branch)
+
+
+class TestTypedCallAgentResolution(unittest.TestCase):
+    """The typed ``call_agent`` tool is a first-class routing decision (#876).
+
+    Structured replacement for the sentinel-carried ``function_call``: a typed
+    hand-off wins over the legacy sentinel and, without a ``dispatch_next``
+    sibling, is itself the decision (advance to the named agent).
+    """
+
+    def _patch_call_agent(self, function_call):
+        return mock.patch(
+            "build_output.get_recorded_function_call", return_value=function_call
+        )
+
+    def test_typed_call_agent_alone_is_the_decision(self):
+        """No tool dispatch, no sentinel: the typed hand-off advances."""
+        fake = _FakeConv("conv-typed-only")
+        call = FunctionCall(function="call_agent", agent_name="context", complexity="high")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ), self._patch_call_agent(call):
+            dispatch, function_call, _ = _resolve_dispatch(fake, "answer")
+        self.assertEqual(dispatch.status, "advance")
+        self.assertEqual(dispatch.task_hint, "context")
+        self.assertEqual(dispatch.complexity, "high")
+        self.assertEqual(function_call.agent_name, "context")
+
+    def test_typed_call_agent_beats_the_legacy_sentinel(self):
+        """A typed hand-off wins over a co-emitted sentinel function_call."""
+        fake = _FakeConv("conv-typed-beats-sentinel")
+        call = FunctionCall(function="call_agent", agent_name="context")
+        sentinel = (
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, '
+            '"function_call": {"function": "call_agent", '
+            '"agent_name": "review"}} -->'
+        )
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ), self._patch_call_agent(call):
+            dispatch, function_call, message = _resolve_dispatch(fake, sentinel)
+        self.assertEqual(dispatch.task_hint, "context")
+        self.assertEqual(function_call.agent_name, "context")
+        self.assertNotIn("AGENT_RUN_CONFIG", message)
+
+    def test_typed_call_agent_beats_dispatch_next_target(self):
+        """When both tools are called, the imperative hand-off target wins."""
+        fake = _FakeConv("conv-typed-beats-dispatch")
+        recorded = Dispatch(status="advance", task_hint="review")
+        call = FunctionCall(function="call_agent", agent_name="context")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=recorded
+        ), self._patch_call_agent(call):
+            dispatch, function_call, _ = _resolve_dispatch(fake, "answer")
+        self.assertEqual(dispatch.status, "advance")
+        self.assertEqual(function_call.agent_name, "context")
+
+    def test_sentinel_only_legacy_function_call_still_routes(self):
+        """Absent a typed tool call the sentinel function_call still resolves."""
+        fake = _FakeConv("conv-legacy-fc")
+        sentinel = (
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, '
+            '"function_call": {"function": "call_agent", '
+            '"agent_name": "context", "callback": "architect"}} -->'
+        )
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ), self._patch_call_agent(None):
+            dispatch, function_call, message = _resolve_dispatch(fake, sentinel)
+        self.assertEqual(dispatch.status, "advance")
+        self.assertEqual(function_call.agent_name, "context")
+        self.assertEqual(function_call.callback, "architect")
+        self.assertNotIn("AGENT_RUN_CONFIG", message)
+
+
+class TestSelfHandoffNeutralization(unittest.TestCase):
+    """Self hand-off neutralization also clears the promoted routing target.
+
+    Issue #876 review (#618 defect 2a): the typed ``call_agent`` branch promotes
+    ``agent_name`` into ``dispatch.task_hint``, so dropping only the
+    ``function_call`` on a self-target left the routing target alive and let
+    ``agent_host._routing_payload`` re-derive an ``agent`` that re-routes to the
+    running agent. The neutralizer must clear both.
+    """
+
+    def test_self_handoff_drops_function_call_and_task_hint(self):
+        call = FunctionCall(function="call_agent", agent_name="dev")
+        recorded = Dispatch(status="advance", task_hint="dev")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "dev")
+        self.assertIsNone(function_call)
+        self.assertIsNone(dispatch.task_hint)
+        # The plain advance survives so the router falls through to workflow-next.
+        self.assertEqual(dispatch.status, "advance")
+
+    def test_self_handoff_preserves_a_different_agent_target(self):
+        """A promo target naming a *different* agent is not a self hand-off."""
+        call = FunctionCall(function="call_agent", agent_name="context")
+        recorded = Dispatch(status="advance", task_hint="context")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "dev")
+        self.assertEqual(function_call.agent_name, "context")
+        self.assertEqual(dispatch.task_hint, "context")
+
+    def test_self_handoff_does_not_clear_an_unrelated_task_hint(self):
+        """A stale/unrelated task_hint is left untouched (the fc is the target)."""
+        call = FunctionCall(function="call_agent", agent_name="dev")
+        recorded = Dispatch(status="advance", task_hint="review")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "dev")
+        self.assertIsNone(function_call)
+        self.assertEqual(dispatch.task_hint, "review")
+
+    def test_non_self_handoff_is_untouched(self):
+        call = FunctionCall(function="call_agent", agent_name="review")
+        recorded = Dispatch(status="advance", task_hint="review")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "dev")
+        self.assertIs(function_call, call)
+        self.assertIs(dispatch, recorded)
+
+
+class TestPoEscalationPin(unittest.TestCase):
+    """A PO imperative hand-off forces the pin engine-side (issue #876 review).
+
+    ``CallAgentAction`` exposes no ``pin`` field, so a prompt alone cannot pin
+    the spec comment on a PO escalation. The engine forces ``dispatch.pin``.
+    """
+
+    def test_po_handoff_forces_pin(self):
+        call = FunctionCall(function="call_agent", agent_name="architect")
+        recorded = Dispatch(status="advance", task_hint="architect")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "po")
+        self.assertTrue(dispatch.pin)
+        self.assertEqual(function_call.agent_name, "architect")
+
+    def test_non_po_handoff_does_not_force_pin(self):
+        call = FunctionCall(function="call_agent", agent_name="context")
+        recorded = Dispatch(status="advance", task_hint="context")
+        dispatch, _ = _neutralize_self_and_pin(recorded, call, "architect")
+        self.assertFalse(dispatch.pin)
+
+    def test_po_without_a_handoff_does_not_force_pin(self):
+        """Only the imperative hand-off path pins; a plain advance is untouched."""
+        recorded = Dispatch(status="advance", task_hint="dev")
+        dispatch, _ = _neutralize_self_and_pin(recorded, None, "po")
+        self.assertFalse(dispatch.pin)
 
 
 if __name__ == "__main__":
