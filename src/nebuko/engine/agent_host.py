@@ -50,6 +50,7 @@ _MISSING = object()
 #: mirroring how ``run_agent`` stows ``run_outcome`` for ``build_output``.
 _REPORT_PAYLOAD_ATTR = "nebuko_report_payload"
 _REPORT_ROUTING_ATTR = "nebuko_report_routing"
+_REPORT_FUNCTION_CALL_ATTR = "nebuko_report_function_call"
 _REPORT_OFFSET_ATTR = "nebuko_report_event_offset"
 
 #: Engine-elicited report turn (issue #830). After the work loop ends the
@@ -66,6 +67,9 @@ _REPORT_PROMPT = (
     "2. `dispatch_next` with your routing decision (status, plus `agent` when "
     "you are explicitly overriding the workflow's next step, `pin`, and branch/"
     "complexity/reason when they apply).\n"
+    "3. `call_agent` only when you are imperatively naming the exact agent to "
+    "run next (with `agent_name`, plus optional `callback`/`complexity`) "
+    "instead of letting the workflow resolve it.\n"
     "Put no deliverable prose outside the `finish` message."
 )
 
@@ -198,6 +202,7 @@ class InProcessAgentHost:
             return
         finish = self._call_finish(conversation)
         routing = self._call_dispatch(conversation)
+        handoff = self._call_agent(conversation)
         if finish is not None:
             setattr(conversation, _REPORT_PAYLOAD_ATTR, finish)
             log.info(
@@ -206,7 +211,9 @@ class InProcessAgentHost:
             )
         if routing is not None:
             setattr(conversation, _REPORT_ROUTING_ATTR, routing)
-        if finish is None and routing is None:
+        if handoff is not None:
+            setattr(conversation, _REPORT_FUNCTION_CALL_ATTR, handoff)
+        if finish is None and routing is None and handoff is None:
             log.warning("[phase:agent] report turn returned no control-plane call")
 
     def _call_finish(self, conversation: Any) -> EngineToolPayload | None:
@@ -216,6 +223,10 @@ class InProcessAgentHost:
     def _call_dispatch(self, conversation: Any) -> EngineToolPayload | None:
         """Engine-started report turn's ``dispatch_next`` payload: the routing."""
         return _harvest_report(conversation, "dispatch_next")
+
+    def _call_agent(self, conversation: Any) -> EngineToolPayload | None:
+        """Engine-started report turn's ``call_agent`` payload: the hand-off."""
+        return _harvest_report(conversation, "call_agent")
 
 
 def _report_payload(conversation: Any) -> EngineToolPayload | None:
@@ -228,26 +239,50 @@ def _routing_payload(conversation: Any, state: Any) -> dict[str, Any] | None:
 
     The report turn replaces ``final_message.txt`` — the artefact the engine's
     ``route`` phase scrapes for the legacy ``AGENT_RUN_CONFIG`` sentinel — so
-    the routing must be handed over structurally instead. The report turn's
-    harvested ``dispatch_next`` payload is the canonical channel; when the turn
-    returns only ``finish``, the dispatch ``build_output`` resolved into the
-    run's workflow state (itself sourced from the typed ``dispatch_next`` tool)
-    is used. Runs without a report turn keep the legacy text scrape unchanged.
+    the routing must be handed over structurally instead. Two report-turn
+    channels feed this: the harvested ``dispatch_next`` payload (status/branch/
+    complexity/reason/pin) and the harvested typed ``call_agent`` hand-off
+    (issue #876) naming the exact next agent. A hand-off outranks the
+    dispatch-derived target so an imperative cross-agent call is never lost to
+    a workflow-relative dispatch. When the turn returns only ``finish``, the
+    dispatch ``build_output`` resolved into the run's workflow state (itself
+    sourced from the typed tools) is used. Runs without a report turn keep the
+    legacy text scrape unchanged.
     """
     harvested = getattr(conversation, _REPORT_ROUTING_ATTR, None)
-    if harvested is not None:
-        direct = _drop_blanks(harvested.fields)
-        if direct:
-            # The harvested fields win per key, but the report turn routinely
-            # omits the cross-agent target/pin: those live only in the work
-            # loop's resolution. Merge the state fallback underneath so an
-            # omitted key inherits it instead of silently reverting the
-            # hand-off to the workflow's default next step (issue #830).
-            fallback = _state_routing_fields(state) or {}
-            return {**fallback, **direct}
+    handoff = getattr(conversation, _REPORT_FUNCTION_CALL_ATTR, None)
+    direct = _drop_blanks(harvested.fields) if harvested is not None else {}
+    if direct or handoff is not None:
+        # The harvested fields win per key, but the report turn routinely
+        # omits the cross-agent target/pin: those live only in the work
+        # loop's resolution. Merge the state fallback underneath so an
+        # omitted key inherits it instead of silently reverting the
+        # hand-off to the workflow's default next step (issue #830). The
+        # typed ``call_agent`` target then overrides the dispatch target
+        # (issue #876).
+        fallback = _state_routing_fields(state) or {}
+        return {**fallback, **direct, **_handoff_routing_fields(handoff)}
     if _report_payload(conversation) is None:
         return None
     return _state_routing_fields(state)
+
+
+def _handoff_routing_fields(handoff: EngineToolPayload | None) -> dict[str, Any]:
+    """A harvested report-turn ``call_agent`` as routing-payload fields.
+
+    The imperative hand-off names the exact next agent (``agent_name``), which
+    the engine's routing shape carries as ``agent`` (issue #876). Returns ``{}``
+    when there is no hand-off, so it never disturbs the dispatch-derived routing.
+    """
+    if handoff is None:
+        return {}
+    fields = _drop_blanks(handoff.fields)
+    mapped: dict[str, Any] = {}
+    if fields.get("agent_name"):
+        mapped["agent"] = fields["agent_name"]
+    if fields.get("complexity"):
+        mapped["complexity"] = fields["complexity"]
+    return mapped
 
 
 def _drop_blanks(fields: Mapping[str, Any]) -> dict[str, Any]:

@@ -12,7 +12,11 @@ from agent_script.features.dispatch_check import (
     has_dispatch_decision,
 )
 from agent_script.features.dispatch_next_tool import record_dispatch, reset_registry
-from workflow_state import Dispatch
+from agent_script.features.call_agent_tool import (
+    record_function_call,
+    reset_registry as reset_function_call_registry,
+)
+from workflow_state import Dispatch, FunctionCall
 
 
 VALID_SENTINEL = (
@@ -29,6 +33,7 @@ class _FakeConv:
 def _fresh_run_id(prefix: str) -> str:
     """Unique registry key, cleaned up around each test."""
     reset_registry()
+    reset_function_call_registry()
     return prefix
 
 
@@ -63,6 +68,17 @@ class TestHasDispatchDecision(unittest.TestCase):
         run_id = _fresh_run_id("run-invalid")
         invalid = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "bogus"}} -->'
         self.assertFalse(has_dispatch_decision(_FakeConv(run_id), invalid))
+
+    def test_typed_call_agent_handoff_suppresses_recall(self):
+        """A recorded typed ``call_agent`` is itself a decision (issue #876),
+        so the recall pass must not fire for a hand-off-only run — exactly as
+        for a ``dispatch_next`` call, and without any sentinel in the message.
+        """
+        run_id = _fresh_run_id("run-call-agent")
+        record_function_call(
+            run_id, FunctionCall(function="call_agent", agent_name="context")
+        )
+        self.assertTrue(has_dispatch_decision(_FakeConv(run_id), None))
 
 
 class TestAgentToFunctionCall(unittest.TestCase):
