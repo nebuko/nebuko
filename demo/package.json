@@ -1,0 +1,13 @@
+{
+    "name": "nebuko-demo",
+    "private": true,
+    "scripts": {
+        "dev": "remotion studio",
+        "render": "remotion render NebukoDemo out.mp4"
+    },
+    "devDependencies": {
+        "@remotion/cli": "^4.0.535",
+        "@remotion/studio": "^4.0.535",
+        "remotion": "^4.0.535"
+    }
+}

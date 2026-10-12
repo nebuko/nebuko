@@ -166,8 +166,8 @@ works end-to-end on real issues, with human gates, per-step metrics and a
 deterministic command surface. What to hold: the config schema and the
 `WORKFLOW_STATE` format still move (legacy state blobs load unchanged and
 serialize byte-identically [2]); GitHub only; PAT mode (no bot identity yet);
-and expect a real token profile — on the order of **1–3M input tokens for a
-small fix, 2–5M medium, up to 15M high**, with 95%+ cache hits on successive
+and expect a real token profile — on the order of **1–5M input tokens for a
+small fix, 5–15M medium, 15-100 high**, with 95%+ cache hits on successive
 calls within a run. Cheap on subscription providers; plan for it.
 
 **Next.**
