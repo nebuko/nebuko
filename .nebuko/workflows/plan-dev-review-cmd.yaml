@@ -29,17 +29,19 @@ steps:
   - name: implement
     agent: dev
     inputs: [plan]
-    next: review
-  
+    next: git_diff
+
   - name: git_diff
     script:
       path: "git"
       args: ["diff", "origin/main"]
-  
+    next: run_tests
+
   - name: run_tests
     script:
       path: "uv"
       args: ["run", "pytest", "-q", "--tb=no", "-rf"]
+    next: review
 
   - name: review
     agent: review
