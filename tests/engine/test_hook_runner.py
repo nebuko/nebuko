@@ -112,6 +112,18 @@ class TestHookRunner:
 
         assert len(result.output_tail) == 2000
 
+    def test_non_decodable_output_is_data_not_an_exception(self, tmp_path):
+        # A stats hook may cat a binary file; the invalid byte must be replaced,
+        # never escape as a UnicodeDecodeError (which would break fail-open).
+        _write_script(tmp_path, "scripts/binary.sh", "printf '\\377'")
+        spec = HookSpec(path="scripts/binary.sh")
+
+        result = _runner(tmp_path).run(spec, "post")
+
+        assert isinstance(result, HookResult)
+        assert result.ok is True
+        assert result.exit_code == 0
+
 
 class TestTimeoutSeconds:
     def test_defaults_to_thirty_minutes(self):

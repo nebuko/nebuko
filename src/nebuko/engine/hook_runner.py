@@ -83,6 +83,11 @@ class HookRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                # Explicit decoding keeps the "never raises" contract even when a
+                # hook emits non-decodable bytes: the default locale codec with
+                # errors="strict" would raise UnicodeDecodeError from communicate().
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
