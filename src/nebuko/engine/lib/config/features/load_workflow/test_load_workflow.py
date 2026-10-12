@@ -25,7 +25,6 @@ class TestLoadWorkflow:
         raw = {
             "name": "default",
             "description": "Standard dev workflow",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "analyze", "agent": "architect", "next": "context"},
                 {"name": "context", "agent": "context", "next": None},
@@ -47,7 +46,6 @@ class TestLoadWorkflow:
         raw = {
             "name": "conditional",
             "description": "Workflow with conditional branching",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {
                     "name": "implement",
@@ -82,7 +80,6 @@ class TestLoadWorkflow:
         raw = {
             "name": "digest",
             "description": "Digest workflow with a step prompt",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {
                     "name": "analyze",
@@ -121,7 +118,7 @@ class TestLoadWorkflow:
     def test_load_missing_section_raises(self):
         raw = {
             "name": "incomplete",
-            # Missing description, trigger, steps
+            # Missing description, steps
         }
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".yaml", delete=False
@@ -141,7 +138,7 @@ class TestLoadWorkflow:
         wf = load_workflow(workflow_path)
 
         assert wf.name == "default"
-        assert wf.trigger.agents == ["architect"]
+        assert wf.entry_agent == "architect"
         assert len(wf.steps) == 5
         assert wf.steps[0].name == "analyze"
         assert wf.steps[0].agent == "architect"
@@ -169,7 +166,6 @@ class TestPathBasedLoading:
     RAW = {
         "name": "path_wf",
         "description": "Workflow at a non-standard path",
-        "trigger": {"agents": ["architect"]},
         "steps": [{"name": "step", "agent": "dev", "next": None}],
     }
 
@@ -237,7 +233,6 @@ class TestLoadWorkflowWithDirs:
         return {
             "name": name,
             "description": "test workflow",
-            "trigger": {"agents": [agent]},
             "steps": [{"name": "only", "agent": agent, "next": None}],
         }
 

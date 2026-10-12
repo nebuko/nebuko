@@ -1,7 +1,5 @@
 name: chain-leaf
 description: "Leaf: consumes the forwarded command"
-trigger:
-  agents: [dev]
 inputs:
   - name: run_test
     kind: exec

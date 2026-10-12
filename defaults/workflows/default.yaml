@@ -4,9 +4,6 @@
 name: default
 description: "Standard development workflow: analyze → context → plan → implement → review"
 
-trigger:
-  agents: [architect]  # which @@mentions can start this workflow
-
 steps:
   - name: analyze
     agent: architect

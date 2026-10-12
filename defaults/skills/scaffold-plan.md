@@ -22,8 +22,6 @@ You are in plan-scaffolding mode for a branch-mounted dynamic plan workflow (iss
    ```yaml
    name: tmp-impl
    description: "Dynamically generated per-step execution workflow for issue #N"
-   trigger:
-     agents: [dev]
    steps:
      - name: step_1
        workflow: dev-review-loop

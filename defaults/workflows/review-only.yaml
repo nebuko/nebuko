@@ -4,9 +4,6 @@
 name: review-only
 description: "Standalone code review workflow — reviews code without prior implementation"
 
-trigger:
-  agents: [review]
-
 steps:
   - name: review
     agent: review

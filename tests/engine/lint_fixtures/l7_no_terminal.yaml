@@ -1,7 +1,5 @@
 name: l7-no-terminal
 description: "L7: 'a' and 'b' loop forever; no step is terminal"
-trigger:
-  agents: [architect]
 steps:
   - name: a
     agent: architect

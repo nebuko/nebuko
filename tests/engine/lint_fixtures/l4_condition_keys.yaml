@@ -1,7 +1,5 @@
 name: l4-condition-keys
 description: "L4: 'gate' declares on_result 'approved' twice; the second is dead"
-trigger:
-  agents: [architect]
 steps:
   - name: gate
     agent: architect

@@ -6,9 +6,6 @@
 name: dev-review-loop
 description: "Execute a single plan step with review; loops on rejection"
 
-trigger:
-  agents: [dev]
-
 steps:
   - name: implement
     agent: dev

@@ -1,7 +1,5 @@
 name: clean
 description: "A minimal, fully valid two-step workflow"
-trigger:
-  agents: [architect]
 steps:
   - name: analyze
     agent: architect

@@ -47,9 +47,10 @@ steps:
   (see [Step Instructions](#step-instructions-prompt)).
 - `human_gate: true` marks a step as a **security boundary**: the workflow is
   held after that step until a human releases it (see [Human Gates](#human-gates)).
-- Workflows can be started by an `@@mention` (matching `trigger.agents`), a
-  `/nebuko <name>` command, or a `dispatch` field pointing at them. Human
-  commands override state-based routing — see the routing cascade in
+- Workflows are started by GitHub CI (an issue comment/opened event) or by a
+  `/nebuko run workflow --name <name>` command, which enters at the workflow's
+  **first step**. A `dispatch` field pointing at a workflow also routes to it.
+  Human commands override state-based routing — see the routing cascade in
   [architecture.md](./architecture.md#routing-cascade).
 
 ---

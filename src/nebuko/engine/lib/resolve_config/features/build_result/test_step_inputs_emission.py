@@ -40,8 +40,6 @@ class TestConsumerEmission:
         _write(workflows_dir, "plain.yaml", """
 name: plain
 description: d
-trigger:
-  agents: [dev]
 steps:
   - name: work
     agent: dev
@@ -57,8 +55,6 @@ steps:
         _write(workflows_dir, "review.yaml", """
 name: review
 description: d
-trigger:
-  agents: [dev]
 inputs:
   - name: diff
     kind: exec
@@ -83,8 +79,6 @@ steps:
         _write(workflows_dir, "review.yaml", """
 name: review
 description: d
-trigger:
-  agents: [dev]
 steps:
   - name: inspect
     agent: dev
@@ -105,8 +99,6 @@ class TestFrameEmission:
         _write(workflows_dir, "super-parent.yaml", """
 name: super-parent
 description: root
-trigger:
-  agents: [dev]
 steps:
   - name: call_spec
     workflow: spec-driven
@@ -117,8 +109,6 @@ steps:
         _write(workflows_dir, "spec-driven.yaml", """
 name: spec-driven
 description: middle
-trigger:
-  agents: [dev]
 inputs:
   - name: run_test
     kind: exec
@@ -131,8 +121,6 @@ steps:
         _write(workflows_dir, "spec-driven-impl.yaml", """
 name: spec-driven-impl
 description: leaf
-trigger:
-  agents: [dev]
 inputs:
   - name: run_test
     kind: exec

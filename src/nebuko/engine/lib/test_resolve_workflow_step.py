@@ -20,7 +20,6 @@ def linear_workflows_dir(tmp_path: Path) -> Path:
     (tmp_path / "linear.yaml").write_text(yaml.dump({
         "name": "linear",
         "description": "Simple linear workflow",
-        "trigger": {"agents": ["architect"]},
         "steps": [
             {"name": "analyze", "agent": "architect", "next": "context"},
             {"name": "context", "agent": "context", "next": "implement"},
@@ -36,7 +35,6 @@ def conditional_workflows_dir(tmp_path: Path) -> Path:
     (tmp_path / "approval.yaml").write_text(yaml.dump({
         "name": "approval",
         "description": "Approval workflow with conditions",
-        "trigger": {"agents": ["architect"]},
         "steps": [
             {"name": "spec", "agent": "po", "next": "approval"},
             {
@@ -187,7 +185,6 @@ class TestSubWorkflowEntry:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with sub-workflow",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "start", "agent": "architect", "next": "subtask"},
                 {
@@ -202,7 +199,6 @@ class TestSubWorkflowEntry:
         (tmp_path / "child.yaml").write_text(yaml.dump({
             "name": "child",
             "description": "Child sub-workflow",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "child_start", "agent": "dev", "next": "child_end"},
                 {"name": "child_end", "agent": "review", "next": None},
@@ -243,7 +239,6 @@ class TestSubWorkflowTraversal:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with sub-workflow",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "analyze", "agent": "architect", "next": "subtask"},
                 {
@@ -257,7 +252,6 @@ class TestSubWorkflowTraversal:
         (tmp_path / "child.yaml").write_text(yaml.dump({
             "name": "child",
             "description": "Child sub-workflow",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "impl", "agent": "dev", "next": "verify"},
                 {"name": "verify", "agent": "review", "next": None},
@@ -322,7 +316,6 @@ class TestSubWorkflowTraversal:
         (tmp_path / "loop_parent.yaml").write_text(yaml.dump({
             "name": "loop_parent",
             "description": "Parent of looping child",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "start", "agent": "architect", "next": "run"},
                 {"name": "run", "workflow": "loop_child", "next": "done"},
@@ -332,7 +325,6 @@ class TestSubWorkflowTraversal:
         (tmp_path / "loop_child.yaml").write_text(yaml.dump({
             "name": "loop_child",
             "description": "Child with a rejection loop",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "implement", "agent": "dev", "next": "review"},
                 {
@@ -383,7 +375,6 @@ class TestSubWorkflowTraversal:
         (subdir / "flow.yaml").write_text(yaml.dump({
             "name": "flow",
             "description": "Path-resolved workflow",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "one", "agent": "dev", "next": "two"},
                 {"name": "two", "agent": "review", "next": None},
@@ -408,7 +399,6 @@ class TestThreeLevelNestingRuntime:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Outer parent",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "analyze", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "mid", "next": None},
@@ -419,7 +409,6 @@ class TestThreeLevelNestingRuntime:
         (tmp_path / "mid.yaml").write_text(yaml.dump({
             "name": "mid",
             "description": "Intermediate loop driver",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "run_1", "workflow": "leaf", "next": "run_2"},
                 {"name": "run_2", "workflow": "leaf", "next": None},
@@ -429,7 +418,6 @@ class TestThreeLevelNestingRuntime:
         (tmp_path / "leaf.yaml").write_text(yaml.dump({
             "name": "leaf",
             "description": "Inner loop",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "implement", "agent": "dev", "next": "review"},
                 {"name": "review", "agent": "review", "next": None},
@@ -497,7 +485,6 @@ class TestThreeLevelNestingRuntime:
         (three_level_dir / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Outer parent",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "analyze", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "mid", "next": "done"},
@@ -550,13 +537,11 @@ class TestScaffoldShapeNestedEntry:
         (tmp_path / "tmp-impl.yaml").write_text(yaml.dump({
             "name": "tmp-impl",
             "description": "Dynamically generated per-step execution workflow",
-            "trigger": {"agents": ["dev"]},
             "steps": steps,
         }))
         (tmp_path / "dev-review-loop.yaml").write_text(yaml.dump({
             "name": "dev-review-loop",
             "description": "Reusable sub-workflow: implement + review loop",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "implement", "agent": "dev", "next": "review"},
                 {
@@ -661,7 +646,6 @@ class TestNestedEntrySkillPrecedence:
         (tmp_path / "child1.yaml").write_text(yaml.dump({
             "name": "child1",
             "description": "Child with a skillead leaf",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "do", "agent": "dev", "skill": ["leaf1"], "next": None},
             ],
@@ -671,7 +655,6 @@ class TestNestedEntrySkillPrecedence:
         (tmp_path / "child1b.yaml").write_text(yaml.dump({
             "name": "child1b",
             "description": "Child whose first step is a reference",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "ref", "workflow": "child2", "skill": ["mid1"], "next": None},
             ],
@@ -679,7 +662,6 @@ class TestNestedEntrySkillPrecedence:
         (tmp_path / "child2.yaml").write_text(yaml.dump({
             "name": "child2",
             "description": "Grandchild leaf without skills",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "do", "agent": "dev", "next": None},
             ],
@@ -693,7 +675,6 @@ class TestNestedEntrySkillPrecedence:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with a nested reference",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "start", "agent": "architect", "next": "mount"},
                 step,
@@ -744,7 +725,6 @@ class TestNestedEntryErrors:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent mounting a child",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "start", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "child", "next": None},
@@ -756,7 +736,6 @@ class TestNestedEntryErrors:
         (tmp_path / "child.yaml").write_text(yaml.dump({
             "name": "child",
             "description": "Child without a runnable first step",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "first",
                  "repo": "https://github.com/owner/repo.git",
@@ -778,13 +757,11 @@ class TestNestedEntryErrors:
         (tmp_path / "a.yaml").write_text(yaml.dump({
             "name": "a",
             "description": "A references B",
-            "trigger": {"agents": ["dev"]},
             "steps": [{"name": "s", "workflow": "b", "next": None}],
         }))
         (tmp_path / "b.yaml").write_text(yaml.dump({
             "name": "b",
             "description": "B references A (cycle)",
-            "trigger": {"agents": ["dev"]},
             "steps": [{"name": "s", "workflow": "a", "next": None}],
         }))
         rwt = _import_workflow_step()
@@ -809,7 +786,6 @@ class TestNestedEntryErrors:
         (tmp_path / "loop" / "workflow.yaml").write_text(yaml.dump({
             "name": "loop",
             "description": "Self-cycle via its own path",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "s", "workflow": "loop/workflow.yaml", "next": None},
             ],
@@ -817,7 +793,6 @@ class TestNestedEntryErrors:
         (tmp_path / "start.yaml").write_text(yaml.dump({
             "name": "start",
             "description": "Mounts the self-cycling child by path",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "go", "agent": "dev", "next": "enter"},
                 {"name": "enter", "workflow": "loop/workflow.yaml", "next": None},
@@ -848,7 +823,6 @@ class TestNestedEntryErrors:
             (tmp_path / f"{name}.yaml").write_text(yaml.dump({
                 "name": name,
                 "description": f"{name} references {nxt}",
-                "trigger": {"agents": ["dev"]},
                 "steps": [{"name": "s", "workflow": nxt, "next": None}],
             }))
         rwt = _import_workflow_step()
@@ -873,7 +847,6 @@ class TestLinearScriptSuccessor:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with a script successor after the mount",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "start", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "child", "next": "post"},
@@ -891,7 +864,6 @@ class TestLinearScriptSuccessor:
         (tmp_path / "child.yaml").write_text(yaml.dump({
             "name": "child",
             "description": "Child with a single terminal agent step",
-            "trigger": {"agents": ["dev"]},
             "steps": [{"name": "end", "agent": "dev", "next": None}],
         }))
         rwt = _import_workflow_step()
@@ -925,13 +897,11 @@ class TestNestedFetchOnMiss:
         (fetched_dir / "inner.yaml").write_text(yaml.dump({
             "name": "inner",
             "description": "Branch-mounted grandchild",
-            "trigger": {"agents": ["dev"]},
             "steps": [{"name": "do", "agent": "dev", "next": None}],
         }))
         (fetched_dir / "child.yaml").write_text(yaml.dump({
             "name": "child",
             "description": "Branch-mounted child",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {"name": "run", "workflow": "inner/wf.yaml", "next": None},
             ],
@@ -939,7 +909,6 @@ class TestNestedFetchOnMiss:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Local parent",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "start", "agent": "architect", "next": "mount"},
                 {"name": "mount", "workflow": "tmp_impl/workflow.yaml", "next": None},
@@ -981,7 +950,6 @@ class TestCircularReference:
         (tmp_path / "circular.yaml").write_text(yaml.dump({
             "name": "circular",
             "description": "Circular reference workflow",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "step_a", "agent": "dev", "next": "step_b"},
                 {"name": "step_b", "agent": "review", "next": "step_a"},
@@ -1016,7 +984,6 @@ class TestMissingNextStep:
         (tmp_path / "broken_next.yaml").write_text(yaml.dump({
             "name": "broken_next",
             "description": "Broken next step reference",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "start", "agent": "architect", "next": "ghost"},
                 {"name": "real_step", "agent": "dev", "next": None},
@@ -1054,7 +1021,6 @@ class TestConditionsOnlyWorkflow:
         (tmp_path / "conditions_only.yaml").write_text(yaml.dump({
             "name": "conditions_only",
             "description": "Workflow with conditions-only step",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "start", "agent": "architect", "next": "decision"},
                 {
@@ -1107,7 +1073,6 @@ class TestConditionsOnlyWorkflow:
         (tmp_path / "branchless_default.yaml").write_text(yaml.dump({
             "name": "branchless_default",
             "description": "Conditions-only step with a default condition",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {
                     "name": "decision",
@@ -1145,7 +1110,6 @@ class TestEmptyWorkflowDefinition:
         (tmp_path / "empty.yaml").write_text(yaml.dump({
             "name": "empty",
             "description": "Empty workflow",
-            "trigger": {"agents": ["architect"]},
             "steps": [],
         }))
         return tmp_path
@@ -1286,7 +1250,6 @@ class TestParentReturnFailureSurface:
         (tmp_path / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent with a conditional remount",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {
                     "name": "anchor",
@@ -1302,7 +1265,6 @@ class TestParentReturnFailureSurface:
         (tmp_path / "broken.yaml").write_text(yaml.dump({
             "name": "broken",
             "description": "Child without a runnable first step",
-            "trigger": {"agents": ["dev"]},
             "steps": [
                 {
                     "name": "first",
@@ -1332,7 +1294,6 @@ class TestStepComplexityEmission:
         (tmp_path / "tiered.yaml").write_text(yaml.dump({
             "name": "tiered",
             "description": "Workflow with a declared per-step tier",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "analyze", "agent": "architect", "complexity": "low", "next": "plan"},
                 {"name": "plan", "agent": "architect", "next": None},

@@ -20,7 +20,6 @@ from config import (  # noqa: E402
     WorkflowDefinition,
     WorkflowInputSpec,
     WorkflowStep,
-    WorkflowTrigger,
 )
 
 
@@ -122,7 +121,6 @@ def _definition(**overrides) -> WorkflowDefinition:
     values = {
         "name": "wf",
         "description": "d",
-        "trigger": WorkflowTrigger(agents=["dev"]),
         "steps": [WorkflowStep(name="s", agent="dev")],
     }
     values.update(overrides)

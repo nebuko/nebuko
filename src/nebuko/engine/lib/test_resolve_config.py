@@ -291,8 +291,6 @@ class TestResolveConfigWithWorkflowCommand:
             f.write(
                 "name: default\n"
                 "description: Standard workflow\n"
-                "trigger:\n"
-                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: analyze\n"
                 "    agent: architect\n"
@@ -302,8 +300,6 @@ class TestResolveConfigWithWorkflowCommand:
             f.write(
                 "name: review-only\n"
                 "description: Review only\n"
-                "trigger:\n"
-                "  agents: [review]\n"
                 "steps:\n"
                 "  - name: review\n"
                 "    agent: review\n"
@@ -313,8 +309,6 @@ class TestResolveConfigWithWorkflowCommand:
             f.write(
                 "name: multi\n"
                 "description: Multi-step\n"
-                "trigger:\n"
-                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: analyze\n"
                 "    agent: architect\n"
@@ -414,22 +408,16 @@ class TestResolveConfigWithWorkflowCommand:
         assert result["WORKFLOW_NAME"] == ""
         assert result["SKIP_AGENT"] == "false"
 
-    def test_workflow_empty_agents_falls_through_mentions(self):
-        """Workflow with no trigger agents falls through to @@mention."""
+    def test_workflow_empty_steps_falls_through_mentions(self):
+        """A step-less workflow has no entry agent and falls through to @@mention."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        # Create a workflow with empty agents
-        with open(os.path.join(workflows_dir, "empty-agents.yaml"), "w") as f:
+        with open(os.path.join(workflows_dir, "no-steps.yaml"), "w") as f:
             f.write(
-                "name: empty-agents\n"
-                "description: No agents\n"
-                "trigger:\n"
-                "  agents: []\n"
-                "steps:\n"
-                "  - name: review\n"
-                "    agent: review\n"
-                "    next: null\n"
+                "name: no-steps\n"
+                "description: Workflow with no steps\n"
+                "steps: []\n"
             )
-        body = "/nebuko run workflow --name empty-agents\n@@context gather context"
+        body = "/nebuko run workflow --name no-steps\n@@context gather context"
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
@@ -485,8 +473,6 @@ class TestResolveConfigWithWorkflowCommand:
             f.write(
                 "name: with-skills\n"
                 "description: Workflow with skills\n"
-                "trigger:\n"
-                "  agents: [dev]\n"
                 "steps:\n"
                 "  - name: implement\n"
                 "    agent: dev\n"
@@ -590,8 +576,6 @@ class TestForceNextStepIntegration(unittest.TestCase):
         return (
             "name: default\n"
             "description: Standard workflow\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -719,8 +703,6 @@ class TestForceNextStepIntegration(unittest.TestCase):
         malformed_yaml = (
             "name: broken\n"
             "description: Broken workflow\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -1150,8 +1132,6 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
         lines = [
             f"name: {name}",
             "description: Child workflow",
-            "trigger:",
-            f"  agents: [{first_agent}]",
             "steps:",
             f"  - name: first_step",
             f"    agent: {first_agent}",
@@ -1167,8 +1147,6 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
         return (
             "name: subparent\n"
             "description: Parent with a sub-workflow step\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -1263,8 +1241,6 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
         bad_child = (
             "name: badchild\n"
             "description: Child with unknown agent\n"
-            "trigger:\n"
-            "  agents: [context]\n"
             "steps:\n"
             "  - name: first_step\n"
             "    agent: not_a_real_agent\n"
@@ -1287,8 +1263,6 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
         script_parent = (
             "name: scriptparent\n"
             "description: Parent with a script step\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -1342,8 +1316,6 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
         return (
             "name: default\n"
             "description: Standard workflow\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -1475,8 +1447,6 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         return (
             "name: default\n"
             "description: Standard workflow\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -1668,8 +1638,6 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
         return (
             "name: spec-driven-impl\n"
             "description: Spec-driven development\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -1803,8 +1771,6 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
             f.write(
                 "name: broken\n"
                 "description: Dangling next reference\n"
-                "trigger:\n"
-                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: only\n"
                 "    agent: architect\n"
@@ -1876,8 +1842,6 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         return (
             "name: approval\n"
             "description: Approval workflow with conditional branching\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: spec\n"
             "    agent: po\n"
@@ -2048,8 +2012,6 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         return (
             "name: default\n"
             "description: Standard workflow\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -2216,8 +2178,6 @@ class TestHumanWorkflowOverridePrecedence(unittest.TestCase):
             f.write(
                 "name: review-only\n"
                 "description: Review only workflow\n"
-                "trigger:\n"
-                "  agents: [review]\n"
                 "steps:\n"
                 "  - name: review\n"
                 "    agent: review\n"
@@ -2346,8 +2306,6 @@ class TestResumeIntegration(unittest.TestCase):
         return (
             "name: default\n"
             "description: Standard workflow\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -2558,8 +2516,6 @@ class TestResumeIntegration(unittest.TestCase):
         return (
             "name: spec-driven\n"
             "description: Spec-driven workflow\n"
-            "trigger:\n"
-            "  agents: [po]\n"
             "steps:\n"
             "  - name: spec\n"
             "    agent: po\n"
@@ -2682,8 +2638,6 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
             f.write(
                 "name: default\n"
                 "description: Standard workflow\n"
-                "trigger:\n"
-                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: analyze\n"
                 "    agent: architect\n"
@@ -2784,8 +2738,6 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
             "parent-wf.yaml": (
                 "name: parent-wf\n"
                 "description: outer parent\n"
-                "trigger:\n"
-                "  agents: [dev]\n"
                 "steps:\n"
                 "  - name: mount\n"
                 "    workflow: mid-wf\n"
@@ -2794,8 +2746,6 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
             "mid-wf.yaml": (
                 "name: mid-wf\n"
                 "description: middle level\n"
-                "trigger:\n"
-                "  agents: [dev]\n"
                 "steps:\n"
                 "  - name: run\n"
                 "    workflow: leaf-wf\n"
@@ -2805,8 +2755,6 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
             "leaf-wf.yaml": (
                 "name: leaf-wf\n"
                 "description: innermost loop\n"
-                "trigger:\n"
-                "  agents: [dev]\n"
                 "steps:\n"
                 "  - name: do\n"
                 "    agent: dev\n"
@@ -2891,8 +2839,6 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
         tmp_impl = (
             "name: tmp-impl\n"
             "description: dynamically generated per-step execution workflow\n"
-            "trigger:\n"
-            "  agents: [dev]\n"
             "steps:\n" + "".join(steps)
         )
         with open(os.path.join(workflows_dir, "tmp-impl.yaml"), "w") as f:
@@ -2901,8 +2847,6 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
             f.write(
                 "name: dev-review-loop\n"
                 "description: one implementation step + review loop\n"
-                "trigger:\n"
-                "  agents: [dev]\n"
                 "steps:\n"
                 "  - name: implement\n"
                 "    agent: dev\n"

@@ -1,7 +1,5 @@
 name: l1-dangling-next
 description: "L1: 'analyze' points at a step that does not exist"
-trigger:
-  agents: [architect]
 steps:
   - name: analyze
     agent: architect

@@ -164,7 +164,6 @@ class TestResolveWorkflowRouting:
                 yaml.dump({
                     "name": "conditional",
                     "description": "Conditional workflow",
-                    "trigger": {"agents": ["architect"]},
                     "steps": [
                         {
                             "name": "implement",
@@ -197,7 +196,6 @@ class TestResolveWorkflowRouting:
                 yaml.dump({
                     "name": "conditional",
                     "description": "Conditional workflow",
-                    "trigger": {"agents": ["architect"]},
                     "steps": [
                         {
                             "name": "implement",
@@ -228,7 +226,6 @@ class TestResolveWorkflowRouting:
                 yaml.dump({
                     "name": "linear",
                     "description": "Linear workflow",
-                    "trigger": {"agents": ["architect"]},
                     "steps": [
                         {"name": "step1", "agent": "architect", "next": "step2"},
                         {"name": "step2", "agent": "dev", "next": None},
@@ -252,7 +249,6 @@ class TestResolveWorkflowRouting:
                 yaml.dump({
                     "name": "conditional",
                     "description": "Test null next",
-                    "trigger": {"agents": ["architect"]},
                     "steps": [
                         {
                             "name": "implement",
@@ -294,7 +290,6 @@ class TestStepPromptFile:
         return {
             "name": "wf",
             "description": "prompt wf",
-            "trigger": {"agents": ["architect"]},
             "steps": steps,
         }
 
@@ -404,7 +399,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "start", "agent": "architect", "next": "subtask"},
                     {
@@ -419,7 +413,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
                 "name": "child",
                 "description": "Child workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "scan", "agent": "context", "next": "report"},
                     {"name": "report", "agent": "review", "next": None},
@@ -447,7 +440,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {
                         "name": "subtask",
@@ -460,7 +452,6 @@ class TestSubWorkflowResolution:
             (subdir / "custom-wf.yaml").write_text(yaml.dump({
                 "name": "external",
                 "description": "External workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "run", "agent": "dev", "next": None},
                 ],
@@ -482,7 +473,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "start", "agent": "architect", "next": "subtask"},
                     {"name": "subtask", "workflow": "child", "next": "finalize"},
@@ -492,7 +482,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
                 "name": "child",
                 "description": "Child workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "only-step", "agent": "review", "next": None},
                 ],
@@ -521,7 +510,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "subtask", "workflow": "child", "next": "after"},
                     {"name": "after", "agent": "architect", "next": None},
@@ -530,7 +518,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
                 "name": "child",
                 "description": "Child workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "first", "agent": "context", "next": "last"},
                     {"name": "last", "agent": "review", "next": None},
@@ -577,7 +564,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "simple.yaml").write_text(yaml.dump({
                 "name": "simple",
                 "description": "Simple workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "step1", "agent": "architect", "next": None},
                 ],
@@ -597,7 +583,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "parent.yaml").write_text(yaml.dump({
                 "name": "parent",
                 "description": "Parent workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "start", "agent": "architect", "next": "subtask"},
                     {
@@ -616,7 +601,6 @@ class TestSubWorkflowResolution:
             (Path(tmpdir) / "child.yaml").write_text(yaml.dump({
                 "name": "child",
                 "description": "Child workflow",
-                "trigger": {"agents": ["architect"]},
                 "steps": [
                     {"name": "review-step", "agent": "review", "next": None},
                 ],
@@ -700,7 +684,6 @@ class TestSpecDrivenWorkflow:
             (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
                 "name": "spec-driven",
                 "description": "Spec-driven development",
-                "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
                     {"name": "spec_approval", "agent": "architect", "next": "architect"},
@@ -723,7 +706,6 @@ class TestSpecDrivenWorkflow:
             (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
                 "name": "spec-driven",
                 "description": "Spec-driven development",
-                "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
                     {
@@ -766,7 +748,6 @@ class TestSpecDrivenWorkflow:
             (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
                 "name": "spec-driven",
                 "description": "Spec-driven development",
-                "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
                     {
@@ -808,7 +789,6 @@ class TestSpecDrivenWorkflow:
             (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
                 "name": "spec-driven",
                 "description": "Spec-driven development",
-                "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
                     {"name": "spec_approval", "agent": "architect", "next": "architect"},
@@ -833,7 +813,6 @@ class TestSpecDrivenWorkflow:
             (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
                 "name": "spec-driven",
                 "description": "Spec-driven development",
-                "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
                     {"name": "spec_approval", "agent": "architect", "next": "architect"},
@@ -858,7 +837,6 @@ class TestSpecDrivenWorkflow:
             (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
                 "name": "spec-driven",
                 "description": "Spec-driven development",
-                "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
                     {"name": "spec_approval", "agent": "architect", "next": "architect"},
@@ -891,7 +869,6 @@ class TestSpecDrivenWorkflow:
             (Path(tmpdir) / "spec-driven.yaml").write_text(yaml.dump({
                 "name": "spec-driven",
                 "description": "Spec-driven development",
-                "trigger": {"agents": ["po"]},
                 "steps": [
                     {"name": "spec", "agent": "po", "next": "spec_approval"},
                     {"name": "spec_approval", "agent": "architect", "next": "architect"},

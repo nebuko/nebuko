@@ -4,9 +4,6 @@
 name: think
 description: "Simple workflow to think about a subject and help user to define and understand something"
 
-trigger:
-  agents: [architect]  # which @@mentions can start this workflow
-
 steps:
   - name: analyze
     agent: architect

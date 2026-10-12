@@ -145,8 +145,6 @@ class TestSoftKillResumeAfterHalt(unittest.TestCase):
     _WORKFLOW_YAML = (
         "name: dev-review-loop\n"
         "description: dev review loop\n"
-        "trigger:\n"
-        "  agents: [dev]\n"
         "steps:\n"
         "  - name: implement\n"
         "    agent: dev\n"

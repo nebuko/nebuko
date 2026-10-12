@@ -206,9 +206,8 @@ engine/lib/config/
     ├── llm_config/                            # LLMConfig: model_path, provider ref, sampling params
     ├── agent_config/                          # AgentConfig: model ref, prompt_file, skills, tools
     ├── app_config/                            # AppConfig: the full providers/llms/agents tree
-    ├── workflow_definition/                   # WorkflowDefinition: name, steps, trigger
+    ├── workflow_definition/                   # WorkflowDefinition: name, description, steps
     ├── workflow_step/                         # WorkflowStep: agent/workflow, next, conditions, skill
-    ├── workflow_trigger/                      # WorkflowTrigger: trigger.agents
     └── workflow_condition/                    # WorkflowCondition: on_result → next
 ```
 

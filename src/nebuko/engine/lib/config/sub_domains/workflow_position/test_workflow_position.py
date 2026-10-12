@@ -29,7 +29,6 @@ from config import (  # noqa: E402
     WorkflowDefinition,
     WorkflowPosition,
     WorkflowStep,
-    WorkflowTrigger,
     is_self_function_call,
 )
 
@@ -38,7 +37,6 @@ def _wf(name: str, *steps: WorkflowStep) -> WorkflowDefinition:
     return WorkflowDefinition(
         name=name,
         description=name,
-        trigger=WorkflowTrigger(agents=["dev"]),
         steps=list(steps),
     )
 

@@ -12,7 +12,7 @@ from resolve_config.sub_domains.workflow_entry.workflow_entry import (  # noqa: 
 
 def _wf(*steps: WorkflowStep) -> WorkflowDefinition:
     return WorkflowDefinition(
-        name="wf", description="test", trigger={"agents": ["architect"]}, steps=list(steps)
+        name="wf", description="test", steps=list(steps)
     )
 
 

@@ -107,8 +107,7 @@ graph-level invariants below are checked offline by
 | `inputs[].kind` | input | `exec`\|`str` | yes | `exec` = a deterministic provider command materialized by the engine; `str` = a constant. |
 | `inputs[].required` | input | bool | no | When true (default), a failed/absent value fails the consuming step deterministically, before the agent runs. |
 | `outputs` | file | string[] | no | The workflow's results, each naming a **step** whose posted comment is that result (issue #756; a bare string coerces to a one-element list). Supersedes the pre-#756 opaque `<call-step>.<name>` return values. |
-| `trigger.agents` | file | string[] | no | Which `@@mention`s can start this workflow. |
-| `steps` | file | list | yes | Ordered list of steps. |
+| `steps` | file | list | yes | Ordered list of steps. The first step is the workflow's entry point. |
 | `steps[].name` | step | string | yes | Unique step name. |
 | `steps[].agent` | step | string | one of `agent`/`workflow`/`repo`/`script` | Agent role executing the step. |
 | `steps[].workflow` | step | string/path | one of `agent`/`workflow`/`repo`/`script` | Sub-workflow to mount instead of an agent (name or path like `tmp_impl/workflow.yaml`). |

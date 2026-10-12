@@ -34,8 +34,6 @@ CHILD_REF = "tmp_impl/workflow.yaml"
 PLAN_ORCHESTRATION_YAML = """
 name: plan-orchestration
 description: Top-level orchestration
-trigger:
-  agents: [architect]
 steps:
   - name: scaffold
     agent: architect
@@ -51,8 +49,6 @@ steps:
 DEV_REVIEW_LOOP_YAML = """
 name: dev-review-loop
 description: Reusable implement + review loop
-trigger:
-  agents: [dev]
 steps:
   - name: implement
     agent: dev
@@ -65,8 +61,6 @@ steps:
 TMP_IMPL_YAML = """
 name: tmp-impl
 description: Dynamically generated per-step execution workflow
-trigger:
-  agents: [dev]
 steps:
   - name: step_1
     workflow: dev-review-loop
@@ -280,7 +274,6 @@ class TestScriptLeafResolution(unittest.TestCase):
         (self.wfdir / "script_parent.yaml").write_text(
             "name: script_parent\n"
             "description: Parent mounting a script child\n"
-            "trigger:\n  agents: [dev]\n"
             "steps:\n"
             "  - name: run\n"
             "    workflow: script_child\n"
@@ -289,7 +282,6 @@ class TestScriptLeafResolution(unittest.TestCase):
         (self.wfdir / "script_child.yaml").write_text(
             "name: script_child\n"
             "description: Child whose first step is a script\n"
-            "trigger:\n  agents: [dev]\n"
             "steps:\n"
             "  - name: build\n"
             "    script:\n"

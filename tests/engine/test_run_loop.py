@@ -2379,7 +2379,6 @@ class TestStepInputSeam:
         (_Path(workflows_dir) / "super-parent.yaml").write_text(
             "name: super-parent\n"
             "description: root\n"
-            "trigger:\n  agents: [dev]\n"
             "steps:\n"
             "  - name: call_spec\n"
             "    workflow: spec-driven\n"
@@ -2391,7 +2390,6 @@ class TestStepInputSeam:
         (_Path(workflows_dir) / "spec-driven.yaml").write_text(
             "name: spec-driven\n"
             "description: middle\n"
-            "trigger:\n  agents: [dev]\n"
             "inputs:\n"
             "  - name: run_test\n"
             "    kind: exec\n"
@@ -2405,7 +2403,6 @@ class TestStepInputSeam:
         (_Path(workflows_dir) / "spec-driven-impl.yaml").write_text(
             "name: spec-driven-impl\n"
             "description: leaf\n"
-            "trigger:\n  agents: [dev]\n"
             "inputs:\n"
             "  - name: run_test\n"
             "    kind: exec\n"

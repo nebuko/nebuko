@@ -1,7 +1,5 @@
 name: chain-super
 description: "Composition root: concrete commands wired at the top"
-trigger:
-  agents: [dev]
 steps:
   - name: spec-driven
     workflow: chain-middle

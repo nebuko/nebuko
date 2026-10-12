@@ -1,7 +1,5 @@
 name: l5-terminal-consistency
 description: "L5: 'analyze' routes only via conditions and declares no linear next"
-trigger:
-  agents: [architect]
 steps:
   - name: analyze
     agent: architect
