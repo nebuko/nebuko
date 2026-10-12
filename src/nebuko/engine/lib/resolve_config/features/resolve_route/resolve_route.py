@@ -314,6 +314,28 @@ def _is_human_gate_hold(reason: Optional[str]) -> bool:
     return (reason or "").startswith("human_gate:")
 
 
+def _gate_step_from_reason(reason: Optional[str]) -> str:
+    """Extract the gated step name from a ``human_gate:<step>`` reason."""
+    return (reason or "")[len("human_gate:"):] or ""
+
+
+def _human_gate_hold_result(step: str) -> dict:
+    """The SKIP_AGENT result that keeps a gated step parked (issue #887).
+
+    A persisted ``human_gate`` hold must block auto-advance on every routing
+    path until an identity-verified ``/nebuko approve gate`` /
+    ``/nebuko reject gate`` releases it, so this names the gate step and the
+    two commands that can release it.
+    """
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": (
+            f"human_gate:{step} held — use /nebuko approve gate or "
+            "/nebuko reject gate"
+        ),
+    }
+
+
 def _resolve_gate_decision_path(
     prev_state: Optional["WorkflowState"],
     wf_cmd: WorkflowCommand,
@@ -633,6 +655,13 @@ def _resolve_dispatch_path(
         )
         if soft_kill_config is not None:
             return soft_kill_config
+
+    # Human-gate hold precedence (issue #887): a persisted human_gate hold must
+    # block auto-advance even when the workflow forward edge resolves. Checked
+    # before workflow-next resolution, which would otherwise follow
+    # ``plan -> implement`` and silently ignore the gate.
+    if dispatch_obj.status == "hold" and _is_human_gate_hold(dispatch_obj.reason):
+        return _human_gate_hold_result(_gate_step_from_reason(dispatch_obj.reason))
 
     config = {
         "task": "",
@@ -1733,6 +1762,12 @@ def _resolve_bot_fallback_path(
         else:
             reason = "Bot comment without AGENT_RUN_CONFIG or dispatch"
         return {"SKIP_AGENT": "true", "REASON": reason}
+
+    # Human-gate hold precedence (issue #887): the state-only bot path never
+    # reads the workflow forward edge, but the same guard keeps the behavior
+    # uniform with `_resolve_dispatch_path` and names the release commands.
+    if dispatch.status == "hold" and _is_human_gate_hold(dispatch.reason):
+        return _human_gate_hold_result(_gate_step_from_reason(dispatch.reason))
 
     config = {
         "task": dispatch.task_hint or "",

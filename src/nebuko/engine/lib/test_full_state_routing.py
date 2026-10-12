@@ -278,6 +278,63 @@ def _round2_state() -> dict:
     return state
 
 
+def _default_workflow() -> dict:
+    """Verbatim ``defaults/workflows/default.yaml`` (``plan`` is a human_gate)."""
+    return {
+        "name": "default",
+        "description": "Standard development workflow: analyze → context → plan → implement → review",
+        "trigger": {"agents": ["architect"]},
+        "steps": [
+            {"name": "analyze", "agent": "architect", "complexity": "low", "next": "context"},
+            {"name": "context", "agent": "context", "next": "plan"},
+            {
+                "name": "plan",
+                "agent": "architect",
+                "next": "implement",
+                "human_gate": True,
+                "conditions": [
+                    {"on_result": "approved", "next": "implement"},
+                    {"on_result": "rejected", "next": "context"},
+                ],
+            },
+            {"name": "implement", "agent": "dev", "next": "review"},
+            {
+                "name": "review",
+                "agent": "review",
+                "conditions": [
+                    {"on_result": "approved", "next": None},
+                    {"on_result": "rejected", "next": "implement"},
+                ],
+            },
+        ],
+    }
+
+
+@dataclass(frozen=True)
+class GateHoldCase:
+    """A captured gate-hold state plus the trigger body shape to replay it with."""
+
+    name: str
+    state: dict
+    workflows_dir: Path
+    body_prefix: str = "<!-- bot-agent-architect -->\n"
+
+    def trigger_body(self) -> str:
+        return (
+            self.body_prefix
+            + STATE_MARKER_START + "\n"
+            + json.dumps(self.state)
+            + "\n" + STATE_MARKER_END + "\n"
+        )
+
+
+@pytest.fixture
+def default_workflows_dir(tmp_path: Path) -> Path:
+    """Materialize the shipped ``default`` workflow (its ``plan`` is gated)."""
+    (tmp_path / "default.yaml").write_text(yaml.dump(_default_workflow()))
+    return tmp_path
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -371,6 +428,81 @@ class TestFullStateRouting:
         assert result.get("WORKFLOW_POSITION_PATH", "").endswith(
             "plan-orchestration/sub_impl|tmp-impl/step_1"
         )
+
+
+# ---------------------------------------------------------------------------
+# Human-gate hold precedence (issue #885 / #887)
+# ---------------------------------------------------------------------------
+
+ISSUE885_GATE_HOLD = "workflow_state_issue885_gate_hold"
+
+
+class TestHumanGateHoldPrecedence:
+    """A persisted ``human_gate`` hold must block auto-advance (issues #885, #887).
+
+    Replays the captured issue-#885 state verbatim: the architect's ``plan``
+    step emitted ``dispatch.status == "hold"`` with ``reason ==
+    "human_gate:plan"``, yet the bot re-trigger advanced to ``implement``
+    because the workflow forward edge (``plan -> implement``) resolved first.
+    """
+
+    def _case(self, workflows_dir: Path, body_prefix: str) -> GateHoldCase:
+        return GateHoldCase(
+            name=ISSUE885_GATE_HOLD,
+            state=_load_fixture(ISSUE885_GATE_HOLD),
+            workflows_dir=workflows_dir,
+            body_prefix=body_prefix,
+        )
+
+    def test_bot_state_only_rerun_stays_held(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        """A bot re-trigger of the held state must SKIP, not advance to implement."""
+        case = self._case(default_workflows_dir, "<!-- bot-agent-architect -->\n")
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(case.workflows_dir), is_bot=True,
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert "human_gate" in result.get("REASON", "")
+        assert result.get("TASK", "") != "dev"
+        assert result.get("WORKFLOW_STEP", "") != "implement"
+
+    def test_engine_sentinel_variant_also_held(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        """The AGENT_RUN_CONFIG-sentinel shape must behave identically."""
+        case = self._case(
+            default_workflows_dir,
+            "<!-- bot-agent-architect -->\n<!-- AGENT_RUN_CONFIG "
+            '{"dispatch": {"status": "hold", "reason": "human_gate:plan"}} -->\n',
+        )
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(case.workflows_dir), is_bot=True,
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert "human_gate" in result.get("REASON", "")
+        assert result.get("TASK", "") != "dev"
+
+    def test_non_gate_hold_still_unreachable_when_successor_resolves(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        """A plain (non-gate) hold on a step with a successor is out of scope:
+        the guard is scoped to ``human_gate:*`` exactly as the plan approved."""
+        state = _load_fixture(ISSUE885_GATE_HOLD)
+        state["dispatch"] = {"status": "hold", "reason": "no-action default"}
+        for entry in state["history"]:
+            if entry.get("dispatch", {}).get("reason", "").startswith("human_gate"):
+                entry["dispatch"] = {"status": "hold", "reason": "no-action default"}
+        case = GateHoldCase(
+            name=ISSUE885_GATE_HOLD + "_plain_hold",
+            state=state,
+            workflows_dir=default_workflows_dir,
+        )
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(default_workflows_dir), is_bot=True,
+        )
+        # Documented current behavior: only a human_gate hold is guarded here.
+        assert result.get("TASK", "") == "dev"
 
 
 # ---------------------------------------------------------------------------
