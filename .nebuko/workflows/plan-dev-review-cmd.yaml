@@ -1,7 +1,7 @@
 # Default workflow: the standard dev chain
 # architect → context → architect (plan) → dev → review
 
-name: default-with-command
+name: plan-dev-review-cmd
 description: "Standard development workflow: analyze → context → plan → implement → review"
 
 trigger:
