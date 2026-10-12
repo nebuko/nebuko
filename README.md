@@ -16,53 +16,94 @@ and redirect.
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Human
-    participant Issue as Issue thread<br/>(WORKFLOW_STATE comments)
-    participant Engine as Nebuko engine<br/>(stateless, fresh run)
-    participant Architect
-    participant Context
-    participant Dev
-    participant Review
+    
+    actor H as 👤 Human
+    participant I as 💬 Issue Thread<br/>(State Carrier)
+    participant E as ⚙️ Nebuko Engine<br/>(Stateless)
+    participant A as 📐 Architect
+    participant C as 🔍 Context
+    participant D as 💻 Dev
+    participant R as 🔍 Review
 
-    Human->>Issue: comment: /nebuko run workflow --name default
-    Issue->>Engine: GitHub trigger
-
-    note over Engine,Issue
-        Engine is stateless: a fresh container per trigger.
-        It reads the latest WORKFLOW_STATE comment and
-        decides who acts next. Nothing is stored elsewhere.
+    %% Phase 1
+    H->>I: /nebuko run workflow
+    I->>E: Trigger webhook
+    
+    rect rgb(235, 245, 255)
+        note over E,R: Phase 1 — Planning & Context
+        E->>I: Read latest WORKFLOW_STATE
+        E->>A: Dispatch: analyze
+        A-->>I: High-level understanding
+        E->>C: Dispatch: context
+        C-->>I: Relevant files & search report
+        E->>A: Dispatch: plan
+        A-->>I: Plan update (ODA)
     end
 
-    Engine->>Issue: read latest state comment
-    Engine->>Architect: dispatch step "analyze"
-
-    Architect->>Issue: post comment + full updated state
-    note right of Issue
-        The comment IS the state (ECST carrier):
-        history, current step, dispatch, metrics —
-        the only durable "knowledge" in the system.
+    %% Phase 2
+    rect rgb(255, 243, 224)
+        note over H,E: Phase 2 — Human Gate (Paused)
+        H->>I: /nebuko approve gate
+        I->>E: Trigger on comment
     end
 
-    Engine->>Context: dispatch step "context"
-    Context->>Issue: report + full updated state
-    Engine->>Architect: dispatch step "plan"
-    Architect->>Issue: plan (ODA) + state with dispatch.status = hold, pin = true
-
-    note over Issue
-        Human gate: the engine stops.
-        No agent runs until a human approves.
+    %% Phase 3
+    rect rgb(235, 250, 235)
+        note over E,R: Phase 3 — Execution & Review
+        E->>D: Dispatch: implement
+        D-->>I: Diff summary + updated state
+        E->>R: Dispatch: review
+        R-->>I: Verdict + final state
     end
 
-    Human->>Issue: comment: approved
-    Issue->>Engine: trigger on new comment
-    Engine->>Issue: read state + approval
-    Engine->>Dev: dispatch step "implement"
+    H->>I: Review PR & Merge
+```
 
-    Dev->>Issue: diff summary + full updated state
-    Engine->>Review: dispatch step "review"
-    Review->>Issue: verdict + full updated state
+```mermaid
+sequenceDiagram
+    autonumber
+    
+    actor Human as 👤 Human
+    participant Issue as 💬 Issue Thread<br/>(State carrier)
+    participant Engine as ⚙️ Nebuko Engine<br/>(Stateless)
+    participant Steps as 🤖 Agents<br/>(Architect / Context / Dev / Review)
 
-    Human->>Human: reads the thread, reviews the PR, merges
+    %% Trigger & Init
+    Human->>Issue: /nebuko run workflow --name default
+    Issue->>Engine: GitHub trigger webhook
+    
+    note right of Engine: Stateless: fresh container spun up
+
+    %% Phase 1: Analysis & Plan
+    rect rgb(240, 248, 255)
+        note right of Engine: Phase 1: Planning & Context
+        Engine->>Issue: Read latest WORKFLOW_STATE comment
+        Engine->>Steps: Dispatch: analyze
+        Steps->>Issue: High level understanding and prepare query for relevent context
+        Engine->>Steps: Dispatch: context
+        Steps->>Issue: Report with relevent files, code and web search
+        Engine->>Steps: Dispatch: plan
+        Steps->>Issue: Architecture update with implementation plan
+    end
+
+    %% Phase 2: Human Gate
+    rect rgb(255, 243, 230)
+        note over Issue,Engine: 🛑 Human Gate (Paused)
+        Human->>Issue: Comment: "/nebuko approve gate"
+        Issue->>Engine: Triggered by new comment event
+    end
+
+    %% Phase 3: Implementation & Review
+    rect rgb(240, 255, 240)
+        note right of Engine: Phase 2: Execution & Review
+        Engine->>Steps: Dispatch: implement (Dev)
+        Steps->>Issue: Diff summary + updated state
+        Engine->>Steps: Dispatch: review (GLM)
+        Steps->>Issue: Verdict + final state
+    end
+
+    %% Finalize
+    Human->>Issue: Reads thread, reviews PR & merges
 ```
 
 ## What it is
