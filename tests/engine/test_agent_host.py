@@ -18,6 +18,7 @@ import pytest
 
 from nebuko.engine.agent_host import (
     InProcessAgentHost,
+    _REPORT_FUNCTION_CALL_ATTR,
     _REPORT_PAYLOAD_ATTR,
     _REPORT_PROMPT,
     _REPORT_ROUTING_ATTR,
@@ -100,6 +101,28 @@ def _dispatch_report_event(**fields: Any) -> object:
         tool_call=MessageToolCall(
             id="tc-report-dispatch",
             name="dispatch_next",
+            arguments="{}",
+            origin="completion",
+        ),
+        llm_response_id="r2",
+    )
+
+
+def _call_agent_report_event(**fields: Any) -> object:
+    """A real ``call_agent`` action carrying the typed hand-off (issue #876)."""
+    from agent_script.features.call_agent_tool.call_agent_tool import CallAgentAction
+    from openhands.sdk.event import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall, TextContent
+
+    return ActionEvent(
+        source="agent",
+        tool_name="call_agent",
+        thought=[TextContent(text="")],
+        action=CallAgentAction(**fields),
+        tool_call_id="tc-report-call-agent",
+        tool_call=MessageToolCall(
+            id="tc-report-call-agent",
+            name="call_agent",
             arguments="{}",
             origin="completion",
         ),
@@ -495,6 +518,72 @@ class TestEngineElicitedReportTurn:
         assert result["dispatch"]["agent"] == "review"
         assert result["dispatch"]["pin"] == "true"
         assert to_routing_decision(result["dispatch"]).agent == "review"
+
+    def test_harvests_the_typed_call_agent_handoff(self, tmp_path: Path) -> None:
+        """A report-turn ``call_agent`` is harvested as the typed hand-off."""
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FakeConversation(
+            events=[_end_tool_turn("finish", "note")],
+            report_events=[
+                _finish_report_event("Full report"),
+                _call_agent_report_event(agent_name="context", complexity="high"),
+            ],
+        )
+        host = _host_for(repo_root, conversation, latest_answer="note")
+
+        host.run("prompt")
+
+        handoff = getattr(conversation, _REPORT_FUNCTION_CALL_ATTR)
+        assert handoff.fields["agent_name"] == "context"
+        assert handoff.fields["complexity"] == "high"
+
+    def test_report_turn_call_agent_reaches_the_routing_decision(
+        self, tmp_path: Path
+    ) -> None:
+        """#876: a report-turn ``call_agent`` names the exact next agent.
+
+        Without the structural merge the imperative hand-off would be dropped
+        and the run would revert to the workflow's default next step.
+        """
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FakeConversation(
+            events=[_end_tool_turn("finish", "note")],
+            report_events=[
+                _finish_report_event("Full report"),
+                _call_agent_report_event(agent_name="context", complexity="high"),
+            ],
+        )
+        host = _host_for(repo_root, conversation, latest_answer="note")
+
+        result = host.run("prompt")
+
+        assert result["dispatch"]["agent"] == "context"
+        assert result["dispatch"]["complexity"] == "high"
+        decision = to_routing_decision(result["dispatch"])
+        assert (decision.agent, decision.complexity) == ("context", "high")
+
+    def test_report_turn_call_agent_target_beats_a_dispatch_target(
+        self, tmp_path: Path
+    ) -> None:
+        """The imperative hand-off outranks the dispatch-derived target (#876)."""
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FakeConversation(
+            events=[_end_tool_turn("finish", "note")],
+            report_events=[
+                _finish_report_event("Full report"),
+                _dispatch_report_event(status="advance", agent="review"),
+                _call_agent_report_event(agent_name="context"),
+            ],
+        )
+        host = _host_for(repo_root, conversation, latest_answer="note")
+
+        result = host.run("prompt")
+
+        assert result["dispatch"]["agent"] == "context"
+        assert to_routing_decision(result["dispatch"]).agent == "context"
 
     def test_routes_from_the_state_when_the_report_returns_only_finish(
         self, tmp_path: Path

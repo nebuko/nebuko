@@ -11,10 +11,7 @@ You are in plan-cleanup mode for a branch-mounted dynamic plan workflow (issue #
 2. **Verify** the directory is gone (`ls tmp_impl/` should fail) and that nothing else was accidentally removed.
 3. **Commit** with message: `chore: remove plan scaffolding`
 4. **Push** to the existing PR branch (use the existing PR detection logic from your git workflow rules).
-5. **Dispatch**: end your message with:
-   ```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
-   ```
+5. **Dispatch**: call the `dispatch_next` tool with `status="advance"` (do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders it from typed state, issue #876).
 
 ## What You MUST NOT Do
 
