@@ -5,6 +5,141 @@
 
 # Nebuko
 
+
+> **Pre-alpha.** Usable today, expect some bugs and breaking changes between releases.
+
+**AI multi-agent workflow-as-code, where you already are: in your issues.**
+Mention an agent on an issue and a team of specialized agents plans, implements
+and reviews the work — leaving every step as a comment you can read, question
+and redirect.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Human
+    participant Issue as Issue thread<br/>(WORKFLOW_STATE comments)
+    participant Engine as Nebuko engine<br/>(stateless, fresh run)
+    participant Architect
+    participant Context
+    participant Dev
+    participant Review
+
+    Human->>Issue: comment: /nebuko run workflow --name default
+    Issue->>Engine: GitHub trigger
+
+    note over Engine,Issue
+        Engine is stateless: a fresh container per trigger.
+        It reads the latest WORKFLOW_STATE comment and
+        decides who acts next. Nothing is stored elsewhere.
+    end
+
+    Engine->>Issue: read latest state comment
+    Engine->>Architect: dispatch step "analyze"
+
+    Architect->>Issue: post comment + full updated state
+    note right of Issue
+        The comment IS the state (ECST carrier):
+        history, current step, dispatch, metrics —
+        the only durable "knowledge" in the system.
+    end
+
+    Engine->>Context: dispatch step "context"
+    Context->>Issue: report + full updated state
+    Engine->>Architect: dispatch step "plan"
+    Architect->>Issue: plan (ODA) + state with dispatch.status = hold, pin = true
+
+    note over Issue
+        Human gate: the engine stops.
+        No agent runs until a human approves.
+    end
+
+    Human->>Issue: comment: approved
+    Issue->>Engine: trigger on new comment
+    Engine->>Issue: read state + approval
+    Engine->>Dev: dispatch step "implement"
+
+    Dev->>Issue: diff summary + full updated state
+    Engine->>Review: dispatch step "review"
+    Review->>Issue: verdict + full updated state
+
+    Human->>Human: reads the thread, reviews the PR, merges
+```
+
+## What it is
+
+A **schema + engine** for defining, running and auditing AI agent pipelines
+as code in your own repository. Three layers — Nebuko owns Layer 2:
+
+| Layer | What it is | Here |
+|-------|-----------|------|
+| 3 — AI workflow | A way of doing something with AI, as copyable YAML you own | `defaults/workflows/` |
+| 2 — spec + engine | The workflow format and the engine that runs it | **Nebuko** |
+| 1 — agent runner | Runs an individual agent | [OpenHands SDK], model-agnostic via [litellm] |
+
+Built for **iterative dev** — small iterations, fast delivery, clean code, TDD, etc.
+
+## Why it exists
+
+- **Your workflow is code you own.** Declarative YAML in the repo: agents,
+  skills, human approval gates, conditional routing, per-step model and
+  sampling choice. Reviewed in PRs, forked, versioned. Adopt with a commit,
+  delete with a commit — no SaaS to migrate away from.
+- **The audit trail is your issue thread.** Every step is a plain comment:
+  what the agent did, what it found, the decision it made, and the cost it
+  paid (tokens, latency, tool calls). Agents are prompted to assume a human
+  reviewer will read every change [3] — because they will.
+- **Stateless agents, durable state.** The engine is a stateless mechanism:
+  every run recounts the evidence and reduces the latest
+  `WORKFLOW_STATE` comment to pick the next action [1][2]. Crash, soft-kill,
+  or leave for the weekend — the state is in the thread, so the workflow
+  resumes from the newest comment.
+- **Humans own the decisions.** `human_gate` stops the pipeline until a
+  human approves — e.g. the *Object Design Anchor*, the state object's fields
+  and signatures, before any implementation starts [1]. Reject it and the
+  architect loops back to the plan.
+- **Bring your own keys.** Provider accounts and API keys are yours; nothing
+  is billed through Nebuko, and keys never live in the config file.
+
+## How it works
+
+1. **Trigger** — an issue comment (`@@agent …`, `/nebuko run workflow …`),
+   or any GitHub trigger you wire: cron, `on: pull_request: closed`, …
+2. **Dispatch** — the engine reads the latest `WORKFLOW_STATE` JSON from the
+   thread [1], applies safety guards, and selects the next step.
+3. **Execute** — a step is either a **deterministic command** (agent-free:
+   runs, posts, consumes no call budget) or an **agent** with a scoped role
+   prompt, granted skills and tool list.
+4. **Carry** — the agent posts its result *and* the full updated state as a
+   comment. The comment is the carrier; the state is the payload. The next
+   run needs nothing but the thread.
+5. **Protect** — layered safety: rejection bound per step (2 loops, then the
+   human is pinged), circuit breaker per issue (per-issue override: a
+   `None` limit inherits the host's threshold, so old state never regresses a
+   custom deployment [2]), human gates, and `CALLER_AUTH` so only repo
+   members can spend tokens.
+
+## What to expect — today vs. next
+
+**Today (pre-alpha).** The full `plan → context → implement → review` loop
+works end-to-end on real issues, with human gates, per-step metrics and a
+deterministic command surface. What to hold: the config schema and the
+`WORKFLOW_STATE` format still move (legacy state blobs load unchanged and
+serialize byte-identically [2]); GitHub only; PAT mode (no bot identity yet);
+and expect a real token profile — on the order of **1–3M input tokens for a
+small fix, 2–5M medium, up to 15M high**, with 95%+ cache hits on successive
+calls within a run. Cheap on subscription providers; plan for it.
+
+**Next.**
+- **Alpha** — the tool/spec surface freezes: stable schema, bug fixes only.
+- **Thin SaaS** — one-click GitHub App setup, one dashboard across your
+  infra (GitHub, GitLab, Jira, …), same open schema, state in a database
+  (enabling parallel agent execution). The open-source engine and format are
+  unchanged; the schema stays open source, always.
+- **Platforms** — GitLab, Codeberg, Gitea, BitBucket, then ticketing systems
+  like Jira; a local mode (same engine, file adapter) for running without
+  GitHub; a workflow marketplace in the SaaS.
+````
+
 > **Pre-alpha.** Nebuko is usable today but unstable — expect breaking changes
 > between releases. The config schema, workflow format and comment contracts may
 > change without notice.
