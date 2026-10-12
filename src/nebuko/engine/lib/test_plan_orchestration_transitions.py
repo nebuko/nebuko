@@ -30,7 +30,6 @@ def plan_chain_dir(tmp_path: Path) -> Path:
     _write(tmp_path, "dev-review-loop", {
         "name": "dev-review-loop",
         "description": "Reusable sub-workflow: implement + review loop",
-        "trigger": {"agents": ["dev"]},
         "steps": [
             {"name": "implement", "agent": "dev", "next": "review"},
             {
@@ -47,7 +46,6 @@ def plan_chain_dir(tmp_path: Path) -> Path:
     _write(tmp_path, "tmp-impl", {
         "name": "tmp-impl",
         "description": "Dynamically generated per-step execution workflow",
-        "trigger": {"agents": ["dev"]},
         "steps": [
             {"name": "step_1", "workflow": "dev-review-loop", "next": "step_2"},
             {"name": "step_2", "workflow": "dev-review-loop", "next": None},
@@ -56,7 +54,6 @@ def plan_chain_dir(tmp_path: Path) -> Path:
     _write(tmp_path, "plan-orchestration", {
         "name": "plan-orchestration",
         "description": "Top-level orchestration",
-        "trigger": {"agents": ["architect"]},
         "steps": [
             {"name": "scaffold", "agent": "architect", "next": "sub_impl"},
             {"name": "sub_impl", "workflow": "tmp-impl", "next": "sub_clean"},

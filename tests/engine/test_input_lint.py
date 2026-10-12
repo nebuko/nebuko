@@ -77,7 +77,6 @@ class TestConsumerRules:
             path.write_text(
                 "name: unused\n"
                 "description: d\n"
-                "trigger:\n  agents: [dev]\n"
                 "inputs:\n  - name: diff\n    kind: exec\n"
                 "steps:\n  - name: work\n    agent: dev\n    next: null\n",
                 encoding="utf-8",

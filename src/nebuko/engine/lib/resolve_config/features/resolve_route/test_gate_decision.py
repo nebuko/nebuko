@@ -40,8 +40,6 @@ from workflow_state import (  # noqa: E402
 GATED_WORKFLOW_YAML = (
     "name: default\n"
     "description: Standard workflow with a gated approval step\n"
-    "trigger:\n"
-    "  agents: [architect]\n"
     "steps:\n"
     "  - name: plan\n"
     "    agent: architect\n"

@@ -1,7 +1,5 @@
 name: l6-human-gate
 description: "L6: the gated 'gate' step is terminal, so the hold can never resume"
-trigger:
-  agents: [architect]
 steps:
   - name: analyze
     agent: architect

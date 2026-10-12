@@ -1,7 +1,5 @@
 name: l3-duplicate-ids
 description: "L3: two steps share the name 'dup'"
-trigger:
-  agents: [architect]
 steps:
   - name: dup
     agent: architect

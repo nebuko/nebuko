@@ -114,8 +114,6 @@ class TestBuildResult:
         wf_yaml = (
             "name: wf\n"
             "description: prompt passthrough\n"
-            "trigger:\n"
-            "  agents: [dev]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: dev\n"
@@ -152,8 +150,6 @@ class TestConfigComplexityEmission:
             f.write(
                 "name: tiered\n"
                 "description: tiered\n"
-                "trigger:\n"
-                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: analyze\n"
                 "    agent: architect\n"
@@ -215,8 +211,6 @@ class TestConfigComplexityEmission:
             f.write(
                 "name: devwf\n"
                 "description: dev tiered\n"
-                "trigger:\n"
-                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: implement\n"
                 "    agent: dev\n"
@@ -241,8 +235,6 @@ class TestComplexityGovernanceOverlay:
             f.write(
                 "name: lowstep\n"
                 "description: low step\n"
-                "trigger:\n"
-                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: analyze\n"
                 "    agent: architect\n"
@@ -257,8 +249,6 @@ class TestComplexityGovernanceOverlay:
             f.write(
                 "name: highstep\n"
                 "description: high step\n"
-                "trigger:\n"
-                "  agents: [architect]\n"
                 "steps:\n"
                 "  - name: analyze\n"
                 "    agent: architect\n"

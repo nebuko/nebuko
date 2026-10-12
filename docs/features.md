@@ -20,7 +20,7 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 
 | Command | Effect |
 |---------|--------|
-| `@@<agent>` | Run the named agent directly (`architect`, `context`, `dev`, `review`, ...). If the agent matches a workflow's `trigger.agents`, that workflow's first step runs. |
+| `@@<agent>` | Run the named agent directly (`architect`, `context`, `dev`, `review`, ...). To start a workflow, use `/nebuko run workflow --name <name>` — which enters at the workflow's first step. |
 | `/nebuko run workflow --name <name> [--step <step>[.<step>...]]` | Start (or switch to) the named workflow, regardless of current state. `--step` seeds a **fresh** run directly at `<step>` instead of the first step (issue #789) — useful to enter `plan-orchestration` at `plan`/`scaffold` without replaying `architect`. A **dotted** selector (`sub_impl.step_3`, `sub_impl.step_3.review`) descends into mounted sub-workflows to address a non-first nested step (issue #822). An unknown, malformed, or not-yet-scaffolded target fails loudly. Human-only. |
 | `/nebuko resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. On a `human_gate:*` hold it is **inert** (points at the gate commands) — use `/nebuko approve gate` / `/nebuko reject gate` there. |
 | `/nebuko approve gate [--feedback "..."]` | Release a `human_gate` hold: record an engine-owned **`GateDecision`** (`approved`) and route via the gated step's `on_result: approved` successor. Handled inline by the engine, never routed to an agent. Authorized humans only (`OWNER`/`MEMBER`/`COLLABORATOR`), always-on regardless of `CALLER_AUTH` (issue #648). |

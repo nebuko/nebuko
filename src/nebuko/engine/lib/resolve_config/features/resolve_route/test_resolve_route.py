@@ -104,8 +104,6 @@ class TestResolveFunctionCallPathWorkflowContext:
     SPEC_YAML = (
         "name: spec\n"
         "description: test\n"
-        "trigger:\n"
-        "  agents: [architect]\n"
         "steps:\n"
         "  - name: analyze\n"
         "    agent: architect\n"
@@ -143,8 +141,6 @@ class TestResolveFunctionCallPathWorkflowContext:
         yaml = (
             "name: spec\n"
             "description: test\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: plan\n"
             "    agent: architect\n"
@@ -211,8 +207,6 @@ class TestWorkflowCommandPrecedence:
         return (
             "name: foo\n"
             'description: "test"\n'
-            "trigger:\n"
-            f"  agents: [{agent}]\n"
             "steps:\n"
             f"  - name: only\n    agent: {agent}\n    next: null\n"
         )
@@ -289,8 +283,6 @@ class TestWorkflowCommandPrecedence:
     _MULTI_STEP_YAML = (
         "name: foo\n"
         'description: "test"\n'
-        "trigger:\n"
-        "  agents: [architect]\n"
         "steps:\n"
         "  - name: one\n    agent: architect\n    next: two\n"
         "  - name: two\n    agent: dev\n    next: null\n"
@@ -372,8 +364,6 @@ class TestWorkflowCommandPrecedence:
 _GATED_HANDOFF_WF_YAML = (
     "name: spec-driven-impl\n"
     "description: test\n"
-    "trigger:\n"
-    "  agents: [architect]\n"
     "steps:\n"
     "  - name: stub\n"
     "    agent: dev\n"
@@ -563,8 +553,6 @@ class TestGatePrecedenceOverFunctionCall:
 _CALLBACK_WF_YAML = (
     "name: cb\n"
     "description: test\n"
-    "trigger:\n"
-    "  agents: [architect]\n"
     "steps:\n"
     "  - name: context\n"
     "    agent: context\n"
@@ -821,8 +809,6 @@ class TestWorkflowCommandPerStepComplexity:
     _TIERED_YAML = (
         "name: tiered\n"
         'description: "tiered"\n'
-        "trigger:\n"
-        "  agents: [architect]\n"
         "steps:\n"
         "  - name: analyze\n"
         "    agent: architect\n"

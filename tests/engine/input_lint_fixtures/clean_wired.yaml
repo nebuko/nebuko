@@ -1,7 +1,5 @@
 name: clean-wired
 description: "Every declared input bound with a matching kind"
-trigger:
-  agents: [dev]
 steps:
   - name: call_callee
     workflow: callee

@@ -1,7 +1,5 @@
 name: l10-reserved-name
 description: "A step claims the reserved input namespace"
-trigger:
-  agents: [dev]
 steps:
   - name: input
     agent: dev

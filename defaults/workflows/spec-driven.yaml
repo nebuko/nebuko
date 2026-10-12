@@ -4,9 +4,6 @@
 name: spec-driven
 description: "Spec-driven development: spec → stub → implement"
 
-trigger:
-  agents: [po]  # which @@mentions can start this workflow
-
 steps:
   - name: spec
     agent: po

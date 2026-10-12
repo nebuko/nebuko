@@ -1,7 +1,5 @@
 name: chain-middle
 description: "Declares its parameters and forwards them unchanged"
-trigger:
-  agents: [dev]
 inputs:
   - name: run_test
     kind: exec

@@ -1,7 +1,5 @@
 name: l2-unreachable
 description: "L2: 'orphan' is never routed to from the entry step"
-trigger:
-  agents: [architect]
 steps:
   - name: analyze
     agent: architect

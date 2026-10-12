@@ -361,7 +361,6 @@ class TestRemoteWorkflowStepLoading:
         raw = {
             "name": "remote-deploy",
             "description": "Deploy from remote repo",
-            "trigger": {"agents": ["architect"]},
             "steps": [{
                 "name": "deploy",
                 "repo": "https://github.com/org/shared-workflows.git",
@@ -382,7 +381,6 @@ class TestRemoteWorkflowStepLoading:
         raw = {
             "name": "remote-default",
             "description": "Default from remote repo",
-            "trigger": {"agents": ["architect"]},
             "steps": [{
                 "name": "run",
                 "repo": "https://github.com/org/shared.git",
@@ -413,7 +411,6 @@ class TestResolverWithRemoteWorkflows:
         (Path(tmp_path) / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent workflow",
-            "trigger": {"agents": ["architect"]},
             "steps": [
                 {"name": "start", "agent": "architect", "next": "remote-task"},
                 {
@@ -429,7 +426,6 @@ class TestResolverWithRemoteWorkflows:
         mock_wf_content = yaml.dump({
             "name": "deploy",
             "description": "Deploy workflow",
-            "trigger": {"agents": ["dev"]},
             "steps": [{"name": "deploy-step", "agent": "dev"}],
         })
         mock_wf_path = str(tmp_path / "mock_deploy.yaml")
@@ -454,7 +450,6 @@ class TestResolverWithRemoteWorkflows:
         (Path(tmp_path) / "parent.yaml").write_text(yaml.dump({
             "name": "parent",
             "description": "Parent workflow",
-            "trigger": {"agents": ["architect"]},
             "steps": [{
                 "name": "remote-task",
                 "repo": "https://github.com/org/workflows.git",

@@ -79,7 +79,6 @@ def _dev_review_loop() -> dict:
     return {
         "name": "dev-review-loop",
         "description": "Execute a single plan step with review; loops on rejection",
-        "trigger": {"agents": ["dev"]},
         "steps": [
             {"name": "implement", "agent": "dev", "next": "review"},
             {
@@ -99,7 +98,6 @@ def _plan_orchestration() -> dict:
     return {
         "name": "plan-orchestration",
         "description": "Full lifecycle — architect, context, plan, scaffold, execute, cleanup, final review",
-        "trigger": {"agents": ["architect"]},
         "steps": [
             {"name": "architect", "agent": "architect", "next": "context"},
             {"name": "context", "agent": "context", "next": "plan"},
@@ -132,7 +130,6 @@ def _tmp_impl() -> dict:
     return {
         "name": "tmp-impl",
         "description": "Dynamically generated per-step execution workflow",
-        "trigger": {"agents": ["dev"]},
         "steps": [
             {"name": "step_1", "workflow": "dev-review-loop", "next": "step_2"},
             {"name": "step_2", "workflow": "dev-review-loop", "next": None},
@@ -146,7 +143,6 @@ def _tmp_impl_scaffold() -> dict:
     return {
         "name": "tmp-impl",
         "description": "Dynamically generated per-step execution workflow",
-        "trigger": {"agents": ["dev"]},
         "steps": [
             {"name": "step_1", "agent": "dev", "skill": ["step-1"], "next": "step_2"},
             {"name": "step_2", "agent": "dev", "skill": ["step-2"], "next": None},
@@ -161,7 +157,6 @@ def _tmp_impl_three() -> dict:
     return {
         "name": "tmp-impl",
         "description": "Dynamically generated per-step execution workflow",
-        "trigger": {"agents": ["dev"]},
         "steps": [
             {"name": "step_1", "workflow": "dev-review-loop", "next": "step_2"},
             {"name": "step_2", "workflow": "dev-review-loop", "next": "step_3"},

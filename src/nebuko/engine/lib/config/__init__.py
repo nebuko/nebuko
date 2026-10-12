@@ -36,7 +36,6 @@ from .sub_domains.workflow.workflow_input_spec import WorkflowInputSpec
 from .sub_domains.workflow_condition.workflow_condition import WorkflowCondition
 from .sub_domains.workflow_step.script_step_spec import ScriptStepSpec
 from .sub_domains.workflow_step.workflow_step import WorkflowStep
-from .sub_domains.workflow_trigger.workflow_trigger import WorkflowTrigger
 from .sub_domains.workflow_definition.workflow_definition import WorkflowDefinition
 from .sub_domains.workflow_position.workflow_position import (
     POSITION_STATE_VERSION,
@@ -99,7 +98,6 @@ __all__ = [
     "INPUT_REF_PATTERN",
     "ScriptStepSpec",
     "WorkflowStep",
-    "WorkflowTrigger",
     "WorkflowDefinition",
     "WorkflowPosition",
     "is_self_function_call",

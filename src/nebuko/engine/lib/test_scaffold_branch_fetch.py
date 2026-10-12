@@ -74,8 +74,6 @@ class _ScaffoldFixture:
         (seed / "parent.yaml").write_text(
             "name: parent\n"
             "description: Parent with a branch-mounted child\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: analyze\n"
             "    agent: architect\n"
@@ -91,8 +89,6 @@ class _ScaffoldFixture:
         (seed / "tmp_impl" / "workflow.yaml").write_text(
             "name: implchild\n"
             "description: Branch-mounted child\n"
-            "trigger:\n"
-            "  agents: [dev]\n"
             "steps:\n"
             "  - name: implement\n"
             "    agent: dev\n"
@@ -180,8 +176,6 @@ class TestScaffoldBranchFetchOnMiss(unittest.TestCase):
         (local_child / "workflow.yaml").write_text(
             "name: localchild\n"
             "description: Local child\n"
-            "trigger:\n"
-            "  agents: [dev]\n"
             "steps:\n"
             "  - name: implement\n"
             "    agent: dev\n"

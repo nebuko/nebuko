@@ -1600,9 +1600,12 @@ def _resolve_human_path(
                 wf_name, workflows_dir, local_workflows_dir
             )
             wf_def = load_workflow(str(wf_file))
-            task = wf_def.trigger.agents[0] if wf_def.trigger.agents else ""
-            if task:
-                wf_resolved = True
+            task = wf_def.entry_agent
+            # A workflow is attemptable whenever it has steps (issue #816): the
+            # first step is the entry, and a first-step sub-workflow mount is
+            # descended to its runnable leaf below. Only a step-less workflow
+            # (entry agent "", nothing to start) falls through to @@mention.
+            wf_resolved = bool(wf_def.steps)
             # Issue #789: enter at the requested step (``--step``; default the
             # first step). Issue #609: this also descends a first-step
             # sub-workflow mount (e.g. the scaffold's ``tmp-impl``) to its

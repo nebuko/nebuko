@@ -1,7 +1,5 @@
 name: multi-error
 description: "Several distinct defects in one definition"
-trigger:
-  agents: [architect]
 steps:
   - name: a
     agent: architect

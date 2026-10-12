@@ -1,7 +1,5 @@
 name: l8-undeclared
 description: "The call site binds a name the callee does not declare"
-trigger:
-  agents: [dev]
 steps:
   - name: call_callee
     workflow: callee

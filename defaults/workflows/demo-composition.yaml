@@ -1,7 +1,5 @@
 name: demo-composition
 description: "Demonstrates sub-workflow composition"
-trigger:
-  agents: [architect]
 steps:
   - name: analyze
     agent: architect

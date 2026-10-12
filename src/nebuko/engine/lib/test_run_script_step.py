@@ -36,8 +36,6 @@ class TestResolveNextScriptMarker:
     SCRIPT_WF = (
         "name: default\n"
         "description: test\n"
-        "trigger:\n"
-        "  agents: [architect]\n"
         "steps:\n"
         "  - name: analyze\n"
         "    agent: architect\n"
@@ -73,8 +71,6 @@ class TestResolveNextScriptMarker:
         yaml = (
             "name: default\n"
             "description: test\n"
-            "trigger:\n"
-            "  agents: [architect]\n"
             "steps:\n"
             "  - name: a\n"
             "    agent: architect\n"
@@ -152,8 +148,6 @@ class TestBuildResultRunScript:
         yaml = (
             "name: default\n"
             "description: t\n"
-            "trigger:\n"
-            "  agents: [dev]\n"
             "steps:\n"
             "  - name: implement\n"
             "    agent: dev\n"
@@ -189,8 +183,6 @@ class TestResolveConfigEndToEnd:
     SCRIPT_WF = (
         "name: default\n"
         "description: test\n"
-        "trigger:\n"
-        "  agents: [architect]\n"
         "steps:\n"
         "  - name: analyze\n"
         "    agent: architect\n"

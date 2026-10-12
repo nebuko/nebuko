@@ -1,9 +1,6 @@
 name: spec-driven-impl
 description: "Spec-driven development: plan -> stub -> implement"
 
-trigger:
-  agents: [architect]  # which @@mentions can start this workflow
-
 steps:
   - name: analyze
     agent: architect

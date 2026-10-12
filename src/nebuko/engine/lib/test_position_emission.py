@@ -42,7 +42,6 @@ def _dev_review_loop() -> dict:
     return {
         "name": "dev-review-loop",
         "description": "Reusable sub-workflow: implement + review loop",
-        "trigger": {"agents": ["dev"]},
         "steps": [
             {"name": "implement", "agent": "dev", "next": "review"},
             {
@@ -65,7 +64,6 @@ def scaffold_dir(tmp_path: Path) -> Path:
     _write(tmp_path, "tmp-impl", {
         "name": "tmp-impl",
         "description": "Dynamically generated per-step execution workflow",
-        "trigger": {"agents": ["dev"]},
         "steps": [
             {"name": "step_1", "workflow": "dev-review-loop", "next": "step_2"},
             {"name": "step_2", "workflow": "dev-review-loop", "next": None},
@@ -74,7 +72,6 @@ def scaffold_dir(tmp_path: Path) -> Path:
     _write(tmp_path, "plan-orchestration", {
         "name": "plan-orchestration",
         "description": "Top-level orchestration",
-        "trigger": {"agents": ["architect"]},
         "steps": [
             {"name": "scaffold", "agent": "architect", "next": "sub_impl"},
             {"name": "sub_impl", "workflow": "tmp-impl", "next": "sub_clean"},
@@ -153,12 +150,10 @@ class TestPositionChainBuilder:
     def test_cyclic_mount_ref_stops(self, tmp_path):
         _write(tmp_path, "a", {
             "name": "a", "description": "cycle a",
-            "trigger": {"agents": ["dev"]},
             "steps": [{"name": "go", "workflow": "b", "next": None}],
         })
         _write(tmp_path, "b", {
             "name": "b", "description": "cycle b",
-            "trigger": {"agents": ["dev"]},
             "steps": [{"name": "back", "workflow": "a", "next": None}],
         })
         wf_dir = str(tmp_path)
@@ -171,7 +166,6 @@ class TestPositionChainBuilder:
     def test_missing_dynamic_child_degrades_to_bare(self, tmp_path):
         _write(tmp_path, "top", {
             "name": "top", "description": "top",
-            "trigger": {"agents": ["dev"]},
             "steps": [{"name": "mount", "workflow": "tmp-impl", "next": None}],
         })
         wf_dir = str(tmp_path)

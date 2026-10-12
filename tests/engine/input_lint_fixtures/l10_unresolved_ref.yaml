@@ -1,7 +1,5 @@
 name: l10-ref
 description: "A consumer references an input that is not declared"
-trigger:
-  agents: [dev]
 steps:
   - name: work
     agent: dev

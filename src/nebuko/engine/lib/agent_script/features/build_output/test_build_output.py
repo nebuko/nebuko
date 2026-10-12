@@ -332,7 +332,6 @@ class TestHumanGateIntercept(unittest.TestCase):
             f.write(
                 f"name: {name}\n"
                 f'description: "test workflow"\n'
-                f"trigger:\n  agents: [architect]\n"
                 f"steps:\n{steps_yaml}"
             )
         return path
