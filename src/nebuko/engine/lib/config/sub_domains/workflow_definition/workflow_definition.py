@@ -35,7 +35,7 @@ class WorkflowDefinition(BaseModel):
         return value
 
     @property
-    def entry_agent(self) -> str:
+    def entry_agent(self) -> str:  # @stub-protected
         """Agent of the first step; "" when the workflow has no steps.
 
         The first step is definitionally the workflow's entry point, so this
