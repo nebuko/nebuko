@@ -20,7 +20,10 @@ import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional
+
+if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
+    from config import HookSpec
 
 log = logging.getLogger("nebuko.engine.hook_runner")
 
@@ -62,13 +65,12 @@ class HookRunner:
     workspace: Path
     env: Mapping[str, str]
 
-    def run(self, spec: Any, phase: HookPhase) -> HookResult:
+    def run(self, spec: "HookSpec", phase: HookPhase) -> HookResult:
         """Run ``spec`` in the session workspace; never raises.
 
-        ``spec`` is a ``HookSpec`` (duck-typed here to keep this module
-        import-light): ``path`` is resolved against the workspace, ``args`` are
-        appended as an argv list (no shell interpolation), and the process is
-        bounded by ``timeout_minutes`` (default 30, capped at 60).
+        ``path`` is resolved against the workspace, ``args`` are appended as an
+        argv list (no shell interpolation), and the process is bounded by
+        ``timeout_minutes`` (default 30, capped at 60).
         """
         timeout = _timeout_seconds(spec.timeout_minutes)
         argv = [*_command(spec, self.workspace)]
@@ -112,7 +114,7 @@ class HookRunner:
 
 def hooks_from_resolved(
     resolved: Any,
-) -> dict[HookPhase, Any]:
+) -> dict[HookPhase, "HookSpec"]:
     """Decode the resolver's ``STEP_HOOKS`` contract into ``{phase: HookSpec}``.
 
     Returns an empty mapping when the step declares no hooks, so a hookless step
@@ -140,7 +142,7 @@ def hooks_from_resolved(
     ensure_import_path()
     from config import HookSpec
 
-    specs: dict[HookPhase, Any] = {}
+    specs: dict[HookPhase, HookSpec] = {}
     for phase in ("pre", "post"):
         payload = raw.get(phase)
         if payload:
@@ -153,7 +155,7 @@ def hooks_from_resolved(
     return specs
 
 
-def _command(spec: Any, workspace: Path) -> tuple[str, ...]:
+def _command(spec: "HookSpec", workspace: Path) -> tuple[str, ...]:
     """The argv to execute: the workspace-resolved script path plus its args."""
     script = Path(str(spec.path))
     if not script.is_absolute():

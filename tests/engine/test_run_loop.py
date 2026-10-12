@@ -2907,6 +2907,80 @@ class TestStepHooks:
         assert outcome.routing.status == "advance"
         assert "post_hook failed" in caplog.text
 
+    def test_a_failing_post_hook_is_recorded_on_the_persisted_state(
+        self, tmp_path, monkeypatch
+    ):
+        """The round-1 review finding: the failure must survive on the thread.
+
+        A ``post_hook`` failure is fail-open (routing/exit unchanged), but it
+        must not be invisible — a persisted ``current_context`` note is the
+        durable surface the state comment and ``state.json`` both carry.
+        """
+        root = tmp_path / "repo"
+        root.mkdir()
+        _write_hook_script(
+            root, "scripts/post.sh", "echo boom-detail >&2\nexit 3"
+        )
+        engine = _engine_at_root(tmp_path, root)
+        _stub_resolved(
+            monkeypatch,
+            _resolved_with_hooks({"post": {"path": "scripts/post.sh"}}),
+        )
+        state = WorkflowState(
+            version=3, workflow="default", step="implement", agent="dev"
+        )
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: {**_agent_result("done"), "state": state},
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.routing.status == "advance"
+        assert outcome.state is not None
+        note = outcome.state.current_context.get("post_hook_failure")
+        assert note is not None
+        assert "post_hook failed" in note
+        # The captured output tail is surfaced too (round-1 item 3).
+        assert "boom-detail" in note
+        saved = json.loads(
+            (tmp_path / "runs" / "run-1" / "state.json").read_text(encoding="utf-8")
+        )
+        assert "post_hook failed" in saved["current_context"]["post_hook_failure"]
+        # The published comment (the step's output per ADR-0013) carries it too.
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(
+            encoding="utf-8"
+        )
+        assert "post_hook_failure" in journal
+        assert "post_hook failed" in journal
+
+    def test_a_successful_post_hook_records_no_failure_note(
+        self, tmp_path, monkeypatch
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        _write_hook_script(root, "scripts/post.sh", "exit 0")
+        engine = _engine_at_root(tmp_path, root)
+        _stub_resolved(
+            monkeypatch,
+            _resolved_with_hooks({"post": {"path": "scripts/post.sh"}}),
+        )
+        state = WorkflowState(
+            version=3, workflow="default", step="implement", agent="dev"
+        )
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: {**_agent_result("done"), "state": state},
+        )
+
+        outcome = engine.run()
+
+        assert outcome.state is not None
+        assert "post_hook_failure" not in outcome.state.current_context
+
     def test_post_hook_runs_when_the_agent_raises(self, tmp_path, monkeypatch):
         root = tmp_path / "repo"
         root.mkdir()

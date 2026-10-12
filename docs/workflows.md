@@ -346,8 +346,10 @@ Mechanics:
    (the same handling as an agent exception).
 3. `post_hook` runs after the agent attempt in a finally position — on success,
    on failure, and even when the agent raised or was skipped. It is
-   **fail-open**: its failure is recorded but never changes the step outcome or
-   routing.
+   **fail-open**: its failure never changes the step outcome or routing, but on
+   a non-zero exit or timeout a `post_hook failed: ...` note (including the
+   captured output tail) is recorded under `post_hook_failure` in the persisted
+   workflow state, so a broken hook stays visible on the thread.
 4. Hooks are only valid on `agent` steps. A `script` step has no agent session
    and a `workflow`/`repo` step dispatches elsewhere; declaring a hook on any of
    them is rejected at parse time.
