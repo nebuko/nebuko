@@ -23,6 +23,7 @@ from agent_metrics import (
     generate_model_summary_table,
     format_number,
     format_cost,
+    format_rate,
     get_agent_display_name,
     AGENT_DISPLAY_NAMES,
     _merge_per_tool_dict,
@@ -176,6 +177,8 @@ class TestMetricsSchema(unittest.TestCase):
             input_tokens=1000,
             output_tokens=500,
             max_context_window=8192,
+            cache_hit_rate=0.4819,
+            reasoning_tokens=10170,
             complexity="medium",
             tool_call_latency_ms=1500.5,
             agent_runtime_ms=5000.0,
@@ -204,6 +207,8 @@ class TestMetricsSchema(unittest.TestCase):
         self.assertEqual(restored.agent_role, original.agent_role)
         self.assertEqual(restored.input_tokens, original.input_tokens)
         self.assertEqual(restored.output_tokens, original.output_tokens)
+        self.assertEqual(restored.cache_hit_rate, original.cache_hit_rate)
+        self.assertEqual(restored.reasoning_tokens, original.reasoning_tokens)
         self.assertEqual(restored.complexity, original.complexity)
         self.assertEqual(restored.tool_call_latency_ms, original.tool_call_latency_ms)
         self.assertEqual(restored.agent_runtime_ms, original.agent_runtime_ms)
@@ -305,7 +310,8 @@ class TestMetricsSchema(unittest.TestCase):
         # Verify dict has all expected keys
         expected_keys = {
             "run_id", "model_name", "agent_role", "input_tokens", "output_tokens",
-            "max_context_window", "cost", "complexity", "tool_call_latency_ms", "agent_runtime_ms",
+            "max_context_window", "cache_hit_rate", "reasoning_tokens", "cost",
+            "complexity", "tool_call_latency_ms", "agent_runtime_ms",
             "agent_runtimes_per_call_ms", "nb_tool_calls", "tool_call_error_rate",
             "start_time", "end_time", "tool_calls_per_tool", "errors_per_tool",
             "tokens_per_tool", "review_fix_requests", "dispatch_recall_count",
@@ -319,7 +325,7 @@ class TestAggregateByModel(unittest.TestCase):
     def _make_metric(self, model, input_tokens=100, output_tokens=50,
                      latency=1000.0, tool_calls=5, error_rate=0.0,
                      review_fix_requests=0, max_context_window=8192,
-                     cost=0.0):
+                     cost=0.0, cache_hit_rate=0.0, reasoning_tokens=0):
         return Metrics(
             run_id="test-run",
             model_name=model,
@@ -327,6 +333,8 @@ class TestAggregateByModel(unittest.TestCase):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             max_context_window=max_context_window,
+            cache_hit_rate=cache_hit_rate,
+            reasoning_tokens=reasoning_tokens,
             complexity="medium",
             tool_call_latency_ms=latency,
             agent_runtime_ms=5000.0,
@@ -475,6 +483,39 @@ class TestAggregateByModel(unittest.TestCase):
         self.assertEqual(agg["tps_count"], 2)
         self.assertEqual(agg["ttft_count"], 1)
 
+    def test_cache_and_reasoning_metrics_objects(self):
+        """Reasoning sums; the cache rate is the input-weighted mean (#888)."""
+        first = self._make_metric(
+            "gpt-4", input_tokens=1000, cache_hit_rate=0.5, reasoning_tokens=100
+        )
+        second = self._make_metric(
+            "gpt-4", input_tokens=3000, cache_hit_rate=0.6, reasoning_tokens=200
+        )
+        agg = aggregate_by_model([first, second])["gpt-4"]
+        self.assertEqual(agg["total_reasoning_tokens"], 300)
+        self.assertEqual(agg["cache_weight"], 4000)
+        # (0.5*1000 + 0.6*3000) / 4000 = 2300 / 4000 = 0.575
+        self.assertAlmostEqual(agg["cache_weighted_sum"] / agg["cache_weight"], 0.575)
+
+    def test_cache_and_reasoning_default_to_zero(self):
+        """A run with no signals contributes no weight, hits, or reasoning (#888)."""
+        agg = aggregate_by_model([self._make_metric("gpt-4", input_tokens=0)])["gpt-4"]
+        self.assertEqual(agg["total_reasoning_tokens"], 0)
+        self.assertEqual(agg["cache_weight"], 0)
+        self.assertEqual(agg["cache_weighted_sum"], 0.0)
+
+    def test_cache_and_reasoning_legacy_dicts(self):
+        """Legacy dicts read the two new keys (#888)."""
+        metrics = [
+            {"model_name": "gpt-4", "input_tokens": 1000,
+             "cache_hit_rate": 0.25, "reasoning_tokens": 10},
+            {"model_name": "gpt-4", "input_tokens": 1000,
+             "cache_hit_rate": 0.75, "reasoning_tokens": 20},
+        ]
+        agg = aggregate_by_model(metrics)["gpt-4"]
+        self.assertEqual(agg["total_reasoning_tokens"], 30)
+        self.assertAlmostEqual(agg["cache_weighted_sum"] / agg["cache_weight"], 0.5)
+
 
 class TestAggregateByAgent(unittest.TestCase):
     """Test aggregate_by_agent function."""
@@ -482,7 +523,7 @@ class TestAggregateByAgent(unittest.TestCase):
     def _make_metric(self, agent, input_tokens=100, output_tokens=50,
                      latency=1000.0, tool_calls=5, error_rate=0.0,
                      review_fix_requests=0, max_context_window=8192,
-                     cost=0.0):
+                     cost=0.0, cache_hit_rate=0.0, reasoning_tokens=0):
         return Metrics(
             run_id="test-run",
             model_name="gpt-4",
@@ -490,6 +531,8 @@ class TestAggregateByAgent(unittest.TestCase):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             max_context_window=max_context_window,
+            cache_hit_rate=cache_hit_rate,
+            reasoning_tokens=reasoning_tokens,
             complexity="medium",
             tool_call_latency_ms=latency,
             agent_runtime_ms=5000.0,
@@ -599,6 +642,20 @@ class TestAggregateByAgent(unittest.TestCase):
         result = aggregate_by_agent(metrics)
         self.assertAlmostEqual(result["dev"]["total_cost"], 1.25)
 
+    def test_cache_and_reasoning_aggregation(self):
+        """Reasoning sums; the cache rate is the input-weighted mean (#888)."""
+        metrics = [
+            self._make_metric(
+                "dev", input_tokens=1000, cache_hit_rate=0.4, reasoning_tokens=100
+            ),
+            self._make_metric(
+                "dev", input_tokens=1000, cache_hit_rate=0.8, reasoning_tokens=50
+            ),
+        ]
+        agg = aggregate_by_agent(metrics)["dev"]
+        self.assertEqual(agg["total_reasoning_tokens"], 150)
+        self.assertAlmostEqual(agg["cache_weighted_sum"] / agg["cache_weight"], 0.6)
+
 
 class TestFormatNumber(unittest.TestCase):
     """Test format_number function."""
@@ -630,6 +687,22 @@ class TestFormatCost(unittest.TestCase):
 
     def test_rounds_to_four_decimals(self):
         self.assertEqual(format_cost(0.123456), "$0.1235")
+
+
+class TestFormatRate(unittest.TestCase):
+    """Test format_rate function."""
+
+    def test_typical_rate(self):
+        self.assertEqual(format_rate(0.4819), "48.19%")
+
+    def test_full_and_zero_cache(self):
+        self.assertEqual(format_rate(1.0), "100.00%")
+
+    def test_zero_renders_not_available(self):
+        self.assertEqual(format_rate(0.0), "n/a")
+
+    def test_missing_rate_renders_not_available(self):
+        self.assertEqual(format_rate(None), "n/a")
 
 
 class TestGenerateSummaryTable(unittest.TestCase):
@@ -1078,6 +1151,41 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertIn("Cost (USD)", result_str)
         self.assertIn("$0.1234", result_str)
 
+    def test_cache_hit_and_reasoning_columns(self):
+        """The two new columns render the rate and the summed reasoning (#888)."""
+        agg = {
+            "dev": {
+                "runs": 1,
+                "total_input_tokens": 4000,
+                "total_output_tokens": 200,
+                "total_context_window": 16384,
+                "latency_sum": 3000.0,
+                "llm_runtime_sum": 8000.0,
+                "tool_calls_sum": 8,
+                "error_rate_sum": 2.0,
+                "review_fix_requests_sum": 0,
+                "cache_weighted_sum": 2300.0,
+                "cache_weight": 4000,
+                "total_reasoning_tokens": 10170,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            }
+        }
+        result = generate_agent_summary_table(agg)
+        result_str = "\n".join(result)
+        self.assertIn("Cache Hit Rate", result_str)
+        self.assertIn("Reasoning Tokens", result_str)
+        dev_line = [line for line in result if "Dev" in line][0]
+        # 2300 / 4000 = 57.50%
+        self.assertIn("| 57.50% ", dev_line)
+        self.assertIn("| 10,170 ", dev_line)
+
+    def test_cache_hit_shows_na_without_signal(self):
+        """A bucket with no observed input tokens renders 'n/a'."""
+        result_str = "\n".join(generate_agent_summary_table(self._make_aggregated()))
+        self.assertIn("n/a", result_str)
+
 
 class TestGenerateModelSummaryTable(unittest.TestCase):
     """Test generate_model_summary_table function."""
@@ -1210,6 +1318,41 @@ class TestGenerateModelSummaryTable(unittest.TestCase):
         result = generate_model_summary_table(agg)
         result_str = "\n".join(result)
         self.assertIn("| 0 ", result_str)
+
+    def test_cache_hit_and_reasoning_columns(self):
+        """The two new columns render the rate and the summed reasoning (#888)."""
+        agg = {
+            "gpt-4": {
+                "runs": 2,
+                "total_input_tokens": 4000,
+                "total_output_tokens": 200,
+                "total_context_window": 16384,
+                "latency_sum": 2000.0,
+                "llm_runtime_sum": 10000.0,
+                "tool_calls_sum": 10,
+                "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
+                "cache_weighted_sum": 2300.0,
+                "cache_weight": 4000,
+                "total_reasoning_tokens": 10170,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            }
+        }
+        result = generate_model_summary_table(agg)
+        result_str = "\n".join(result)
+        self.assertIn("Cache Hit Rate", result_str)
+        self.assertIn("Reasoning Tokens", result_str)
+        gpt4_line = [line for line in result if "gpt-4" in line][0]
+        # 2300 / 4000 = 57.50%
+        self.assertIn("| 57.50% ", gpt4_line)
+        self.assertIn("| 10,170 ", gpt4_line)
+
+    def test_cache_hit_shows_na_without_signal(self):
+        """A bucket with no observed input tokens renders 'n/a'."""
+        result_str = "\n".join(generate_model_summary_table(self._make_aggregated()))
+        self.assertIn("n/a", result_str)
 
 
 class TestMergePerToolDict(unittest.TestCase):

@@ -122,6 +122,39 @@ def _compute_tokens_per_tool(combined_metrics):
     return tokens_per_tool
 
 
+def _cache_hit_rate(combined_metrics):
+    """
+    Read the SDK's cache-hit ratio as a fraction in [0.0, 1.0].
+
+    ``combined_metrics.cache_hit_rate`` is already a derived ratio (issue #888);
+    it is None when no input tokens were measurable, which maps to 0.0.
+
+    Args:
+        combined_metrics: The combined metrics object from conversation
+
+    Returns:
+        float: Cache-hit fraction, or 0.0 when unavailable
+    """
+    rate = getattr(combined_metrics, 'cache_hit_rate', None)
+    return float(rate) if rate is not None else 0.0
+
+
+def _reasoning_tokens(combined_metrics):
+    """
+    Sum reasoning tokens across all per-call usages.
+
+    Args:
+        combined_metrics: The combined metrics object from conversation
+
+    Returns:
+        int: Cumulative reasoning tokens (0 when none reported)
+    """
+    return sum(
+        getattr(usage, 'reasoning_tokens', 0) or 0
+        for usage in (combined_metrics.token_usages or [])
+    )
+
+
 def collect_llm_metrics(conversation, agent_cfg=None):
     """
     Collect LLM metrics from a conversation after it has completed.
@@ -186,6 +219,10 @@ def collect_llm_metrics(conversation, agent_cfg=None):
         errors_per_tool = _compute_errors_per_tool(conversation)
         tokens_per_tool = _compute_tokens_per_tool(combined_metrics)
 
+        # Provider cache/reasoning signals (issue #888).
+        cache_hit_rate = _cache_hit_rate(combined_metrics)
+        reasoning_tokens = _reasoning_tokens(combined_metrics)
+
         # Get start time (first event timestamp or current time)
         start_time = datetime.now(timezone.utc).isoformat()
         if conversation.state.events:
@@ -205,6 +242,8 @@ def collect_llm_metrics(conversation, agent_cfg=None):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             max_context_window=max_context_window,
+            cache_hit_rate=cache_hit_rate,
+            reasoning_tokens=reasoning_tokens,
             cost=cost,
             complexity=os.environ.get("COMPLEXITY", "N/A"),
             tool_call_latency_ms=tool_call_latency_ms,

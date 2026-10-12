@@ -192,6 +192,43 @@ def _format_provider_metric(total, count, decimals):
     return f"{total / count:.{decimals}f}"
 
 
+def _accumulate_cache_and_reasoning(agg, reasoning_tokens, cache_hit_rate, input_tokens):
+    """Fold one run's reasoning tokens and cache-hit rate into the aggregate.
+
+    Reasoning tokens are additive and simply summed. The cache-hit rate is a
+    non-additive ratio, so it is accumulated as an input-token-weighted mean:
+    each run contributes ``rate * input_tokens`` together with its
+    ``input_tokens`` as weight (issue #888).
+    """
+    agg["total_reasoning_tokens"] += reasoning_tokens
+    agg["cache_weighted_sum"] += cache_hit_rate * input_tokens
+    agg["cache_weight"] += input_tokens
+
+
+def format_rate(rate):
+    """Render a [0.0, 1.0] cache-hit fraction as e.g. '48.19%'.
+
+    Zero or missing rates render as 'n/a' — with no cache-hit signal there is
+    no meaningful ratio to show, matching the provider-health formatter's
+    no-data convention (issue #888).
+    """
+    if not rate:
+        return "n/a"
+    return f"{rate * 100:.2f}%"
+
+
+def _bucket_cache_and_reasoning(agg):
+    """Display strings for a bucket's cache-hit rate and reasoning tokens.
+
+    The bucket rate is the input-token-weighted mean of its runs' rates; with
+    no observed input tokens it falls back to 0.0 (rendered 'n/a').
+    """
+    weight = agg.get("cache_weight", 0)
+    rate = agg["cache_weighted_sum"] / weight if weight else 0.0
+    reasoning = format_number(agg.get("total_reasoning_tokens", 0))
+    return format_rate(rate), reasoning
+
+
 def aggregate_by_model(all_metrics):
     """Aggregate metrics by model_name."""
     aggregated = defaultdict(lambda: {
@@ -212,6 +249,9 @@ def aggregate_by_model(all_metrics):
         "tps_count": 0,
         "ttft_sum": 0.0,
         "ttft_count": 0,
+        "total_reasoning_tokens": 0,
+        "cache_weighted_sum": 0.0,
+        "cache_weight": 0,
     })
 
     for m in all_metrics:
@@ -232,6 +272,8 @@ def aggregate_by_model(all_metrics):
             tokens_per_tool = m.tokens_per_tool
             tokens_per_second = m.tokens_per_second
             time_to_first_token = m.time_to_first_token
+            reasoning_tokens = m.reasoning_tokens
+            cache_hit_rate = m.cache_hit_rate
         else:
             # Legacy dict support
             model = m.get("model_name", "unknown")
@@ -249,6 +291,8 @@ def aggregate_by_model(all_metrics):
             tokens_per_tool = m.get("tokens_per_tool", {})
             tokens_per_second = m.get("tokens_per_second")
             time_to_first_token = m.get("time_to_first_token")
+            reasoning_tokens = m.get("reasoning_tokens", 0)
+            cache_hit_rate = m.get("cache_hit_rate", 0.0)
 
         agg = aggregated[model]
         agg["runs"] += 1
@@ -262,6 +306,7 @@ def aggregate_by_model(all_metrics):
         agg["error_rate_sum"] += error_rate
         agg["review_fix_requests_sum"] += fix_requests
         _accumulate_provider_health(agg, tokens_per_second, time_to_first_token)
+        _accumulate_cache_and_reasoning(agg, reasoning_tokens, cache_hit_rate, input_tokens)
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
             agg["tool_calls_per_tool"], tool_calls_per_tool
@@ -308,6 +353,9 @@ def aggregate_by_agent(all_metrics):
         "tps_count": 0,
         "ttft_sum": 0.0,
         "ttft_count": 0,
+        "total_reasoning_tokens": 0,
+        "cache_weighted_sum": 0.0,
+        "cache_weight": 0,
     })
 
     for m in all_metrics:
@@ -328,6 +376,8 @@ def aggregate_by_agent(all_metrics):
             tokens_per_tool = m.tokens_per_tool
             tokens_per_second = m.tokens_per_second
             time_to_first_token = m.time_to_first_token
+            reasoning_tokens = m.reasoning_tokens
+            cache_hit_rate = m.cache_hit_rate
         else:
             # Legacy dict support
             agent = m.get("agent_role", "unknown")
@@ -345,6 +395,8 @@ def aggregate_by_agent(all_metrics):
             tokens_per_tool = m.get("tokens_per_tool", {})
             tokens_per_second = m.get("tokens_per_second")
             time_to_first_token = m.get("time_to_first_token")
+            reasoning_tokens = m.get("reasoning_tokens", 0)
+            cache_hit_rate = m.get("cache_hit_rate", 0.0)
 
         agg = aggregated[agent]
         agg["runs"] += 1
@@ -358,6 +410,7 @@ def aggregate_by_agent(all_metrics):
         agg["error_rate_sum"] += error_rate
         agg["review_fix_requests_sum"] += fix_requests
         _accumulate_provider_health(agg, tokens_per_second, time_to_first_token)
+        _accumulate_cache_and_reasoning(agg, reasoning_tokens, cache_hit_rate, input_tokens)
         # Merge per-tool data
         agg["tool_calls_per_tool"] = _merge_per_tool_dict(
             agg["tool_calls_per_tool"], tool_calls_per_tool
@@ -451,8 +504,8 @@ def generate_agent_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Agent Statistics Summary")
     lines.append("")
-    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
-    lines.append("|-------|------|-------------|---------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|")
+    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|----------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|")
 
     grand_runs = 0
     grand_input = 0
@@ -485,6 +538,8 @@ def generate_agent_summary_table(aggregated):
         # Get total fix requests across all runs
         fix_requests = agg.get("review_fix_requests_sum", 0)
 
+        cache_rate, reasoning_tokens = _bucket_cache_and_reasoning(agg)
+
         display_name = get_agent_display_name(agent)
 
         lines.append(
@@ -492,6 +547,8 @@ def generate_agent_summary_table(aggregated):
             f"| {runs} "
             f"| {format_number(input_tokens)} "
             f"| {format_number(output_tokens)} "
+            f"| {cache_rate} "
+            f"| {reasoning_tokens} "
             f"| {format_cost(cost)} "
             f"| {format_number(avg_context_window)} "
             f"| {avg_latency:.0f} "
@@ -528,8 +585,8 @@ def generate_model_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Model Statistics Summary")
     lines.append("")
-    lines.append("| Model | Runs | Input Tokens | Output Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
-    lines.append("|-------|------|-------------|---------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|")
+    lines.append("| Model | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("|-------|------|-------------|---------------|----------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|")
 
     for model in sorted(aggregated.keys()):
         agg = aggregated[model]
@@ -554,11 +611,15 @@ def generate_model_summary_table(aggregated):
         # Get total fix requests across all runs
         fix_requests = agg.get("review_fix_requests_sum", 0)
 
+        cache_rate, reasoning_tokens = _bucket_cache_and_reasoning(agg)
+
         lines.append(
             f"| {model} "
             f"| {runs} "
             f"| {format_number(input_tokens)} "
             f"| {format_number(output_tokens)} "
+            f"| {cache_rate} "
+            f"| {reasoning_tokens} "
             f"| {format_cost(cost)} "
             f"| {format_number(avg_context_window)} "
             f"| {avg_latency:.0f} "
