@@ -117,6 +117,13 @@ class TestResolveToolset:
         assert _names(resolved.sdk_tools) == ("DispatchNextTool",)
         assert resolved.dispatch_tool_enabled is True
 
+    def test_call_agent_registers(self):
+        resolved = resolve_toolset(["call_agent"], "architect")
+        assert _names(resolved.sdk_tools) == ("CallAgentTool",)
+        assert "CallAgentTool" in list_registered_tools()
+        # A hand-off-only tool must not be mistaken for a dispatch tool.
+        assert resolved.dispatch_tool_enabled is False
+
     def test_report_scaffold_branch_registers(self):
         resolved = resolve_toolset(["report_scaffold_branch"], "dev")
         assert _names(resolved.sdk_tools) == ("ScaffoldBranchReportTool",)
