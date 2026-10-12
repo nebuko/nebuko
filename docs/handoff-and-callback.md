@@ -13,12 +13,18 @@ cascade that consumes these decisions see
 
 ## 1. Two signals, one sentinel
 
-An agent ends its run with a single `AGENT_RUN_CONFIG` sentinel — a one-line
+A run's hand-off is recorded as a single `AGENT_RUN_CONFIG` sentinel — a one-line
 HTML comment carrying a compact JSON payload:
 
 ```
 <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
 ```
+
+The sentinel is **engine-rendered** from typed state (the `dispatch_next` /
+`call_agent` control-plane tools) and appended to the posted comment exactly
+once; agents no longer emit it themselves (issue #876). The parser described
+here reads it back as a durable cross-run record and as a compatibility input
+for legacy comments.
 
 The payload may carry up to three top-level actions:
 

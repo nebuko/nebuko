@@ -11,21 +11,16 @@ Never use `@@agent` mentions to call another agent: bot messages are ignored for
 
 ## Format
 
-End your message with a single `AGENT_RUN_CONFIG` sentinel. Put the `function_call` section next to `dispatch` (both optional, but include at most one `function_call` per message):
+Use the typed `call_agent` control-plane tool — it records the hand-off structurally, immune to long-context format drops. (Transitional note, issue #876: until the typed tool lands, the imperative `function_call` + `callback` hand-off is still carried by the `AGENT_RUN_CONFIG` sentinel, which the engine renders from typed state.)
 
-```
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, "function_call": {"function": "call_agent", "agent_name": "context", "complexity": "medium"}} -->
-```
+Hand-off fields (do not write the sentinel yourself — the engine renders it):
 
-Rules:
-
-- **One function call per message.** If several appear, the last valid one wins — but do not rely on that; emit exactly one.
+- **One function call per message.** If several are given, the last valid one wins — but do not rely on that; supply exactly one.
 - `function` must be a registered name. Currently only `call_agent` is registered.
 - `agent_name` must be a known agent roster name: `architect`, `context`, `dev`, `review`, `po`.
 - `complexity` (optional, default `"medium"`): `low`, `medium`, or `high`.
 - `callback` (optional): the **return address** — the agent to run once the callee finishes without a decision of its own. It defaults to the **emitting caller**, so you usually omit it; set it explicitly only to route the return somewhere other than yourself. A `callback` equal to `agent_name` is a no-op.
 - The call is **one-shot**: it is consumed by the next run and cleared from the workflow state, so it can never re-fire.
-- **Keep the sentinel on a single line, inside the code fence shown above only.** Do not break the JSON across lines or wrap it in extra markdown fences — extraction is resilient to drift (issue #512), but a clean single-line sentinel is the safest form.
 
 ## Return path and precedence (issue #765)
 

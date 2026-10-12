@@ -50,8 +50,9 @@ Analyzes requests, designs architecture, drafts plans, and hands off to
 `@@context` and `@@dev`. Its prompt opens with a **critical override** telling it to
 ignore the SDK's generic coding instructions: it is *not* a coding agent and
 must not explore repos or edit files (the tool whitelist enforces this
-regardless). Plans end in an `AGENT_RUN_CONFIG` dispatch that routes the next
-step.
+regardless). Plans route the next step via the typed `dispatch_next` tool. The
+posted `AGENT_RUN_CONFIG` sentinel is engine-rendered, not agent-emitted
+(issue #876).
 
 ### context — Context Collection Agent
 Strictly read-only information gathering: locate files, extract snippets with

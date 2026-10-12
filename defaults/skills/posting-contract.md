@@ -45,7 +45,10 @@ published a one-line lead-in).
 
 5. **Ending a turn requires an explicit dispatch decision.**
    Never end a run without one — doing so triggers an engine recall pass whose
-   short status note can clobber a fallback answer (issue #558). Which decision
+   short status note can clobber a fallback answer (issue #558). Signal the
+   decision with the `dispatch_next` tool when you already know it; the engine
+   also elicits the routing decision at run end. A decision-less end triggers a
+   bounded recall, never a lost answer. Which decision
    is correct depends on the step:
    - **On a `human_gate: true` step the completing dispatch is `advance`.**
      The engine intercepts it and records the hold (`human_gate:<step>`) — that
@@ -64,10 +67,8 @@ published a one-line lead-in).
    This matches the engine's `collapse_sections` primitive and keeps the issue
    thread readable (issue #866).
 
-7. **The hand-off sentinel goes last.**
-   End the posted deliverable with the single-line `AGENT_RUN_CONFIG` sentinel
-   (per `call-agent` / your agent rules) when a hand-off is required. The ETL
-   layer re-appends it to the posted body exactly once.
+7. **The engine appends the hand-off sentinel.**
+   Do **not** write the `AGENT_RUN_CONFIG` sentinel yourself: the engine renders it from typed state (your `dispatch_next` / `call_agent` fields) and appends it exactly once to the posted body (last payload wins). It is a durable **record** for cross-run consumers, not an agent emission requirement (issue #876).
 
 8. **Size is handled for you.**
    Long answers are automatically split into multiple comments (10k chars per
