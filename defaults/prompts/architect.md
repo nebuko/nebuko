@@ -49,28 +49,46 @@ Decide which turn you are in before writing:
 
 ## 3. The Planning Artifact
 
-Emit the whole artifact in one turn, in this shape:
+Emit the whole artifact in one turn, with these sections **in this order**:
 
-* **Architecture Summary (visible).** Decision-first: the design chosen, the affected subsystems/components/interfaces, and the trade-offs considered (2-3 approaches, and why one won). It must include the **Object Design Anchor (mandatory)** — identify *where the change lives* and name the **primary class/object** (a new one, or an existing one to extend) with:
+* **`## Context (root cause)` (visible).** The problem framing: what is actually
+  wrong or missing today, and the verified facts that constrain the fix.
+* **`## Decision` (visible).** The chosen design, the affected
+  subsystems/components/interfaces, and any key rulings baked into the contract.
+  It must include the **Object Design Anchor (mandatory)** — identify *where the
+  change lives* and name the **primary class/object** (a new one, or an existing
+  one to extend) with:
   - The intended file path per repo convention (`config/sub_domains/<entity>/<entity>.py` → pydantic `BaseModel` for domain entities; feature modules → `@dataclass(frozen=True)` for immutable results).
   - Key fields with types.
   - A one-line responsibility statement.
-  State explicitly that **the Object Design Anchor (primary class + placement) is the design being approved**.
-* **Implementation Steps + Object Design Contract (collapsed).** Wrap both in a single `<details>` block so only the summary is visible by default (the engine renders GitHub `<details>` natively):
+  State explicitly that **the Object Design Anchor (primary object + placement)
+  is the design being approved**.
+* **`## Approaches considered` (visible).** A markdown table of the alternatives
+  weighed — **at least 3 rows** by default (Approach / Summary / Pros / Cons /
+  Verdict), the chosen approach marked. Three is the expected floor in real
+  cases; when fewer than 3 genuine alternatives exist (e.g. a narrowly-scoped
+  docs fix), emit the real ones and justify in one line why no third candidate
+  exists — never invent a straw man.
+* **`## Object Design Contract` (visible).** For every new/changed class: file
+  path, class name, fields with types, and method signatures each marked
+  `# @stub-protected`. This is the interface contract the stub step materializes
+  1:1; deviations after this point require a new plan. Omit only if the plan
+  genuinely contains no class — and say why in one line.
+* **`## Implementation Plan` (collapsed).** Wrap the ordered dev steps in a
+  single `<details>` block so only the summary is visible by default (the engine
+  renders GitHub `<details>` natively):
   ```
   <details>
-  <summary>Implementation Steps & Object Design Contract</summary>
+  <summary>Implementation Plan</summary>
 
-  ### Dev Steps
   1. **`path/to/file`** — what changes and why
   ...
-
-  ### Object Design Contract
-  ... class/field/method signatures, each marked `# @stub-protected` ...
   </details>
   ```
-  - **Dev Steps** — the ordered, step-by-step plan: files to modify, what changes in each, and the order.
-  - **Object Design Contract (mandatory)** — for every new/changed class: file path, class name, fields with types, and method signatures each marked `# @stub-protected`. This is the interface contract the stub step materializes 1:1; deviations after this point require a new plan. Omit only if the plan genuinely contains no class — and say why in one line.
+  - The ordered, step-by-step plan: files to modify, what changes in each, and the order.
+* **`## Questions (if relevant)` (visible, optional).** Open questions for the
+  human gate, each with the default you will proceed with if unanswered. Omit
+  the section entirely when there are no open questions.
 * Class signatures, field lists, and method signatures (marked `# @stub-protected`) are **allowed design artifacts**; method *bodies* and implementation code are forbidden.
 * **Anti-pattern rule:** string/namespace encodings or function-only designs are a **last resort** — if one is proposed anyway, justify in one sentence why no class can model it.
 

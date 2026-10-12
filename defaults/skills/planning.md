@@ -11,37 +11,54 @@ The `plan` step is **one** human gate: emit **one** artifact per turn — never 
 separate "architecture proposal" turn followed by an implementation turn. Ship
 the architecture decision and the executable detail together, marked with
 `<!-- architect-state: phase=plan,status=awaiting_gate -->` (fresh) or
-`phase=plan,status=revising` (revision):
+`phase=plan,status=revising` (revision).
 
-1. **Architecture Summary (visible).** Decision-first: the design chosen, the
-   affected subsystems/interfaces, and the trade-offs (2-3 approaches, why one
-   won). It must include the **Object Design Anchor** — *where the change lives*
-   and the **primary class/object** (new or extended) with the file path per repo
-   convention, key fields with types, and a one-line responsibility. Make
-   explicit that the Anchor is the design being approved.
-2. **Implementation Steps + Object Design Contract (collapsed).** Both inside a
-   single `<details>` block so only the summary is visible by default:
+Emit the artifact with these sections **in this order**:
+
+1. **`## Context (root cause)` (visible).** The root cause / problem framing for
+   the task being planned: what is actually wrong or missing today, and the
+   verified facts that constrain the fix.
+2. **`## Decision` (visible).** The chosen design: the affected
+   subsystems/components/interfaces, and any key rulings baked into the
+   contract. It must include the **Object Design Anchor (mandatory)** — *where
+   the change lives* and the **primary class/object** (new or extended) with the
+   file path per repo convention, key fields with types, and a one-line
+   responsibility statement. State explicitly that **the Object Design Anchor
+   (primary object + placement) is the design being approved.**
+3. **`## Approaches considered` (visible).** A markdown table of the alternatives
+   weighed, with **at least 3 rows** by default (Approach / Summary / Pros /
+   Cons / Verdict), the chosen approach marked (e.g. ✅ **Chosen**). Three is the
+   expected floor in real cases: when fewer than 3 genuine alternatives exist
+   (e.g. a narrowly-scoped docs fix), emit the real ones and justify in one line
+   why no third candidate exists — never invent a straw man.
+4. **`## Object Design Contract` (visible).** For every new/changed class: file
+   path, class name, fields with types, and method signatures each marked
+   `# @stub-protected`. This is the interface contract the **stub step
+   materializes 1:1**; deviations after this point require a new plan. Omit only
+   if the plan genuinely contains no class — and say why in one line.
+5. **`## Implementation Plan` (collapsed).** Inside a single `<details>` block so
+   only the summary is visible by default:
 
    ```
    <details>
-   <summary>Implementation Steps & Object Design Contract</summary>
+   <summary>Implementation Plan</summary>
 
-   ### Dev Steps
    1. **`path/to/file`** — what changes and why
    ...
-
-   ### Object Design Contract
-   ... class/field/method signatures, each marked `# @stub-protected` ...
    </details>
    ```
 
-   - **Dev Steps** — ordered: files to modify, what changes in each, the order.
-   - **Object Design Contract** — for every new/changed class: file path, class
-     name, fields with types, and method signatures each marked
-     `# @stub-protected`. This is the interface contract the **stub step
-     materializes 1:1**; deviations after this point require a new plan. Omit
-     only if the plan genuinely contains no class — and say why in one line.
+   - Ordered dev steps: files to modify, what changes in each, and the order.
+6. **`## Questions (if relevant)` (visible, optional).** Open questions for the
+   human gate, each with the default you will proceed with if unanswered. Omit
+   the section entirely when there are no open questions.
 
+* Class signatures, field lists, and method signatures (marked
+  `# @stub-protected`) are **allowed design artifacts**; method *bodies* and
+  implementation code are forbidden.
+* **Anti-pattern rule:** string/namespace encodings or function-only designs are
+  a **last resort** — if one is proposed anyway, justify in one sentence why no
+  class can model it.
 * Estimate complexity (LOW/MEDIUM/HIGH) and pass it in the dispatch.
 * Hand off to @@dev with `dispatch_next(status='advance', complexity=<tier>)` — the
   gated `plan` step then holds for the human until the gate is approved. For a
@@ -54,12 +71,12 @@ When the `plan` step is re-run after `/nebuko reject gate --feedback "..."`, you
 context carries a `## Human Gate Decision` section (`**Status:** rejected`,
 `**Feedback:**`). Locate your prior artifact — your own previous comment carrying
 the `<!-- architect-state: ... -->` marker — and revise it in place, addressing
-every point of the feedback while keeping the visible-summary +
-collapsed-`<details>` shape:
+every point of the feedback while keeping the six-section shape above
+(visible Context/Decision/Approaches/Object Design Contract + collapsed Implementation
+Plan):
 
 * Marker: `<!-- architect-state: phase=plan,status=revising -->`
-* Re-emit the **full** artifact (visible summary + collapsed steps/contract) —
-  never a diff-only reply.
+* Re-emit the **full** artifact (all six sections) — never a diff-only reply.
 * End with `dispatch_next(status='advance', complexity=...)` on the SAME turn as
   the artifact text — the gate re-arms and requires fresh human validation.
 
