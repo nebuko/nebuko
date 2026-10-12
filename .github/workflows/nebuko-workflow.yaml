@@ -157,9 +157,6 @@ concurrency:
 jobs:
     run-task:
         runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
-        # The '/nebuko' trigger prefix must match BrandIdentity.command_name
-        # (engine/lib/config/sub_domains/brand/brand.py); GitHub Actions
-        # cannot import Python, so the value is duplicated here (issue #749).
         if: |
           github.event.action != 'closed' &&
           (
@@ -210,15 +207,9 @@ jobs:
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
-            # The named Brave alias lives at job level, not on the engine step, so
-            # the EXTRA_SECRET_n materialize step can fill/override it through
-            # $GITHUB_ENV (issue #834). A step-level binding would shadow the
-            # materialized value when the named secret is not passed.
+
             BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-            # Human-gate event-author identity (issue #648): forwarded from the
-            # GitHub event so the engine can verify a gate command's author
-            # out-of-band. Never derived from comment body markers (which are
-            # agent-writable). Falls back to the issue author for `issues`.
+
             TRIGGER_AUTHOR_LOGIN: ${{ github.event.comment.user.login || github.event.issue.user.login }}
             TRIGGER_AUTHOR_TYPE: ${{ github.event.comment.user.type || github.event.issue.user.type }}
             TRIGGER_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association || github.event.issue.author_association }}
@@ -229,13 +220,6 @@ jobs:
                 git config --global --unset-all http.https://github.com/.extraheader || true
                 git config --global --unset-all credential.helper || true
                 
-            # Pin the workspace to the workflow's own commit (issue #862): a
-            # bare checkout follows the event default (main), so a workflow
-            # pinned via ``uses: <repo>/…@<sha1|tag>`` would run a pinned
-            # workflow against a main checkout. ``job.workflow_sha`` is this
-            # workflow file's commit; the same-repo guard keeps a cross-repo
-            # caller (whose checkout repo differs from the workflow repo) on
-            # the event default. ``checkout_ref`` overrides the auto-pin.
             - name: Checkout repository
               uses: actions/checkout@v5
               with:
@@ -254,25 +238,13 @@ jobs:
 
             - name: Install OpenHands dependencies
               run: |
-                  # Nettoie l'en-tête global potentiellement corrompu
-                  git config --global --unset-all http.https://github.com/.extraheader || true
-
-                  # Génère le header d'authentification avec la BONNE variable (GH_TOKEN)
                   ENCODED=$(echo -n "x-access-token:${GH_TOKEN}" | base64 -w 0)
                   git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $ENCODED"
-
-                  # Nettoie le cache de uv pour forcer une réinitialisation propre
-                  uv cache clean
-
-                  # Installation des packages
                   uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
                   uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
               env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-            # Materialize caller-declared secret slots into env vars (issue #834).
-            # Only the 18 generic slot refs enter this step's environment: GH_PAT
-            # and the named engine secrets never do. Empty slots make it a no-op.
             - name: "Materialize extra secret slots as env vars"
               env:
                 EXTRA_SECRET_1_NAME: ${{ inputs.EXTRA_SECRET_1_NAME }}
@@ -295,10 +267,6 @@ jobs:
                 EXTRA_SECRET_9_VALUE: ${{ secrets.EXTRA_SECRET_9_VALUE }}
               run: uv run --extra runtime python -m nebuko.engine.lib.secret_env
 
-            # Stage B (issue #713): the orchestration that used to live in ~30
-            # bash steps (normalize → resolve_config → guards → prompt → agent →
-            # validate → publish → state → route) is now the single Stage A
-            # engine. This job only wires the GitHub host and invokes it once.
             - name: Run orchestration engine
               run: uv run --extra runtime python -m nebuko.engine.run
               env:
@@ -315,22 +283,10 @@ jobs:
                 PIN_COMMENT: ${{ inputs.pin_comment }}
                 HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
                 PROMPT_BODY: ${{ inputs.prompt_body }}
-                # The engine stages its full SDK file log (app.txt) and captured
-                # console.txt here; the steps below upload each as its own
-                # unzipped artifact so a run's logs can be fetched raw, no unzip
-                # (issues #743, #779, #894).
-                # runner.temp is absolute and outside the agent's temp workdir.
                 LOG_TO_FILE: "true"
                 LOG_DIR: ${{ runner.temp }}/nebuko-task-logs
-                # Provenance (issue #862): the pinned ref of the reusable
-                # workflow that defined this run, persisted into workflow_state.
                 NEBUKO_WORKFLOW_REF: ${{ job.workflow_ref }}
 
-            # One unzipped artifact per staged log (issue #779). Under
-            # ``archive: false`` each upload takes a single file and the artifact
-            # is named after that file, so the debug tooling fetches ``console.txt``
-            # / ``app.txt`` directly instead of downloading and extracting a zip.
-            # The ``.txt`` extension renders inline in a browser (issue #894).
             - name: Upload console.txt artifact
               uses: actions/upload-artifact@v7
               if: always()
