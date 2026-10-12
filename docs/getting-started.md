@@ -125,9 +125,9 @@ all. To customize one, add a file with the same agent name under
 ```
 
 Each file describes the agent's role, responsibilities, output contract (how it
-must emit its `AGENT_RUN_CONFIG` dispatch — see
-[reference.md](./reference.md#agent_run_config)), and constraints. You can start
-from the shipped prompts in this repository's
+signals its dispatch with the typed `dispatch_next` / `call_agent` control-plane
+tools — see [reference.md](./reference.md#agent_run_config)), and constraints.
+You can start from the shipped prompts in this repository's
 [`defaults/prompts/`](../defaults/prompts/) and refine them iteratively.
 
 ---

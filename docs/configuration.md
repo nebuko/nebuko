@@ -300,9 +300,10 @@ See this repo's [`agent-config.yaml`](../defaults/agents/agent-config.yaml) for 
 Per-invocation dispatch fields override the YAML cascade. Precedence
 (highest first):
 
-1. **Per-invocation** — dispatch fields in the `AGENT_RUN_CONFIG` sentinel
-   (`model`, `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`,
-   `repetition_penalty`, `complexity`).
+1. **Per-invocation** — dispatch fields from the typed `dispatch_next` /
+   `call_agent` control-plane tools, recorded in the engine-rendered
+   `AGENT_RUN_CONFIG` sentinel (`model`, `temperature`, `top_p`, `top_k`,
+   `min_p`, `presence_penalty`, `repetition_penalty`, `complexity`).
 2. **Complexity tier override** — `agents.<name>.complexity_overrides.<tier>`
    for the dispatch `complexity` tier (`low`/`medium`/`high`). See
    [Complexity Overrides](#complexity-overrides-per-tier-configuration).

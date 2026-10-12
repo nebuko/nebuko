@@ -42,8 +42,10 @@ they run a deterministic step and never invoke an
 agent.
 
 Note: **bot agents cannot use `@@mention`** (only humans may); bots hand off via
-the `AGENT_RUN_CONFIG` sentinel ([reference.md](./reference.md#agent_run_config)).
-The loop guard additionally skips a run when a human is pinged *alongside* an
+the typed `dispatch_next` / `call_agent` control-plane tools, whose decision the
+engine records as an engine-rendered `AGENT_RUN_CONFIG`
+([reference.md](./reference.md#agent_run_config)). The loop guard additionally
+skips a run when a human is pinged *alongside* an
 agent, so the human gets to orchestrate.
 
 An invalid invocation — an unknown flag (e.g. `/nebuko run workflow --default`),

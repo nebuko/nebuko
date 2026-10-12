@@ -132,7 +132,7 @@ Installs the two core OpenHands packages directly from the `agent-sdk` GitHub re
 **Output:** Environment variables: `TASK`, `ROLE_NAME`, `PROMPT_LOCATION`, `AGENT_SELECTED`, `COMPLEXITY`, `LLM_REASONING`, `AGENT_ROUND`, `AGENT_SKILLS`, `STEP_SKILLS`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `CONFIG_TOP_P`, `CONFIG_TOP_K`, `CONFIG_REPETITION_PENALTY`, `WORKFLOW_NAME`, `WORKFLOW_STEP`, `WORKFLOW_NEXT`, `PARENT_WORKFLOW`, `PARENT_WORKFLOW_STEP`, `SKILL_CONTEXT_FILE`, `CONFIG_PR_NUMBER`.
 
 Runs `resolve_config.py` which parses the trigger body to determine:
-1. Which agent role should handle the request (from a human `@@mention`, a machine trigger token, the `AGENT_RUN_CONFIG` `function_call` section, or the workflow state's dispatch).
+1. Which agent role should handle the request (from a human `@@mention`, a machine trigger token, the engine-rendered `AGENT_RUN_CONFIG` `function_call` section, or the workflow state's dispatch).
 2. The complexity level (`low`, `medium`, `high`).
 3. The prompt file location for the selected agent.
 4. Skill files to load and concatenate.
@@ -234,7 +234,7 @@ Runs the agent via `stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PR
 The step `timeout-minutes: 30` remains as a hard backstop only. In-process, the agent runs under a *soft* time budget (`AGENT_SOFT_TIMEOUT_MINUTES`, set to `20` in the workflow; library fallback `110`). When the budget expires, the in-flight LLM call is interrupted (`conversation.interrupt()`), a bounded wind-down prompt is injected (budget: `WIND_DOWN_TIMEOUT_MINUTES`, set to `10` in the workflow; library fallback `8`) asking the agent to summarize completed work, the blocking point, and remaining work, then commit and open/update a PR. A deterministic fallback (`ensure_pr`) commits the working tree and opens/updates the PR if the agent did not. A gracefully timed-out run feeds the standard recovery-log pipeline, so the next run resumes from a fresh session via the saved PR instead of starting over. Both knobs are optional env overrides resolved in `run_agent/timeout_budget.py` (budget decision recorded in ADR-0002, issue #639).
 
 **PR Discovery Priority (review agent only):**
-1. Explicit `CONFIG_PR_NUMBER` from the `AGENT_RUN_CONFIG` sentinel JSON.
+1. Explicit `CONFIG_PR_NUMBER` from the engine-rendered `AGENT_RUN_CONFIG` sentinel JSON.
 2. GitHub API query for open PRs referencing the issue.
 3. Regex scan of comment history for `PR #<digits>` pattern.
 

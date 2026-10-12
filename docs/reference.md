@@ -89,9 +89,10 @@ Examples:
 <!-- AGENT_RUN_CONFIG {"task": "dev", "complexity": "low", "top_p": 0.1, "top_k": 10, "repetition_penalty": 1.2} -->
 ```
 
-**Rule:** human users trigger agents with `@@mention`; only agents may use
-`AGENT_RUN_CONFIG`. Bot agents cannot use `@@mention` to avoid self-triggering
-loops.
+**Rule:** human users trigger agents with `@@mention`; the engine renders
+`AGENT_RUN_CONFIG` from typed state (`dispatch_next` / `call_agent`) — agents no
+longer emit it themselves (issue #876). Bot agents cannot use `@@mention` to
+avoid self-triggering loops.
 
 ---
 

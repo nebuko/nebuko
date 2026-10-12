@@ -12,9 +12,10 @@ the GitHub Actions job, see [default-workflow.md](./default-workflow.md).
 
 nebuko is a multi-agent AI orchestration system built on GitHub Actions +
 the OpenHands SDK. All collaboration happens inside GitHub issues: agents post
-comments, persist state in those comments, and trigger each other through
-dispatch sentinels. There is no server or database — the issue thread *is* the
-state store.
+comments, persist state in those comments, and trigger each other through the
+typed `dispatch_next` / `call_agent` control-plane tools, whose decisions the
+engine records as a durable engine-rendered dispatch sentinel. There is no
+server or database — the issue thread *is* the state store.
 
 ```
 ┌────────────┐   ┌────────────────────────── GHA Orchestrator ──────────────────────────┐   ┌──────────────┐
@@ -82,8 +83,8 @@ Each trigger runs the following sequence inside the `run-task` job:
 6. **Execute** — `agent_script.py` loads the prompt, resolves the LLM config,
    and runs an OpenHands `Agent` + `Conversation` under a soft-timeout watchdog
    (see [features.md — Execution Layer](./features.md#execution-layer)).
-7. **Validate output** — `validate_output.py` checks the dispatch sentinel and
-   forbidden sections.
+7. **Validate output** — `validate_output.py` checks the engine-rendered
+   dispatch sentinel and forbidden sections.
 8. **Post comment** — `prepare_comment.py` strips internal tags; the cleaned
    message is posted via `github_client.py` with bot markers prepended.
 9. **Persist state** — a fresh full-snapshot `WORKFLOW_STATE` JSON is embedded
