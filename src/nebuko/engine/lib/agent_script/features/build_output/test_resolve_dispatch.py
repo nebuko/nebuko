@@ -287,5 +287,78 @@ class TestSentinelRoutingFieldMerge(unittest.TestCase):
         self.assertIsNone(dispatch.branch)
 
 
+class TestTypedCallAgentResolution(unittest.TestCase):
+    """The typed ``call_agent`` tool is a first-class routing decision (#876).
+
+    Structured replacement for the sentinel-carried ``function_call``: a typed
+    hand-off wins over the legacy sentinel and, without a ``dispatch_next``
+    sibling, is itself the decision (advance to the named agent).
+    """
+
+    def _patch_call_agent(self, function_call):
+        return mock.patch(
+            "build_output.get_recorded_function_call", return_value=function_call
+        )
+
+    def test_typed_call_agent_alone_is_the_decision(self):
+        """No tool dispatch, no sentinel: the typed hand-off advances."""
+        fake = _FakeConv("conv-typed-only")
+        call = FunctionCall(function="call_agent", agent_name="context", complexity="high")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ), self._patch_call_agent(call):
+            dispatch, function_call, _ = _resolve_dispatch(fake, "answer")
+        self.assertEqual(dispatch.status, "advance")
+        self.assertEqual(dispatch.task_hint, "context")
+        self.assertEqual(dispatch.complexity, "high")
+        self.assertEqual(function_call.agent_name, "context")
+
+    def test_typed_call_agent_beats_the_legacy_sentinel(self):
+        """A typed hand-off wins over a co-emitted sentinel function_call."""
+        fake = _FakeConv("conv-typed-beats-sentinel")
+        call = FunctionCall(function="call_agent", agent_name="context")
+        sentinel = (
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, '
+            '"function_call": {"function": "call_agent", '
+            '"agent_name": "review"}} -->'
+        )
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ), self._patch_call_agent(call):
+            dispatch, function_call, message = _resolve_dispatch(fake, sentinel)
+        self.assertEqual(dispatch.task_hint, "context")
+        self.assertEqual(function_call.agent_name, "context")
+        self.assertNotIn("AGENT_RUN_CONFIG", message)
+
+    def test_typed_call_agent_beats_dispatch_next_target(self):
+        """When both tools are called, the imperative hand-off target wins."""
+        fake = _FakeConv("conv-typed-beats-dispatch")
+        recorded = Dispatch(status="advance", task_hint="review")
+        call = FunctionCall(function="call_agent", agent_name="context")
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=recorded
+        ), self._patch_call_agent(call):
+            dispatch, function_call, _ = _resolve_dispatch(fake, "answer")
+        self.assertEqual(dispatch.status, "advance")
+        self.assertEqual(function_call.agent_name, "context")
+
+    def test_sentinel_only_legacy_function_call_still_routes(self):
+        """Absent a typed tool call the sentinel function_call still resolves."""
+        fake = _FakeConv("conv-legacy-fc")
+        sentinel = (
+            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}, '
+            '"function_call": {"function": "call_agent", '
+            '"agent_name": "context", "callback": "architect"}} -->'
+        )
+        with mock.patch(
+            "build_output.get_recorded_dispatch", return_value=None
+        ), self._patch_call_agent(None):
+            dispatch, function_call, message = _resolve_dispatch(fake, sentinel)
+        self.assertEqual(dispatch.status, "advance")
+        self.assertEqual(function_call.agent_name, "context")
+        self.assertEqual(function_call.callback, "architect")
+        self.assertNotIn("AGENT_RUN_CONFIG", message)
+
+
 if __name__ == "__main__":
     unittest.main()
