@@ -219,7 +219,7 @@ Updates the git remote URL to embed the PAT, allowing the agent to push branches
 ### Step 15: Run OpenHands Agent
 
 **Input:** `PROMPT_LOCATION`, `AGENT_QUERY_PATH`, `ROLE_NAME`, `COMPLEXITY`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `AGENT_CONFIG_PATH`, `LLM_API_KEY`, `LLM_BASE_URL`, `PR_NUMBER` (optional for review agent).  
-**Output:** Agent execution results written to stdout → `console.log`, structured final message to `final_message.txt`, `workflow_state.json`, and optional `final_message_part_{N}.txt` files.
+**Output:** Agent execution results written to stdout → `console.txt`, structured final message to `final_message.txt`, `workflow_state.json`, and optional `final_message_part_{N}.txt` files.
 
 Builds the final prompt by concatenating:
 1. The role-specific prompt template (`$PROMPT_LOCATION`).
@@ -227,7 +227,7 @@ Builds the final prompt by concatenating:
 3. The query context (`$AGENT_QUERY_PATH`).
 4. For `review` role: PR diff (discovered via explicit PR number → API query → regex fallback).
 
-Runs the agent via `stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE"` with output logged to `console.log`.
+Runs the agent via `stdbuf -oL -eL uv run python "$AGENT_SCRIPT_PATH" "$FINAL_PROMPT_FILE"` with output logged to `console.txt`.
 
 **Graceful Interruption on Timeout:**
 The step `timeout-minutes: 30` remains as a hard backstop only. In-process, the agent runs under a *soft* time budget (`AGENT_SOFT_TIMEOUT_MINUTES`, set to `20` in the workflow; library fallback `110`). When the budget expires, the in-flight LLM call is interrupted (`conversation.interrupt()`), a bounded wind-down prompt is injected (budget: `WIND_DOWN_TIMEOUT_MINUTES`, set to `10` in the workflow; library fallback `8`) asking the agent to summarize completed work, the blocking point, and remaining work, then commit and open/update a PR. A deterministic fallback (`ensure_pr`) commits the working tree and opens/updates the PR if the agent did not. A gracefully timed-out run feeds the standard recovery-log pipeline, so the next run resumes from a fresh session via the saved PR instead of starting over. Both knobs are optional env overrides resolved in `run_agent/timeout_budget.py` (budget decision recorded in ADR-0002, issue #639).
@@ -241,13 +241,13 @@ The step `timeout-minutes: 30` remains as a hard backstop only. In-process, the 
 
 ### Step 16: Clean and Prepare Comment
 
-**Input:** `final_message.txt` (preferred), `console.log` (fallback), `TRIGGER_AUTHOR`.  
+**Input:** `final_message.txt` (preferred), `console.txt` (fallback), `TRIGGER_AUTHOR`.  
 **Output:** `github_comment.md` containing the cleaned agent response. Sets `HAS_COMMENT=true`.
 
 Four-path logic:
 - **Path A:** `final_message.txt` exists and has content → use it (truncated to 60K chars).
-- **Path B:** `final_message.txt` has sentinel `__NO_FINAL_MESSAGE__` or is empty → parse `console.log` for "Message from Agent" blocks, fall back to last 50 meaningful lines.
-- **Path C:** No `console.log` either → crash message.
+- **Path B:** `final_message.txt` has sentinel `__NO_FINAL_MESSAGE__` or is empty → parse `console.txt` for "Message from Agent" blocks, fall back to last 50 meaningful lines.
+- **Path C:** No `console.txt` either → crash message.
 - **Path D:** `final_message.txt` doesn't exist → fallback error message.
 
 Per-step agent metrics are no longer appended to the comment; they live in the
@@ -296,8 +296,8 @@ If the agent's response was split into multiple parts (to stay within GitHub's ~
 
 ### Step 21: Upload Logs as Artifacts (unzipped)
 
-**Input:** the staged `console.log` and `app.log` files under `${{ runner.temp }}/nebuko-task-logs`.  
-**Output:** two GitHub Actions artifacts named `console.log` and `app.log` (7-day retention).
+**Input:** the staged `console.txt` and `app.txt` files under `${{ runner.temp }}/nebuko-task-logs`.  
+**Output:** two GitHub Actions artifacts named `console.txt` and `app.txt` (7-day retention).
 
 Each log is uploaded as its **own unzipped artifact** via
 `actions/upload-artifact@v7` with `archive: false` (issue #779), so it can be
@@ -377,7 +377,7 @@ GitHub Event
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
-│ Run Agent           │ → console.log, final_message.txt, workflow_state.json
+│ Run Agent           │ → console.txt, final_message.txt, workflow_state.json
 │ (agent_script.py)   │
 └─────────┬───────────┘
           ▼

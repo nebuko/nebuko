@@ -1,7 +1,7 @@
 """Filesystem-backed platform adapter (issue #590, Stage A).
 
 Run directory ``runs/<run-id>/`` holds ``trigger.json``, ``journal.md``,
-``state.json``, ``latest_answer.md`` and ``console.log``. Journal entries carry
+``state.json``, ``latest_answer.md`` and ``console.txt``. Journal entries carry
 the standard ``<!-- bot-workflow-terminal -->`` / ``<!-- bot-agent-* -->``
 markers, so ``loop_guard``, ``circuit_breaker`` and state extraction run
 **unchanged** against :meth:`LocalAdapter.load_history`.
@@ -28,7 +28,7 @@ TRIGGER_FILE = "trigger.json"
 JOURNAL_FILE = "journal.md"
 STATE_FILE = "state.json"
 LATEST_ANSWER_FILE = "latest_answer.md"
-CONSOLE_LOG_FILE = "console.log"
+CONSOLE_LOG_FILE = "console.txt"
 
 # Each journal entry is introduced by this boundary line so posted bodies keep
 # their blank lines verbatim; the captured group is the entry timestamp.

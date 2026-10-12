@@ -1,9 +1,10 @@
-"""Spec-scenario tests for per-run log staging (issues #743, #779).
+"""Spec-scenario tests for per-run log staging (issues #743, #779, #894).
 
 The new-engine host runs the legacy agent in a throwaway temp directory, so the
-run's ``console.log`` and the OpenHands SDK's on-disk ``app.log`` must be staged
+run's ``console.txt`` and the OpenHands SDK's on-disk ``app.log`` must be staged
 in a host-owned directory the workflow uploads — each file as its own *unzipped*
-artifact (issue #779) so a run's logs can be fetched raw, without any unzip.
+artifact (issue #779) so a run's logs can be fetched raw, without any unzip. The
+SDK's ``app.log`` is renamed to the browser-viewable ``app.txt`` (issue #894).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from nebuko.adapters.github import ARTIFACT_DIR_NAME
 from nebuko.engine.artifacts import (
     APP_LOG_FILE,
     CONSOLE_LOG_FILE,
+    SDK_APP_LOG_FILE,
     ArtifactFile,
     RunArtifactStager,
     RunArtifacts,
@@ -78,6 +80,32 @@ class TestRunArtifactStager:
 
         assert artifacts.files == RunArtifactStager(staging).artifact_files()
 
+    def test_manifest_names_use_the_browser_viewable_txt_extension(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+
+        names = [artifact.name for artifact in RunArtifactStager(staging).artifact_files()]
+
+        assert names == ["console.txt", "app.txt"]
+
+    def test_bundle_renames_the_sdk_app_log_to_app_txt(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+        staging.mkdir()
+        (staging / SDK_APP_LOG_FILE).write_text("sdk log line\n", encoding="utf-8")
+
+        RunArtifactStager(staging).bundle("console output")
+
+        assert not (staging / SDK_APP_LOG_FILE).exists()
+        assert (staging / APP_LOG_FILE).read_text(encoding="utf-8") == "sdk log line\n"
+        assert RunArtifactStager(staging).artifact_files()[-1].path.is_file()
+
+    def test_bundle_without_an_sdk_log_still_freezes_the_manifest(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+
+        artifacts = RunArtifactStager(staging).bundle("console output")
+
+        assert not (staging / APP_LOG_FILE).exists()
+        assert [artifact.name for artifact in artifacts.files] == ["console.txt", "app.txt"]
+
 
 class TestArtifactFile:
     def test_is_immutable(self, tmp_path):
@@ -87,9 +115,9 @@ class TestArtifactFile:
             artifact.name = APP_LOG_FILE  # type: ignore[misc]
 
     def test_is_hashable_by_value(self):
-        artifact = ArtifactFile(name=CONSOLE_LOG_FILE, path=Path("/tmp/console.log"))
+        artifact = ArtifactFile(name=CONSOLE_LOG_FILE, path=Path("/tmp/console.txt"))
 
-        assert artifact == ArtifactFile(name=CONSOLE_LOG_FILE, path=Path("/tmp/console.log"))
+        assert artifact == ArtifactFile(name=CONSOLE_LOG_FILE, path=Path("/tmp/console.txt"))
 
 
 class TestWorkflowUploadContract:

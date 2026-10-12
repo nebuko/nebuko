@@ -41,7 +41,7 @@ _AGENT_SCRIPT = Path("src") / "nebuko" / "engine" / "lib" / "agent_script" / "ag
 _LATEST_ANSWER_FILE = "latest_answer.md"
 _FINAL_MESSAGE_FILE = "final_message.txt"
 _STATE_FILE = "workflow_state.json"
-_CONSOLE_LOG_FILE = "console.log"
+_CONSOLE_LOG_FILE = "console.txt"
 _PROMPT_FILE = "final_prompt.md"
 # The entry point is staged under a name that cannot shadow the ``agent_script``
 # package (see :func:`_stage_entry_point`).
