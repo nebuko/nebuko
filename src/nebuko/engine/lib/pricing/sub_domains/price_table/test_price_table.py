@@ -110,6 +110,35 @@ class TestMatch:
     def test_unmatched_model_returns_none(self):
         assert self._table().match("openai/unknown/model") is None
 
+    def test_unique_basename_resolves_without_org_segment(self):
+        # OpenCode Go ships org-less paths (``openai/glm-5.3-flash``) while the
+        # table keys on the org-qualified id; a unique basename resolves it.
+        table = PriceTable.from_openrouter(
+            {
+                "data": [
+                    {
+                        "id": "z-ai/glm-5.3-flash",
+                        "pricing": {"prompt": "0.00000015", "completion": "0.0000005"},
+                    }
+                ]
+            }
+        )
+        price = table.match("openai/glm-5.3-flash")
+        assert price is not None
+        assert price.input_price == pytest.approx(0.15)
+
+    def test_ambiguous_basename_returns_none(self):
+        # Two orgs shipping the same model name must not be guessed between.
+        table = PriceTable.from_openrouter(
+            {
+                "data": [
+                    {"id": "a/dup", "pricing": {"prompt": "0.0000001"}},
+                    {"id": "b/dup", "pricing": {"prompt": "0.0000002"}},
+                ]
+            }
+        )
+        assert table.match("openai/dup") is None
+
 
 class TestModelPriceMergedOver:
     """ModelPrice.merged_over: per-field override on top of a base bundle."""

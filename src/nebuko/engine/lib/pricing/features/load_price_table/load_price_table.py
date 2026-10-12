@@ -54,37 +54,58 @@ def _default_fetcher() -> bytes:
 
 
 def _parse(raw: bytes) -> Optional[PriceTable]:
-    """Parse a raw OpenRouter payload, or ``None`` on bad JSON/shape."""
+    """Parse a raw OpenRouter payload, or ``None`` on bad JSON/shape.
+
+    Blanket-guarded: the fail-open contract means *any* unusable input — bad
+    JSON, a non-mapping root, a malformed ``data`` entry — yields ``None``
+    rather than propagating out of the loader.
+    """
     try:
         return PriceTable.from_openrouter(json.loads(raw))
-    except (ValueError, TypeError) as exc:
+    except Exception as exc:  # noqa: BLE001 — fail-open by contract
         logger.warning(f"Ignoring unusable price table payload: {exc}")
         return None
 
 
 def _read_cache(path: Path) -> Optional[_CacheEntry]:
-    """Read and parse the cache envelope, or ``None`` when unusable."""
+    """Read and parse the cache envelope, or ``None`` when unusable.
+
+    Fail-open by contract: the whole body is guarded so a valid-JSON but
+    structurally-wrong envelope (missing/non-mapping ``payload``, non-numeric
+    ``fetched_at``, an interleaved partial write) can never abort a run.
+    """
     try:
         envelope = json.loads(path.read_text())
-    except (OSError, ValueError):
+        if not isinstance(envelope, dict):
+            return None
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        fetched_at = float(envelope.get("fetched_at", 0.0))
+        table = _parse(json.dumps(payload).encode())
+        if table is None:
+            return None
+        return _CacheEntry(fetched_at=fetched_at, table=table)
+    except Exception as exc:  # noqa: BLE001 — fail-open by contract
+        logger.warning(f"Ignoring unusable price cache at {path}: {exc}")
         return None
-    if not isinstance(envelope, dict):
-        return None
-    table = _parse(json.dumps(envelope.get("payload")).encode())
-    if table is None:
-        return None
-    return _CacheEntry(fetched_at=float(envelope.get("fetched_at", 0.0)), table=table)
 
 
 def _write_cache(path: Path, fetched_at: float, raw: bytes) -> None:
-    """Best-effort cache write — a read-only home must not break pricing."""
+    """Best-effort atomic cache write — a read-only home must not break pricing.
+
+    Written to a temp file in the same directory and ``os.replace``-d into
+    place, so a concurrent reader never observes a partially-written envelope.
+    """
     try:
         envelope = {"fetched_at": fetched_at, "payload": json.loads(raw)}
     except (ValueError, TypeError):
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(envelope))
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(envelope))
+        os.replace(tmp, path)
     except OSError as exc:
         logger.warning(f"Could not write price cache at {path}: {exc}")
 

@@ -59,6 +59,20 @@ merged **per field**, so a partial config is completed rather than discarded.
 - Cache-read and cache-write rates fall back to the input price when unset
   (LiteLLM-conservative; OpenRouter has `input_cache_write` for only 93/458
   models — none of ours).
+- **Cache-write counts come from the capture seam, not the SDK.** In v1.53 the
+  SDK populates its accumulated `cache_write_tokens` from
+  `prompt_details.cache_creation_tokens` — a field litellm's
+  `PromptTokensDetails` does not define (it carries `cache_write_tokens`) — so
+  the SDK's cache-write bucket stays `0` for OpenAI-shaped responses. The
+  telemetry capture seam reads the correct litellm field, and cost accounting
+  takes the larger of the two readers, so the cache-write tier is priced instead
+  of silently staying empty. A small upstream-SDK issue should track the field
+  mismatch.
+- **Model resolution falls back to an unambiguous basename.** Some providers
+  route by a path without the org segment (OpenCode Go ships
+  `openai/glm-5.3-flash`) while the table keys on the org-qualified id
+  (`z-ai/glm-5.3-flash`); when exactly one table entry shares the basename it is
+  used, and an ambiguous basename is treated as unknown (never guessed).
 - **Token-shape guard:** when `input_tokens ≥ cache_read + cache_write` the
   buckets are *inclusive* (subtract them to get regular input, the OpenAI
   shape); otherwise they are *exclusive* (price on top, the Anthropic shape).
@@ -88,7 +102,9 @@ cache-aware map pricing.
 ## Consequences
 
 - CommandCode/OpenCode costs become non-zero estimates out of the box, with zero
-  hand-maintained config.
+  hand-maintained config. CommandCode paths carry the org segment and resolve by
+  exact id; OpenCode Go's org-less paths (`openai/<model>`) resolve through the
+  unambiguous-basename fallback.
 - `0` remains the outcome only when neither the config nor the service knows the
   model — still documented in `docs/subscription-plans.md`.
 - Config gains `cache_read_price`/`cache_write_price` (USD per 1M tokens) and the

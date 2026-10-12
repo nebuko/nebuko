@@ -92,6 +92,33 @@ class TestFailOpen:
         fetcher = _CountingFetcher(b"not json")
         assert load_price_table(fetcher=fetcher, cache_dir=tmp_path) is None
 
+    def test_structurally_wrong_envelopes_fail_open(self, tmp_path):
+        # Valid JSON but wrong shape must never propagate (issue #714 review):
+        # a corrupt cache file must not abort the run before build_output.
+        wrong_envelopes = [
+            [1, 2, 3],  # envelope is a list
+            "hello",  # envelope is a scalar
+            {"fetched_at": 1.0},  # payload missing
+            {"fetched_at": 1.0, "payload": None},  # payload null
+            {"fetched_at": 1.0, "payload": [1, 2, 3]},  # payload a list
+            {"fetched_at": 1.0, "payload": {"data": [1, 2]}},  # model not a map
+        ]
+        for envelope in wrong_envelopes:
+            cache = tmp_path / "openrouter.json"
+            cache.write_text(json.dumps(envelope))
+            table = load_price_table(
+                fetcher=_FailingFetcher(), cache_dir=tmp_path, now=1000.0
+            )
+            assert table is None
+
+    def test_non_numeric_fetched_at_fails_open(self, tmp_path):
+        cache = tmp_path / "openrouter.json"
+        cache.write_text(json.dumps({"fetched_at": "abc", "payload": PAYLOAD}))
+        table = load_price_table(
+            fetcher=_FailingFetcher(), cache_dir=tmp_path, now=1000.0
+        )
+        assert table is None
+
     def test_unwritable_cache_still_prices(self, tmp_path):
         # Point the cache at a path whose parent is a file → mkdir/write fails.
         blocked = tmp_path / "blocked"

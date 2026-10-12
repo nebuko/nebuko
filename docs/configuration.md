@@ -77,6 +77,15 @@ providers:
 | `presence_penalty` / `repetition_penalty` | float | Repetition control (see table below). |
 | `stop_sequences` | string[] | Tokens that stop generation. |
 
+> **Cost precedence.** A provider/SDK-reported cost (a genuinely billed amount,
+> cache-aware) always wins over local estimation, so for a model litellm already
+> knows the SDK's cost is used and these configured prices do **not** override
+> it. The `*_price` fields only seed the local four-tier estimate, which applies
+> when no provider/SDK cost is reported — e.g. a subscription backend, or a
+> self-hosted model. Where the estimate applies, each tier falls back per field
+> to the default price service (an OpenRouter-backed table; see
+> [features.md — Metrics](./features.md#metrics)) and then to `input_price`.
+
 Sampling parameters and their typical ranges:
 
 | Parameter | Type | Description | Typical range |

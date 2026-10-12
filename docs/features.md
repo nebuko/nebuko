@@ -125,9 +125,11 @@ separate hidden HTML comment):
   an OpenRouter-backed table fetched once and file-cached under
   `~/.nebuko/cache/prices/` (env `NEBUKO_PRICE_CACHE_DIR`), fully fail-open.
   This is what lets subscription providers (CommandCode, OpenCode), which report
-  no per-token cost and ship no prices, produce non-zero estimates; `0` remains
-  the documented outcome only when neither config nor the service knows the
-  model.
+  no per-token cost and ship no prices, produce non-zero estimates — CommandCode
+  by exact org-qualified id, OpenCode Go through an unambiguous-basename
+  fallback for its org-less paths. `0` remains the documented outcome only when
+  neither config nor the service knows the model. Because the service is
+  org-aware, a model priced only by the operator's config still resolves too.
 - **Issue-close aggregation** — `agent_metrics.py` (GHA job
   `agent-metrics`, triggered on issue close) fetches all comments, reads the
   per-step metrics from each comment's `workflow_state` snapshot (de-duplicating

@@ -105,7 +105,24 @@ class PriceTable(BaseModel):
         for candidate in normalize_model_id(model_path):
             if candidate in self.entries:
                 return self.entries[candidate]
-        return None
+        return self._match_by_basename(model_path)
+
+    def _match_by_basename(self, model_path: str) -> Optional[ModelPrice]:
+        """Fall back to an unambiguous basename match.
+
+        Some providers route by a path that omits the org segment (OpenCode Go
+        ships ``openai/glm-5.3-flash``) while the table keys on the
+        org-qualified id (``z-ai/glm-5.3-flash``). When exactly one table entry
+        shares the model's basename, it is the model the path refers to; an
+        ambiguous basename is treated as unknown (fail-open, never a guess).
+        """
+        basename = model_path.rsplit("/", 1)[-1]
+        hits = [
+            price
+            for model_id, price in self.entries.items()
+            if model_id.rsplit("/", 1)[-1] == basename
+        ]
+        return hits[0] if len(hits) == 1 else None
 
 
 # @stub-protected: signature defined by architect — do not modify

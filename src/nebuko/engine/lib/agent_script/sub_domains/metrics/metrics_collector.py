@@ -1,5 +1,6 @@
 """LLM metrics collection — pure functions for extracting metrics from conversations."""
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from openhands.sdk import get_logger
@@ -23,24 +24,52 @@ from agent_script.sub_domains.metrics.token_telemetry_collector import (
 logger = get_logger(__name__)
 
 
-def _derive_tps_and_ttft() -> tuple[float | None, float | None]:
-    """Mean (tokens/sec, time-to-first-token) over the run's captured calls.
+@dataclass(frozen=True)
+class _CapturedTelemetry:
+    """One drain of the capture seam: provider-health means + cache totals."""
 
-    Drains the active capture collector (issue #829). Returns ``(None, None)``
-    when no collector was installed for this run or nothing was observable.
+    tokens_per_second: float | None
+    time_to_first_token: float | None
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+
+def _drain_captured_telemetry() -> "_CapturedTelemetry":
+    """Drain the capture collector once, returning health means + cache totals.
+
+    Drains the active capture collector (issue #829) so it can feed both the
+    provider-health indicators and the cache-token tiers cost accounting needs.
+    Returns an all-empty record when no collector was installed or nothing was
+    observable.
     """
     collector = get_active_collector()
     if collector is None:
-        return None, None
-    mean_ttft, mean_tps = TokenTelemetry.aggregate(collector.drain())
-    return mean_tps, mean_ttft
+        return _CapturedTelemetry(None, None, 0, 0)
+    observations = collector.drain()
+    mean_ttft, mean_tps = TokenTelemetry.aggregate(observations)
+    return _CapturedTelemetry(
+        tokens_per_second=mean_tps,
+        time_to_first_token=mean_ttft,
+        cache_read_tokens=sum(obs.cache_read_tokens for obs in observations),
+        cache_write_tokens=sum(obs.cache_write_tokens for obs in observations),
+    )
 
 
-def _cache_token_counts(accumulated_usage) -> tuple[int, int]:
-    """Cache-read/cache-write token counts from the SDK's accumulated usage."""
-    cache_read = int(getattr(accumulated_usage, "cache_read_tokens", 0) or 0)
-    cache_write = int(getattr(accumulated_usage, "cache_write_tokens", 0) or 0)
-    return cache_read, cache_write
+def _cache_token_counts(accumulated_usage, captured: "_CapturedTelemetry") -> tuple[int, int]:
+    """Cache-read/cache-write counts, preferring whichever source saw more.
+
+    The SDK's accumulated ``cache_write_tokens`` is empty for OpenAI-shaped
+    responses: it reads ``cache_creation_tokens``, a field litellm's
+    ``PromptTokensDetails`` does not define (it carries ``cache_write_tokens``).
+    The capture seam reads that field correctly, so it supplies the cache-write
+    tier when the SDK is silent (issue #714 review).
+    """
+    sdk_read = int(getattr(accumulated_usage, "cache_read_tokens", 0) or 0)
+    sdk_write = int(getattr(accumulated_usage, "cache_write_tokens", 0) or 0)
+    return (
+        max(sdk_read, captured.cache_read_tokens),
+        max(sdk_write, captured.cache_write_tokens),
+    )
 
 
 def _effective_model_ref(agent_cfg):
@@ -254,11 +283,17 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
         cache_read_tokens = 0
         cache_write_tokens = 0
         max_context_window = 0
+
+        # Drain the capture seam once — it feeds both the provider-health means
+        # and, when the SDK's cache-write bucket is empty (litellm field-name
+        # mismatch), the cache-write tier cost accounting needs.
+        captured = _drain_captured_telemetry()
+
         if combined_metrics.accumulated_token_usage:
             input_tokens = combined_metrics.accumulated_token_usage.prompt_tokens
             output_tokens = combined_metrics.accumulated_token_usage.completion_tokens
             cache_read_tokens, cache_write_tokens = _cache_token_counts(
-                combined_metrics.accumulated_token_usage
+                combined_metrics.accumulated_token_usage, captured
             )
             max_context_window = combined_metrics.accumulated_token_usage.context_window
 
@@ -292,7 +327,8 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
                 start_time = first_event.timestamp
 
         # Provider-health indicators captured over the run's LLM calls (#829).
-        tokens_per_second, time_to_first_token = _derive_tps_and_ttft()
+        tokens_per_second = captured.tokens_per_second
+        time_to_first_token = captured.time_to_first_token
 
         # Build Metrics object
         role_name = os.environ.get("ROLE_NAME", "unknown")
