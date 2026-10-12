@@ -57,11 +57,12 @@ published a one-line lead-in).
      feedback request).
 
 6. **Collapse verbose detail behind `<details>`.**
-   When a deliverable's detail would bury the decision — dev steps, an Object
-   Design Contract, a long analysis — keep the summary visible and wrap the
-   detail in a single `<details><summary>…</summary> … </details>` block. This
-   matches the engine's `collapse_sections` primitive and keeps the issue thread
-   readable (issue #866).
+   When a deliverable's detail would bury the decision, keep the decision-level
+   content visible and wrap only the verbose mechanics — dev steps, a long
+   analysis — in a single `<details><summary>…</summary> … </details>` block. The
+   Object Design Contract is decision-level content and must stay **visible**.
+   This matches the engine's `collapse_sections` primitive and keeps the issue
+   thread readable (issue #866).
 
 7. **The hand-off sentinel goes last.**
    End the posted deliverable with the single-line `AGENT_RUN_CONFIG` sentinel

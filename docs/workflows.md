@@ -458,9 +458,10 @@ problem to the system. The `plan` step can loop back to `context` when the
 plan is rejected (insufficient context).
 
 The `plan` step is a single `human_gate:plan`: @@architect emits **one** planning
-artifact — a visible Architecture Summary (design + Object Design Anchor) with
-the dev steps and Object Design Contract collapsed in a `<details>` block — and
-ends with `advance`. The engine intercepts that advance into the gate hold, so
+artifact — visible `Context (root cause)`, `Decision` (design + Object Design
+Anchor), an `Approaches considered` table, and the `Object Design Contract`, with
+the `Implementation Plan` collapsed in a `<details>` block — and ends with
+`advance`. The engine intercepts that advance into the gate hold, so
 the human runs exactly **one** `/nebuko approve gate` before @@dev is routed.
 
 Example trigger:

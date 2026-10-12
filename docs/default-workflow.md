@@ -29,10 +29,11 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 | `po` | `@@po` | Product owner — specs and issue refinement |
 
 The `plan` step of the `default` workflow is a single `human_gate:plan`:
-@@architect delivers one planning artifact (visible Architecture Summary with the
-Object Design Anchor, plus the dev steps and Object Design Contract collapsed in a
-`<details>` block) and advances; the engine converts that advance into the gate
-hold, released by exactly one `/nebuko approve gate`.
+@@architect delivers one planning artifact (visible Context (root cause), Decision
+with the Object Design Anchor, an Approaches considered table, and the Object
+Design Contract, plus the Implementation Plan collapsed in a `<details>` block)
+and advances; the engine converts that advance into the gate hold, released by
+exactly one `/nebuko approve gate`.
 
 ---
 
