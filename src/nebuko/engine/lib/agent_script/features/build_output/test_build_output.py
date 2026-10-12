@@ -512,6 +512,106 @@ class TestHumanGateIntercept(unittest.TestCase):
         self.assertEqual(result.status, "advance")
 
 
+class TestDispatchIsHumanGateHold(unittest.TestCase):
+    """Issue #887: the shape detector that keeps persisted state and router aligned."""
+
+    def test_gate_hold_detected(self):
+        from build_output import _dispatch_is_human_gate_hold
+
+        self.assertTrue(
+            _dispatch_is_human_gate_hold(
+                Dispatch(status="hold", reason="human_gate:plan")
+            )
+        )
+
+    def test_plain_hold_not_detected(self):
+        from build_output import _dispatch_is_human_gate_hold
+
+        self.assertFalse(
+            _dispatch_is_human_gate_hold(
+                Dispatch(status="hold", reason="no-action default")
+            )
+        )
+
+    def test_advance_not_detected(self):
+        from build_output import _dispatch_is_human_gate_hold
+
+        self.assertFalse(
+            _dispatch_is_human_gate_hold(
+                Dispatch(status="advance", reason="human_gate:plan")
+            )
+        )
+
+    def test_none_not_detected(self):
+        from build_output import _dispatch_is_human_gate_hold
+
+        self.assertFalse(_dispatch_is_human_gate_hold(None))
+
+    def test_gate_intercept_at_call_site_clears_resolution_next_step(self):
+        """Issue #887: when the intercept holds a gated step, the persisted
+        resolution must not keep advertising the ungated forward edge."""
+        from types import SimpleNamespace as NS
+
+        import build_output as bo
+
+        captured = {}
+
+        def _capture_build_state(prev_state, **kwargs):
+            captured.update(kwargs)
+            return NS(run_id=1)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "gated.yaml"), "w") as f:
+                f.write(
+                    "name: gated\n"
+                    "description: test\n"
+                    "trigger:\n  agents: [architect]\n"
+                    "steps:\n"
+                    "  - name: plan\n    agent: architect\n"
+                    "    next: implement\n    human_gate: true\n"
+                    "  - name: implement\n    agent: dev\n    next: review\n"
+                )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "WORKFLOW_NAME": "gated",
+                "WORKFLOW_STEP": "plan",
+                "WORKFLOW_NEXT": "implement",
+                "ROLE_NAME": "architect",
+            }
+            conversation = NS(
+                state=NS(events=[_msg_event("plan answer")]),
+                id="conv-887",
+                run_outcome=None,
+            )
+            metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+            with mock.patch.object(bo, "get_agent_final_response", return_value="plan answer"), \
+                 mock.patch.object(bo, "_load_prev_state", return_value=None), \
+                 mock.patch.object(bo, "_build_issue_info", return_value=None), \
+                 mock.patch.object(bo, "_build_pr_info", return_value=None), \
+                 mock.patch.object(
+                     bo, "_resolve_dispatch",
+                     return_value=(Dispatch(status="advance"), None, "plan answer"),
+                 ), \
+                 mock.patch.object(bo, "clear_run"), \
+                 mock.patch.object(bo, "clear_scaffold_branch_run"), \
+                 mock.patch.object(bo, "clear_complexity_review_run"), \
+                 mock.patch.object(bo, "get_recorded_review_request", return_value=None), \
+                 mock.patch.object(bo, "build_state", side_effect=_capture_build_state), \
+                 mock.patch.object(bo, "split_message", return_value=[]), \
+                 mock.patch.object(bo, "_write_output_files", return_value=None), \
+                 mock.patch.dict(os.environ, env, clear=False):
+                cwd = os.getcwd()
+                os.chdir(tmpdir)
+                try:
+                    bo.build_output(conversation, metrics)
+                finally:
+                    os.chdir(cwd)
+
+        self.assertEqual(captured["dispatch"].status, "hold")
+        self.assertEqual(captured["resolution"].next_step, "")
+
+
+
 class TestHumanGateRealWorkflowYaml(unittest.TestCase):
     """Regression against the real workflows/spec-driven-impl.yaml (issue #506).
 

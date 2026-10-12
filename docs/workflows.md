@@ -162,7 +162,11 @@ Mechanics:
    completing dispatch). The engine intercepts it and records `hold` (reason
    `human_gate:<step>`). The workflow stops; the step's output stays posted on
    the issue for human review. **Every** advancing dispatch is intercepted —
-   the gate has no bypass.
+   the gate has no bypass. A held state also carries no forward edge: the
+   intercept empties `resolution.next_step`, and on any later bot trigger the
+   resolver treats the `human_gate` hold as higher precedence than the
+   workflow's next step, so a stale `plan -> implement` edge can never advance
+   the run (issues #885, #887).
 2. An authorized human (GitHub `OWNER` / `MEMBER` / `COLLABORATOR`) reviews the
    output and runs one of:
 
