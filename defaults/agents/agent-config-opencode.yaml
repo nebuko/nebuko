@@ -78,7 +78,7 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
     skills: ["posting-contract", "plan-review", "retrospective", "complexity"]
-    tools: ["think", "finish", "dispatch_next", "complexity_review"]
+    tools: ["terminal", "think", "finish", "dispatch_next", "complexity_review"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"
