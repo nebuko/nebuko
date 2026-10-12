@@ -136,6 +136,57 @@ class TestHistory:
         assert ("get_issue_comments", "olivier-norture/git-flow-ai", 590) in client.calls
 
 
+class TestLoadRawThread:
+    """The full thread feeds the ledger with realistic PAT payloads (issue #872).
+
+    Every comment the PAT posts carries ``type: "User"``, so bot-ness must be
+    derived from the body marker — these tests exercise the real GitHub adapter
+    path so the classification cannot hide behind the local journal's synthesized
+    ``type: "Bot"``.
+    """
+
+    def test_agent_answer_is_agent_output_from_a_user_authored_comment(self, tmp_path):
+        from workflow_state.features.reconcile_thread import reconcile_thread
+        from workflow_state.sub_domains.thread_record import ThreadRecordKind
+
+        client = FakeGhClient(
+            comments=[
+                {
+                    "id": 11,
+                    "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-dev -->\n"
+                    "*Dev answer*",
+                    "user": {"id": 1, "login": "olivier-norture", "type": "User"},
+                    "author_association": "OWNER",
+                    "created_at": "2026-10-02T00:00:00Z",
+                },
+                {
+                    "id": 12,
+                    "body": "<!-- bot-workflow-terminal -->\n**dev agent started** "
+                    "[View workflow run logs](https://x)",
+                    "user": {"id": 1, "login": "olivier-norture", "type": "User"},
+                    "author_association": "OWNER",
+                    "created_at": "2026-10-02T00:01:00Z",
+                },
+            ]
+        )
+        adapter = _adapter(tmp_path, client)
+        adapter.read_trigger()
+
+        issue, comments = adapter.load_raw_thread()
+        ledger = reconcile_thread(
+            [],
+            issue=issue,
+            comments=comments,
+            trigger_user_id=1,
+            trigger_login="olivier-norture",
+        )
+
+        assert {record.id: record.kind for record in ledger} == {
+            11: ThreadRecordKind.AGENT_OUTPUT,
+            12: ThreadRecordKind.ENGINE_OUTPUT,
+        }
+
+
 class TestPost:
     def test_returns_the_posted_comment_reference(self, tmp_path):
         client = FakeGhClient()

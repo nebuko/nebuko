@@ -60,15 +60,16 @@ Two hazards are in scope for the security posture:
    explicitly-unverified summary instead of being rendered in full: it informs
    the agent without reading as instructions.
 
-4. **Full relevant flow by default; a cap is an explicit opt-down.**
+4. **The ledger renders the relevant flow, capped by the same window knob.**
    `HISTORY_COMMENT_COUNT` changes meaning for the ledger: unset or
    non-positive → the full relevant flow; a positive N → the last N relevant
    records (pinned comments always added on top). This deliberately relaxes the
    issue #844 fail-safe ("never inject the whole *raw* thread") into "inject the
-   whole *relevant* flow", which is the issue's stated goal; the guard survives
-   as the opt-down knob and the loop guard's raw-history fallback keeps a
-   positive default. Pre-migration states (no ledger) fall back to the legacy
-   tail slice, so behaviour is never worse than before.
+   whole *relevant* flow", which is the issue's stated goal. The shipped
+   reusable workflow keeps the legacy `history_comment_count: 5`, so a CI run
+   tail-caps the ledger to 5 relevant records by default; set the input to `0`
+   to render the full relevant flow. Pre-migration states (no ledger) fall back
+   to the legacy tail slice, so behaviour is never worse than before.
 
 5. **Resolved step inputs are persisted.** Each materialization is recorded as
    a `StepInputRecord` (`name`, `binding`, `ok`, `detail`, `value` capped at

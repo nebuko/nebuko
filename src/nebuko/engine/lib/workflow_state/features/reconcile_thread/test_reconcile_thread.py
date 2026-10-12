@@ -80,6 +80,8 @@ class TestOrderingAndClassification:
         assert [record.id for record in ledger] == [ISSUE_ID, 11, 12]
 
     def test_comments_are_classified(self):
+        # Realistic PAT payloads: every comment is posted by the PAT owner as
+        # ``type: "User"``; bot-ness must come from the body marker alone.
         ledger = _reconcile(
             [],
             _issue(),
@@ -87,11 +89,11 @@ class TestOrderingAndClassification:
                 _comment(11, "/nebuko approve gate"),
                 _comment(
                     12,
-                    "<!-- bot-agent-dev -->\n*Dev answer*",
-                    user=_user(99, "nebuko[bot]", "Bot"),
+                    "<!-- bot-workflow-terminal -->\n<!-- bot-agent-dev -->\n"
+                    "*Dev answer*",
                 ),
                 _comment(13, "just a human thought"),
-                _comment(14, "engine note", user=_user(99, "nebuko[bot]", "Bot")),
+                _comment(14, "<!-- bot-workflow-terminal -->\nengine note"),
             ],
         )
         by_id = {record.id: record.kind for record in ledger}
@@ -99,6 +101,41 @@ class TestOrderingAndClassification:
         assert by_id[12] is ThreadRecordKind.AGENT_OUTPUT
         assert by_id[13] is ThreadRecordKind.HUMAN_FEEDBACK
         assert by_id[14] is ThreadRecordKind.ENGINE_OUTPUT
+
+    def test_legacy_agent_marker_without_universal_marker_is_agent_output(self):
+        # Pre-universal-marker issues: the legacy line-anchored agent token in
+        # the opening window is still enough, with a ``type: "User"`` author.
+        ledger = _reconcile(
+            [], _issue(), [_comment(11, "<!-- bot-agent-dev -->\n*answer*")]
+        )
+        assert {record.id: record.kind for record in ledger}[11] is (
+            ThreadRecordKind.AGENT_OUTPUT
+        )
+
+    def test_engine_notices_are_engine_output_for_user_authored_comments(self):
+        comments = [
+            _comment(
+                11,
+                "<!-- bot-workflow-terminal -->\n**dev agent started** "
+                "[View workflow run logs](https://x)",
+            ),
+            _comment(12, "<!-- bot-workflow-terminal -->\n<!-- bot-human-action -->\n"),
+            _comment(
+                13,
+                "<!-- bot-workflow-terminal -->\n"
+                "The agent crashed or timed out before producing output",
+            ),
+            _comment(
+                14,
+                "<!-- bot-workflow-terminal -->\n"
+                "The agent did not produce a final message",
+            ),
+        ]
+        ledger = _reconcile([], _issue(), comments)
+        by_id = {record.id: record.kind for record in ledger}
+        assert {by_id[11], by_id[12], by_id[13], by_id[14]} == {
+            ThreadRecordKind.ENGINE_OUTPUT
+        }
 
     def test_a_non_bot_quoting_a_marker_is_not_agent_output(self):
         # GitHub quote-reply copies the marker into the quoted text; a human
@@ -108,6 +145,29 @@ class TestOrderingAndClassification:
         )
         assert {record.id: record.kind for record in ledger}[11] is (
             ThreadRecordKind.HUMAN_FEEDBACK
+        )
+
+    def test_a_human_quoting_the_universal_marker_stays_human_feedback(self):
+        # A quote-only reply carries the universal marker behind ``>``; with no
+        # top-level marker it must not impersonate a bot author.
+        ledger = _reconcile(
+            [],
+            _issue(),
+            [_comment(11, "> <!-- bot-workflow-terminal -->\n> quoted answer")],
+        )
+        assert {record.id: record.kind for record in ledger}[11] is (
+            ThreadRecordKind.HUMAN_FEEDBACK
+        )
+
+    def test_a_github_app_bot_without_a_marker_is_still_bot(self):
+        # ``user.type`` remains an OR-signal for a genuine GitHub App bot.
+        ledger = _reconcile(
+            [],
+            _issue(),
+            [_comment(11, "plain body", user=_user(99, "nebuko[bot]", "Bot"))],
+        )
+        assert {record.id: record.kind for record in ledger}[11] is (
+            ThreadRecordKind.ENGINE_OUTPUT
         )
 
     def test_issue_none_yields_comment_only_ledger(self):

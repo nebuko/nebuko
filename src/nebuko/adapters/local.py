@@ -77,10 +77,11 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         There is no issue object locally, so the ledger is comment-only.
 
         Every journal entry was produced by the adapter's own ``post`` (the local
-        engine bot), so each is shaped as a bot author — mirroring the GitHub
-        account that posts agent/engine output. The classifier derives the
-        engine/agent kinds from bot-ness (issue #872), so without this a local
-        agent answer would read as human feedback and drop out of the flow.
+        engine bot) and carries the terminal marker, so the classifier derives
+        the engine/agent kinds from that body marker — the same signal used on
+        the GitHub path (issue #872). ``type: "Bot"`` is set as well so the
+        synthetic thread mirrors a real bot account for the account-based
+        OR-signal, but it is not what the classification relies on.
         """
         comments = [
             {
