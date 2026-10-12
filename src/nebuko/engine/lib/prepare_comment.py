@@ -9,7 +9,7 @@ No bash intermediate — Python reads and writes files directly.
 
 Handles multiple paths mirroring the workflow logic:
   Path A: Structured final_message.txt (happy path)
-  Path B: Fallback to console.log parsing
+  Path B: Fallback to console.txt parsing
   Path C: Agent crashed before producing output
   Path D: final_message.txt doesn't exist
 """
@@ -277,22 +277,22 @@ def clean_message(raw: str) -> str:
     return content
 
 
-# ── Fallback: parse console.log ───────────────────────────────────
+# ── Fallback: parse console.txt ───────────────────────────────────
 
 
 def extract_from_console_log() -> str:
-    """Parse console.log to extract agent message as a fallback.
+    """Parse console.txt to extract agent message as a fallback.
 
     File-driven wrapper around :func:`console_log_fallback` (the shared body);
     kept as the legacy entry point for callers that read the working directory.
 
     Returns:
-        Extracted message text from console.log.
+        Extracted message text from console.txt.
     """
-    if not os.path.isfile("console.log") or os.path.getsize("console.log") == 0:
+    if not os.path.isfile("console.txt") or os.path.getsize("console.txt") == 0:
         return ""
 
-    with open("console.log", "r", encoding="utf-8") as f:
+    with open("console.txt", "r", encoding="utf-8") as f:
         log_content = f.read()
 
     return console_log_fallback(log_content)
@@ -541,10 +541,10 @@ def _select_fallback_body(
     Args:
         latest_answer: Raw ``latest_answer.md`` content (the preferred body).
         final_message: Raw ``final_message.txt`` content.
-        console_log: Raw ``console.log`` content.
+        console_log: Raw ``console.txt`` content.
         has_final_message: Whether the ``final_message.txt`` artifact existed
             with content. ``None`` derives it from ``final_message``.
-        has_console_log: Whether the ``console.log`` artifact existed with
+        has_console_log: Whether the ``console.txt`` artifact existed with
             content. ``None`` derives it from ``console_log``.
         trigger_author: Author pinged on the crash paths (``TRIGGER_AUTHOR``).
         role_name: Role for the context collapse; ``None`` reads the environment.
@@ -579,7 +579,7 @@ def _select_fallback_body(
 
         # Sentinel: agent ran but produced no final message
         if raw.startswith("__NO_FINAL_MESSAGE__"):
-            print("Warning: No final message from agent (sentinel detected), falling back to console.log",
+            print("Warning: No final message from agent (sentinel detected), falling back to console.txt",
                   flush=True)
             fallback = console_fallback()
             if fallback:
@@ -617,15 +617,15 @@ def _select_fallback_body(
             print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
             return finalized(cleaned)
 
-        # Content was empty after cleaning — fall through to console.log
+        # Content was empty after cleaning — fall through to console.txt
         print("Warning: final_message.txt has no meaningful content after cleaning, "
-              "falling back to console.log", flush=True)
+              "falling back to console.txt", flush=True)
         fallback = console_fallback()
         if fallback:
             return fallback
         return author_ping + _CRASH_MESSAGE
 
-    # ── Path B: console.log only (final message missing/empty) ──
+    # ── Path B: console.txt only (final message missing/empty) ──
     fallback = console_fallback()
     if fallback:
         return fallback
@@ -657,10 +657,10 @@ def build_comment_body(
     Args:
         latest_answer: Raw ``latest_answer.md`` content (the preferred body).
         final_message: Raw ``final_message.txt`` content.
-        console_log: Raw ``console.log`` content.
+        console_log: Raw ``console.txt`` content.
         has_final_message: Whether the ``final_message.txt`` artifact existed
             with content. ``None`` derives it from ``final_message``.
-        has_console_log: Whether the ``console.log`` artifact existed with
+        has_console_log: Whether the ``console.txt`` artifact existed with
             content. ``None`` derives it from ``console_log``.
         trigger_author: Author pinged on the crash paths (``TRIGGER_AUTHOR``).
         role_name: Answer-comment role; also drives the context body collapse.
@@ -709,7 +709,7 @@ def prepare_comment(poster: Poster | None = None) -> bool:
     File-driven wrapper around :func:`build_comment_body`; mirrors the
     four-path logic from the workflow YAML:
       Path A: Use final_message.txt (strip internal tags, write output)
-      Path B: Parse console.log for "Message from Agent" blocks
+      Path B: Parse console.txt for "Message from Agent" blocks
       Path C: Agent crashed before producing output
       Path D: final_message.txt doesn't exist
 
@@ -722,11 +722,11 @@ def prepare_comment(poster: Poster | None = None) -> bool:
         True if github_comment.md was written successfully.
     """
     has_final_message = _artifact_has_content("final_message.txt")
-    has_console_log = _artifact_has_content("console.log")
+    has_console_log = _artifact_has_content("console.txt")
     body = build_comment_body(
         latest_answer=_read_latest_answer(),
         final_message=_read_artifact("final_message.txt") if has_final_message else "",
-        console_log=_read_artifact("console.log") if has_console_log else "",
+        console_log=_read_artifact("console.txt") if has_console_log else "",
         has_final_message=has_final_message,
         has_console_log=has_console_log,
         trigger_author=os.environ.get("TRIGGER_AUTHOR", ""),

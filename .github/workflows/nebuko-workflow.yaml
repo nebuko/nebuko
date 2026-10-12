@@ -315,10 +315,10 @@ jobs:
                 PIN_COMMENT: ${{ inputs.pin_comment }}
                 HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
                 PROMPT_BODY: ${{ inputs.prompt_body }}
-                # The engine stages its full SDK file log (app.log) and captured
-                # console.log here; the steps below upload each as its own
+                # The engine stages its full SDK file log (app.txt) and captured
+                # console.txt here; the steps below upload each as its own
                 # unzipped artifact so a run's logs can be fetched raw, no unzip
-                # (issues #743, #779).
+                # (issues #743, #779, #894).
                 # runner.temp is absolute and outside the agent's temp workdir.
                 LOG_TO_FILE: "true"
                 LOG_DIR: ${{ runner.temp }}/nebuko-task-logs
@@ -328,22 +328,23 @@ jobs:
 
             # One unzipped artifact per staged log (issue #779). Under
             # ``archive: false`` each upload takes a single file and the artifact
-            # is named after that file, so the debug tooling fetches ``console.log``
-            # / ``app.log`` directly instead of downloading and extracting a zip.
-            - name: Upload console.log artifact
+            # is named after that file, so the debug tooling fetches ``console.txt``
+            # / ``app.txt`` directly instead of downloading and extracting a zip.
+            # The ``.txt`` extension renders inline in a browser (issue #894).
+            - name: Upload console.txt artifact
               uses: actions/upload-artifact@v7
               if: always()
               with:
-                path: ${{ runner.temp }}/nebuko-task-logs/console.log
+                path: ${{ runner.temp }}/nebuko-task-logs/console.txt
                 archive: false
                 if-no-files-found: ignore
                 retention-days: 7
 
-            - name: Upload app.log artifact
+            - name: Upload app.txt artifact
               uses: actions/upload-artifact@v7
               if: always()
               with:
-                path: ${{ runner.temp }}/nebuko-task-logs/app.log
+                path: ${{ runner.temp }}/nebuko-task-logs/app.txt
                 archive: false
                 if-no-files-found: ignore
                 retention-days: 7

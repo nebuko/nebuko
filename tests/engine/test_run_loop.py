@@ -1281,7 +1281,7 @@ class TestRunLoop:
     def test_posts_the_crash_fallback_when_the_agent_crashes(self, tmp_path, monkeypatch):
         """A crashed agent still reaches publish (issue #590 round-4, finding 2).
 
-        The legacy job runs the agent behind ``| tee console.log`` (so a non-zero
+        The legacy job runs the agent behind ``| tee console.txt`` (so a non-zero
         exit never fails that step) and guards "Clean and Prepare Comment" with
         ``if: always()``. With no artefacts on disk the chain lands on its
         Path C/D fallback — the trigger-author ping plus the warning — and the
@@ -1749,7 +1749,7 @@ class TestRunLogArtifacts:
 
         engine.run()
 
-        staged = engine.adapter.artifact_dir() / "console.log"
+        staged = engine.adapter.artifact_dir() / "console.txt"
         assert staged.read_text(encoding="utf-8") == "[phase:normalize] ok\n"
 
     def test_a_staging_failure_never_aborts_the_run(self, tmp_path, monkeypatch, caplog):

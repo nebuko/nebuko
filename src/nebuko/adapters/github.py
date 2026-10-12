@@ -22,8 +22,8 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
 __all__ = ["GitHubAdapter", "PublishError"]
 
 # Staging directory whose files are uploaded as per-file unzipped CI artifacts
-# (``console.log``, ``app.log``). Kept in sync with the upload-artifact steps in
-# ``nebuko-workflow.yaml`` (issues #743, #779).
+# (``console.txt``, ``app.txt``). Kept in sync with the upload-artifact steps in
+# ``nebuko-workflow.yaml`` (issues #743, #779, #894).
 ARTIFACT_DIR_NAME = "nebuko-task-logs"
 
 # Durable copy of a comment body whose write could not be delivered (issue
