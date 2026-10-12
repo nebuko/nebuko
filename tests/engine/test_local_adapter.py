@@ -20,7 +20,7 @@ TRIGGER_FILE = "trigger.json"
 JOURNAL_FILE = "journal.md"
 STATE_FILE = "state.json"
 LATEST_ANSWER_FILE = "latest_answer.md"
-CONSOLE_LOG_FILE = "console.log"
+CONSOLE_LOG_FILE = "console.txt"
 TERMINAL_MARKER = "<!-- bot-workflow-terminal -->"
 
 

@@ -308,7 +308,7 @@ class TestPrepareCommentIntegration(unittest.TestCase):
 
     def test_path_a_sentinel_falls_back_to_console_log(self):
         self._write("final_message.txt", "__NO_FINAL_MESSAGE__ no data")
-        self._write("console.log",
+        self._write("console.txt",
                      "Message from Agent " + "\u2500" * 63 + "\nFallback message content\nTokens: 100")
         prepare_comment()
         result = self._read("github_comment.md")
@@ -331,7 +331,7 @@ class TestPrepareCommentIntegration(unittest.TestCase):
         # Message only contains tags — empty after cleaning
         content = "<agentRunConfig>{}</agentRunConfig>"
         self._write("final_message.txt", content)
-        self._write("console.log", "Some console output line")
+        self._write("console.txt", "Some console output line")
         prepare_comment()
         # Should have produced some output via fallback
         self.assertTrue(os.path.isfile("github_comment.md"))
@@ -399,7 +399,7 @@ class TestPrepareCommentIntegration(unittest.TestCase):
         self.assertNotIn("@olivier-norture", result)
 
     def test_path_d_crash_fallback_sets_has_comment(self):
-        """Empty/no final message + empty console.log still sets HAS_COMMENT=true."""
+        """Empty/no final message + empty console.txt still sets HAS_COMMENT=true."""
         os.environ["GITHUB_ENV"] = os.path.join(self.tmpdir, "env.txt")
         prepare_comment()
         result = self._read("github_comment.md")

@@ -242,9 +242,9 @@ class TestArtifacts:
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
         adapter = _adapter(tmp_path, FakeGhClient())
 
-        adapter.write_artifact("console.log", "log line\n")
+        adapter.write_artifact("console.txt", "log line\n")
 
-        staged = tmp_path / "nebuko-task-logs" / "console.log"
+        staged = tmp_path / "nebuko-task-logs" / "console.txt"
         assert staged.read_text() == "log line\n"
 
 

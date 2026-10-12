@@ -66,5 +66,5 @@ class PlatformAdapter(Protocol):
 
     # @stub-protected
     def write_artifact(self, name: str, content: str) -> None:
-        """Write a run artifact (``latest_answer.md``, ``console.log``, ...)."""
+        """Write a run artifact (``latest_answer.md``, ``console.txt``, ...)."""
         ...

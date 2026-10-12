@@ -795,7 +795,7 @@ class Engine:
                 agent_result = self.invoke_agent(prompt)
             except Exception as exc:  # noqa: BLE001 - never crash the host
                 log.exception("[phase:agent] agent invocation failed: %s", exc)
-                # The bash runs the agent behind ``| tee console.log``, so a
+                # The bash runs the agent behind ``| tee console.txt``, so a
                 # non-zero exit never fails the step, and "Clean and Prepare
                 # Comment" is guarded by ``if: always()``. A crashed run still
                 # reaches ``prepare_comment`` and posts its structured
@@ -1541,9 +1541,9 @@ class Engine:
         return RunArtifactStager(self.adapter.artifact_dir())
 
     def _stage_run_logs(self, console_log: str) -> None:
-        """Stage ``console.log`` for the CI artifact; never abort the run.
+        """Stage ``console.txt`` for the CI artifact; never abort the run.
 
-        Mirrors the legacy ``| tee console.log``: a run that cannot persist its
+        Mirrors the legacy ``| tee console.txt``: a run that cannot persist its
         logs must still publish its comment, and the upload steps' ``if: always()``
         with ``if-no-files-found: ignore`` tolerate a missing file
         (issues #743, #779).
@@ -1626,7 +1626,7 @@ class Engine:
         """Run the legacy publish chain, then post through the adapter.
 
         The four-path fallback of the ``run-task`` job (final message ->
-        latest answer -> console.log -> crash notice) lives in
+        latest answer -> console.txt -> crash notice) lives in
         ``prepare_comment.build_comment_body``; calling that same function is
         what keeps a run that produced no usable output posting the *same*
         structured fallback on both hosts (issue #590 round-4, finding 2).

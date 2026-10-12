@@ -208,7 +208,7 @@ Nebuko is public at this stage to **find bugs**. Please
 
 - the failing GitHub Actions **run link**;
 - the triggering comment's collapsed **`WORKFLOW_STATE` JSON** block;
-- the run's **`console.log`** and **`app.log`** artifacts;
+- the run's **`console.txt`** and **`app.txt`** artifacts;
 - what you expected versus what happened.
 
 Workflow, agent and skill ideas are just as welcome.
