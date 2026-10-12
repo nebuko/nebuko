@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import litellm
+
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
@@ -17,6 +19,7 @@ from resolve_llm_config import (
     resolve_api_url,
     resolve_llm_config,
 )
+import resolve_llm_config as _rlc
 
 
 class TestResolveApiUrl(unittest.TestCase):
@@ -806,6 +809,121 @@ agents:
         from openhands.sdk import LLM
 
         self.assertIn("extra_headers", LLM.model_fields)
+
+
+class TestMessageNameDrop(unittest.TestCase):
+    """Provider opt-in that strips the message-level ``name`` field (issue #881).
+
+    ``drop_params`` never touches fields nested in ``messages``; a gateway that
+    rejects the tool-message ``name`` needs the dedicated pre-call seam.
+    """
+
+    CONFIG_TEMPLATE = """\
+providers:
+  opencode_go:
+    api_url: "https://opencode.ai/zen/go/v1"
+    api_token_env: "OPENCODE_GO_API_KEY"
+    drop_message_name: true
+llms:
+  go-model:
+    model_path: "openai/deepseek/deepseek-v4.1-flash"
+    provider: "${providers.opencode_go}"
+agents:
+  dev:
+    model: "${llms.go-model}"
+    temperature: 0.1
+    prompt_file: "dev.md"
+"""
+
+    _ENV_KEYS = (
+        "AGENT_CONFIG_PATH",
+        "ROLE_NAME",
+        "CONFIG_MODEL",
+        "CONFIG_TEMPERATURE",
+        "LLM_MODEL",
+        "LLM_BASE_URL",
+        "OPENCODE_GO_API_KEY",
+    )
+
+    def setUp(self):
+        self._saved = {k: os.environ.get(k) for k in self._ENV_KEYS}
+        for k in self._ENV_KEYS:
+            os.environ.pop(k, None)
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        os.environ["ROLE_NAME"] = "dev"
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
+        os.environ["OPENCODE_GO_API_KEY"] = "secret"
+        self._saved_stripper = _rlc._MESSAGE_NAME_STRIPPER
+        if self._saved_stripper in litellm.callbacks:
+            litellm.callbacks.remove(self._saved_stripper)
+
+    def tearDown(self):
+        stripper = _rlc._MESSAGE_NAME_STRIPPER
+        if stripper is not None and stripper in litellm.callbacks:
+            litellm.callbacks.remove(stripper)
+        _rlc._MESSAGE_NAME_STRIPPER = self._saved_stripper
+        if self._saved_stripper is not None and self._saved_stripper not in litellm.callbacks:
+            litellm.callbacks.append(self._saved_stripper)
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _resolve(self, config: str = None):
+        with open(self._config_path, "w") as f:
+            f.write(self.CONFIG_TEMPLATE if config is None else config)
+        return resolve_llm_config(None, "prompt")[0]
+
+    def test_strip_message_name_is_pure_and_role_scoped(self):
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "tool", "tool_call_id": "c1", "name": "terminal", "content": "out"},
+            {"role": "assistant", "content": "ok"},
+        ]
+        result = _rlc._strip_message_name(messages)
+        self.assertNotIn("name", result[1])
+        self.assertEqual(result[1]["tool_call_id"], "c1")
+        self.assertEqual(result[0], messages[0])
+        self.assertEqual(result[2], messages[2])
+        # Input untouched (pure).
+        self.assertIn("name", messages[1])
+
+    def test_pre_call_hook_rewrites_the_outgoing_body(self):
+        stripper = _rlc._MessageNameStripper()
+        complete_input = {
+            "model": "x",
+            "messages": [
+                {"role": "tool", "tool_call_id": "c1", "name": "terminal", "content": "out"},
+            ],
+        }
+        stripper.log_pre_api_call(
+            model="x",
+            messages=complete_input["messages"],
+            kwargs={"additional_args": {"complete_input_dict": complete_input}},
+        )
+        self.assertNotIn("name", complete_input["messages"][0])
+
+    def test_pre_call_hook_tolerates_missing_payload(self):
+        _rlc._MessageNameStripper().log_pre_api_call(
+            model="x", messages=[], kwargs={}
+        )
+
+    def test_opt_in_registers_the_stripper_idempotently(self):
+        self._resolve()
+        self.assertIn(_rlc._MESSAGE_NAME_STRIPPER, litellm.callbacks)
+        self._resolve()
+        self.assertEqual(
+            litellm.callbacks.count(_rlc._MESSAGE_NAME_STRIPPER), 1
+        )
+
+    def test_provider_without_opt_in_registers_nothing(self):
+        self._resolve(self.CONFIG_TEMPLATE.replace(
+            "    drop_message_name: true\n", ""
+        ))
+        self.assertIsNone(_rlc._MESSAGE_NAME_STRIPPER)
 
 
 if __name__ == "__main__":
