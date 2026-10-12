@@ -117,6 +117,19 @@ separate hidden HTML comment):
   token counts, latencies, tool-call statistics, and error rates from the
   OpenHands conversation after each run, and `build_state` attaches them to the
   step's `HistoryEntry`.
+- **Cost estimation (issue #714)** — cost resolves through a precedence chain:
+  a provider/SDK-reported cost (cache-aware) always wins; otherwise the token
+  counts are priced locally with **four rates** (input, output, cache-read,
+  cache-write, in USD per 1M tokens). Where agent-config sets only some fields,
+  the missing tiers are completed per field from a **default price service** —
+  an OpenRouter-backed table fetched once and file-cached under
+  `~/.nebuko/cache/prices/` (env `NEBUKO_PRICE_CACHE_DIR`), fully fail-open.
+  This is what lets subscription providers (CommandCode, OpenCode), which report
+  no per-token cost and ship no prices, produce non-zero estimates — CommandCode
+  by exact org-qualified id, OpenCode Go through an unambiguous-basename
+  fallback for its org-less paths. `0` remains the documented outcome only when
+  neither config nor the service knows the model. Because the service is
+  org-aware, a model priced only by the operator's config still resolves too.
 - **Issue-close aggregation** — `agent_metrics.py` (GHA job
   `agent-metrics`, triggered on issue close) fetches all comments, reads the
   per-step metrics from each comment's `workflow_state` snapshot (de-duplicating

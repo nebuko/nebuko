@@ -37,6 +37,29 @@ class TestLLMConfig:
         assert config.input_price == 2.0
         assert config.output_price == 8.0
 
+    def test_llm_cache_prices_default_none(self):
+        """Cache-tier prices default to None (fall back to the input price)."""
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        config = LLMConfig(
+            model_path="openrouter/deepseek/v4",
+            provider=provider,
+        )
+        assert config.cache_read_price is None
+        assert config.cache_write_price is None
+
+    def test_llm_with_cache_prices(self):
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        config = LLMConfig(
+            model_path="openrouter/deepseek/v4",
+            provider=provider,
+            input_price=2.0,
+            output_price=8.0,
+            cache_read_price=0.2,
+            cache_write_price=2.0,
+        )
+        assert config.cache_read_price == 0.2
+        assert config.cache_write_price == 2.0
+
     def test_llm_with_thinking_params(self):
         """LLMConfig accepts thinking_enabled, preserve_thinking, thinking_token_budget."""
         provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")

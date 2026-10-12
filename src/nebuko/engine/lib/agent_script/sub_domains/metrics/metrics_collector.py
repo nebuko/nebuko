@@ -1,5 +1,6 @@
 """LLM metrics collection — pure functions for extracting metrics from conversations."""
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from openhands.sdk import get_logger
@@ -10,6 +11,10 @@ import os
 
 from metrics_schema import Metrics
 
+from pricing.features.resolve_model_rates.resolve_model_rates import (
+    resolve_model_rates,
+)
+
 from agent_script.sub_domains.metrics.cost import CostRates, SessionCost
 from agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
 from agent_script.sub_domains.metrics.token_telemetry_collector import (
@@ -19,30 +24,99 @@ from agent_script.sub_domains.metrics.token_telemetry_collector import (
 logger = get_logger(__name__)
 
 
-def _derive_tps_and_ttft() -> tuple[float | None, float | None]:
-    """Mean (tokens/sec, time-to-first-token) over the run's captured calls.
+@dataclass(frozen=True)
+class _CapturedTelemetry:
+    """One drain of the capture seam: provider-health means + cache totals."""
 
-    Drains the active capture collector (issue #829). Returns ``(None, None)``
-    when no collector was installed for this run or nothing was observable.
+    tokens_per_second: float | None
+    time_to_first_token: float | None
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+
+def _drain_captured_telemetry() -> "_CapturedTelemetry":
+    """Drain the capture collector once, returning health means + cache totals.
+
+    Drains the active capture collector (issue #829) so it can feed both the
+    provider-health indicators and the cache-token tiers cost accounting needs.
+    Returns an all-empty record when no collector was installed or nothing was
+    observable.
     """
     collector = get_active_collector()
     if collector is None:
-        return None, None
-    mean_ttft, mean_tps = TokenTelemetry.aggregate(collector.drain())
-    return mean_tps, mean_ttft
+        return _CapturedTelemetry(None, None, 0, 0)
+    observations = collector.drain()
+    mean_ttft, mean_tps = TokenTelemetry.aggregate(observations)
+    return _CapturedTelemetry(
+        tokens_per_second=mean_tps,
+        time_to_first_token=mean_ttft,
+        cache_read_tokens=sum(obs.cache_read_tokens for obs in observations),
+        cache_write_tokens=sum(obs.cache_write_tokens for obs in observations),
+    )
 
 
-def _session_cost(combined_metrics, input_tokens, output_tokens, agent_cfg) -> float:
-    """Cost for the session: SDK-reported, else tokens × configured rates."""
+def _cache_token_counts(accumulated_usage, captured: "_CapturedTelemetry") -> tuple[int, int]:
+    """Cache-read/cache-write counts, preferring whichever source saw more.
+
+    The SDK's accumulated ``cache_write_tokens`` is empty for OpenAI-shaped
+    responses: it reads ``cache_creation_tokens``, a field litellm's
+    ``PromptTokensDetails`` does not define (it carries ``cache_write_tokens``).
+    The capture seam reads that field correctly, so it supplies the cache-write
+    tier when the SDK is silent (issue #714 review).
+    """
+    sdk_read = int(getattr(accumulated_usage, "cache_read_tokens", 0) or 0)
+    sdk_write = int(getattr(accumulated_usage, "cache_write_tokens", 0) or 0)
+    return (
+        max(sdk_read, captured.cache_read_tokens),
+        max(sdk_write, captured.cache_write_tokens),
+    )
+
+
+def _effective_model_ref(agent_cfg):
+    """The LLMConfig whose prices apply, honoring the active complexity tier."""
+    if agent_cfg is None:
+        return None
+    complexity = os.environ.get("CONFIG_COMPLEXITY", "").lower()
+    if complexity in ("low", "medium", "high"):
+        overrides = getattr(agent_cfg, "complexity_overrides", None) or {}
+        tier = overrides.get(complexity)
+        if tier is not None and tier.model_ref is not None:
+            return tier.model_ref
+    return agent_cfg.model_ref
+
+
+def _resolve_price(agent_cfg, price_table):
+    """Merge configured prices with the default price table for the session model."""
+    model_ref = _effective_model_ref(agent_cfg)
+    if model_ref is None:
+        return None
+    return resolve_model_rates(model_ref, price_table)
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _session_cost(
+    combined_metrics,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    cache_write_tokens: int,
+    model_price,
+) -> float:
+    """Cost for the session: SDK-reported, else tokens × resolved model rates."""
     rates = None
-    if agent_cfg is not None:
+    if model_price is not None:
         rates = CostRates.from_prices(
-            agent_cfg.model_ref.input_price, agent_cfg.model_ref.output_price
+            model_price.input_price,
+            model_price.output_price,
+            model_price.cache_read_price,
+            model_price.cache_write_price,
         )
     sdk_reported = float(getattr(combined_metrics, "accumulated_cost", 0.0) or 0.0)
     return SessionCost(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
         rates=rates,
         sdk_reported_cost=sdk_reported,
     ).total()
@@ -115,7 +189,7 @@ def _compute_tokens_per_tool(combined_metrics):
         tokens_per_tool[tool_name] = {
             'input': getattr(usage, 'prompt_tokens', 0) or 0,
             'output': getattr(usage, 'completion_tokens', 0) or 0,
-            'cache_hit': getattr(usage, 'cache_hit_tokens', 0) or 0,
+            'cache_hit': getattr(usage, 'cache_read_tokens', 0) or 0,
             'reasoning': getattr(usage, 'reasoning_tokens', 0) or 0,
         }
 
@@ -155,14 +229,16 @@ def _reasoning_tokens(combined_metrics):
     )
 
 
-def collect_llm_metrics(conversation, agent_cfg=None):
+def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
     """
     Collect LLM metrics from a conversation after it has completed.
 
     Args:
         conversation: The OpenHands Conversation object
-        agent_cfg: Optional AgentConfig supplying per-million prices for the
-            deterministic cost fallback when the SDK reports no cost.
+        agent_cfg: Optional AgentConfig whose ``model_ref`` seeds the
+            deterministic cost fallback (its configured prices win per field).
+        price_table: Optional default :class:`PriceTable` supplying prices the
+            config does not set, so subscription-provider models are costed.
 
     Returns:
         Metrics: Metrics object containing all collected metrics
@@ -201,18 +277,38 @@ def collect_llm_metrics(conversation, agent_cfg=None):
             agent_runtime_ms = 0.0
             agent_runtimes_per_call_ms = []
 
-        # Get token usage
+        # Get token usage (including the SDK's cache buckets)
         input_tokens = 0
         output_tokens = 0
+        cache_read_tokens = 0
+        cache_write_tokens = 0
         max_context_window = 0
+
+        # Drain the capture seam once — it feeds both the provider-health means
+        # and, when the SDK's cache-write bucket is empty (litellm field-name
+        # mismatch), the cache-write tier cost accounting needs.
+        captured = _drain_captured_telemetry()
+
         if combined_metrics.accumulated_token_usage:
             input_tokens = combined_metrics.accumulated_token_usage.prompt_tokens
             output_tokens = combined_metrics.accumulated_token_usage.completion_tokens
+            cache_read_tokens, cache_write_tokens = _cache_token_counts(
+                combined_metrics.accumulated_token_usage, captured
+            )
             max_context_window = combined_metrics.accumulated_token_usage.context_window
 
         # Session cost: the SDK's accumulated_cost when it priced the model,
-        # otherwise tokens × configured rates (0.0 only when neither is known).
-        cost = _session_cost(combined_metrics, input_tokens, output_tokens, agent_cfg)
+        # otherwise tokens × resolved rates (config over the default price
+        # table; 0.0 only when neither source knows the model).
+        model_price = _resolve_price(agent_cfg, price_table)
+        cost = _session_cost(
+            combined_metrics,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            model_price,
+        )
 
         # Compute per-tool statistics
         tool_calls_per_tool = _compute_tool_calls_per_tool(conversation)
@@ -231,7 +327,8 @@ def collect_llm_metrics(conversation, agent_cfg=None):
                 start_time = first_event.timestamp
 
         # Provider-health indicators captured over the run's LLM calls (#829).
-        tokens_per_second, time_to_first_token = _derive_tps_and_ttft()
+        tokens_per_second = captured.tokens_per_second
+        time_to_first_token = captured.time_to_first_token
 
         # Build Metrics object
         role_name = os.environ.get("ROLE_NAME", "unknown")
