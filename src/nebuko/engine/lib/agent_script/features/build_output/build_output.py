@@ -976,6 +976,50 @@ def _resolve_dispatch(
     return dispatch, function_call, final_message
 
 
+def _neutralize_self_and_pin(
+    dispatch: Optional[Dispatch],
+    function_call: Optional[FunctionCall],
+    role_name: str,
+) -> tuple[Optional[Dispatch], Optional[FunctionCall]]:
+    """Neutralize a self hand-off and force the PO escalation pin (issue #876).
+
+    Two pure decisions applied to the resolved ``(dispatch, function_call)``:
+
+    1. **Self hand-off (issue #618, defect 2a):** when the ``function_call``
+       targets the running agent it must not outrank the plain dispatch /
+       workflow-next routing. Drop the ``function_call`` *and* the promoted
+       ``task_hint`` the typed ``call_agent`` branch copied onto the dispatch —
+       otherwise ``agent_host._routing_payload`` would re-derive an ``agent``
+       target from the neutralized hand-off and re-route to the running agent.
+    2. **PO escalation pin (issue #876 review):** the typed ``call_agent`` tool
+       exposes no ``pin`` field, so an imperatively escalating PO would lose the
+       verbatim pin its spec-comment contract requires. Force ``dispatch.pin``
+       engine-side on a PO hand-off.
+
+    Returns the possibly-updated ``(dispatch, function_call)`` pair; neither
+    input is mutated (``model_copy``).
+    """
+    if function_call is not None and is_self_function_call(function_call, role_name):
+        logger.info(
+            f"Self function_call neutralized (agent={role_name}); "
+            f"keeping plain dispatch for workflow-next routing"
+        )
+        function_call = None
+        if dispatch is not None and dispatch.task_hint == role_name:
+            dispatch = dispatch.model_copy(update={"task_hint": None})
+
+    if (
+        role_name == "po"
+        and function_call is not None
+        and function_call.function == "call_agent"
+        and dispatch is not None
+    ):
+        logger.info("PO imperative hand-off — forcing dispatch pin (issue #876)")
+        dispatch = dispatch.model_copy(update={"pin": True})
+
+    return dispatch, function_call
+
+
 def _resolve_pin(dispatch: Optional[Dispatch]) -> bool:
     """Resolve whether this step's output comment(s) should be pinned.
 
@@ -1140,16 +1184,10 @@ def build_output(
         conversation, final_message
     )
 
-    # Self function_call neutralization (issue #618, defect 2a): a self
-    # hand-off (agent dispatches to itself) must not outrank the plain
-    # dispatch / workflow-next routing. Drop the function_call and keep
-    # the plain dispatch so the router falls through to workflow-next.
-    if function_call is not None and is_self_function_call(function_call, role_name):
-        logger.info(
-            f"Self function_call neutralized (agent={role_name}); "
-            f"keeping plain dispatch for workflow-next routing"
-        )
-        function_call = None
+    # Self function_call neutralization (issue #618, defect 2a) + PO escalation
+    # pin (issue #876 review): both decisions live in the pure helper so they
+    # are directly unit-testable.
+    dispatch, function_call = _neutralize_self_and_pin(dispatch, function_call, role_name)
 
     # Clear the run-scoped dispatch registry on every exit path (issue #524):
     # build_output runs exactly once per agent run, so this must not leak into

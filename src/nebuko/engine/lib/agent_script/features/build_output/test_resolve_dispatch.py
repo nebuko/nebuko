@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from build_output import _resolve_dispatch, _no_action_dispatch
+from build_output import _resolve_dispatch, _no_action_dispatch, _neutralize_self_and_pin
 from workflow_state import Dispatch, FunctionCall, WorkflowState
 
 
@@ -358,6 +358,76 @@ class TestTypedCallAgentResolution(unittest.TestCase):
         self.assertEqual(function_call.agent_name, "context")
         self.assertEqual(function_call.callback, "architect")
         self.assertNotIn("AGENT_RUN_CONFIG", message)
+
+
+class TestSelfHandoffNeutralization(unittest.TestCase):
+    """Self hand-off neutralization also clears the promoted routing target.
+
+    Issue #876 review (#618 defect 2a): the typed ``call_agent`` branch promotes
+    ``agent_name`` into ``dispatch.task_hint``, so dropping only the
+    ``function_call`` on a self-target left the routing target alive and let
+    ``agent_host._routing_payload`` re-derive an ``agent`` that re-routes to the
+    running agent. The neutralizer must clear both.
+    """
+
+    def test_self_handoff_drops_function_call_and_task_hint(self):
+        call = FunctionCall(function="call_agent", agent_name="dev")
+        recorded = Dispatch(status="advance", task_hint="dev")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "dev")
+        self.assertIsNone(function_call)
+        self.assertIsNone(dispatch.task_hint)
+        # The plain advance survives so the router falls through to workflow-next.
+        self.assertEqual(dispatch.status, "advance")
+
+    def test_self_handoff_preserves_a_different_agent_target(self):
+        """A promo target naming a *different* agent is not a self hand-off."""
+        call = FunctionCall(function="call_agent", agent_name="context")
+        recorded = Dispatch(status="advance", task_hint="context")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "dev")
+        self.assertEqual(function_call.agent_name, "context")
+        self.assertEqual(dispatch.task_hint, "context")
+
+    def test_self_handoff_does_not_clear_an_unrelated_task_hint(self):
+        """A stale/unrelated task_hint is left untouched (the fc is the target)."""
+        call = FunctionCall(function="call_agent", agent_name="dev")
+        recorded = Dispatch(status="advance", task_hint="review")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "dev")
+        self.assertIsNone(function_call)
+        self.assertEqual(dispatch.task_hint, "review")
+
+    def test_non_self_handoff_is_untouched(self):
+        call = FunctionCall(function="call_agent", agent_name="review")
+        recorded = Dispatch(status="advance", task_hint="review")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "dev")
+        self.assertIs(function_call, call)
+        self.assertIs(dispatch, recorded)
+
+
+class TestPoEscalationPin(unittest.TestCase):
+    """A PO imperative hand-off forces the pin engine-side (issue #876 review).
+
+    ``CallAgentAction`` exposes no ``pin`` field, so a prompt alone cannot pin
+    the spec comment on a PO escalation. The engine forces ``dispatch.pin``.
+    """
+
+    def test_po_handoff_forces_pin(self):
+        call = FunctionCall(function="call_agent", agent_name="architect")
+        recorded = Dispatch(status="advance", task_hint="architect")
+        dispatch, function_call = _neutralize_self_and_pin(recorded, call, "po")
+        self.assertTrue(dispatch.pin)
+        self.assertEqual(function_call.agent_name, "architect")
+
+    def test_non_po_handoff_does_not_force_pin(self):
+        call = FunctionCall(function="call_agent", agent_name="context")
+        recorded = Dispatch(status="advance", task_hint="context")
+        dispatch, _ = _neutralize_self_and_pin(recorded, call, "architect")
+        self.assertFalse(dispatch.pin)
+
+    def test_po_without_a_handoff_does_not_force_pin(self):
+        """Only the imperative hand-off path pins; a plain advance is untouched."""
+        recorded = Dispatch(status="advance", task_hint="dev")
+        dispatch, _ = _neutralize_self_and_pin(recorded, None, "po")
+        self.assertFalse(dispatch.pin)
 
 
 if __name__ == "__main__":

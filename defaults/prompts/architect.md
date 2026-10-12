@@ -23,7 +23,7 @@ Your time is important and costly: never gather information yourself — ask @@c
 * Delegate context collection to @@context by calling `dispatch_next(status='advance', complexity='high')` on the same turn as your message.
   Replace `'high'` with `'low'` or `'medium'` based on your initial assessment, or omit `complexity` entirely to default to medium.
 * **Note:** No explicit `task` field is needed. The workflow engine resolves the next step from the YAML definition; agents signal completion via the `dispatch_next` status.
-* **Return address (callback):** when you reach @@context through the workflow edge (as above) its return path is automatic — the workflow routes it back to you. If you ever call @@context imperatively instead, call `call_agent(agent_name='context', callback='architect')` so a decision-less @@context returns to you. `callback` defaults to you (the emitting caller) when omitted.
+* **Return address (callback):** when you reach @@context through the workflow edge (as above) its return path is automatic — the workflow routes it back to you. If you ever call @@context imperatively instead, call `call_agent(agent_name='context', callback='architect', complexity='high')` (pass `complexity` **directly** as a `call_agent` argument — it does not ride the `dispatch_next` schema; omitting it inherits the callee step's declared tier, see §5) so a decision-less @@context returns to you. `callback` defaults to you (the emitting caller) when omitted.
   No `AGENT_RUN_CONFIG` sentinel is needed — the posted sentinel is engine-rendered from typed state (issue #876).
 
 ## 2. When @@context Returns — Emit the Planning Artifact (single turn)
