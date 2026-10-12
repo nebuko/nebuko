@@ -19,6 +19,14 @@ from typing import Any, Mapping, Optional, Sequence
 from ...sub_domains.thread_record.thread_record import ThreadRecord, ThreadRecordKind
 from ..classify_comment.classify_comment import classify_comment
 
+# The canonical bot markers live in resolve_config; importing the constant keeps
+# the ledger's notion of "bot-authored" identical to the rest of the engine's.
+# ``is_bot_comment`` is deliberately *not* reused here: it scans the first lines
+# for a bare marker substring, so it also fires on a human quote-reply (which
+# copies the marker verbatim) — the ledger needs the stricter top-level check
+# below (see :func:`_has_top_level_bot_marker`).
+from resolve_config.features.parse_trigger.parse_trigger import UNIVERSAL_BOT_MARKER
+
 __all__ = ["reconcile_thread", "DEFAULT_TRUST_ALLOWLIST"]
 
 # Repository-trusted associations (mirrors the CI caller-auth gate and the
@@ -124,7 +132,7 @@ def _record_from_comment(
     association = str(comment.get("author_association") or "")
     return ThreadRecord(
         kind=classify_comment(
-            str(comment.get("body") or ""), author_is_bot=_user_is_bot(comment)
+            str(comment.get("body") or ""), author_is_bot=_author_is_bot(comment)
         ),
         id=_int(comment.get("id")),
         url=str(comment.get("html_url") or ""),
@@ -177,6 +185,45 @@ def _user_id(item: Mapping[str, Any]) -> int:
 
 def _user_login(item: Mapping[str, Any]) -> str:
     return str(_user_block(item).get("login") or "")
+
+
+def _author_is_bot(comment: Mapping[str, Any]) -> bool:
+    """True when the comment's author is bot-generated (issue #872).
+
+    The canonical signal is the body's own bot marker (the universal
+    ``<!-- bot-workflow-terminal -->`` or a line-anchored ``<!-- bot-agent-* -->``
+    token in the first five lines), because in this deployment the PAT owner
+    posts every comment as ``type == "User"`` — a ``user.type``/``[bot]`` check
+    therefore never fires and the agent/engine buckets go dead. The account check
+    stays only as an additional OR-signal for a true GitHub App bot.
+
+    A *top-level* marker is required: GitHub's quote-reply copies a quoted
+    comment verbatim (marker included) into the reply body, so a human quoting an
+    agent answer must not be read as its author (prompt-injection guard, issue
+    #872 review).
+    """
+    body = str(comment.get("body") or "")
+    if _has_top_level_bot_marker(body):
+        return True
+    return _user_is_bot(comment)
+
+
+def _has_top_level_bot_marker(body: str) -> bool:
+    """True when ``body`` carries a bot marker that is not inside a quote block.
+
+    Only the author's own (unquoted) lines count: a line carrying a leading
+    ``>`` is quoted text, so a marker copied there by GitHub's quote-reply cannot
+    impersonate a bot author. The universal marker or the legacy agent marker is
+    honoured when it appears in the first five unquoted lines (mirroring the
+    window used by :func:`has_universal_bot_marker` / :func:`is_bot_comment`).
+    """
+    for line in body.split("\n")[:5]:
+        stripped = line.lstrip()
+        if stripped.startswith(">"):
+            continue
+        if UNIVERSAL_BOT_MARKER in stripped or stripped.startswith("<!-- bot-agent-"):
+            return True
+    return False
 
 
 def _user_is_bot(item: Mapping[str, Any]) -> bool:
