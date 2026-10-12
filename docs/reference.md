@@ -254,7 +254,7 @@ is authoritative.
 | `agent` | string | Agent role executing the current step. |
 | `phase` | string | High-level phase (`analysis`, `planning`, `execution`, ...). |
 | `history` | HistoryEntry[] | Summarized records of prior steps (see below). |
-| `thread` | ThreadRecord[] | The issue's **thread ledger** (issue #872): one classified, id-keyed metadata record per issue artifact (issue body, command, engine output, agent output, human feedback). Reconciled against the full comment list between runs; the prompt's `## Recent thread` is rendered from the relevant records. |
+| `thread` | ThreadRecord[] | The issue's **thread ledger** (issue #872): one classified, id-keyed metadata record per issue artifact (issue body, command, engine output, agent output, human feedback). Reconciled against the full comment list between runs; the prompt's `## Recent thread` is rendered from the relevant records. Body-marker bot-ness is anchored to the engine's own `GET /user` account (or a genuine bot account), so a forged marker cannot reach the trusted flow. |
 | `pinned_comment_ids` | int[] | Comment IDs injected **verbatim** into the next agent's context; every other included comment is injected as a summary/excerpt. |
 | `current_context` | object | Free-form shared data between agents (pending tasks, constraints, decisions, `last_run_status`, ...). |
 | `parent_workflow` | string \| null | Parent workflow name when inside a sub-workflow. Derived view of the second-to-last `position` frame. |

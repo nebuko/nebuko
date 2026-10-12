@@ -87,12 +87,23 @@ Two hazards are in scope for the security posture:
 
 6. **Prompt-injection posture.** Two independent gates protect the trusted
    flow:
-   - **Bot-ness gates classification, not the tie-break.** The
-     `engine-output` / `agent-output` kinds are decided only for a bot author; a
-     non-bot author can only ever be a `command` or `human-feedback`. Since
-     GitHub quote-reply copies markers (`<!-- bot-agent-* -->`) into the quoted
-     text, deriving a bot kind from the body alone would let a human comment
-     masquerade as trusted agent output.
+   - **Bot-ness gates classification, and is anchored to the posting account.**
+     The `engine-output` / `agent-output` kinds are decided only for a bot
+     author; a non-bot author can only ever be a `command` or `human-feedback`.
+     Because every CI comment in this deployment is posted by the PAT owner as
+     `type: "User"`, bot-ness is derived from the body's own marker
+     (`<!-- bot-workflow-terminal -->` / a line-anchored `<!-- bot-agent-* -->`)
+     — but the marker alone is forgeable by any public commenter, and GitHub
+     quote-reply copies markers into the quoted text. The marker signal is
+     therefore **anchored to the posting account**: it is honoured only when the
+     author is a genuine bot account (`user.type == "Bot"` / `[bot]` login) *or*
+     the engine's own actor — the account `GET /user` reports for the run's token
+     (resolved once per run, cached; the login is the fallback when the numeric
+     id is unknown). When a top-level marker matches but the account does not,
+     the comment falls back to the human path, so a forged marker yields a
+     `command` or `human-feedback` (still gated below), never trusted agent/
+     engine output. The anchor fails closed: an unresolved engine actor means no
+     marker-derived bot-ness.
    - **Human-authored kinds are trust-gated at render time.** A `command` or
      `human-feedback` renders in full only when `trusted`:
      `author_association ∈ {OWNER, MEMBER, COLLABORATOR}` **and** the author
@@ -136,8 +147,9 @@ deferred.
   skips it.
 - **Injection surface is bounded.** Only the run's initiator (with a trusted
   association) contributes trusted human text; every other human comment is
-  quarantined in the unverified appendix, and a bot kind can only be derived
-  from a bot author.
+  quarantined in the unverified appendix, and a bot kind is derived only from an
+  author anchored to a bot account or the engine's own `GET /user` actor, never
+  from a forgeable body marker alone.
 - **Comment fetch cost.** Reconciliation requires the *full* comment list, so
   `load_raw_thread` adds one unbounded comment fetch per run on top of the
   bounded window it replaces. This is inherent to "review the whole thread

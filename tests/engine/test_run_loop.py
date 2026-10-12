@@ -2692,6 +2692,26 @@ class TestThreadLedgerEngineGlue:
         assert engine._render_recent_thread(history) == _render_history(history)
         assert "legacy body" in engine._render_recent_thread(history)
 
+    def test_engine_actor_is_resolved_from_the_adapter(self, tmp_path):
+        class _ActorAdapter(_NoThreadAdapter):
+            def engine_actor(self):
+                return 7, "nebuko-engine"
+
+        engine = Engine(adapter=_ActorAdapter(), repo_root=repo_root(), env={})
+        assert engine._thread_engine_actor() == (7, "nebuko-engine")
+
+    def test_engine_actor_fails_closed_without_the_adapter_method(self, tmp_path):
+        engine = Engine(adapter=_NoThreadAdapter(), repo_root=repo_root(), env={})
+        assert engine._thread_engine_actor() == (0, "")
+
+    def test_engine_actor_is_best_effort_on_resolver_failure(self, tmp_path):
+        class _BrokenAdapter(_NoThreadAdapter):
+            def engine_actor(self):
+                raise RuntimeError("GET /user unavailable")
+
+        engine = Engine(adapter=_BrokenAdapter(), repo_root=repo_root(), env={})
+        assert engine._thread_engine_actor() == (0, "")
+
 
 class TestUnverifiedHumanComments:
     """Untrusted human comments are surfaced but framed as unverified (#872)."""

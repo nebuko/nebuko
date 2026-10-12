@@ -1896,12 +1896,15 @@ class Engine:
 
         prev = self._seeded_prev_state.get("state") or self._previous_state()
         trigger_user_id, trigger_login = self._thread_trigger_identity()
+        engine_actor_id, engine_actor_login = self._thread_engine_actor()
         records = reconcile_thread(
             list(getattr(prev, "thread", []) or []),
             issue=issue,
             comments=comments,
             trigger_user_id=trigger_user_id,
             trigger_login=trigger_login,
+            engine_actor_id=engine_actor_id,
+            engine_actor_login=engine_actor_login,
         )
         bodies: dict[str, str] = {}
         for comment in comments:
@@ -1916,7 +1919,9 @@ class Engine:
         The id is preferred (``TRIGGER_AUTHOR_ID``); the login falls back to the
         workflow's recorded starter — the human on the hook — then the trigger
         author, so a chained bot-triggered run still trusts that human's
-        comments (issue #872).
+        comments (issue #872). This anchors trust matching *and* bot rendering:
+        only this account's comments are trusted; the engine's own actor (see
+        :meth:`_thread_engine_actor`) is the separate anchor for bot-ness.
         """
         raw = self.env.get("TRIGGER_AUTHOR_ID") or ""
         try:
@@ -1933,6 +1938,29 @@ class Engine:
             if isinstance(trigger, Trigger):
                 login = trigger.author
         return user_id, login
+
+    def _thread_engine_actor(self) -> tuple[int, str]:
+        """The engine's own ``(user_id, login)`` for ledger bot-ness anchoring.
+
+        Board-resolution (issue #872 review): the body-marker signal is trusted
+        only for this posting account, so a public commenter cannot forge a bot
+        marker into the trusted flow. Delegates to the adapter's best-effort
+        ``engine_actor`` (a ``GET /user`` self-identity); adapters without it
+        (e.g. the local journal, whose comments are typed ``Bot``) return
+        ``(0, "")`` and the marker signal fails closed.
+        """
+        resolver = getattr(self.adapter, "engine_actor", None)
+        if resolver is None:
+            return 0, ""
+        try:
+            user_id, login = resolver()
+        except Exception as exc:  # noqa: BLE001 - identity is best-effort
+            log.warning("[thread-ledger] could not resolve the engine actor: %s", exc)
+            return 0, ""
+        try:
+            return int(user_id), str(login or "")
+        except (TypeError, ValueError):
+            return 0, ""
 
     def _role_of(self, agent_result: Any) -> str:
         if isinstance(agent_result, Mapping) and agent_result.get("role"):

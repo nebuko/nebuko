@@ -42,6 +42,8 @@ def reconcile_thread(
     trigger_user_id: int,
     trigger_login: str = "",
     allowlist: tuple[str, ...] = DEFAULT_TRUST_ALLOWLIST,
+    engine_actor_id: int = 0,
+    engine_actor_login: str = "",
 ) -> list[ThreadRecord]:  # @stub-protected
     """Fold the current thread into the ledger (see the module docstring).
 
@@ -55,6 +57,11 @@ def reconcile_thread(
         trigger_login: Login of the run's initiator, used as the trust match when
             ``trigger_user_id`` is unknown (fail-closed when both are empty).
         allowlist: Author associations eligible for trust.
+        engine_actor_id: GitHub user id the engine posts as (the PAT owner),
+            resolved via ``GET /user``. Anchor for body-marker bot-ness: pass
+            ``0`` when unknown (markers then fail closed to the human path).
+        engine_actor_login: Login the engine posts as; the login fallback for
+            the bot-ness anchor when ``engine_actor_id`` is unknown.
 
     Returns:
         The reconciled ledger: present artifacts in thread order, then any
@@ -73,7 +80,14 @@ def reconcile_thread(
         _append(
             ordered,
             seen,
-            _record_from_comment(comment, trigger_user_id, trigger_login, allowlist),
+            _record_from_comment(
+                comment,
+                trigger_user_id,
+                trigger_login,
+                allowlist,
+                engine_actor_id,
+                engine_actor_login,
+            ),
         )
 
     present = {record.id for record in ordered}
@@ -125,6 +139,8 @@ def _record_from_comment(
     trigger_user_id: int,
     trigger_login: str,
     allowlist: tuple[str, ...],
+    engine_actor_id: int,
+    engine_actor_login: str,
 ) -> ThreadRecord:
     """Build a comment record, classifying its kind and trust."""
     user_id = _user_id(comment)
@@ -132,7 +148,10 @@ def _record_from_comment(
     association = str(comment.get("author_association") or "")
     return ThreadRecord(
         kind=classify_comment(
-            str(comment.get("body") or ""), author_is_bot=_author_is_bot(comment)
+            str(comment.get("body") or ""),
+            author_is_bot=_author_is_bot(
+                comment, engine_actor_id, engine_actor_login
+            ),
         ),
         id=_int(comment.get("id")),
         url=str(comment.get("html_url") or ""),
@@ -187,25 +206,52 @@ def _user_login(item: Mapping[str, Any]) -> str:
     return str(_user_block(item).get("login") or "")
 
 
-def _author_is_bot(comment: Mapping[str, Any]) -> bool:
+def _author_is_bot(
+    comment: Mapping[str, Any], engine_actor_id: int, engine_actor_login: str
+) -> bool:
     """True when the comment's author is bot-generated (issue #872).
 
     The canonical signal is the body's own bot marker (the universal
     ``<!-- bot-workflow-terminal -->`` or a line-anchored ``<!-- bot-agent-* -->``
     token in the first five lines), because in this deployment the PAT owner
     posts every comment as ``type == "User"`` — a ``user.type``/``[bot]`` check
-    therefore never fires and the agent/engine buckets go dead. The account check
-    stays only as an additional OR-signal for a true GitHub App bot.
+    therefore never fires and the agent/engine buckets go dead.
+
+    But the marker alone is forgeable: any public commenter can type a
+    top-level bot marker. So the body-marker signal is **anchored to the posting
+    account** — it is honoured only when the comment author is a genuine bot
+    account (``user.type == "Bot"`` / ``[bot]`` login) *or* it is the engine's
+    own actor (the PAT resolved via ``GET /user``). When the marker matches but
+    the account does not, the comment falls back to the human path
+    (:func:`classify_comment` with ``author_is_bot=False``), so the existing
+    ``_is_trusted`` gate + unverified appendix handle it (issue #872 review,
+    prompt-injection guard).
 
     A *top-level* marker is required: GitHub's quote-reply copies a quoted
     comment verbatim (marker included) into the reply body, so a human quoting an
-    agent answer must not be read as its author (prompt-injection guard, issue
-    #872 review).
+    agent answer must not be read as its author.
     """
-    body = str(comment.get("body") or "")
-    if _has_top_level_bot_marker(body):
+    if _user_is_bot(comment):
         return True
-    return _user_is_bot(comment)
+    if not _has_top_level_bot_marker(str(comment.get("body") or "")):
+        return False
+    return _is_engine_actor(comment, engine_actor_id, engine_actor_login)
+
+
+def _is_engine_actor(
+    comment: Mapping[str, Any], engine_actor_id: int, engine_actor_login: str
+) -> bool:
+    """True when the comment author is the engine's own posting account.
+
+    Resolved from ``GET /user`` for this token: the PAT owner (and, for a true
+    GitHub App, its bot identity). Falls back to the login when the numeric id
+    is unknown, and fails closed when neither is known — an unanchored marker
+    must never grant bot status.
+    """
+    user_id = _user_id(comment)
+    if engine_actor_id > 0 and user_id == engine_actor_id:
+        return True
+    return bool(engine_actor_login) and _user_login(comment) == engine_actor_login
 
 
 def _has_top_level_bot_marker(body: str) -> bool:

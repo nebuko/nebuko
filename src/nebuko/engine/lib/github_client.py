@@ -653,6 +653,45 @@ def get_issue(
     return payload if isinstance(payload, dict) else None
 
 
+def get_authenticated_user(
+    token: Optional[str] = None,
+    dry_run: bool = False,
+    *,
+    transport: Optional[GitHubTransport] = None,
+) -> Optional[dict]:
+    """Fetch the identity of the account this token posts as (``GET /user``).
+
+    Returns ``{"id": int, "login": str, "type": str}`` for the engine's own
+    actor — the PAT owner every CI comment is attributed to. The thread ledger
+    anchors body-marker bot-ness to this account so a public commenter cannot
+    forge a bot marker (issue #872 review). Best-effort: ``None`` on a
+    failed/unparseable fetch (the ledger then fails closed).
+    """
+    if dry_run:
+        return None
+
+    transport = transport or _default_transport(token)
+    result = transport.call(["api", "/user"], mutative=False)
+    if not result.ok:
+        print(f"Error fetching authenticated user: {result.detail}", file=sys.stderr)
+        return None
+    try:
+        payload = json.loads(result.payload) if result.payload.strip() else None
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        user_id = int(payload.get("id"))
+    except (TypeError, ValueError):
+        user_id = 0
+    return {
+        "id": user_id,
+        "login": str(payload.get("login") or ""),
+        "type": str(payload.get("type") or ""),
+    }
+
+
 def fetch_issue_comments(
     repo: str,
     issue_number: int,
