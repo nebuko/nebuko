@@ -255,15 +255,32 @@ steps:
 Mechanics:
 
 1. The resolver detects the `script:` source and emits the execution contract
-   (`RUN_SCRIPT=true`, `SCRIPT_PATH`, `SCRIPT_ARGS`, `SCRIPT_TIMEOUT_MINUTES`)
-   instead of a task assignment; no agent is run for that step.
-2. The CI job executes the script in a dedicated "Run Script Step" step,
-   bounded by a step-level timeout and an executor-level timeout.
-3. The executor posts a structured comment — a **PASS ✅ / FAIL ⚠️** banner,
-   the script path, args, exit code, duration, and the raw output in a fenced
-   code block (so trigger-like strings in the output stay inert) — and
-   advances the workflow state with a synthetic dispatch so the next step
-   fires exactly as after an agent run.
+   (`RUN_SCRIPT=true`, `SKIP_AGENT=true`, `SCRIPT_PATH`, `SCRIPT_ARGS`,
+   `SCRIPT_TIMEOUT_MINUTES`, `WORKFLOW_STEP`) instead of a task assignment; no
+   agent is run for that step.
+2. The engine runs the script from `[phase:action]` (bounded by the optional
+   `timeout_minutes`), capturing stdout and stderr **merged**, and posts **two**
+   comments — the same comment lifecycle as an agent step:
+   - a *start notice* on entry: `<step> command started` — View workflow run
+     logs. It carries no state block and **no** `<!-- workflow-continue -->`
+     token (a token here would re-trigger the gate before the command finished);
+   - a *completion* comment carrying the workflow state
+     (`<!-- bot-workflow-terminal -->` + `<!-- bot-command-<step> -->` +
+     `<!-- workflow-continue -->` + the embedded state block). This comment is
+     the step's registered output.
+3. The completion body is a **`<step> command succeeded` / `command failed`**
+   banner — the step name, exit code and duration only, **never the command
+   line** (path/args may carry secrets) — followed by a collapsed
+   `<details><summary>command output</summary>` fenced block with the captured
+   output (so trigger-like strings in the output stay inert). Oversized output
+   is truncated head+tail with a marker to stay under GitHub's comment-size
+   limit.
+4. The completion comment is registered as the step output
+   (`current_context.step_outputs` → `{step, comment_id}`), so a downstream
+   `inputs: [<step>]` binds to it exactly like an agent answer (ADR-0013), and
+   the `<!-- workflow-continue -->` token re-triggers the workflow gate so the
+   chain continues automatically. The script's distinct `bot-command-*` tag is
+   never counted as an agent turn by the circuit breaker.
 
 Result semantics (feeds the existing `conditions` mechanism):
 
@@ -280,6 +297,10 @@ Security notes:
 - Scripts must live in the repo: `script.path` is repo-relative, absolute
   paths and `..` segments are rejected at parse time and re-verified at
   runtime (realpath containment inside the checkout).
+- The command line (`path` + `args`) is deliberately **not echoed** in the
+  posted comments; only the step name, exit code and duration appear in the
+  banner. The captured *output* is posted as-is — the same trust level as an
+  agent answer.
 - The script runs in the same CI job with the job's full environment and
   permissions — the same trust level as the workflow YAML itself. Secret
   scrubbing / sandboxed execution are deferred enhancements.

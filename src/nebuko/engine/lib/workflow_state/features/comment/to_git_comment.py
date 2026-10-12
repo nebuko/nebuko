@@ -61,6 +61,39 @@ def wrap_comment_with_state(state: WorkflowState, body: str) -> str:
     section = format_collapsed_section(state)
     return section + body
 
+
+def wrap_script_comment(step: str, state: WorkflowState, body: str) -> str:
+    """
+    Frame a deterministic script step's output comment (issue #885).
+
+    Mirrors the agent-answer envelope so a script step's output is addressable
+    by ``inputs: [...]`` exactly like an agent step's (ADR-0013): the universal
+    bot marker (line 1), a distinct ``<!-- bot-command-{step} -->`` tag (kept
+    apart from ``bot-agent-*`` so ``count_bot_markers`` never counts a script
+    comment as an agent turn), the ``<!-- workflow-continue -->`` token that
+    re-triggers the workflow gate, then the collapsed workflow-state section and
+    the human-readable report body.
+
+    Args:
+        step: Workflow step name that produced the output.
+        state: The advanced WorkflowState to embed (``state.step == step``).
+        body: The rendered ScriptStepReport body.
+
+    Returns:
+        Complete comment string ready to post.
+    """
+    # Deferred: ``prepare_comment`` imports this module at import time, so a
+    # module-level import here would be circular.
+    from prepare_comment import BOT_MARKER, CONTINUE_TOKEN
+
+    return (
+        f"{BOT_MARKER}\n"
+        f"<!-- bot-command-{step} -->\n"
+        f"{CONTINUE_TOKEN}"
+        f"{format_collapsed_section(state)}"
+        f"{body}"
+    )
+
 def _strip_md_emphasis(line: str) -> str:
     """Strip surrounding * / _ emphasis markers from a line (up to two pairs)."""
     stripped = line.strip()
@@ -175,7 +208,8 @@ _LABEL_STATE_BLOCK_RE = re.compile(
 
 _BOT_MARKER_LINE_RE = re.compile(
     r"(?m)^[ \t]*<!--[ \t]*"
-    r"(?:bot-workflow-terminal|bot-agent-[A-Za-z0-9\-]+|bot-human-action|workflow-continue)"
+    r"(?:bot-workflow-terminal|bot-agent-[A-Za-z0-9_\-]+|bot-command-[A-Za-z0-9_\-]+"
+    r"|bot-human-action|workflow-continue)"
     r"[ \t]*-->[ \t]*\n?"
 )
 
@@ -195,7 +229,7 @@ def strip_state_section(body: str) -> str:
        generations stay tolerated (issue #778): the legacy '🤖' emoji, the
        theme-adaptive ``<picture>`` logo mark, and a bare label.
     3. Standalone bot routing marker lines (``bot-workflow-terminal``,
-       ``bot-agent-*``, ``workflow-continue``).
+       ``bot-agent-*``, ``bot-command-*``, ``workflow-continue``).
 
     Any other content is preserved byte-for-byte (modulo the trailing strip).
     """

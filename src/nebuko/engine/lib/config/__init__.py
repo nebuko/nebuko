@@ -21,6 +21,8 @@ from .sub_domains.mcp_server_config.mcp_server_config import MCPServerConfig
 from .sub_domains.agent_config.agent_config import AgentConfig
 from .sub_domains.agent_start_notice.agent_start_notice import AgentStartNotice
 from .sub_domains.human_action_notice.human_action_notice import HumanActionNotice
+from .sub_domains.script_start_notice.script_start_notice import ScriptStartNotice
+from .sub_domains.script_step_report.script_step_report import ScriptStepReport
 from .sub_domains.app_config.app_config import AppConfig
 from .sub_domains.history_window.history_window import HistoryWindowConfig
 
@@ -85,6 +87,8 @@ __all__ = [
     "AgentConfig",
     "AgentStartNotice",
     "HumanActionNotice",
+    "ScriptStartNotice",
+    "ScriptStepReport",
     "AppConfig",
     "HistoryWindowConfig",
     # Workflow Config entities

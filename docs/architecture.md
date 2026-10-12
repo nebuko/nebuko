@@ -296,22 +296,32 @@ fatal to the run, exactly like `notify_agent_started`.
 ### Deterministic `script` steps (issue #541)
 
 A step can also be a **script**: instead of running an agent, the engine runs
-a repo-local script deterministically and posts its raw output as a comment.
+a repo-local script deterministically and posts its output as a comment — the
+same comment lifecycle as an agent step, so `inputs: [...]` wiring and the
+`<!-- workflow-continue -->` gate work identically (issue #885).
 
 ```
 resolved step declares a `script:` source (nested `script: {path, args, timeout_minutes}`)
 │
 ├─ resolve_config emits RUN_SCRIPT=true + SKIP_AGENT=true + SCRIPT_PATH /
-│  SCRIPT_ARGS / SCRIPT_TIMEOUT_MINUTES instead of a task assignment,
-│  with ROLE_NAME="script"
-├─ the legacy GHA "Run Script Step" (removed with the legacy flow)
-│  (bounded by GHA timeout-minutes and an executor-level timeout); no agent run
-├─ executor writes the standard artifacts: final_message.txt (+ 10k split parts
-│  on overflow) and workflow_state.json with history advanced and a synthetic
-│  dispatch {status: advance, branch: pass|fail}
-└─ the existing posting pipeline runs untouched: prepare_comment → bot marker
-   (tag <!-- bot-agent-script -->) → peter-evans post → continuation trigger
+│  SCRIPT_ARGS / SCRIPT_TIMEOUT_MINUTES / WORKFLOW_STEP instead of a task
+│  assignment, with ROLE_NAME="script"
+├─ engine runs the script from [phase:action] (bounded by the optional
+│  timeout_minutes), capturing stdout+stderr merged; no agent run
+├─ engine posts a start notice (`<step> command started`, no continuation token)
+├─ engine builds the advanced state (build_state, synthetic dispatch
+│  {status: advance, branch: pass|fail}, StepOutputRecord in current_context)
+│  and posts the completion comment: wrap_script_comment → BOT_MARKER +
+│  <!-- bot-command-<step> --> + <!-- workflow-continue --> + collapsed state
+│  + ScriptStepReport body, then backfills the comment id and saves the state
+└─ the distinct bot-command-* tag keeps count_bot_markers from counting the
+   script comments as agent turns (circuit-breaker budget stays honest)
 ```
+
+The completion body is a `<step> command succeeded|failed` banner (step name,
+exit code, duration — **never the command line**, since `args`/env may carry
+secrets) plus the captured output in a collapsed, collision-proof fenced block,
+truncated head+tail to stay under GitHub's comment-size limit.
 
 Result semantics: exit 0 → synthetic `branch: "pass"`; non-zero exit or
 timeout → `branch: "fail"`. Routing uses the step's `conditions[]` on that
