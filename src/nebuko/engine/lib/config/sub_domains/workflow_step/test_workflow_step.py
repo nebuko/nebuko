@@ -277,6 +277,115 @@ class TestWorkflowStepScript:
         assert step.agent == "architect"
 
 
+class TestWorkflowStepHooks:
+    """Test the ``pre_hook``/``post_hook`` step fields (issue #884)."""
+
+    def test_minimal_pre_hook(self):
+        step = WorkflowStep(
+            name="implement", agent="dev", pre_hook={"path": "scripts/init.sh"}
+        )
+        assert step.pre_hook.path == "scripts/init.sh"
+        assert step.pre_hook.args is None
+        assert step.pre_hook.timeout_minutes is None
+        assert step.post_hook is None
+
+    def test_minimal_post_hook(self):
+        step = WorkflowStep(
+            name="implement", agent="dev", post_hook={"path": "scripts/stats.sh"}
+        )
+        assert step.post_hook.path == "scripts/stats.sh"
+        assert step.pre_hook is None
+
+    def test_hook_args_and_timeout_round_trip(self):
+        step = WorkflowStep(
+            name="implement",
+            agent="dev",
+            pre_hook={
+                "path": "scripts/init.sh",
+                "args": ["--full", "x"],
+                "timeout_minutes": 10,
+            },
+        )
+        assert step.pre_hook.args == ["--full", "x"]
+        assert step.pre_hook.timeout_minutes == 10
+
+    def test_hook_absolute_path_rejected(self):
+        with pytest.raises(ValueError, match="repo-relative"):
+            WorkflowStep(name="bad", agent="dev", pre_hook={"path": "/etc/passwd"})
+
+    def test_hook_traversal_path_rejected(self):
+        with pytest.raises(ValueError, match="repo-relative"):
+            WorkflowStep(name="bad", agent="dev", post_hook={"path": "../outside.sh"})
+
+    def test_hook_nested_traversal_path_rejected(self):
+        with pytest.raises(ValueError, match="repo-relative"):
+            WorkflowStep(
+                name="bad", agent="dev", pre_hook={"path": "scripts/../secrets.sh"}
+            )
+
+    def test_hook_dotdot_prefixed_filename_allowed(self):
+        step = WorkflowStep(
+            name="ok", agent="dev", pre_hook={"path": "scripts/..bar.sh"}
+        )
+        assert step.pre_hook.path == "scripts/..bar.sh"
+
+    def test_hook_timeout_zero_rejected(self):
+        with pytest.raises(ValueError, match="positive"):
+            WorkflowStep(
+                name="bad",
+                agent="dev",
+                pre_hook={"path": "scripts/init.sh", "timeout_minutes": 0},
+            )
+
+    def test_hook_requires_path(self):
+        with pytest.raises(ValueError, match="path"):
+            WorkflowStep(name="bad", agent="dev", pre_hook={})
+
+    def test_hooks_rejected_on_script_step(self):
+        with pytest.raises(ValueError, match="cannot declare 'pre_hook' or 'post_hook'"):
+            WorkflowStep(
+                name="bad",
+                script={"path": "scripts/test.sh"},
+                pre_hook={"path": "scripts/init.sh"},
+            )
+
+    def test_hooks_rejected_on_workflow_step(self):
+        with pytest.raises(ValueError, match="only valid on an 'agent' step"):
+            WorkflowStep(
+                name="bad",
+                workflow="review-only",
+                post_hook={"path": "scripts/stats.sh"},
+            )
+
+    def test_hooks_rejected_on_repo_step(self):
+        with pytest.raises(ValueError, match="only valid on an 'agent' step"):
+            WorkflowStep(
+                name="bad",
+                repo="https://example.com/repo.git",
+                ref="main",
+                pre_hook={"path": "scripts/init.sh"},
+            )
+
+    def test_agent_step_with_hooks_has_no_other_source_side_effects(self):
+        step = WorkflowStep(
+            name="implement",
+            agent="dev",
+            pre_hook={"path": "scripts/init.sh"},
+            post_hook={"path": "scripts/stats.sh"},
+            next="review",
+        )
+        assert step.script is None
+        assert step.workflow is None
+        assert step.repo is None
+        assert step.next == "review"
+
+    def test_existing_agent_step_has_no_hooks(self):
+        # Backward compatibility: a hookless step parses exactly as before.
+        step = WorkflowStep(name="analyze", agent="architect", next="context")
+        assert step.pre_hook is None
+        assert step.post_hook is None
+
+
 class TestWorkflowStepComplexity:
     """Test the per-step declared complexity tier (issue #787)."""
 

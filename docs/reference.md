@@ -119,6 +119,11 @@ graph-level invariants below are checked offline by
 | `steps[].script.path` | script | string | yes (with `script`) | Repo-relative path of the script to run. Absolute paths and `..` segments are rejected. |
 | `steps[].script.args` | script | string[] | no | Arguments passed to the script (argv list, no shell interpolation). |
 | `steps[].script.timeout_minutes` | script | int | no | Execution timeout in minutes (≥ 1; default 30, capped at 60). |
+| `steps[].pre_hook` | step | object | no | Deterministic command run **in the session workspace immediately before the agent** (issue #884). Fail-closed: a non-zero exit or timeout skips the agent and fails the step. Agent steps only. |
+| `steps[].post_hook` | step | object | no | Deterministic command run **in the session workspace immediately after the agent attempt** (issue #884), even when the agent fails. Fail-open: its failure is recorded but never changes the step outcome or routing. Agent steps only. |
+| `steps[].pre_hook\|post_hook.path` | hook | string | yes (with the hook) | Repo-relative path of the script to run. Absolute paths and `..` segments are rejected. |
+| `steps[].pre_hook\|post_hook.args` | hook | string[] | no | Arguments passed to the hook (argv list, no shell interpolation). |
+| `steps[].pre_hook\|post_hook.timeout_minutes` | hook | int | no | Execution timeout in minutes (≥ 1; default 30, capped at 60). |
 | `steps[].next` | step | string/null | no | Next step name, or `null` for terminal. |
 | `steps[].conditions` | step | list | no | Conditional routing, evaluated in order. |
 | `steps[].conditions[].on_result` | condition | string | yes | Result key reported by the agent (e.g., `approved`, `rejected`, `default`). |

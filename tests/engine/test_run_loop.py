@@ -2782,3 +2782,186 @@ class TestStepInputRecordsEnv:
     def test_no_results_leaves_the_env_untouched(self):
         env = {"X": "1"}
         assert _with_step_input_records(env, []) == {"X": "1"}
+# --- Session hooks (issue #884) -------------------------------------------
+
+
+def _engine_at_root(tmp_path, root, trigger=None, *, name="run-1", env=None) -> Engine:
+    """An Engine whose session workspace (``repo_root``) is ``root``.
+
+    Hooks run in the session workspace, so the integration tests point it at a
+    temp dir and place real executable scripts there.
+    """
+    adapter = LocalAdapter(tmp_path / "runs" / name, trigger=trigger or _trigger())
+    base_env = {
+        "CIRCUIT_BREAKER_THRESHOLD": "3",
+        "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
+    }
+    base_env.update(env or {})
+    return Engine(adapter=adapter, repo_root=root, env=base_env)
+
+
+def _write_hook_script(root, rel: str, body: str) -> None:
+    """Write an executable ``/bin/sh`` hook script at ``root/rel``."""
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _resolved_with_hooks(hooks=None, **extra) -> dict:
+    """A minimal agent-step resolver contract, optionally carrying ``STEP_HOOKS``."""
+    resolved = {
+        "SKIP_AGENT": "false",
+        "TASK": "dev",
+        "ROLE_NAME": "dev",
+        "WORKFLOW_NAME": "wf",
+        "WORKFLOW_STEP": "implement",
+        "PROMPT_LOCATION": "",
+    }
+    resolved.update(extra)
+    if hooks is not None:
+        resolved["STEP_HOOKS"] = json.dumps(hooks)
+    return resolved
+
+
+class TestStepHooks:
+    """Session hooks run around the agent invocation (issue #884).
+
+    ``pre_hook`` is fail-closed: a non-zero exit skips the agent and fails the
+    step. ``post_hook`` is fail-open: it always runs after the agent attempt and
+    its failure is recorded without changing the step outcome or routing.
+    """
+
+    def test_hooks_run_in_order_around_the_agent(self, tmp_path, monkeypatch):
+        root = tmp_path / "repo"
+        root.mkdir()
+        log = tmp_path / "order.log"
+        _write_hook_script(root, "scripts/pre.sh", 'echo pre >> "$ORDER_LOG"')
+        _write_hook_script(root, "scripts/post.sh", 'echo post >> "$ORDER_LOG"')
+        engine = _engine_at_root(tmp_path, root, env={"ORDER_LOG": str(log)})
+        _stub_resolved(
+            monkeypatch,
+            _resolved_with_hooks(
+                {
+                    "pre": {"path": "scripts/pre.sh"},
+                    "post": {"path": "scripts/post.sh"},
+                }
+            ),
+        )
+
+        def fake_agent(self, prompt):
+            with open(log, "a", encoding="utf-8") as handle:
+                handle.write("agent\n")
+            return _agent_result("done")
+
+        monkeypatch.setattr(Engine, "invoke_agent", fake_agent)
+
+        outcome = engine.run()
+
+        assert log.read_text(encoding="utf-8").split() == ["pre", "agent", "post"]
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.routing.status == "advance"
+
+    def test_a_failing_pre_hook_skips_the_agent_and_fails_the_step(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        _write_hook_script(root, "scripts/pre.sh", "exit 2")
+        engine = _engine_at_root(tmp_path, root)
+        _stub_resolved(
+            monkeypatch,
+            _resolved_with_hooks({"pre": {"path": "scripts/pre.sh"}}),
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+
+        with caplog.at_level("ERROR"):
+            outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.routing.status == "hold"
+        assert "pre_hook failed" in (outcome.routing.reason or "")
+        assert "pre_hook failed" in caplog.text
+
+    def test_a_failing_post_hook_does_not_change_the_step_outcome(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        _write_hook_script(root, "scripts/post.sh", "exit 3")
+        engine = _engine_at_root(tmp_path, root)
+        _stub_resolved(
+            monkeypatch,
+            _resolved_with_hooks({"post": {"path": "scripts/post.sh"}}),
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result("done")
+        )
+
+        with caplog.at_level("WARNING"):
+            outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.routing.status == "advance"
+        assert "post_hook failed" in caplog.text
+
+    def test_post_hook_runs_when_the_agent_raises(self, tmp_path, monkeypatch):
+        root = tmp_path / "repo"
+        root.mkdir()
+        marker = tmp_path / "post-ran.txt"
+        _write_hook_script(root, "scripts/post.sh", 'touch "$POST_MARKER"')
+        engine = _engine_at_root(tmp_path, root, env={"POST_MARKER": str(marker)})
+        _stub_resolved(
+            monkeypatch,
+            _resolved_with_hooks({"post": {"path": "scripts/post.sh"}}),
+        )
+
+        def exploding_agent(self, prompt):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(Engine, "invoke_agent", exploding_agent)
+
+        outcome = engine.run()
+
+        assert marker.exists(), "post_hook did not run after the agent raised"
+        assert outcome.exit_code == ExitCode.ERROR
+
+    def test_a_step_without_hooks_omits_the_contract_entirely(
+        self, tmp_path, monkeypatch
+    ):
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, _resolved_with_hooks())
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result("done")
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+
+    def test_hooks_run_as_the_session_env_and_workspace(self, tmp_path, monkeypatch):
+        """A hook observes the same workspace and hand-off env as the agent."""
+        root = tmp_path / "repo"
+        root.mkdir()
+        output = tmp_path / "hook-output.txt"
+        _write_hook_script(
+            root,
+            "scripts/env.sh",
+            'printf "cwd=%s repo=%s" "$(pwd)" "$GITHUB_REPOSITORY" > "$HOOK_OUT"',
+        )
+        engine = _engine_at_root(tmp_path, root, env={"HOOK_OUT": str(output)})
+        _stub_resolved(
+            monkeypatch,
+            _resolved_with_hooks({"pre": {"path": "scripts/env.sh"}}),
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result("done")
+        )
+
+        engine.run()
+
+        text = output.read_text(encoding="utf-8")
+        assert f"cwd={root}" in text
+        assert "repo=olivier-norture/git-flow-ai" in text

@@ -1,5 +1,6 @@
 """Tests for build_result feature (env-var dict construction)."""
 
+import json
 import os
 import sys
 import tempfile
@@ -303,3 +304,74 @@ class TestComplexityGovernanceOverlay:
             workflows_dir,
         )
         assert result["CONFIG_COMPLEXITY"] == "high"
+
+
+class TestBuildResultStepHooks:
+    """The resolver emits a step's session hooks as ``STEP_HOOKS`` (issue #884)."""
+
+    _HOOKED_WF = (
+        "name: wf\n"
+        "description: hooks\n"
+        "trigger:\n"
+        "  agents: [dev]\n"
+        "steps:\n"
+        "  - name: implement\n"
+        "    agent: dev\n"
+        "    pre_hook:\n"
+        "      path: scripts/init.sh\n"
+        "      args: ['--full']\n"
+        "      timeout_minutes: 5\n"
+        "    post_hook:\n"
+        "      path: scripts/stats.sh\n"
+        "    next: null\n"
+    )
+
+    _PLAIN_WF = (
+        "name: wf\n"
+        "description: no hooks\n"
+        "trigger:\n"
+        "  agents: [dev]\n"
+        "steps:\n"
+        "  - name: implement\n"
+        "    agent: dev\n"
+        "    next: null\n"
+    )
+
+    def _dirs(self, yaml_text: str):
+        prompt_base, workflows_dir = _make_dirs()
+        with open(os.path.join(workflows_dir, "wf.yaml"), "w") as f:
+            f.write(yaml_text)
+        return prompt_base, workflows_dir
+
+    def test_emits_the_declared_hooks_as_a_json_contract(self):
+        prompt_base, workflows_dir = self._dirs(self._HOOKED_WF)
+
+        result = _build_result(
+            {"task": "dev", "config_workflow": "wf"},
+            prompt_base,
+            workflows_dir,
+        )
+
+        hooks = json.loads(result["STEP_HOOKS"])
+        assert hooks["pre"] == {
+            "path": "scripts/init.sh",
+            "args": ["--full"],
+            "timeout_minutes": 5,
+        }
+        assert hooks["post"] == {
+            "path": "scripts/stats.sh",
+            "args": None,
+            "timeout_minutes": None,
+        }
+
+    def test_hookless_step_omits_the_contract(self):
+        prompt_base, workflows_dir = self._dirs(self._PLAIN_WF)
+
+        result = _build_result(
+            {"task": "dev", "config_workflow": "wf"},
+            prompt_base,
+            workflows_dir,
+        )
+
+        assert "STEP_HOOKS" not in result
+

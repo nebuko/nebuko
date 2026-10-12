@@ -20,6 +20,12 @@ from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
+from nebuko.engine.hook_runner import (
+    HookPhase,
+    HookResult,
+    HookRunner,
+    hooks_from_resolved,
+)
 from nebuko.engine.input_wiring import (
     MAX_CALL_FRAMES,
     Materialization,
@@ -810,20 +816,49 @@ class Engine:
             # the child starts from scratch and resets ``history`` to a single
             # entry (issue #726).
             self.stage_prev_state()
-            self.notify_agent_started(self._agent_start_notice(trigger))
+            # Session hooks (issue #884): the resolver hands the step's declared
+            # ``pre_hook`` / ``post_hook`` as a ``STEP_HOOKS`` contract, decoded
+            # once here. A ``pre_hook`` runs before the agent and is fail-closed;
+            # a ``post_hook`` runs after the agent attempt and is fail-open.
+            hooks = hooks_from_resolved(resolved)
             failure_reason: str | None = None
-            try:
-                agent_result = self.invoke_agent(prompt)
-            except Exception as exc:  # noqa: BLE001 - never crash the host
-                log.exception("[phase:agent] agent invocation failed: %s", exc)
-                # The bash runs the agent behind ``| tee console.txt``, so a
-                # non-zero exit never fails the step, and "Clean and Prepare
-                # Comment" is guarded by ``if: always()``. A crashed run still
-                # reaches ``prepare_comment`` and posts its structured
-                # fallback; mirror that with an empty result (no artefacts)
-                # instead of aborting silently (issue #590 round-4, finding 2).
-                agent_result = {}
-                failure_reason = str(exc)
+            agent_result: dict[str, Any] = {}
+
+            pre_hook = hooks.get("pre")
+            if pre_hook is not None:
+                pre_result = self._run_hook(pre_hook, "pre")
+                if not pre_result.ok:
+                    # Fail-closed: a broken precondition must not run the agent.
+                    log.error("[phase:agent] pre_hook failed: %s", pre_result.detail)
+                    failure_reason = f"pre_hook failed: {pre_result.detail}"
+
+            if failure_reason is None:
+                self.notify_agent_started(self._agent_start_notice(trigger))
+                try:
+                    agent_result = self.invoke_agent(prompt)
+                except Exception as exc:  # noqa: BLE001 - never crash the host
+                    log.exception("[phase:agent] agent invocation failed: %s", exc)
+                    # The bash runs the agent behind ``| tee console.txt``, so a
+                    # non-zero exit never fails the step, and "Clean and Prepare
+                    # Comment" is guarded by ``if: always()``. A crashed run still
+                    # reaches ``prepare_comment`` and posts its structured
+                    # fallback; mirror that with an empty result (no artefacts)
+                    # instead of aborting silently (issue #590 round-4, finding 2).
+                    agent_result = {}
+                    failure_reason = str(exc)
+
+            # Fail-open: the post_hook always runs once the agent phase is
+            # entered (after success, failure, or a skipped agent), and its
+            # failure is recorded without altering the step outcome or routing.
+            post_hook = hooks.get("post")
+            if post_hook is not None:
+                post_result = self._run_hook(post_hook, "post")
+                if not post_result.ok:
+                    log.warning(
+                        "[phase:agent] post_hook failed "
+                        "(recorded; step outcome unchanged): %s",
+                        post_result.detail,
+                    )
 
             self._enter(phases, "validate")
             if failure_reason is None:
@@ -1573,6 +1608,20 @@ class Engine:
             return state
         records, _ = ledger
         return state.model_copy(update={"thread": records})
+
+    # @stub-protected
+    def _run_hook(self, spec: Any, phase: HookPhase) -> HookResult:
+        """Run one step hook in the session workspace (issue #884).
+
+        The workspace is the agent host's repo root and the env is the same
+        hand-off the agent child receives, so a hook observes the session the
+        agent runs in. Never raises: a hook failure is returned as data for the
+        caller (``pre`` fail-closed, ``post`` fail-open).
+        """
+        runner = HookRunner(workspace=self.repo_root, env=self._agent_env())
+        result = runner.run(spec, phase)
+        log.info("[phase:agent] %s", result.detail)
+        return result
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""
