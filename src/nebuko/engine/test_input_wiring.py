@@ -25,6 +25,7 @@ from nebuko.engine.input_wiring import (  # noqa: E402
     StepInputs,
     materialize,
     render,
+    to_records,
 )
 
 
@@ -65,7 +66,9 @@ class TestMaterialize:
             {"STEP_INPUTS": _payload(consumer={"diff": {"exec": ["echo", "hello"]}})}
         )
         results = materialize(step_inputs)
-        assert results == [Materialization(name="diff", ok=True, body="hello\n")]
+        assert results == [
+            Materialization(name="diff", ok=True, body="hello\n", binding="exec")
+        ]
 
     def test_str_binding_returns_the_constant(self):
         step_inputs = StepInputs.from_resolved(
@@ -265,3 +268,58 @@ class TestStepScopeResolution:
             step_inputs, {"plan": "P", "implement": "I"}
         )
         assert {r.name: r.body for r in results} == {"plan": "P", "implement": "I"}
+
+
+class TestToRecords:
+    """Persisted step-input records (issue #872) round-trip into the state."""
+
+    def _records(self, results):
+        return to_records(results)
+
+    def test_materialization_fields_are_carried(self):
+        records = self._records(
+            [Materialization(name="diff", ok=True, body="patch\n", binding="exec")]
+        )
+        assert records == [
+            {
+                "name": "diff",
+                "binding": "exec",
+                "ok": True,
+                "detail": "",
+                "value": "patch\n",
+                "truncated": False,
+            }
+        ]
+
+    def test_failure_detail_is_carried(self):
+        records = self._records(
+            [Materialization(name="diff", ok=False, body="", detail="exit 7", binding="exec")]
+        )
+        assert records[0]["ok"] is False
+        assert records[0]["detail"] == "exit 7"
+
+    def test_oversized_value_is_truncated_and_flagged(self):
+        from workflow_state.sub_domains.step_input_record.step_input_record import (
+            MAX_VALUE_CHARS,
+        )
+
+        records = self._records(
+            [
+                Materialization(
+                    name="big", ok=True, body="x" * (MAX_VALUE_CHARS + 5)
+                )
+            ]
+        )
+        assert len(records[0]["value"]) == MAX_VALUE_CHARS
+        assert records[0]["truncated"] is True
+
+    def test_records_validate_as_step_input_records(self):
+        from workflow_state.sub_domains.step_input_record import StepInputRecord
+
+        records = self._records(
+            [Materialization(name="diff", ok=True, body="patch", binding="str")]
+        )
+        assert StepInputRecord.model_validate(records[0]).name == "diff"
+
+    def test_empty_results_yield_no_records(self):
+        assert to_records([]) == []

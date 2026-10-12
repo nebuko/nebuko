@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from nebuko.engine.paths import ensure_import_path
 
@@ -88,6 +88,9 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         # history several times per run (issue #805, Pillar C).
         self._snapshot: Any | None = None
         self._snapshot_limit: int | None = None
+        # Cached ``(id, login)`` the token posts as (issue #872 review); ``None``
+        # = not yet resolved, ``(0, "")`` = resolution failed / unavailable.
+        self._engine_actor: tuple[int, str] | None = None
 
     # @stub-protected
     def read_trigger(self) -> Trigger:
@@ -121,6 +124,61 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         if limit is not None:
             entries = entries[-limit:] if limit > 0 else []
         return entries
+
+    # @stub-protected
+    def load_raw_thread(self) -> tuple[Any, Sequence[dict[str, Any]]]:
+        """Full ``(issue, comments)`` payloads for the thread ledger (issue #872).
+
+        The ledger reconciles the *whole* thread (so a vanished id is safely
+        detected as deleted), not the bounded recency snapshot. The snapshot is
+        reused when it was already fetched unbounded; otherwise the full list is
+        fetched once. The issue object is best-effort (``None`` on failure).
+        """
+        client = self._client_handle()
+        repo = self._require_repo()
+        number = self._issue_number()
+
+        snapshot = self._thread_snapshot()
+        comments: Sequence[dict[str, Any]] = snapshot.comments
+        if self._snapshot_limit is not None:
+            comments = client.get_issue_comments(repo, number)
+
+        getter = getattr(client, "get_issue", None)
+        issue = None
+        if getter is not None:
+            try:
+                issue = getter(repo, number)
+            except Exception:  # noqa: BLE001 - best-effort metadata
+                issue = None
+        return issue, comments
+
+    # @stub-protected
+    def engine_actor(self) -> tuple[int, str]:
+        """``(user_id, login)`` the engine's token posts as (issue #872 review).
+
+        Resolved once via ``GET /user`` (``github_client.get_authenticated_user``)
+        and cached, so the ledger can anchor body-marker bot-ness to the engine's
+        own account instead of trusting a forgeable marker. Best-effort: returns
+        ``(0, "")`` when the client cannot resolve it (the ledger then fails
+        closed, treating marked comments as human).
+        """
+        if self._engine_actor is not None:
+            return self._engine_actor
+        self._engine_actor = (0, "")
+        client = self._client_handle()
+        getter = getattr(client, "get_authenticated_user", None)
+        if getter is not None:
+            try:
+                payload = getter()
+            except Exception:  # noqa: BLE001 - best-effort identity
+                payload = None
+            if isinstance(payload, Mapping):
+                try:
+                    user_id = int(payload.get("id") or 0)
+                except (TypeError, ValueError):
+                    user_id = 0
+                self._engine_actor = (user_id, str(payload.get("login") or ""))
+        return self._engine_actor
 
     # @stub-protected
     def _thread_snapshot(self) -> Any:

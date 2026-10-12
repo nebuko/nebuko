@@ -64,6 +64,10 @@ class TestBuildOutputGracefulTimeout(unittest.TestCase):
                 "ROLE_NAME": "dev",
                 "WORKFLOW_NAME": "default",
                 "WORKFLOW_STEP": "implement",
+                # Isolate the ``prev_workflow_state.json`` hand-off: build_output
+                # falls back to ``$RUNNER_TEMP`` when ``prev_state`` is None, so a
+                # shared path lets a sibling test's state leak in.
+                "RUNNER_TEMP": self._tmp.name,
             },
             clear=False,
         )

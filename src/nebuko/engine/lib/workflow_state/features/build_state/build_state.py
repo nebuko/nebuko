@@ -23,6 +23,9 @@ from ...sub_domains.dispatch.dispatch import Dispatch
 from ...sub_domains.function_call import FunctionCall
 from ...sub_domains.gate_decision.gate_decision import GateDecision
 from ...step_output_record import StepOutputRecord
+from ...sub_domains.thread_record.thread_record import ThreadRecord
+from ...sub_domains.step_input_record.step_input_record import StepInputRecord
+
 
 def _position_refs(position: Optional[dict]) -> list[StepRef]:
     """Normalize a position input to the flat v3 refs list (issue #638).
@@ -92,6 +95,8 @@ def build_state(
     complexity_adjustment: Optional[ComplexityAdjustment] = None,
     complexity_review_request: Optional[ComplexityReviewRequest] = None,
     complexity_policy: Optional[ComplexityPolicy] = None,
+    thread: Optional[list[ThreadRecord]] = None,
+    inputs: Optional[list[StepInputRecord]] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -156,6 +161,12 @@ def build_state(
             (issue #862), read from ``job.workflow_ref``. None preserves the
             previous value (``None`` on legacy blobs), so a run hosted outside
             the reusable workflow records nothing.
+        thread: The reconciled thread ledger (issue #872). Non-None replaces the
+            ledger wholesale (the engine folds the full comment list into it
+            before advancing); None preserves the previous ledger.
+        inputs: Deterministically materialized step inputs of THIS step
+            (issue #872), recorded verbatim on the new history entry. None/empty
+            for a step that declares none.
 
     Returns:
         A new WorkflowState instance.
@@ -177,6 +188,7 @@ def build_state(
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
         base_complexity_policy: Optional[ComplexityPolicy] = None
+        base_thread: list[ThreadRecord] = []
     else:
         base_run_id = prev_state.run_id
         base_history = list(prev_state.history)
@@ -194,6 +206,7 @@ def build_state(
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
         base_complexity_policy = prev_state.complexity_policy
+        base_thread = list(prev_state.thread)
 
     # Build history entry for the current step
     # Normalize the position block to the flat v3 refs list (issue #638);
@@ -219,6 +232,7 @@ def build_state(
         metrics=entry_metrics,
         complexity_adjustment=complexity_adjustment,
         complexity_review_request=complexity_review_request,
+        inputs=inputs or [],
     )
     new_history = base_history + [entry]
 
@@ -361,4 +375,5 @@ def build_state(
         gate_decision=new_gate_decision,
         gate_history=new_gate_history,
         complexity_policy=new_complexity_policy,
+        thread=thread if thread is not None else base_thread,
     )

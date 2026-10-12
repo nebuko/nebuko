@@ -11,6 +11,7 @@ from github_client import (
     ApiErrorKind,
     GitHubTransport,
     get_comment_body,
+    get_authenticated_user,
     get_issue_comments,
     get_comment_node_id,
     post_comment,
@@ -171,6 +172,39 @@ class TestGetIssueComments:
         assert [c["body"] for c in result] == ["newer", "newest"]
         assert mock_run.call_count == 2
         assert "--paginate" in mock_run.call_args_list[1][0][0]
+
+
+class TestGetAuthenticatedUser:
+    """``GET /user`` self-identity anchors ledger bot-ness (issue #872 review)."""
+
+    def test_dry_run_returns_none(self):
+        assert get_authenticated_user(dry_run=True) is None
+
+    @patch("github_client.subprocess.run")
+    def test_returns_id_login_and_type(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps({"id": 42, "login": "nebuko-engine", "type": "User"}),
+        )
+
+        result = get_authenticated_user(transport=_transport())
+
+        assert result == {"id": 42, "login": "nebuko-engine", "type": "User"}
+        args = mock_run.call_args[0][0]
+        assert args[:2] == ["gh", "api"]
+        assert "/user" in args
+
+    @patch("github_client.subprocess.run")
+    def test_api_error_returns_none(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="bad creds")
+
+        assert get_authenticated_user(transport=_transport()) is None
+
+    @patch("github_client.subprocess.run")
+    def test_invalid_json_returns_none(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="not json")
+
+        assert get_authenticated_user(transport=_transport()) is None
 
 
 class TestGetCommentNodeId:

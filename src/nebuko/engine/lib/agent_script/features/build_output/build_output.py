@@ -35,6 +35,7 @@ from workflow_state import (
     GateDecision,
     IssueInfo,
     PullRequestInfo,
+    StepInputRecord,
     StepResolution,
     WorkflowState,
     workflow_ref_from_env,
@@ -233,6 +234,31 @@ def _soft_kill_dispatch() -> Dispatch:  # @stub-protected
             "human once MAX_SOFT_RETRIES is exhausted."
         ),
     )
+
+
+def _parse_step_input_records_env() -> list[StepInputRecord]:
+    """Parse this step's materialized-input records from ``STEP_INPUT_RESULTS``.
+
+    Emitted by the engine before the agent is invoked (issue #872) so the
+    advancing step's ``HistoryEntry`` records what deterministic inputs were
+    wired to it. Absent/empty yields no records; a malformed value is ignored
+    (logged) rather than aborting the run.
+    """
+    raw = os.environ.get("STEP_INPUT_RESULTS", "").strip()
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Ignoring malformed STEP_INPUT_RESULTS env value")
+        return []
+    records: list[StepInputRecord] = []
+    for item in payload if isinstance(payload, list) else []:
+        try:
+            records.append(StepInputRecord.model_validate(item))
+        except Exception:
+            logger.warning("Ignoring malformed STEP_INPUT_RESULTS entry")
+    return records
 
 
 def _parse_gate_decision_env() -> Optional[GateDecision]:
@@ -1307,6 +1333,7 @@ def build_output(
         complexity_adjustment=_parse_complexity_adjustment_env(),
         complexity_review_request=complexity_review_request,
         complexity_policy=_parse_complexity_policy_env(),
+        inputs=_parse_step_input_records_env(),
     )
     logger.info(f"Built workflow state run {new_state.run_id} for step={workflow_step}")
 

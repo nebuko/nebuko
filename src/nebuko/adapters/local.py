@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from nebuko.engine.paths import ensure_import_path
 
@@ -67,6 +67,32 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         if limit is not None:
             entries = entries[-limit:] if limit > 0 else []
         return entries
+
+    # @stub-protected
+    def load_raw_thread(self) -> tuple[Any, list[dict[str, Any]]]:
+        """Synthetic ``(issue, comments)`` for the thread ledger (issue #872).
+
+        The local journal carries no GitHub ids, so a stable 1-based positional
+        id stands in (the journal is append-only, so existing ids never shift).
+        There is no issue object locally, so the ledger is comment-only.
+
+        Every journal entry was produced by the adapter's own ``post`` (the local
+        engine bot) and carries the terminal marker, so the classifier derives
+        the engine/agent kinds from that body marker — the same signal used on
+        the GitHub path (issue #872). ``type: "Bot"`` is set as well so the
+        synthetic thread mirrors a real bot account for the account-based
+        OR-signal, but it is not what the classification relies on.
+        """
+        comments = [
+            {
+                "id": index,
+                "body": entry.body,
+                "created_at": entry.created_at,
+                "user": {"login": entry.author, "type": "Bot"},
+            }
+            for index, entry in enumerate(self._read_journal(), start=1)
+        ]
+        return None, comments
 
     # @stub-protected
     def post(self, body: str) -> str:
