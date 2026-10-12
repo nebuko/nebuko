@@ -1,0 +1,100 @@
+# ── Providers: API endpoints + auth ──
+# ``opencode_go`` is OpenAI-compatible. It is designed for coding agents and
+# expects a stable per-session identity: ``user_agent`` declares the client
+# identity and ``session_header`` names the header the engine fills with the
+# trigger's issue number at runtime (never a value in this file).
+providers:
+  opencode_go:
+    api_url: "https://opencode.ai/zen/go/v1"
+    api_token_env: "OPENCODE_GO_API_KEY"
+    user_agent: "nebuko/1.0"
+    session_header: "x-opencode-session"
+    drop_message_name: true
+
+# ── LLMs: model paths referencing providers ──
+llms:
+  deepseek-v4_1-flash:
+    model_path: "openai/deepseek-v4.1-flash"
+    provider: "${providers.opencode_go}"
+    thinking_enabled: true
+    preserve_thinking: true
+    top_p: 0.95
+    reasoning: "medium"
+  glm-5_3-flash:
+    model_path: "openai/glm-5.3-flash"
+    provider: "${providers.opencode_go}"
+  mimo-2_6-pro:
+    model_path: "openai/mimo-v2.6-pro"
+    provider: "${providers.opencode_go}"
+    thinking_enabled: true
+    preserve_thinking: true
+
+# ── Agents: role → model + prompt + skills + tools ──
+# Tools: terminal, file_editor, task_tracker (SDK tools)
+#        think, finish (built-in defaults)
+agents:
+  architect:
+    model: "${llms.mimo-2_6-pro}"
+    role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
+    temperature: 0.4
+    prompt_file: "defaults/prompts/architect.md"
+    skills: ["call-agent", "posting-contract", "planning", "complexity"]
+    tools: ["think", "finish", "dispatch_next", "complexity_review"]
+    complexity_overrides:
+      low:
+        model: "${llms.deepseek-v4_1-flash}"
+      high:
+        temperature: 0.6
+        reasoning: "high"
+
+  dev:
+    model: "${llms.deepseek-v4_1-flash}"
+    role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
+    temperature: 0.1
+    prompt_file: "defaults/prompts/dev.md"
+    skills: ["posting-contract", "git-pr-workflow", "complexity"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "report_scaffold_branch", "complexity_review"]
+    complexity_overrides:
+      low:
+        reasoning: "low"
+      high:
+        reasoning: "high"
+
+  context:
+    model: "${llms.deepseek-v4_1-flash}"
+    role: "Read-only context collector — gathers and compiles codebase facts for other agents."
+    temperature: 0.1
+    prompt_file: "defaults/prompts/context.md"
+    skills: ["call-agent", "posting-contract", "context-research", "complexity"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "complexity_review"]
+    complexity_overrides:
+      low:
+        reasoning: "low"
+      high:
+        reasoning: "high"
+    mcp_servers:
+      - name: "brave-search"
+        command: "npx"
+        args:
+          - "-y"
+          - "@brave/brave-search-mcp-server@2.1.4"
+          - "--enabled-tools"
+          - "brave_web_search"
+          - "brave_news_search"
+        env:
+          BRAVE_API_KEY: "BRAVE_API_KEY"
+
+  review:
+    model: "${llms.glm-5_3-flash}"
+    role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
+    temperature: 0.4
+    prompt_file: "defaults/prompts/review.md"
+    skills: ["posting-contract", "plan-review", "retrospective", "complexity"]
+    tools: ["terminal", "think", "finish", "dispatch_next", "complexity_review"]
+
+  po:
+    model: "${llms.deepseek-v4_1-flash}"
+    role: "Product owner — triages and refines issues into actionable specs; never modifies code."
+    prompt_file: "defaults/prompts/po.md"
+    skills: ["call-agent", "posting-contract", "issue-refinement", "complexity"]
+    tools: ["think", "finish", "dispatch_next", "complexity_review"]
