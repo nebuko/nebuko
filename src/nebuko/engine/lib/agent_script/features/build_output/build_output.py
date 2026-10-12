@@ -1168,6 +1168,10 @@ def build_output(
     # edge; the routing guard in resolve_route no longer trusts it either.
     if dispatch is not None and _dispatch_is_human_gate_hold(dispatch):
         resolution = resolution.model_copy(update={"next_step": ""})
+        # The gate supersedes any agent-named hand-off (issue #887 round 2): a
+        # persisted ``function_call`` would otherwise let the next bot trigger
+        # route straight to the callee, past the unreleased gate.
+        function_call = None
 
     # ── Recovery log: capture execution trace on failure ──────────
     if is_graceful_timeout or not final_message or is_malformed_final_message(final_message):

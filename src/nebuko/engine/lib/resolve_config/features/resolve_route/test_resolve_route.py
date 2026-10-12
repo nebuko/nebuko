@@ -642,6 +642,17 @@ class TestHumanGateHoldPrecedence:
         assert result.get("TASK") == "dev"
         assert result.get("WORKFLOW_STEP") == "implement"
 
+    def test_gate_hold_outranks_a_persisted_function_call(self, tmp_path):
+        # Issue #887 round 2: a held gate whose state also carries a
+        # function_call must not let the hand-off branch route to the callee.
+        state = self._state(status="hold", reason="human_gate:plan")
+        state["function_call"] = {"agent_name": "dev"}
+        result = self._resolve(tmp_path, state)
+        assert result["SKIP_AGENT"] == "true"
+        assert "human_gate:plan" in result["REASON"]
+        assert result.get("TASK") != "dev"
+        assert result.get("WORKFLOW_STEP") != "implement"
+
 
 _CALLBACK_WF_YAML = (
     "name: cb\n"

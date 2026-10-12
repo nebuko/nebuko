@@ -483,6 +483,26 @@ class TestHumanGateHoldPrecedence:
         assert "human_gate" in result.get("REASON", "")
         assert result.get("TASK", "") != "dev"
 
+    def test_gate_hold_with_persisted_function_call_stays_held(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        """Issue #887 round 2: a held gate that also persisted a function_call
+        must still SKIP — the hand-off branch must not route straight to `dev`."""
+        state = _load_fixture(ISSUE885_GATE_HOLD)
+        state["function_call"] = {"function": "call_agent", "agent_name": "dev"}
+        case = GateHoldCase(
+            name=ISSUE885_GATE_HOLD + "_with_function_call",
+            state=state,
+            workflows_dir=default_workflows_dir,
+        )
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(default_workflows_dir), is_bot=True,
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert "human_gate" in result.get("REASON", "")
+        assert result.get("TASK", "") != "dev"
+        assert result.get("WORKFLOW_STEP", "") != "implement"
+
     def test_non_gate_hold_still_unreachable_when_successor_resolves(
         self, default_workflows_dir: Path, prompt_base: str,
     ):

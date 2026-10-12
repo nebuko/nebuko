@@ -1082,10 +1082,12 @@ def _resolve_handoff_decision(
 
     Applies the two routing invariants in precedence order:
 
-    1. **Gate precedence (security boundary).** When the workflow successor
-       of the current step is ``human_gate: true`` it outranks the
-       agent-originated hand-off: the decision targets the *gated* step with
-       ``reason_code='gate_hold'`` so no call can route around a human gate.
+    1. **Gate precedence (security boundary).** A human gate outranks the
+       agent-originated hand-off, with ``reason_code='gate_hold'`` so no call
+       can route around it. Two shapes qualify: the *current* step is already
+       parked on an unreleased ``human_gate`` hold (issue #887 round 2 — its
+       own hold must not be handed off past), or the workflow successor of the
+       current step is ``human_gate: true`` (issue #733).
     2. **Forward-only hand-off (correctness).** Otherwise the callee's step
        is resolved only from the forward suffix of the workflow (via
        :func:`_resolve_callee_step`); a consumed step is never re-entered.
@@ -1097,6 +1099,16 @@ def _resolve_handoff_decision(
     """
     function_call = getattr(prev_state, "function_call", None)
     callee = (getattr(function_call, "agent_name", "") or "").strip()
+    dispatch = getattr(prev_state, "dispatch", None)
+    if (
+        dispatch is not None
+        and dispatch.status == "hold"
+        and _is_human_gate_hold(dispatch.reason)
+    ):
+        # The current step's own hold outranks the hand-off: routing continues
+        # on the dispatch path, which applies the same guard and returns the
+        # hold. Empty target — the gate releases to a step, not to the callee.
+        return HandoffDecision("", "", "gate_hold")
     wf_name = (getattr(prev_state, "workflow", "") or "") if prev_state is not None else ""
     if not wf_name:
         return HandoffDecision(callee, "", "function_call")

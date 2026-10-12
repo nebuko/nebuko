@@ -609,6 +609,74 @@ class TestDispatchIsHumanGateHold(unittest.TestCase):
         self.assertEqual(captured["dispatch"].status, "hold")
         self.assertEqual(captured["resolution"].next_step, "")
 
+    def test_gate_intercept_at_call_site_clears_function_call(self):
+        """Issue #887 round 2: the intercept must also drop any agent-named
+        hand-off, else the next bot trigger routes past the released-to gate."""
+        from types import SimpleNamespace as NS
+
+        import build_output as bo
+        from workflow_state import FunctionCall
+
+        captured = {}
+
+        def _capture_build_state(prev_state, **kwargs):
+            captured.update(kwargs)
+            return NS(run_id=1)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "gated.yaml"), "w") as f:
+                f.write(
+                    "name: gated\n"
+                    "description: test\n"
+                    "trigger:\n  agents: [architect]\n"
+                    "steps:\n"
+                    "  - name: plan\n    agent: architect\n"
+                    "    next: implement\n    human_gate: true\n"
+                    "  - name: implement\n    agent: dev\n    next: review\n"
+                )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "WORKFLOW_NAME": "gated",
+                "WORKFLOW_STEP": "plan",
+                "WORKFLOW_NEXT": "implement",
+                "ROLE_NAME": "architect",
+            }
+            conversation = NS(
+                state=NS(events=[_msg_event("plan answer")]),
+                id="conv-887-fc",
+                run_outcome=None,
+            )
+            metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+            with mock.patch.object(bo, "get_agent_final_response", return_value="plan answer"), \
+                 mock.patch.object(bo, "_load_prev_state", return_value=None), \
+                 mock.patch.object(bo, "_build_issue_info", return_value=None), \
+                 mock.patch.object(bo, "_build_pr_info", return_value=None), \
+                 mock.patch.object(
+                     bo, "_resolve_dispatch",
+                     return_value=(
+                         Dispatch(status="advance"),
+                         FunctionCall(function="call_agent", agent_name="dev"),
+                         "plan answer",
+                     ),
+                 ), \
+                 mock.patch.object(bo, "clear_run"), \
+                 mock.patch.object(bo, "clear_scaffold_branch_run"), \
+                 mock.patch.object(bo, "clear_complexity_review_run"), \
+                 mock.patch.object(bo, "get_recorded_review_request", return_value=None), \
+                 mock.patch.object(bo, "build_state", side_effect=_capture_build_state), \
+                 mock.patch.object(bo, "split_message", return_value=[]), \
+                 mock.patch.object(bo, "_write_output_files", return_value=None), \
+                 mock.patch.dict(os.environ, env, clear=False):
+                cwd = os.getcwd()
+                os.chdir(tmpdir)
+                try:
+                    bo.build_output(conversation, metrics)
+                finally:
+                    os.chdir(cwd)
+
+        self.assertEqual(captured["dispatch"].status, "hold")
+        self.assertIsNone(captured["function_call"])
+
 
 
 class TestHumanGateRealWorkflowYaml(unittest.TestCase):
