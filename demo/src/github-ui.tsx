@@ -293,6 +293,9 @@ export const IssueFrame: React.FC<{
   narrationHeight?: number;
   /** Scroll the thread from its top (0) to its bottom (1), for content taller than the screen. */
   scroll?: number;
+  /** Push the thread down by this many px, and a ref to its visible area (see ThreadColumn). */
+  threadOffset?: number;
+  threadViewportRef?: React.Ref<HTMLDivElement>;
   /** false hides the right sidebar so the thread gets the full width */
   sidebar?: boolean;
   showRepoChrome?: boolean;
@@ -321,6 +324,8 @@ export const IssueFrame: React.FC<{
   narration,
   narrationHeight = 0,
   scroll,
+  threadOffset,
+  threadViewportRef,
   sidebar = true,
   showRepoChrome = true,
 }) => {
@@ -354,6 +359,8 @@ export const IssueFrame: React.FC<{
             below={narration}
             belowHeight={narrationHeight}
             scroll={scroll}
+            offset={threadOffset}
+            viewportRef={threadViewportRef}
           >
             {children}
           </ThreadColumn>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useLayoutEffect, useRef, useState} from 'react';
 import {AbsoluteFill, Easing, interpolate, Sequence, Series, spring, useCurrentFrame, useVideoConfig} from 'remotion';
 import {Collapse, GithubComment, GithubIssueMainPost, GithubTimelineEvent, IssueFrame, ThemeName} from './github-ui';
 import {eventById, events, metricsSummary, ThreadEvent} from './data';
@@ -20,6 +20,24 @@ const TYPE_PAUSE = 6;
 const CLICK_DONE = 20;
 /** Extra time on screen for a step that has a caption, so it can be read. */
 const CAPTION_EXTRA = 45;
+/**
+ * Long comments land with their top in view, pause, then scroll smoothly to their end.
+ * The scroll time grows with the text length (folded <details> and HTML comments don't count).
+ */
+const REVEAL = 20;
+const READ_PAUSE = 30;
+const LONG_CHARS = 600;
+const SCROLL_CHARS_PER_FRAME = 30;
+const SCROLL_MIN = 60;
+const SCROLL_MAX = 300;
+/** Gap kept above a long comment's top while it is pinned (clears the top fade). */
+const TOP_MARGIN = 24;
+
+const visibleChars = (body: string) =>
+  body
+    .replace(/<details>[\s\S]*?<\/details>/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .trim().length;
 
 type Slot = {
   event: ThreadEvent;
@@ -30,6 +48,8 @@ type Slot = {
   /** the step on screen: from typing (or landing) until the next step starts */
   from: number;
   to: number;
+  /** long comment: frames over which it scrolls from its top to its end */
+  scroll?: [number, number];
 };
 
 const isHuman = (e: ThreadEvent) => e.kind === 'trigger' || e.kind === 'approve';
@@ -47,7 +67,15 @@ const schedule: Slot[] = (() => {
     } else {
       slots.push({event, at: t, from: t, to: 0});
     }
+    const at = t;
     t += STEP + (event.caption ? CAPTION_EXTRA : 0);
+    const chars = visibleChars(event.body);
+    if (chars > LONG_CHARS) {
+      const from = at + REVEAL + READ_PAUSE;
+      const frames = Math.min(SCROLL_MAX, Math.max(SCROLL_MIN, Math.round(chars / SCROLL_CHARS_PER_FRAME)));
+      slots[slots.length - 1].scroll = [from, from + frames];
+      t = Math.max(t, from + frames + READ_PAUSE);
+    }
   }
   slots.forEach((s, i) => (s.to = slots[i + 1]?.from ?? t));
   return slots;
@@ -101,12 +129,12 @@ const CLOSING_START = PR_END - FADE;
 export const PREVIEW_DURATION = CLOSING_START + SCROLL_FROM + SCROLL_FRAMES + END_HOLD;
 
 /** Grows from 0 to its natural height, so with the thread anchored at the bottom the older comments scroll up smoothly. */
-const Reveal: React.FC<{children: React.ReactNode}> = ({children}) => {
+const Reveal: React.FC<{children: React.ReactNode; boxRef?: React.Ref<HTMLDivElement>}> = ({children, boxRef}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
-  const p = spring({frame, fps, config: {damping: 200}, durationInFrames: 20});
+  const p = spring({frame, fps, config: {damping: 200}, durationInFrames: REVEAL});
   return (
-    <Collapse open={p} style={{marginTop: -16 * (1 - p)}}>
+    <Collapse open={p} style={{marginTop: -16 * (1 - p)}} boxRef={boxRef}>
       {children}
     </Collapse>
   );
@@ -121,8 +149,27 @@ const IssueThread: React.FC<{theme: ThemeName}> = ({theme}) => {
   // once the thread starts moving, fold GitHub's header away so the comments get the screen
   const collapse = spring({frame: frame - schedule[0].at, fps, config: {damping: 200}, durationInFrames: 25});
   const typed = typing ? typing.event.title.slice(0, Math.floor((frame - typing.typeFrom!) * TYPE_SPEED)) : '';
+
+  // A newest comment taller than the screen: push the thread down so its top shows, then glide to its end.
+  const landed = schedule.filter((s) => s.at <= frame);
+  const newest = landed[landed.length - 1];
+  const newestRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({comment: 0, viewport: 0});
+  useLayoutEffect(() => {
+    const comment = newestRef.current?.offsetHeight ?? 0;
+    const viewport = viewportRef.current?.clientHeight ?? 0;
+    if (comment !== size.comment || viewport !== size.viewport) setSize({comment, viewport});
+  });
+  const progress = newest?.scroll
+    ? interpolate(frame, newest.scroll, [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic)})
+    : 1;
+  const offset = (1 - progress) * Math.max(0, size.comment - size.viewport + TOP_MARGIN);
+
   return (
     <IssueFrame
+      threadOffset={offset}
+      threadViewportRef={viewportRef}
       theme={theme}
       commentCount={shown}
       anchor="bottom"
@@ -155,10 +202,10 @@ const IssueThread: React.FC<{theme: ThemeName}> = ({theme}) => {
           'The circuit breaker trips for the whole repository when a single issue fails three times.\n\nWe should be able to raise the limit for **one issue** only, e.g. `/nebuko run workflow --max-failures 5`.\n\n- keep the default at 3\n- log the override in the workflow state'
         }
       />
-      {schedule.map(({event: e, at}) => (
-        <Sequence key={e.id} from={at} layout="none">
-          <Reveal>
-            <GithubComment event={e} gate={isGate(e.stateLabel)} animate />
+      {schedule.map((slot) => (
+        <Sequence key={slot.event.id} from={slot.at} layout="none">
+          <Reveal boxRef={slot === newest ? newestRef : undefined}>
+            <GithubComment event={slot.event} gate={isGate(slot.event.stateLabel)} animate />
           </Reveal>
         </Sequence>
       ))}
@@ -197,7 +244,6 @@ const IssueClosing: React.FC<{theme: ThemeName}> = ({theme}) => {
     extrapolateRight: 'clamp',
     easing: Easing.inOut(Easing.cubic),
   });
-  const last = events[events.length - 1];
   return (
     <AbsoluteFill style={{opacity: interpolate(frame, [0, FADE], [0, 1], {extrapolateRight: 'clamp'})}}>
       <IssueFrame
@@ -222,7 +268,6 @@ const IssueClosing: React.FC<{theme: ThemeName}> = ({theme}) => {
         }
         linkedPr={{number: PR.number, title: PR.title, merged: true}}
       >
-        <GithubComment event={last} gate={isGate(last.stateLabel)} />
         <Sequence from={CLOSE_AT} layout="none">
           <Reveal>
             <GithubTimelineEvent kind="closed" actor="alex-dev" time="just now" animate>

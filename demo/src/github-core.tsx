@@ -4,6 +4,7 @@ import {Theme, useGH} from './github-theme';
 import {
   IconBell,
   IconChevronDown,
+  IconChevronRight,
   IconCheck,
   IconCheckCircle,
   IconCode,
@@ -358,9 +359,15 @@ const renderInline = (text: string, t: Theme): React.ReactNode[] =>
 
 export const Markdown: React.FC<{text: string}> = ({text}) => {
   const t = useGH();
-  // fenced code is pulled out first (it may hold blank lines), then put back as a placeholder block
+  // <details> render folded, like on GitHub: only the summary line (its content may hold blank lines and fences)
+  const summaries: string[] = [];
+  const withoutDetails = text.replace(/<details>\s*(?:<summary>([\s\S]*?)<\/summary>)?[\s\S]*?<\/details>/g, (_, summary?: string) => {
+    const label = (summary ?? 'Details').replace(/<[^>]+>/g, '').trim() || 'Details';
+    return `\n\n\u0001${summaries.push(label) - 1}\u0001\n\n`;
+  });
+  // fenced code is pulled out next (it may hold blank lines), then put back as a placeholder block
   const fences: string[] = [];
-  const withoutFences = text.replace(/```\w*\n([\s\S]*?)\n?```/g, (_, code: string) => `\n\n\u0000${fences.push(code) - 1}\u0000\n\n`);
+  const withoutFences = withoutDetails.replace(/```\w*\n([\s\S]*?)\n?```/g, (_, code: string) => `\n\n\u0000${fences.push(code) - 1}\u0000\n\n`);
   // HTML comments (e.g. `<!-- bot-workflow-terminal -->`) are not rendered by GitHub either
   const blocks = withoutFences.replace(/<!--[\s\S]*?-->/g, '').trim().split(/\n{2,}/);
   return (
@@ -368,6 +375,15 @@ export const Markdown: React.FC<{text: string}> = ({text}) => {
       {blocks.map((block, i) => {
         const fence = /^\u0000(\d+)\u0000$/.exec(block.trim());
         if (fence) return <CodeBlock key={i} code={fences[Number(fence[1])]} />;
+        const details = /^\u0001(\d+)\u0001$/.exec(block.trim());
+        if (details) {
+          return (
+            <div key={i} style={{display: 'flex', alignItems: 'center', gap: 6}}>
+              <IconChevronRight size={16} color={t.muted} />
+              <span>{renderInline(summaries[Number(details[1])], t)}</span>
+            </div>
+          );
+        }
         const lines = block.split('\n');
         const heading = /^(#{1,6}) (.*)$/.exec(block);
         if (heading && lines.length === 1) {
@@ -780,8 +796,13 @@ export const RepoHeader: React.FC<{owner: string; repo: string; active?: 'issues
  * Folds its content away: `open` 1 = natural height, 0 = gone (grid `0fr → 1fr` trick, no measuring).
  * Drive `open` frame by frame for a smooth collapse.
  */
-export const Collapse: React.FC<{open: number; children: React.ReactNode; style?: React.CSSProperties}> = ({open, children, style}) => (
-  <div style={{display: 'grid', gridTemplateRows: `${open}fr`, opacity: open, flexShrink: 0, ...style}}>
+export const Collapse: React.FC<{
+  open: number;
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+  boxRef?: React.Ref<HTMLDivElement>;
+}> = ({open, children, style, boxRef}) => (
+  <div ref={boxRef} style={{display: 'grid', gridTemplateRows: `${open}fr`, opacity: open, flexShrink: 0, ...style}}>
     <div style={{minHeight: 0, overflow: 'hidden'}}>{children}</div>
   </div>
 );
@@ -1044,12 +1065,17 @@ export const ThreadColumn: React.FC<{
   belowHeight?: number;
   /** Scroll through a thread taller than the screen: 0 = its top is visible, 1 = its bottom. Overrides `anchor`. */
   scroll?: number;
-}> = ({children, anchor = 'top', composer, below, belowHeight = 0, scroll}) => {
+  /** Push the thread down by this many px (keeps the top of a tall newest comment in view, see Preview). */
+  offset?: number;
+  /** Ref to the visible area, to measure its height. */
+  viewportRef?: React.Ref<HTMLDivElement>;
+}> = ({children, anchor = 'top', composer, below, belowHeight = 0, scroll, offset = 0, viewportRef}) => {
   const t = useGH();
   const fade = t.name === 'dark' ? 'rgba(13,17,23,0)' : 'rgba(255,255,255,0)';
   return (
     <div style={{flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column'}}>
       <div
+        ref={viewportRef}
         style={{
           flex: 1,
           minHeight: 0,
@@ -1064,7 +1090,9 @@ export const ThreadColumn: React.FC<{
           style={{
             position: scroll === undefined ? 'relative' : 'absolute',
             // top: N% of the viewport + translate: -N% of the content → slides from "top aligned" to "bottom aligned", no measuring
-            ...(scroll === undefined ? {} : {left: 0, right: 0, top: `${scroll * 100}%`, transform: `translateY(${-scroll * 100}%)`}),
+            ...(scroll === undefined
+              ? {transform: offset ? `translateY(${offset}px)` : undefined}
+              : {left: 0, right: 0, top: `${scroll * 100}%`, transform: `translateY(${-scroll * 100}%)`}),
             display: 'flex',
             flexDirection: 'column',
             gap: 16,
