@@ -32,6 +32,14 @@ class FunctionCall(BaseModel):
             a fallback target: the callee's own explicit function_call /
             hold / loop still wins, and the workflow forward edge is used
             only when no callback is registered.
+        sub_run: Provenance marker (issue #889). True only for an explicit
+            typed ``call_agent`` the agent itself issued as its decision — an
+            out-of-workflow sub-run that preserves the caller's position and
+            that a human gate must let through. False for a ``dispatch_next``
+            target promoted to a call_agent spec (a *workflow dispatch*), which
+            stays held. Set by the producer (:mod:`build_output`); a default
+            ``False`` is omitted from the serialized state (``exclude_defaults``),
+            so legacy/omitted callers keep workflow-dispatch semantics.
     """
 
     function: str = Field(default="call_agent")
@@ -41,6 +49,8 @@ class FunctionCall(BaseModel):
     complexity: str = ""
     reason: Optional[str] = None
     callback: Optional[str] = None
+    # Explicit typed-call provenance (issue #889): serialized only when true.
+    sub_run: bool = False
 
     @model_validator(mode="after")
     def validate_known_function(self) -> "FunctionCall":

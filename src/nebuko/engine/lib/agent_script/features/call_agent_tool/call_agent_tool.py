@@ -146,6 +146,9 @@ def action_to_function_call(action: CallAgentAction) -> Optional[FunctionCall]:
             agent_name=action.agent_name,
             complexity=action.complexity or "",
             callback=action.callback,
+            # Explicit typed call_agent is an out-of-workflow sub-run that
+            # preserves the caller's position (issue #889 R1).
+            sub_run=True,
         )
     except Exception as e:  # pydantic ValidationError or similar
         logger.warning(f"call_agent payload failed FunctionCall validation: {e}")

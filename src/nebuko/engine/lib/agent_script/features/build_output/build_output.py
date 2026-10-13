@@ -16,6 +16,8 @@ from pydantic import ValidationError
 from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS
 
 from config import (
+    HandOffScope,
+    WorkflowPosition,
     is_self_function_call,
     load_workflow,
     parse_position_env,
@@ -1279,12 +1281,25 @@ def build_output(
     # advertising the ungated forward edge (``next_step`` from WORKFLOW_NEXT).
     # The hold is released only by a gate command, so no reader may follow that
     # edge; the routing guard in resolve_route no longer trusts it either.
+    #
+    # Sub-run carve-out (issue #889): the gate holds workflow *advancement*, not
+    # an explicit out-of-workflow agent-to-agent sub-run (a typed ``call_agent``
+    # the agent issued itself). That hand-off preserves the caller's position and
+    # must survive so the resolver can start the callee (e.g. context) and return
+    # to the gated caller. Only a position-advancing hand-off is wiped. The
+    # decision is delegated to HandOffScope so producer and resolver agree.
     if dispatch is not None and _dispatch_is_human_gate_hold(dispatch):
-        resolution = resolution.model_copy(update={"next_step": ""})
-        # The gate supersedes any agent-named hand-off (issue #887 round 2): a
-        # persisted ``function_call`` would otherwise let the next bot trigger
-        # route straight to the callee, past the unreleased gate.
-        function_call = None
+        scope = HandOffScope.classify(
+            function_call=function_call,
+            position=WorkflowPosition.from_state_dict(position),
+            dispatch=dispatch,
+        )
+        if scope.kind != "sub_run":
+            resolution = resolution.model_copy(update={"next_step": ""})
+            # The gate supersedes any agent-named workflow hand-off (issue #887
+            # round 2): a persisted ``function_call`` would otherwise let the
+            # next bot trigger route straight to the callee, past the gate.
+            function_call = None
 
     # ── Recovery log: capture execution trace on failure ──────────
     if is_graceful_timeout or not final_message or is_malformed_final_message(final_message):

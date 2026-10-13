@@ -46,6 +46,7 @@ from .sub_domains.workflow_position.workflow_position import (
 )
 from .sub_domains.step_ref.step_ref import StepRef
 from .sub_domains.step_path.step_path import SEGMENT_PATTERN, StepPath
+from .sub_domains.hand_off_scope.hand_off_scope import HandOffScope
 
 # Features
 from .features.resolve_refs.resolve_refs import resolve_refs, REF_PATTERN
@@ -108,6 +109,7 @@ __all__ = [
     "StepRef",
     "StepPath",
     "SEGMENT_PATTERN",
+    "HandOffScope",
     # Features
     "resolve_refs",
     "REF_PATTERN",

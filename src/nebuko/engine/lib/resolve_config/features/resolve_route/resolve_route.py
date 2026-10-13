@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Optional
 
 from config import (
+    HandOffScope,
     WorkflowDefinition,
     WorkflowStep,
     load_workflow,
@@ -957,7 +958,7 @@ class HandoffDecision:
 
 
 # @stub-protected: signature defined by architect — do not modify
-def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None, exclude_step: Optional[str] = None) -> str:
+def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None, exclude_step: Optional[str] = None, allow_backward: bool = False) -> str:
     """Resolve the workflow step that ``callee`` should run (issue #507).
 
     When a caller hands off via ``function_call`` while a workflow is active,
@@ -1036,6 +1037,19 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
             and step.name != (exclude_step or "")
         ):
             return step.name
+    # Backward fallback (issue #889): an explicit out-of-workflow sub-run may
+    # legitimately re-enter a step already consumed by the caller (the gated
+    # ``plan`` -> ``context`` call for more knowledge). Callers opt in
+    # (``allow_backward=True``) only for a typed ``call_agent``; the
+    # forward-only default that kills the #733 loop is unchanged.
+    if allow_backward:
+        for step in steps[:current_index]:
+            if (
+                getattr(step, "agent", None) == callee
+                and getattr(step, "name", "")
+                and step.name != (exclude_step or "")
+            ):
+                return step.name
     return ""
 
 
@@ -1073,6 +1087,20 @@ def _is_human_gate_step(
     return bool(step is not None and getattr(step, "human_gate", False))
 
 
+def _is_sub_run_handoff(function_call, prev_state) -> bool:
+    """True when ``prev_state`` is parked on an explicit typed ``call_agent`` (issue #889).
+
+    Delegates to :class:`HandOffScope` so this resolver branch and the producer
+    (``build_output``) cannot disagree on whether the hand-off is a
+    position-preserving sub-run or a held workflow transition.
+    """
+    position = None
+    refs = getattr(prev_state, "position", None)
+    if refs:
+        position = WorkflowPosition(refs=list(refs))
+    return HandOffScope.classify(function_call=function_call, position=position).kind == "sub_run"
+
+
 def _resolve_handoff_decision(
     prev_state: "WorkflowState",
     workflows_dir: str,
@@ -1105,6 +1133,24 @@ def _resolve_handoff_decision(
         and dispatch.status == "hold"
         and _is_human_gate_hold(dispatch.reason)
     ):
+        # Sub-run carve-out (issue #889): the gate holds workflow *advancement*,
+        # not an explicit out-of-workflow sub-run (a typed ``call_agent``). The
+        # gated caller's own hold does not outrank that hand-off — the callee
+        # runs, then returns to the still-gated caller (R2). Every other
+        # hand-off (a workflow dispatch, no provenance) stays held.
+        if _is_sub_run_handoff(function_call, prev_state):
+            wf_name = (getattr(prev_state, "workflow", "") or "") if prev_state is not None else ""
+            caller_step = (getattr(prev_state, "step", "") or "") if prev_state is not None else ""
+            if wf_name:
+                target_step = _resolve_callee_step(
+                    wf_name, caller_step, callee, workflows_dir, local_workflows_dir,
+                    allow_backward=True,
+                )
+                if target_step:
+                    return HandoffDecision(callee, target_step, "function_call")
+            # Callee unresolvable: fail empty (the workflow path re-applies the
+            # hold) rather than launch a caller step.
+            return HandoffDecision("", "", "dispatch")
         # The current step's own hold outranks the hand-off: routing continues
         # on the dispatch path, which applies the same guard and returns the
         # hold. Empty target — the gate releases to a step, not to the callee.
