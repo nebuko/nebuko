@@ -1176,6 +1176,26 @@ class TestExtractLatestAnswerRecallOffset(unittest.TestCase):
         self.assertEqual(_fake_write.final_message, "finish summary")
 
 
+class TestCommentSplitLength(unittest.TestCase):
+    """Step-5 seam: build_output splits at the shared CommentSizePolicy (#913)."""
+
+    def test_uses_policy_max_comment_chars(self):
+        from build_output import _comment_split_length
+        from config import CommentSizePolicy
+
+        self.assertEqual(
+            _comment_split_length(),
+            CommentSizePolicy().resolved_max_comment_chars(),
+        )
+
+    def test_default_is_the_full_comment_cap(self):
+        from build_output import _comment_split_length
+
+        # The old role branch gave non-context agents a 10k split; the policy
+        # lifts every role to the comment cap so a long report is not chopped.
+        self.assertEqual(_comment_split_length(), 60_000)
+
+
 class TestWriteLatestAnswerFile(unittest.TestCase):
     """Artifact persistence used by the prepare_comment ETL layer."""
 
