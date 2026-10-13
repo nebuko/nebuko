@@ -25,6 +25,7 @@ from .sub_domains.script_start_notice.script_start_notice import ScriptStartNoti
 from .sub_domains.script_step_report.script_step_report import ScriptStepReport
 from .sub_domains.app_config.app_config import AppConfig
 from .sub_domains.history_window.history_window import HistoryWindowConfig
+from .sub_domains.comment_size.comment_size import CommentSizePolicy
 
 # Workflow Config sub-domains
 from .sub_domains.workflow.input_binding import (
@@ -91,6 +92,7 @@ __all__ = [
     "ScriptStepReport",
     "AppConfig",
     "HistoryWindowConfig",
+    "CommentSizePolicy",
     # Workflow Config entities
     "WorkflowCondition",
     "WorkflowInputSpec",
