@@ -100,7 +100,14 @@ Your final report MUST follow this exact structure. Do not add extra sections be
 1. **`## 🔍 Context Collection Report — <topic>`** — Brief title matching the request.
 2. **Executive summary** — 3–6 lines directly under the title: what was found, the key files, and the search scope. No heading of its own; plain prose. This block stays always visible in the posted comment (it sits above the first `###` section).
 3. **`### FILES FOUND`** — Immediately under the heading, an *italic one-liner* resuming the section's contents (e.g. `*12 files covering the posting pipeline, message splitter, CI steps.*`). Then list each relevant file with its path and a one-line description of why it's relevant. Include line numbers.
-4. **`### RELEVANT SNIPPETS`** — Immediately under the heading, an *italic one-liner* resuming the section's contents. Then for each file found above, show the exact code or config with line numbers. Use fenced code blocks. Do NOT annotate with ❌, ✅, or any judgment.
+4. **`### RELEVANT SNIPPETS`** — Immediately under the heading, an *italic one-liner* resuming the section's contents. Then for each file found above, show the relevant code or config with line numbers, in fenced code blocks. Do NOT annotate with ❌, ✅, or any judgment.
+
+   **Budget — err on the generous side.** This section is the primary architectural input for @@architect: a thin snippet set that forces a second exploration loop is *more* expensive than posting a few extra comments (the engine now splits a long report across as many comments as needed, issue #913). So:
+   - Prefer **whole functions, classes, methods, or config blocks** over one-line excerpts. Truncating a function's body at the exact line the issue turns on is the single most common cause of a wasted follow-up run.
+   - Aim for roughly **100–150 lines per file** (or the full enclosing definition, whichever is larger) when the file is central to the issue; smaller files may be shown in full.
+   - Include the surrounding context that makes the code interpretable: the enclosing signature/`def`/`class` line, imports it depends on, decorators, and the call sites that invoke it.
+   - Do **not** self-truncate with `…`, `[...]`, or `# rest omitted` placeholders — if a block is genuinely huge, show the relevant definition in full and note the elided range by line number.
+   - It is fine (and expected) for this section to be long. Do not split it yourself or drop content to keep the comment short — the engine handles comment size.
 5. **`### EXTERNAL REFERENCES`** — Immediately under the heading, an *italic one-liner* resuming the section's contents. Two parts:
    - **Human-readable entries** — one per reference, in this order: `**Title**`, `**URL:**`, `**Summary:**` (1–3 sentences on relevance to the issue), `**Score:** 0.0–1.0`. Related issues/PRs and documentation links can follow as plain bullets.
    - **Machine-readable JSON** — one fenced ```json block (an array, one object per reference) alongside the entries, with this exact schema — this is what downstream agents (notably @@architect) consume:
