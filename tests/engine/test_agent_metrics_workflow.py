@@ -20,9 +20,13 @@ CACHE_PREFIX = ".nebuko-cache/"
 SCRIPT_PATH_RE = re.compile(r'SCRIPT_PATH="([^"]+)"')
 
 
-def _agent_metrics_run_script() -> str:
+def _agent_metrics_steps() -> list[dict]:
     workflow = yaml.safe_load(WORKFLOW_YAML.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["agent-metrics"]["steps"]
+    return workflow["jobs"]["agent-metrics"]["steps"]
+
+
+def _agent_metrics_run_script() -> str:
+    steps = _agent_metrics_steps()
     step = next(s for s in steps if s.get("name") == "Aggregate agent metrics")
     return step["run"]
 
@@ -37,3 +41,40 @@ class TestAgentMetricsScriptPath:
             assert (REPO_ROOT / repo_relative).is_file(), (
                 f"agent-metrics points at a missing script: {declared}"
             )
+
+
+class TestAgentMetricsDependencyProvisioning:
+    """Structural guard: agent-metrics must provision deps before running the script.
+
+    The job ran ``python "$SCRIPT_PATH"`` under a bare interpreter with no
+    dependency-install step, so it died on ``ModuleNotFoundError: pydantic``
+    (issue #923). These tests pin the install step and that it pulls
+    dependencies from the engine manifest rather than a hardcoded package list.
+    """
+
+    STEP_NAME = "Install project dependencies"
+    AGGREGATE_STEP = "Aggregate agent metrics"
+
+    def _install_step(self) -> dict:
+        steps = _agent_metrics_steps()
+        return next(s for s in steps if s.get("name") == self.STEP_NAME)
+
+    def _step_names(self) -> list[str]:
+        return [s.get("name") for s in _agent_metrics_steps()]
+
+    def test_install_step_runs_before_aggregate(self) -> None:
+        names = self._step_names()
+        assert self.STEP_NAME in names, "agent-metrics must install dependencies"
+        assert names.index(self.STEP_NAME) < names.index(self.AGGREGATE_STEP), (
+            "dependencies must be installed before the metrics script runs"
+        )
+
+    def test_install_uses_manifest_root_not_hardcoded_packages(self) -> None:
+        run = self._install_step()["run"]
+        assert "pip install" in run
+        assert "$PROJECT_ROOT" in run
+        assert 'PROJECT_ROOT=".nebuko-cache"' in run
+        assert 'PROJECT_ROOT="."' in run
+        assert not re.search(r"pip install\s+(?:pyyaml|pydantic|rich)\b", run), (
+            "deps must come from the manifest, not a hardcoded package list"
+        )

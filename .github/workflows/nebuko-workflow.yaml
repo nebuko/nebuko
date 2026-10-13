@@ -364,6 +364,20 @@ jobs:
               with:
                   python-version: '3.13'
 
+            - name: Install project dependencies
+              run: |
+                # Install the engine manifest so pydantic/pyyaml (and future
+                # core deps) come from pyproject.toml instead of drifting.
+                # Fallback to the repo root mirrors the SCRIPT_PATH fallback
+                # in the next step: reusable-workflow mode checks the engine
+                # out into .nebuko-cache, self-hosted mode uses the repo root.
+                if [ -f ".nebuko-cache/src/nebuko/engine/lib/agent_metrics.py" ]; then
+                  PROJECT_ROOT=".nebuko-cache"
+                else
+                  PROJECT_ROOT="."
+                fi
+                python -m pip install "$PROJECT_ROOT"
+
             - name: Aggregate agent metrics
               env:
                   GITHUB_TOKEN: ${{ secrets.GH_PAT }}
