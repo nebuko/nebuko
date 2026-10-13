@@ -1,20 +1,20 @@
 <!-- bot-workflow-terminal -->
 ## 📊 Agent Statistics Summary
 
-| Agent | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |
-|-------|------|-------------|---------------|----------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|
-| Architect | 2 | 133,611 | 11,752 | n/a | 0 | $0.0000 | 0 | 28823 | 107754 | 87.4 | 2.17 | 3.5 | 0 | 0 | dispatch_next: 4, finish: 3 |
-| Context | 1 | 5,408,715 | 76,762 | n/a | 0 | $0.0000 | 0 | 9171 | 687853 | 158.6 | 1.79 | 105.0 | 2 | 0 | dispatch_next: 1, file_editor: 4, finish: 1, terminal: 99 |
-| Dev | 1 | 2,837,110 | 53,849 | n/a | 0 | $0.0000 | 0 | 13385 | 682650 | 105.8 | 1.36 | 70.0 | 1 | 0 | dispatch_next: 1, finish: 1, terminal: 68 |
-| Review | 1 | 1,626,119 | 16,203 | n/a | 0 | $0.0000 | 0 | 7178 | 330172 | 86.3 | 1.92 | 46.0 | 0 | 0 | dispatch_next: 2, finish: 1, terminal: 37, think: 6 |
+| Agent | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Cache Hit Tokens | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |
+|-------|------|-------------|---------------|----------------|------------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|
+| Architect | 2 | 133,611 | 11,752 | n/a | 0 | 0 | $0.0000 | 0 | 28823 | 107754 | 87.4 | 2.17 | 3.5 | 0 | 0 | dispatch_next: 4, finish: 3 |
+| Context | 1 | 5,408,715 | 76,762 | n/a | 0 | 0 | $0.0000 | 0 | 9171 | 687853 | 158.6 | 1.79 | 105.0 | 2 | 0 | dispatch_next: 1, file_editor: 4, finish: 1, terminal: 99 |
+| Dev | 1 | 2,837,110 | 53,849 | n/a | 0 | 0 | $0.0000 | 0 | 13385 | 682650 | 105.8 | 1.36 | 70.0 | 1 | 0 | dispatch_next: 1, finish: 1, terminal: 68 |
+| Review | 1 | 1,626,119 | 16,203 | n/a | 0 | 0 | $0.0000 | 0 | 7178 | 330172 | 86.3 | 1.92 | 46.0 | 0 | 0 | dispatch_next: 2, finish: 1, terminal: 37, think: 6 |
 
 **Totals:** 5 runs · 10,005,555 input tokens · 158,566 output tokens · $0.0000
 
 ## 📊 Model Statistics Summary
 
-| Model | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |
-|-------|------|-------------|---------------|----------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|
-| default | 5 | 10,005,555 | 158,566 | n/a | 0 | $0.0000 | 0 | 17476 | 383237 | 105.1 | 1.88 | 45.6 | 3 | 0 | dispatch_next: 8, file_editor: 4, finish: 6, terminal: 204, think: 6 |
+| Model | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Cache Hit Tokens | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |
+|-------|------|-------------|---------------|----------------|------------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|
+| default | 5 | 10,005,555 | 158,566 | n/a | 0 | 0 | $0.0000 | 0 | 17476 | 383237 | 105.1 | 1.88 | 45.6 | 3 | 0 | dispatch_next: 8, file_editor: 4, finish: 6, terminal: 204, think: 6 |
 
 ## 🧑‍💻 Human metrics
 

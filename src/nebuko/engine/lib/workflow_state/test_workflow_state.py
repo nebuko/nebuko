@@ -241,6 +241,31 @@ class TestStateMetricsCost(unittest.TestCase):
         self.assertEqual(metrics.cost, 0.0)
 
 
+class TestStateMetricsCacheAndReasoning(unittest.TestCase):
+    """Root cache/reasoning counters survive the state mirror (issue #917)."""
+
+    def test_counters_extracted_from_full_metrics_dict(self):
+        metrics = StateMetrics.from_full_metrics_dict(
+            {
+                "input_tokens": 26493,
+                "output_tokens": 2772,
+                "cache_hit_rate": 0.4819,
+                "cache_hit_tokens": 4864,
+                "reasoning_tokens": 120,
+            }
+        )
+        self.assertEqual(metrics.cache_hit_tokens, 4864)
+        self.assertEqual(metrics.reasoning_tokens, 120)
+        self.assertEqual(metrics.cache_hit_rate, 0.4819)
+
+    def test_counters_default_when_absent(self):
+        """Legacy payloads without the new keys still load (backward compat)."""
+        metrics = StateMetrics.from_full_metrics_dict({"input_tokens": 10})
+        self.assertEqual(metrics.cache_hit_tokens, 0)
+        self.assertEqual(metrics.reasoning_tokens, 0)
+        self.assertEqual(metrics.cache_hit_rate, 0.0)
+
+
 class TestStateMetricsProviderHealth(unittest.TestCase):
     """TPS/TTFT survive the workflow-state metrics mirror (issue #829)."""
 

@@ -20,6 +20,9 @@ class StateMetrics(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     max_context_window: int = 0
+    cache_hit_rate: float = 0.0
+    cache_hit_tokens: int = 0
+    reasoning_tokens: int = 0
     cost: float = 0.0
     tool_call_latency_ms: float = 0.0
     agent_runtime_ms: float = 0.0
@@ -49,6 +52,9 @@ class StateMetrics(BaseModel):
             input_tokens=data.get("input_tokens", 0),
             output_tokens=data.get("output_tokens", 0),
             max_context_window=data.get("max_context_window", 0),
+            cache_hit_rate=data.get("cache_hit_rate", 0.0) or 0.0,
+            cache_hit_tokens=data.get("cache_hit_tokens", 0),
+            reasoning_tokens=data.get("reasoning_tokens", 0),
             cost=data.get("cost", 0.0),
             tool_call_latency_ms=data.get("tool_call_latency_ms", 0.0),
             agent_runtime_ms=data.get("agent_runtime_ms", 0.0),

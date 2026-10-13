@@ -28,7 +28,12 @@ class Metrics:
         max_context_window: Peak context window observed during the run (used for KV cache estimation).
         cache_hit_rate: Fraction of input tokens served from the provider's
             prompt cache, in [0.0, 1.0] (0.0 when unavailable).
+        cache_hit_tokens: Cumulative input tokens served from the provider's
+            prompt cache. A subset of ``input_tokens`` in the inclusive
+            (OpenAI/litellm) shape; see ADR 0014 for the inclusive/exclusive
+            guard.
         reasoning_tokens: Cumulative reasoning tokens generated during the run.
+            A subset of ``output_tokens``.
         cost: Total LLM cost for the run in USD, as reported by the SDK
             (0.0 when the model has no pricing configured).
         complexity: Task complexity level (e.g. "medium", "high").
@@ -59,6 +64,7 @@ class Metrics:
     output_tokens: int = 0
     max_context_window: int = 0
     cache_hit_rate: float = 0.0
+    cache_hit_tokens: int = 0
     reasoning_tokens: int = 0
     cost: float = 0.0
     complexity: str = "N/A"
