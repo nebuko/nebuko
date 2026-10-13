@@ -124,8 +124,8 @@ export const GithubComment: React.FC<{
 }> = ({event, animate, gate, gateTitle, gateText, stateOpen = true}) => {
   if (!event) {
     throw new Error(
-      '<GithubComment> received no `event`. If it comes from GatePreview / PrFlowDemo: these scenes import ' +
-        'trigger / plan / impl, which now live in "./sample-events" (data.ts only exports `events`).',
+      '<GithubComment> received no `event`. Check the event id: ' +
+        'pick an event from `events` (or `eventById(id)`) in "./data".',
     );
   }
   const t = useGH();
@@ -283,6 +283,8 @@ export const IssueFrame: React.FC<{
   anchor?: 'top' | 'bottom';
   /** Text shown in the "Add a comment" box (drive it frame by frame for a typing effect). */
   composerText?: string;
+  /** Absolute frame at which the cursor clicks the composer's "Comment" button. */
+  composerPointerAt?: number | null;
   showRepoChrome?: boolean;
 }> = ({
   children,
@@ -304,6 +306,7 @@ export const IssueFrame: React.FC<{
   participants = [],
   anchor = 'top',
   composerText,
+  composerPointerAt = null,
   showRepoChrome = true,
 }) => {
   const t = THEMES[theme];
@@ -327,7 +330,7 @@ export const IssueFrame: React.FC<{
         </div>
 
         <div style={{flex: 1, minHeight: 0, display: 'flex', padding: '24px 32px', gap: 32, overflow: 'hidden'}}>
-          <ThreadColumn anchor={anchor} composer={<Composer text={composerText} />}>
+          <ThreadColumn anchor={anchor} composer={<Composer text={composerText} pointerAt={composerPointerAt} />}>
             {children}
           </ThreadColumn>
 

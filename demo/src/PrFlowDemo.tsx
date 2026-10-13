@@ -13,7 +13,7 @@ import {
   PullRequestFrame,
   ThemeName,
 } from './github-ui';
-import {impl, plan} from './data';
+import {eventById} from './data';
 
 /* ---------------------------------------------------------------------
  * Example flow: agents finished → open the PR → approve → squash merge.
@@ -100,8 +100,8 @@ const IssueScene: React.FC<{theme: ThemeName}> = ({theme}) => (
       time="3 hours ago"
       body={'The circuit breaker trips for the whole repository when a single issue fails three times.\n\nWe should be able to raise the limit for **one issue** only.'}
     />
-    <GithubComment event={plan} />
-    <GithubComment event={impl} />
+    <GithubComment event={eventById('e7')} />
+    <GithubComment event={eventById('e10')} />
     <GithubTimelineEvent kind="pr" actor="nebuko-dev" time="12 minutes ago" pointer>
       linked a pull request #842 that will close this issue
     </GithubTimelineEvent>

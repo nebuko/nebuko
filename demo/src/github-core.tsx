@@ -1004,7 +1004,12 @@ export const SideSection: React.FC<{title: string; gear?: boolean; last?: boolea
   );
 };
 
-export const Composer: React.FC<{text?: string; connector?: boolean}> = ({text, connector = true}) => {
+export const Composer: React.FC<{
+  text?: string;
+  connector?: boolean;
+  /** absolute frame at which the cursor flies to "Comment" and clicks it (null = no cursor) */
+  pointerAt?: number | null;
+}> = ({text, connector = true, pointerAt = null}) => {
   const t = useGH();
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
@@ -1072,7 +1077,7 @@ export const Composer: React.FC<{text?: string; connector?: boolean}> = ({text, 
           <span>Markdown is supported</span>
           <div style={{display: 'flex', gap: 8}}>
             <Button icon={<IconCheckCircle size={16} color={t.purple} />}>Close issue</Button>
-            <Button primary disabled={!has}>
+            <Button primary disabled={!has} pointed={pointerAt !== null} pointerDelay={pointerAt ?? undefined}>
               Comment
             </Button>
           </div>
