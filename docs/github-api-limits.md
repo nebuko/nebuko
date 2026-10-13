@@ -100,10 +100,12 @@ mutation rides the same `GitHubTransport` choke point as REST, but its point cos
 This limit stems from GitHub's underlying MySQL `mediumblob` storage (262,144 bytes
 ÷ 4 bytes per UTF-8 char ≈ 65,536 characters).
 
-**Project status:** The codebase currently splits long messages at **10,000
-characters** (`MAX_MESSAGE_LENGTH` in `agent_script.py`). This provides a comfortable
-safety margin below the hard limit, leaving room for bot markers and metrics
-commentary appended during posting.
+**Project status:** the codebase splits long answer bodies at the
+`CommentSizePolicy.max_comment_chars` threshold (default **60,000 characters**,
+`config/sub_domains/comment_size/comment_size.py`), a comfortable safety margin
+below the hard limit that leaves room for the bot marker and the workflow-state
+header. A body longer than one comment is posted as several comments by the
+publish seam (up to `max_parts`, default 4; issue #913) rather than truncated.
 
 ---
 
@@ -152,7 +154,7 @@ The table below maps each limit to the code or workflow that consumes it.
 | 5,000 req/h rate limit (PAT) | All engine API calls | `engine/lib/github_client.py` (`GitHubTransport`) | Every `gh api` call funnels through one choke point that tracks `x-ratelimit-remaining`/`x-ratelimit-reset`. |
 | 1,000 req/h (GITHUB_TOKEN) | Dependency-install + marker `curl` steps | `.github/workflows/nebuko-workflow.yaml` | Engine steps use `GH_PAT` (5,000/h); some YAML steps still ride `GITHUB_TOKEN` (1,000/h) — unification pending. |
 | Content creation (80/min, 500/h) | Comment/issue writes | `GitHubTransport._pace` + backoff | Mutative calls are paced ≥1 s apart; secondary blocks are retried with jittered backoff. See ADR-0005 for the runs/hour budget. |
-| Comment body size (65,536 chars) | Multi-part message posting | `agent_script.py` | Splits at 10,000 chars. Safe. |
+| Comment body size (65,536 chars) | Multi-part message posting | `config/sub_domains/comment_size` (`CommentSizePolicy`) | Splits at 60,000 chars, up to 4 comment parts (issue #913). Safe. |
 | Max comments per issue (~30,000) | Long-running issues | N/A (structural) | Unlikely to be reached in practice. |
 | Pagination (100 per page) | Fetching comments | `engine/lib/github_client.py` | `--paginate --slurp` for full reads; bounded tail read for the engine's per-run snapshot. |
 

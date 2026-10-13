@@ -177,8 +177,13 @@ for every agent (no per-agent code paths):
    - **Small state snapshots** — `WorkflowState.summary` stays derived from the
      concise finish message (`[:300]`), keeping snapshots compact.
 
-   Size handling is unchanged: 10k-char split → part files → 60k truncate →
-   multi-part posting.
+   Size handling (issue #913): the answer body is split at the publish seam
+   into up to `CommentSizePolicy.max_parts` comments (default 4), each under
+   `CommentSizePolicy.max_comment_chars` (default 60k). The state-bearing
+   header rides on the *first* part — the bot marker on its line 1 keeps the
+   whole run CI-gate exempt, and the later parts are grouped onto that state
+   comment on re-read (issue #504). The legacy single-comment 60k truncation is
+   gone, so a long `context` report reaches @@architect in full.
 
 **Shared contract** — the rule "the report turn's `finish.message` is the
 deliverable; the work-loop finish message is an optional note" lives in a single
