@@ -226,6 +226,26 @@ jobs:
                 ref: ${{ inputs.checkout_ref || (job.workflow_repository == github.repository && job.workflow_sha) || '' }}
                 persist-credentials: false
 
+            - name: Checkout nebuko engine (cross-repo caller)
+              if: job.workflow_repository != github.repository
+              uses: actions/checkout@v5
+              with:
+                repository: ${{ job.workflow_repository }}
+                ref: ${{ job.workflow_sha }}
+                path: .nebuko-engine
+                token: ${{ secrets.GH_PAT }}
+                persist-credentials: false
+
+            - name: Locate nebuko engine
+              run: |
+                if [ -d .nebuko-engine ]; then
+                  # Keep the engine checkout out of the caller's commits.
+                  echo "/.nebuko-engine/" >> .git/info/exclude
+                  echo "NEBUKO_ROOT=$GITHUB_WORKSPACE/.nebuko-engine" >> "$GITHUB_ENV"
+                else
+                  echo "NEBUKO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+                fi
+
             - name: Set up Python
               uses: actions/setup-python@v6
               with:
@@ -265,10 +285,10 @@ jobs:
                 EXTRA_SECRET_8_VALUE: ${{ secrets.EXTRA_SECRET_8_VALUE }}
                 EXTRA_SECRET_9_NAME: ${{ inputs.EXTRA_SECRET_9_NAME }}
                 EXTRA_SECRET_9_VALUE: ${{ secrets.EXTRA_SECRET_9_VALUE }}
-              run: uv run --extra runtime python -m nebuko.engine.lib.secret_env
+              run: uv run --project "$NEBUKO_ROOT" --extra runtime python -m nebuko.engine.lib.secret_env
 
             - name: Run orchestration engine
-              run: uv run --extra runtime python -m nebuko.engine.run
+              run: uv run --project "$NEBUKO_ROOT" --extra runtime python -m nebuko.engine.run
               env:
                 ENGINE_ADAPTER: github
                 GFA_SOURCE: github
