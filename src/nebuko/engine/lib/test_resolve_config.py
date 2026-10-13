@@ -1050,6 +1050,16 @@ class TestCommandAttemptRouting(unittest.TestCase):
         self.assertNotIn("COMMAND_ERROR", result)
         self.assertNotIn("DELETE_COMMENTS", result)
 
+    def test_multiline_feedback_is_not_a_command_error(self):
+        body = self._body(
+            "/nebuko approve gate --feedback\n"
+            "1. Flat\n"
+            "2. Remove this section\n"
+            "3. cache_hit_token is fine"
+        )
+        result = self._resolve(body, issue_number=919)
+        self.assertNotIn("COMMAND_ERROR", result)
+
 
 class TestUpdateCircuitBreakerCommand(unittest.TestCase):
     """Human `/nebuko update circuit-breaker --value <n>` arm (issue #839).

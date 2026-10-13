@@ -31,6 +31,21 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 | `/nebuko update circuit-breaker --value <n>` | Human-only, per-issue circuit-breaker override (issue #839). Persists `limit = <n>` in the issue's `workflow_state`; the guard then uses `state override → CIRCUIT_BREAKER_THRESHOLD env → 25`. Raising the value above the current agent-call count **un-trips** the issue; lowering it tightens a runaway issue. Terminal, agent-free: it consumes no call budget. Bots are ignored. |
 | `DEBUG=true` | Enables verbose debug logging for the run. |
 
+**Multiline `--feedback`:** the command line is the grammar line, but a terminal
+`--feedback` flag spans the remainder of the comment body verbatim, newlines
+preserved (issue #919). So a bare `--feedback` with the payload on following
+lines is valid:
+
+```
+/nebuko approve gate --feedback
+1. Flat
+2. Remove this section
+3. cache_hit_token is fine
+```
+
+A `--feedback` with nothing after it (only blank lines) is still rejected as a
+bare flag value.
+
 **Precedence:** human commands always override state-based routing (see the
 cascade in [architecture.md — Routing Cascade](./architecture.md#routing-cascade)):
 `approve/reject gate` > `resume` > `force-step` > `delete comments` >

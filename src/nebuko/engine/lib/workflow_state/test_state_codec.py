@@ -207,6 +207,20 @@ class TestCodecRoundTripPreservesGateDecisions(unittest.TestCase):
         self.assertIsNone(restored.gate_decision)
         self.assertEqual(restored.gate_history, [])
 
+    def test_multiline_feedback_roundtrips_verbatim(self):
+        codec = WorkflowStateCodec()
+        multiline = "1. Flat\n2. Remove this section\n3. cache_hit_token is fine"
+        decision = _gate_decision("rejected", "stub_approval").model_copy(
+            update={"feedback": multiline}
+        )
+        state = _state_with_gate_decisions().model_copy(
+            update={"gate_decision": decision}
+        )
+
+        restored = codec.decode(codec.encode(state, compact=True))
+
+        self.assertEqual(restored.gate_decision.feedback, multiline)
+
 
 class TestMalformedPositionNeverSilentlyDropped(unittest.TestCase):
     def test_empty_step_mount_ref_is_preserved(self):

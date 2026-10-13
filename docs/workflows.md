@@ -177,6 +177,10 @@ Mechanics:
    /nebuko reject gate  [--feedback "..."]
    ```
 
+   The `--feedback` value may span the command line and every following line of
+   the comment body (verbatim, newlines preserved); a trailing `--feedback`
+   with no value is still rejected (issue #919).
+
    The command is handled **inline by the engine** and is never routed to an
    agent.
 3. The engine records a `GateDecision` (`status`, `decided_by`, `decided_at`,

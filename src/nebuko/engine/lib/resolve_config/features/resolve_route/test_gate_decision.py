@@ -166,6 +166,42 @@ class TestResolveGateDecisionPath(unittest.TestCase):
         self.assertEqual(decision["status"], "rejected")
         self.assertEqual(decision["feedback"], "fix the X section")
 
+    def test_reject_with_multiline_feedback_keeps_newlines(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_gate_decision_path(
+                _held_state(),
+                _cmd(
+                    "/nebuko reject gate --feedback\n"
+                    "1. Flat\n"
+                    "2. Remove this section"
+                ),
+                HUMAN,
+                tmpdir,
+            )
+        self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg["task"], "architect")
+        self.assertEqual(cfg["config_step"], "stub_approval")
+        decision = json.loads(cfg["config_gate_decision"])
+        self.assertEqual(decision["status"], "rejected")
+        self.assertEqual(
+            decision["feedback"], "1. Flat\n2. Remove this section"
+        )
+
+    def test_approve_with_multiline_feedback_stores_verbatim(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_gate_decision_path(
+                _held_state(),
+                _cmd("/nebuko approve gate --feedback\n1. Flat\n2. Keep as is"),
+                HUMAN,
+                tmpdir,
+            )
+        self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
+        decision = json.loads(cfg["config_gate_decision"])
+        self.assertEqual(decision["status"], "approved")
+        self.assertEqual(decision["feedback"], "1. Flat\n2. Keep as is")
+
     def test_reject_without_feedback_routes_on_result_rejected(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_workflow(tmpdir)
