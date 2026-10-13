@@ -125,19 +125,23 @@ Built for **iterative dev** — small iterations, fast delivery, clean code, TDD
   skills, human approval gates, conditional routing, per-step model and
   sampling choice. Reviewed in PRs, forked, versioned. Adopt with a commit,
   delete with a commit — no SaaS to migrate away from.
+
 - **The audit trail is your issue thread.** Every step is a plain comment:
   what the agent did, what it found, the decision it made, and the cost it
   paid (tokens, latency, tool calls). Agents are prompted to assume a human
   reviewer will read every change [3] — because they will.
+
 - **Stateless agents, durable state.** The engine is a stateless mechanism:
   every run recounts the evidence and reduces the latest
   `WORKFLOW_STATE` comment to pick the next action [1][2]. Crash, soft-kill,
   or leave for the weekend — the state is in the thread, so the workflow
   resumes from the newest comment.
+
 - **Humans own the decisions.** `human_gate` stops the pipeline until a
   human approves — e.g. the *Object Design Anchor*, the state object's fields
   and signatures, before any implementation starts [1]. Reject it and the
   architect loops back to the plan.
+
 - **Bring your own keys.** Provider accounts and API keys are yours; nothing
   is billed through Nebuko, and keys never live in the config file.
 
