@@ -667,3 +667,93 @@ class TestNebukoPrefix:
 
     def test_classify_legacy_workflow_clean_is_not_command(self):
         assert classify_comment("/workflow clean comments").kind == "none"
+
+
+class TestMultilineFeedback:
+    """Multiline ``--feedback`` (issue #919).
+
+    The command line stays the grammar line, but a terminal ``--feedback`` flag
+    spans the remainder of the comment body verbatim, newlines preserved.
+    """
+
+    ISSUE_BODY = (
+        "/nebuko approve gate --feedback\n"
+        "1. Flat\n"
+        "2. Remove this section\n"
+        "3. cache_hit_token is fine"
+    )
+
+    def test_issue_body_is_valid_with_verbatim_multiline_feedback(self):
+        result = parse_command(self.ISSUE_BODY)
+        assert result.status == "valid"
+        assert result.command is not None
+        assert result.command.action == "approve"
+        assert (
+            result.command.params["feedback"]
+            == "1. Flat\n2. Remove this section\n3. cache_hit_token is fine"
+        )
+
+    def test_parse_workflow_command_returns_multiline_feedback(self):
+        cmd = parse_workflow_command(self.ISSUE_BODY)
+        assert cmd == WorkflowCommand(
+            action="approve",
+            resource="gate",
+            params={
+                "feedback": "1. Flat\n2. Remove this section\n3. cache_hit_token is fine"
+            },
+        )
+
+    def test_same_line_start_joins_continuation_with_newline(self):
+        cmd = parse_workflow_command(
+            "/nebuko approve gate --feedback first line\nsecond line\nthird"
+        )
+        assert cmd is not None
+        assert cmd.params["feedback"] == "first line\nsecond line\nthird"
+
+    def test_blank_lines_only_after_feedback_is_still_bare(self):
+        result = parse_command("/nebuko approve gate --feedback\n\n  \n")
+        assert result.status == "malformed"
+        assert result.detail == "bare_flag_value"
+
+    def test_same_line_value_then_continuation_is_captured(self):
+        # A terminal --feedback captures the rest of the body even when it
+        # already has a same-line value (everything after the flag is feedback).
+        result = parse_command("/nebuko approve gate --feedback hi\nthere")
+        assert result.status == "valid"
+        assert result.command is not None
+        assert result.command.params["feedback"] == "hi\nthere"
+
+    def test_feedback_followed_by_another_flag_keeps_single_line(self):
+        # --feedback is not terminal here, so single-line semantics apply and
+        # the following duplicate flag is still the reported violation.
+        result = parse_command("/nebuko resume --feedback a --feedback b\nignored")
+        assert result.status == "malformed"
+        assert result.detail == "duplicate_flag"
+
+    def test_resume_bare_feedback_no_continuation_is_none(self):
+        assert parse_workflow_command("/nebuko resume --feedback") is None
+
+    def test_classify_issue_body_is_command_not_attempt(self):
+        intent = classify_comment(self.ISSUE_BODY)
+        assert intent.kind == "command"
+        assert intent.command == "approve"
+
+    def test_extra_lines_ignored_for_non_feedback_flags(self):
+        cmd = parse_workflow_command("/nebuko run workflow --name default\nmore text")
+        assert cmd is not None and cmd.params == {"name": "default"}
+
+    def test_appended_state_block_is_not_feedback(self):
+        # Real trigger bodies carry the engine-appended workflow-state block;
+        # it must never leak into the captured feedback (issue #919).
+        body = self.ISSUE_BODY + (
+            "\n<details>\n<summary>🤖 Workflow State (v1)</summary>\n\n"
+            "```json\n<!-- WORKFLOW_STATE_START -->\n{\"version\": 1}\n"
+            "<!-- WORKFLOW_STATE_END -->\n```\n\n</details>"
+        )
+        cmd = parse_workflow_command(body)
+        assert cmd is not None
+        assert (
+            cmd.params["feedback"]
+            == "1. Flat\n2. Remove this section\n3. cache_hit_token is fine"
+        )
+

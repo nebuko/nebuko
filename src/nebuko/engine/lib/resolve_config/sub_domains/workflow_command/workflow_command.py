@@ -28,6 +28,11 @@ Canonical actions (issue #635):
 Only the ``/nebuko``-prefixed form is recognized as a command; a bare
 ``clean comments`` line is not one (issue #679).
 
+The command line is the grammar line for every action, but a **terminal**
+``--feedback`` flag additionally spans the rest of the comment body, so its
+value may be written on the following lines (verbatim, newlines preserved,
+issue #919). Any other flag stays single-line.
+
 Malformed input (unknown action, wrong/missing resource, unknown or
 duplicate flag, missing required flag) yields ``None`` from
 :func:`parse_workflow_command`; :func:`parse_command` is the typed sibling
@@ -48,6 +53,7 @@ from config import brand
 __all__ = [
     "WorkflowCommand",
     "CommandGrammar",
+    "CommandSource",
     "CommandParseResult",
     "CommandDetail",
     "ParseStatus",
@@ -227,8 +233,55 @@ COMMAND_GRAMMAR = CommandGrammar(primary=brand().command_name)
 _COMMAND_RE = COMMAND_GRAMMAR.pattern()
 
 
+@dataclass(frozen=True)
+class CommandSource:
+    """A command body split into its grammar line and its continuation.
+
+    The command grammar is first-line-only; the terminal multiword flag
+    (``--feedback``) additionally spans the comment body (issue #919). This
+    value object models ``body = command_line + continuation`` in one place so
+    :func:`parse_command` and :func:`_attempted_action` share a single split
+    boundary and the ``--feedback`` span rule has one source of truth.
+
+    The continuation excludes engine bookkeeping (the appended workflow-state
+    ``<details>`` block and bot marker lines) so only human-authored text is
+    ever captured as feedback. The command line itself is left verbatim, so a
+    bot body whose first line is a marker is still not a command.
+
+    Attributes:
+        command_line: First line of the body, stripped.
+        continuation: Human-authored text after the first newline with internal
+            newlines preserved; stripped; ``""`` when there is none.
+    """
+
+    command_line: str
+    continuation: str
+
+    @classmethod
+    def from_body(cls, body: str) -> "CommandSource":
+        """Split ``body`` into its stripped grammar line and continuation."""
+        command_line, _, rest = body.partition("\n")
+        return cls(
+            command_line=command_line.strip(),
+            continuation=_strip_engine_bookkeeping(rest).strip(),
+        )
+
+
+def _strip_engine_bookkeeping(text: str) -> str:
+    """Drop the engine-appended workflow-state block and bot markers.
+
+    Trigger bodies carry the state ``<details>`` block and routing markers that
+    the engine appended; they are not command input (issue #919).
+    """
+    if not text:
+        return text
+    from workflow_state.features.comment.to_git_comment import strip_state_section
+
+    return strip_state_section(text)
+
+
 def _parse_flags(
-    tokens: List[str], action: str
+    tokens: List[str], action: str, continuation: str = ""
 ) -> Tuple[Optional[Dict[str, str]], Optional[CommandDetail]]:
     """Parse ``--flag value`` pairs into a dict.
 
@@ -253,6 +306,12 @@ def _parse_flags(
             while j < len(tokens) and not tokens[j].startswith("--"):
                 j += 1
             value = " ".join(tokens[i + 1 : j])
+            # A terminal multiword flag (no ``--`` token follows on the command
+            # line) spans the rest of the body: append the continuation lines
+            # verbatim, newlines preserved (issue #919). A non-terminal flag
+            # keeps single-line semantics and ignores the continuation.
+            if j >= len(tokens) and continuation:
+                value = f"{value}\n{continuation}" if value else continuation
             if not value:
                 return None, "bare_flag_value"
             params[flag] = value
@@ -321,9 +380,13 @@ def _malformed_result(
 def parse_command(trigger_body: str) -> CommandParseResult:
     """First line → typed :class:`CommandParseResult`; never collapses failures.
 
+    The command line is the grammar line; the terminal ``--feedback`` flag
+    additionally spans the rest of the body (issue #919).
+
     # @stub-protected
     """
-    first_line = trigger_body.split("\n", 1)[0].strip()
+    source = CommandSource.from_body(trigger_body)
+    first_line = source.command_line
     match = _COMMAND_RE.match(first_line)
     if not match:
         # A leading "/" that is not a well-formed /nebuko prefix is an unknown
@@ -361,7 +424,7 @@ def parse_command(trigger_body: str) -> CommandParseResult:
         if resource_token != expected_resource:
             return _malformed_result("unknown_resource", action, grammar_action)
         i += 1
-    params, detail = _parse_flags(tokens[i:], grammar_action)
+    params, detail = _parse_flags(tokens[i:], grammar_action, source.continuation)
     if params is None:
         return _malformed_result(detail or "unknown_flag", action, grammar_action)
     if not _numeric_flags_valid(params, grammar_action):
@@ -470,7 +533,7 @@ def _attempted_action(body: str) -> Optional[str]:
     flags are invalid (issue #867); a malformed *action* has no verb. Matching
     mirrors :func:`parse_command`: first line, anchored prefix, first token.
     """
-    first_line = body.split("\n", 1)[0].strip()
+    first_line = CommandSource.from_body(body).command_line
     match = _COMMAND_RE.match(first_line)
     if not match:
         return None
