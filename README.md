@@ -91,35 +91,65 @@ want to try is a YAML diff, not a new stack:
 > 🚀 The full walkthrough is in [**How to adopt Nebuko**](docs/adoption.md)
 > (entrypoint, authentication, providers, runners).
 
-1. **Add the reusable workflow** in `.github/workflows/nebuko.yaml`
-   (complete entrypoint: [adoption.md](docs/adoption.md#3-the-entrypoint-copy-paste)):
+1. **Add your agent config** at `.nebuko/agents/agent-config.yaml` — **mandatory
+   for now**: it is how you keep control of which providers, models and tools
+   your agents use. Start from a shipped profile:
 
-   ```yaml
-   jobs:
-     agent:
-       uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
-       with:
-         agent_config_path: "agent-config.yaml"
-       secrets:
-         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-         GH_PAT: ${{ secrets.GH_PAT }}
+   ```bash
+   mkdir -p .nebuko/agents
+   curl -fsSL -o .nebuko/agents/agent-config.yaml \
+     https://raw.githubusercontent.com/nebuko/nebuko/v0.0.2/defaults/agents/agent-config-openrouter.yaml
    ```
 
-2. **Add secrets** under *Settings → Secrets and variables → Actions*:
-   - a provider key: `OPENROUTER_API_KEY` or `COMMANDCODE_API_KEY`
-     (see [providers](#providers));
+   Pick the profile matching your provider ([providers](#providers)) and note
+   its `api_token_env` — that is the secret you wire in steps 2–3. Full schema:
+   [configuration.md](docs/configuration.md).
+
+2. **Add the reusable workflow** in `.github/workflows/nebuko.yaml`
+   (complete entrypoint: [adoption.md](docs/adoption.md#3-the-entrypoint-copy-paste)),
+   pointing `agent_config_path` at your file and passing the secret your config
+   reads:
+
+   ```yaml
+    name: Nebuko
+
+    on:
+      issues:
+        types: [opened, edited, assigned, closed]
+      issue_comment:
+        types: [created]
+
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    jobs:
+      agent:
+        uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@v0.0.2
+        with:
+          agent_config_path: ".nebuko/agents/agent-config.yaml"
+        secrets:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # = api_token_env in your config
+          GH_PAT: ${{ secrets.GH_PAT }}
+   ```
+
+3. **Add secrets** under *Settings → Secrets and variables → Actions*:
+   - the provider key named by your config's `api_token_env`:
+     `OPENROUTER_API_KEY`, `COMMANDCODE_API_KEY`, `OPENCODE_GO_API_KEY` or
+     `LOCAL_VLLM_API_TOKEN` (see [providers](#providers));
    - `GH_PAT`: a fine-grained PAT with **Contents**, **Pull requests** and
      **Issues** read/write;
    - optional MCP tokens (e.g. `BRAVE_API_KEY`) through the generic
      `EXTRA_SECRET_n_*` slots — see [adoption.md §3.1](docs/adoption.md#31-wiring-extra-secrets-mcp-tokens).
 
-3. **Comment on an issue:**
+4. **Comment on an issue:**
    - `/nebuko run workflow --name default` — the standard plan → context →
      implement → review workflow, or
    - `@@architect <your request>` — call a single agent directly.
 
-**Zero config to start.** Nebuko ships default agents
-([`defaults/agents/`](defaults/agents/)), prompts
+**Minimal config to start.** Beyond your agent config, Nebuko ships default
+agent profiles ([`defaults/agents/`](defaults/agents/)), prompts
 ([`defaults/prompts/`](defaults/prompts/)) and workflows
 ([`defaults/workflows/`](defaults/workflows/)). Lookup is layered: your
 `.nebuko/<kind>/` override first, then the shipped default. It runs on
@@ -182,7 +212,8 @@ sampling that cascades per-invocation > per-agent > per-LLM. A per-step
 | **OpenRouter** | [`agent-config-openrouter.yaml`](defaults/agents/agent-config-openrouter.yaml) | Pay-as-you-go; 25+ free models | Model variety, zero-commitment trial |
 | **CommandCode** | [`agent-config-commandcode.yaml`](defaults/agents/agent-config-commandcode.yaml) | ~$10/mo GOAT plan ($10 → $70 of credits); API access needs **GOAT or higher** | Cheapest subscription-driven runs |
 
-Point `agent_config_path` at a profile name. See
+Copy a profile to `.nebuko/agents/agent-config.yaml` and point
+`agent_config_path` at it (Quickstart step 1). See
 [subscription-plans.md](docs/subscription-plans.md) for the subscription story and
 its limits.
 

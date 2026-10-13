@@ -47,16 +47,49 @@ Adding Nebuko to a repository gives you:
    - **Contents:** read and write — clone and push branches.
    - **Pull requests:** read and write — open and update PRs.
    - **Issues:** read and write — read triggers, post comments, persist state.
-4. **A provider API key** — one of `OPENROUTER_API_KEY`,
-   `COMMANDCODE_API_KEY`, or `LOCAL_VLLM_API_TOKEN`, matching the provider you
-   configure (section 5).
+4. **An agent config** at `.nebuko/agents/agent-config.yaml` in your
+   repository — **mandatory for now** (section 3, step 1).
+5. **A provider API key** — one of `OPENROUTER_API_KEY`,
+   `COMMANDCODE_API_KEY`, `OPENCODE_GO_API_KEY` or `LOCAL_VLLM_API_TOKEN`,
+   matching the `api_token_env` of the provider in your agent config
+   (section 5).
 
 ---
 
 ## 3. The entrypoint (copy-paste)
 
-Create `.github/workflows/nebuko.yaml` in your repository and commit this file
-as-is:
+Adopting Nebuko is three commits' worth of work, in this order: the agent
+config, the workflow, then the secrets that config needs.
+
+### Step 1 — Create your agent config (mandatory)
+
+Every adopting repository **must** provide its own
+`.nebuko/agents/agent-config.yaml`. This is mandatory for now: it keeps the
+choice of providers, models, prompts and tools on *your* side rather than
+inherited from whatever Nebuko ships. Either write one (section 5,
+[configuration.md](./configuration.md)) or copy a shipped profile from
+[`defaults/agents/`](../defaults/agents/) and adapt it:
+
+| Profile | Provider | Secret it reads (`api_token_env`) |
+|---------|----------|-----------------------------------|
+| [`agent-config-openrouter.yaml`](../defaults/agents/agent-config-openrouter.yaml) | OpenRouter | `OPENROUTER_API_KEY` |
+| [`agent-config-commandcode.yaml`](../defaults/agents/agent-config-commandcode.yaml) | CommandCode | `COMMANDCODE_API_KEY` |
+| [`agent-config-opencode.yaml`](../defaults/agents/agent-config-opencode.yaml) | OpenCode Go | `OPENCODE_GO_API_KEY` |
+
+```bash
+mkdir -p .nebuko/agents
+curl -fsSL -o .nebuko/agents/agent-config.yaml \
+  https://raw.githubusercontent.com/nebuko/nebuko/v0.0.2/defaults/agents/agent-config-openrouter.yaml
+```
+
+Commit the file. Note every `api_token_env` it declares (one per provider):
+each one is a secret you must pass in step 2 and create in step 3.
+
+### Step 2 — Add the workflow
+
+Create `.github/workflows/nebuko.yaml` in your repository, point
+`agent_config_path` at your config, and pass the secrets that config reads
+(here, the OpenRouter profile):
 
 ```yaml
 name: Nebuko
@@ -74,16 +107,24 @@ permissions:
 
 jobs:
   agent:
-    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@v0.0.2
     with:
-      agent_config_path: "agent-config.yaml"
+      agent_config_path: ".nebuko/agents/agent-config.yaml"
     secrets:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # = api_token_env in your config
       GH_PAT: ${{ secrets.GH_PAT }}
 ```
 
-`OPENROUTER_API_KEY` and `GH_PAT` are repository secrets, added under
-**Settings → Secrets and variables → Actions**.
+On another provider, replace `OPENROUTER_API_KEY` with the secret named by your
+config's `api_token_env` (e.g. `COMMANDCODE_API_KEY`); list one line per
+provider your config uses.
+
+### Step 3 — Add the secrets
+
+Under **Settings → Secrets and variables → Actions**, create a repository secret
+for each name wired in step 2: `GH_PAT` (section 4) and every provider key your
+config's `api_token_env` entries reference. A provider whose secret is missing
+cannot reach its LLM.
 
 ### Inputs
 
@@ -91,7 +132,7 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 
 | Input | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `agent_config_path` | string | `agent-config.yaml` | Path to your layered config (section 5). |
+| `agent_config_path` | string | `agent-config.yaml` | Path to your agent config — set it to `.nebuko/agents/agent-config.yaml` (step 1, section 5). A bare file name is looked up in `.nebuko/agents/`. |
 | `runs_on` | string | `ubuntu-latest` | Runner label used by the jobs (section 6). |
 | `circuit_breaker_threshold` | number | `25` | Bot-marker count that trips the circuit breaker (per-issue override: `/nebuko update circuit-breaker --value <n>`). |
 | `pin_comment` | boolean | `false` | Pin every agent-step comment for verbatim context injection. |
@@ -110,11 +151,13 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 | `GH_PAT` | **yes** | Fine-grained PAT for git push, issue/PR API calls, and comments. |
 | `OPENROUTER_API_KEY` | optional | Provider key, used as the fallback LLM key. |
 | `COMMANDCODE_API_KEY` | optional | CommandCode subscription provider. |
+| `OPENCODE_GO_API_KEY` | optional | OpenCode Go provider. |
 | `LOCAL_VLLM_API_TOKEN` | optional | Local vLLM provider. |
 | `BRAVE_API_KEY` | optional | Brave Search MCP token (the named alias of the slot pattern in section 3.1). |
 | `EXTRA_SECRET_1_VALUE` … `EXTRA_SECRET_9_VALUE` | optional | Values materialized into the env vars named by the `EXTRA_SECRET_n_NAME` inputs (section 3.1). |
 
-At least one provider secret must be wired for the agents to reach an LLM.
+Each provider "optional" above becomes **required** as soon as your agent
+config's `api_token_env` references it.
 
 ### 3.1 Wiring extra secrets (MCP tokens)
 
@@ -126,9 +169,9 @@ carries the *name*, the `secrets:` block carries the *value*:
 ```yaml
 jobs:
   agent:
-    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@v0.0.2
     with:
-      agent_config_path: "agent-config.yaml"
+      agent_config_path: ".nebuko/agents/agent-config.yaml"
       EXTRA_SECRET_1_NAME: "BRAVE_API_KEY"       # env var the MCP reads
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -185,18 +228,18 @@ The `nebuko[bot]` actor requires the GitHub App and is not available yet.
 
 ## 5. Provider configuration — ready-to-paste configs
 
-Commit an `agent-config.yaml`. Nebuko resolves it — and every other config
-artifact — through a layered lookup: a repo override under `.nebuko/` first,
-then the copy shipped in `defaults/`. Add yours at
-`.nebuko/agents/agent-config.yaml` (or set `agent_config_path` to wherever you
-keep it). The file is layered **providers → llms → agents**; the full schema is
-in [configuration.md](./configuration.md). The shipped `defaults/agents/` and
-`defaults/prompts/` work with no local files at all, so the config below is the
-whole minimal setup.
+Commit your agent config at `.nebuko/agents/agent-config.yaml` — **mandatory
+for now** (section 3, step 1) — and set `agent_config_path` to that path. Other
+config artifacts (prompts, skills, workflows) still resolve through the layered
+lookup: a repo override under `.nebuko/` first, then the copy shipped in
+`defaults/`. The file is layered **providers → llms → agents**; the full schema
+is in [configuration.md](./configuration.md). The shipped `defaults/prompts/`
+need no local copies, so a config like the one below is the whole minimal
+setup.
 
 ### OpenRouter
 
-`agent-config.yaml`:
+`.nebuko/agents/agent-config.yaml`:
 
 ```yaml
 providers:
@@ -307,14 +350,18 @@ The workflow runs on GitHub-hosted runners by default. Select a runner with the
 
 ## 7. Pinning and upgrades
 
-The entrypoint above pins `@main`. Release tags (starting `0.1.0`) will be
-published before public launch; once they exist, pin the release tag for
-reproducibility, or a full commit SHA for the strongest guarantee:
+The entrypoint above pins the release tag `@v0.0.2` (the default version).
+Pin a release tag for reproducibility, a full commit SHA for the strongest
+guarantee, or `@main` to track unreleased changes:
 
 ```yaml
-    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@0.1.0
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@v0.0.2
     # or: .../nebuko-workflow.yaml@<full-commit-sha>
+    # or: .../nebuko-workflow.yaml@main   # latest, unreleased
 ```
+
+To upgrade, bump the tag in your entrypoint and re-fetch your agent config
+profile from the same tag if you started from a shipped one.
 
 GitHub Actions does **not** follow redirects for reusable workflows: if the
 called repository or workflow path is ever renamed, callers pinned to the old
