@@ -4,6 +4,7 @@ Validates the resolved task, routes via resolve_workflow_routing, and
 constructs the final KEY=value environment variable dict.
 """
 
+import json
 from typing import Optional
 
 from complexity_governor.complexity_governor import ComplexityGovernor
@@ -358,7 +359,13 @@ def _build_result(
     result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")
     result["WORKFLOW_POSITION_PATH"] = wf_result.get("WORKFLOW_POSITION_PATH", "")
     result = _attach_position(result, config, workflows_dir, local_workflows_dir)
-    return _attach_step_inputs(result, config, workflows_dir, local_workflows_dir)
+    result = _attach_step_inputs(result, config, workflows_dir, local_workflows_dir)
+    return _attach_step_hooks(
+        result,
+        workflows_dir,
+        local_workflows_dir,
+        config.get("config_scaffold_branch") or None,
+    )
 
 
 def _attach_step_inputs(
@@ -395,4 +402,38 @@ def _attach_step_inputs(
         local_workflows_dir,
         scaffold_branch,
     )
+    return result
+
+
+def _attach_step_hooks(
+    result: dict,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
+) -> dict:
+    """Emit a resolved agent step's declared session hooks as ``STEP_HOOKS`` (issue #884).
+
+    The payload is a JSON object keyed by phase (``pre`` / ``post``), each value
+    the hook's ``path``/``args``/``timeout_minutes`` — decoded engine-side into
+    ``HookSpec``. Loading the step here (rather than threading the spec through
+    every routing branch) mirrors ``_attach_step_inputs``. A step that declares
+    no hooks is left untouched, keeping its resolver output byte-identical.
+    """
+    wf_name = result.get("WORKFLOW_NAME") or ""
+    step_name = result.get("WORKFLOW_STEP") or ""
+    if not wf_name or not step_name:
+        return result
+    workflow = _load_workflow_by_reference(
+        wf_name, workflows_dir, local_workflows_dir, scaffold_branch,
+    )
+    step = _find_workflow_step(workflow, step_name) if workflow else None
+    if step is None or (step.pre_hook is None and step.post_hook is None):
+        return result
+
+    payload: dict[str, dict] = {}
+    if step.pre_hook is not None:
+        payload["pre"] = step.pre_hook.model_dump()
+    if step.post_hook is not None:
+        payload["post"] = step.post_hook.model_dump()
+    result["STEP_HOOKS"] = json.dumps(payload)
     return result

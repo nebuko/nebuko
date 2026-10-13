@@ -20,6 +20,12 @@ from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
+from nebuko.engine.hook_runner import (
+    HookPhase,
+    HookResult,
+    HookRunner,
+    hooks_from_resolved,
+)
 from nebuko.engine.input_wiring import (
     MAX_CALL_FRAMES,
     Materialization,
@@ -50,7 +56,7 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
     from nebuko.adapters.base import PlatformAdapter
-    from config import AgentStartNotice, HumanActionNotice, ScriptStartNotice
+    from config import AgentStartNotice, HookSpec, HumanActionNotice, ScriptStartNotice
     from nebuko.engine.artifacts import RunArtifactStager
     from nebuko.engine.models import CommentEntry
     from workflow_state.workflow_state import WorkflowState
@@ -570,6 +576,14 @@ class Engine:
     _step_input_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # A fail-open hook failure note to record on the persisted step output
+    # (issue #884). A ``post_hook`` failure must be visible in the state comment
+    # without altering the step outcome or routing, so the agent phase stages it
+    # and ``persist`` merges it into ``current_context``. Engine-internal, so it
+    # is excluded from ``__init__``/equality/repr.
+    _hook_state: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
 
     # @stub-protected
     def _run_deterministic_step(
@@ -704,6 +718,7 @@ class Engine:
         state: WorkflowState | None = None
         publish_failed = False
         self._publish_state.clear()
+        self._hook_state.clear()
         try:
             self._enter(phases, "normalize")
             trigger = self.normalize()
@@ -810,20 +825,55 @@ class Engine:
             # the child starts from scratch and resets ``history`` to a single
             # entry (issue #726).
             self.stage_prev_state()
-            self.notify_agent_started(self._agent_start_notice(trigger))
+            # Session hooks (issue #884): the resolver hands the step's declared
+            # ``pre_hook`` / ``post_hook`` as a ``STEP_HOOKS`` contract, decoded
+            # once here. A ``pre_hook`` runs before the agent and is fail-closed;
+            # a ``post_hook`` runs after the agent attempt and is fail-open.
+            hooks = hooks_from_resolved(resolved)
             failure_reason: str | None = None
-            try:
-                agent_result = self.invoke_agent(prompt)
-            except Exception as exc:  # noqa: BLE001 - never crash the host
-                log.exception("[phase:agent] agent invocation failed: %s", exc)
-                # The bash runs the agent behind ``| tee console.txt``, so a
-                # non-zero exit never fails the step, and "Clean and Prepare
-                # Comment" is guarded by ``if: always()``. A crashed run still
-                # reaches ``prepare_comment`` and posts its structured
-                # fallback; mirror that with an empty result (no artefacts)
-                # instead of aborting silently (issue #590 round-4, finding 2).
-                agent_result = {}
-                failure_reason = str(exc)
+            agent_result: dict[str, Any] = {}
+
+            pre_hook = hooks.get("pre")
+            if pre_hook is not None:
+                pre_result = self._run_hook(pre_hook, "pre")
+                if not pre_result.ok:
+                    # Fail-closed: a broken precondition must not run the agent.
+                    log.error("[phase:agent] pre_hook failed: %s", pre_result.detail)
+                    failure_reason = _hook_failure_note("pre", pre_result)
+
+            if failure_reason is None:
+                self.notify_agent_started(self._agent_start_notice(trigger))
+                try:
+                    agent_result = self.invoke_agent(prompt)
+                except Exception as exc:  # noqa: BLE001 - never crash the host
+                    log.exception("[phase:agent] agent invocation failed: %s", exc)
+                    # The bash runs the agent behind ``| tee console.txt``, so a
+                    # non-zero exit never fails the step, and "Clean and Prepare
+                    # Comment" is guarded by ``if: always()``. A crashed run still
+                    # reaches ``prepare_comment`` and posts its structured
+                    # fallback; mirror that with an empty result (no artefacts)
+                    # instead of aborting silently (issue #590 round-4, finding 2).
+                    agent_result = {}
+                    failure_reason = str(exc)
+
+            # Fail-open: the post_hook always runs once the agent phase is
+            # entered (after success, failure, or a skipped agent). Its failure
+            # never alters the step outcome or routing, but it must leave a
+            # trace: the note is staged here and merged into the persisted state
+            # by ``persist`` so a broken hook is visible on the thread.
+            post_hook = hooks.get("post")
+            if post_hook is not None:
+                post_result = self._run_hook(post_hook, "post")
+                if not post_result.ok:
+                    note = _hook_failure_note("post", post_result)
+                    log.warning(
+                        "[phase:agent] %s (recorded; step outcome unchanged)",
+                        note,
+                    )
+                    self._hook_state["post_failure"] = note
+                    # Make the note visible on the published comment (a step's
+                    # output per ADR-0013), not only in the persisted hand-off.
+                    self._annotate_state_with_hook_failure(agent_result, note)
 
             self._enter(phases, "validate")
             if failure_reason is None:
@@ -1574,6 +1624,20 @@ class Engine:
         records, _ = ledger
         return state.model_copy(update={"thread": records})
 
+    # @stub-protected
+    def _run_hook(self, spec: "HookSpec", phase: HookPhase) -> HookResult:
+        """Run one step hook in the session workspace (issue #884).
+
+        The workspace is the agent host's repo root and the env is the same
+        hand-off the agent child receives, so a hook observes the session the
+        agent runs in. Never raises: a hook failure is returned as data for the
+        caller (``pre`` fail-closed, ``post`` fail-open).
+        """
+        runner = HookRunner(workspace=self.repo_root, env=self._agent_env())
+        result = runner.run(spec, phase)
+        log.info("[phase:agent] %s", result.detail)
+        return result
+
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""
         from nebuko.engine.artifacts import RunArtifactStager
@@ -1705,6 +1769,7 @@ class Engine:
         state = self._build_state(agent_result)
         if state is None:
             return None
+        state = self._record_hook_failure(state)
         state = self._backfill_step_output(state)
         if self._publish_state.get("failed") and not state.publish_failed:
             # The journal must record that this run's deliverable was lost
@@ -1713,6 +1778,51 @@ class Engine:
             state = state.model_copy(update={"publish_failed": True})
         self.adapter.save_state(state)
         return state
+
+    @staticmethod
+    def _annotate_state_with_hook_failure(agent_result: Any, note: str) -> None:
+        """Merge a hook-failure note into the agent's own state artifact.
+
+        The published comment embeds the agent's ``state`` artifact (a step's
+        output per ADR-0013), so annotating it here makes a ``post_hook``
+        failure visible on the thread. A run with no state artifact is left
+        alone; ``persist`` still records the note on the hand-off state.
+        """
+        if not isinstance(agent_result, dict):
+            return
+        raw = agent_result.get("state")
+        if raw is None:
+            return
+        ensure_import_path()
+        from workflow_state.workflow_state import WorkflowState
+
+        if isinstance(raw, WorkflowState):
+            context = dict(raw.current_context)
+            context["post_hook_failure"] = note
+            agent_result["state"] = raw.model_copy(
+                update={"current_context": context}
+            )
+        elif isinstance(raw, Mapping):
+            updated = dict(raw)
+            context = dict(updated.get("current_context") or {})
+            context["post_hook_failure"] = note
+            updated["current_context"] = context
+            agent_result["state"] = updated
+
+    def _record_hook_failure(self, state: WorkflowState) -> WorkflowState:
+        """Merge a staged fail-open hook failure into the persisted state.
+
+        ``current_context`` is the durable surface (it is serialized into the
+        state comment and ``state.json``), so appending ``post_hook_failure``
+        makes a broken ``post_hook`` visible on the thread without touching the
+        step outcome, exit code, or routing (issue #884).
+        """
+        note = self._hook_state.get("post_failure")
+        if not note:
+            return state
+        context = dict(state.current_context)
+        context["post_hook_failure"] = note
+        return state.model_copy(update={"current_context": context})
 
     def _backfill_step_output(self, state: WorkflowState) -> WorkflowState:
         """Point the running step's output locator at its just-posted comment.
@@ -2076,6 +2186,18 @@ class Engine:
     @staticmethod
     def _get(resolved: Any, key: str) -> Any:
         return resolved.get(key) if isinstance(resolved, Mapping) else None
+
+
+def _hook_failure_note(phase: HookPhase, result: HookResult) -> str:
+    """A persisted one-line note describing a failed step hook (issue #884).
+
+    The note always names the phase and the runner's ``detail``; when the hook
+    captured output, its tail is appended so debugging a failure does not
+    require re-running the hook manually.
+    """
+    note = f"{phase}_hook failed: {result.detail}"
+    tail = (result.output_tail or "").strip()
+    return f"{note}\n{tail}" if tail else note
 
 
 def _agent_facing_body(body: str) -> str:

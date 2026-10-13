@@ -6,6 +6,7 @@ from pydantic import BaseModel, field_validator, model_validator
 
 from ..workflow.input_binding import InputBinding
 from ..workflow_condition.workflow_condition import WorkflowCondition
+from .hook_spec import HookSpec
 from .script_step_spec import ScriptStepSpec
 
 
@@ -33,6 +34,14 @@ class WorkflowStep(BaseModel):
     # under it.
     # @stub-protected: script-variant fields defined by architect — do not modify
     script: Optional[ScriptStepSpec] = None
+    # Session hooks (issue #884): deterministic repo-local commands run in the
+    # session workspace around the step's agent invocation. ``pre_hook`` runs
+    # before the agent and is fail-closed (its failure skips the agent);
+    # ``post_hook`` runs after the agent attempt and is fail-open (its failure
+    # is recorded only). Agent steps only — the validator rejects hooks on
+    # ``script``/``workflow``/``repo`` sources.
+    pre_hook: Optional[HookSpec] = None
+    post_hook: Optional[HookSpec] = None
     next: Optional[str] = None
     conditions: Optional[list[WorkflowCondition]] = None
     skill: Optional[list[str]] = None
@@ -95,6 +104,10 @@ class WorkflowStep(BaseModel):
 
     @model_validator(mode="after")
     def _validate_step_source(self) -> "WorkflowStep":
+        # Hooks (issue #884) attach to an agent invocation only: a script step
+        # has no agent session, and a workflow/repo step dispatches elsewhere.
+        hooks_present = self.pre_hook is not None or self.post_hook is not None
+
         # Script step (issue #541): a distinct, deterministic, non-agent source
         # keyed by the nested ``script`` object itself. It must be the sole
         # source. Path/timeout rules are enforced by ``ScriptStepSpec``.
@@ -105,6 +118,10 @@ class WorkflowStep(BaseModel):
                 )
             if self.path is not None:
                 raise ValueError("A 'script' step cannot declare 'path'")
+            if hooks_present:
+                raise ValueError(
+                    "A 'script' step cannot declare 'pre_hook' or 'post_hook'"
+                )
             return self
 
         # Note: `path` is an optional companion to `workflow`, not a standalone source.
@@ -112,6 +129,10 @@ class WorkflowStep(BaseModel):
         if not self.agent and not self.workflow and not self.repo:
             raise ValueError(
                 "Step must have exactly one of 'agent', 'workflow', 'repo', or 'script'"
+            )
+        if hooks_present and not self.agent:
+            raise ValueError(
+                "'pre_hook'/'post_hook' are only valid on an 'agent' step"
             )
         if self.agent and self.workflow:
             raise ValueError(
