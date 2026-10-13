@@ -1,8 +1,8 @@
 import React from 'react';
-import {AbsoluteFill, Sequence, spring, useCurrentFrame, useVideoConfig} from 'remotion';
-import {GithubComment, GithubIssueMainPost, IssueFrame, ThemeName} from './github-ui';
+import {Sequence, spring, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Collapse, GithubComment, GithubIssueMainPost, IssueFrame, ThemeName} from './github-ui';
 import {events, ThreadEvent} from './data';
-import {Narration} from './Narration';
+import {Narration, NARRATION_HEIGHT} from './Narration';
 
 // The engine holds the workflow on the step whose state says `dispatch: HOLD`.
 const isGate = (label?: string) => !!label && /\bdispatch:\s*HOLD\b/.test(label);
@@ -55,61 +55,61 @@ const schedule: Slot[] = (() => {
 
 export const PREVIEW_DURATION = schedule[schedule.length - 1].to;
 
-/**
- * Grows from 0 to its natural height (grid `0fr → 1fr` trick, no measuring),
- * so with the thread anchored at the bottom the older comments scroll up smoothly.
- */
+/** Grows from 0 to its natural height, so with the thread anchored at the bottom the older comments scroll up smoothly. */
 const Reveal: React.FC<{children: React.ReactNode}> = ({children}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const p = spring({frame, fps, config: {damping: 200}, durationInFrames: 20});
   return (
-    <div style={{display: 'grid', gridTemplateRows: `${p}fr`, marginTop: -16 * (1 - p)}}>
-      <div style={{minHeight: 0, overflow: 'hidden'}}>{children}</div>
-    </div>
+    <Collapse open={p} style={{marginTop: -16 * (1 - p)}}>
+      {children}
+    </Collapse>
   );
 };
 
 export const Preview: React.FC<{theme?: ThemeName}> = ({theme = 'light'}) => {
   const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
   const shown = schedule.filter((s) => s.at <= frame).length;
   // a human comment being written: its command types into the composer, then "Comment" is clicked
   const typing = schedule.find((s) => s.typeFrom !== undefined && s.typeFrom <= frame && frame < s.at);
+  // once the thread starts moving, fold GitHub's header away so the comments get the screen
+  const collapse = spring({frame: frame - schedule[0].at, fps, config: {damping: 200}, durationInFrames: 25});
   const typed = typing ? typing.event.title.slice(0, Math.floor((frame - typing.typeFrom!) * TYPE_SPEED)) : '';
   return (
-    <AbsoluteFill>
-      <IssueFrame
-        theme={theme}
-        commentCount={shown}
-        anchor="bottom"
-        composerText={typed}
-        composerPointerAt={typing?.pointerAt ?? null}
-        participants={participants}
-        linkedPr={{number: 843, title: 'feat: /nebuko update circuit-breaker'}}
-      >
-        <GithubIssueMainPost
-          author="alex-dev"
-          avatar="🧑‍💻"
-          time="3 hours ago"
-          body={
-            'The circuit breaker trips for the whole repository when a single issue fails three times.\n\nWe should be able to raise the limit for **one issue** only, e.g. `/nebuko run workflow --max-failures 5`.\n\n- keep the default at 3\n- log the override in the workflow state'
-          }
-        />
-        {schedule.map(({event: e, at}) => (
-          <Sequence key={e.id} from={at} layout="none">
-            <Reveal>
-              <GithubComment event={e} gate={isGate(e.stateLabel)} animate />
-            </Reveal>
-          </Sequence>
-        ))}
-      </IssueFrame>
-      {schedule.map(({event: e, from, to}) =>
+    <IssueFrame
+      theme={theme}
+      commentCount={shown}
+      anchor="bottom"
+      composerText={typed}
+      composerPointerAt={typing?.pointerAt ?? null}
+      participants={participants}
+      collapse={collapse}
+      narrationHeight={NARRATION_HEIGHT}
+      narration={schedule.map(({event: e, from, to}) =>
         e.caption ? (
           <Sequence key={e.id} from={from} durationInFrames={to - from}>
             <Narration text={e.caption} theme={theme} />
           </Sequence>
         ) : null,
       )}
-    </AbsoluteFill>
+      linkedPr={{number: 843, title: 'feat: /nebuko update circuit-breaker'}}
+    >
+      <GithubIssueMainPost
+        author="alex-dev"
+        avatar="🧑‍💻"
+        time="3 hours ago"
+        body={
+          'The circuit breaker trips for the whole repository when a single issue fails three times.\n\nWe should be able to raise the limit for **one issue** only, e.g. `/nebuko run workflow --max-failures 5`.\n\n- keep the default at 3\n- log the override in the workflow state'
+        }
+      />
+      {schedule.map(({event: e, at}) => (
+        <Sequence key={e.id} from={at} layout="none">
+          <Reveal>
+            <GithubComment event={e} gate={isGate(e.stateLabel)} animate />
+          </Reveal>
+        </Sequence>
+      ))}
+    </IssueFrame>
   );
 };

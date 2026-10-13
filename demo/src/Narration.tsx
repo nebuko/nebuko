@@ -1,12 +1,14 @@
 import React from 'react';
-import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
+import {interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
 import {ThemeName, THEMES} from './github-theme';
 
 /**
- * Explainer card floating over the GitHub page ("this command starts the workflow").
+ * Explainer card ("this command starts the workflow"), meant for IssueFrame's reserved `narration` band, between the newest comment and the composer.
  * Not part of GitHub's UI: it uses the theme's inverted colors so it reads as a voice-over.
  * Frames are relative: wrap it in a <Sequence durationInFrames={…}> to set when it shows.
  */
+export const NARRATION_HEIGHT = 88;
+
 export const Narration: React.FC<{text: string; theme?: ThemeName; step?: string}> = ({text, theme = 'light', step}) => {
   const t = THEMES[theme];
   const frame = useCurrentFrame();
@@ -18,10 +20,11 @@ export const Narration: React.FC<{text: string; theme?: ThemeName; step?: string
   });
   const p = Math.min(enter, exit);
   return (
-    <AbsoluteFill style={{pointerEvents: 'none', alignItems: 'center', justifyContent: 'flex-start', paddingTop: 72, zIndex: 100}}>
+    <div style={{height: '100%', display: 'flex', alignItems: 'center'}}>
       <div
         style={{
-          maxWidth: 820,
+          width: '100%',
+          boxSizing: 'border-box',
           display: 'flex',
           alignItems: 'center',
           gap: 14,
@@ -32,11 +35,11 @@ export const Narration: React.FC<{text: string; theme?: ThemeName; step?: string
           borderLeft: '5px solid ' + t.accent,
           boxShadow: t.shadow,
           fontFamily: t.font,
-          fontSize: 22,
+          fontSize: 20,
           lineHeight: 1.35,
           fontWeight: 500,
           opacity: p,
-          transform: `translateY(${(1 - p) * -16}px)`,
+          transform: `translateY(${(1 - p) * 16}px)`,
         }}
       >
         <span
@@ -62,6 +65,6 @@ export const Narration: React.FC<{text: string; theme?: ThemeName; step?: string
           {text}
         </span>
       </div>
-    </AbsoluteFill>
+    </div>
   );
 };

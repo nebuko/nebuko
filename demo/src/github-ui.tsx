@@ -3,6 +3,7 @@ import {AbsoluteFill, interpolate, useCurrentFrame} from 'remotion';
 import {ThemeName, ThemeProvider, THEMES, useGH} from './github-theme';
 import {
   CodeBlock,
+  Collapse,
   CommentShell,
   Composer,
   GithubAlert,
@@ -285,6 +286,11 @@ export const IssueFrame: React.FC<{
   composerText?: string;
   /** Absolute frame at which the cursor clicks the composer's "Comment" button. */
   composerPointerAt?: number | null;
+  /** 0 = full page, 1 = GitHub header and repo tabs folded away, title shrunk to a sticky bar. */
+  collapse?: number;
+  /** Content of a reserved band between the newest comment and the composer (e.g. an explainer card). */
+  narration?: React.ReactNode;
+  narrationHeight?: number;
   showRepoChrome?: boolean;
 }> = ({
   children,
@@ -307,19 +313,25 @@ export const IssueFrame: React.FC<{
   anchor = 'top',
   composerText,
   composerPointerAt = null,
+  collapse = 0,
+  narration,
+  narrationHeight = 0,
   showRepoChrome = true,
 }) => {
   const t = THEMES[theme];
   return (
     <ThemeProvider theme={theme}>
       <AbsoluteFill style={{background: t.bg, display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: t.font}}>
-        <GithubHeader owner={repoOwner} repo={repoName} />
-        {showRepoChrome ? <RepoHeader owner={repoOwner} repo={repoName} active="issues" /> : null}
+        <Collapse open={1 - collapse}>
+          <GithubHeader owner={repoOwner} repo={repoName} />
+          {showRepoChrome ? <RepoHeader owner={repoOwner} repo={repoName} active="issues" /> : null}
+        </Collapse>
 
         <div style={{borderBottom: '1px solid ' + t.border, flexShrink: 0}}>
           <TitleBlock
             title={title}
             number={number}
+            compact={collapse}
             badge={<StatusBadge type="issue" state={state} />}
             subtitle={
               <>
@@ -330,7 +342,12 @@ export const IssueFrame: React.FC<{
         </div>
 
         <div style={{flex: 1, minHeight: 0, display: 'flex', padding: '24px 32px', gap: 32, overflow: 'hidden'}}>
-          <ThreadColumn anchor={anchor} composer={<Composer text={composerText} pointerAt={composerPointerAt} />}>
+          <ThreadColumn
+            anchor={anchor}
+            composer={<Composer text={composerText} pointerAt={composerPointerAt} />}
+            below={narration}
+            belowHeight={narrationHeight}
+          >
             {children}
           </ThreadColumn>
 

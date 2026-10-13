@@ -704,6 +704,16 @@ export const RepoHeader: React.FC<{owner: string; repo: string; active?: 'issues
   );
 };
 
+/**
+ * Folds its content away: `open` 1 = natural height, 0 = gone (grid `0fr → 1fr` trick, no measuring).
+ * Drive `open` frame by frame for a smooth collapse.
+ */
+export const Collapse: React.FC<{open: number; children: React.ReactNode; style?: React.CSSProperties}> = ({open, children, style}) => (
+  <div style={{display: 'grid', gridTemplateRows: `${open}fr`, opacity: open, flexShrink: 0, ...style}}>
+    <div style={{minHeight: 0, overflow: 'hidden'}}>{children}</div>
+  </div>
+);
+
 /** Title row + status line shared by the issue and PR pages. */
 export const TitleBlock: React.FC<{
   title: string;
@@ -711,15 +721,18 @@ export const TitleBlock: React.FC<{
   badge: React.ReactNode;
   subtitle: React.ReactNode;
   actions?: React.ReactNode;
-}> = ({title, number, badge, subtitle, actions}) => {
+  /** 0 = full header, 1 = compact sticky bar (smaller title, no status line, no actions) */
+  compact?: number;
+}> = ({title, number, badge, subtitle, actions, compact = 0}) => {
   const t = useGH();
+  const c = compact;
   return (
-    <div style={{padding: '24px 32px 16px', flexShrink: 0, fontFamily: t.font}}>
+    <div style={{padding: `${24 - 12 * c}px 32px ${16 - 4 * c}px`, flexShrink: 0, fontFamily: t.font}}>
       <div style={{display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24}}>
-        <div style={{fontSize: 32, lineHeight: 1.25, color: t.text, fontWeight: 400}}>
+        <div style={{fontSize: 32 - 10 * c, lineHeight: 1.25, color: t.text, fontWeight: 400 + 200 * c}}>
           {title} <span style={{color: t.muted, fontWeight: 300}}>#{number}</span>
         </div>
-        <div style={{display: 'flex', gap: 8, flexShrink: 0}}>
+        <div style={{display: 'flex', gap: 8, flexShrink: 0, opacity: 1 - c}}>
           {actions ?? (
             <>
               <Button>Edit</Button>
@@ -728,10 +741,12 @@ export const TitleBlock: React.FC<{
           )}
         </div>
       </div>
-      <div style={{display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 14, color: t.muted}}>
-        {badge}
-        <span>{subtitle}</span>
-      </div>
+      <Collapse open={1 - c}>
+        <div style={{display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 14, color: t.muted}}>
+          {badge}
+          <span>{subtitle}</span>
+        </div>
+      </Collapse>
     </div>
   );
 };
@@ -946,7 +961,10 @@ export const ThreadColumn: React.FC<{
   children: React.ReactNode;
   anchor?: 'top' | 'bottom';
   composer?: React.ReactNode;
-}> = ({children, anchor = 'top', composer}) => {
+  /** Reserved band between the newest comment and the composer (e.g. an explainer card), right where the action happens. */
+  below?: React.ReactNode;
+  belowHeight?: number;
+}> = ({children, anchor = 'top', composer, below, belowHeight = 0}) => {
   const t = useGH();
   const fade = t.name === 'dark' ? 'rgba(13,17,23,0)' : 'rgba(255,255,255,0)';
   return (
@@ -981,6 +999,13 @@ export const ThreadColumn: React.FC<{
           />
         ) : null}
       </div>
+      {belowHeight > 0 ? (
+        <div style={{position: 'relative', height: belowHeight, flexShrink: 0, marginTop: 16, paddingLeft: 56}}>
+          {/* keep the thread's timeline line running down to the composer */}
+          <div style={{position: 'absolute', left: 19, top: -16, bottom: 0, width: 2, background: t.border}} />
+          <div style={{position: 'relative', height: '100%'}}>{below}</div>
+        </div>
+      ) : null}
       {composer}
     </div>
   );
