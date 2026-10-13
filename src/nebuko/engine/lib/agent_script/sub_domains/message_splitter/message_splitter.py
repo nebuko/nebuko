@@ -146,23 +146,26 @@ class CommentPart:
 def split_comment_body(
     body: str,
     policy: CommentSizePolicy,
-    tail: str = "",
+    head: str = "",
 ) -> list[CommentPart]:
-    """Split an answer body across comments, reserving ``tail`` for the last part.
+    """Split an answer body across comments, prepending ``head`` to the first part.
 
     Boundary-aware (paragraph, then line, then sentence, then hard split) and
     policy-driven: each part stays within ``policy``'s per-comment budget once
-    its ``*(Part i/N)*`` header is counted, and ``tail`` (the workflow-state
-    section) is reserved on the final part so its state marker lands on the
-    last posted comment. If the body needs more than ``policy``'s
+    its ``*(Part i/N)*`` header is counted. ``head`` (the answer header, which
+    carries the workflow-state section and the bot marker) is prepended to the
+    *first* comment, not the last: the state marker must land on the earliest
+    part so the continuation parts that follow it are grouped onto the same
+    history entry (issue #504), and the leading bot marker keeps the whole run
+    exempt from the CI gate. If the body needs more than ``policy``'s
     ``max_parts`` comments, the overflow is folded into the last part and
     marked with a truncation notice rather than dropped silently.
 
     Args:
         body: The answer content to post.
         policy: The comment-size policy (per-comment budget and part ceiling).
-        tail: Content appended verbatim to the final part (e.g. the state
-            section); only its length affects the other parts.
+        head: Content prepended verbatim to the first part (e.g. the answer
+            header with its state section); only its length affects sizing.
 
     Returns:
         The ordered parts; a single part carries no continuation header.
@@ -170,24 +173,24 @@ def split_comment_body(
     budget = policy.resolved_max_comment_chars()
     max_parts = policy.resolved_max_parts()
 
-    # Single-comment fast path: no header is emitted for a one-part answer.
-    if len(body) + len(tail) <= budget:
-        return [CommentPart(index=1, total=1, body=body + tail)]
+    # Single-comment fast path: no continuation header is emitted for one part.
+    if len(body) + len(head) <= budget:
+        return [CommentPart(index=1, total=1, body=head + body)]
 
     header_reserve = len(f"*(Part {max_parts}/{max_parts})*\n\n")
     per_part = max(1, budget - header_reserve)
-    last_limit = max(1, per_part - len(tail))
+    first_limit = max(1, per_part - len(head))
 
-    chunks = _pack_body(body, per_part, last_limit)
+    chunks = _pack_body(body, first_limit, per_part)
     if len(chunks) > max_parts:
-        chunks = _fold_overflow(chunks, max_parts, last_limit)
+        chunks = _fold_overflow(chunks, max_parts, per_part)
 
     total = len(chunks)
     parts: list[CommentPart] = []
     for index, chunk in enumerate(chunks, start=1):
-        text = chunk + tail if index == total else chunk
-        header = f"*(Part {index}/{total})*\n\n"
-        parts.append(CommentPart(index=index, total=total, body=header + text))
+        part_header = f"*(Part {index}/{total})*\n\n"
+        text = head + part_header + chunk if index == 1 else part_header + chunk
+        parts.append(CommentPart(index=index, total=total, body=text))
     return parts
 
 

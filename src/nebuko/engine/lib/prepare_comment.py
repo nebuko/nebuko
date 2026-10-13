@@ -505,9 +505,11 @@ def _continue_token(state: WorkflowState) -> str:
     return CONTINUE_TOKEN if status in _LIVE_STATUSES else ""
 
 
-def _format_answer_header(role_name: str | None, state: WorkflowState | None) -> str:
+def format_answer_header(role_name: str | None, state: WorkflowState | None) -> str:
     """Build the marker/token/state header prepended to the answer (issue #736).
 
+    Public so the engine publish seam can place this header on the first of
+    several answer comments while the body is split across them (issue #913).
     A run that emitted no state still gets the bot marker, caller marker and
     continue token (matching the legacy step when the file was absent); only the
     collapsed state section is omitted.
@@ -522,6 +524,10 @@ def _format_answer_header(role_name: str | None, state: WorkflowState | None) ->
         f"{section}"
         f"\n*{_display_name_for(role)} answer*\n\n"
     )
+
+
+# Backwards-compatible alias; the private name predates the public export.
+_format_answer_header = format_answer_header
 
 
 def _select_fallback_body(

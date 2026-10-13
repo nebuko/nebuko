@@ -18,11 +18,11 @@ class TestSinglePart:
 
         assert parts == [CommentPart(index=1, total=1, body="hello world")]
 
-    def test_tail_is_appended_without_a_header(self):
-        parts = split_comment_body("body", CommentSizePolicy(), tail="\nSTATE")
+    def test_head_is_prepended_without_a_header(self):
+        parts = split_comment_body("body", CommentSizePolicy(), head="HEAD\n\n")
 
         assert len(parts) == 1
-        assert parts[0].body == "body\nSTATE"
+        assert parts[0].body == "HEAD\n\nbody"
         assert "*(Part" not in parts[0].body
 
 
@@ -65,18 +65,18 @@ class TestMultiPart:
         assert "B" * 80 in parts[1].body
 
 
-class TestTailReservation:
-    def test_tail_lands_only_on_the_last_part(self):
+class TestHeadPlacement:
+    def test_head_lands_only_on_the_first_part(self):
         policy = CommentSizePolicy(max_comment_chars=200, max_parts=10)
-        parts = split_comment_body(_lines("paragraph", 40), policy, tail="\n\nSTATE")
+        parts = split_comment_body(_lines("paragraph", 40), policy, head="STATE\n\n")
 
-        assert "STATE" not in parts[0].body
-        assert parts[-1].body.endswith("STATE")
+        assert parts[0].body.startswith("STATE")
+        assert all("STATE" not in p.body for p in parts[1:])
 
-    def test_last_part_leaves_room_for_the_tail(self):
+    def test_first_part_leaves_room_for_the_head(self):
         policy = CommentSizePolicy(max_comment_chars=200, max_parts=10)
-        tail = "\n\n" + "T" * 50
-        parts = split_comment_body(_lines("paragraph", 40), policy, tail=tail)
+        head = "H" * 50 + "\n\n"
+        parts = split_comment_body(_lines("paragraph", 40), policy, head=head)
 
         assert all(len(p.body) <= 200 for p in parts)
 
@@ -90,9 +90,9 @@ class TestOverflow:
         assert "truncated due to size limit" in parts[-1].body
         assert all(len(p.body) <= 200 for p in parts)
 
-    def test_overflow_keeps_the_tail_on_the_last_part(self):
+    def test_overflow_keeps_the_head_on_the_first_part(self):
         policy = CommentSizePolicy(max_comment_chars=200, max_parts=2)
-        parts = split_comment_body(_lines("paragraph", 80), policy, tail="\nSTATE")
+        parts = split_comment_body(_lines("paragraph", 80), policy, head="STATE\n\n")
 
-        assert parts[-1].body.rstrip().endswith("STATE")
-        assert "STATE" not in parts[0].body
+        assert parts[0].body.startswith("STATE")
+        assert "STATE" not in parts[-1].body
