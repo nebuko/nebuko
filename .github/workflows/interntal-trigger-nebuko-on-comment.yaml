@@ -15,7 +15,6 @@ jobs:
   agent:
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
     with:
-      runs_on: "self-hosted"
       agent_config_path: ".nebuko/agents/agent-config-opencode.yaml"
     secrets:
       GH_PAT: ${{ secrets.GH_PAT }}
