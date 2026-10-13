@@ -93,7 +93,12 @@ const components: Components = {
   em: withRefs('em'),
 };
 
-export const Markdown: React.FC<{text: string}> = ({text}) => {
+const REMARK = [remarkGfm];
+const REHYPE = [rehypeRaw];
+
+// Memoized: the text never changes between frames, and re-parsing every comment
+// (remark + rehype-raw) on every frame dominates render time.
+export const Markdown = React.memo<{text: string}>(({text}) => {
   const t = useGH();
   const vars = {
     '--md-text': t.text,
@@ -109,9 +114,9 @@ export const Markdown: React.FC<{text: string}> = ({text}) => {
   return (
     <div className="gh-md" style={vars}>
       <style>{CSS}</style>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={components}>
+      <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={components}>
         {text}
       </ReactMarkdown>
     </div>
   );
-};
+});

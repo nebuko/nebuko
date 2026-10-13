@@ -14,7 +14,7 @@ question and redirect. No new platform, no new UI, nothing to migrate away from.
 > **Pre-alpha.** Usable today, but expect bugs and breaking changes between
 > releases: the config schema, workflow format and comment contracts may change.
 
-## See it in 30 seconds
+## See it 
 
 You, on any issue:
 
@@ -23,6 +23,11 @@ You, on any issue:
 ```
 
 Then Nebuko does the rest, in the open:
+
+https://github.com/user-attachments/assets/c8d0145f-c35d-402c-a4ca-9311f896e65d
+
+<details>
+<summary>What happens under the hood</summary>
 
 ```mermaid
 sequenceDiagram
@@ -56,6 +61,8 @@ sequenceDiagram
 
     H->>I: Read the thread, review the PR, merge
 ```
+
+</details>
 
 You approve the design *before* any code is written, and everything the agents
 did, found and decided is in the thread.

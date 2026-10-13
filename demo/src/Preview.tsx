@@ -1,10 +1,9 @@
 import React, {useLayoutEffect, useRef, useState} from 'react';
 import {AbsoluteFill, Easing, interpolate, Sequence, Series, spring, useCurrentFrame, useVideoConfig} from 'remotion';
 import {Collapse, GithubComment, GithubIssueMainPost, GithubTimelineEvent, IssueFrame, ThemeName} from './github-ui';
-import {eventById, events, metricsSummary, ThreadEvent} from './data';
+import {eventById, events, issueBody, metricsSummary, ThreadEvent} from './data';
 import {Narration, NARRATION_HEIGHT} from './Narration';
 import {Phase, PrContent, PrScene, SAMPLE_PR} from './PrFlowDemo';
-import {eventById, issueBody} from './data';
 
 // The engine holds the workflow on the step whose state says `dispatch: HOLD`.
 const isGate = (label?: string) => !!label && /\bdispatch:\s*HOLD\b/.test(label);
@@ -31,6 +30,12 @@ const LONG_CHARS = 600;
 const SCROLL_CHARS_PER_FRAME = 30;
 const SCROLL_MIN = 60;
 const SCROLL_MAX = 300;
+/**
+ * Comments kept mounted in the issue thread. It is anchored at the bottom, so older ones sit
+ * above the viewport: dropping them changes nothing on screen but keeps every frame as cheap
+ * as the first one (otherwise layout + paint grow with the thread and the render slows down).
+ */
+const KEEP_MOUNTED = 6;
 /** Gap kept above a long comment's top while it is pinned (clears the top fade). */
 const TOP_MARGIN = 24;
 
@@ -195,13 +200,15 @@ const IssueThread: React.FC<{theme: ThemeName}> = ({theme}) => {
       }
       linkedPr={{number: PR.number, title: PR.title, pointer: frame >= ISSUE_END ? ISSUE_END : false}}
     >
-      <GithubIssueMainPost
-        author="alex-dev"
-        avatar="🧑‍💻"
-        time="3 hours ago"
-        body={issueBody}
-      />
-      {schedule.map((slot) => (
+      {shown < KEEP_MOUNTED ? (
+        <GithubIssueMainPost
+          author="alex-dev"
+          avatar="🧑‍💻"
+          time="3 hours ago"
+          body={issueBody}
+        />
+      ) : null}
+      {schedule.map((slot, i) => i < shown - KEEP_MOUNTED ? null : (
         <Sequence key={slot.event.id} from={slot.at} layout="none">
           <Reveal boxRef={slot === newest ? newestRef : undefined}>
             <GithubComment event={slot.event} gate={isGate(slot.event.stateLabel)} animate />
