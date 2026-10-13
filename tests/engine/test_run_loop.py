@@ -1195,6 +1195,71 @@ class TestRunLoop:
         assert "*Dev answer*" in outcome.posted_body
         assert (tmp_path / "runs" / "run-1" / "journal.md").is_file()
 
+    def test_splits_a_long_answer_across_ordered_star_marked_comments(
+        self, tmp_path, monkeypatch
+    ):
+        """A long answer posts as several comments, not one truncated body (#913)."""
+        from config import CommentSizePolicy
+
+        engine = _engine(tmp_path)
+        long_answer = "\n\n".join(
+            f"Section {i} " + "x" * 80 for i in range(30)
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result(long_answer))
+        monkeypatch.setattr(
+            Engine,
+            "_comment_size_policy",
+            staticmethod(lambda: CommentSizePolicy(max_comment_chars=400, max_parts=10)),
+        )
+
+        engine.run()
+
+        entries = engine.adapter.load_history()
+        parts = [entry for entry in entries if "*(Part " in entry.body]
+        assert len(parts) > 1
+        # Part 1 opens with the answer-comment header (the terminal marker is
+        # stripped by the adapter on read) and the first continuation header;
+        # every later part is an ordered continuation fragment with no header.
+        # The header therefore stays on part 1, keeping the run CI-gate exempt
+        # and the parts grouped onto that history entry (issues #504, #913).
+        assert parts[0].body.startswith(BOT_AGENT_MARKER)
+        assert parts[0].body.count("*(Part 1/") == 1
+        for offset, part in enumerate(parts[1:], start=2):
+            assert part.body.startswith(f"*(Part {offset}/")
+            assert "*(Part 1/" not in part.body
+
+    def test_the_first_published_comment_carries_the_workflow_state(
+        self, tmp_path, monkeypatch
+    ):
+        """The state-bearing header rides on part 1, not the last part (#913)."""
+        from config import CommentSizePolicy
+        from workflow_state.workflow_state import WorkflowState
+
+        engine = _engine(tmp_path)
+        long_answer = "\n\n".join(f"Section {i} " + "x" * 80 for i in range(30))
+        state = WorkflowState(run_id=3, workflow="default", step="implement", agent="dev")
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: {**_agent_result(long_answer), "state": state},
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_comment_size_policy",
+            staticmethod(lambda: CommentSizePolicy(max_comment_chars=400, max_parts=10)),
+        )
+
+        outcome = engine.run()
+
+        entries = engine.adapter.load_history()
+        parts = [entry for entry in entries if "*(Part " in entry.body]
+        assert len(parts) > 1
+        assert WORKFLOW_STATE_MARKER in parts[0].body
+        assert all(WORKFLOW_STATE_MARKER not in part.body for part in parts[1:])
+        # The step's output locator points at the state-bearing comment.
+        locators = outcome.state.current_context["step_outputs"]
+        assert locators[-1]["comment_id"] == parts[0].comment_id
+
     def test_publish_neutralizes_agent_triggers_before_posting(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
         monkeypatch.setattr(

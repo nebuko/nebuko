@@ -648,6 +648,45 @@ def _select_fallback_body(
     return author_ping + _NO_FINAL_MESSAGE
 
 
+def build_comment_body_parts(
+    *,
+    latest_answer: str,
+    final_message: str,
+    console_log: str = "",
+    has_final_message: bool | None = None,
+    has_console_log: bool | None = None,
+    trigger_author: str = "",
+    role_name: str | None = None,
+    state: WorkflowState | None = None,
+) -> tuple[str, str]:
+    """The posted comment as ``(header, body)``, kept separate for splitting.
+
+    :func:`build_comment_body` frames the two halves into one string; the engine
+    publish seam instead needs them apart so it can hand the header to
+    ``message_splitter.split_comment_body(head=...)`` — the header carries the
+    workflow-state JSON and the bot marker, and must land intact on the *first*
+    of several comments (issue #913). The header itself is never split.
+
+    Returns:
+        ``(header, body)`` where ``header`` is the answer-comment header and
+        ``body`` is the fallback/answer content beneath it.
+    """
+    return (
+        format_answer_header(role_name, state),
+        _select_fallback_body(
+            latest_answer=latest_answer,
+            final_message=final_message,
+            console_log=console_log,
+            has_final_message=has_final_message,
+            has_console_log=has_console_log,
+            trigger_author=trigger_author,
+            role_name=role_name,
+            recall_count=_posted_recall_count(state),
+            engine_sentinel=render_handoff_sentinel(state),
+        ),
+    )
+
+
 def build_comment_body(
     *,
     latest_answer: str,
@@ -686,7 +725,7 @@ def build_comment_body(
     Returns:
         The framed body to escape and publish.
     """
-    return _format_answer_header(role_name, state) + _select_fallback_body(
+    header, body = build_comment_body_parts(
         latest_answer=latest_answer,
         final_message=final_message,
         console_log=console_log,
@@ -694,9 +733,9 @@ def build_comment_body(
         has_console_log=has_console_log,
         trigger_author=trigger_author,
         role_name=role_name,
-        recall_count=_posted_recall_count(state),
-        engine_sentinel=render_handoff_sentinel(state),
+        state=state,
     )
+    return header + body
 
 
 def _read_workflow_state() -> WorkflowState | None:
