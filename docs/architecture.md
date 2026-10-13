@@ -281,12 +281,24 @@ path** (issues #885, #887): the resolver checks the gate-hold precedence
 state (`plan -> implement`) can never route the run past an unreleased gate.
 This precedence is applied on the dispatch path, the state-only bot fallback,
 *and* the agent hand-off (`function_call`) branch — a held step's own gate
-outranks any `call_agent` it persisted, so no hand-off can jump the gate. The
-intercept additionally empties `resolution.next_step` and drops any
-`function_call` on the held state, so the persisted snapshot advertises neither
-an ungated forward edge nor a callee. See `resolve_route.py`
-(`_human_gate_hold_result`, `_resolve_handoff_decision`) and
+outranks any position-advancing `call_agent` it persisted, so no such hand-off
+can jump the gate. The intercept additionally empties `resolution.next_step`
+and drops a position-advancing `function_call` on the held state, so the
+persisted snapshot advertises neither an ungated forward edge nor a callee. See
+`resolve_route.py` (`_human_gate_hold_result`, `_resolve_handoff_decision`) and
 `build_output.py` (`_dispatch_is_human_gate_hold`).
+
+**Sub-run carve-out (issues #889, #912).** The gate holds *advancement*, not an
+explicit out-of-workflow **sub-run**. A typed `call_agent` (issued by the
+agent's own `call_agent` tool, carrying `FunctionCall.sub_run`) is
+position-preserving: the callee (`context`, summoned by the gated `plan` step
+for more knowledge) is started — resolving its step with
+`_resolve_callee_step(..., allow_backward=True)` so an already-consumed step may
+be re-entered — and control returns to the still-gated caller via the callback
+return address. Both the producer and the resolver decide this through the
+single `HandOffScope.classify` (`config/sub_domains/hand_off_scope/`), so the
+two sides cannot diverge; only a promoted `dispatch_next` (no `sub_run`
+provenance) remains held.
 
 ### Human-action notification (issue #795)
 

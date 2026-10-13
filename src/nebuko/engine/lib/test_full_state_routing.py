@@ -526,6 +526,121 @@ class TestHumanGateHoldPrecedence:
 
 
 # ---------------------------------------------------------------------------
+# Gated sub-run hand-off (issue #912, follow-up to #889)
+# ---------------------------------------------------------------------------
+
+ISSUE912_GATED_SUBRUN = "workflow_state_issue912_gated_subrun"
+
+
+class TestSubRunHandOffFromGatedStep:
+    """A gated step must not swallow an explicit agent-to-agent sub-run (#912).
+
+    Mandatory project feature: when the architect, parked on the gated ``plan``
+    step, issues an explicit typed ``call_agent`` to ``context`` to fetch more
+    information, the engine must start the context agent — never record the
+    ``human_gate:plan`` hold and drop the hand-off.
+
+    The captured state (fixture ``workflow_state_issue912_gated_subrun``) is the
+    architect's ``plan`` run: ``dispatch.status == "hold"`` /
+    ``reason == "human_gate:plan"`` **and** a pending typed ``call_agent`` to
+    ``context`` with the caller recorded. Because the gated ``plan`` re-enters
+    the already-consumed ``context`` step, callee resolution must opt into the
+    backward leg (issue #889) — the forward-only default from #733 is unchanged.
+    """
+
+    def _case(self, workflows_dir: Path, **overrides) -> GateHoldCase:
+        state = _load_fixture(ISSUE912_GATED_SUBRUN)
+        state.update(overrides)
+        return GateHoldCase(
+            name=ISSUE912_GATED_SUBRUN,
+            state=state,
+            workflows_dir=workflows_dir,
+        )
+
+    def test_context_agent_starts_from_the_gated_plan_step(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        case = self._case(default_workflows_dir)
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(case.workflows_dir), is_bot=True,
+        )
+        assert result.get("SKIP_AGENT", "false") == "false"
+        assert result["TASK"] == "context"
+        assert result["ROLE_NAME"] == "context"
+
+    def test_context_runs_on_the_consumed_context_step(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        # The callee's posted state must record the step it actually ran
+        # (`context`), not the gated caller's step nor the workflow entry.
+        case = self._case(default_workflows_dir)
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(case.workflows_dir), is_bot=True,
+        )
+        assert result["WORKFLOW_NAME"] == "default"
+        assert result["WORKFLOW_STEP"] == "context"
+
+    def test_caller_is_kept_as_the_return_address(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        # R2: control must return to the still-gated caller (architect@plan)
+        # when the context sub-run finishes with no decision of its own.
+        case = self._case(default_workflows_dir)
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(case.workflows_dir), is_bot=True,
+        )
+        assert result["CONFIG_CALLBACK"] == "architect"
+
+    def test_the_gate_hold_does_not_win_over_a_sub_run(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        case = self._case(default_workflows_dir)
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(case.workflows_dir), is_bot=True,
+        )
+        assert result["TASK"] != "architect"
+        assert result["WORKFLOW_STEP"] != "plan"
+        assert "human_gate" not in result.get("REASON", "")
+
+    def test_a_workflow_dispatch_hand_off_is_still_held(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        # R1 (issue #889): a ``dispatch_next`` target promoted to a call_agent
+        # spec has no explicit-typed provenance, so the gate must still swallow
+        # it — the sub-run carve-out is scoped to typed ``call_agent`` exactly.
+        case = self._case(
+            default_workflows_dir,
+            function_call={"function": "call_agent", "agent_name": "context"},
+        )
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(case.workflows_dir), is_bot=True,
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert "human_gate:plan" in result.get("REASON", "")
+        assert result.get("TASK", "") != "context"
+
+    def test_an_unresolvable_callee_fails_empty_not_past_the_gate(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        # A sub-run naming an agent the workflow does not own cannot be routed;
+        # the hand-off must not be improvised into a step, and the gate hold
+        # must persist.
+        case = self._case(
+            default_workflows_dir,
+            function_call={
+                "function": "call_agent",
+                "agent_name": "po",
+                "sub_run": True,
+            },
+        )
+        result = resolve_config(
+            case.trigger_body(), prompt_base, str(case.workflows_dir), is_bot=True,
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("TASK", "") != "po"
+
+
+# ---------------------------------------------------------------------------
 # Nested step addressing (issue #822)
 # ---------------------------------------------------------------------------
 

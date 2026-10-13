@@ -164,11 +164,25 @@ Mechanics:
    `human_gate:<step>`). The workflow stops; the step's output stays posted on
    the issue for human review. **Every** advancing dispatch is intercepted —
    the gate has no bypass. A held state also carries no forward edge: the
-   intercept empties `resolution.next_step` and drops any agent-named
-   `function_call`, and on any later bot trigger the resolver treats the
-   `human_gate` hold as higher precedence than the workflow's next step or a
-   `call_agent` hand-off, so neither a stale `plan -> implement` edge nor a
-   persisted hand-off can advance the run (issues #885, #887).
+   intercept empties `resolution.next_step` and drops any *position-advancing*
+   `function_call` (a `dispatch_next` target promoted to a hand-off), and on
+   any later bot trigger the resolver treats the `human_gate` hold as higher
+   precedence than the workflow's next step or such a hand-off, so neither a
+   stale `plan -> implement` edge nor a persisted dispatch can advance the run
+   (issues #885, #887).
+
+   **Sub-run carve-out (issues #889, #912).** A gate holds workflow
+   *advancement*, not an explicit out-of-workflow agent-to-agent **sub-run**.
+   When the gated agent itself issues a typed `call_agent` (the
+   `call_agent` tool, not a promoted `dispatch_next`) to summon another agent
+   for more knowledge — the architect parked on `plan` calling `context` — the
+   hand-off **survives** the intercept: the resolver starts the callee (from
+   the caller's step, allowing the backward re-entry of an already-consumed
+   step such as `context`) and returns control to the still-gated caller when
+   it finishes. The gate remains armed for the *caller*; only the sub-run
+   passes through. The decision is made once by the `HandOffScope` classifier
+   (`config/sub_domains/hand_off_scope/`) so the producer
+   (`build_output.py`) and the resolver (`resolve_route.py`) cannot disagree.
 2. An authorized human (GitHub `OWNER` / `MEMBER` / `COLLABORATOR`) reviews the
    output and runs one of:
 

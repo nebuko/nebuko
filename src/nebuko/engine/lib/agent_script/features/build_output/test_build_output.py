@@ -677,6 +677,83 @@ class TestDispatchIsHumanGateHold(unittest.TestCase):
         self.assertEqual(captured["dispatch"].status, "hold")
         self.assertIsNone(captured["function_call"])
 
+    def test_gate_intercept_at_call_site_keeps_a_typed_sub_run(self):
+        """Issue #912 (R1 of #889): a gate holds workflow *advancement*, not an
+        explicit typed ``call_agent`` sub-run. The hand-off must survive the
+        intercept so the resolver can start the context agent; only a
+        position-advancing workflow dispatch is wiped.
+        """
+        from types import SimpleNamespace as NS
+
+        import build_output as bo
+        from workflow_state import FunctionCall
+
+        captured = {}
+
+        def _capture_build_state(prev_state, **kwargs):
+            captured.update(kwargs)
+            return NS(run_id=1)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "gated.yaml"), "w") as f:
+                f.write(
+                    "name: gated\n"
+                    "description: test\n"
+                    "trigger:\n  agents: [architect]\n"
+                    "steps:\n"
+                    "  - name: plan\n    agent: architect\n"
+                    "    next: implement\n    human_gate: true\n"
+                    "  - name: implement\n    agent: dev\n    next: review\n"
+                )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "WORKFLOW_NAME": "gated",
+                "WORKFLOW_STEP": "plan",
+                "WORKFLOW_NEXT": "implement",
+                "ROLE_NAME": "architect",
+            }
+            conversation = NS(
+                state=NS(events=[_msg_event("plan answer")]),
+                id="conv-912-subrun",
+                run_outcome=None,
+            )
+            metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+            with mock.patch.object(bo, "get_agent_final_response", return_value="plan answer"), \
+                 mock.patch.object(bo, "_load_prev_state", return_value=None), \
+                 mock.patch.object(bo, "_build_issue_info", return_value=None), \
+                 mock.patch.object(bo, "_build_pr_info", return_value=None), \
+                 mock.patch.object(
+                     bo, "_resolve_dispatch",
+                     return_value=(
+                         Dispatch(status="advance"),
+                         FunctionCall(
+                             function="call_agent",
+                             agent_name="context",
+                             callback="architect",
+                             sub_run=True,
+                         ),
+                         "plan answer",
+                     ),
+                 ), \
+                 mock.patch.object(bo, "clear_run"), \
+                 mock.patch.object(bo, "clear_scaffold_branch_run"), \
+                 mock.patch.object(bo, "clear_complexity_review_run"), \
+                 mock.patch.object(bo, "get_recorded_review_request", return_value=None), \
+                 mock.patch.object(bo, "build_state", side_effect=_capture_build_state), \
+                 mock.patch.object(bo, "split_message", return_value=[]), \
+                 mock.patch.object(bo, "_write_output_files", return_value=None), \
+                 mock.patch.dict(os.environ, env, clear=False):
+                cwd = os.getcwd()
+                os.chdir(tmpdir)
+                try:
+                    bo.build_output(conversation, metrics)
+                finally:
+                    os.chdir(cwd)
+
+        self.assertEqual(captured["dispatch"].status, "hold")
+        self.assertIsNotNone(captured["function_call"])
+        self.assertEqual(captured["function_call"].agent_name, "context")
+        self.assertTrue(captured["function_call"].sub_run)
 
 
 class TestHumanGateRealWorkflowYaml(unittest.TestCase):
@@ -689,8 +766,14 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
 
     @staticmethod
     def _real_workflows_dir():
-        from default_paths import config_dir
-        return config_dir("workflows")
+        # These cases assert on the *shipped* spec-driven-impl.yaml, so pin the
+        # checkout's ``defaults/workflows`` directly. ``default_paths.config_dir``
+        # consults the CWD-dependent ``<cwd>/.nebuko/workflows`` override layer
+        # first; when pytest runs from the repo root that layer holds only
+        # ``plan-dev-review-cmd.yaml``, so the shipped workflow never loads and
+        # the gate checks silently degrade to "not gated" (issue #912 triage).
+        from default_paths import checkout_root
+        return str(checkout_root() / "defaults" / "workflows")
 
     def setUp(self):
         self.env = {"WORKFLOWS_DIR": self._real_workflows_dir()}

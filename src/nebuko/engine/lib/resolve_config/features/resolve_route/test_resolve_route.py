@@ -426,6 +426,90 @@ class TestForwardOnlyCalleeResolution:
         assert resolved == "implement"
 
 
+_SUBRUN_WF_YAML = (
+    "name: default\n"
+    "description: test\n"
+    "trigger:\n  agents: [architect]\n"
+    "steps:\n"
+    "  - name: analyze\n    agent: architect\n    next: context\n"
+    "  - name: context\n    agent: context\n    next: plan\n"
+    "  - name: plan\n    agent: architect\n    next: implement\n    human_gate: true\n"
+    "  - name: implement\n    agent: dev\n    next: review\n"
+    "  - name: review\n    agent: review\n    next: null\n"
+)
+
+
+class TestSubRunCalleeResolution:
+    """A typed ``call_agent`` sub-run may re-enter a consumed step (issue #912).
+
+    The gated ``plan`` step calling ``context`` for more knowledge targets a step
+    the caller already consumed, so resolution must opt into the backward leg —
+    while the forward-only default that kills the #733 loop is unchanged.
+    """
+
+    def _workflows_dir(self, tmp_path):
+        (tmp_path / "default.yaml").write_text(_SUBRUN_WF_YAML)
+        return str(tmp_path)
+
+    def test_forward_only_default_rejects_the_consumed_step(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_callee_step
+
+        resolved = _resolve_callee_step(
+            "default", "plan", "context", self._workflows_dir(tmp_path)
+        )
+        assert resolved == ""
+
+    def test_allow_backward_resolves_the_consumed_context_step(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_callee_step
+
+        resolved = _resolve_callee_step(
+            "default",
+            "plan",
+            "context",
+            self._workflows_dir(tmp_path),
+            allow_backward=True,
+        )
+        assert resolved == "context"
+
+    def test_a_typed_sub_run_opts_into_the_backward_leg(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from workflow_state import FunctionCall, WorkflowState
+
+        state = WorkflowState(
+            workflow="default", step="plan", agent="architect", position=None
+        )
+        config = _resolve_function_call_path(
+            FunctionCall(
+                function="call_agent",
+                agent_name="context",
+                callback="architect",
+                sub_run=True,
+            ),
+            self._workflows_dir(tmp_path),
+            state,
+        )
+        assert config["task"] == "context"
+        assert config["config_step"] == "context"
+        assert config["config_callback"] == "architect"
+
+    def test_a_promoted_dispatch_stays_forward_only(self, tmp_path):
+        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from workflow_state import FunctionCall, WorkflowState
+
+        state = WorkflowState(
+            workflow="default", step="plan", agent="architect", position=None
+        )
+        # No ``sub_run`` provenance: a ``dispatch_next`` target promoted to a
+        # call_agent spec must not re-enter the consumed ``context`` step.
+        config = _resolve_function_call_path(
+            FunctionCall(function="call_agent", agent_name="context"),
+            self._workflows_dir(tmp_path),
+            state,
+        )
+        assert config["task"] == "context"
+        assert config["config_step"] == ""
+
+
 class TestGatePrecedenceOverFunctionCall:
     """A human gate outranks an agent `function_call` (issue #733)."""
 
@@ -519,8 +603,11 @@ class TestGatePrecedenceOverFunctionCall:
         prompt_base.mkdir()
         for name in TASK_TO_PROMPT.values():
             (prompt_base / name).write_text("# prompt")
-        from default_paths import config_dir
-        workflows_dir = config_dir("workflows")
+        # The case asserts on the *shipped* spec-driven-impl.yaml; pin the
+        # checkout's ``defaults/workflows`` rather than going through the
+        # CWD-dependent ``.nebuko`` override layer (issue #912 triage).
+        from default_paths import checkout_root
+        workflows_dir = str(checkout_root() / "defaults" / "workflows")
         block = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps(state)

@@ -1346,8 +1346,18 @@ def _resolve_function_call_path(
     complexity = function_call.complexity or ""
     wf_name = (getattr(prev_state, "workflow", "") or "") if prev_state is not None else ""
     # Establish the callee's step from the active workflow so the callee's
-    # posted state records the step it actually ran (issue #507).
-    wf_step = _resolve_callee_step(wf_name, getattr(prev_state, "step", "") or "", task, workflows_dir, local_workflows_dir) if wf_name else ""
+    # posted state records the step it actually ran (issue #507). An explicit
+    # typed ``call_agent`` is an out-of-workflow sub-run (issue #889), so it may
+    # legitimately re-enter a step the caller already consumed (the gated
+    # ``plan`` -> ``context`` call); the forward-only default is unchanged.
+    wf_step = _resolve_callee_step(
+        wf_name,
+        getattr(prev_state, "step", "") or "",
+        task,
+        workflows_dir,
+        local_workflows_dir,
+        allow_backward=bool(getattr(function_call, "sub_run", False)),
+    ) if wf_name else ""
     # Return address (issue #765): the explicit ``callback`` if the caller set
     # one, otherwise auto-default to the emitting agent so a callee that
     # finishes with no decision of its own routes back to whoever invoked it

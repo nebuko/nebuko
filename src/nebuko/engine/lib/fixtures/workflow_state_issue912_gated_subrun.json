@@ -1,0 +1,78 @@
+{
+  "run_id": 5,
+  "schema_version": 5,
+  "workflow": "default",
+  "step": "plan",
+  "agent": "architect",
+  "phase": "planning",
+  "history": [
+    {
+      "step": "analyze",
+      "agent": "architect",
+      "summary": "## Architect — triage\n\nFresh issue; delegate context collection before designing.",
+      "position": [
+        {
+          "workflow": "default",
+          "step": "analyze"
+        }
+      ],
+      "dispatch": {
+        "task_hint": "context",
+        "complexity": "high",
+        "reason": "Fresh issue; delegate context collection before designing."
+      }
+    },
+    {
+      "step": "context",
+      "agent": "context",
+      "summary": "## Context Report\n\nRead-only collection; no files modified.",
+      "position": [
+        {
+          "workflow": "default",
+          "step": "context"
+        }
+      ],
+      "dispatch": {
+        "reason": "no-action default: agent emitted no decision",
+        "origin": "engine_fallback"
+      }
+    }
+  ],
+  "current_context": {
+    "last_run_status": "success"
+  },
+  "dispatch": {
+    "status": "hold",
+    "complexity": "high",
+    "reason": "human_gate:plan"
+  },
+  "resolution": {
+    "task": "architect",
+    "input_workflow": "default",
+    "input_step": "plan",
+    "input_complexity": "N/A",
+    "role_name": "architect",
+    "prompt_location": "/runner/_work/nebuko/nebuko/defaults/prompts/architect.md",
+    "agent_selected": "true",
+    "selected_workflow": "default",
+    "selected_step": "plan",
+    "next_step": "",
+    "reasoning": "none",
+    "matched_rule": "workflow:default/step:plan",
+    "timestamp": "2026-10-13T09:41:17.061410+00:00"
+  },
+  "workflow_ref": "nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@refs/heads/main",
+  "position": [
+    {
+      "workflow": "default",
+      "step": "plan"
+    }
+  ],
+  "function_call": {
+    "function": "call_agent",
+    "agent_name": "context",
+    "complexity": "",
+    "callback": "architect",
+    "sub_run": true
+  }
+}
