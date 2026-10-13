@@ -1,4 +1,10 @@
-import e3ArchitectAnalyze from './comments/e3-architect-analyze.md';
+import e1IssueBody from './comments/e1-issue-body.md';
+import e2ArchitectAnalyze from './comments/e2-architect-analyze.md';
+import e3ContextReport from './comments/e3-context-report.md';
+import e4ArchitectPlan from './comments/e4-architect-plan.md';
+import e5DevImplement from './comments/e5-dev-implement.md';
+import e6ReviewApproved from './comments/e6-review-approved.md';
+import e7MetricsReport from './comments/e7-metrics-report.md';
 
 export interface ThreadEvent {
   id: string;
@@ -61,7 +67,7 @@ export const events: ThreadEvent[] = [
     avatar: '📐',
     time: '14:35',
     title: '',
-    ...fromGithub(e3ArchitectAnalyze),
+    ...fromGithub(e2ArchitectAnalyze),
     caption: 'The architect agent triages the issue and hands context gathering to the next agent.',
   },
   {
@@ -80,7 +86,7 @@ export const events: ThreadEvent[] = [
     avatar: '🔍',
     time: '14:45',
     title: 'Context Collection Report',
-    body: 'I traced the 25-call limit end to end: Python module, engine guard, reusable workflow input, and the docs.',
+    ...fromGithub(e3ContextReport),
     stateLabel: 'WORKFLOW_STATE · step: context → plan',
     metrics: { input: '2,045,617', output: '25,443', toolCalls: '71', runtime: '5 min' },
     caption: 'The context agent traces the code involved and reports back, with token and runtime metrics.',
@@ -101,7 +107,7 @@ export const events: ThreadEvent[] = [
     avatar: '📐',
     time: '15:00',
     title: 'Architecture proposal — Object Design Anchor',
-    body: 'Proposed design: a pydantic CircuitBreakerState model, co-located with the existing SoftRetryState precedent. Workflow waiting for human approval of the Object Design Anchor.',
+    ...fromGithub(e4ArchitectPlan),
     stateLabel: 'WORKFLOW_STATE · step: plan · dispatch: HOLD · pin: true',
     pinned: true,
     metrics: { input: '71,549', output: '18,131', toolCalls: '2', runtime: '8 min' },
@@ -133,7 +139,7 @@ export const events: ThreadEvent[] = [
     avatar: '💻',
     time: '15:52',
     title: 'Implemented — PR opened',
-    body: 'Added /nebuko update circuit-breaker --value <n>: a deterministic step, no agent. Diff excerpts:',
+    ...fromGithub(e5DevImplement),
     code: `def test_with_limit_does_not_mutate_the_receiver(self):
     base = CircuitBreakerState(limit=20)
     base.with_limit(35)
@@ -157,7 +163,7 @@ export const events: ThreadEvent[] = [
     avatar: '⚖️',
     time: '16:29',
     title: 'Review verdict — APPROVED',
-    body: 'Full diff reviewed against the approved Object Design Anchor. Contract fidelity: all met.',
+    ...fromGithub(e6ReviewApproved),
     stateLabel: 'WORKFLOW_STATE · matched_rule: workflow:default/step:review',
     caption: 'A review agent running on a different model checks the diff against the approved design.',
   },
@@ -179,39 +185,5 @@ export const metricsSummary: ThreadEvent = {
   time: 'just now',
   title: '',
   caption: 'Closing the issue posts a summary: tokens, tool calls and time, per agent and for the humans.',
-  body: `<!-- bot-workflow-terminal -->
-## 📊 Agent Statistics Summary
-
-| Agent | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |
-|-------|------|-------------|---------------|----------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|
-| Architect | 2 | 112,283 | 26,197 | n/a | 0 | $0.0000 | 0 | 41322 | 148175 | 121.0 | 1.56 | 3.5 | 0 | 0 | dispatch_next: 4, finish: 3 |
-| Context | 1 | 2,309,637 | 31,372 | n/a | 0 | $0.0000 | 0 | 6847 | 246496 | 222.9 | 2.66 | 66.0 | 0 | 0 | dispatch_next: 1, finish: 1, task_tracker: 2, terminal: 62 |
-| Dev | 7 | 48,014,546 | 450,392 | n/a | 0 | $0.0000 | 0 | 9948 | 867978 | 155.4 | 2.45 | 113.1 | 7 | 0 | dispatch_next: 11, editor: 1, file_editor: 208, finish: 12, task_tracker: 10, terminal: 550 |
-| Review | 6 | 11,253,351 | 159,005 | n/a | 0 | $0.0000 | 0 | 9016 | 440148 | 3926.4 | 2.77 | 45.5 | 4 | 0 | dispatch_next: 9, finish: 11, terminal: 245, think: 8 |
-
-**Totals:** 16 runs · 61,689,817 input tokens · 666,966 output tokens · $0.0000
-
-## 📊 Model Statistics Summary
-
-| Model | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |
-|-------|------|-------------|---------------|----------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|
-| default | 16 | 61,689,817 | 666,966 | n/a | 0 | $0.0000 | 0 | 13326 | 578724 | 1569.4 | 2.47 | 71.1 | 11 | 0 | dispatch_next: 25, editor: 1, file_editor: 208, finish: 27, task_tracker: 12, terminal: 857, think: 8 |
-
-## 🧑‍💻 Human metrics
-
-| Metric | Value |
-|--------|-------|
-| Human comments | 7 |
-| Human interventions after implementation | 5 |
-| Human workflow commands | 5 |
-| Agent tool invocations | 1138 |
-| Estimated human reading time | 43.4 min |
-| Wall-clock duration (first agent start → close) | 2364.0 min |
-| Agent time spent (benefit proxy) | 154.3 min |
-| Average human response latency | 360.1 min |
-| Accepted on first pass | No |
-
-> _Human metrics are estimates/proxies derived from issue text and workflow timestamps (reading speed: 200 wpm; scope: issue body + all comments except context-agent reports, non-rendered markup excluded). Agent time spent is a proxy for human effort avoided, not a measured saving._
-
-> _This comment was auto-generated by the metrics summary agent on issue close._`,
+  ...fromGithub(e7MetricsReport),
 };
