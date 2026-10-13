@@ -308,7 +308,7 @@ export const StatusBadge: React.FC<{type: 'issue' | 'pr'; state: 'open' | 'close
 /* =====================================================================
  * Markdown (tiny): paragraphs, lists, `code`, **bold**, @mention, #123
  * ===================================================================== */
-const INLINE = /(`[^`]+`|\*\*[^*]+\*\*|@[\w-]+|#\d+)/g;
+const INLINE = /(`[^`]+`|\*\*[^*]+\*\*|(?<!\w)_[^_]+_(?!\w)|@[\w-]+|#\d+)/g;
 
 export const inlineCodeStyle = (t: Theme): React.CSSProperties => ({
   fontFamily: t.mono,
@@ -336,6 +336,9 @@ const renderInline = (text: string, t: Theme): React.ReactNode[] =>
         </strong>
       );
     }
+    if (part.length > 2 && /^_[^_]+_$/.test(part)) {
+      return <em key={i}>{part.slice(1, -1)}</em>;
+    }
     if (/^@[\w-]+$/.test(part)) {
       return (
         <span key={i} style={{fontWeight: 600}}>
@@ -355,11 +358,75 @@ const renderInline = (text: string, t: Theme): React.ReactNode[] =>
 
 export const Markdown: React.FC<{text: string}> = ({text}) => {
   const t = useGH();
-  const blocks = text.trim().split(/\n{2,}/);
+  // HTML comments (e.g. `<!-- bot-workflow-terminal -->`) are not rendered by GitHub either
+  const blocks = text.replace(/<!--[\s\S]*?-->/g, '').trim().split(/\n{2,}/);
   return (
     <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
       {blocks.map((block, i) => {
         const lines = block.split('\n');
+        const heading = /^(#{1,6}) (.*)$/.exec(block);
+        if (heading && lines.length === 1) {
+          const level = heading[1].length;
+          return (
+            <div
+              key={i}
+              style={{
+                fontSize: [32, 24, 20, 16, 14, 13][level - 1],
+                fontWeight: 600,
+                lineHeight: 1.25,
+                marginTop: i ? 12 : 0,
+                paddingBottom: level <= 2 ? 6 : 0,
+                borderBottom: level <= 2 ? '1px solid ' + t.border : 'none',
+              }}
+            >
+              {renderInline(heading[2], t)}
+            </div>
+          );
+        }
+        if (lines.length >= 2 && lines.every((l) => l.trim().startsWith('|')) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[1])) {
+          const cells = (l: string) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+          // wide tables (e.g. 16 metric columns) get denser cells so they fit the comment
+          const wide = cells(lines[0]).length > 8;
+          const cell: React.CSSProperties = {
+            border: '1px solid ' + t.border,
+            padding: wide ? '3px 5px' : '4px 8px',
+            textAlign: 'left',
+            verticalAlign: 'top',
+          };
+          return (
+            <div key={i} style={{overflowX: 'hidden'}}>
+              <table style={{borderCollapse: 'collapse', fontSize: wide ? 11 : 12, lineHeight: 1.4, width: 'fit-content', maxWidth: '100%'}}>
+                <thead>
+                  <tr>
+                    {cells(lines[0]).map((c, j) => (
+                      <th key={j} style={{...cell, fontWeight: 600}}>
+                        {renderInline(c, t)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.slice(2).map((l, r) => (
+                    <tr key={r} style={{background: r % 2 ? t.surface : 'transparent'}}>
+                      {cells(l).map((c, j) => (
+                        <td key={j} style={cell}>
+                          {renderInline(c, t)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        if (lines.every((l) => /^\s*>/.test(l))) {
+          return (
+            <blockquote key={i} style={{margin: 0, padding: '0 1em', color: t.muted, borderLeft: '4px solid ' + t.border}}>
+              {renderInline(lines.map((l) => l.replace(/^\s*> ?/, '')).join(' '), t)}
+            </blockquote>
+          );
+        }
         if (lines.every((l) => /^\s*[-*] /.test(l))) {
           return (
             <ul key={i} style={{margin: 0, paddingLeft: 28}}>
@@ -729,8 +796,14 @@ export const TitleBlock: React.FC<{
   return (
     <div style={{padding: `${24 - 12 * c}px 32px ${16 - 4 * c}px`, flexShrink: 0, fontFamily: t.font}}>
       <div style={{display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24}}>
-        <div style={{fontSize: 32 - 10 * c, lineHeight: 1.25, color: t.text, fontWeight: 400 + 200 * c}}>
-          {title} <span style={{color: t.muted, fontWeight: 300}}>#{number}</span>
+        <div style={{display: 'flex', alignItems: 'center', fontSize: 32 - 10 * c, lineHeight: 1.25, color: t.text, fontWeight: 400 + 200 * c}}>
+          {/* compact bar: the status badge moves next to the title (GitHub's sticky header does the same) */}
+          {c > 0 ? (
+            <span style={{display: 'inline-flex', opacity: c, marginRight: 12, transform: 'scale(0.85)', transformOrigin: 'left center'}}>{badge}</span>
+          ) : null}
+          <span>
+            {title} <span style={{color: t.muted, fontWeight: 300}}>#{number}</span>
+          </span>
         </div>
         <div style={{display: 'flex', gap: 8, flexShrink: 0, opacity: 1 - c}}>
           {actions ?? (
@@ -964,7 +1037,9 @@ export const ThreadColumn: React.FC<{
   /** Reserved band between the newest comment and the composer (e.g. an explainer card), right where the action happens. */
   below?: React.ReactNode;
   belowHeight?: number;
-}> = ({children, anchor = 'top', composer, below, belowHeight = 0}) => {
+  /** Scroll through a thread taller than the screen: 0 = its top is visible, 1 = its bottom. Overrides `anchor`. */
+  scroll?: number;
+}> = ({children, anchor = 'top', composer, below, belowHeight = 0, scroll}) => {
   const t = useGH();
   const fade = t.name === 'dark' ? 'rgba(13,17,23,0)' : 'rgba(255,255,255,0)';
   return (
@@ -980,11 +1055,21 @@ export const ThreadColumn: React.FC<{
           justifyContent: anchor === 'bottom' ? 'flex-end' : 'flex-start',
         }}
       >
-        <div style={{position: 'relative', display: 'flex', flexDirection: 'column', gap: 16, flexShrink: 0}}>
+        <div
+          style={{
+            position: scroll === undefined ? 'relative' : 'absolute',
+            // top: N% of the viewport + translate: -N% of the content → slides from "top aligned" to "bottom aligned", no measuring
+            ...(scroll === undefined ? {} : {left: 0, right: 0, top: `${scroll * 100}%`, transform: `translateY(${-scroll * 100}%)`}),
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+            flexShrink: 0,
+          }}
+        >
           <div style={{position: 'absolute', left: 19, top: 20, bottom: 0, width: 2, background: t.border}} />
           {children}
         </div>
-        {anchor === 'bottom' ? (
+        {anchor === 'bottom' || scroll !== undefined ? (
           <div
             style={{
               position: 'absolute',

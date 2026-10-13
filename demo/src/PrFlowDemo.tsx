@@ -33,14 +33,50 @@ const CHECKS = [
   {name: 'nebuko / review', desc: 'Successful in 3m 10s', state: 'success' as const},
 ];
 
-type Phase = 'review' | 'popover' | 'approved' | 'confirm' | 'merged';
+export type Phase = 'review' | 'popover' | 'approved' | 'confirm' | 'merged';
 
-const PrScene: React.FC<{phase: Phase; theme: ThemeName}> = ({phase, theme}) => {
+/** What the PR page shows. The default is a hand-written example; Preview passes the real run's PR. */
+export type PrContent = {
+  number: number;
+  title: string;
+  body: string;
+  /** optional code excerpt under the description */
+  code?: string;
+  commits: {sha: string; message: string}[];
+  /** the review agent's comment */
+  botReview: string;
+  /** what the human types when approving */
+  approveText: string;
+};
+
+export const SAMPLE_PR: PrContent = {
+  number: 842,
+  title: 'feat: per-issue circuit breaker limit',
+  body: 'Implements the per-issue override from #839.\n\n- `limit_for(issue)` reads the limit from the workflow state\n- default stays at **3**',
+  commits: COMMITS,
+  botReview: 'Reviewed with a different model: no blocking issue.\n\nOne nit: log the override in the state (see `circuit_breaker.py`).',
+  approveText: 'LGTM — tests cover the override.',
+};
+
+export const PrScene: React.FC<{
+  phase: Phase;
+  theme: ThemeName;
+  pr?: PrContent;
+  collapse?: number;
+  narration?: React.ReactNode;
+  narrationHeight?: number;
+}> = ({phase, theme, pr = SAMPLE_PR, collapse, narration, narrationHeight}) => {
   const approved = phase === 'approved' || phase === 'confirm' || phase === 'merged';
   const merged = phase === 'merged';
   return (
     <PullRequestFrame
       theme={theme}
+      number={pr.number}
+      title={pr.title}
+      commits={pr.commits.length}
+      collapse={collapse}
+      narration={narration}
+      narrationHeight={narrationHeight}
       state={merged ? 'merged' : 'open'}
       mergedAgo="just now"
       commentCount={approved ? 5 : 3}
@@ -56,16 +92,17 @@ const PrScene: React.FC<{phase: Phase; theme: ThemeName}> = ({phase, theme}) => 
         time="12 minutes ago"
         verb="commented"
         human={false}
-        body={'Implements the per-issue override from #839.\n\n- `limit_for(issue)` reads the limit from the workflow state\n- default stays at **3**'}
+        body={pr.body}
+        code={pr.code}
       />
-      <GithubCommits actor="nebuko-dev" time="12 minutes ago" commits={COMMITS} />
+      <GithubCommits actor="nebuko-dev" time="12 minutes ago" commits={pr.commits} />
       <GithubReview
         actor="nebuko-review"
         state="commented"
         time="8 minutes ago"
-        body={'Reviewed with a different model: no blocking issue.\n\nOne nit: log the override in the state (see `circuit_breaker.py`).'}
+        body={pr.botReview}
       />
-      {approved ? <GithubReview actor="alex-dev" state="approved" time="just now" body="LGTM — tests cover the override." animate={phase === 'approved'} /> : null}
+      {approved ? <GithubReview actor="alex-dev" state="approved" time="just now" body={pr.approveText} animate={phase === 'approved'} /> : null}
       {merged ? (
         <GithubTimelineEvent kind="merged" actor="alex-dev" animate>
           merged commit <span style={{fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12}}>5f3e2d1</span> into main just now
@@ -77,10 +114,10 @@ const PrScene: React.FC<{phase: Phase; theme: ThemeName}> = ({phase, theme}) => 
         checkRows={CHECKS}
         method="squash"
         mergeState={merged ? 'merged' : phase === 'confirm' ? 'confirm' : 'ready'}
-        commitTitle="feat: per-issue circuit breaker limit (#842)"
-        commitBody={'Implements the per-issue override from #839.'}
+        commitTitle={`${pr.title} (#${pr.number})`}
+        commitBody={pr.body.split('\n')[0]}
         pointer={phase === 'review' ? 'review' : phase === 'approved' ? 'merge' : phase === 'confirm' ? 'confirm' : phase === 'merged' ? 'delete' : null}
-        reviewPopover={phase === 'popover' ? {choice: 'approve', text: 'LGTM — tests cover the override.', submitPointed: true} : null}
+        reviewPopover={phase === 'popover' ? {choice: 'approve', text: pr.approveText, submitPointed: true} : null}
       />
     </PullRequestFrame>
   );

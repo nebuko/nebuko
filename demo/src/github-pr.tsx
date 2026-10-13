@@ -5,6 +5,7 @@ import {
   Avatar,
   BranchChip,
   Button,
+  Collapse,
   GithubHeader,
   GithubTimelineEvent,
   Initial,
@@ -579,6 +580,11 @@ export const PullRequestFrame: React.FC<{
   participants?: string[];
   anchor?: 'top' | 'bottom';
   showRepoChrome?: boolean;
+  /** 0 = full page, 1 = GitHub header and repo tabs folded away, title shrunk to a sticky bar. */
+  collapse?: number;
+  /** Content of a reserved band under the newest thread item (e.g. an explainer card). */
+  narration?: React.ReactNode;
+  narrationHeight?: number;
 }> = ({
   children,
   theme = 'light',
@@ -604,6 +610,9 @@ export const PullRequestFrame: React.FC<{
   participants = [],
   anchor = 'bottom',
   showRepoChrome = true,
+  collapse = 0,
+  narration,
+  narrationHeight = 0,
 }) => {
   const t = THEMES[theme];
   const merged = state === 'merged';
@@ -611,10 +620,13 @@ export const PullRequestFrame: React.FC<{
   return (
     <ThemeProvider theme={theme}>
       <AbsoluteFill style={{background: t.bg, display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: t.font}}>
-        <GithubHeader owner={repoOwner} repo={repoName} />
-        {showRepoChrome ? <RepoHeader owner={repoOwner} repo={repoName} active="pulls" /> : null}
+        <Collapse open={1 - collapse}>
+          <GithubHeader owner={repoOwner} repo={repoName} />
+          {showRepoChrome ? <RepoHeader owner={repoOwner} repo={repoName} active="pulls" /> : null}
+        </Collapse>
 
         <TitleBlock
+          compact={collapse}
           title={title}
           number={number}
           badge={<StatusBadge type="pr" state={state} />}
@@ -647,7 +659,9 @@ export const PullRequestFrame: React.FC<{
             <div style={{flex: 1, minWidth: 0}}>{children}</div>
           ) : (
             <>
-              <ThreadColumn anchor={anchor}>{children}</ThreadColumn>
+              <ThreadColumn anchor={anchor} below={narration} belowHeight={narrationHeight}>
+                {children}
+              </ThreadColumn>
               <div style={{width: 296, flexShrink: 0, fontSize: 12}}>
                 <SideSection title="Reviewers">
                   {reviewers.length === 0 ? (

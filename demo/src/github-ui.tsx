@@ -278,7 +278,8 @@ export const IssueFrame: React.FC<{
   state?: 'open' | 'closed';
   labels?: {name: string; color: string}[];
   assignees?: string[];
-  linkedPr?: {number: number | string; title: string; merged?: boolean; pointer?: boolean} | null;
+  /** `pointer`: show the cursor on the PR (a number = frame at which it flies in) */
+  linkedPr?: {number: number | string; title: string; merged?: boolean; pointer?: boolean | number} | null;
   participants?: string[];
   /** 'bottom' pins the newest comment to the bottom and clips older ones, chat-style. */
   anchor?: 'top' | 'bottom';
@@ -291,6 +292,10 @@ export const IssueFrame: React.FC<{
   /** Content of a reserved band between the newest comment and the composer (e.g. an explainer card). */
   narration?: React.ReactNode;
   narrationHeight?: number;
+  /** Scroll the thread from its top (0) to its bottom (1), for content taller than the screen. */
+  scroll?: number;
+  /** false hides the right sidebar so the thread gets the full width */
+  sidebar?: boolean;
   showRepoChrome?: boolean;
 }> = ({
   children,
@@ -316,6 +321,8 @@ export const IssueFrame: React.FC<{
   collapse = 0,
   narration,
   narrationHeight = 0,
+  scroll,
+  sidebar = true,
   showRepoChrome = true,
 }) => {
   const t = THEMES[theme];
@@ -347,50 +354,52 @@ export const IssueFrame: React.FC<{
             composer={<Composer text={composerText} pointerAt={composerPointerAt} />}
             below={narration}
             belowHeight={narrationHeight}
+            scroll={scroll}
           >
             {children}
           </ThreadColumn>
 
-          <div style={{width: 296, flexShrink: 0, fontSize: 12}}>
-            <SideSection title="Assignees">
-              {assignees.length === 0 ? (
-                <span style={{color: t.muted}}>No one assigned</span>
-              ) : (
-                assignees.map((a) => (
-                  <div key={a} style={{display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600}}>
-                    <Initial name={a} />
-                    <span>{a}</span>
-                  </div>
-                ))
-              )}
-            </SideSection>
-            <SideSection title="Labels">
-              <div style={{display: 'flex', gap: 6, flexWrap: 'wrap'}}>
-                {labels.map((l) => (
-                  <Label key={l.name} name={l.name} color={l.color} />
-                ))}
-              </div>
-            </SideSection>
-            <SideSection title="Projects">
-              <span style={{color: t.muted}}>None yet</span>
-            </SideSection>
-            <SideSection title="Milestone">
-              <span style={{color: t.muted}}>No milestone</span>
-            </SideSection>
-            <SideSection title="Development">
-              {linkedPr ? (
-                <div style={{position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 8, lineHeight: 1.4}}>
-                  <IconPullRequest size={16} color={linkedPr.merged ? t.purple : t.green} />
-                  <div>
-                    <div style={{fontWeight: 600}}>{linkedPr.title}</div>
-                    <div style={{color: t.muted}}>
-                      #{linkedPr.number} · {linkedPr.merged ? 'merged' : 'opened'}
+          {sidebar ? (
+            <div style={{width: 296, flexShrink: 0, fontSize: 12}}>
+              <SideSection title="Assignees">
+                {assignees.length === 0 ? (
+                  <span style={{color: t.muted}}>No one assigned</span>
+                ) : (
+                  assignees.map((a) => (
+                    <div key={a} style={{display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600}}>
+                      <Initial name={a} />
+                      <span>{a}</span>
                     </div>
-                  </div>
-                  {linkedPr.pointer ? (
-                    <div style={{position: 'absolute', right: 60, bottom: 8}}>
-                      <Pointer />
+                  ))
+                )}
+              </SideSection>
+              <SideSection title="Labels">
+                <div style={{display: 'flex', gap: 6, flexWrap: 'wrap'}}>
+                  {labels.map((l) => (
+                    <Label key={l.name} name={l.name} color={l.color} />
+                  ))}
+                </div>
+              </SideSection>
+              <SideSection title="Projects">
+                <span style={{color: t.muted}}>None yet</span>
+              </SideSection>
+              <SideSection title="Milestone">
+                <span style={{color: t.muted}}>No milestone</span>
+              </SideSection>
+              <SideSection title="Development">
+                {linkedPr ? (
+                  <div style={{position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 8, lineHeight: 1.4}}>
+                    <IconPullRequest size={16} color={linkedPr.merged ? t.purple : t.green} />
+                    <div>
+                      <div style={{fontWeight: 600}}>{linkedPr.title}</div>
+                      <div style={{color: t.muted}}>
+                        #{linkedPr.number} · {linkedPr.merged ? 'merged' : 'opened'}
+                      </div>
                     </div>
+                    {linkedPr.pointer ? (
+                      <div style={{position: 'absolute', right: 60, bottom: 8}}>
+                        <Pointer delay={typeof linkedPr.pointer === 'number' ? linkedPr.pointer : undefined} />
+                      </div>
                   ) : null}
                 </div>
               ) : (
@@ -424,6 +433,7 @@ export const IssueFrame: React.FC<{
               </div>
             </SideSection>
           </div>
+          ) : null}
         </div>
       </AbsoluteFill>
     </ThemeProvider>
