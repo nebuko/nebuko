@@ -59,8 +59,17 @@ class _Conversation:
 
 
 class _TokenUsage:
-    def __init__(self, reasoning_tokens=0):
+    def __init__(
+        self,
+        reasoning_tokens=0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        cache_read_tokens=0,
+    ):
         self.reasoning_tokens = reasoning_tokens
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+        self.cache_read_tokens = cache_read_tokens
 
 
 def _conversation_with(cache_hit_rate, token_usages):
@@ -226,6 +235,50 @@ class TestCollectLlmMetricsCacheAndReasoning:
 
         assert metrics.cache_hit_rate == 0.0
         assert metrics.reasoning_tokens == 0
+
+    def test_populates_root_cache_hit_tokens_from_accumulated_usage(self):
+        conversation = _conversation_with_usage(
+            _AccumulatedUsage(prompt_tokens=10000, cache_read_tokens=4820)
+        )
+
+        metrics = collect_llm_metrics(conversation)
+
+        assert metrics.input_tokens == 10000
+        assert metrics.cache_hit_tokens == 4820
+
+    def test_root_cache_hit_tokens_default_to_zero(self):
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.cache_hit_tokens == 0
+
+    def test_tokens_per_tool_accumulates_every_call(self):
+        """Each usage adds into its bucket instead of overwriting the previous."""
+        conversation = _conversation_with(
+            0.0,
+            [
+                _TokenUsage(
+                    prompt_tokens=1000, completion_tokens=100,
+                    cache_read_tokens=400, reasoning_tokens=10,
+                ),
+                _TokenUsage(
+                    prompt_tokens=2000, completion_tokens=200,
+                    cache_read_tokens=800, reasoning_tokens=30,
+                ),
+            ],
+        )
+
+        metrics = collect_llm_metrics(conversation)
+
+        # No tool attribution yet, so both calls land in the "unknown" bucket —
+        # but the bucket must now hold the SUM of both calls, not just the last.
+        assert metrics.tokens_per_tool == {
+            "unknown": {
+                "input": 3000,
+                "output": 300,
+                "cache_hit": 1200,
+                "reasoning": 40,
+            }
+        }
 
 
 class _AccumulatedUsage:

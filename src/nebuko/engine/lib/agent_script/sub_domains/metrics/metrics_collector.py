@@ -186,12 +186,13 @@ def _compute_tokens_per_tool(combined_metrics):
     tokens_per_tool = {}
     for usage in combined_metrics.token_usages:
         tool_name = getattr(usage, 'tool_name', 'unknown') or 'unknown'
-        tokens_per_tool[tool_name] = {
-            'input': getattr(usage, 'prompt_tokens', 0) or 0,
-            'output': getattr(usage, 'completion_tokens', 0) or 0,
-            'cache_hit': getattr(usage, 'cache_read_tokens', 0) or 0,
-            'reasoning': getattr(usage, 'reasoning_tokens', 0) or 0,
-        }
+        bucket = tokens_per_tool.setdefault(tool_name, {
+            'input': 0, 'output': 0, 'cache_hit': 0, 'reasoning': 0,
+        })
+        bucket['input'] += getattr(usage, 'prompt_tokens', 0) or 0
+        bucket['output'] += getattr(usage, 'completion_tokens', 0) or 0
+        bucket['cache_hit'] += getattr(usage, 'cache_read_tokens', 0) or 0
+        bucket['reasoning'] += getattr(usage, 'reasoning_tokens', 0) or 0
 
     return tokens_per_tool
 
@@ -340,6 +341,7 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
             output_tokens=output_tokens,
             max_context_window=max_context_window,
             cache_hit_rate=cache_hit_rate,
+            cache_hit_tokens=cache_read_tokens,
             reasoning_tokens=reasoning_tokens,
             cost=cost,
             complexity=os.environ.get("COMPLEXITY", "N/A"),
