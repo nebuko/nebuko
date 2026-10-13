@@ -308,7 +308,7 @@ export const StatusBadge: React.FC<{type: 'issue' | 'pr'; state: 'open' | 'close
 /* =====================================================================
  * Markdown (tiny): paragraphs, lists, `code`, **bold**, @mention, #123
  * ===================================================================== */
-const INLINE = /(`[^`]+`|\*\*[^*]+\*\*|(?<!\w)_[^_]+_(?!\w)|@[\w-]+|#\d+)/g;
+const INLINE = /(`[^`]+`|\*\*[^*]+\*\*|(?<![\w*])\*[^*\s][^*]*\*(?![\w*])|(?<!\w)_[^_]+_(?!\w)|@[\w-]+|#\d+)/g;
 
 export const inlineCodeStyle = (t: Theme): React.CSSProperties => ({
   fontFamily: t.mono,
@@ -336,7 +336,7 @@ const renderInline = (text: string, t: Theme): React.ReactNode[] =>
         </strong>
       );
     }
-    if (part.length > 2 && /^_[^_]+_$/.test(part)) {
+    if (part.length > 2 && (/^_[^_]+_$/.test(part) || /^\*[^*]+\*$/.test(part))) {
       return <em key={i}>{part.slice(1, -1)}</em>;
     }
     if (/^@[\w-]+$/.test(part)) {
@@ -358,11 +358,16 @@ const renderInline = (text: string, t: Theme): React.ReactNode[] =>
 
 export const Markdown: React.FC<{text: string}> = ({text}) => {
   const t = useGH();
+  // fenced code is pulled out first (it may hold blank lines), then put back as a placeholder block
+  const fences: string[] = [];
+  const withoutFences = text.replace(/```\w*\n([\s\S]*?)\n?```/g, (_, code: string) => `\n\n\u0000${fences.push(code) - 1}\u0000\n\n`);
   // HTML comments (e.g. `<!-- bot-workflow-terminal -->`) are not rendered by GitHub either
-  const blocks = text.replace(/<!--[\s\S]*?-->/g, '').trim().split(/\n{2,}/);
+  const blocks = withoutFences.replace(/<!--[\s\S]*?-->/g, '').trim().split(/\n{2,}/);
   return (
     <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
       {blocks.map((block, i) => {
+        const fence = /^\u0000(\d+)\u0000$/.exec(block.trim());
+        if (fence) return <CodeBlock key={i} code={fences[Number(fence[1])]} />;
         const lines = block.split('\n');
         const heading = /^(#{1,6}) (.*)$/.exec(block);
         if (heading && lines.length === 1) {

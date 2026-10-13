@@ -64,7 +64,6 @@ export const GithubIssueMainPost: React.FC<{
  * ===================================================================== */
 type EventExtras = {
   reactions?: {emoji: string; count: number; mine?: boolean}[];
-  stateVersion?: string;
 };
 
 const RUN_LINK = 'View workflow run logs';
@@ -122,7 +121,7 @@ export const GithubComment: React.FC<{
   gateTitle?: string;
   gateText?: string;
   stateOpen?: boolean;
-}> = ({event, animate, gate, gateTitle, gateText, stateOpen = true}) => {
+}> = ({event, animate, gate, gateTitle, gateText, stateOpen = false}) => {
   if (!event) {
     throw new Error(
       '<GithubComment> received no `event`. Check the event id: ' +

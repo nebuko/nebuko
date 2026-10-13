@@ -1,3 +1,5 @@
+import e3ArchitectAnalyze from './comments/e3-architect-analyze.md';
+
 export interface ThreadEvent {
   id: string;
   kind: 'trigger' | 'agent' | 'approve' | 'review';
@@ -6,14 +8,32 @@ export interface ThreadEvent {
   time: string;
   title: string;
   body: string;
-  stateLabel?: string;   // the WORKFLOW_STATE badge under the comment
+  stateLabel?: string;   // the WORKFLOW_STATE badge under the comment (or the state JSON)
+  stateVersion?: string; // "v3": shown as "Workflow State (v3)" when stateLabel is JSON
   pinned?: boolean;
   metrics?: { input: string; output: string; toolCalls?: string; runtime?: string };
   code?: string;         // code block (the PR diff)
   caption?: string;      // explainer card shown over the video while this step plays
 }
 
+/**
+ * A real GitHub comment, pasted verbatim in src/comments/*.md, → the ThreadEvent fields it fills.
+ * The `<details>` "Workflow State (vN)" block becomes the collapsible state; the rest is the body
+ * (HTML comments such as `<!-- AGENT_RUN_CONFIG … -->` are hidden by the Markdown renderer).
+ */
+export const fromGithub = (raw: string): Pick<ThreadEvent, 'body' | 'stateLabel' | 'stateVersion'> => {
+  const details = /<details>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/.exec(raw);
+  const isState = !!details && /Workflow State/.test(details[1]);
+  const json = isState ? /```json\s*([\s\S]*?)```/.exec(details![2])?.[1] : undefined;
+  return {
+    body: (isState ? raw.replace(details![0], '') : raw).trim(),
+    stateLabel: json?.replace(/<!--[\s\S]*?-->/g, '').trim(),
+    stateVersion: isState ? /\((v\d+)\)/.exec(details![1])?.[1] : undefined,
+  };
+};
+
 // Real data from issue #839 / PR #843 — replace with your own run.
+// Long comments live verbatim in ./comments/*.md and go through fromGithub().
 export const events: ThreadEvent[] = [
   {
     id: 'e1',
@@ -40,9 +60,8 @@ export const events: ThreadEvent[] = [
     author: 'nebuko · architect',
     avatar: '📐',
     time: '14:35',
-    title: 'Analyze — triage & delegation',
-    body: 'Triage done: per-issue circuit-breaker limit. Delegating context collection to @@context.',
-    stateLabel: 'WORKFLOW_STATE · step: analyze → context',
+    title: '',
+    ...fromGithub(e3ArchitectAnalyze),
     caption: 'The architect agent triages the issue and hands context gathering to the next agent.',
   },
   {
