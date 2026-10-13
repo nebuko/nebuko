@@ -339,21 +339,25 @@ def console_log_fallback(log_content: str) -> str:
 # ── Helpers ───────────────────────────────────────────────────────
 
 
-def _truncate_at_boundary(text: str) -> str:
-    """Truncate text at MAX_COMMENT_LENGTH, preferring paragraph boundaries.
+def _truncate_at_boundary(text: str, max_chars: int = MAX_COMMENT_LENGTH) -> str:
+    """Truncate text at ``max_chars``, preferring paragraph boundaries.
 
     Args:
         text: The text to potentially truncate.
+        max_chars: The character budget; defaults to the comment cap. A
+            two-argument form (issue #913) lets callers bound the *console*
+            fallback independently of the answer body, which is no longer
+            truncated here — it is split across comments at publish time.
 
     Returns:
         Truncated text with "...*(comment truncated due to size limit)*" appended.
     """
-    if len(text) <= MAX_COMMENT_LENGTH:
+    if len(text) <= max_chars:
         return text
 
-    text = text[:MAX_COMMENT_LENGTH]
+    text = text[:max_chars]
     last_break = text.rfind("\n\n")
-    if last_break > MAX_COMMENT_LENGTH * 0.5:
+    if last_break > max_chars * 0.5:
         text = text[:last_break]
     return text + "\n\n...*(comment truncated due to size limit)*"
 
@@ -570,8 +574,12 @@ def _select_fallback_body(
         return neutralize_human_pings(console_log_fallback(console_log))
 
     def finalized(cleaned: str) -> str:
+        # No length truncation here (issue #913): a long answer is split across
+        # comments at publish time, so truncating first would discard exactly
+        # the content the split exists to preserve. The context <details>
+        # collapse (#557) and ping neutralization (#795) still apply.
         cleaned = neutralize_human_pings(cleaned)
-        return _truncate_at_boundary(_apply_context_collapse(cleaned, role_name))
+        return _apply_context_collapse(cleaned, role_name)
 
     # ── Path A: Structured final message ────────────────────────
     if has_final_message:
