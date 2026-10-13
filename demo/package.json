@@ -1,0 +1,24 @@
+{
+    "name": "nebuko-demo",
+    "private": true,
+    "version": "0.0.1",
+    "scripts": {
+        "studio": "remotion studio src/index.ts",
+        "still": "remotion still src/index.ts GithubPreview out/preview.png --frame=90 --scale=1.5",
+        "render": "remotion render src/index.ts GithubPreview out/preview.mp4 --scale=1.5",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@remotion/cli": "4.0.535",
+        "react": "19.0.0",
+        "react-dom": "19.0.0",
+        "react-markdown": "10.1.0",
+        "rehype-raw": "7.0.0",
+        "remark-gfm": "4.0.1",
+        "remotion": "4.0.535"
+    },
+    "devDependencies": {
+        "@types/react": "19.0.0",
+        "typescript": "5.6.3"
+    }
+}

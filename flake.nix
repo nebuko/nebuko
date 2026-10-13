@@ -2,7 +2,7 @@
   description = "nix-container";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -19,6 +19,7 @@
           python313
           uv
           stdenv.cc.cc.lib
+          nodejs_26
         ];
 
       in {
