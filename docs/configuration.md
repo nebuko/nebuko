@@ -35,9 +35,12 @@ at load time (fail-fast, before any agent runs).
 
 The config is loaded and validated by the `config/` package
 (`load_config`, `load_workflow`, `resolve_refs` — see
-[architecture_code.md](./architecture_code.md)). If `agent-config.yaml` is
-absent, the workflow falls back to the legacy env-var-based approach for
-backward compatibility.
+[architecture_code.md](./architecture_code.md)). `agent-config.yaml` is the
+**sole** source of LLM configuration: the workflow no longer reads the legacy
+`LLM_API_KEY` / `LLM_MODEL` / `LLM_BASE_URL` / `LLM_TEMPERATURE` environment
+variables. If the file is missing, a role is absent, or a provider's
+`api_token_env` is unset, the run fails fast with an actionable
+`LLMConfigError` naming the path (or the env var to set).
 
 ---
 
