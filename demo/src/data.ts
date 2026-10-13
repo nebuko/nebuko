@@ -38,6 +38,9 @@ export const fromGithub = (raw: string): Pick<ThreadEvent, 'body' | 'stateLabel'
   };
 };
 
+// The issue's opening post (real, verbatim).
+export const issueBody = e1IssueBody;
+
 // Real data from issue #839 / PR #843 — replace with your own run.
 // Long comments live verbatim in ./comments/*.md and go through fromGithub().
 export const events: ThreadEvent[] = [
@@ -87,8 +90,6 @@ export const events: ThreadEvent[] = [
     time: '14:45',
     title: 'Context Collection Report',
     ...fromGithub(e3ContextReport),
-    stateLabel: 'WORKFLOW_STATE · step: context → plan',
-    metrics: { input: '2,045,617', output: '25,443', toolCalls: '71', runtime: '5 min' },
     caption: 'The context agent traces the code involved and reports back, with token and runtime metrics.',
   },
   {
@@ -108,9 +109,7 @@ export const events: ThreadEvent[] = [
     time: '15:00',
     title: 'Architecture proposal — Object Design Anchor',
     ...fromGithub(e4ArchitectPlan),
-    stateLabel: 'WORKFLOW_STATE · step: plan · dispatch: HOLD · pin: true',
     pinned: true,
-    metrics: { input: '71,549', output: '18,131', toolCalls: '2', runtime: '8 min' },
     caption: 'The architect proposes a design. The workflow holds here until a human approves it.',
   },
   {
@@ -120,7 +119,7 @@ export const events: ThreadEvent[] = [
     avatar: '👤',
     time: '15:12',
     title: '/nebuko approve gate',
-    body: 'Gate released — the state is re-read and the engine dispatches the next step.',
+    body: '',
     caption: 'One comment releases the gate: the engine dispatches the next step.',
   },
   {
@@ -144,7 +143,6 @@ export const events: ThreadEvent[] = [
     base = CircuitBreakerState(limit=20)
     base.with_limit(35)
     self.assertEqual(base, CircuitBreakerState(limit=20))`,
-    stateLabel: 'WORKFLOW_STATE · step: implement → review',
     caption: 'The dev agent implements the change and opens a pull request.',
   },
   {
@@ -164,7 +162,6 @@ export const events: ThreadEvent[] = [
     time: '16:29',
     title: 'Review verdict — APPROVED',
     ...fromGithub(e6ReviewApproved),
-    stateLabel: 'WORKFLOW_STATE · matched_rule: workflow:default/step:review',
     caption: 'A review agent running on a different model checks the diff against the approved design.',
   },
 ];

@@ -11,7 +11,6 @@ import {
   Initial,
   inlineCodeStyle,
   Label,
-  Markdown,
   Pointer,
   prettyJson,
   RepoHeader,
@@ -21,6 +20,7 @@ import {
   TitleBlock,
   useEnter,
 } from './github-core';
+import {Markdown} from './github-markdown';
 import {IconChevronRight, IconPin, IconPullRequest} from './github-icons';
 import {ThreadEvent} from './data';
 
@@ -30,6 +30,7 @@ export * from './github-theme';
 export * from './github-icons';
 export * from './github-core';
 export * from './github-pr';
+export * from './github-markdown';
 
 /* =====================================================================
  * Issue description (first comment). Also used for the PR description.
@@ -303,8 +304,8 @@ export const IssueFrame: React.FC<{
   children,
   theme = 'light',
   commentCount = 4,
-  title = 'Allow to improve circuit breaker for one issue',
-  number = 839,
+  title = 'human_gate ignore by engine',
+  number = 887,
   repoOwner = 'nebuko',
   repoName = 'nebuko',
   author = 'alex-dev',

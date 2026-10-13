@@ -4,6 +4,7 @@ import {Collapse, GithubComment, GithubIssueMainPost, GithubTimelineEvent, Issue
 import {eventById, events, metricsSummary, ThreadEvent} from './data';
 import {Narration, NARRATION_HEIGHT} from './Narration';
 import {Phase, PrContent, PrScene, SAMPLE_PR} from './PrFlowDemo';
+import {eventById, issueBody} from './data';
 
 // The engine holds the workflow on the step whose state says `dispatch: HOLD`.
 const isGate = (label?: string) => !!label && /\bdispatch:\s*HOLD\b/.test(label);
@@ -12,9 +13,9 @@ const participants = [...new Set(events.map((e) => e.avatar).filter(Boolean))];
 
 /** Frames before the first comment and between two comments. */
 const LEAD_IN = 15;
-const STEP = 30;
+const STEP = 90;
 /** Human comments: typing speed (chars per frame) and the pause before the cursor moves. */
-const TYPE_SPEED = 1.5;
+const TYPE_SPEED = 0.3;
 const TYPE_PAUSE = 6;
 /** `Button` presses on frames [pointerAt + 14, pointerAt + 20): post right after the click. */
 const CLICK_DONE = 20;
@@ -198,9 +199,7 @@ const IssueThread: React.FC<{theme: ThemeName}> = ({theme}) => {
         author="alex-dev"
         avatar="🧑‍💻"
         time="3 hours ago"
-        body={
-          'The circuit breaker trips for the whole repository when a single issue fails three times.\n\nWe should be able to raise the limit for **one issue** only, e.g. `/nebuko run workflow --max-failures 5`.\n\n- keep the default at 3\n- log the override in the workflow state'
-        }
+        body={issueBody}
       />
       {schedule.map((slot) => (
         <Sequence key={slot.event.id} from={slot.at} layout="none">

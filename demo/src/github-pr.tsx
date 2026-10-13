@@ -10,7 +10,6 @@ import {
   GithubTimelineEvent,
   Initial,
   Label,
-  Markdown,
   Pill,
   Pointer,
   RepoHeader,
@@ -21,6 +20,7 @@ import {
   TitleBlock,
   useEnter,
 } from './github-core';
+import {Markdown} from './github-markdown';
 import {
   IconCheck,
   IconCheckCircle,
