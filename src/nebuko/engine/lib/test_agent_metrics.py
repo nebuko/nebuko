@@ -13,6 +13,8 @@ from io import StringIO
 sys.path.insert(0, os.path.dirname(__file__))
 from metrics_schema import Metrics
 from workflow_state import STATE_MARKER_START, STATE_MARKER_END
+from agent_script.sub_domains.metrics.report_cost_resolver import ReportCostResolver
+from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
 from agent_metrics import (
     extract_metrics_from_comment,
     deduplicate_metrics,
@@ -1883,6 +1885,73 @@ class TestBuildHumanMetricsSection(unittest.TestCase):
         ]
         section = build_human_metrics_section(comments, [], body, None)
         self.assertIn("| Estimated human reading time | 1.0 min |", section)
+
+
+class TestReportTimePricing(unittest.TestCase):
+    """Report-time fallback for zero-cost entries (issue #928)."""
+
+    @staticmethod
+    def _resolver():
+        table = PriceTable(
+            source="openrouter",
+            fetched_at=1.0,
+            entries={
+                "deepseek/deepseek-v4.1-flash": ModelPrice(
+                    input_price=0.30, output_price=1.20,
+                )
+            },
+        )
+        return ReportCostResolver(table=table)
+
+    def test_zero_cost_entries_are_priced_and_totaled(self):
+        metrics = [
+            Metrics(model_name="openai/deepseek/deepseek-v4.1-flash",
+                    agent_role="dev", input_tokens=1_000_000, output_tokens=500_000),
+            Metrics(model_name="openai/deepseek/deepseek-v4.1-flash",
+                    agent_role="dev", input_tokens=1_000_000, output_tokens=0),
+        ]
+        by_model = aggregate_by_model(metrics, self._resolver())[
+            "openai/deepseek/deepseek-v4.1-flash"
+        ]
+        # (0.30 + 0.60) + 0.30 = 1.20
+        self.assertAlmostEqual(by_model["total_cost"], 1.20)
+        by_agent = aggregate_by_agent(metrics, self._resolver())["dev"]
+        self.assertAlmostEqual(by_agent["total_cost"], 1.20)
+
+    def test_placeholder_entries_collapse_into_one_row(self):
+        # Legacy "default" entries share one placeholder bucket; their identity
+        # is unresolved (pre-#928 runs) so the bucket sums to zero, while new
+        # runs carry a real model name and price per model.
+        metrics = [
+            Metrics(model_name="default", agent_role="dev",
+                    input_tokens=1_000_000, output_tokens=0),
+            Metrics(model_name="default", agent_role="review",
+                    input_tokens=4_000_000, output_tokens=1_000_000),
+        ]
+        by_model = aggregate_by_model(metrics, self._resolver())
+        self.assertEqual(list(by_model), ["default"])
+        self.assertEqual(by_model["default"]["runs"], 2)
+        self.assertAlmostEqual(by_model["default"]["total_cost"], 0.0)
+
+    def test_reported_cost_is_not_recomputed(self):
+        metrics = [Metrics(model_name="openai/deepseek/deepseek-v4.1-flash",
+                           agent_role="dev", cost=2.5)]
+        by_agent = aggregate_by_agent(metrics, self._resolver())["dev"]
+        self.assertAlmostEqual(by_agent["total_cost"], 2.5)
+
+    def test_resolver_none_preserves_todays_behaviour(self):
+        metrics = [Metrics(model_name="openai/deepseek/deepseek-v4.1-flash",
+                           agent_role="dev", input_tokens=1_000_000)]
+        by_model = aggregate_by_model(metrics)
+        self.assertAlmostEqual(by_model["openai/deepseek/deepseek-v4.1-flash"]["total_cost"], 0.0)
+
+    def test_legacy_dict_entries_are_priced(self):
+        metrics = [{"model_name": "openai/deepseek/deepseek-v4.1-flash",
+                    "agent_role": "dev", "input_tokens": 1_000_000, "cost": 0.0}]
+        by_model = aggregate_by_model(metrics, self._resolver())
+        self.assertAlmostEqual(
+            by_model["openai/deepseek/deepseek-v4.1-flash"]["total_cost"], 0.30
+        )
 
 
 if __name__ == "__main__":
