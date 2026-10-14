@@ -1,6 +1,8 @@
 <!-- bot-workflow-terminal -->
 ## 📊 Agent Statistics Summary
 
+`Input Tokens` reports new (uncached) input — raw prompt tokens minus cache reads — so it is comparable with other harnesses; cache reads stay in `Cache Hit Tokens` (issue #948). In this sample every `Cache Hit Tokens` cell is 0, so the uncached figures equal the raw ones.
+
 | Agent | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Cache Hit Tokens | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (s) | Avg LLM Runtime (s) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |
 |-------|------|-------------|---------------|----------------|------------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|
 | Architect | 2 | 133,611 | 11,752 | n/a | 0 | 0 | $0.0000 | 0 | 29 | 108 | 87.4 | 2.17 | 3.5 | 0 | 0 | dispatch_next: 4, finish: 3 |

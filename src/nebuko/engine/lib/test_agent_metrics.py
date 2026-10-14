@@ -22,6 +22,7 @@ from agent_metrics import (
     aggregate_by_agent,
     generate_agent_summary_table,
     SecondsCell,
+    InputTokenSplit,
     StatsTotals,
     format_number,
     format_cost,
@@ -749,7 +750,8 @@ class TestAggregateByAgent(unittest.TestCase):
     """Test aggregate_by_agent function."""
 
     def _make_metric(self, agent, input_tokens=100, output_tokens=50,
-                     latency=1000.0, tool_calls=5, error_rate=0.0):
+                     latency=1000.0, tool_calls=5, error_rate=0.0,
+                     cache_hit_tokens=0):
         return {
             "model_name": "gpt-4",
             "agent_role": agent,
@@ -759,6 +761,7 @@ class TestAggregateByAgent(unittest.TestCase):
             "tool_call_latency_ms": latency,
             "nb_tool_calls": tool_calls,
             "tool_call_error_rate": error_rate,
+            "cache_hit_tokens": cache_hit_tokens,
         }
 
     def test_single_agent_single_run(self):
@@ -777,6 +780,16 @@ class TestAggregateByAgent(unittest.TestCase):
         self.assertEqual(result["architect"]["runs"], 2)
         self.assertEqual(result["architect"]["total_input_tokens"], 300)
         self.assertEqual(result["architect"]["total_output_tokens"], 150)
+
+    def test_uncached_input_tokens_are_derived_per_run(self):
+        """Agent buckets carry the per-run uncached input sum next to the raw total (#948)."""
+        metrics = [
+            self._make_metric("architect", input_tokens=4000, cache_hit_tokens=1920),
+            self._make_metric("architect", input_tokens=1000),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["architect"]["total_input_tokens"], 5000)
+        self.assertEqual(result["architect"]["total_uncached_input_tokens"], 3080)
 
     def test_multiple_agents(self):
         metrics = [
@@ -845,6 +858,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             "architect": {
                 "runs": 2,
                 "total_input_tokens": 300,
+                "total_uncached_input_tokens": 300,
                 "total_output_tokens": 150,
                 "total_context_window": 16384,
                 "latency_sum": 2000.0,
@@ -859,6 +873,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             "context": {
                 "runs": 1,
                 "total_input_tokens": 200,
+                "total_uncached_input_tokens": 200,
                 "total_output_tokens": 100,
                 "total_context_window": 8192,
                 "latency_sum": 1500.0,
@@ -873,6 +888,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             "dev": {
                 "runs": 1,
                 "total_input_tokens": 400,
+                "total_uncached_input_tokens": 400,
                 "total_output_tokens": 200,
                 "total_context_window": 16384,
                 "latency_sum": 3000.0,
@@ -932,6 +948,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             "architect": {
                 "runs": 1,
                 "total_input_tokens": 100,
+                "total_uncached_input_tokens": 100,
                 "total_output_tokens": 50,
                 "total_context_window": 8192,
                 "latency_sum": 1000.0,
@@ -1002,6 +1019,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             "architect": {
                 "runs": 2,
                 "total_input_tokens": 300,
+                "total_uncached_input_tokens": 300,
                 "total_output_tokens": 150,
                 "total_context_window": 16384,
                 "latency_sum": 2000.0,
@@ -1016,6 +1034,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             "dev": {
                 "runs": 1,
                 "total_input_tokens": 200,
+                "total_uncached_input_tokens": 200,
                 "total_output_tokens": 100,
                 "total_context_window": 8192,
                 "latency_sum": 1500.0,
@@ -1040,6 +1059,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             "architect": {
                 "runs": 1,
                 "total_input_tokens": 100,
+                "total_uncached_input_tokens": 100,
                 "total_output_tokens": 50,
                 "total_context_window": 8192,
                 "latency_sum": 1000.0,
@@ -1062,6 +1082,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             "architect": {
                 "runs": 1,
                 "total_input_tokens": 100,
+                "total_uncached_input_tokens": 100,
                 "total_output_tokens": 50,
                 "total_context_window": 8192,
                 "latency_sum": 1000.0,
@@ -1088,6 +1109,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             "dev": {
                 "runs": 1,
                 "total_input_tokens": 4000,
+                "total_uncached_input_tokens": 2080,
                 "total_output_tokens": 200,
                 "total_context_window": 16384,
                 "latency_sum": 3000.0,
@@ -1114,6 +1136,8 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertIn("| 57.50% ", dev_line)
         self.assertIn("| 1,920 ", dev_line)
         self.assertIn("| 10,170 ", dev_line)
+        # Input cell is the bucket's uncached sum (4,000 − 1,920), not the raw 4,000 (#948).
+        self.assertIn("| 2,080 ", dev_line)
 
     def test_cache_hit_shows_na_without_signal(self):
         """A bucket with no observed input tokens renders 'n/a'."""
@@ -1364,6 +1388,7 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
             "architect": {
                 "runs": 2,
                 "total_input_tokens": 300,
+                "total_uncached_input_tokens": 300,
                 "total_output_tokens": 150,
                 "total_context_window": 16384,
                 "latency_sum": 2000.0,
@@ -1378,6 +1403,7 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
             "context": {
                 "runs": 1,
                 "total_input_tokens": 200,
+                "total_uncached_input_tokens": 200,
                 "total_output_tokens": 100,
                 "total_context_window": 8192,
                 "latency_sum": 1500.0,
@@ -1417,6 +1443,7 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
             "architect": {
                 "runs": 1,
                 "total_input_tokens": 100,
+                "total_uncached_input_tokens": 100,
                 "total_output_tokens": 50,
                 "total_context_window": 8192,
                 "latency_sum": 1000.0,
@@ -1443,6 +1470,37 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
         self.assertEqual(lines[-1].count("|"), header_cols)
 
 
+class TestInputTokenSplit(unittest.TestCase):
+    """Test the inclusive/exclusive input-token derivation (issue #948)."""
+
+    def test_inclusive_shape_subtracts_cache_reads(self):
+        """litellm/OpenAI shape: cache reads sit inside input_tokens."""
+        split = InputTokenSplit(input_tokens=4000, cache_read_tokens=1920)
+        self.assertEqual(split.uncached_input_tokens, 2080)
+
+    def test_all_cached_leaves_zero(self):
+        split = InputTokenSplit(input_tokens=500, cache_read_tokens=500)
+        self.assertEqual(split.uncached_input_tokens, 0)
+
+    def test_cache_writes_are_subtracted_too(self):
+        split = InputTokenSplit(
+            input_tokens=1000, cache_read_tokens=200, cache_write_tokens=300
+        )
+        self.assertEqual(split.uncached_input_tokens, 500)
+
+    def test_exclusive_shape_keeps_input_unchanged(self):
+        """Anthropic shape: cache_read > input means input already excludes cache."""
+        split = InputTokenSplit(input_tokens=100, cache_read_tokens=9000)
+        self.assertEqual(split.uncached_input_tokens, 100)
+
+    def test_input_without_cache_is_unchanged(self):
+        self.assertEqual(InputTokenSplit(input_tokens=700).uncached_input_tokens, 700)
+
+    def test_empty_defaults_to_zero(self):
+        self.assertEqual(InputTokenSplit().uncached_input_tokens, 0)
+        self.assertEqual(InputTokenSplit(cache_read_tokens=9000).uncached_input_tokens, 0)
+
+
 class TestStatsTotals(unittest.TestCase):
     """Test the StatsTotals summary-row value object (issue #942)."""
 
@@ -1451,12 +1509,14 @@ class TestStatsTotals(unittest.TestCase):
             "architect": {
                 "runs": 2,
                 "total_input_tokens": 300,
+                "total_uncached_input_tokens": 300,
                 "total_output_tokens": 150,
                 "total_cost": 0.1000,
             },
             "dev": {
                 "runs": 1,
                 "total_input_tokens": 600,
+                "total_uncached_input_tokens": 600,
                 "total_output_tokens": 100,
                 "total_cost": 0.0234,
             },
@@ -1502,6 +1562,7 @@ class TestStatsTotals(unittest.TestCase):
             "architect": {
                 "runs": 2,
                 "total_input_tokens": 300,
+                "total_uncached_input_tokens": 300,
                 "total_output_tokens": 150,
                 "total_context_window": 16384,
                 "latency_sum": 2000.0,

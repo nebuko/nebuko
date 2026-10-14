@@ -164,6 +164,12 @@ separate hidden HTML comment):
   The table's `Avg Latency` and `Avg LLM Runtime` columns display whole seconds
   (`(s)`), while `workflow_state` and `metrics_schema` continue to store both
   metrics in milliseconds; the conversion happens at render time only (issue #947).
+- **Reported input is uncached (issue #948)** — the summary's `Input Tokens`
+  column reports *new* (uncached) input: the raw prompt count minus its
+  cache-read (and cache-write) part, derived per run under the ADR 0014
+  token-shape guard, so the figure matches harnesses that report only newly
+  processed input. Cache reads remain in `Cache Hit Tokens` (total input is the
+  two columns combined) and cost is unaffected.
 
 ---
 

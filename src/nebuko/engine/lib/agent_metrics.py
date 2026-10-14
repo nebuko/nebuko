@@ -246,6 +246,7 @@ def aggregate_by_model(all_metrics, resolver=None):  # @stub-protected
     aggregated = defaultdict(lambda: {
         "runs": 0,
         "total_input_tokens": 0,
+        "total_uncached_input_tokens": 0,
         "total_output_tokens": 0,
         "total_cost": 0.0,
         "total_context_window": 0,
@@ -312,6 +313,9 @@ def aggregate_by_model(all_metrics, resolver=None):  # @stub-protected
         agg = aggregated[model]
         agg["runs"] += 1
         agg["total_input_tokens"] += input_tokens
+        agg["total_uncached_input_tokens"] += InputTokenSplit(
+            input_tokens=input_tokens, cache_read_tokens=cache_hit_tokens
+        ).uncached_input_tokens
         agg["total_output_tokens"] += output_tokens
         agg["total_cost"] += cost
         agg["total_context_window"] += context_window
@@ -359,6 +363,7 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
     aggregated = defaultdict(lambda: {
         "runs": 0,
         "total_input_tokens": 0,
+        "total_uncached_input_tokens": 0,
         "total_output_tokens": 0,
         "total_cost": 0.0,
         "total_context_window": 0,
@@ -425,6 +430,9 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         agg = aggregated[agent]
         agg["runs"] += 1
         agg["total_input_tokens"] += input_tokens
+        agg["total_uncached_input_tokens"] += InputTokenSplit(
+            input_tokens=input_tokens, cache_read_tokens=cache_hit_tokens
+        ).uncached_input_tokens
         agg["total_output_tokens"] += output_tokens
         agg["total_cost"] += cost
         agg["total_context_window"] += context_window
@@ -462,6 +470,32 @@ def format_cost(value):
 
 
 @dataclass(frozen=True)
+class InputTokenSplit:
+    """One usage record's input tokens split into new (uncached) and cache-read parts.
+
+    Mirrors the ADR-0014 token-shape guard
+    (``cost.py::SessionCost._regular_input_tokens``): the litellm/OpenAI shape
+    counts cache buckets *inside* ``input_tokens`` and they are subtracted; the
+    Anthropic shape counts them alongside, so ``input_tokens`` is already the
+    uncached figure. Reported input is therefore comparable with harnesses that
+    report only newly-processed input (issue #948).
+    """
+
+    input_tokens: int = 0
+    cache_read_tokens: int = 0
+    # Cache-write tokens are not persisted past collection and are 0 at report time.
+    cache_write_tokens: int = 0
+
+    # @stub-protected
+    @property
+    def uncached_input_tokens(self) -> int:
+        """New input tokens: guarded input − cache reads − cache writes; never negative."""
+        if self.input_tokens >= self.cache_read_tokens + self.cache_write_tokens:
+            return self.input_tokens - self.cache_read_tokens - self.cache_write_tokens
+        return self.input_tokens
+
+
+@dataclass(frozen=True)
 class StatsTotals:
     """Grand totals over every bucket of an aggregated metrics mapping.
 
@@ -470,6 +504,7 @@ class StatsTotals:
     """
 
     runs: int = 0
+    # Sum of per-run uncached input (InputTokenSplit); rendered under "Input Tokens".
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
@@ -479,14 +514,19 @@ class StatsTotals:
     def from_aggregated(
         cls, aggregated: Mapping[str, Mapping[str, Any]]
     ) -> "StatsTotals":
-        """Fold every bucket of ``aggregated`` into one totals instance."""
+        """Fold every bucket of ``aggregated`` into one totals instance.
+
+        Input tokens fold each bucket's per-run uncached sum
+        (``total_uncached_input_tokens``), never a post-hoc subtraction of the
+        raw column totals (issue #948).
+        """
         runs = 0
         input_tokens = 0
         output_tokens = 0
         cost_usd = 0.0
         for agg in aggregated.values():
             runs += agg.get("runs", 0)
-            input_tokens += agg.get("total_input_tokens", 0)
+            input_tokens += agg.get("total_uncached_input_tokens", 0)
             output_tokens += agg.get("total_output_tokens", 0)
             cost_usd += agg.get("total_cost", 0.0)
         return cls(
@@ -561,7 +601,7 @@ def generate_agent_summary_table(aggregated):
     for agent in sorted(aggregated.keys(), key=lambda a: agent_order.get(a, 99)):
         agg = aggregated[agent]
         runs = agg["runs"]
-        input_tokens = agg["total_input_tokens"]
+        input_tokens = agg.get("total_uncached_input_tokens", 0)
         output_tokens = agg["total_output_tokens"]
         cost = agg.get("total_cost", 0.0)
         avg_context_window = agg["total_context_window"] // runs if runs else 0
