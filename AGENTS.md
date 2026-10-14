@@ -74,3 +74,36 @@ git push --force-with-lease origin <branch>
 ```
 A leftover `.git/rebase-merge` from a failed attempt blocks the next rebase:
 `git rebase --abort` (or `rm -fr .git/rebase-merge`) before retrying.
+
+## System prompt assembly (issue #943)
+
+The agent's **entire static system prompt** is the module constant
+`_SYSTEM_PROMPT` in
+`src/nebuko/engine/lib/agent_script/features/run_agent/run_agent.py`, passed as
+the SDK's inline `Agent(system_prompt=...)` escape hatch. That escape hatch
+bypasses the SDK prompt-section registry (`openhands/sdk/context/prompts/`)
+entirely: the built-in OpenHands persona, the coding-workflow sections and
+`<MEMORY>` / `<SECURITY>` / `<SECURITY_RISK_ASSESSMENT>` / `<EXTERNAL_SERVICES>` /
+`<PROCESS_MANAGEMENT>` / model-specific notes no longer render. Do **not**
+reintroduce `persona`, `system_prompt_kwargs` or `security_policy_filename` — all
+three only fed the registry and are now silent no-ops (a test pins this).
+
+Useful facts when touching this area:
+
+- **Three SDK blocks are unremovable by field:** `memory`, `external_services`
+  and `process_management` all `guard -> True`; only `security`
+  (`security_policy_filename`) and `security_risk_assessment`
+  (`llm_security_analyzer`) have guard flags. Hence the inline prompt.
+- The SDK **appends each loaded tool's `prompt_guidance`** after an inline
+  `system_prompt` (`agent/base.py`), so tool guidance survives.
+- **Two tiers.** The static prompt above; the *dynamic* tier carries nebuko's
+  `SHARED_EXIT_RULES` + "Your Team" (`AgentContext(system_message_suffix=...)`,
+  `resolve_config/features/team_context/`) plus datetime and secrets. The literal
+  label `Dynamic Context:` is SDK console-visualization only — the model never
+  sees it. The static prompt's closing line defers to that tier for the
+  `dispatch_next` / `AGENT_RUN_CONFIG` contract, so keep the dynamic tier.
+- **Skills are not injected into the prompt** (removed with the registry in
+  #943). Agents read `defaults/skills/*.md` on demand. The old
+  `SKILL_CONTEXT_FILE` -> `security_policy_filename` channel had been orphaned
+  since PR #770 deleted its only producer; re-routing via
+  `AgentContext(skills=[Skill(...)])` is future work (#570).
