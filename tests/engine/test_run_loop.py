@@ -1844,15 +1844,49 @@ class TestAgentEnvHandoff:
             "step": "plan",
         }
 
-    def test_anchors_a_relative_config_path_to_the_checkout(self, tmp_path, monkeypatch):
-        engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": "agent-config.yaml"})
+    def test_anchors_a_relative_config_path_to_the_caller_workspace(
+        self, tmp_path, monkeypatch
+    ):
+        """A caller-relative value anchors at the caller workspace (issue #930)."""
+        caller = tmp_path / "caller"
+        (caller / ".nebuko" / "agents").mkdir(parents=True)
+        engine = _engine(
+            tmp_path,
+            env={
+                "AGENT_CONFIG_PATH": ".nebuko/agents/agent-config.yaml",
+                "GITHUB_WORKSPACE": str(caller),
+            },
+        )
         _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
 
-        env = engine._agent_env()
+        resolved = engine._agent_env()["AGENT_CONFIG_PATH"]
 
-        assert env["AGENT_CONFIG_PATH"] == str(
-            repo_root() / "defaults" / "agents" / "agent-config.yaml"
+        assert resolved == str(caller / ".nebuko" / "agents" / "agent-config.yaml")
+
+    def test_a_cross_repo_caller_path_does_not_leak_the_engine_checkout(
+        self, tmp_path, monkeypatch
+    ):
+        """The imported ``.nebuko-engine`` checkout must not enter the path.
+
+        The reported bug: a cross-repo caller passes a caller-relative value but
+        the engine anchors it at its own (``.nebuko-engine``) checkout, yielding
+        ``<workspace>/.nebuko-engine/.nebuko/agents/...`` (issue #930).
+        """
+        workspace = tmp_path
+        (workspace / ".nebuko-engine" / "src" / "nebuko" / "engine").mkdir(parents=True)
+        engine = _engine(
+            tmp_path,
+            env={
+                "AGENT_CONFIG_PATH": ".nebuko/agents/agent-config.yaml",
+                "GITHUB_WORKSPACE": str(workspace),
+            },
         )
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+
+        resolved = engine._agent_env()["AGENT_CONFIG_PATH"]
+
+        assert resolved == str(workspace / ".nebuko" / "agents" / "agent-config.yaml")
+        assert ".nebuko-engine" not in resolved
 
     def test_keeps_an_absolute_config_path(self, tmp_path, monkeypatch):
         absolute = str(tmp_path / "agent-config.yaml")
@@ -1862,7 +1896,15 @@ class TestAgentEnvHandoff:
         assert engine._agent_env()["AGENT_CONFIG_PATH"] == absolute
 
     def test_ambient_env_survives_a_resolver_failure(self, tmp_path, monkeypatch):
-        engine = _engine(tmp_path, env={"AGENT_CONFIG_PATH": "agent-config.yaml"})
+        caller = tmp_path / "caller"
+        caller.mkdir()
+        engine = _engine(
+            tmp_path,
+            env={
+                "AGENT_CONFIG_PATH": "configs/agent-config.yaml",
+                "GITHUB_WORKSPACE": str(caller),
+            },
+        )
 
         def boom(self, resolved):
             raise RuntimeError("resolver exploded")
@@ -1871,9 +1913,7 @@ class TestAgentEnvHandoff:
 
         env = engine._agent_env()
 
-        assert env["AGENT_CONFIG_PATH"] == str(
-            repo_root() / "defaults" / "agents" / "agent-config.yaml"
-        )
+        assert env["AGENT_CONFIG_PATH"] == str(caller / "configs" / "agent-config.yaml")
 
 
 class TestRunLogArtifacts:

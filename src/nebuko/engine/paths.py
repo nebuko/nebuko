@@ -17,15 +17,17 @@ orchestration runtime shipped inside the package, made importable once through
 from __future__ import annotations
 
 import enum
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, Mapping
 
 from nebuko.engine.models import NebukoManifest
 
 __all__ = [
     "ConfigKind",
+    "ConfigPathAnchor",
     "LIB_DIR",
     "NebukoPaths",
     "defaults_dir",
@@ -156,6 +158,94 @@ class NebukoPaths:
     def _relative_to_repo(self, value: str) -> Path:
         path = Path(value)
         return path if path.is_absolute() else self.repo_root / path
+
+
+# @stub-protected
+@dataclass(frozen=True)
+class ConfigPathAnchor:
+    """Resolve a caller-supplied ``AGENT_CONFIG_PATH`` to an absolute path.
+
+    A relative ``agent_config_path`` is documented as relative to the *caller's*
+    repository (``docs/adoption.md``), but CI imports Nebuko from a separate
+    checkout (``.nebuko-engine``) while running with the caller's workspace as
+    cwd. Anchoring such a value at :func:`repo_root` therefore injects the engine
+    checkout into the caller's path (issue #930), so the anchor is instead built
+    from the caller's workspace — ``$GITHUB_WORKSPACE`` first, then the cwd the
+    engine started in, then the engine checkout as a last resort.
+
+    Attributes:
+        raw: The caller-supplied value verbatim.
+        caller_root: The workspace relative values are anchored at.
+        engine_root: The nebuko checkout, used only to reach packaged defaults.
+    """
+
+    raw: str
+    caller_root: Path
+    engine_root: Path
+
+    # @stub-protected
+    @classmethod
+    def resolve_caller_root(
+        cls,
+        env: Mapping[str, str] | None = None,
+        start_cwd: Path | None = None,
+    ) -> Path:
+        """The workspace to anchor relative values at, by precedence.
+
+        ``$GITHUB_WORKSPACE`` outranks :func:`Path.cwd` because the anchor may run
+        after the engine has ``chdir``-ed into the child's temp workdir
+        (issue #717); it is only honored when it names an existing directory.
+        """
+        source = os.environ if env is None else env
+        workspace = source.get("GITHUB_WORKSPACE")
+        if workspace and Path(workspace).is_dir():
+            return Path(workspace).resolve()
+        cwd = Path.cwd() if start_cwd is None else Path(start_cwd)
+        if cwd.is_dir():
+            return cwd.resolve()
+        return repo_root()
+
+    # @stub-protected
+    @classmethod
+    def from_env(
+        cls,
+        raw: str,
+        *,
+        engine_root: Path,
+        start_cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> "ConfigPathAnchor":
+        """Build an anchor for ``raw``, deriving the caller workspace when absent."""
+        return cls(
+            raw=raw,
+            caller_root=cls.resolve_caller_root(env, start_cwd),
+            engine_root=engine_root,
+        )
+
+    # @stub-protected
+    def resolve(self) -> str:
+        """The absolute path ``raw`` names, anchored at :attr:`caller_root`.
+
+        An absolute value is honored as-is. A relative value with a separator is
+        taken relative to the caller workspace (the caller named the location).
+        A bare name is looked up in the caller's ``.nebuko/agents/`` first — the
+        documented lookup — then the engine's packaged ``defaults/agents/``,
+        finally falling back to the caller workspace.
+        """
+        if os.path.isabs(self.raw):
+            return self.raw
+        if os.sep in self.raw:
+            return str(self.caller_root / self.raw)
+        for root in (self.caller_root, self.engine_root):
+            try:
+                return str(
+                    NebukoPaths.discover(root).resolve(
+                        ConfigKind.AGENT_CONFIG, self.raw
+                    )
+                )
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+        return str(self.caller_root / self.raw)
 
 
 def _load_manifest(path: Path) -> NebukoManifest:

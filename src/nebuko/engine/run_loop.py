@@ -46,6 +46,7 @@ from nebuko.engine.models import (
 )
 from nebuko.engine.paths import (
     ConfigKind,
+    ConfigPathAnchor,
     LIB_DIR,
     NebukoPaths,
     ensure_import_path,
@@ -362,7 +363,9 @@ def resolved_env_overlay(resolved: Any) -> dict[str, str]:
     }
 
 
-def _anchor_config_path(env: dict[str, str], repo_root: "Path") -> dict[str, str]:
+def _anchor_config_path(
+    env: dict[str, str], repo_root: "Path", caller_root: "Path"
+) -> dict[str, str]:
     """Make ``AGENT_CONFIG_PATH`` absolute for the temp-cwd legacy child.
 
     ``AGENT_CONFIG_PATH`` is a *name* now (issue #741), resolved through the
@@ -371,17 +374,17 @@ def _anchor_config_path(env: dict[str, str], repo_root: "Path") -> dict[str, str
     runs the child in a temp workdir, where the same value misses the file and
     the agent boots with no model (issue #717). The resolver's
     ``PROMPT_LOCATION`` is already absolute for the same reason.
+
+    Relative values anchor at ``caller_root`` — the caller's workspace, not the
+    engine checkout — so a cross-repo caller's ``.nebuko/agents/...`` is not
+    joined onto the imported ``.nebuko-engine`` checkout (issue #930).
     """
     raw = env.get("AGENT_CONFIG_PATH")
     if not raw or os.path.isabs(raw):
         return env
-    try:
-        env["AGENT_CONFIG_PATH"] = str(
-            NebukoPaths.discover(repo_root).resolve(ConfigKind.AGENT_CONFIG, raw)
-        )
-    except (FileNotFoundError, NotADirectoryError):
-        # Not a shipped config: keep the legacy repo-root-relative semantics.
-        env["AGENT_CONFIG_PATH"] = os.path.join(str(repo_root), raw)
+    env["AGENT_CONFIG_PATH"] = ConfigPathAnchor(
+        raw=raw, caller_root=caller_root, engine_root=repo_root
+    ).resolve()
     return env
 
 
@@ -584,6 +587,21 @@ class Engine:
     _hook_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # The workspace a relative ``AGENT_CONFIG_PATH`` is anchored at (issue #930),
+    # snapshotted once at engine start before any chdir. A mutable container
+    # because ``Engine`` is frozen; empty until ``_caller_root`` first resolves.
+    _config_caller_root: dict[str, Path] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
+
+    # @stub-protected
+    def _caller_root(self) -> Path:
+        """The caller workspace for path anchoring, resolving it once (issue #930)."""
+        cached = self._config_caller_root.get("root")
+        if cached is None:
+            cached = ConfigPathAnchor.resolve_caller_root(self.env)
+            self._config_caller_root["root"] = cached
+        return cached
 
     # @stub-protected
     def _run_deterministic_step(
@@ -719,6 +737,9 @@ class Engine:
         publish_failed = False
         self._publish_state.clear()
         self._hook_state.clear()
+        # Snapshot the caller workspace before any phase can chdir into a child
+        # temp workdir, so a relative AGENT_CONFIG_PATH stays caller-anchored.
+        self._caller_root()
         try:
             self._enter(phases, "normalize")
             trigger = self.normalize()
@@ -1568,7 +1589,7 @@ class Engine:
         env = _with_step_input_records(
             env, self._step_input_state.get("results") or []
         )
-        return _anchor_config_path(env, self.repo_root)
+        return _anchor_config_path(env, self.repo_root, self._caller_root())
 
     def _active_trigger(self) -> Trigger | None:
         """The trigger the resolver annotated the hand-off with, if any.
