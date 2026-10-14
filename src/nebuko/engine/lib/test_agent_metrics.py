@@ -21,6 +21,7 @@ from agent_metrics import (
     aggregate_by_model,
     aggregate_by_agent,
     generate_agent_summary_table,
+    SecondsCell,
     StatsTotals,
     format_number,
     format_cost,
@@ -68,6 +69,11 @@ def _step_entry(run_id, **metrics_fields):
         "summary": "did work",
         "metrics": {"run_id": run_id, **metrics_fields},
     }
+
+
+def _table_cells(row):
+    """Split a rendered markdown table row into its trimmed cell contents."""
+    return [cell.strip() for cell in row.strip().strip("|").split("|")]
 
 
 class TestExtractMetricsFromComment(unittest.TestCase):
@@ -946,10 +952,23 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
 
     def test_average_latency(self):
         result = generate_agent_summary_table(self._make_aggregated())
-        result_str = "\n".join(result)
-        # architect: 2000/2 = 1000ms avg
+        # architect: 2000ms/2 = 1000ms avg = 1s (whole seconds, issue #947)
         architect_line = [l for l in result if "Architect" in l][0]
-        self.assertIn("| 1000 ", architect_line)
+        self.assertEqual(_table_cells(architect_line)[9], "1")
+
+    def test_average_llm_runtime_seconds(self):
+        result = generate_agent_summary_table(self._make_aggregated())
+        # architect: 10000ms/2 = 5000ms avg = 5s
+        architect_line = [l for l in result if "Architect" in l][0]
+        self.assertEqual(_table_cells(architect_line)[10], "5")
+
+    def test_seconds_unit_labels(self):
+        """Duration columns are labelled seconds; no millisecond label survives."""
+        result = generate_agent_summary_table(self._make_aggregated())
+        result_str = "\n".join(result)
+        self.assertIn("| Avg Latency (s) |", result_str)
+        self.assertIn("| Avg LLM Runtime (s) |", result_str)
+        self.assertNotIn("(ms)", result_str)
 
     def test_average_tool_calls(self):
         result = generate_agent_summary_table(self._make_aggregated())
@@ -1499,6 +1518,24 @@ class TestStatsTotals(unittest.TestCase):
         lines = generate_agent_summary_table(aggregated)
         self.assertEqual(lines[-1], StatsTotals.from_aggregated(aggregated).render_row())
 
+
+class TestSecondsCell(unittest.TestCase):
+    """Test the SecondsCell duration-cell value object (issue #947)."""
+
+    def test_from_average_divides_by_runs(self):
+        self.assertEqual(SecondsCell.from_average(2000.0, 2), SecondsCell(1000.0))
+
+    def test_from_average_with_no_runs_is_zero(self):
+        self.assertEqual(SecondsCell.from_average(5000.0, 0), SecondsCell(0.0))
+
+    def test_render_is_plain_seconds_without_decimals(self):
+        self.assertEqual(SecondsCell(0.0).render(), "0")
+        self.assertEqual(SecondsCell(1000.0).render(), "1")
+        self.assertEqual(SecondsCell(28823.0).render(), "29")
+        self.assertEqual(SecondsCell(687853.0).render(), "688")
+
+    def test_from_average_render_matches_table_cell(self):
+        self.assertEqual(SecondsCell.from_average(2000.0, 2).render(), "1")
 
 
 class TestParseHelpers(unittest.TestCase):
