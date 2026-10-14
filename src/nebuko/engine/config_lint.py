@@ -90,7 +90,11 @@ _PLACEHOLDER = "__lint_placeholder__"
 # linter need not import the config package's Pydantic entities.
 _ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-_LAYER_NOUNS = (("llms", "llm"), ("providers", "provider"))
+_LAYER_NOUNS = (("llms", "llm"), ("providers", "provider"), ("mcp_servers", "mcp server"))
+
+# The root section holding reusable MCP server specs; agents reference its
+# entries as ``"${mcp_servers.<name>}"``.
+_MCP_LAYER = "mcp_servers"
 
 # The config sub-domains the linter needs, imported lazily: the ``config``
 # package only becomes importable once ``ensure_import_path()`` has run.
@@ -229,6 +233,36 @@ def _mcp_server_issues(entry: Any, location: str) -> list[LintIssue]:
     return issues
 
 
+def _catalog_ref_name(value: Any) -> str | None:
+    """Return the catalog key when ``value`` is a full ``${mcp_servers.<key>}`` ref."""
+    if not isinstance(value, str):
+        return None
+    match = _REF_PATTERN.fullmatch(value)
+    if match is None:
+        return None
+    parts = match.group(1).split(".")
+    if len(parts) == 2 and parts[0] == _MCP_LAYER:
+        return parts[1]
+    return None
+
+
+def _catalog_issues(key: Any, entry: Any) -> list[LintIssue]:
+    """C7: validate one root-catalog entry at ``mcp_servers.<key>``."""
+    location = f"{_MCP_LAYER}.{key}"
+    issues = _mcp_server_issues(entry, location)
+    if isinstance(entry, dict) and entry.get("name") != key:
+        issues.append(
+            _make_issue(
+                _RULE_MCP_SERVERS,
+                f"mcp_servers catalog key '{key}' must equal the server's name "
+                f"'{entry.get('name')}'",
+                f"{location}.name",
+                "Use the same string for the catalog key and the server name",
+            )
+        )
+    return issues
+
+
 def _lookup(root: Any, dotted: str) -> Any:
     """Resolve a dotted path against ``root``; return ``_MISSING`` if absent."""
     obj = root
@@ -330,8 +364,8 @@ def _make_issue(rule: str, message: str, location: str, hint: str) -> LintIssue:
 
 
 def _referenced_layers(raw: dict) -> dict[str, set[str]]:
-    """Collect the ``llms``/``providers`` entry names reached by a ``${ref}``."""
-    referenced: dict[str, set[str]] = {"llms": set(), "providers": set()}
+    """Collect the ``llms``/``providers``/``mcp_servers`` entries reached by a ref."""
+    referenced: dict[str, set[str]] = {layer: set() for layer, _ in _LAYER_NOUNS}
     for ref in _iter_refs(raw):
         parts = ref.split(".")
         if len(parts) >= 2 and parts[0] in referenced:
@@ -488,8 +522,8 @@ class ConfigLinter:
         return issues
 
     def _check_mcp_servers(self, raw: dict) -> list[LintIssue]:
-        """C7: every ``mcp_servers`` entry must be a well-formed server spec."""
-        issues: list[LintIssue] = []
+        """C7: validate the root catalog and every agent-level ``mcp_servers`` list."""
+        issues = self._check_mcp_catalog(raw)
         for name, agent in _iter_agents(raw):
             servers = agent.get("mcp_servers")
             if servers is None:
@@ -504,22 +538,56 @@ class ConfigLinter:
                     )
                 )
                 continue
-            seen: set[str] = set()
-            for index, entry in enumerate(servers):
-                location = f"agents.{name}.mcp_servers[{index}]"
+            issues.extend(self._check_agent_mcp_list(name, servers))
+        return issues
+
+    def _check_mcp_catalog(self, raw: dict) -> list[LintIssue]:
+        """C7: every root ``mcp_servers`` catalog entry must be a well-formed spec."""
+        catalog = raw.get(_MCP_LAYER)
+        if catalog is None:
+            return []
+        if not isinstance(catalog, dict):
+            return [
+                _make_issue(
+                    _RULE_MCP_SERVERS,
+                    "mcp_servers must be a mapping of name -> server spec",
+                    _MCP_LAYER,
+                    "Use a YAML mapping keyed by server name",
+                )
+            ]
+        issues: list[LintIssue] = []
+        for key, entry in catalog.items():
+            issues.extend(_catalog_issues(key, entry))
+        return issues
+
+    def _check_agent_mcp_list(self, name: str, servers: list) -> list[LintIssue]:
+        """C7: every agent-level entry is an inline spec or a catalog ref.
+
+        A catalog ref is validated once at its catalog location (see
+        :meth:`_check_mcp_catalog`); a dangling ref is left to C2. Here we only
+        reject an entry that is neither a well-formed inline spec nor a ref.
+        """
+        issues: list[LintIssue] = []
+        seen: set[str] = set()
+        for index, entry in enumerate(servers):
+            location = f"agents.{name}.mcp_servers[{index}]"
+            ref = _catalog_ref_name(entry)
+            if ref is not None:
+                server_name = ref
+            else:
                 issues.extend(_mcp_server_issues(entry, location))
                 server_name = entry.get("name") if isinstance(entry, dict) else None
-                if isinstance(server_name, str):
-                    if server_name in seen:
-                        issues.append(
-                            _make_issue(
-                                _RULE_MCP_SERVERS,
-                                f"duplicate mcp server name '{server_name}'",
-                                f"{location}.name",
-                                "Give each server a unique name",
-                            )
+            if isinstance(server_name, str):
+                if server_name in seen:
+                    issues.append(
+                        _make_issue(
+                            _RULE_MCP_SERVERS,
+                            f"duplicate mcp server name '{server_name}'",
+                            f"{location}.name",
+                            "Give each server a unique name",
                         )
-                    seen.add(server_name)
+                    )
+                seen.add(server_name)
         return issues
 
     def _check_prompt_files(
@@ -566,7 +634,7 @@ class ConfigLinter:
         return issues
 
     def _check_unreferenced(self, raw: dict) -> list[LintIssue]:
-        """C6: ``llms``/``providers`` entries nothing references are dead config."""
+        """C6: ``llms``/``providers``/``mcp_servers`` entries nothing references are dead config."""
         referenced = _referenced_layers(raw)
         issues: list[LintIssue] = []
         for layer, noun in _LAYER_NOUNS:

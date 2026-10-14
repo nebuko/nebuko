@@ -26,6 +26,8 @@ class AgentConfig(BaseModel):
         ]
     )
     # Declarative MCP servers attached to this agent's conversation at launch.
+    # Each entry is either an inline MCPServerConfig spec or a full-string ref
+    # (``"${mcp_servers.<name>}"``) into the root catalog, resolved at load time.
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     # Token-budget / compaction policy for this role (issue #851).
     token_budget: TokenBudgetPolicy = Field(default_factory=TokenBudgetPolicy)

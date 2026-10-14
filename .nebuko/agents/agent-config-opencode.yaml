@@ -29,6 +29,20 @@ llms:
     thinking_enabled: true
     preserve_thinking: true
 
+# ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
+mcp_servers:
+  brave-search:
+    name: "brave-search"
+    command: "npx"
+    args:
+      - "-y"
+      - "@brave/brave-search-mcp-server@2.1.4"
+      - "--enabled-tools"
+      - "brave_web_search"
+      - "brave_news_search"
+    env:
+      BRAVE_API_KEY: "BRAVE_API_KEY"
+
 # ── Agents: role → model + prompt + skills + tools ──
 # Tools: terminal, file_editor, task_tracker (SDK tools)
 #        think, finish (built-in defaults)
@@ -73,16 +87,7 @@ agents:
       high:
         reasoning: "high"
     mcp_servers:
-      - name: "brave-search"
-        command: "npx"
-        args:
-          - "-y"
-          - "@brave/brave-search-mcp-server@2.1.4"
-          - "--enabled-tools"
-          - "brave_web_search"
-          - "brave_news_search"
-        env:
-          BRAVE_API_KEY: "BRAVE_API_KEY"
+      - "${mcp_servers.brave-search}"
 
   review:
     model: "${llms.glm-5_3-flash}"

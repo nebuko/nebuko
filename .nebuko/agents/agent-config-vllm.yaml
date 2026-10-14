@@ -63,6 +63,20 @@ llms:
     model_path: "openrouter/xiaomi/mimo-v2.5"
     provider: "${providers.openrouter}"
 
+# ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
+mcp_servers:
+  brave-search:
+    name: "brave-search"
+    command: "npx"
+    args:
+      - "-y"
+      - "@brave/brave-search-mcp-server@2.1.4"
+      - "--enabled-tools"
+      - "brave_web_search"
+      - "brave_news_search"
+    env:
+      BRAVE_API_KEY: "BRAVE_API_KEY"
+
 # ── Agents: role → model + prompt + skills + tools ──
 # Tools: terminal, file_editor, task_tracker (SDK tools)
 #        think, finish (built-in defaults)
@@ -91,16 +105,7 @@ agents:
     skills: ["call-agent", "posting-contract", "context-research", "complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
     mcp_servers:
-      - name: "brave-search"
-        command: "npx"
-        args:
-          - "-y"
-          - "@brave/brave-search-mcp-server@2.1.4"
-          - "--enabled-tools"
-          - "brave_web_search"
-          - "brave_news_search"
-        env:
-          BRAVE_API_KEY: "BRAVE_API_KEY"
+      - "${mcp_servers.brave-search}"
 
   review:
     model: "${llms.qwen-3-6-27b}"

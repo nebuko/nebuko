@@ -163,8 +163,32 @@ class TestRuleScenarios:
         assert all(issue.severity == "error" for issue in issues)
         assert _by_rule(_lint("clean.yaml"), "C7-mcp-servers") == []
 
+    def test_c7_flags_root_catalog_and_ref_entries(self):
+        issues = _by_rule(_lint("c7_mcp_catalog.yaml"), "C7-mcp-servers")
+        locations = {issue.location for issue in issues}
+        assert locations == {
+            "mcp_servers.brave-search.name",
+            "mcp_servers.brave-search.command",
+            "mcp_servers.brave-search.args",
+            "mcp_servers.brave-search.env.BRAVE_API_KEY",
+            "mcp_servers.malformed",
+        }
+        assert all(issue.severity == "error" for issue in issues)
+
+    def test_c2_reports_a_dangling_mcp_catalog_ref(self):
+        issues = _by_rule(_lint("c7_mcp_catalog.yaml"), "C2-dangling-ref")
+        assert [issue.location for issue in issues] == ["agents.a.mcp_servers[2]"]
+
+    def test_c6_warns_on_an_unreferenced_mcp_catalog_entry(self):
+        issues = _by_rule(_lint("c6_mcp_unreferenced.yaml"), "C6-unreferenced-entry")
+        assert {issue.location for issue in issues} == {"mcp_servers.dead-server"}
+        assert all(issue.severity == "warning" for issue in issues)
+
     def test_a_clean_config_reports_no_issues(self):
         assert _lint("clean.yaml") == []
+
+    def test_a_clean_catalog_config_reports_no_issues(self):
+        assert _lint("clean_mcp_catalog.yaml") == []
 
     def test_multi_error_covers_every_rule(self):
         rules = {issue.rule for issue in _lint("multi_error.yaml")}
