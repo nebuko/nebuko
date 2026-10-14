@@ -2607,6 +2607,93 @@ class TestStepInputSeam:
         )
 
 
+class TestDeclaredInputScoping:
+    """A step that declares inputs is composed by reference (issue #889).
+
+    The declared sections are emitted exactly once by the deterministic
+    step-inputs seam and the unscoped ``## Recent thread`` scan is suppressed —
+    so a step output can not enter a second time through the reverse-comment
+    history walk and an undeclared agent output (the context answer) can not
+    leak in. Steps that declare no inputs keep the recency window unchanged.
+    """
+
+    @staticmethod
+    def _resolved_with_inputs(tmp_path, trigger, consumer, specs=None) -> dict:
+        role = tmp_path / "review.md"
+        role.write_text("REVIEW ROLE PROMPT", encoding="utf-8")
+        return {
+            "PROMPT_LOCATION": str(role),
+            "STEP_INPUTS": json.dumps(
+                {
+                    "frames": [],
+                    "consumer": consumer,
+                    "specs": specs
+                    or {name: {"kind": "str", "required": True} for name in consumer},
+                }
+            ),
+            _TRIGGER_KEY: trigger,
+        }
+
+    def _thread(self, tmp_path):
+        """A ledger thread carrying a context answer, a plan and an implement."""
+        engine = _engine(
+            tmp_path, env={"TRIGGER_AUTHOR_LOGIN": "olivier-norture"}
+        )
+        engine.adapter.post("<!-- bot-agent-context -->\n*Context answer*\n\nCONTEXT ANSWER BODY")
+        engine.adapter.post("<!-- bot-agent-architect -->\n*Architect answer*\n\nTHE PLAN BODY")
+        engine.adapter.post("<!-- bot-agent-dev -->\n*Developer answer*\n\nTHE IMPLEMENT BODY")
+        return engine
+
+    def test_declared_sections_are_emitted_once_and_undeclared_ones_dropped(
+        self, tmp_path
+    ):
+        engine = self._thread(tmp_path)
+        trigger = _trigger(body="@@review", issue_body="THE ISSUE BODY")
+        resolved = self._resolved_with_inputs(
+            tmp_path, trigger, {"plan": "plan", "implement": "implement"}
+        )
+        scope = {"plan": "THE PLAN BODY", "implement": "THE IMPLEMENT BODY"}
+        results, failure = engine._materialize_inputs(resolved, ["action"], scope)
+        assert failure is None
+
+        prompt = engine.build_prompt(resolved, [], results, scope)
+
+        assert "REVIEW ROLE PROMPT" in prompt
+        assert prompt.count("THE PLAN BODY") == 1
+        assert prompt.count("THE IMPLEMENT BODY") == 1
+        # An undeclared agent output must not leak in through the thread scan.
+        assert "CONTEXT ANSWER BODY" not in prompt
+        assert "## Recent thread" not in prompt
+        # The user request is still appended last.
+        assert prompt.index("THE ISSUE BODY") > prompt.index("THE IMPLEMENT BODY")
+
+    def test_a_step_without_inputs_keeps_the_recent_thread(self, tmp_path):
+        engine = self._thread(tmp_path)
+        trigger = _trigger(body="@@review", issue_body="THE ISSUE BODY")
+        resolved = {_TRIGGER_KEY: trigger}
+
+        prompt = engine.build_prompt(resolved, [])
+
+        assert "## Recent thread" in prompt
+        assert "CONTEXT ANSWER BODY" in prompt
+
+    def test_run_log_records_never_reach_a_scoped_prompt(self, tmp_path):
+        engine = self._thread(tmp_path)
+        engine.adapter.post(
+            "<!-- bot-agent-dev -->\n**dev agent started** — "
+            "[View workflow run logs](http://x)"
+        )
+        trigger = _trigger(body="@@review", issue_body="THE ISSUE BODY")
+        resolved = self._resolved_with_inputs(tmp_path, trigger, {"plan": "plan"})
+        results, _ = engine._materialize_inputs(
+            resolved, ["action"], {"plan": "THE PLAN BODY"}
+        )
+
+        prompt = engine.build_prompt(resolved, [], results, {"plan": "THE PLAN BODY"})
+
+        assert "agent started**" not in prompt
+
+
 class TestEntryPoints:
     def test_main_takes_an_argv_sequence(self):
         assert list(inspect.signature(main).parameters) == ["argv"]
