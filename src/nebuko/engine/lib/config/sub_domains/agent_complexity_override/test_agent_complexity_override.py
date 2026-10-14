@@ -3,6 +3,9 @@
 import sys
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 sys.path.insert(0, str(Path(__file__).parents[3]))
 from config import ProviderConfig, LLMConfig, AgentComplexityOverride
 
@@ -50,3 +53,22 @@ class TestAgentComplexityOverride:
         assert override.min_p == 0.05
         assert override.presence_penalty == 0.1
         assert override.repetition_penalty == 1.1
+
+    def test_thinking_fields_default_none(self):
+        """The per-tier thinking switch/effort default to None (inherit, #941)."""
+        override = AgentComplexityOverride()
+        assert override.thinking_enabled is None
+        assert override.reasoning_effort is None
+
+    def test_thinking_fields_parse(self):
+        """Tier-level thinking_enabled/reasoning_effort are recognized (#941)."""
+        override = AgentComplexityOverride(
+            thinking_enabled=True, reasoning_effort="medium"
+        )
+        assert override.thinking_enabled is True
+        assert override.reasoning_effort == "medium"
+
+    def test_unknown_key_is_rejected(self):
+        """A misplaced key fails at load instead of being silently dropped (#941)."""
+        with pytest.raises(ValidationError):
+            AgentComplexityOverride(enable_thinking=True)

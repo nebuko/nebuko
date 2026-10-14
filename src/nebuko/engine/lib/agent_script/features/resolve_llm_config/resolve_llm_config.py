@@ -376,8 +376,15 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     litellm_extra_body = {}
     chat_template_kwargs = {}
 
-    if effective_ref and effective_ref.thinking_enabled is not None:
-        chat_template_kwargs["enable_thinking"] = effective_ref.thinking_enabled
+    # Tier override wins over the llm-level value; ``None`` inherits (#941).
+    effective_thinking = (
+        tier_override.thinking_enabled
+        if tier_override is not None and tier_override.thinking_enabled is not None
+        else (effective_ref.thinking_enabled if effective_ref else None)
+    )
+
+    if effective_thinking is not None:
+        chat_template_kwargs["enable_thinking"] = effective_thinking
     if effective_ref and effective_ref.preserve_thinking is not None:
         chat_template_kwargs["preserve_thinking"] = effective_ref.preserve_thinking
 
@@ -391,6 +398,22 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     if reasoning_effort and thinking_on:
         chat_template_kwargs["reasoning_effort"] = reasoning_effort
         logger.info(f"Reasoning effort: {reasoning_effort}")
+
+    # Top-level reasoning transport. The SDK independently defaults
+    # ``reasoning_effort="high"`` and emits it for models that support the
+    # param, which defeated ``enable_thinking=false`` (issue #941): an explicit
+    # value here overrides that default, and thinking-off must explicitly send
+    # ``None`` (absence would let the SDK default stand).
+    explicit_effort = None
+    if tier_override is not None and tier_override.reasoning_effort is not None:
+        explicit_effort = tier_override.reasoning_effort
+    elif effective_ref is not None and effective_ref.reasoning_effort is not None:
+        explicit_effort = effective_ref.reasoning_effort
+    if thinking_on is False:
+        llm_config["reasoning_effort"] = None
+        logger.info("Thinking disabled: suppressing top-level reasoning_effort")
+    elif explicit_effort is not None:
+        llm_config["reasoning_effort"] = explicit_effort
 
     if chat_template_kwargs:
         litellm_extra_body["chat_template_kwargs"] = chat_template_kwargs

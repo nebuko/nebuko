@@ -236,7 +236,10 @@ agents:
         kwargs = self._chat_kwargs(cfg)
         self.assertIs(kwargs.get("enable_thinking"), False)
         self.assertNotIn("reasoning_effort", kwargs)
-        self.assertNotIn("reasoning_effort", cfg)
+        # The top-level SDK default ("high") must be explicitly neutralized, not
+        # merely absent (issue #941).
+        self.assertIn("reasoning_effort", cfg)
+        self.assertIsNone(cfg["reasoning_effort"])
 
     def test_effort_coexists_with_enable_thinking(self):
         cfg = self._resolve(reasoning="medium")
@@ -970,6 +973,159 @@ agents:
             "    drop_message_name: true\n", ""
         ))
         self.assertIsNone(_rlc._MESSAGE_NAME_STRIPPER)
+
+
+class TestThinkingEnabledDisablesReasoning(unittest.TestCase):
+    """``thinking_enabled: false`` must remove every reasoning-enabling signal (#941).
+
+    Regression: the llm-level flag reached ``chat_template_kwargs`` but the SDK's
+    independent top-level ``reasoning_effort='high'`` default still reasoned.
+    """
+
+    CONFIG_TEMPLATE = """\
+providers:
+  test_provider:
+    api_url: "http://test/v1"
+    api_token_env: "TEST_LLM_API_KEY"
+llms:
+  test-model:
+    model_path: "test/test-model"
+    provider: ${providers.test_provider}
+    thinking_enabled: false
+    preserve_thinking: true
+agents:
+  dev:
+    model: ${llms.test-model}
+    prompt_file: "dev.md"
+"""
+
+    def setUp(self):
+        self._env_keys = [
+            "LLM_REASONING",
+            "TEST_LLM_API_KEY",
+            "CONFIG_COMPLEXITY",
+            "AGENT_CONFIG_PATH",
+            "ROLE_NAME",
+        ]
+        self._saved = {k: os.environ.get(k) for k in self._env_keys}
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        os.environ["TEST_LLM_API_KEY"] = "test-key"
+        os.environ["ROLE_NAME"] = "dev"
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
+        os.environ.pop("LLM_REASONING", None)
+        os.environ.pop("CONFIG_COMPLEXITY", None)
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _resolve(self, config_yaml=None):
+        with open(self._config_path, "w") as f:
+            f.write(config_yaml or self.CONFIG_TEMPLATE)
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+        return cfg
+
+    def _emitted_options(self, cfg):
+        """The options the SDK will actually emit for the resolved config."""
+        from openhands.sdk import LLM
+        from openhands.sdk.llm.options.chat_options import select_chat_options
+
+        return select_chat_options(LLM(**cfg), {}, has_tools=True)
+
+    def test_enable_thinking_false_reaches_extra_body(self):
+        cfg = self._resolve()
+        kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
+        self.assertIs(kwargs["enable_thinking"], False)
+
+    def test_thinking_off_neutralizes_sdk_top_level_default(self):
+        """The resolved config must carry an explicit None, not rely on absence."""
+        cfg = self._resolve()
+        self.assertIn("reasoning_effort", cfg)
+        self.assertIsNone(cfg["reasoning_effort"])
+
+    def test_no_reasoning_param_reaches_the_wire(self):
+        """End-to-end: the emitted kwargs carry no reasoning-enabling parameter."""
+        options = self._emitted_options(self._resolve())
+        self.assertNotIn("reasoning_effort", options)
+        self.assertNotIn("thinking", options)
+
+    def test_tier_override_can_reenable_thinking(self):
+        """``complexity_overrides.low.thinking_enabled: true`` wins over llm-false.
+
+        Regression: the tier-level key was silently dropped by the schema.
+        """
+        os.environ["CONFIG_COMPLEXITY"] = "low"
+        cfg = self._resolve(
+            self.CONFIG_TEMPLATE.replace(
+                '    prompt_file: "dev.md"\n',
+                '    prompt_file: "dev.md"\n'
+                "    complexity_overrides:\n"
+                "      low:\n"
+                "        thinking_enabled: true\n",
+            )
+        )
+        kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
+        self.assertIs(kwargs["enable_thinking"], True)
+        self.assertNotIn("reasoning_effort", cfg)
+
+
+class TestRealOpencodeConfigRoundTrip(unittest.TestCase):
+    """Resolve the shipped ``opencode`` agent-config as written (#941).
+
+    Locks the exact production snippet that reproduced the bug: an llm-level
+    ``thinking_enabled: false`` plus an ``architect@low`` exception.
+    """
+
+    ROLE = "dev"
+    CONFIG = (
+        Path(__file__).parents[7]
+        / ".nebuko"
+        / "agents"
+        / "agent-config-opencode.yaml"
+    )
+
+    def setUp(self):
+        self._env_keys = ["OPENCODE_GO_API_KEY", "CONFIG_COMPLEXITY", "ROLE_NAME"]
+        self._saved = {k: os.environ.get(k) for k in self._env_keys}
+        os.environ["OPENCODE_GO_API_KEY"] = "test-key"
+        os.environ["ROLE_NAME"] = self.ROLE
+        os.environ["AGENT_CONFIG_PATH"] = str(self.CONFIG)
+        os.environ.pop("CONFIG_COMPLEXITY", None)
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _resolve(self, role, complexity):
+        os.environ["ROLE_NAME"] = role
+        os.environ["CONFIG_COMPLEXITY"] = complexity
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+        return cfg
+
+    def test_config_file_exists(self):
+        self.assertTrue(self.CONFIG.is_file(), f"missing {self.CONFIG}")
+
+    def test_dev_thinking_is_fully_disabled(self):
+        """``dev`` on the thinking-off llm emits no reasoning parameter at all."""
+        cfg = self._resolve("dev", "medium")
+        kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
+        self.assertIs(kwargs["enable_thinking"], False)
+        self.assertIsNone(cfg["reasoning_effort"])
+
+    def test_architect_low_exception_reenables_thinking(self):
+        """The tier override is no longer silently dropped (issue #941)."""
+        cfg = self._resolve("architect", "low")
+        kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
+        self.assertIs(kwargs["enable_thinking"], True)
+        self.assertNotIn("reasoning_effort", cfg)
 
 
 if __name__ == "__main__":

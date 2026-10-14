@@ -87,3 +87,18 @@ class TestLLMConfig:
         assert config.preserve_thinking is None
         assert config.thinking_token_budget is None
         assert config.max_output_tokens is None
+
+    def test_llm_with_reasoning_effort(self):
+        """LLMConfig round-trips an explicit top-level reasoning_effort (#941)."""
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        config = LLMConfig(
+            model_path="openrouter/deepseek/v4",
+            provider=provider,
+            reasoning_effort="low",
+        )
+        assert config.reasoning_effort == "low"
+
+    def test_llm_reasoning_effort_default_none(self):
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        config = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        assert config.reasoning_effort is None
