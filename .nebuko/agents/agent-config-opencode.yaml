@@ -16,10 +16,8 @@ llms:
   deepseek-v4_1-flash:
     model_path: "openai/deepseek-v4.1-flash"
     provider: "${providers.opencode_go}"
-    thinking_enabled: true
     preserve_thinking: true
     top_p: 0.95
-    reasoning: "medium"
   glm-5_3-flash:
     model_path: "openai/glm-5.3-flash"
     provider: "${providers.opencode_go}"
@@ -43,6 +41,8 @@ agents:
     complexity_overrides:
       low:
         model: "${llms.deepseek-v4_1-flash}"
+        thinking_enabled: true
+        reasoning: "medium"
       high:
         temperature: 0.6
         reasoning: "high"
@@ -54,11 +54,6 @@ agents:
     prompt_file: "defaults/prompts/dev.md"
     skills: ["posting-contract", "git-pr-workflow", "complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
-    complexity_overrides:
-      low:
-        reasoning: "low"
-      high:
-        reasoning: "high"
 
   context:
     model: "${llms.deepseek-v4_1-flash}"
@@ -67,11 +62,6 @@ agents:
     prompt_file: "defaults/prompts/context.md"
     skills: ["call-agent", "posting-contract", "context-research", "complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
-    complexity_overrides:
-      low:
-        reasoning: "low"
-      high:
-        reasoning: "high"
     mcp_servers:
       - name: "brave-search"
         command: "npx"
