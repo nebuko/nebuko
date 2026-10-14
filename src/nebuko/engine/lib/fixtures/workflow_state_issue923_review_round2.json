@@ -1,0 +1,552 @@
+{
+  "run_id": 5,
+  "schema_version": 5,
+  "workflow": "default",
+  "step": "review",
+  "agent": "review",
+  "phase": "review",
+  "history": [
+    {
+      "step": "analyze",
+      "agent": "architect",
+      "summary": "## Architect analysis — `agent-metrics` workflow failure (`ModuleNotFoundError: No module named 'pydantic'`)\n\n**Run:** https://github.com/nebuko/nebuko/actions/runs/38427225280/job/115399663449\n**Failing step:** `agent-metrics` (invoked via `/nebuko run workflow --name default`)\n\n### Initial framing",
+      "position": [
+        {
+          "workflow": "default",
+          "step": "analyze"
+        }
+      ],
+      "dispatch": {
+        "complexity": "medium",
+        "reason": "Delegating read-only fact collection on the CI agent-metrics pydantic failure so I can emit a single planning artifact at the plan gate."
+      },
+      "comment_ids": [6150631784],
+      "metrics": {
+        "run_id": "1355d827-d9eb-4f1c-ac13-ec8771083d81",
+        "model_name": "default",
+        "agent_role": "architect",
+        "input_tokens": 36675,
+        "output_tokens": 3661,
+        "cache_hit_rate": 0.6386912065439673,
+        "cache_hit_tokens": 23424,
+        "reasoning_tokens": 927,
+        "tool_call_latency_ms": 10401.275157928467,
+        "agent_runtime_ms": 41605.1,
+        "nb_tool_calls": 5,
+        "start_time": "2026-10-13T16:49:51.757621",
+        "end_time": "2026-10-13T16:50:33.724362+00:00",
+        "tool_calls_per_tool": {
+          "think": 1,
+          "dispatch_next": 2,
+          "finish": 2
+        },
+        "tokens_per_tool": {
+          "unknown": {
+            "input": 36675,
+            "output": 3661,
+            "cache_hit": 23424,
+            "reasoning": 927
+          }
+        },
+        "tokens_per_second": 152.7844168254484,
+        "time_to_first_token": 4.257345858500003
+      }
+    },
+    {
+      "step": "context",
+      "agent": "context",
+      "summary": "# Context Report — `agent-metrics` job `ModuleNotFoundError: No module named 'pydantic'`\n\nReporter: `context` (read-only collection). All facts below are quoted verbatim from the checkout at HEAD `e25905c` (`metrics: promote cache_hit/reasoning tokens to root and fix per-tool accumulation (#920)`). ",
+      "position": [
+        {
+          "workflow": "default",
+          "step": "context"
+        }
+      ],
+      "dispatch": {
+        "complexity": "medium",
+        "reason": "Facts on the agent-metrics pydantic failure collected and reported; returning to architect for the plan, noting commit history was unavailable due to shallow clone."
+      },
+      "comment_ids": [6150680286],
+      "metrics": {
+        "run_id": "b4e0ee31-9221-4ed8-b7d8-1ac9b2091f83",
+        "model_name": "default",
+        "agent_role": "context",
+        "input_tokens": 361226,
+        "output_tokens": 15911,
+        "cache_hit_rate": 0.7909065238936289,
+        "cache_hit_tokens": 285696,
+        "reasoning_tokens": 1900,
+        "tool_call_latency_ms": 8714.923730263345,
+        "agent_runtime_ms": 113294.01,
+        "nb_tool_calls": 22,
+        "complexity": "medium",
+        "start_time": "2026-10-13T16:51:08.909755",
+        "end_time": "2026-10-13T16:53:14.999716+00:00",
+        "agent_runtimes_per_call_ms": [7894.35, 2408.71, 3409.67, 4609.56, 3911.99, 4056.15, 4125.83, 4383.86, 6981.75, 4034.83, 30439.64, 4716.94, 32320.73],
+        "tool_calls_per_tool": {
+          "terminal": 19,
+          "dispatch_next": 2,
+          "finish": 1
+        },
+        "tokens_per_tool": {
+          "unknown": {
+            "input": 361226,
+            "output": 15911,
+            "cache_hit": 285696,
+            "reasoning": 1900
+          }
+        },
+        "tokens_per_second": 181.7885719995969,
+        "time_to_first_token": 1.8105866025384632
+      }
+    },
+    {
+      "step": "plan",
+      "agent": "architect",
+      "summary": "# Plan — fix `agent-metrics` job: `ModuleNotFoundError: No module named 'pydantic'`\n\n_Full architect planning artifact for the `agent-metrics` workflow failure. Created by an AI agent (OpenHands) on behalf of @olivier-norture._\n\n**Run:** https://github.com/nebuko/nebuko/actions/runs/38427225280/job/",
+      "position": [
+        {
+          "workflow": "default",
+          "step": "plan"
+        }
+      ],
+      "dispatch": {
+        "status": "hold",
+        "complexity": "low",
+        "reason": "human_gate:plan"
+      },
+      "comment_ids": [6150797345],
+      "metrics": {
+        "run_id": "f5dfdd32-ceef-4962-a7b1-732f6112dbf7",
+        "model_name": "default",
+        "agent_role": "architect",
+        "input_tokens": 73026,
+        "output_tokens": 13217,
+        "cache_hit_rate": 0.3698408785911867,
+        "cache_hit_tokens": 27008,
+        "reasoning_tokens": 8451,
+        "tool_call_latency_ms": 117378.80420684814,
+        "agent_runtime_ms": 352136.41,
+        "nb_tool_calls": 3,
+        "start_time": "2026-10-13T16:53:48.885680",
+        "end_time": "2026-10-13T16:59:41.457546+00:00",
+        "agent_runtimes_per_call_ms": [222794.19, 17426.61, 111915.61],
+        "tool_calls_per_tool": {
+          "dispatch_next": 2,
+          "finish": 1
+        },
+        "tokens_per_tool": {
+          "unknown": {
+            "input": 73026,
+            "output": 13217,
+            "cache_hit": 27008,
+            "reasoning": 8451
+          }
+        },
+        "tokens_per_second": 39.65975424504463,
+        "time_to_first_token": 5.083168112666574
+      },
+      "complexity_adjustment": {
+        "delta": 1,
+        "trigger": "evidence-drift",
+        "evidence": {
+          "llm": {
+            "input_tokens": 361226.0,
+            "output_tokens": 15911.0,
+            "nb_tool_calls": 22.0,
+            "cost": 0.0,
+            "tool_call_error_rate": 0.0,
+            "review_fix_requests": 0.0,
+            "dispatch_recall_count": 0.0
+          }
+        },
+        "rationale": "evidence drift medium -> high"
+      }
+    },
+    {
+      "step": "implement",
+      "agent": "dev",
+      "summary": "Implemented the approved fix for issue #923: added an \"Install project dependencies\" step to the agent-metrics job (resolves the engine root cache-first and runs `python -m pip install \"$PROJECT_ROOT\"`, so deps come from pyproject.toml) plus a structural regression test class in tests/engine/test_ag",
+      "position": [
+        {
+          "workflow": "default",
+          "step": "implement"
+        }
+      ],
+      "dispatch": {
+        "complexity": "medium",
+        "reason": "Implementation complete and test-verified but unpublishable (token lacks workflow(s) permission); advancing per error/blocker rule so the blocker is surfaced."
+      },
+      "comment_ids": [6152515390],
+      "metrics": {
+        "run_id": "fa48303a-e1a1-4c61-bc04-dbe165f35221",
+        "model_name": "default",
+        "agent_role": "dev",
+        "input_tokens": 1869850,
+        "output_tokens": 42900,
+        "cache_hit_rate": 0.9711666711233521,
+        "cache_hit_tokens": 1815936,
+        "reasoning_tokens": 31691,
+        "tool_call_latency_ms": 7474.754844393049,
+        "agent_runtime_ms": 366262.99,
+        "nb_tool_calls": 53,
+        "tool_call_error_rate": 3.7735849056603774,
+        "complexity": "low",
+        "start_time": "2026-10-13T18:27:30.669613",
+        "end_time": "2026-10-13T18:35:41.431891+00:00",
+        "agent_runtimes_per_call_ms": [5552.92, 2373.07, 2309.97, 2374.26, 2482.63, 2343.53, 19032.14, 7534.26, 4715.98, 2388.6, 3126.13, 5702.8, 2663.36, 3982.16, 2444.15, 4076.44, 4100.89, 2738.86, 3874.77, 2577.76, 1990.29, 7532.01, 5071.51, 4708.58, 4411.59, 11076.18, 2441.18, 10715.67, 3926.2, 2922.46, 2408.53, 13066.82, 9316.44, 3606.93, 12117.97, 24997.2, 13602.0, 1657.91, 38807.84, 7074.63, 9433.72, 22015.27, 9859.93, 2772.18, 5470.53, 13231.34, 21275.72, 3164.98, 11192.67],
+        "tool_calls_per_tool": {
+          "terminal": 43,
+          "file_editor": 7,
+          "think": 1,
+          "finish": 1,
+          "dispatch_next": 1
+        },
+        "errors_per_tool": {
+          "unknown": 2
+        },
+        "tokens_per_tool": {
+          "unknown": {
+            "input": 1869850,
+            "output": 42900,
+            "cache_hit": 1815936,
+            "reasoning": 31691
+          }
+        },
+        "dispatch_recall_count": 1,
+        "tokens_per_second": 164.90693112545787,
+        "time_to_first_token": 1.4169260989387757
+      },
+      "complexity_adjustment": {
+        "delta": -1,
+        "trigger": "evidence-drift",
+        "evidence": {
+          "llm": {
+            "input_tokens": 73026.0,
+            "output_tokens": 13217.0,
+            "nb_tool_calls": 3.0,
+            "cost": 0.0,
+            "tool_call_error_rate": 0.0,
+            "review_fix_requests": 0.0,
+            "dispatch_recall_count": 0.0
+          }
+        },
+        "rationale": "evidence drift medium -> low"
+      }
+    },
+    {
+      "step": "review",
+      "agent": "review",
+      "summary": "# Review verdict — issues found, round 2 requested (agent-metrics `ModuleNotFoundError: No module named 'pydantic'`, issue #923)\n\n_Review by an AI agent (OpenHands) on behalf of @olivier-norture._\n\n## What was reviewed / verified\nThis review workspace is detached at HEAD `e25905c` with a clean tree:",
+      "position": [
+        {
+          "workflow": "default",
+          "step": "review"
+        }
+      ],
+      "dispatch": {
+        "reason": "round 2"
+      },
+      "metrics": {
+        "run_id": "25070047-a674-4e01-9902-ddbb7434f97d",
+        "model_name": "default",
+        "agent_role": "review",
+        "input_tokens": 219430,
+        "output_tokens": 4938,
+        "cache_hit_rate": 0.6810372328305154,
+        "cache_hit_tokens": 149440,
+        "reasoning_tokens": 975,
+        "tool_call_latency_ms": 7760.313431421916,
+        "agent_runtime_ms": 93123.76,
+        "nb_tool_calls": 11,
+        "tool_call_error_rate": 9.090909090909092,
+        "start_time": "2026-10-13T18:36:14.722377",
+        "end_time": "2026-10-13T18:38:23.004453+00:00",
+        "agent_runtimes_per_call_ms": [2719.29, 7187.63, 5209.76, 3779.92, 2232.73, 2150.52, 14504.81, 33016.79, 2170.24, 5981.73, 2085.92, 12084.43],
+        "tool_calls_per_tool": {
+          "terminal": 7,
+          "think": 1,
+          "dispatch_next": 2,
+          "finish": 1
+        },
+        "errors_per_tool": {
+          "unknown": 1
+        },
+        "tokens_per_tool": {
+          "unknown": {
+            "input": 219430,
+            "output": 4938,
+            "cache_hit": 149440,
+            "reasoning": 975
+          }
+        },
+        "tokens_per_second": 99.34780905368643,
+        "time_to_first_token": 2.2539448988333333
+      },
+      "complexity_adjustment": {
+        "delta": 1,
+        "trigger": "evidence-drift",
+        "evidence": {
+          "llm": {
+            "input_tokens": 1869850.0,
+            "output_tokens": 42900.0,
+            "nb_tool_calls": 53.0,
+            "cost": 0.0,
+            "tool_call_error_rate": 3.7735849056603774,
+            "review_fix_requests": 0.0,
+            "dispatch_recall_count": 1.0
+          },
+          "human": {
+            "feedback_rounds": 1,
+            "approvals": 1
+          }
+        },
+        "rationale": "evidence drift medium -> high"
+      }
+    }
+  ],
+  "thread": [
+    {
+      "kind": "issue-body",
+      "id": 5834235092,
+      "url": "https://github.com/nebuko/nebuko/issues/923",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T16:49:01Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "command",
+      "id": 6150608151,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6150608151",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T16:49:15Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "engine-output",
+      "id": 6150615893,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6150615893",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T16:49:41Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "agent-output",
+      "id": 6150631784,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6150631784",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T16:50:34Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "engine-output",
+      "id": 6150639572,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6150639572",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T16:51:00Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "agent-output",
+      "id": 6150680286,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6150680286",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T16:53:15Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "engine-output",
+      "id": 6150687423,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6150687423",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T16:53:39Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "agent-output",
+      "id": 6150797345,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6150797345",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T16:59:42Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "command",
+      "id": 6152359199,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6152359199",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T18:26:52Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "engine-output",
+      "id": 6152367398,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6152367398",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T18:27:20Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "agent-output",
+      "id": 6152515390,
+      "url": "https://github.com/nebuko/nebuko/issues/923#issuecomment-6152515390",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-13T18:35:42Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    }
+  ],
+  "current_context": {
+    "last_run_status": "success",
+    "step_outputs": [
+      {
+        "step": "analyze",
+        "comment_id": "6150631784"
+      },
+      {
+        "step": "context",
+        "comment_id": "6150680286"
+      },
+      {
+        "step": "plan",
+        "comment_id": "6150797345"
+      },
+      {
+        "step": "implement",
+        "comment_id": "6152515390"
+      },
+      {
+        "step": "review"
+      }
+    ]
+  },
+  "dispatch": {
+    "reason": "round 2"
+  },
+  "gate_decision": {
+    "status": "approved",
+    "workflow": "default",
+    "target_step": "plan",
+    "decided_by": "olivier-norture",
+    "decided_at": "2026-10-13T18:27:18.266704Z",
+    "comment_id": 6152359199,
+    "position": [
+      {
+        "workflow": "default",
+        "step": "plan"
+      }
+    ]
+  },
+  "gate_history": [
+    {
+      "status": "approved",
+      "workflow": "default",
+      "target_step": "plan",
+      "decided_by": "olivier-norture",
+      "decided_at": "2026-10-13T18:27:18.266704Z",
+      "comment_id": 6152359199,
+      "position": [
+        {
+          "workflow": "default",
+          "step": "plan"
+        }
+      ]
+    }
+  ],
+  "resolution": {
+    "task": "review",
+    "input_workflow": "default",
+    "input_step": "review",
+    "input_complexity": "N/A",
+    "role_name": "review",
+    "prompt_location": "/home/runner/work/nebuko/nebuko/defaults/prompts/review.md",
+    "agent_selected": "true",
+    "selected_workflow": "default",
+    "selected_step": "review",
+    "reasoning": "none",
+    "matched_rule": "workflow:default/step:review",
+    "timestamp": "2026-10-13T18:38:23.005433+00:00"
+  },
+  "workflow_ref": "nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@refs/heads/main",
+  "position": [
+    {
+      "workflow": "default",
+      "step": "review"
+    }
+  ],
+  "complexity_policy": {
+    "bands": {
+      "low": {
+        "min_score": 1,
+        "guidance": "LOW — localized, single-concern change: one file or a tight cluster, no design ambiguity, no cross-module contract change, no open questions. If it fits in a single focused edit, it is LOW."
+      },
+      "medium": {
+        "min_score": 1,
+        "guidance": "MEDIUM — the default working tier: a bounded multi-file change with a clear approach, a couple of touch points, no unresolved design choice. Most feature work and bug fixes belong here."
+      },
+      "high": {
+        "min_score": 3,
+        "any_of": ["multi-issue-linkage", "reopened-issue", "high-token-burn", "large-scope", "human-friction"],
+        "guidance": "HIGH — reserved for genuinely heavy work: multiple linked issues or reopened problem, cross-module/architectural change, sustained large context burn, or repeated human change-requests. Reach for HIGH only when the evidence below actually fires; an unproven HIGH erodes the cost/value of the tier."
+      }
+    },
+    "signal_rules": [
+      {
+        "signal": "multi-issue-linkage",
+        "family": "context",
+        "field": "linked_issues",
+        "threshold": 2.0
+      },
+      {
+        "signal": "reopened-issue",
+        "family": "context",
+        "field": "reopened",
+        "threshold": 1.0
+      },
+      {
+        "signal": "high-token-burn",
+        "family": "llm",
+        "field": "input_tokens",
+        "threshold": 150000.0
+      },
+      {
+        "signal": "large-scope",
+        "family": "llm",
+        "field": "nb_tool_calls",
+        "threshold": 40.0
+      },
+      {
+        "signal": "human-friction",
+        "family": "human",
+        "field": "changes_requested",
+        "threshold": 2.0
+      }
+    ],
+    "target_distribution": {
+      "low": 0.35,
+      "medium": 0.5,
+      "high": 0.15
+    }
+  }
+}
