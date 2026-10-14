@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from openhands.sdk.llm.exceptions import LLMServiceUnavailableError
 
 from agent_script.features.run_agent.run_agent import (
+    _DISABLED_SYSTEM_PROMPT_PERSONA,
     _build_mcp_servers,
     _discard_token,
     _perform_wind_down,
@@ -546,6 +547,39 @@ class TestMCPServerWiring(unittest.TestCase):
             mcp_config["brave-search"].env["BRAVE_API_KEY"].get_secret_value(),
             "secret-value",
         )
+
+
+class TestSystemPromptOverride(unittest.TestCase):
+    """The SDK's built-in OpenHands persona is replaced (issue #938).
+
+    ``persona`` is the SDK's purpose-built lever: it drops ``<SOUL>``/``<ROLE>``
+    and the generic coding-workflow sections while keeping the capability/policy
+    sections and the dynamic context. It is not used yet, so the run must pass a
+    non-blank value (an empty/None ``persona`` falls back to the built-in one).
+    """
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_agent_receives_neutral_persona(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        mock_conversation_cls.return_value = _make_conversation("finished")
+        with patch(
+            "agent_script.features.run_agent.run_agent.build_condenser",
+            return_value=None,
+        ):
+            run_agent(llm_config={}, prompt="do the thing")
+
+        persona = mock_agent.call_args.kwargs["persona"]
+        self.assertIsNotNone(persona)
+        self.assertTrue(persona.strip())
+        self.assertEqual(persona, _DISABLED_SYSTEM_PROMPT_PERSONA)
+        self.assertFalse(mock_agent.call_args.kwargs.get("system_prompt"))
 
 
 if __name__ == "__main__":
