@@ -554,8 +554,8 @@ class TestSystemPromptOverride(unittest.TestCase):
 
     ``persona`` is the SDK's purpose-built lever: it drops ``<SOUL>``/``<ROLE>``
     and the generic coding-workflow sections while keeping the capability/policy
-    sections and the dynamic context. It is not used yet, so the run must pass a
-    non-blank value (an empty/None ``persona`` falls back to the built-in one).
+    sections and the dynamic context. The run must pass a non-blank value (an
+    empty/None ``persona`` falls back to the built-in one).
     """
 
     @patch("agent_script.features.run_agent.run_agent.Conversation")
