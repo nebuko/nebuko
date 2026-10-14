@@ -1701,11 +1701,23 @@ class Engine:
             return cached
         validate_output = _load_bridge_module("validate_output")
         prepare_comment = _load_bridge_module("prepare_comment")
+        # ``message_splitter`` is a sub-domain (nested under ``agent_script``),
+        # not a top-level ``lib`` module, so it is imported through the same
+        # ``ensure_import_path`` bootstrap build_output uses rather than
+        # ``_load_bridge_module`` (which resolves only ``LIB_DIR/<name>.py``).
+        ensure_import_path()
+        from agent_script.sub_domains.message_splitter.message_splitter import (
+            split_comment_body,
+        )
+
         bridge = SimpleNamespace(
             validate_agent_output=validate_output.validate_agent_output,
             extract_dispatch=validate_output.extract_dispatch,
             build_comment_body=prepare_comment.build_comment_body,
+            build_comment_body_parts=prepare_comment.build_comment_body_parts,
+            format_bot_marker=prepare_comment.format_bot_marker,
             escape_agent_triggers=prepare_comment.escape_agent_triggers,
+            split_comment_body=split_comment_body,
         )
         self._bridge["bridge"] = bridge
         return bridge
@@ -1736,6 +1748,20 @@ class Engine:
         structured fallback on both hosts (issue #590 round-4, finding 2).
         The body is framed with the workflow-state header (issue #736) before
         it is escaped and posted: only the sink differs here.
+
+        A long answer is split across comments at the publish seam (issue
+        #913) instead of being truncated: ``split_comment_body`` packs the
+        content into up-to-``CommentSizePolicy.max_parts`` comments and the
+        state-bearing header rides on the *first* one. The first comment keeps
+        the bot marker on line 1 and the continue token, so the whole run stays
+        CI-gate exempt, and the later parts are grouped onto the same history
+        entry (issue #504) because they follow the state comment. The header
+        part's id is the one persisted for this step's output locator
+        (ADR-0013); the remaining parts are append-only continuation content.
+
+        Returns:
+            The full escaped body (all parts joined), which is also what
+            ``RunOutcome.posted_body`` and the failure artifact carry.
         """
         bridge = self._resolve_bridge()
 
@@ -1743,7 +1769,7 @@ class Engine:
         final_message = _final_message_of(agent_result) or answer
         console_log = self._console_log_of(agent_result)
         self._stage_run_logs(console_log)
-        body = bridge.build_comment_body(
+        header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,
             console_log=console_log,
@@ -1753,15 +1779,37 @@ class Engine:
             role_name=self._role_of(agent_result),
             state=self._explicit_state(agent_result),
         )
+        # Every continuation part must carry the bot marker too, or the ledger
+        # reads it as human feedback and drops it from the next prompt (#913).
+        marker = bridge.format_bot_marker(self._role_of(agent_result))
+        parts = bridge.split_comment_body(
+            body, self._comment_size_policy(), head=header, marker=marker
+        )
         # Same invariant as ``prepare_comment._write_output``: a posted comment
         # must never carry a raw ``@@agent`` token, or it re-arms the very gate
-        # that started this run (issue #482).
-        escaped = bridge.escape_agent_triggers(body)
+        # that started this run (issue #482). Escaping the joined body is
+        # equivalent to escaping each part, since the escape is per token.
+        escaped = bridge.escape_agent_triggers(header + body)
         self._publish_state["body"] = escaped
-        # Keep the posted comment id so ``persist`` can point this step's output
-        # locator at it (issue #756, ADR-0013).
-        self._publish_state["comment_id"] = self.adapter.post(escaped)
+        # The part ids the adapter accepted, in order, so the state journal can
+        # record every comment the answer was posted as (issue #913).
+        self._publish_state["comment_ids"] = [
+            self.adapter.post(bridge.escape_agent_triggers(part.body))
+            for part in parts
+        ]
+        # Keep the state-bearing comment id so ``persist`` can point this step's
+        # output locator at it (issue #756, ADR-0013). The state lives on part 1
+        # (``split_comment_body(head=...)``), so that is the tracked id.
+        self._publish_state["comment_id"] = self._publish_state["comment_ids"][0]
         return escaped
+
+    @staticmethod
+    def _comment_size_policy() -> Any:
+        """The tunable comment-size contract governing the publish split (#913)."""
+        ensure_import_path()
+        from config import CommentSizePolicy
+
+        return CommentSizePolicy()
 
     # @stub-protected
     def persist(self, agent_result: Any) -> WorkflowState | None:

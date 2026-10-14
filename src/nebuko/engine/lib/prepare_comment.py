@@ -339,21 +339,25 @@ def console_log_fallback(log_content: str) -> str:
 # ── Helpers ───────────────────────────────────────────────────────
 
 
-def _truncate_at_boundary(text: str) -> str:
-    """Truncate text at MAX_COMMENT_LENGTH, preferring paragraph boundaries.
+def _truncate_at_boundary(text: str, max_chars: int = MAX_COMMENT_LENGTH) -> str:
+    """Truncate text at ``max_chars``, preferring paragraph boundaries.
 
     Args:
         text: The text to potentially truncate.
+        max_chars: The character budget; defaults to the comment cap. A
+            two-argument form (issue #913) lets callers bound the *console*
+            fallback independently of the answer body, which is no longer
+            truncated here — it is split across comments at publish time.
 
     Returns:
         Truncated text with "...*(comment truncated due to size limit)*" appended.
     """
-    if len(text) <= MAX_COMMENT_LENGTH:
+    if len(text) <= max_chars:
         return text
 
-    text = text[:MAX_COMMENT_LENGTH]
+    text = text[:max_chars]
     last_break = text.rfind("\n\n")
-    if last_break > MAX_COMMENT_LENGTH * 0.5:
+    if last_break > max_chars * 0.5:
         text = text[:last_break]
     return text + "\n\n...*(comment truncated due to size limit)*"
 
@@ -501,9 +505,11 @@ def _continue_token(state: WorkflowState) -> str:
     return CONTINUE_TOKEN if status in _LIVE_STATUSES else ""
 
 
-def _format_answer_header(role_name: str | None, state: WorkflowState | None) -> str:
+def format_answer_header(role_name: str | None, state: WorkflowState | None) -> str:
     """Build the marker/token/state header prepended to the answer (issue #736).
 
+    Public so the engine publish seam can place this header on the first of
+    several answer comments while the body is split across them (issue #913).
     A run that emitted no state still gets the bot marker, caller marker and
     continue token (matching the legacy step when the file was absent); only the
     collapsed state section is omitted.
@@ -518,6 +524,23 @@ def _format_answer_header(role_name: str | None, state: WorkflowState | None) ->
         f"{section}"
         f"\n*{_display_name_for(role)} answer*\n\n"
     )
+
+
+def format_bot_marker(role_name: str | None) -> str:
+    """The bot marker line for a role, newline-terminated (issue #913).
+
+    A continuation answer comment must carry the same ``<!-- bot-agent-* -->``
+    marker as the first part: the thread ledger classifies comment kinds from
+    the body marker (issue #872), so a marker-less continuation part is read as
+    human feedback and never renders into the next agent's prompt. Returns the
+    same role normalisation as :func:`format_answer_header`.
+    """
+    role = (role_name or "").strip() or "unknown"
+    return f"<!-- bot-agent-{role} -->\n"
+
+
+# Backwards-compatible alias; the private name predates the public export.
+_format_answer_header = format_answer_header
 
 
 def _select_fallback_body(
@@ -570,8 +593,12 @@ def _select_fallback_body(
         return neutralize_human_pings(console_log_fallback(console_log))
 
     def finalized(cleaned: str) -> str:
+        # No length truncation here (issue #913): a long answer is split across
+        # comments at publish time, so truncating first would discard exactly
+        # the content the split exists to preserve. The context <details>
+        # collapse (#557) and ping neutralization (#795) still apply.
         cleaned = neutralize_human_pings(cleaned)
-        return _truncate_at_boundary(_apply_context_collapse(cleaned, role_name))
+        return _apply_context_collapse(cleaned, role_name)
 
     # ── Path A: Structured final message ────────────────────────
     if has_final_message:
@@ -634,6 +661,45 @@ def _select_fallback_body(
     return author_ping + _NO_FINAL_MESSAGE
 
 
+def build_comment_body_parts(
+    *,
+    latest_answer: str,
+    final_message: str,
+    console_log: str = "",
+    has_final_message: bool | None = None,
+    has_console_log: bool | None = None,
+    trigger_author: str = "",
+    role_name: str | None = None,
+    state: WorkflowState | None = None,
+) -> tuple[str, str]:
+    """The posted comment as ``(header, body)``, kept separate for splitting.
+
+    :func:`build_comment_body` frames the two halves into one string; the engine
+    publish seam instead needs them apart so it can hand the header to
+    ``message_splitter.split_comment_body(head=...)`` — the header carries the
+    workflow-state JSON and the bot marker, and must land intact on the *first*
+    of several comments (issue #913). The header itself is never split.
+
+    Returns:
+        ``(header, body)`` where ``header`` is the answer-comment header and
+        ``body`` is the fallback/answer content beneath it.
+    """
+    return (
+        format_answer_header(role_name, state),
+        _select_fallback_body(
+            latest_answer=latest_answer,
+            final_message=final_message,
+            console_log=console_log,
+            has_final_message=has_final_message,
+            has_console_log=has_console_log,
+            trigger_author=trigger_author,
+            role_name=role_name,
+            recall_count=_posted_recall_count(state),
+            engine_sentinel=render_handoff_sentinel(state),
+        ),
+    )
+
+
 def build_comment_body(
     *,
     latest_answer: str,
@@ -672,7 +738,7 @@ def build_comment_body(
     Returns:
         The framed body to escape and publish.
     """
-    return _format_answer_header(role_name, state) + _select_fallback_body(
+    header, body = build_comment_body_parts(
         latest_answer=latest_answer,
         final_message=final_message,
         console_log=console_log,
@@ -680,9 +746,9 @@ def build_comment_body(
         has_console_log=has_console_log,
         trigger_author=trigger_author,
         role_name=role_name,
-        recall_count=_posted_recall_count(state),
-        engine_sentinel=render_handoff_sentinel(state),
+        state=state,
     )
+    return header + body
 
 
 def _read_workflow_state() -> WorkflowState | None:

@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS
 
 from config import (
+    CommentSizePolicy,
     is_self_function_call,
     load_workflow,
     parse_position_env,
@@ -634,6 +635,17 @@ def _parse_position_env() -> Optional[dict]:
     (``run_script``) behaves identically.
     """
     return parse_position_env(os.environ.get("WORKFLOW_POSITION", ""))
+
+
+def _comment_split_length() -> int:
+    """The part-splitting threshold, from the shared comment-size policy (#913).
+
+    Single source of truth with the publish seam
+    (``run_loop.Engine._comment_size_policy``): the debug part files here and
+    the multi-comment post there share one ``max_comment_chars``, so they can
+    never disagree about where an answer gets split.
+    """
+    return CommentSizePolicy().resolved_max_comment_chars()
 
 
 def _write_output_files(final_message: str, message_parts: list[str], new_state: WorkflowState) -> None:
@@ -1357,10 +1369,12 @@ def build_output(
     _write_latest_answer_file(latest_answer)
 
     # ── Message splitting ────────────────────────────────────────
-    # context reports are posted as a single collapsed comment (issue #557):
-    # raise the split threshold to the 60k comment cap so they fit in one
-    # part; other agents keep the 10k multi-part split.
-    max_split_length = 60000 if role_name == "context" else 10000
+    # The posted answer is split at the publish seam into up to
+    # ``CommentSizePolicy.max_parts`` comments (issue #913); these part files
+    # are debug artifacts only. Their threshold is driven by the same policy so
+    # the two stages cannot drift — a long context report is no longer reduced
+    # to a single 60k comment here, and no role gets a smaller 10k split.
+    max_split_length = _comment_split_length()
     message_parts = split_message(final_message, max_split_length) if final_message else []
 
     # ── Write output files ───────────────────────────────────────

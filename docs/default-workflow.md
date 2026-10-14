@@ -288,10 +288,16 @@ Cleans up the acknowledgment comment from Step 11 by marking it as `OUTDATED` vi
 
 ### Step 20: Post Additional Message Parts
 
-**Input:** `final_message_parts_count.txt`, `final_message_part_{N}.txt` files.  
-**Output:** Additional comments on the issue for messages that exceeded GitHub's comment size limit.
+**Input:** the agent answer body (`latest_answer.md` / `final_message.txt`).
+**Output:** additional comments on the issue for messages that exceeded GitHub's comment size limit.
 
-If the agent's response was split into multiple parts (to stay within GitHub's ~65K char limit), posts parts 2 through N as separate comments.
+The engine's publish phase splits a long answer at the publish seam and posts
+parts 2..N itself (issue #913) — the legacy GHA *Post Additional Message Parts*
+step that read `final_message_parts_count.txt` / `final_message_part_{N}.txt` is
+no longer the mechanism; those files remain as debug artifacts. The split is
+governed by `CommentSizePolicy` (default 60,000 chars per comment, up to 4
+parts). The state-bearing header is on part 1, so the continuation parts carry no
+continue token and do not re-trigger the workflow.
 
 ---
 

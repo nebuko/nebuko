@@ -212,8 +212,13 @@ contract as `config.load_agent_names`). See
 
 GitHub comment bodies have a size limit; `split_message` splits long final
 messages at paragraph → line → sentence boundaries (hard split as last resort),
-keeping each part under 10,000 characters. Extra parts are posted as additional
-comment parts by the GHA *Post Additional Message Parts* step.
+keeping each part under the threshold. The threshold comes from
+`CommentSizePolicy.max_comment_chars` (default 60,000; issue #913) — a single
+source of truth so `build_output`'s debug part files and the publish seam's
+multi-comment post never disagree. At publish time `split_comment_body` packs
+the answer into up to `CommentSizePolicy.max_parts` comments (default 4), with
+the state-bearing header on the first part; parts 2..N are posted as
+continuation comments and grouped back onto the state comment on re-read.
 
 ---
 

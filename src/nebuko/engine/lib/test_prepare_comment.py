@@ -247,6 +247,12 @@ class TestTruncateAtBoundary(unittest.TestCase):
         result = _truncate_at_boundary(text)
         self.assertEqual(result, text)
 
+    def test_custom_limit_is_honored(self):
+        text = "Y" * 500
+        result = _truncate_at_boundary(text, max_chars=100)
+        self.assertIn("truncated due to size limit", result)
+        self.assertLessEqual(len(result), 100 + len("\n\n...*(comment truncated due to size limit)*"))
+
 
 class TestPrepareCommentIntegration(unittest.TestCase):
     """Integration tests for prepare_comment() using temp files."""
@@ -608,6 +614,32 @@ class TestPrepareCommentContextCollapse(TestPrepareCommentIntegration):
         self._write("final_message.txt", plain)
         prepare_comment()
         self.assertEqual(_strip_answer_header(self._read("github_comment.md")), plain)
+
+
+class TestPrepareCommentSizeLimit(TestPrepareCommentIntegration):
+    """A long answer is no longer truncated at 60k (issue #913).
+
+    The publish seam splits it across comments instead; truncating here would
+    discard exactly the content the split preserves.
+    """
+
+    def test_body_over_60k_is_not_truncated(self):
+        marker = "TAIL-MARKER"
+        body = "A" * 70000 + "\n\n" + marker
+        self._write("final_message.txt", body)
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertNotIn("truncated due to size limit", result)
+        self.assertIn(marker, result)
+
+    def test_context_collapse_still_applied_without_truncation(self):
+        os.environ["ROLE_NAME"] = "context"
+        body = "## Report\n\n### FILES FOUND\n" + ("x" * 70000)
+        self._write("final_message.txt", body)
+        prepare_comment()
+        result = self._read("github_comment.md")
+        self.assertIn("<details>", result)
+        self.assertNotIn("truncated due to size limit", result)
 
 
 class TestBuildCommentBodyHeader(unittest.TestCase):
