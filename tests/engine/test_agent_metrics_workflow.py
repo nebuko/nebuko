@@ -9,6 +9,7 @@ declared ``SCRIPT_PATH`` values to files that actually exist in the checkout.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -87,22 +88,32 @@ class TestReportTimePricingImportability:
     """The summarize job installs base deps only, so the report-time pricing
     chain must import with ``openhands``/``litellm`` absent (issue #928)."""
 
-    def test_pricing_and_resolver_import_without_openhands(self) -> None:
+    def test_pricing_and_resolver_import_without_openhands(self, tmp_path) -> None:
         script = (
-            "import builtins, sys;"
+            "import builtins, os, sys;"
+            "sys.path[:] = [p for p in sys.path if not p or not os.path.exists("
+            "os.path.join(p, 'agent_script'))];"
             f"sys.path.insert(0, {str(ENGINE_LIB)!r});"
             "real = builtins.__import__;"
             "guard = lambda name, *a, **k: (_ for _ in ()).throw("
             "ImportError(name)) if name.split('.')[0] in "
             "('openhands', 'litellm') else real(name, *a, **k);"
             "builtins.__import__ = guard;"
+            "import agent_script, pricing;"
             "from agent_script.sub_domains.metrics.report_cost_resolver import"
             " ReportCostResolver;"
             "from pricing.features.load_price_table.load_price_table import"
             " load_price_table;"
+            f"assert agent_script.__file__.startswith({str(ENGINE_LIB)!r}),"
+            " agent_script.__file__;"
             "print('ok')"
         )
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
         result = subprocess.run(
-            [sys.executable, "-c", script], capture_output=True, text=True
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            env=env,
         )
         assert result.returncode == 0, result.stderr

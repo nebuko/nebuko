@@ -4,9 +4,9 @@ No network: the price table is stubbed, or loaded through an injected fetcher
 pointed at a tmp cache dir.
 """
 
+import os
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -19,7 +19,10 @@ from agent_script.sub_domains.metrics.report_cost_resolver import (
 from metrics_schema import Metrics
 from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
 
-REPO_LIB = Path(__file__).resolve().parents[4]
+# tests live at <lib>/agent_script/sub_domains/metrics/, so the importable lib
+# root is parents[3] (parents[4] would be.../engine, which cannot satisfy
+# `import agent_script`).
+ENGINE_LIB = Path(__file__).resolve().parents[3]
 
 
 def _table() -> PriceTable:
@@ -154,31 +157,48 @@ class TestBuild:
         assert ReportCostResolver.build().table is None
 
 
+def _import_guard_script(lib: Path) -> str:
+    """Import the base-deps-safe chain with ``openhands``/``litellm`` blocked.
+
+    stdlib and base site-packages stay on ``sys.path``; any entry that could
+    shadow ``agent_script`` is dropped, so the package can only resolve from
+    ``lib``. A foreign checkout (or a stale editable install) can therefore
+    never mask a real import regression.
+    """
+    lib = str(lib)
+    return (
+        "import builtins, os, sys;"
+        "sys.path[:] = [p for p in sys.path if not p or not os.path.exists("
+        "os.path.join(p, 'agent_script'))];"
+        f"sys.path.insert(0, {lib!r});"
+        "real = builtins.__import__;"
+        "guard = lambda name, *a, **k: (_ for _ in ()).throw("
+        "ImportError(name)) if name.split('.')[0] in "
+        "('openhands', 'litellm') else real(name, *a, **k);"
+        "builtins.__import__ = guard;"
+        "import agent_script, pricing;"
+        "from agent_script.sub_domains.metrics.report_cost_resolver import"
+        " ReportCostResolver;"
+        "from pricing.features.load_price_table.load_price_table import"
+        " load_price_table;"
+        f"assert agent_script.__file__.startswith({lib!r}), "
+        "agent_script.__file__;"
+        "print('ok')"
+    )
+
+
 class TestBaseDepsImportability:
     """The job installs base deps only, so the resolver chain must not need
     ``openhands``/``litellm`` (issue #928)."""
 
-    def test_resolver_imports_with_openhands_and_litellm_blocked(self):
-        script = textwrap.dedent(
-            """
-            import builtins, sys
-            sys.path.insert(0, {lib!r})
-            real_import = builtins.__import__
-            def guarded(name, *a, **k):
-                if name.split('.')[0] in ('openhands', 'litellm'):
-                    raise ImportError('blocked ' + name)
-                return real_import(name, *a, **k)
-            builtins.__import__ = guarded
-            from agent_script.sub_domains.metrics.report_cost_resolver import (
-                ReportCostResolver,
-            )
-            from pricing.features.load_price_table.load_price_table import (
-                load_price_table,
-            )
-            print(ReportCostResolver, load_price_table)
-            """
-        ).format(lib=str(REPO_LIB))
+    def test_resolver_imports_with_openhands_and_litellm_blocked(self, tmp_path):
+        script = _import_guard_script(ENGINE_LIB)
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
         result = subprocess.run(
-            [sys.executable, "-c", script], capture_output=True, text=True
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            env=env,
         )
         assert result.returncode == 0, result.stderr
