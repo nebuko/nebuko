@@ -60,8 +60,8 @@ def main():
         logger.error(str(e))
         sys.exit(1)
 
-    # 3. Skill context is injected at the Agent level via the system channel
-    #    (security_policy_filename in run_agent) — no user-prompt append here.
+    # 3. The agent's static system prompt is installed in run_agent (issue #943);
+    #    the role prompt below travels as the first *user* message.
 
     # 4. Resolve LLM config
     llm_config, prompt, agent_cfg = resolve_llm_config(args, prompt)
