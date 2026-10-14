@@ -205,7 +205,8 @@ engine/lib/config/
     ├── provider_config/                       # ProviderConfig: api_url + api_token_env
     ├── llm_config/                            # LLMConfig: model_path, provider ref, sampling params
     ├── agent_config/                          # AgentConfig: model ref, prompt_file, skills, tools
-    ├── app_config/                            # AppConfig: the full providers/llms/agents tree
+    ├── mcp_server_config/                     # MCPServerConfig: one stdio MCP server spec
+    ├── app_config/                            # AppConfig: providers/llms/agents + mcp_servers catalog
     ├── workflow_definition/                   # WorkflowDefinition: name, description, steps
     ├── workflow_step/                         # WorkflowStep: agent/workflow, next, conditions, skill
     └── workflow_condition/                    # WorkflowCondition: on_result → next
@@ -215,7 +216,7 @@ engine/lib/config/
 
 - `load_config(path)` — parses and validates the layered config into `AppConfig`; fails fast on schema violations.
 - `load_workflow(path)` — loads a `workflows/*.yaml` file into a `WorkflowDefinition`. Also handles workflow *references* (`resolve_workflow_reference`), where a step's `workflow:` value may be a workflow name or a path like `tmp_impl/workflow.yaml`.
-- `resolve_refs(config)` — resolves `${layer.key.subkey}` references (see [configuration.md](./configuration.md#ref-cross-layer-resolution)):
+- `resolve_refs(config)` — resolves `${layer.key.subkey}` references over any root mapping, including the `mcp_servers` catalog (see [configuration.md](./configuration.md#ref-cross-layer-resolution)):
   - Full-string ref (`"${providers.openrouter}"`) → replaced by the referenced object itself.
   - Inline partial ref (`"prefix_${llms.x.model_path}"`) → string-only substitution.
   - Recurses through dicts and lists; an undefined ref raises at load time.

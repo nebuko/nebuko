@@ -82,6 +82,35 @@ class TestResolveRefs:
         result = resolve_refs(root)
         assert result["agents"]["architect"]["model"]["model_path"] == "openrouter/deepseek/v4"
 
+    def test_mcp_servers_catalog_ref_resolves_to_entry(self):
+        """${mcp_servers.<name>} resolves against a name-keyed root catalog.
+
+        The catalog must be a *mapping*: a list-rooted ref cannot be walked by
+        the dotted-path resolver (issue #932).
+        """
+        root = {
+            "mcp_servers": {
+                "brave-search": {
+                    "name": "brave-search",
+                    "command": "npx",
+                    "args": ["-y", "@brave/brave-search-mcp-server@2.1.4"],
+                    "env": {"BRAVE_API_KEY": "BRAVE_API_KEY"},
+                }
+            },
+            "agents": {
+                "context": {"mcp_servers": ["${mcp_servers.brave-search}"]},
+            },
+        }
+        result = resolve_refs(root)
+        assert result["agents"]["context"]["mcp_servers"] == [
+            {
+                "name": "brave-search",
+                "command": "npx",
+                "args": ["-y", "@brave/brave-search-mcp-server@2.1.4"],
+                "env": {"BRAVE_API_KEY": "BRAVE_API_KEY"},
+            }
+        ]
+
     def test_non_string_values_unchanged(self):
         """Non-string, non-dict, non-list values pass through unchanged."""
         config = {"count": 42, "flag": True, "nothing": None}

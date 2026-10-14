@@ -1,7 +1,7 @@
 # Configuration
 
 The system is configured by a single layered YAML file (`agent-config.yaml`):
-**providers → llms → agents**. Cross-layer `${ref}` resolution lets each layer
+**providers → llms / mcp_servers → agents**. Cross-layer `${ref}` resolution lets each layer
 reference the one below it, so adding an agent is a short stanza with no other
 file changes.
 
@@ -21,6 +21,7 @@ For the machine-readable dispatch overrides applied at invocation time, see
 ┌──────────────────────────────▼──────────────────────────────┐
 │ llms          qwen-3-6-27b / deepseek-v4-pro / ...          │
 │               provider: "${providers.openrouter}"           │
+│ mcp_servers   brave-search / ...  (agent opt-in via ${ref}) │
 └──────────────────────────────┬──────────────────────────────┘
                                │ ${ref}
 ┌──────────────────────────────▼──────────────────────────────┐
@@ -30,8 +31,9 @@ For the machine-readable dispatch overrides applied at invocation time, see
 ```
 
 References resolve bottom-up: a provider has no dependencies; an LLM points at
-a provider; an agent points at an LLM. A ref that does not resolve is an error
-at load time (fail-fast, before any agent runs).
+a provider; a `mcp_servers` catalog entry is standalone; an agent points at an
+LLM (and, optionally, at one or more catalog entries). A ref that does not
+resolve is an error at load time (fail-fast, before any agent runs).
 
 The config is loaded and validated by the `config/` package
 (`load_config`, `load_workflow`, `resolve_refs` — see
@@ -145,7 +147,7 @@ llms:
 | `skills` | string[] | Skills attached to the agent by default. |
 | `complexity_overrides` | mapping<`low` \| `medium` \| `high`, object> | Per-tier partial overrides of model/sampling/reasoning. See [Complexity Overrides](#complexity-overrides-per-tier-configuration). |
 | `tools` | string[] | Tool whitelist: `terminal`, `file_editor`, `task_tracker` (SDK tools) plus `think`, `finish`, `dispatch_next` (built-in defaults). See [agents-and-skills.md](./agents-and-skills.md). |
-| `mcp_servers` | object[] | MCP servers attached to the agent's conversation (see [MCP Servers](#mcp-servers)). |
+| `mcp_servers` | object[] | MCP servers attached to the agent's conversation. Each entry is either an inline spec or a `${mcp_servers.<name>}` ref into the root catalog (see [MCP Servers](#mcp-servers)). |
 | `token_budget` | object | Compaction / prompt-leanness policy (see [Token Budget](#token-budget)). |
 
 Example:
@@ -197,9 +199,22 @@ agents:
 servers to an agent's conversation. Each entry is a stdio process spec; the
 server's tools become available to the agent alongside its `tools` whitelist.
 
+There are two levels, mirroring `providers`/`llms`:
+
+- **Root catalog** — a top-level `mcp_servers:` mapping, keyed by server name,
+  holding the reusable server specs. The key **must equal** the entry's `name`.
+- **Agent opt-in** — each agent's `mcp_servers:` list is a list of refs into the
+  catalog (`- "${mcp_servers.<name>}"`). Inline specs are still accepted for a
+  genuinely one-off server.
+
+A ref resolves to the referenced entry dict at load time, so the runtime wiring
+is unchanged: the agent still ends up with plain `MCPServerConfig` instances.
+
+Catalog/server spec fields:
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Stable handle for the server. |
+| `name` | string | Stable handle for the server (must equal its catalog key). |
 | `command` | string | Executable to launch (`npx`, `uvx`, `docker`, or a binary path). |
 | `args` | string[] | Command arguments (default `[]`). |
 | `env` | mapping<string, string> | Child-process env var → **name** of the OS env var holding the value (never the literal secret). |
@@ -209,32 +224,37 @@ Unresolved `env` references (the named OS env var is unset) cause the server to
 be skipped with a warning — a missing key degrades that one capability rather
 than failing the run.
 
-Example — Brave Search MCP web search for the `context` agent:
+Example — one Brave Search MCP definition reused by the `context` agent:
 
 ```yaml
+mcp_servers:
+  brave-search:
+    name: "brave-search"
+    command: "npx"
+    args:
+      - "-y"
+      - "@brave/brave-search-mcp-server@2.1.4"
+      - "--enabled-tools"
+      - "brave_web_search"
+      - "brave_news_search"
+    env:
+      BRAVE_API_KEY: "BRAVE_API_KEY"   # child var ← OS env var name
+
 agents:
   context:
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
     mcp_servers:
-      - name: "brave-search"
-        command: "npx"
-        args:
-          - "-y"
-          - "@brave/brave-search-mcp-server@2.1.4"
-          - "--enabled-tools"
-          - "brave_web_search"
-          - "brave_news_search"
-        env:
-          BRAVE_API_KEY: "BRAVE_API_KEY"   # child var ← OS env var name
+      - "${mcp_servers.brave-search}"
 ```
 
-Set `BRAVE_API_KEY` in the environment (or as a CI secret) to enable it.
+Any number of agents can reference the same catalog entry. Set `BRAVE_API_KEY`
+in the environment (or as a CI secret) to enable it.
 
 ---
 
 ## `${ref}` Cross-Layer Resolution
 
-Syntax: `${layer.key}` where `layer` is `providers` or `llms`.
+Syntax: `${layer.key}` where `layer` is `providers`, `llms`, or `mcp_servers`.
 
 Rules:
 - A value that is exactly a single ref (e.g., `"${llms.qwen-3-6-27b}"`) is
@@ -244,7 +264,7 @@ Rules:
   value is substituted in place of the ref expression.
 - Resolution is recursive and runs at load time; an undefined ref is a hard
   error at load time.
-- Refs can only point at a *lower* layer (`agents → llms → providers`).
+- Refs can only point at a *lower* layer (`agents → llms / mcp_servers → providers`).
 
 Inline partial example:
 
