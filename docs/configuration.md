@@ -42,6 +42,17 @@ variables. If the file is missing, a role is absent, or a provider's
 `api_token_env` is unset, the run fails fast with an actionable
 `LLMConfigError` naming the path (or the env var to set).
 
+### Where a relative `AGENT_CONFIG_PATH` resolves
+
+`AGENT_CONFIG_PATH` (the workflow's `agent_config_path` input) is relative to
+the **caller's repository** — the checked-out workspace, not the Nebuko
+checkout. The base is `$GITHUB_WORKSPACE` when set, otherwise the working
+directory the engine started in. An absolute value is used unchanged, and a bare
+file name (no separator) is looked up in `<base>/.nebuko/agents/` first, then in
+Nebuko's shipped `defaults/agents/`. This is what makes a cross-repo
+`uses: nebuko/nebuko/...` caller's `.nebuko/agents/agent-config.yaml` resolve
+against the caller's own workspace rather than the imported engine checkout.
+
 ---
 
 ## Provider Schema
