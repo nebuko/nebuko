@@ -23,6 +23,10 @@ class LLMConfig(BaseModel):
     thinking_enabled: Optional[bool] = None
     preserve_thinking: Optional[bool] = None
     thinking_token_budget: Optional[int] = None
+    # Explicit top-level reasoning effort sent to the provider. ``None`` lets
+    # the SDK default stand; it is the transport Nebuko owns so ``thinking_enabled``
+    # can neutralize an independent SDK default (issue #941).
+    reasoning_effort: Optional[str] = None
     max_output_tokens: Optional[int] = None
     # Sampling parameters for instruction-following control
     top_p: Optional[float] = None

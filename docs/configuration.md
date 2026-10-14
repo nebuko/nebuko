@@ -86,8 +86,9 @@ providers:
 | `default_temperature` | float | Base temperature for the model. |
 | `input_price` / `output_price` | float | Cost per **1M tokens** (USD) — seeds metrics/cost accounting. |
 | `cache_read_price` / `cache_write_price` | float | Cost per **1M tokens** (USD) for cached prompt tokens; falls back to `input_price` when unset. |
-| `thinking_enabled` | bool | Enables the model's thinking mode (e.g., Qwen flexible thinking). |
+| `thinking_enabled` | bool | Enables the model's thinking mode (e.g., Qwen flexible thinking). `false` strips all reasoning-enabling request params. |
 | `preserve_thinking` | bool | Keeps thinking content across turns. |
+| `reasoning_effort` | string | Explicit top-level reasoning effort (`none`/`low`/`medium`/`xhigh`); unset keeps the SDK default. |
 | `max_output_tokens` | int | Max output tokens per completion. |
 | `top_p` / `top_k` / `min_p` | float/int | Sampling parameters (see table below). |
 | `presence_penalty` / `repetition_penalty` | float | Repetition control (see table below). |
@@ -395,8 +396,9 @@ for `high`.
 
 Keys are exactly `low`, `medium`, or `high`; each value is a **partial**
 override reusing the agent-stanza field names (`model`, `temperature`,
-`reasoning`, `top_p`, `top_k`, `min_p`, `presence_penalty`,
-`repetition_penalty`). Unset fields fall through to the per-agent value.
+`reasoning`, `reasoning_effort`, `thinking_enabled`, `top_p`, `top_k`, `min_p`,
+`presence_penalty`, `repetition_penalty`). Unset fields fall through to the
+per-agent value; an unknown key is a load error, never silently ignored.
 
 ```yaml
 agents:
@@ -420,6 +422,13 @@ temperature, and the per-tier floor from
 is then applied on top with `max()`; so a `high` override of `0.1` still
 resolves to `0.3`. `reasoning` only applies while thinking is enabled for the
 resolved model.
+
+`thinking_enabled` may also be set per tier, so an agent can re-enable thinking
+for one tier while its LLM defaults it off (the tier value wins). When thinking
+resolves to `false`, the resolver strips every reasoning-enabling request
+parameter — including the SDK's top-level `reasoning_effort` default — so
+`thinking_enabled: false` genuinely disables reasoning. `reasoning_effort` sets
+the top-level effort explicitly; leave it unset to keep the SDK default.
 
 ### Repo Complexity Policy (`complexity_policy`)
 
