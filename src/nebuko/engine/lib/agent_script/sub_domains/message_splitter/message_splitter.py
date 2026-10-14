@@ -125,10 +125,10 @@ def _split_at_sentence_boundaries(text: str, max_length: int) -> str | None:
 #
 # A long answer is posted across several comments instead of being truncated:
 # one comment per ``CommentPart``, each within ``CommentSizePolicy``'s per
-# comment budget, and only the final part carries the trailing ``tail`` (the
-# workflow-state section). Earlier parts therefore stay free of the state
-# marker so the CI gate — which re-fires only on the state-bearing comment —
-# is not re-armed by the content-only parts.
+# comment budget. The state-bearing header rides on the *first* part (see
+# ``split_comment_body``), so the continuation parts that follow it group onto
+# the same history entry (issue #504), and every part carries the bot marker,
+# which keeps the whole run CI-gate exempt instead of re-firing the gate.
 
 #: Appended to the final part when a body overflows the ``max_parts`` ceiling.
 _TRUNCATION_MARKER = "\n\n...*(comment truncated due to size limit)*"
