@@ -93,6 +93,18 @@ def _resolve_price(agent_cfg, price_table):
     return resolve_model_rates(model_ref, price_table)
 
 
+def _effective_model_name(agent_cfg, combined_metrics):
+    """The model the run actually used, for report-time pricing (issue #928).
+
+    Prefers the effective model ref (honoring the complexity tier) over the
+    SDK's placeholder ``"default"`` so the summarize job can price the entry by
+    identity; falls back to the SDK value when no config/model is resolvable.
+    """
+    model_ref = _effective_model_ref(agent_cfg)
+    model_path = getattr(model_ref, "model_path", None) if model_ref is not None else None
+    return model_path or combined_metrics.model_name
+
+
 # @stub-protected: signature defined by architect — do not modify
 def _session_cost(
     combined_metrics,
@@ -335,7 +347,7 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
         role_name = os.environ.get("ROLE_NAME", "unknown")
         metrics = Metrics(
             run_id=str(conversation.id),
-            model_name=combined_metrics.model_name,
+            model_name=_effective_model_name(agent_cfg, combined_metrics),
             agent_role=role_name,
             input_tokens=input_tokens,
             output_tokens=output_tokens,

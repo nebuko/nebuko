@@ -36,6 +36,7 @@ from human_metrics import (
     IssueData,
 )
 from workflow_state.features.get_last_state.get_last_state import extract_state_from_body
+from agent_script.sub_domains.metrics.report_cost_resolver import ReportCostResolver
 
 # Agent role marker emitted at the top of every agent comment (e.g. bot-agent-dev).
 BOT_AGENT_ROLE_REGEX = re.compile(r"<!--\s*bot-agent-([a-z0-9_-]+)\s*-->")
@@ -233,8 +234,13 @@ def _bucket_cache_and_reasoning(agg):
     return format_rate(rate), cache_hit, reasoning
 
 
-def aggregate_by_model(all_metrics):
-    """Aggregate metrics by model_name."""
+def aggregate_by_model(all_metrics, resolver=None):  # @stub-protected
+    """Aggregate metrics by model name.
+
+    When ``resolver`` is given, entries are grouped by
+    ``resolver.model_key(...)`` and costed via ``resolver.effective_cost(...)``
+    (issue #928); ``None`` preserves the raw ``model_name``/``cost`` behaviour.
+    """
     aggregated = defaultdict(lambda: {
         "runs": 0,
         "total_input_tokens": 0,
@@ -262,10 +268,10 @@ def aggregate_by_model(all_metrics):
     for m in all_metrics:
         # Support both Metrics objects and legacy dicts
         if isinstance(m, Metrics):
-            model = m.model_name or "unknown"
+            model = resolver.model_key(m) if resolver else (m.model_name or "unknown")
             input_tokens = m.input_tokens
             output_tokens = m.output_tokens
-            cost = m.cost
+            cost = resolver.effective_cost(m) if resolver else m.cost
             context_window = m.max_context_window
             latency = m.tool_call_latency_ms
             runtime = m.agent_runtime_ms
@@ -282,10 +288,10 @@ def aggregate_by_model(all_metrics):
             cache_hit_tokens = m.cache_hit_tokens
         else:
             # Legacy dict support
-            model = m.get("model_name", "unknown")
+            model = resolver.model_key(m) if resolver else m.get("model_name", "unknown")
             input_tokens = m.get("input_tokens", 0)
             output_tokens = m.get("output_tokens", 0)
-            cost = m.get("cost", 0.0)
+            cost = resolver.effective_cost(m) if resolver else m.get("cost", 0.0)
             context_window = m.get("max_context_window", 0)
             latency = m.get("tool_call_latency_ms", 0.0)
             runtime = m.get("agent_runtime_ms", 0.0)
@@ -342,8 +348,12 @@ def get_agent_display_name(agent_role):
     return AGENT_DISPLAY_NAMES.get(agent_role, agent_role.title())
 
 
-def aggregate_by_agent(all_metrics):
-    """Aggregate metrics by agent_role."""
+def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
+    """Aggregate metrics by agent_role.
+
+    When ``resolver`` is given, per-role cost is ``resolver.effective_cost(...)``
+    (issue #928); ``None`` preserves the raw ``cost`` behaviour.
+    """
     aggregated = defaultdict(lambda: {
         "runs": 0,
         "total_input_tokens": 0,
@@ -374,7 +384,7 @@ def aggregate_by_agent(all_metrics):
             agent = m.agent_role or "unknown"
             input_tokens = m.input_tokens
             output_tokens = m.output_tokens
-            cost = m.cost
+            cost = resolver.effective_cost(m) if resolver else m.cost
             context_window = m.max_context_window
             latency = m.tool_call_latency_ms
             runtime = m.agent_runtime_ms
@@ -394,7 +404,7 @@ def aggregate_by_agent(all_metrics):
             agent = m.get("agent_role", "unknown")
             input_tokens = m.get("input_tokens", 0)
             output_tokens = m.get("output_tokens", 0)
-            cost = m.get("cost", 0.0)
+            cost = resolver.effective_cost(m) if resolver else m.get("cost", 0.0)
             context_window = m.get("max_context_window", 0)
             latency = m.get("tool_call_latency_ms", 0.0)
             runtime = m.get("agent_runtime_ms", 0.0)
@@ -792,8 +802,11 @@ def main():
         if human_section:
             summary = f"{summary}\n\n{human_section}"
     else:
-        agent_aggregated = aggregate_by_agent(all_metrics)
-        model_aggregated = aggregate_by_model(all_metrics)
+        # Fill zero-cost entries at report time from the OpenRouter price table
+        # keyed by each entry's recorded model identity (issue #928); fail-open.
+        resolver = ReportCostResolver.build()
+        agent_aggregated = aggregate_by_agent(all_metrics, resolver)
+        model_aggregated = aggregate_by_model(all_metrics, resolver)
 
         sections = []
         agent_table = generate_agent_summary_table(agent_aggregated)

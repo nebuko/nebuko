@@ -361,3 +361,34 @@ class TestCollectLlmMetricsCacheWriteFromCapture:
         assert metrics.error is None
         # 800k regular input @ $1/1M + 200k cache-write @ $4/1M = $1.60
         assert metrics.cost == pytest.approx(1.6)
+
+
+class TestEffectiveModelNameRecorded:
+    """The run records the effective model identity, not the SDK placeholder.
+
+    The summarize job prices zero-cost entries by this identity, so a run with
+    a resolvable model_ref must persist the real model path instead of
+    ``"default"`` (issue #928).
+    """
+
+    def _cfg(self, model_path="openai/deepseek/deepseek-v4.1-flash"):
+        from types import SimpleNamespace
+
+        ref = SimpleNamespace(model_path=model_path)
+        return SimpleNamespace(model_ref=ref, complexity_overrides={})
+
+    def test_records_the_config_model_path(self):
+        import os
+
+        usage = _AccumulatedUsage(prompt_tokens=10, completion_tokens=5)
+        os.environ.pop("CONFIG_COMPLEXITY", None)
+        metrics = collect_llm_metrics(_conversation_with_usage(usage), self._cfg())
+        assert metrics.model_name == "openai/deepseek/deepseek-v4.1-flash"
+
+    def test_falls_back_to_the_sdk_value_without_config(self):
+        import os
+
+        usage = _AccumulatedUsage(prompt_tokens=10, completion_tokens=5)
+        os.environ.pop("CONFIG_COMPLEXITY", None)
+        metrics = collect_llm_metrics(_conversation_with_usage(usage), None)
+        assert metrics.model_name == "test-model"
