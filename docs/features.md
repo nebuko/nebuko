@@ -145,11 +145,23 @@ separate hidden HTML comment):
   fallback for its org-less paths. `0` remains the documented outcome only when
   neither config nor the service knows the model. Because the service is
   org-aware, a model priced only by the operator's config still resolves too.
+- **Run-time identity (issue #928)** — each run records the *effective* model
+  path it used (the complexity-tier-aware ref) in `StateMetrics.model_name`, so
+  report-time pricing has a real identity to look up. Run time still writes no
+  price; an SDK-reported cost is kept as-is.
 - **Issue-close aggregation** — `agent_metrics.py` (GHA job
   `agent-metrics`, triggered on issue close) fetches all comments, reads the
   per-step metrics from each comment's `workflow_state` snapshot (de-duplicating
   entries repeated across accumulating snapshots), aggregates by model name
-  (tokens, runtime, error rate), and posts a summary table.
+  (tokens, runtime, error rate), and posts a summary table. Because a
+  subscription provider reports no per-token cost, the job **fills any
+  zero-cost entry at report time**: it prices the entry's stored token counts
+  against the default price service by its recorded model identity, using the
+  same cache-aware math (issue #928). Workflow state is never rewritten —
+  rerunning the job recomputes prices on demand. Entries still carrying the
+  SDK's `"default"` placeholder (pre-#928 runs) are grouped into a single
+  `default` row that carries its summed price; once runs record a real identity
+  the table splits into per-model rows.
 
 ---
 

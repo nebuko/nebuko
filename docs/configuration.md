@@ -88,6 +88,14 @@ providers:
 > self-hosted model. Where the estimate applies, each tier falls back per field
 > to the default price service (an OpenRouter-backed table; see
 > [features.md — Metrics](./features.md#metrics)) and then to `input_price`.
+>
+> The issue-close **`agent-metrics` job** additionally fills entries whose
+> recorded cost is still `0` at report time, pricing their stored tokens
+> against that same default price service by the model identity each run
+> recorded (issue #928). The job has no agent-config, so this report-time
+> fill uses the table only; configured `*_price` precedence applies at run
+> time (the local estimate written into state). State is never rewritten —
+> rerunning the job recomputes.
 
 Sampling parameters and their typical ranges:
 
