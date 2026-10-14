@@ -252,15 +252,10 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     config_path = default_paths.agent_config_file()
     role_name = os.environ.get("ROLE_NAME", "unknown")
 
-    api_key = None
-    model = None
-    base_url = None
-    temperature = None
-    agent_cfg = None
-    api_url_raw = None
+    # ``tier_override`` needs a default: it is assigned conditionally below but
+    # read unconditionally. Every other value is bound on every path that
+    # reaches its use — the failure modes raise instead.
     tier_override = None
-    effective_ref = None
-    provider = None
 
     config_complexity = os.getenv("CONFIG_COMPLEXITY", "").lower()
 
