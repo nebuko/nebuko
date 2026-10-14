@@ -532,6 +532,16 @@ class TestAggregateByModel(unittest.TestCase):
         self.assertEqual(agg["total_cache_hit_tokens"], 400)
         self.assertAlmostEqual(agg["cache_weighted_sum"] / agg["cache_weight"], 0.5)
 
+    def test_uncached_input_tokens_are_derived_per_run(self):
+        """Model buckets carry the per-run uncached input sum next to the raw total (#948)."""
+        metrics = [
+            self._make_metric("gpt-4", input_tokens=4000, cache_hit_tokens=1920),
+            self._make_metric("gpt-4", input_tokens=1000),
+        ]
+        agg = aggregate_by_model(metrics)["gpt-4"]
+        self.assertEqual(agg["total_input_tokens"], 5000)
+        self.assertEqual(agg["total_uncached_input_tokens"], 3080)
+
 
 class TestAggregateByAgent(unittest.TestCase):
     """Test aggregate_by_agent function."""
@@ -790,6 +800,21 @@ class TestAggregateByAgent(unittest.TestCase):
         result = aggregate_by_agent(metrics)
         self.assertEqual(result["architect"]["total_input_tokens"], 5000)
         self.assertEqual(result["architect"]["total_uncached_input_tokens"], 3080)
+
+    def test_uncached_input_tokens_guard_applies_per_run(self):
+        """A bucket mixing token shapes guards each run, never post-hoc Σinput − Σcache (#948).
+
+        Run 1 is the exclusive/ACP shape (cache_read 9000 > input 100, SDK #5975), run 2
+        the inclusive litellm shape: the correct sum is 100 + 600 = 700, whereas a
+        rescaled post-hoc subtraction 900 − 9200 would be wrong.
+        """
+        metrics = [
+            self._make_metric("architect", input_tokens=100, cache_hit_tokens=9000),
+            self._make_metric("architect", input_tokens=800, cache_hit_tokens=200),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["architect"]["total_input_tokens"], 900)
+        self.assertEqual(result["architect"]["total_uncached_input_tokens"], 700)
 
     def test_multiple_agents(self):
         metrics = [
