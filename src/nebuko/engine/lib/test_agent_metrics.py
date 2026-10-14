@@ -20,9 +20,8 @@ from agent_metrics import (
     deduplicate_metrics,
     aggregate_by_model,
     aggregate_by_agent,
-    generate_summary_table,
     generate_agent_summary_table,
-    generate_model_summary_table,
+    StatsTotals,
     format_number,
     format_cost,
     format_rate,
@@ -721,121 +720,6 @@ class TestFormatRate(unittest.TestCase):
         self.assertEqual(format_rate(None), "n/a")
 
 
-class TestGenerateSummaryTable(unittest.TestCase):
-    """Test generate_summary_table function."""
-
-    def _make_aggregated(self):
-        return {
-            "gpt-4": {
-                "runs": 2,
-                "total_input_tokens": 300,
-                "total_output_tokens": 150,
-                "total_context_window": 16384,
-                "latency_sum": 2000.0,
-                "llm_runtime_sum": 10000.0,
-                "tool_calls_sum": 10,
-                "error_rate_sum": 0.0,
-                "review_fix_requests_sum": 0,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            },
-            "claude": {
-                "runs": 1,
-                "total_input_tokens": 200,
-                "total_output_tokens": 100,
-                "total_context_window": 8192,
-                "latency_sum": 1500.0,
-                "llm_runtime_sum": 5000.0,
-                "tool_calls_sum": 5,
-                "error_rate_sum": 5.0,
-                "review_fix_requests_sum": 0,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            },
-        }
-
-    def test_no_metrics_message(self):
-        result = generate_summary_table({})
-        self.assertIn("No agent metrics", result)
-
-    def test_table_header(self):
-        result = generate_summary_table(self._make_aggregated())
-        self.assertIn("| Model | Runs |", result)
-        self.assertIn("## 📊 Agent Statistics Summary", result)
-
-    def test_model_rows(self):
-        result = generate_summary_table(self._make_aggregated())
-        self.assertIn("| gpt-4 ", result)
-        self.assertIn("| claude ", result)
-
-    def test_totals_line(self):
-        result = generate_summary_table(self._make_aggregated())
-        self.assertIn("Totals:", result)
-        self.assertIn("3 runs", result)
-        self.assertIn("500 input tokens", result)
-        self.assertIn("250 output tokens", result)
-
-    def test_auto_generated_footer(self):
-        result = generate_summary_table(self._make_aggregated())
-        self.assertIn("auto-generated", result)
-        self.assertIn("issue close", result)
-
-    def test_single_run_uses_singular(self):
-        agg = {
-            "gpt-4": {
-                "runs": 1,
-                "total_input_tokens": 100,
-                "total_output_tokens": 50,
-                "total_context_window": 8192,
-                "latency_sum": 1000.0,
-                "llm_runtime_sum": 5000.0,
-                "tool_calls_sum": 5,
-                "error_rate_sum": 0.0,
-                "review_fix_requests_sum": 0,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            }
-        }
-        result = generate_summary_table(agg)
-        self.assertIn("1 run", result)
-        self.assertNotIn("1 runs", result)
-
-    def test_average_latency(self):
-        result = generate_summary_table(self._make_aggregated())
-        # gpt-4: 2000/2 = 1000ms avg
-        self.assertIn("| 1000 ", result)
-
-    def test_average_tool_calls(self):
-        result = generate_summary_table(self._make_aggregated())
-        # gpt-4: 10/2 = 5.0 avg tool calls
-        lines = result.split("\n")
-        gpt_line = [l for l in lines if "gpt-4" in l][0]
-        self.assertIn("5.0", gpt_line)
-
-    def test_average_error_rate(self):
-        result = generate_summary_table(self._make_aggregated())
-        lines = result.split("\n")
-        claude_line = [l for l in lines if "claude" in l][0]
-        self.assertIn("5.0%", claude_line)
-
-    def test_cost_column_shown(self):
-        result = generate_summary_table(self._make_aggregated())
-        self.assertIn("Cost (USD)", result)
-        # Missing total_cost defaults to $0.0000
-        gpt_line = [l for l in result.split("\n") if "gpt-4" in l][0]
-        self.assertIn("$0.0000", gpt_line)
-
-    def test_totals_includes_cost(self):
-        agg = self._make_aggregated()
-        agg["gpt-4"]["total_cost"] = 0.1234
-        agg["claude"]["total_cost"] = 0.0500
-        result = generate_summary_table(agg)
-        self.assertIn("$0.1734", result)
-
-
 class TestGetAgentDisplayName(unittest.TestCase):
     """Test get_agent_display_name function."""
 
@@ -1022,15 +906,22 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertLess(architect_pos, context_pos)
         self.assertLess(context_pos, dev_pos)
 
-    def test_totals_line(self):
+    def test_totals_row(self):
+        """The removed Totals sentence is now the table's final summary row."""
         result = generate_agent_summary_table(self._make_aggregated())
         result_str = "\n".join(result)
-        self.assertIn("Totals:", result_str)
-        self.assertIn("4 runs", result_str)
-        self.assertIn("900 input tokens", result_str)
-        self.assertIn("450 output tokens", result_str)
+        self.assertNotIn("Totals:", result_str)
+        self.assertNotIn(" runs · ", result_str)
+        self.assertNotIn("Model Statistics Summary", result_str)
+        self.assertEqual(result[-1], "| **Totals** | 4 | 900 | 450 | — | — | — | $0.0000 | — | — | — | — | — | — | — | — | — |")
 
-    def test_single_run_singular(self):
+    def test_totals_row_is_contiguous_and_last(self):
+        """GFM ends a table at a blank line, so the totals row sits directly beneath."""
+        lines = generate_agent_summary_table(self._make_aggregated())
+        self.assertTrue(lines[-1].startswith("| **Totals** "))
+        self.assertNotEqual(lines[-2], "")
+
+    def test_single_run_totals_row(self):
         agg = {
             "architect": {
                 "runs": 1,
@@ -1048,9 +939,10 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             }
         }
         result = generate_agent_summary_table(agg)
-        result_str = "\n".join(result)
-        self.assertIn("1 run", result_str)
-        self.assertNotIn("1 runs", result_str)
+        totals_row = result[-1]
+        # Row semantics win: the runs cell is the bare integer, never pluralized.
+        self.assertTrue(totals_row.startswith("| **Totals** | 1 |"))
+        self.assertNotIn("1 runs", totals_row)
 
     def test_average_latency(self):
         result = generate_agent_summary_table(self._make_aggregated())
@@ -1146,7 +1038,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertIn("| 0 ", result_str)
 
     def test_cost_column_and_total(self):
-        """Agent table should include a Cost column and sum costs in totals."""
+        """Agent table should include a Cost column and sum costs in its totals row."""
         agg = {
             "architect": {
                 "runs": 1,
@@ -1163,9 +1055,13 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "tokens_per_tool": {},
             }
         }
-        result_str = "\n".join(generate_agent_summary_table(agg))
+        result = generate_agent_summary_table(agg)
+        result_str = "\n".join(result)
         self.assertIn("Cost (USD)", result_str)
         self.assertIn("$0.1234", result_str)
+        totals_row = result[-1]
+        # The totals cost cell is the shared format_cost output, not a bespoke string.
+        self.assertIn(f"| {format_cost(0.1234)} |", totals_row)
 
     def test_cache_hit_and_reasoning_columns(self):
         """The columns render the rate, summed cache-hit and summed reasoning (#888)."""
@@ -1203,174 +1099,6 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
     def test_cache_hit_shows_na_without_signal(self):
         """A bucket with no observed input tokens renders 'n/a'."""
         result_str = "\n".join(generate_agent_summary_table(self._make_aggregated()))
-        self.assertIn("n/a", result_str)
-
-
-class TestGenerateModelSummaryTable(unittest.TestCase):
-    """Test generate_model_summary_table function."""
-
-    def _make_aggregated(self):
-        return {
-            "gpt-4": {
-                "runs": 2,
-                "total_input_tokens": 300,
-                "total_output_tokens": 150,
-                "total_context_window": 16384,
-                "latency_sum": 2000.0,
-                "llm_runtime_sum": 10000.0,
-                "tool_calls_sum": 10,
-                "error_rate_sum": 0.0,
-                "review_fix_requests_sum": 0,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            },
-            "claude": {
-                "runs": 1,
-                "total_input_tokens": 200,
-                "total_output_tokens": 100,
-                "total_context_window": 8192,
-                "latency_sum": 1500.0,
-                "llm_runtime_sum": 5000.0,
-                "tool_calls_sum": 5,
-                "error_rate_sum": 5.0,
-                "review_fix_requests_sum": 0,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            },
-        }
-
-    def test_empty_returns_empty(self):
-        result = generate_model_summary_table({})
-        self.assertEqual(result, "")
-
-    def test_table_header(self):
-        result = generate_model_summary_table(self._make_aggregated())
-        result_str = "\n".join(result)
-        self.assertIn("| Model | Runs |", result_str)
-        self.assertIn("## 📊 Model Statistics Summary", result_str)
-
-    def test_model_rows(self):
-        result = generate_model_summary_table(self._make_aggregated())
-        result_str = "\n".join(result)
-        self.assertIn("| gpt-4 ", result_str)
-        self.assertIn("| claude ", result_str)
-
-    def test_tool_errors_column(self):
-        """Test that tool errors column shows correct values."""
-        result = generate_model_summary_table(self._make_aggregated())
-        # All per-tool error dicts are empty, so all should show 0
-        for line in result:
-            if any(name in line for name in ["gpt-4", "claude"]):
-                self.assertIn("| 0 ", line)
-
-    def test_fix_requests_column_header(self):
-        """Test that Fix Requests column header is present."""
-        result = generate_model_summary_table(self._make_aggregated())
-        result_str = "\n".join(result)
-        self.assertIn("Fix Requests", result_str)
-
-    def test_fix_requests_column_zero_by_default(self):
-        """Test that Fix Requests column shows 0 when no fix requests."""
-        result = generate_model_summary_table(self._make_aggregated())
-        for line in result:
-            if any(name in line for name in ["gpt-4", "claude"]):
-                self.assertIn("| 0 ", line)
-
-    def test_fix_requests_column_with_values(self):
-        """Test that Fix Requests column shows correct values."""
-        agg = {
-            "gpt-4": {
-                "runs": 2,
-                "total_input_tokens": 300,
-                "total_output_tokens": 150,
-                "total_context_window": 16384,
-                "latency_sum": 2000.0,
-                "llm_runtime_sum": 10000.0,
-                "tool_calls_sum": 10,
-                "error_rate_sum": 0.0,
-                "review_fix_requests_sum": 3,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            },
-            "claude": {
-                "runs": 1,
-                "total_input_tokens": 200,
-                "total_output_tokens": 100,
-                "total_context_window": 8192,
-                "latency_sum": 1500.0,
-                "llm_runtime_sum": 5000.0,
-                "tool_calls_sum": 5,
-                "error_rate_sum": 5.0,
-                "review_fix_requests_sum": 2,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            },
-        }
-        result = generate_model_summary_table(agg)
-        gpt4_line = [l for l in result if "gpt-4" in l][0]
-        claude_line = [l for l in result if "claude" in l][0]
-        self.assertIn("| 3 ", gpt4_line)
-        self.assertIn("| 2 ", claude_line)
-
-    def test_backward_compatible_without_fix_requests(self):
-        """Model table should show 0 for models without review_fix_requests_sum."""
-        agg = {
-            "gpt-4": {
-                "runs": 1,
-                "total_input_tokens": 100,
-                "total_output_tokens": 50,
-                "total_context_window": 8192,
-                "latency_sum": 1000.0,
-                "llm_runtime_sum": 5000.0,
-                "tool_calls_sum": 5,
-                "error_rate_sum": 0.0,
-                # No review_fix_requests_sum key
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            }
-        }
-        result = generate_model_summary_table(agg)
-        result_str = "\n".join(result)
-        self.assertIn("| 0 ", result_str)
-
-    def test_cache_hit_and_reasoning_columns(self):
-        """The two new columns render the rate and the summed reasoning (#888)."""
-        agg = {
-            "gpt-4": {
-                "runs": 2,
-                "total_input_tokens": 4000,
-                "total_output_tokens": 200,
-                "total_context_window": 16384,
-                "latency_sum": 2000.0,
-                "llm_runtime_sum": 10000.0,
-                "tool_calls_sum": 10,
-                "error_rate_sum": 0.0,
-                "review_fix_requests_sum": 0,
-                "cache_weighted_sum": 2300.0,
-                "cache_weight": 4000,
-                "total_reasoning_tokens": 10170,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            }
-        }
-        result = generate_model_summary_table(agg)
-        result_str = "\n".join(result)
-        self.assertIn("Cache Hit Rate", result_str)
-        self.assertIn("Reasoning Tokens", result_str)
-        gpt4_line = [line for line in result if "gpt-4" in line][0]
-        # 2300 / 4000 = 57.50%
-        self.assertIn("| 57.50% ", gpt4_line)
-        self.assertIn("| 10,170 ", gpt4_line)
-
-    def test_cache_hit_shows_na_without_signal(self):
-        """A bucket with no observed input tokens renders 'n/a'."""
-        result_str = "\n".join(generate_model_summary_table(self._make_aggregated()))
         self.assertIn("n/a", result_str)
 
 
@@ -1686,73 +1414,91 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
         result_str = "\n".join(result)
         self.assertIn("N/A", result_str)
 
-    def test_model_table_has_new_columns(self):
-        """Model table should include Tool Errors and Per-Tool Calls columns."""
-        result = generate_model_summary_table(self._make_aggregated_with_per_tool())
-        result_str = "\n".join(result)
-        self.assertIn("Tool Errors", result_str)
-        self.assertIn("Per-Tool Calls", result_str)
-
-    def test_model_table_shows_tool_errors(self):
-        """Model table should show correct tool error counts."""
-        result = generate_model_summary_table(self._make_aggregated_with_per_tool())
-        # Both architect and context have errors
-        for line in result:
-            if "| Architect " in line or "| Context " in line:
-                # Should contain error count
-                self.assertTrue(any(c.isdigit() for c in line))
-
-    def test_model_table_cost_column(self):
-        """Model table should include a Cost column populated from total_cost."""
-        agg = self._make_aggregated_with_per_tool()
-        agg["architect"]["total_cost"] = 0.2500
-        result_str = "\n".join(generate_model_summary_table(agg))
-        self.assertIn("Cost (USD)", result_str)
-        self.assertIn("$0.2500", result_str)
-
-    def test_agent_table_has_provider_health_columns(self):
-        """Agent table should expose the tokens/sec and TTFT columns (#829)."""
-        result_str = "\n".join(generate_agent_summary_table(self._make_aggregated_with_per_tool()))
-        self.assertIn("Avg Tokens/sec", result_str)
-        self.assertIn("Avg TTFT (s)", result_str)
-
-    def test_model_table_has_provider_health_columns(self):
-        """Model table should expose the tokens/sec and TTFT columns (#829)."""
-        result_str = "\n".join(generate_model_summary_table(self._make_aggregated_with_per_tool()))
-        self.assertIn("Avg Tokens/sec", result_str)
-        self.assertIn("Avg TTFT (s)", result_str)
-
-    def test_agent_table_renders_na_when_unobserved(self):
-        """Runs without provider-health observations render n/a."""
-        result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
-        architect_line = [l for l in result if "Architect" in l][0]
-        self.assertIn("| n/a | n/a |", architect_line)
-
-    def test_agent_table_renders_provider_health_means(self):
-        """Means are rendered from the sums and counts."""
-        agg = self._make_aggregated_with_per_tool()
-        agg["architect"].update(
-            {"tps_sum": 300.0, "tps_count": 2, "ttft_sum": 1.0, "ttft_count": 2}
-        )
-        result = generate_agent_summary_table(agg)
-        architect_line = [l for l in result if "Architect" in l][0]
-        self.assertIn("| 150.0 | 0.50 |", architect_line)
-
     def test_agent_table_columns_align(self):
-        """Header, separator and rows must keep the same column count (#829)."""
+        """Header, separator, rows and the totals row keep one column count (#829, #942)."""
         lines = generate_agent_summary_table(self._make_aggregated_with_per_tool())
         header_cols = lines[2].count("|")
         self.assertEqual(lines[3].count("|"), header_cols)
         arch_row = next(l for l in lines if l.startswith("| Architect "))
         self.assertEqual(arch_row.count("|"), header_cols)
+        self.assertEqual(lines[-1].count("|"), header_cols)
 
-    def test_model_table_columns_align(self):
-        """Header, separator and rows must keep the same column count (#829)."""
-        lines = generate_model_summary_table(self._make_aggregated_with_per_tool())
-        header_cols = lines[2].count("|")
-        self.assertEqual(lines[3].count("|"), header_cols)
-        arch_row = next(l for l in lines if l.startswith("| architect "))
-        self.assertEqual(arch_row.count("|"), header_cols)
+
+class TestStatsTotals(unittest.TestCase):
+    """Test the StatsTotals summary-row value object (issue #942)."""
+
+    def _make_aggregated(self):
+        return {
+            "architect": {
+                "runs": 2,
+                "total_input_tokens": 300,
+                "total_output_tokens": 150,
+                "total_cost": 0.1000,
+            },
+            "dev": {
+                "runs": 1,
+                "total_input_tokens": 600,
+                "total_output_tokens": 100,
+                "total_cost": 0.0234,
+            },
+        }
+
+    def test_from_aggregated_sums_every_bucket(self):
+        totals = StatsTotals.from_aggregated(self._make_aggregated())
+        self.assertEqual(totals.runs, 3)
+        self.assertEqual(totals.input_tokens, 900)
+        self.assertEqual(totals.output_tokens, 250)
+        self.assertAlmostEqual(totals.cost_usd, 0.1234)
+
+    def test_from_aggregated_empty_is_zeroed(self):
+        self.assertEqual(StatsTotals.from_aggregated({}), StatsTotals())
+
+    def test_from_aggregated_tolerates_missing_cost(self):
+        totals = StatsTotals.from_aggregated(
+            {"architect": {"runs": 1, "total_input_tokens": 10, "total_output_tokens": 5}}
+        )
+        self.assertEqual(totals.cost_usd, 0.0)
+
+    def test_render_row_shape(self):
+        row = StatsTotals.from_aggregated(self._make_aggregated()).render_row()
+        self.assertEqual(
+            row,
+            "| **Totals** | 3 | 900 | 250 | — | — | — | $0.1234 | — | — | — "
+            "| — | — | — | — | — | — |",
+        )
+        self.assertTrue(row.endswith(" |"))
+        self.assertEqual(row.count("|"), 18)
+
+    def test_render_row_uses_shared_cell_formatters(self):
+        """Totals cells call the same formatters as data rows (parity by construction)."""
+        totals = StatsTotals.from_aggregated(self._make_aggregated())
+        row = totals.render_row()
+        self.assertIn(f"| {format_number(totals.input_tokens)} ", row)
+        self.assertIn(f"| {format_number(totals.output_tokens)} ", row)
+        self.assertIn(f"| {format_cost(totals.cost_usd)} ", row)
+
+    def test_render_row_matches_agent_table_layout(self):
+        """The row keeps the agent table's 17-cell layout and ends the table."""
+        aggregated = {
+            "architect": {
+                "runs": 2,
+                "total_input_tokens": 300,
+                "total_output_tokens": 150,
+                "total_context_window": 16384,
+                "latency_sum": 2000.0,
+                "llm_runtime_sum": 10000.0,
+                "tool_calls_sum": 10,
+                "error_rate_sum": 0.0,
+                "review_fix_requests_sum": 0,
+                "total_cost": 0.1000,
+                "tool_calls_per_tool": {},
+                "errors_per_tool": {},
+                "tokens_per_tool": {},
+            }
+        }
+        lines = generate_agent_summary_table(aggregated)
+        self.assertEqual(lines[-1], StatsTotals.from_aggregated(aggregated).render_row())
+
 
 
 class TestParseHelpers(unittest.TestCase):

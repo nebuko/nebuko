@@ -152,16 +152,15 @@ separate hidden HTML comment):
 - **Issue-close aggregation** — `agent_metrics.py` (GHA job
   `agent-metrics`, triggered on issue close) fetches all comments, reads the
   per-step metrics from each comment's `workflow_state` snapshot (de-duplicating
-  entries repeated across accumulating snapshots), aggregates by model name
-  (tokens, runtime, error rate), and posts a summary table. Because a
+  entries repeated across accumulating snapshots), aggregates by agent role
+  (tokens, runtime, error rate), and posts a single summary table whose last row
+  is a bold `Totals` summary row (issue #942). Because a
   subscription provider reports no per-token cost, the job **fills any
   zero-cost entry at report time**: it prices the entry's stored token counts
   against the default price service by its recorded model identity, using the
   same cache-aware math (issue #928). Workflow state is never rewritten —
-  rerunning the job recomputes prices on demand. Entries still carrying the
-  SDK's `"default"` placeholder (pre-#928 runs) are grouped into a single
-  `default` row that carries its summed price; once runs record a real identity
-  the table splits into per-model rows.
+  rerunning the job recomputes prices on demand. Per-model aggregation
+  (`aggregate_by_model`) is still available for future per-model reporting.
 
 ---
 
