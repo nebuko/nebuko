@@ -2694,6 +2694,38 @@ class TestDeclaredInputScoping:
         assert "agent started**" not in prompt
 
 
+class TestShippedDefaultWorkflowReviewWiring:
+    """The shipped ``default`` workflow's review step declares its inputs (#889).
+
+    The engine only scopes a step that *declares* inputs, so the fix is inert for
+    the shipped ``default`` workflow unless its review step is wired. The
+    wiring was removed as a stopgap while the reverse-comment-history walk still
+    duplicated every declared record; now that a declared-input step is composed
+    by reference, re-wiring restores the issue's expected review prompt
+    (role → plan → implement → user request) without the duplicates.
+    """
+
+    @staticmethod
+    def _default_workflow() -> dict:
+        from config import load_workflow
+
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "defaults"
+            / "workflows"
+            / "default.yaml"
+        )
+        return {step.name: step for step in load_workflow(str(path)).steps}
+
+    def test_review_declares_plan_and_implement(self):
+        review = self._default_workflow()["review"]
+        assert set(review.inputs or {}) == {"plan", "implement"}
+
+    def test_implement_still_hands_off_to_review(self):
+        steps = self._default_workflow()
+        assert steps["implement"].next == "review"
+
+
 class TestEntryPoints:
     def test_main_takes_an_argv_sequence(self):
         assert list(inspect.signature(main).parameters) == ["argv"]
