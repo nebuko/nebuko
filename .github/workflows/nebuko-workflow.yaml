@@ -106,7 +106,7 @@ on:
         description: 'API key for the OpenCode Go LLM provider (optional - only needed if you want to use it as provider)'
         required: false
       OPENROUTER_API_KEY:
-        description: 'Default API key for the LLM provider (used as fallback)'
+        description: 'Provider API key, referenced by api_token_env in the agent config (used by the default OpenRouter provider)'
         required: false
       LOCAL_VLLM_API_TOKEN:
         description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
@@ -295,11 +295,10 @@ jobs:
                 GH_TOKEN: ${{ secrets.GH_PAT }}
                 GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                 AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
-                LLM_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+                OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                 LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
                 COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
                 OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
-                LLM_BASE_URL: ${{ env.LLM_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions' }}
                 PIN_COMMENT: ${{ inputs.pin_comment }}
                 HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
                 PROMPT_BODY: ${{ inputs.prompt_body }}
