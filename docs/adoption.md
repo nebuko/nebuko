@@ -149,7 +149,7 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 | Secret | Required | Purpose |
 |--------|----------|---------|
 | `GH_PAT` | **yes** | Fine-grained PAT for git push, issue/PR API calls, and comments. |
-| `OPENROUTER_API_KEY` | optional | Provider key, used as the fallback LLM key. |
+| `OPENROUTER_API_KEY` | optional | Provider key (the `api_token_env` referenced by `defaults/agents/agent-config-openrouter.yaml`). |
 | `COMMANDCODE_API_KEY` | optional | CommandCode subscription provider. |
 | `OPENCODE_GO_API_KEY` | optional | OpenCode Go provider. |
 | `LOCAL_VLLM_API_TOKEN` | optional | Local vLLM provider. |

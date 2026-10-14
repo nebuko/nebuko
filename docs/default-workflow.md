@@ -219,7 +219,7 @@ Updates the git remote URL to embed the PAT, allowing the agent to push branches
 
 ### Step 15: Run OpenHands Agent
 
-**Input:** `PROMPT_LOCATION`, `AGENT_QUERY_PATH`, `ROLE_NAME`, `COMPLEXITY`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `AGENT_CONFIG_PATH`, `LLM_API_KEY`, `LLM_BASE_URL`, `PR_NUMBER` (optional for review agent).  
+**Input:** `PROMPT_LOCATION`, `AGENT_QUERY_PATH`, `ROLE_NAME`, `COMPLEXITY`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `AGENT_CONFIG_PATH`, `PR_NUMBER` (optional for review agent).  
 **Output:** Agent execution results written to stdout → `console.txt`, structured final message to `final_message.txt`, `workflow_state.json`, and optional `final_message_part_{N}.txt` files.
 
 Builds the final prompt by concatenating:

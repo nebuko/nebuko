@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from resolve_llm_config import (
     LLM_TIMEOUT_S,
+    LLMConfigError,
     normalize_base_url,
     normalize_reasoning_effort,
     resolve_api_url,
@@ -156,7 +157,6 @@ agents:
         self._env_keys = [
             "LLM_REASONING",
             "TEST_LLM_API_KEY",
-            "LLM_MODEL",
             "CONFIG_COMPLEXITY",
             "CONFIG_TEMPERATURE",
             "CONFIG_TOP_P",
@@ -302,14 +302,13 @@ agents:
 """
 
     def setUp(self):
-        self._env_keys = ["TEST_LLM_API_KEY", "LLM_BASE_URL", "AGENT_CONFIG_PATH", "ROLE_NAME", self.ENV]
+        self._env_keys = ["TEST_LLM_API_KEY", "AGENT_CONFIG_PATH", "ROLE_NAME", self.ENV]
         self._saved = {k: os.environ.get(k) for k in self._env_keys}
         self._tmpdir = tempfile.mkdtemp()
         self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
         os.environ["TEST_LLM_API_KEY"] = "test-key"
         os.environ["ROLE_NAME"] = "dev"
         os.environ["AGENT_CONFIG_PATH"] = self._config_path
-        os.environ.pop("LLM_BASE_URL", None)
         os.environ.pop(self.ENV, None)
 
     def tearDown(self):
@@ -352,30 +351,38 @@ agents:
             self._resolve(self.ENV)
 
 
-class TestBaseUrlNormalizedAfterFallbacks(unittest.TestCase):
-    """The env-fallback base_url is normalized too, not only the config URL.
+class TestBaseUrlNormalizedFromConfig(unittest.TestCase):
+    """The config-file base_url is normalized before it reaches ``LLM(**cfg)``.
 
-    ``base_url`` is normalized once, after every source has been folded in, so
-    the ``/chat/completions`` route is stripped no matter which layer supplied
-    it (issue #717 round 2).
+    ``base_url`` now comes only from the provider's ``api_url`` (the legacy
+    ``LLM_BASE_URL`` env fallback was removed, issue #925); the redundant
+    ``/chat/completions`` route is still stripped (issue #717).
     """
 
+    CONFIG_TEMPLATE = """\
+providers:
+  test_provider:
+    api_url: "@API_URL@"
+    api_token_env: "TEST_LLM_API_KEY"
+llms:
+  test-model:
+    model_path: "test/test-model"
+    provider: ${providers.test_provider}
+agents:
+  dev:
+    model: ${llms.test-model}
+    temperature: 0.7
+    prompt_file: "dev.md"
+"""
+
     def setUp(self):
-        self._env_keys = [
-            "LLM_API_KEY",
-            "LLM_MODEL",
-            "LLM_BASE_URL",
-            "AGENT_CONFIG_PATH",
-            "ROLE_NAME",
-        ]
+        self._env_keys = ["TEST_LLM_API_KEY", "AGENT_CONFIG_PATH", "ROLE_NAME"]
         self._saved = {k: os.environ.get(k) for k in self._env_keys}
-        os.environ["LLM_API_KEY"] = "test-key"
-        os.environ["LLM_MODEL"] = "test/model"
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        os.environ["TEST_LLM_API_KEY"] = "test-key"
         os.environ["ROLE_NAME"] = "dev"
-        # Point at a missing config so ``base_url`` comes from the env fallback.
-        os.environ["AGENT_CONFIG_PATH"] = os.path.join(
-            tempfile.gettempdir(), "does-not-exist-717.yaml"
-        )
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
 
     def tearDown(self):
         for k, v in self._saved.items():
@@ -383,24 +390,30 @@ class TestBaseUrlNormalizedAfterFallbacks(unittest.TestCase):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
-    def test_chat_completions_suffix_in_llm_base_url_is_stripped(self):
-        os.environ["LLM_BASE_URL"] = "http://litellm:4000/v1/chat/completions"
-
+    def _resolve(self, api_url: str) -> dict:
+        with open(self._config_path, "w") as f:
+            f.write(self.CONFIG_TEMPLATE.replace("@API_URL@", api_url))
         cfg, _, _ = resolve_llm_config(None, "prompt")
+        return cfg
 
+    def test_chat_completions_suffix_is_stripped(self):
+        cfg = self._resolve("http://litellm:4000/v1/chat/completions")
         self.assertEqual(cfg["base_url"], "http://litellm:4000/v1")
 
-    def test_bare_llm_base_url_passes_through(self):
-        os.environ["LLM_BASE_URL"] = "http://litellm:4000/v1"
-
-        cfg, _, _ = resolve_llm_config(None, "prompt")
-
+    def test_bare_url_passes_through(self):
+        cfg = self._resolve("http://litellm:4000/v1")
         self.assertEqual(cfg["base_url"], "http://litellm:4000/v1")
 
 
-class TestMissingModelFailsLoudly(unittest.TestCase):
-    """An unresolved model must fail loudly, not 404 at the provider (issue #717)."""
+class TestLLMConfigError(unittest.TestCase):
+    """Every resolution failure is a typed, actionable LLMConfigError (#925).
+
+    The agent-config file is the sole source of LLM configuration; the legacy
+    ``LLM_API_KEY`` / ``LLM_MODEL`` / ``LLM_BASE_URL`` / ``LLM_TEMPERATURE``
+    environment variables are no longer read.
+    """
 
     CONFIG_TEMPLATE = """\
 providers:
@@ -411,7 +424,6 @@ llms:
   test-model:
     model_path: "test/test-model"
     provider: ${providers.test_provider}
-    default_temperature: 0.7
 agents:
   dev:
     model: ${llms.test-model}
@@ -420,16 +432,25 @@ agents:
 """
 
     def setUp(self):
-        self._env_keys = ["TEST_LLM_API_KEY", "LLM_API_KEY", "LLM_MODEL", "AGENT_CONFIG_PATH", "ROLE_NAME"]
+        self._env_keys = [
+            "TEST_LLM_API_KEY",
+            "LLM_API_KEY",
+            "LLM_MODEL",
+            "LLM_BASE_URL",
+            "LLM_TEMPERATURE",
+            "AGENT_CONFIG_PATH",
+            "ROLE_NAME",
+        ]
         self._saved = {k: os.environ.get(k) for k in self._env_keys}
         self._tmpdir = tempfile.mkdtemp()
         self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
         with open(self._config_path, "w") as f:
             f.write(self.CONFIG_TEMPLATE)
         os.environ["TEST_LLM_API_KEY"] = "test-key"
-        os.environ["LLM_API_KEY"] = "legacy-key"
+        os.environ["ROLE_NAME"] = "dev"
         os.environ["AGENT_CONFIG_PATH"] = self._config_path
-        os.environ.pop("LLM_MODEL", None)
+        for k in ("LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "LLM_TEMPERATURE"):
+            os.environ.pop(k, None)
 
     def tearDown(self):
         for k, v in self._saved.items():
@@ -439,17 +460,48 @@ agents:
                 os.environ[k] = v
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
-    def test_unknown_role_without_llm_model_raises(self):
-        os.environ["ROLE_NAME"] = "unknown"
-        with self.assertRaises(ValueError) as context:
+    def test_missing_config_file_raises_config_file(self):
+        os.environ["AGENT_CONFIG_PATH"] = os.path.join(self._tmpdir, "nope.yaml")
+        with self.assertRaises(LLMConfigError) as context:
             resolve_llm_config(None, "prompt")
-        self.assertIn("LLM_MODEL", str(context.exception))
+        self.assertEqual(context.exception.missing, "config_file")
+        self.assertIn("nope.yaml", str(context.exception))
 
-    def test_llm_model_env_is_the_documented_fallback(self):
+    def test_unloadable_config_raises_config_load(self):
+        with open(self._config_path, "w") as f:
+            f.write("foo: bar\n")
+        with self.assertRaises(LLMConfigError) as context:
+            resolve_llm_config(None, "prompt")
+        self.assertEqual(context.exception.missing, "config_load")
+        self.assertTrue(context.exception.cause)
+
+    def test_unknown_role_raises_agent_role(self):
         os.environ["ROLE_NAME"] = "unknown"
-        os.environ["LLM_MODEL"] = "openrouter/anthropic/claude-sonnet-5"
-        cfg, _, _ = resolve_llm_config(None, "prompt")
-        self.assertEqual(cfg["model"], "openrouter/anthropic/claude-sonnet-5")
+        with self.assertRaises(LLMConfigError) as context:
+            resolve_llm_config(None, "prompt")
+        self.assertEqual(context.exception.missing, "agent_role")
+        self.assertIn("unknown", str(context.exception))
+
+    def test_unset_provider_secret_names_the_env_var(self):
+        os.environ.pop("TEST_LLM_API_KEY", None)
+        with self.assertRaises(LLMConfigError) as context:
+            resolve_llm_config(None, "prompt")
+        self.assertEqual(context.exception.missing, "api_token_env")
+        self.assertEqual(context.exception.api_token_env, "TEST_LLM_API_KEY")
+        self.assertIn("TEST_LLM_API_KEY", str(context.exception))
+
+    def test_stale_legacy_llm_api_key_is_ignored(self):
+        """A stale LLM_API_KEY must not mask the config-declared secret (#925)."""
+        os.environ.pop("TEST_LLM_API_KEY", None)
+        os.environ["LLM_API_KEY"] = "stale-legacy-key"
+        with self.assertRaises(LLMConfigError) as context:
+            resolve_llm_config(None, "prompt")
+        self.assertEqual(context.exception.missing, "api_token_env")
+
+    def test_error_is_a_value_error_for_existing_callers(self):
+        os.environ["ROLE_NAME"] = "unknown"
+        with self.assertRaises(ValueError):
+            resolve_llm_config(None, "prompt")
 
 
 class TestComplexityOverrideRouting(unittest.TestCase):
@@ -516,7 +568,6 @@ agents:
             "BASE_LLM_API_KEY",
             "HIGH_LLM_API_KEY",
             "LOW_LLM_API_KEY",
-            "LLM_MODEL",
             "CONFIG_MODEL",
             "CONFIG_COMPLEXITY",
             "CONFIG_TEMPERATURE",
@@ -742,8 +793,6 @@ agents:
         "ROLE_NAME",
         "CONFIG_MODEL",
         "CONFIG_TEMPERATURE",
-        "LLM_MODEL",
-        "LLM_BASE_URL",
         "OPENCODE_GO_API_KEY",
         "LLM_SESSION_ID",
     )
@@ -839,8 +888,6 @@ agents:
         "ROLE_NAME",
         "CONFIG_MODEL",
         "CONFIG_TEMPERATURE",
-        "LLM_MODEL",
-        "LLM_BASE_URL",
         "OPENCODE_GO_API_KEY",
     )
 

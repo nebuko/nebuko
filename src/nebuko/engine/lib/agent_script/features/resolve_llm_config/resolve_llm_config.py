@@ -1,6 +1,7 @@
-"""Resolve LLM config feature — config file parsing, env fallback, and override handling."""
+"""Resolve LLM config feature — agent-config file parsing and override handling."""
 
 import os
+from typing import Literal
 
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
@@ -146,14 +147,94 @@ def _enable_message_name_drop() -> None:
         litellm.callbacks.append(_MESSAGE_NAME_STRIPPER)
 
 
+class LLMConfigError(ValueError):
+    """The single typed failure for every LLM-configuration resolution error.
+
+    The agent-config file is the sole source of LLM configuration, so a missing
+    file, an unloadable file, an unknown role, or an unset provider secret all
+    fail here — carrying the config path, role, and the exact env var to set so
+    the message is actionable for a new user (issue #925).
+
+    Subclasses ``ValueError`` so existing ``except ValueError`` callers such as
+    the agent entry point keep working unchanged.
+    """
+
+    def __init__(
+        self,
+        config_path: str,
+        role_name: str,
+        missing: Literal[
+            "config_file", "config_load", "agent_role", "api_token_env"
+        ],
+        api_token_env: str = "",
+        cause: str = "",
+    ) -> None:
+        self.config_path = config_path
+        self.role_name = role_name
+        self.missing = missing
+        self.api_token_env = api_token_env
+        self.cause = cause
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        if self.missing == "config_file":
+            return (
+                f"Agent config file not found: '{self.config_path}'. "
+                "Nebuko resolves all LLM configuration from this file; create "
+                "it (see docs/configuration.md) or point AGENT_CONFIG_PATH at "
+                "an existing one."
+            )
+        if self.missing == "config_load":
+            return (
+                f"Failed to load agent config '{self.config_path}': {self.cause}. "
+                "Fix the file — the legacy LLM_* environment variables are no "
+                "longer read."
+            )
+        if self.missing == "agent_role":
+            return (
+                f"Agent role '{self.role_name}' has no entry in "
+                f"'{self.config_path}'. Add it to the 'agents' section."
+            )
+        return (
+            f"Provider secret env var '{self.api_token_env}' (declared by "
+            f"provider for agent role '{self.role_name}' in "
+            f"'{self.config_path}') is not set. Export it before running the "
+            "agent."
+        )
+
+    @classmethod
+    def config_file_missing(cls, config_path: str, role_name: str) -> "LLMConfigError":
+        return cls(config_path, role_name, "config_file")
+
+    @classmethod
+    def config_load_failed(
+        cls, config_path: str, role_name: str, cause: str
+    ) -> "LLMConfigError":
+        return cls(config_path, role_name, "config_load", cause=cause)
+
+    @classmethod
+    def unknown_role(cls, config_path: str, role_name: str) -> "LLMConfigError":
+        return cls(config_path, role_name, "agent_role")
+
+    @classmethod
+    def secret_env_unset(
+        cls, config_path: str, role_name: str, api_token_env: str
+    ) -> "LLMConfigError":
+        return cls(config_path, role_name, "api_token_env", api_token_env=api_token_env)
+
+
 def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     """
-    Resolve LLM configuration from layered sources.
+    Resolve LLM configuration from the agent-config file.
 
     Priority order (highest → lowest):
       1. Per-invocation overrides (CONFIG_MODEL, CONFIG_TEMPERATURE, etc.)
-      2. Layered config file (agent-config.yaml)
-      3. Environment variables (LLM_API_KEY, LLM_MODEL, etc.)
+      2. The agent-config file — the sole source of LLM configuration.
+
+    The legacy ``LLM_API_KEY`` / ``LLM_MODEL`` / ``LLM_BASE_URL`` /
+    ``LLM_TEMPERATURE`` environment variables are no longer read; the API key is
+    sourced from the env var named by the selected provider's ``api_token_env``
+    (issue #925).
 
     Args:
         args: Parsed argparse namespace with prompt_location attribute.
@@ -163,81 +244,59 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         Tuple of (llm_config_dict, prompt, agent_cfg_or_none).
 
     Raises:
-        ValueError: If no API key can be resolved.
+        LLMConfigError: If the config file is missing/unloadable, the agent role
+            has no entry, or the provider secret env var is unset.
     """
     import default_paths
 
     config_path = default_paths.agent_config_file()
     role_name = os.environ.get("ROLE_NAME", "unknown")
 
-    api_key = None
-    model = None
-    base_url = None
-    temperature = None
-    agent_cfg = None
-    api_url_raw = None
+    # ``tier_override`` needs a default: it is assigned conditionally below but
+    # read unconditionally. Every other value is bound on every path that
+    # reaches its use — the failure modes raise instead.
     tier_override = None
-    effective_ref = None
-    provider = None
 
     config_complexity = os.getenv("CONFIG_COMPLEXITY", "").lower()
 
-    # ── Layered config file ──────────────────────────────────────
-    if os.path.isfile(config_path):
-        try:
-            from config import load_config
+    # ── Agent-config file (sole source of LLM configuration) ─────
+    # The legacy LLM_* env-var fallback was removed (issue #925): every failure
+    # below is fatal and typed, never a silent substitution.
+    if not os.path.isfile(config_path):
+        raise LLMConfigError.config_file_missing(config_path, role_name)
 
-            cfg = load_config(config_path)
-            agent_cfg = cfg.agents.get(role_name)
-            api_url_raw = None
-            if agent_cfg:
-                if config_complexity in ("low", "medium", "high"):
-                    tier_override = agent_cfg.complexity_overrides.get(config_complexity)
-                effective_ref = (
-                    tier_override.model_ref
-                    if tier_override and tier_override.model_ref
-                    else agent_cfg.model_ref
-                )
-                model = effective_ref.model_path
-                provider = effective_ref.provider_ref
-                api_key = os.environ.get(provider.api_token_env)
-                api_url_raw = provider.api_url
-                temperature = agent_cfg.temperature
-                if tier_override is not None and tier_override.model_ref is not None:
-                    logger.info(
-                        f"Complexity tier override: {config_complexity} -> {model}"
-                    )
-            else:
-                logger.warning(
-                    f"Agent role '{role_name}' not found in config; "
-                    "falling back to env vars"
-                )
-        except Exception as e:
-            logger.warning(
-                f"Failed to load config from {config_path}: {e}; "
-                "falling back to env vars"
-            )
+    from config import load_config
 
-        # Resolve api_url outside the load try/except: a bad env-var reference
-        # is a config error and must fail fast, not silently fall back.
-        if api_url_raw is not None:
-            base_url = resolve_api_url(api_url_raw)
-            logger.info(
-                f"Loaded config for agent '{role_name}' from {config_path}: "
-                f"model={model}, provider={base_url}"
-            )
+    try:
+        cfg = load_config(config_path)
+    except Exception as e:  # noqa: BLE001 - re-raised as the typed config error
+        raise LLMConfigError.config_load_failed(config_path, role_name, str(e)) from e
 
-    # ── Backward-compatible env var fallback ─────────────────────
-    if api_key is None:
-        api_key = os.getenv("LLM_API_KEY")
-    if model is None:
-        # No silent default: an unresolved model must fail loudly below rather
-        # than reach the provider as a bogus name and 404 (issue #717).
-        model = os.getenv("LLM_MODEL")
-    if base_url is None:
-        base_url = os.getenv("LLM_BASE_URL")
-    if temperature is None and os.getenv("LLM_TEMPERATURE"):
-        temperature = float(os.getenv("LLM_TEMPERATURE"))
+    agent_cfg = cfg.agents.get(role_name)
+    if agent_cfg is None:
+        raise LLMConfigError.unknown_role(config_path, role_name)
+
+    if config_complexity in ("low", "medium", "high"):
+        tier_override = agent_cfg.complexity_overrides.get(config_complexity)
+    effective_ref = (
+        tier_override.model_ref
+        if tier_override and tier_override.model_ref
+        else agent_cfg.model_ref
+    )
+    model = effective_ref.model_path
+    provider = effective_ref.provider_ref
+    api_key = os.environ.get(provider.api_token_env)
+    api_url_raw = provider.api_url
+    temperature = agent_cfg.temperature
+    if tier_override is not None and tier_override.model_ref is not None:
+        logger.info(f"Complexity tier override: {config_complexity} -> {model}")
+
+    # A bad env-var reference is a config error and fails fast.
+    base_url = resolve_api_url(api_url_raw)
+    logger.info(
+        f"Loaded config for agent '{role_name}' from {config_path}: "
+        f"model={model}, provider={base_url}"
+    )
 
     # ── Per-invocation overrides ─────────────────────────────────
     config_model = os.getenv("CONFIG_MODEL")
@@ -264,16 +323,14 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
             )
 
     # ── Validation ───────────────────────────────────────────────
+    # The API key is the only remaining runtime check: the role and model were
+    # validated from the config file above.
     if not api_key:
-        raise ValueError("LLM_API_KEY environment variable is not set.")
-    if not model:
-        raise ValueError(
-            f"No LLM model resolved: agent role '{role_name}' has no entry in "
-            f"'{config_path}' and LLM_MODEL is unset."
+        raise LLMConfigError.secret_env_unset(
+            config_path, role_name, provider.api_token_env
         )
 
-    # Normalize last: every source (config, env fallback, override) has been
-    # folded into ``base_url`` by now, so the suffix strip covers them all.
+    # Normalize last: ``base_url`` came from the config provider above.
     base_url = normalize_base_url(base_url)
 
     # ── Build base LLM config dict ───────────────────────────────

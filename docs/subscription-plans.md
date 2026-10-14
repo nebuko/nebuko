@@ -104,9 +104,10 @@ Then reference the LLM from each agent exactly as in the full file. The
 
 - The run's *Resolve Agent Configuration* step should log
   `provider=https://api.commandcode.ai/provider/v1` and the model you chose.
-- If the key is missing the run fails fast with
-  `LLM_API_KEY environment variable is not set.` (the `api_token_env` variable
-  was empty and no fallback key was available).
+- If the key is missing the run fails fast with an `LLMConfigError` naming the
+  provider's `api_token_env` (for example
+  `Provider secret env var 'COMMANDCODE_API_KEY' ... is not set.`); there is no
+  fallback key.
 - A quick sanity call from your machine:
 
   ```bash
