@@ -23,6 +23,7 @@ from config import (
 )
 from resolve_workflow import (
     resolve_next_from_workflow,
+    resolution_to_marker,
     resolve_sub_workflow_entry,
     _is_terminal_step,
     _load_workflow_by_reference,
@@ -465,7 +466,7 @@ def _route_gate_decision(
             local_workflows_dir,
             prev_state.scaffold_branch,
         )
-    wf_result = resolve_next_from_workflow(
+    wf_result = resolution_to_marker(resolve_next_from_workflow(
         wf_name,
         step_name,
         workflows_dir,
@@ -475,7 +476,7 @@ def _route_gate_decision(
         local_workflows_dir=local_workflows_dir,
         scaffold_branch=prev_state.scaffold_branch,
         history=prev_state.history,
-    )
+    ))
     if not wf_result:
         return _workflow_next_step_skip_reason(wf_name, step_name, workflows_dir)
     if wf_result.get("SKIP_AGENT") == "true":
@@ -708,7 +709,7 @@ def _resolve_dispatch_path(
         parent_wf_step = (
             dispatch_obj.parent_workflow_step or prev_state.parent_workflow_step or ""
         )
-        wf_result = resolve_next_from_workflow(
+        wf_result = resolution_to_marker(resolve_next_from_workflow(
             prev_state.workflow,
             prev_state.step,
             workflows_dir,
@@ -719,7 +720,7 @@ def _resolve_dispatch_path(
             local_workflows_dir=local_workflows_dir,
             scaffold_branch=getattr(prev_state, "scaffold_branch", None),
             history=prev_state.history,
-        )
+        ))
         if wf_result:
             if wf_result.get("SKIP_AGENT") == "true":
                 # Surfaced mount-resolution failure (issue #671): a declared
@@ -989,7 +990,7 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
     the callee.
     """
     try:
-        result = resolve_next_from_workflow(wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir)
+        result = resolution_to_marker(resolve_next_from_workflow(wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir))
     except Exception:
         result = None
     if result and result.get("task") == callee and result.get("step"):
@@ -1049,9 +1050,9 @@ def _workflow_successor(
     if not (wf_name and current_step):
         return None
     try:
-        return resolve_next_from_workflow(
+        return resolution_to_marker(resolve_next_from_workflow(
             wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir
-        )
+        ))
     except Exception:
         return None
 
@@ -1806,10 +1807,10 @@ def _resolve_bot_fallback_path(
     if dispatch.status == "advance":
         if not config["task"]:
             # Auto-resolve next agent from workflow YAML
-            wf_result = resolve_next_from_workflow(
+            wf_result = resolution_to_marker(resolve_next_from_workflow(
                 config["config_workflow"], config["config_step"], workflows_dir,
                 local_workflows_dir=local_workflows_dir,
-            )
+            ))
             if wf_result:
                 if wf_result.get("SKIP_AGENT") == "true":
                     # Surfaced mount-resolution failure (issue #671).
@@ -1932,7 +1933,7 @@ def _resolve_workflow_next_step(
         return config
 
     # Resolve next step from workflow YAML
-    wf_result = resolve_next_from_workflow(
+    wf_result = resolution_to_marker(resolve_next_from_workflow(
         wf_name,
         current_step,
         workflows_dir,
@@ -1943,7 +1944,7 @@ def _resolve_workflow_next_step(
         local_workflows_dir=local_workflows_dir,
         scaffold_branch=prev_state.scaffold_branch,
         history=prev_state.history,
-    )
+    ))
     if wf_result:
         if wf_result.get("SKIP_AGENT") == "true":
             # Surfaced mount-resolution failure (issue #671).

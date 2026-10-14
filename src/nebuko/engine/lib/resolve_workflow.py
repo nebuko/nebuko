@@ -28,6 +28,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Optional, Union
 
@@ -265,6 +266,144 @@ def is_terminal_step(step: WorkflowStep) -> bool:
                 return False
         return True
     return False
+
+
+class RouteKind(Enum):  # @stub-protected
+    """What kind of routing result the resolver produced (issue #923).
+
+    The distinction that matters for the round-2 dead-end is
+    ``DECLARED_FINISH`` (the workflow explicitly ends: a matched
+    ``on_result`` edge or linear ``next`` with ``next: null``) versus
+    ``UNRESOLVED`` (nothing matched and nothing declared an end — a config
+    gap that must ping for input, never look like an honest finish).
+    """
+
+    ROUTE = "route"  # a normal ``{task, step[, branch]}`` successor
+    RUN_SCRIPT = "run_script"  # a deterministic script successor (issue #541)
+    SUB_WORKFLOW_ENTER = "sub_workflow_enter"  # a mounted child's leaf
+    SUB_WORKFLOW_EXIT = "sub_workflow_exit"  # the parent's post-ref step
+    DECLARED_FINISH = "declared_finish"  # the workflow declares its end
+    UNRESOLVED = "unresolved"  # a conditions step with no matching edge
+
+
+@dataclass(frozen=True)
+class RouteResolution:  # @stub-protected
+    """Immutable typed result of :func:`resolve_next_from_workflow` (issue #923).
+
+    Exactly one :class:`RouteKind` variant; the optional fields carry the
+    variant's payload. :meth:`as_marker` reproduces the legacy marker dict so
+    unconverted call sites keep working during the migration.
+    """
+
+    kind: RouteKind
+    task: str = ""
+    step: str = ""
+    branch: Optional[str] = None
+    script: Optional[dict] = None
+    workflow: str = ""
+    parent_workflow: str = ""
+    parent_workflow_step: str = ""
+    reason: str = ""
+
+    def as_marker(self) -> Optional[dict]:
+        """Legacy marker-dict view (``None`` for the member-less kinds)."""
+        if self.kind is RouteKind.ROUTE:
+            # Omit an empty ``step`` so the marker matches the legacy
+            # agent-hint fallback shape (``{"task": <hint>}``) exactly.
+            marker: dict = {"task": self.task}
+            if self.step:
+                marker["step"] = self.step
+            if self.branch:
+                marker["branch"] = self.branch
+            return marker
+        if self.kind is RouteKind.RUN_SCRIPT:
+            return dict(self.script or {})
+        if self.kind is RouteKind.SUB_WORKFLOW_ENTER:
+            marker = {
+                "entered_sub_workflow": True,
+                "task": self.task,
+                "step": self.step,
+                "workflow": self.workflow,
+                "parent_workflow": self.parent_workflow,
+                "parent_workflow_step": self.parent_workflow_step,
+            }
+            if self.branch:
+                marker["branch"] = self.branch
+            return marker
+        if self.kind is RouteKind.SUB_WORKFLOW_EXIT:
+            marker = {
+                "exited_sub_workflow": True,
+                "task": self.task,
+                "step": self.step,
+                "workflow": self.workflow,
+            }
+            if self.branch:
+                marker["branch"] = self.branch
+            return marker
+        return None
+
+
+def resolution_to_marker(resolution: Optional[RouteResolution]) -> Optional[dict]:
+    """Compat shim: legacy marker view of a :class:`RouteResolution`."""
+    return resolution.as_marker() if resolution is not None else None
+
+
+@dataclass(frozen=True)
+class _StepGap:
+    """A step whose routing could not be resolved (implementation detail).
+
+    Returned internally when a step's conditions are present but no edge
+    matches the branch key, or when the matched target step is missing from
+    the definition — the two cases :func:`resolve_next_from_workflow` maps
+    onto :attr:`RouteKind.UNRESOLVED`.
+    """
+
+    step: str
+    reason: str
+
+
+def _marker_to_resolution(marker: Optional[dict]) -> Optional[RouteResolution]:
+    """Translate a legacy marker dict (or ``None``) into a typed resolution."""
+    if marker is None:
+        return None
+    if marker.get("SKIP_AGENT") == "true":
+        # Mount-resolution failure is surfaced by returning ``None`` from the
+        # typed API; callers keep their existing clean-failure semantics.
+        return None
+    if marker.get("run_script"):
+        return RouteResolution(
+            kind=RouteKind.RUN_SCRIPT,
+            step=str(marker.get("step") or ""),
+            script={
+                "path": marker.get("script_path", ""),
+                "args_str": marker.get("script_args_str", ""),
+                "timeout_minutes": marker.get("timeout_minutes"),
+            },
+        )
+    if marker.get("entered_sub_workflow"):
+        return RouteResolution(
+            kind=RouteKind.SUB_WORKFLOW_ENTER,
+            task=str(marker.get("task") or ""),
+            step=str(marker.get("step") or ""),
+            branch=marker.get("branch"),
+            workflow=str(marker.get("workflow") or ""),
+            parent_workflow=str(marker.get("parent_workflow") or ""),
+            parent_workflow_step=str(marker.get("parent_workflow_step") or ""),
+        )
+    if marker.get("exited_sub_workflow"):
+        return RouteResolution(
+            kind=RouteKind.SUB_WORKFLOW_EXIT,
+            task=str(marker.get("task") or ""),
+            step=str(marker.get("step") or ""),
+            branch=marker.get("branch"),
+            workflow=str(marker.get("workflow") or ""),
+        )
+    return RouteResolution(
+        kind=RouteKind.ROUTE,
+        task=str(marker.get("task") or ""),
+        step=str(marker.get("step") or ""),
+        branch=marker.get("branch"),
+    )
 
 
 # Back-compat private aliases (issue #751): the offline linter imports the
@@ -2443,7 +2582,7 @@ def _marker_for_target_step(
     return result
 
 
-def resolve_next_from_workflow(
+def _resolve_next_marker(
     workflow_name: str,
     current_step_name: str,
     workflows_dir: str,
@@ -2454,8 +2593,14 @@ def resolve_next_from_workflow(
     local_workflows_dir: Optional[str] = None,
     scaffold_branch: Optional[str] = None,
     history: Optional[list] = None,
-) -> Optional[dict]:
-    """Resolve the next step in a workflow given the current step.
+) -> Optional[Union[dict, _StepGap]]:
+    """Legacy marker-dict resolver (implementation detail of #923 retype).
+
+    Same behavior as before: returns the marker dicts documented below, or
+    ``None``. Adds one internal sentinel: a :class:`_StepGap` is returned when
+    the step's conditions are present, nothing matched, and no linear ``next``
+    exists — the config gap that the typed wrapper reports as
+    ``RouteKind.UNRESOLVED`` (issue #923) instead of a silent finish.
 
     ``workflow_name`` may be a workflow name (resolved from ``workflows_dir``)
     or a repo-root-relative path (issue #468) — same resolution rules as
@@ -2535,6 +2680,10 @@ def resolve_next_from_workflow(
     # Resolve target step name
     target_step_name: Optional[str] = None
     branch_key: Optional[str] = None
+    # True once a declared edge was followed — including a matched condition
+    # whose ``next`` is ``null`` (a declared finish), so a legitimate terminal
+    # is never mistaken for the #923 conditions-gap (issue #923).
+    branch_matched = False
 
     if branch_result and current_step.conditions:
         # Try to match a specific condition; a match on ``next: null`` is
@@ -2552,7 +2701,9 @@ def resolve_next_from_workflow(
                 if condition.on_result == "default":
                     target_step_name = condition.next
                     branch_key = "default"
+                    matched = True
                     break
+        branch_matched = matched
     elif not branch_result and current_step.conditions and current_step.next is None:
         # Branch-less dispatch on a conditions-only step (issue #618):
         # honor a ``default`` condition instead of dead-ending. Only when the
@@ -2562,12 +2713,27 @@ def resolve_next_from_workflow(
             if condition.on_result == "default":
                 target_step_name = condition.next
                 branch_key = "default"
+                branch_matched = True
                 break
     else:
         # Follow linear next field
         target_step_name = current_step.next
+        branch_matched = True
 
     if target_step_name is None:
+        # A conditions step whose edges matched nothing is a config gap, not a
+        # declared end (issue #923): report it so the typed wrapper can
+        # distinguish it from an honest finish and never route it to the silent
+        # WORKFLOW_COMPLETE ping.
+        if current_step.conditions and current_step.next is None and not branch_matched:
+            return _StepGap(
+                step=current_step.name,
+                reason=(
+                    f"step '{current_step.name}' declares conditions but none "
+                    f"matched branch '{branch_result or ''}' and it has no "
+                    "linear next"
+                ),
+            )
         return _return_to_parent_on_terminal(
             parent_workflow, parent_workflow_step, branch_result, workflows_dir, agent_hint,
             local_workflows_dir, scaffold_branch,
@@ -2594,6 +2760,103 @@ def resolve_next_from_workflow(
         target_step, workflow, workflows_dir, local_workflows_dir,
         scaffold_branch, branch_key or "",
     )
+
+
+def resolve_next_from_workflow(
+    workflow_name: str,
+    current_step_name: str,
+    workflows_dir: str,
+    agent_hint: Optional[str] = None,
+    branch_result: Optional[str] = None,
+    parent_workflow: str = "",
+    parent_workflow_step: str = "",
+    local_workflows_dir: Optional[str] = None,
+    scaffold_branch: Optional[str] = None,
+    history: Optional[list] = None,
+) -> Optional[RouteResolution]:
+    """Typed resolver (issue #923): resolve the next step as a RouteResolution.
+
+    Retypes :func:`_resolve_next_marker`'s legacy marker dicts onto
+    :class:`RouteResolution` and, crucially, separates three outcomes that the
+    legacy ``None`` conflated:
+
+    - :attr:`RouteKind.DECLARED_FINISH` — the workflow explicitly ends here (a
+      matched ``on_result`` edge or linear ``next`` with ``next: null``, or a
+      parent return with no parent). A benign finish.
+    - :attr:`RouteKind.UNRESOLVED` — a conditions step whose edges matched
+      nothing and which has no linear ``next``: a config gap that must ping for
+      input, never look like an honest finish (the #923 round-2 dead-end).
+    - ``None`` — the workflow/step did not resolve at all (missing file, unknown
+      step), preserving the clean-failure contract.
+
+    The parameter list is unchanged; callers that still expect the marker dict
+    use :func:`resolution_to_marker` (or :meth:`RouteResolution.as_marker`).
+    """
+    marker = _resolve_next_marker(
+        workflow_name,
+        current_step_name,
+        workflows_dir,
+        agent_hint=agent_hint,
+        branch_result=branch_result,
+        parent_workflow=parent_workflow,
+        parent_workflow_step=parent_workflow_step,
+        local_workflows_dir=local_workflows_dir,
+        scaffold_branch=scaffold_branch,
+        history=history,
+    )
+    if isinstance(marker, _StepGap):
+        return RouteResolution(kind=RouteKind.UNRESOLVED, step=marker.step, reason=marker.reason)
+    if marker is not None:
+        return _marker_to_resolution(marker)
+    kind = _classify_terminal_kind(
+        workflow_name, current_step_name, workflows_dir, local_workflows_dir,
+    )
+    if kind is RouteKind.UNRESOLVED:
+        return RouteResolution(kind=kind, step=current_step_name)
+    if kind is RouteKind.DECLARED_FINISH:
+        return RouteResolution(kind=kind, step=current_step_name)
+    return None
+
+
+def _classify_terminal_kind(
+    workflow_name: str,
+    current_step_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> Optional[RouteKind]:
+    """Classify a ``None`` marker result: DECLARED_FINISH, UNRESOLVED, or None.
+
+    A ``None`` from :func:`_resolve_next_marker` means "no successor". It is a
+    *declared finish* when the step exists and honestly has no onward edge
+    (conditions all ``next: null``, or a linear ``next: null``), and
+    *unresolved* when the step declares forward edges that matched nothing.
+    A missing workflow/step stays ``None`` (not a finish).
+    """
+    try:
+        workflow = _load_workflow_by_reference(
+            workflow_name, workflows_dir, local_workflows_dir
+        )
+    except Exception:
+        return None
+    if workflow is None:
+        return None
+    current_step = next(
+        (s for s in workflow.steps if s.name == current_step_name), None
+    )
+    if current_step is None:
+        return None
+    if current_step.conditions and current_step.next is None:
+        # Conditions exist but every reachable edge is ``next: null`` or the
+        # key did not match: the internal marker resolver already raised the
+        # pure "nothing matched" case as ``_StepGap``; here we only reach a
+        # genuine all-null terminal, which is a declared finish.
+        if all(cond.next is None for cond in current_step.conditions):
+            return RouteKind.DECLARED_FINISH
+        return RouteKind.UNRESOLVED
+    if current_step.next is None:
+        return RouteKind.DECLARED_FINISH
+    # A forward edge existed but produced no successor (missing target step).
+    return RouteKind.UNRESOLVED
 
 
 def main():

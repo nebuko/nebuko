@@ -10,8 +10,13 @@ import yaml
 def _import_resolver():
     import sys
     sys.path.insert(0, str(Path(__file__).parent))
-    from resolve_workflow import resolve_next_from_workflow
-    return resolve_next_from_workflow
+    from resolve_workflow import resolve_next_from_workflow, resolution_to_marker
+
+    # The resolver now returns a typed ``RouteResolution`` (issue #923); these
+    # tests exercise the legacy marker-dict view, so adapt through the shim.
+    return lambda *args, **kwargs: resolution_to_marker(
+        resolve_next_from_workflow(*args, **kwargs)
+    )
 
 
 @pytest.fixture
