@@ -17,6 +17,7 @@ llms:
     model_path: "openai/deepseek-v4.1-flash"
     provider: "${providers.opencode_go}"
     preserve_thinking: true
+    thinking_enabled: false
     top_p: 0.95
   glm-5_3-flash:
     model_path: "openai/glm-5.3-flash"
