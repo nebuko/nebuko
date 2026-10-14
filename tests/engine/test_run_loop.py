@@ -1225,8 +1225,43 @@ class TestRunLoop:
         assert parts[0].body.startswith(BOT_AGENT_MARKER)
         assert parts[0].body.count("*(Part 1/") == 1
         for offset, part in enumerate(parts[1:], start=2):
-            assert part.body.startswith(f"*(Part {offset}/")
+            # Continuation parts carry the bot marker so the ledger classifies
+            # them as agent output and renders them in full (issue #913).
+            assert part.body.startswith(BOT_AGENT_MARKER)
+            assert f"*(Part {offset}/" in part.body
             assert "*(Part 1/" not in part.body
+
+    def test_continuation_parts_render_in_full_in_the_next_run_thread(
+        self, tmp_path, monkeypatch
+    ):
+        """The split parts reach the next prompt in full, not a one-line preview (#913).
+
+        A marker-less continuation part is classified as human feedback by the
+        thread ledger, so it collapses to an unverified one-line preview and the
+        enlarged RELEVANT SNIPPETS never reach the agent. Every part carrying the
+        bot marker keeps them agent output, rendered verbatim.
+        """
+        from config import CommentSizePolicy
+
+        engine = _engine(tmp_path)
+        long_answer = "\n\n".join(f"Section {i} " + "x" * 80 for i in range(30))
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result(long_answer))
+        monkeypatch.setattr(
+            Engine,
+            "_comment_size_policy",
+            staticmethod(lambda: CommentSizePolicy(max_comment_chars=400, max_parts=40)),
+        )
+
+        engine.run()
+
+        # A fresh engine over the same run dir renders the ledger the next
+        # agent would see.
+        next_engine = _engine(tmp_path)
+        text = next_engine._render_recent_thread([])
+
+        for i in range(30):
+            assert f"Section {i} " in text
+        assert "Other human comments (unverified)" not in text
 
     def test_the_first_published_comment_carries_the_workflow_state(
         self, tmp_path, monkeypatch

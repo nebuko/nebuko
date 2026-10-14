@@ -1715,6 +1715,7 @@ class Engine:
             extract_dispatch=validate_output.extract_dispatch,
             build_comment_body=prepare_comment.build_comment_body,
             build_comment_body_parts=prepare_comment.build_comment_body_parts,
+            format_bot_marker=prepare_comment.format_bot_marker,
             escape_agent_triggers=prepare_comment.escape_agent_triggers,
             split_comment_body=split_comment_body,
         )
@@ -1778,7 +1779,12 @@ class Engine:
             role_name=self._role_of(agent_result),
             state=self._explicit_state(agent_result),
         )
-        parts = bridge.split_comment_body(body, self._comment_size_policy(), head=header)
+        # Every continuation part must carry the bot marker too, or the ledger
+        # reads it as human feedback and drops it from the next prompt (#913).
+        marker = bridge.format_bot_marker(self._role_of(agent_result))
+        parts = bridge.split_comment_body(
+            body, self._comment_size_policy(), head=header, marker=marker
+        )
         # Same invariant as ``prepare_comment._write_output``: a posted comment
         # must never carry a raw ``@@agent`` token, or it re-arms the very gate
         # that started this run (issue #482). Escaping the joined body is

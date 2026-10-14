@@ -526,6 +526,19 @@ def format_answer_header(role_name: str | None, state: WorkflowState | None) -> 
     )
 
 
+def format_bot_marker(role_name: str | None) -> str:
+    """The bot marker line for a role, newline-terminated (issue #913).
+
+    A continuation answer comment must carry the same ``<!-- bot-agent-* -->``
+    marker as the first part: the thread ledger classifies comment kinds from
+    the body marker (issue #872), so a marker-less continuation part is read as
+    human feedback and never renders into the next agent's prompt. Returns the
+    same role normalisation as :func:`format_answer_header`.
+    """
+    role = (role_name or "").strip() or "unknown"
+    return f"<!-- bot-agent-{role} -->\n"
+
+
 # Backwards-compatible alias; the private name predates the public export.
 _format_answer_header = format_answer_header
 

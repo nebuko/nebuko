@@ -147,6 +147,7 @@ def split_comment_body(
     body: str,
     policy: CommentSizePolicy,
     head: str = "",
+    marker: str = "",
 ) -> list[CommentPart]:
     """Split an answer body across comments, prepending ``head`` to the first part.
 
@@ -166,6 +167,13 @@ def split_comment_body(
         policy: The comment-size policy (per-comment budget and part ceiling).
         head: Content prepended verbatim to the first part (e.g. the answer
             header with its state section); only its length affects sizing.
+        marker: A bot marker line (e.g. ``<!-- bot-agent-<role> -->\n``)
+            prefixed to every *continuation* part. Without it the later parts
+            are marker-less and the thread ledger classifies them as human
+            feedback, so they never render into the next agent's prompt — the
+            very content this split exists to deliver (issue #913). The first
+            part already carries the marker inside ``head``, so it is not
+            prefixed there.
 
     Returns:
         The ordered parts; a single part carries no continuation header.
@@ -177,7 +185,7 @@ def split_comment_body(
     if len(body) + len(head) <= budget:
         return [CommentPart(index=1, total=1, body=head + body)]
 
-    header_reserve = len(f"*(Part {max_parts}/{max_parts})*\n\n")
+    header_reserve = len(f"*(Part {max_parts}/{max_parts})*\n\n") + len(marker)
     per_part = max(1, budget - header_reserve)
     first_limit = max(1, per_part - len(head))
 
@@ -189,7 +197,10 @@ def split_comment_body(
     parts: list[CommentPart] = []
     for index, chunk in enumerate(chunks, start=1):
         part_header = f"*(Part {index}/{total})*\n\n"
-        text = head + part_header + chunk if index == 1 else part_header + chunk
+        if index == 1:
+            text = head + part_header + chunk
+        else:
+            text = marker + part_header + chunk
         parts.append(CommentPart(index=index, total=total, body=text))
     return parts
 
