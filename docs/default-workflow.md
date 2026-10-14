@@ -129,15 +129,14 @@ Installs the two core OpenHands packages directly from the `agent-sdk` GitHub re
 ### Step 8: Resolve Agent Configuration
 
 **Input:** `TRIGGER_BODY`, `PROMPT_BASE`, `WFLOWS_DIR`.  
-**Output:** Environment variables: `TASK`, `ROLE_NAME`, `PROMPT_LOCATION`, `AGENT_SELECTED`, `COMPLEXITY`, `LLM_REASONING`, `AGENT_ROUND`, `AGENT_SKILLS`, `STEP_SKILLS`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `CONFIG_TOP_P`, `CONFIG_TOP_K`, `CONFIG_REPETITION_PENALTY`, `WORKFLOW_NAME`, `WORKFLOW_STEP`, `WORKFLOW_NEXT`, `PARENT_WORKFLOW`, `PARENT_WORKFLOW_STEP`, `SKILL_CONTEXT_FILE`, `CONFIG_PR_NUMBER`.
+**Output:** Environment variables: `TASK`, `ROLE_NAME`, `PROMPT_LOCATION`, `AGENT_SELECTED`, `COMPLEXITY`, `LLM_REASONING`, `AGENT_ROUND`, `CONFIG_MODEL`, `CONFIG_TEMPERATURE`, `CONFIG_TOP_P`, `CONFIG_TOP_K`, `CONFIG_REPETITION_PENALTY`, `WORKFLOW_NAME`, `WORKFLOW_STEP`, `WORKFLOW_NEXT`, `PARENT_WORKFLOW`, `PARENT_WORKFLOW_STEP`, `CONFIG_PR_NUMBER`.
 
 Runs `resolve_config.py` which parses the trigger body to determine:
 1. Which agent role should handle the request (from a human `@@mention`, a machine trigger token, the `AGENT_RUN_CONFIG` `function_call` section, or the workflow state's dispatch).
 2. The complexity level (`low`, `medium`, `high`).
 3. The prompt file location for the selected agent.
-4. Skill files to load and concatenate.
-5. Model/temperature overrides.
-6. Workflow routing metadata (for multi-step workflows).
+4. Model/temperature overrides.
+5. Workflow routing metadata (for multi-step workflows).
 
 Routing priority: human `@@mention` > `AGENT_RUN_CONFIG` `function_call` (imperative one-shot hand-off) > machine trigger token > workflow-state dispatch > workflow next-step > bot fallback. Bot bodies never yield an `@@mention` (logged warning when mentions are dropped).
 
@@ -441,7 +440,6 @@ GitHub Event
 | `ROLE_NAME` | Step 8 | Selected agent role |
 | `COMPLEXITY` | Step 8 | Task complexity level |
 | `PROMPT_LOCATION` | Step 8 | Path to prompt template |
-| `AGENT_SKILLS` | Step 8 | Comma-separated skill file names |
 | `SKIP_AGENT` | Steps 8-10 | Whether to skip agent execution |
 | `CIRCUIT_BREAKER_TRIPPED` | Step 10 | Whether circuit breaker activated |
 | `HAS_COMMENT` | Step 16 | Whether a comment was generated |

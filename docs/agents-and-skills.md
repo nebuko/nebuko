@@ -38,7 +38,7 @@ core rules only); the product owner's issue-refinement behavior contract
 
 Prompts themselves hold only **personality and core rules**. Procedural
 playbooks (search strategy, git/PR mechanics, planning, review modes, issue
-refinement) are skills, injected on demand — see
+refinement) are skills, read on demand — see
 [The Skills System](#the-skills-system).
 
 ---
@@ -102,9 +102,13 @@ markers (see
 
 A skill is a Markdown prompt file in `defaults/skills/`. An agent attaches one or
 more by default through the `skills:` field of its `agent-config.yaml` stanza; a
-workflow step attaches one or more with `skill: [name]`. The skill content is
-injected into that agent's system prompt, narrowing or constraining its behavior
-for that run.
+workflow step attaches one or more with `skill: [name]`. Skills are **not**
+currently injected into the system prompt: each agent reads the skill files it
+needs on demand (see the instruction at the top of `defaults/prompts/dev.md`).
+The former system-channel injection (`SKILL_CONTEXT_FILE` →
+`security_policy_filename`) was removed with the SDK prompt-section registry in
+issue #943; re-routing skills through the SDK's `AgentContext(skills=[...])` is
+tracked separately.
 
 | Skill | File | Purpose |
 |-------|------|---------|

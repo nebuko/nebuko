@@ -5,7 +5,6 @@ arming, arun invocation, wind-down trigger, outcome attachment) is exercised.
 """
 
 import asyncio
-import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -13,12 +12,11 @@ from unittest.mock import MagicMock, patch
 from openhands.sdk.llm.exceptions import LLMServiceUnavailableError
 
 from agent_script.features.run_agent.run_agent import (
-    _DISABLED_SYSTEM_PROMPT_PERSONA,
+    _SYSTEM_PROMPT,
     _build_mcp_servers,
     _discard_token,
     _perform_wind_down,
     _resolve_mcp_env,
-    _resolve_security_policy,
     _run_supervised,
     run_agent,
 )
@@ -26,6 +24,16 @@ from agent_script.features.run_agent.run_failure import RunFailureKind
 from agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
+)
+
+# SDK registry sections the static prompt used to carry. Issue #943 removes all
+# of them; these pins keep them from coming back.
+_SDK_SECTION_MARKERS = (
+    "<MEMORY>",
+    "<SECURITY>",
+    "<SECURITY_RISK_ASSESSMENT>",
+    "<EXTERNAL_SERVICES>",
+    "<PROCESS_MANAGEMENT>",
 )
 
 
@@ -355,97 +363,99 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertIsNone(convo.run_outcome.dispatch_recall_event_offset)
 
 
-class TestResolveSecurityPolicy(unittest.TestCase):
-    """Skills route through the system channel; SDK default as fallback (#510)."""
-
-    def test_skill_file_routed_to_system_channel(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md") as f:
-            f.write("# Stub-Only Mode\nsentinel skill text\n")
-            f.flush()
-            with patch("agent_script.features.run_agent.run_agent.os.environ", {
-                "SKILL_CONTEXT_FILE": f.name
-            }):
-                self.assertEqual(_resolve_security_policy(), f.name)
-
-    def test_env_var_unset_falls_back_to_default(self):
-        with patch(
-            "agent_script.features.run_agent.run_agent.os.environ", {}
-        ):
-            self.assertEqual(_resolve_security_policy(), "security_policy.j2")
-
-    def test_nonexistent_path_falls_back_to_default(self):
-        with patch(
-            "agent_script.features.run_agent.run_agent.os.environ", {
-                "SKILL_CONTEXT_FILE": "/tmp/definitely-missing-skill-context.md"
-            }
-        ):
-            self.assertEqual(_resolve_security_policy(), "security_policy.j2")
-
-    def test_empty_file_falls_back_to_default(self):
-        with tempfile.NamedTemporaryFile(mode="w") as f:
-            f.flush()
-            with patch("agent_script.features.run_agent.run_agent.os.environ", {
-                "SKILL_CONTEXT_FILE": f.name
-            }):
-                self.assertEqual(_resolve_security_policy(), "security_policy.j2")
-
-
-class TestRunAgentSystemChannelIntegration(unittest.TestCase):
-    """run_agent passes the resolved policy to the Agent constructor."""
+class TestRunAgentSystemPromptWiring(unittest.TestCase):
+    """run_agent hands its own static prompt to the Agent constructor (#943)."""
 
     @patch("agent_script.features.run_agent.run_agent.Conversation")
     @patch("agent_script.features.run_agent.run_agent.Agent")
     @patch("agent_script.features.run_agent.run_agent.LLM")
     @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
-    def test_agent_receives_skill_file_as_security_policy(
+    def test_agent_receives_nebuko_static_prompt(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
         mock_budget.return_value = SimpleNamespace(
             soft_timeout_s=60.0, wind_down_timeout_s=30.0
         )
-        convo = _make_conversation("finished")
-        mock_conversation_cls.return_value = convo
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md") as f:
-            f.write("skill content\n")
-            f.flush()
-            with patch(
-                "agent_script.features.run_agent.run_agent.os.environ", {
-                    "SKILL_CONTEXT_FILE": f.name,
-                    "ROLE_NAME": "dev",
-                }
-            ), patch(
-                "agent_script.features.run_agent.run_agent.build_condenser",
-                return_value=None,
-            ):
-                run_agent(llm_config={}, prompt="do the thing")
-        self.assertEqual(
-            mock_agent.call_args.kwargs["security_policy_filename"], f.name
-        )
-
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
-    def test_agent_keeps_default_policy_without_skills(
-        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
-    ):
-        mock_budget.return_value = SimpleNamespace(
-            soft_timeout_s=60.0, wind_down_timeout_s=30.0
-        )
-        convo = _make_conversation("finished")
-        mock_conversation_cls.return_value = convo
+        mock_conversation_cls.return_value = _make_conversation("finished")
         with patch(
-            "agent_script.features.run_agent.run_agent.os.environ",
-            {"ROLE_NAME": "dev"},
-        ), patch(
             "agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(llm_config={}, prompt="do the thing")
+
         self.assertEqual(
-            mock_agent.call_args.kwargs["security_policy_filename"],
-            "security_policy.j2",
+            mock_agent.call_args.kwargs["system_prompt"], _SYSTEM_PROMPT
         )
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_no_legacy_prompt_levers_reach_the_agent(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        """`persona`/`security_policy_filename`/`system_prompt_kwargs` are gone.
+
+        All three fed the registry the inline prompt now bypasses, so passing
+        them again would be a silent no-op at best.
+        """
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        mock_conversation_cls.return_value = _make_conversation("finished")
+        with patch(
+            "agent_script.features.run_agent.run_agent.build_condenser",
+            return_value=None,
+        ):
+            run_agent(llm_config={}, prompt="do the thing")
+
+        kwargs = mock_agent.call_args.kwargs
+        for lever in ("persona", "security_policy_filename", "system_prompt_kwargs"):
+            self.assertNotIn(lever, kwargs)
+
+
+class TestSystemPromptOverride(unittest.TestCase):
+    """The SDK's built-in prompt is replaced wholesale (issues #938, #943).
+
+    The inline ``system_prompt`` escape hatch is the only lever that reaches the
+    three unguarded registry sections (``memory``, ``external_services``,
+    ``process_management``); ``persona`` deliberately kept them.
+    """
+
+    def test_prompt_is_non_blank(self):
+        self.assertTrue(_SYSTEM_PROMPT.strip())
+
+    def test_prompt_carries_no_sdk_section_markers(self):
+        for marker in _SDK_SECTION_MARKERS:
+            self.assertNotIn(marker, _SYSTEM_PROMPT)
+        self.assertNotIn("<SOUL>", _SYSTEM_PROMPT)
+        self.assertNotIn("<ROLE>", _SYSTEM_PROMPT)
+
+    def test_prompt_defers_control_to_role_instructions(self):
+        # The last line routes the agent to the control tools, which live in the
+        # role prompt + the dynamic tier (SHARED_EXIT_RULES).
+        self.assertIn(
+            "Finish through the control tools described in your role instructions",
+            _SYSTEM_PROMPT,
+        )
+
+
+class TestSdkStaticPromptRegression(unittest.TestCase):
+    """The SDK's own static sections must never reach the model again (#943)."""
+
+    def test_real_agent_static_prompt_is_nebuko_prompt_only(self):
+        from openhands.sdk import Agent, LLM
+
+        agent = Agent(
+            llm=LLM(model="gpt-4o-mini"),
+            system_prompt=_SYSTEM_PROMPT,
+        )
+        static = agent.static_system_message
+        for marker in _SDK_SECTION_MARKERS:
+            self.assertNotIn(marker, static)
+        # The SDK appends the loaded tools' prompt guidance after the inline
+        # prompt; the prompt itself is the whole static head.
+        self.assertIn(_SYSTEM_PROMPT.strip("\n"), static)
 
 
 class TestMCPServerWiring(unittest.TestCase):
@@ -547,39 +557,6 @@ class TestMCPServerWiring(unittest.TestCase):
             mcp_config["brave-search"].env["BRAVE_API_KEY"].get_secret_value(),
             "secret-value",
         )
-
-
-class TestSystemPromptOverride(unittest.TestCase):
-    """The SDK's built-in OpenHands persona is replaced (issue #938).
-
-    ``persona`` is the SDK's purpose-built lever: it drops ``<SOUL>``/``<ROLE>``
-    and the generic coding-workflow sections while keeping the capability/policy
-    sections and the dynamic context. The run must pass a non-blank value (an
-    empty/None ``persona`` falls back to the built-in one).
-    """
-
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
-    def test_agent_receives_neutral_persona(
-        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
-    ):
-        mock_budget.return_value = SimpleNamespace(
-            soft_timeout_s=60.0, wind_down_timeout_s=30.0
-        )
-        mock_conversation_cls.return_value = _make_conversation("finished")
-        with patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
-            return_value=None,
-        ):
-            run_agent(llm_config={}, prompt="do the thing")
-
-        persona = mock_agent.call_args.kwargs["persona"]
-        self.assertIsNotNone(persona)
-        self.assertTrue(persona.strip())
-        self.assertEqual(persona, _DISABLED_SYSTEM_PROMPT_PERSONA)
-        self.assertFalse(mock_agent.call_args.kwargs.get("system_prompt"))
 
 
 if __name__ == "__main__":
