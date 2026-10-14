@@ -54,6 +54,22 @@ logger = get_logger(__name__)
 # SDK sentinel for the built-in security policy (agent/base.py).
 _DEFAULT_SECURITY_POLICY = "security_policy.j2"
 
+# Replaces the SDK's built-in OpenHands persona and coding-workflow sections
+# (`<SOUL>`/`<ROLE>`/`<EFFICIENCY>`/`<FILE_SYSTEM_GUIDELINES>`/`<CODE_QUALITY>`/
+# `<VERSION_CONTROL>`/`<PULL_REQUESTS>`/`<PROBLEM_SOLVING_WORKFLOW>`/
+# `<SELF_DOCUMENTATION>`/`<ENVIRONMENT_SETUP>`/`<TROUBLESHOOTING>` ...) so an
+# agent is defined solely by its Nebuko role prompt + skills, not by OpenHands'
+# generic coding-agent identity (issue #938). The SDK's `persona` lever is the
+# purpose-built switch for this: capability and policy sections (memory,
+# security policy, risk assessment, tool guidance, external services, process
+# management, model-specific notes) and the dynamic context are still included.
+# Empty would fall back to the built-in persona, so this must stay non-blank.
+_DISABLED_SYSTEM_PROMPT_PERSONA = (
+    "You are an autonomous AI agent operated by the Nebuko workflow engine on "
+    "behalf of the repository maintainers. Your role, rules, and scope are "
+    "defined by the instructions that follow."
+)
+
 
 def _resolve_mcp_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
     """Resolve each child env var to the value of the OS env var it names.
@@ -260,6 +276,9 @@ def run_agent(
         tools=sdk_tools,
         include_default_tools=include_default_tools,
         mcp_config=mcp_servers,
+        # Drop the SDK's built-in OpenHands persona + coding-workflow sections;
+        # the Nebuko role prompt + skills define the agent (issue #938).
+        persona=_DISABLED_SYSTEM_PROMPT_PERSONA,
         system_prompt_kwargs=system_prompt_kwargs,
         security_policy_filename=_resolve_security_policy(),
         agent_context=_build_agent_context(role_name),
