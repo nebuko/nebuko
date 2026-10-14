@@ -7,6 +7,7 @@ reports ``$0`` as before).
 """
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -14,9 +15,14 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.request import urlopen
 
-from openhands.sdk import get_logger
-
 from pricing.sub_domains.price_table.price_table import PriceTable
+
+try:  # openhands ships with the ``runtime`` extra only.
+    from openhands.sdk import get_logger
+except ImportError:
+    # The summarize metrics job installs base deps (no openhands) yet must
+    # still import this module to price zero-cost entries (issue #928).
+    get_logger = logging.getLogger
 
 logger = get_logger(__name__)
 
