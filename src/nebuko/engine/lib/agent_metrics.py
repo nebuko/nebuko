@@ -521,6 +521,29 @@ class StatsTotals:
         )
 
 
+@dataclass(frozen=True)
+class SecondsCell:
+    """One duration cell of the agent statistics table, rendered in seconds.
+
+    Owns the ms -> s presentation conversion (issue #947): ``workflow_state``,
+    ``metrics_schema.Metrics`` and the aggregation buckets all keep
+    milliseconds; only the rendered cell text is divided by 1000.
+    """
+
+    ms_value: float = 0.0
+
+    # @stub-protected
+    @classmethod
+    def from_average(cls, ms_sum: float, runs: int) -> "SecondsCell":
+        """Per-run mean of a millisecond sum, wrapping 0.0 ms when runs == 0."""
+        return cls(ms_value=ms_sum / runs if runs else 0.0)
+
+    # @stub-protected
+    def render(self) -> str:
+        """Whole seconds, no decimals: '0', '1', '29', '688'."""
+        return f"{self.ms_value / 1000.0:.0f}"
+
+
 def generate_agent_summary_table(aggregated):
     """Generate a markdown table from per-agent aggregated metrics."""
     if not aggregated:
@@ -529,7 +552,7 @@ def generate_agent_summary_table(aggregated):
     lines = []
     lines.append("## 📊 Agent Statistics Summary")
     lines.append("")
-    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Cache Hit Tokens | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (ms) | Avg LLM Runtime (ms) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
+    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Cache Hit Tokens | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (s) | Avg LLM Runtime (s) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
     lines.append("|-------|------|-------------|---------------|----------------|------------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|")
 
     # Define a stable sort order for known agents
@@ -542,8 +565,8 @@ def generate_agent_summary_table(aggregated):
         output_tokens = agg["total_output_tokens"]
         cost = agg.get("total_cost", 0.0)
         avg_context_window = agg["total_context_window"] // runs if runs else 0
-        avg_latency = agg["latency_sum"] / runs if runs else 0
-        avg_llm_runtime = agg["llm_runtime_sum"] / runs if runs else 0
+        avg_latency = SecondsCell.from_average(agg["latency_sum"], runs)
+        avg_llm_runtime = SecondsCell.from_average(agg["llm_runtime_sum"], runs)
         avg_tool_calls = agg["tool_calls_sum"] / runs if runs else 0
         avg_tps = _format_provider_metric(
             agg.get("tps_sum", 0.0), agg.get("tps_count", 0), 1
@@ -572,8 +595,8 @@ def generate_agent_summary_table(aggregated):
             f"| {reasoning_tokens} "
             f"| {format_cost(cost)} "
             f"| {format_number(avg_context_window)} "
-            f"| {avg_latency:.0f} "
-            f"| {avg_llm_runtime:.0f} "
+            f"| {avg_latency.render()} "
+            f"| {avg_llm_runtime.render()} "
             f"| {avg_tps} "
             f"| {avg_ttft} "
             f"| {avg_tool_calls:.1f} "

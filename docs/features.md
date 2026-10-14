@@ -161,6 +161,9 @@ separate hidden HTML comment):
   same cache-aware math (issue #928). Workflow state is never rewritten —
   rerunning the job recomputes prices on demand. Per-model aggregation
   (`aggregate_by_model`) is still available for future per-model reporting.
+  The table's `Avg Latency` and `Avg LLM Runtime` columns display whole seconds
+  (`(s)`), while `workflow_state` and `metrics_schema` continue to store both
+  metrics in milliseconds; the conversion happens at render time only (issue #947).
 
 ---
 
