@@ -17,6 +17,13 @@ from .sub_domains.function_call import FunctionCall, SUPPORTED_FUNCTIONS
 from .sub_domains.gate_decision.gate_decision import GateDecision
 from .sub_domains.thread_record.thread_record import ThreadRecord, ThreadRecordKind
 from .sub_domains.step_input_record.step_input_record import StepInputRecord
+from .sub_domains.turn_outcome.turn_outcome import (
+    Appreciation,
+    HoldKind,
+    IncompleteReason,
+    TurnOutcome,
+    TurnStatus,
+)
 
 # Features
 from .features.build_state.build_state import build_state
@@ -67,6 +74,11 @@ __all__ = [
     "ThreadRecord",
     "ThreadRecordKind",
     "StepInputRecord",
+    "Appreciation",
+    "HoldKind",
+    "IncompleteReason",
+    "TurnOutcome",
+    "TurnStatus",
     # Features
     "build_state",
     "state_to_json",

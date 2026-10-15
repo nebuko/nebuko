@@ -892,10 +892,15 @@ class TestHumanActionNotice:
     """
 
     def test_advance_out_of_a_terminal_step_is_workflow_complete(self, tmp_path):
+        """An *approved* verdict on the terminal `review` step is the honest end.
+
+        The verdict key is what makes the step a declared finish: `on_result:
+        approved → next: null` (issue #924).
+        """
         engine = _engine(tmp_path)
 
         notice = engine.human_action_notice(
-            routing=RoutingDecision(status="advance"),
+            routing=RoutingDecision(status="advance", branch="approved"),
             agent_ran=True,
             state=None,
             resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
@@ -903,6 +908,26 @@ class TestHumanActionNotice:
 
         assert notice is not None
         assert notice.kind == "workflow_complete"
+
+    def test_verdictless_review_never_claims_a_completed_workflow(self, tmp_path):
+        """Issue #924: the captured #923 round-2 blob (`dispatch={"reason":
+        "round 2"}`, no verdict key) must not ping "workflow finished".
+
+        `default/review` declares `on_result` edges that matched nothing, so
+        the step is *unresolved*, not a finish: the dev/review loop still owes
+        a round, and the human is asked for input instead.
+        """
+        engine = _engine(tmp_path)
+
+        notice = engine.human_action_notice(
+            routing=RoutingDecision(status="advance", reason="round 2"),
+            agent_ran=True,
+            state=None,
+            resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
+        )
+
+        assert notice is not None
+        assert notice.kind == "awaiting_input"
 
     def test_advance_out_of_a_mid_workflow_step_pings_nobody(self, tmp_path):
         engine = _engine(tmp_path)

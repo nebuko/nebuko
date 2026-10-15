@@ -11,6 +11,7 @@ from complexity_governor.complexity_governor import (
 from ..dispatch.dispatch import Dispatch
 from ..state_metrics.state_metrics import StateMetrics
 from ..step_input_record.step_input_record import StepInputRecord
+from ..turn_outcome.turn_outcome import TurnOutcome
 
 
 class HistoryEntry(BaseModel):
@@ -27,6 +28,11 @@ class HistoryEntry(BaseModel):
     # Dispatch model so the ordered history becomes a self-contained,
     # replayable movement log. None for legacy snapshots that predate the field.
     dispatch: Optional[Dispatch] = None
+    # Factual outcome of THIS step's turn (issue #923): engine-measured
+    # completion + the agent's verdict, from which routing is derived. None on
+    # legacy snapshots, whose dispatch is mapped best-effort by
+    # ``TurnOutcome.from_legacy_dispatch`` at read time.
+    turn_outcome: Optional[TurnOutcome] = None  # @stub-protected
     # GitHub comment IDs of this step's output. Multi-part agent messages are
     # posted as separate comments, so an entry may reference several IDs
     # (issue #504). Legacy snapshots store a scalar `comment_id`, coerced

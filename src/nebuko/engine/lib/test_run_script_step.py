@@ -15,7 +15,16 @@ import tempfile
 
 from resolve_config import resolve_config
 from resolve_config.features.build_result.build_result import _build_result
-from resolve_workflow import TASK_TO_PROMPT, resolve_next_from_workflow
+from resolve_workflow import (
+    TASK_TO_PROMPT,
+    resolution_to_marker,
+    resolve_next_from_workflow as _resolve_next_typed,
+)
+
+
+def resolve_next_from_workflow(*args, **kwargs):
+    """Legacy marker-dict view of the typed resolver (issue #923)."""
+    return resolution_to_marker(_resolve_next_typed(*args, **kwargs))
 
 
 def _make_dirs(workflow_yaml: str):

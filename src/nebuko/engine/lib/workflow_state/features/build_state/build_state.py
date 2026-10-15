@@ -25,6 +25,7 @@ from ...sub_domains.gate_decision.gate_decision import GateDecision
 from ...step_output_record import StepOutputRecord
 from ...sub_domains.thread_record.thread_record import ThreadRecord
 from ...sub_domains.step_input_record.step_input_record import StepInputRecord
+from ...sub_domains.turn_outcome.turn_outcome import TurnOutcome
 
 
 def _position_refs(position: Optional[dict]) -> list[StepRef]:
@@ -84,6 +85,7 @@ def build_state(
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
     dispatch: Optional[Dispatch] = None,
+    turn_outcome: Optional[TurnOutcome] = None,
     function_call: Optional[FunctionCall] = None,
     callback: Optional[str] = None,
     started_by: Optional[str] = None,
@@ -128,6 +130,9 @@ def build_state(
         resolution: Step resolution context from resolve_config (replaced each transition).
         dispatch: Agent dispatch outcome from the AGENT_RUN_CONFIG sentinel
             (replaced each transition).
+        turn_outcome: Factual outcome of this step's turn (issue #923) —
+            engine-measured completion + the agent's verdict — recorded on the
+            new history entry. None on legacy blobs.
         function_call: Imperative agent-to-agent hand-off from the
             AGENT_RUN_CONFIG function_call section (replaced each transition;
             None clears any pending call).
@@ -229,6 +234,7 @@ def build_state(
         result=result,
         position=position_refs,
         dispatch=dispatch,
+        turn_outcome=turn_outcome,
         metrics=entry_metrics,
         complexity_adjustment=complexity_adjustment,
         complexity_review_request=complexity_review_request,
