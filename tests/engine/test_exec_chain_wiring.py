@@ -28,13 +28,24 @@ def _steps() -> dict:
 
 
 class TestExecChainIsReachable:
-    def test_implement_hands_off_to_git_diff(self):
-        assert _steps()["implement"].next == "git_diff"
+    def test_implement_hands_off_to_fetch_base(self):
+        assert _steps()["implement"].next == "fetch_base"
+
+    def test_fetch_base_materializes_origin_main_before_the_diff(self):
+        """The checkout is shallow: ``origin/main`` must be fetched, not assumed."""
+        fetch_base = _steps()["fetch_base"]
+        assert fetch_base.script is not None
+        assert fetch_base.script.path == "git"
+        args = fetch_base.script.args
+        assert args[0] == "fetch"
+        assert "main:refs/remotes/origin/main" in args
+        assert fetch_base.next == "git_diff"
 
     def test_git_diff_is_a_script_step_that_continues_to_run_tests(self):
         git_diff = _steps()["git_diff"]
         assert git_diff.script is not None
         assert git_diff.script.path == "git"
+        assert git_diff.script.args[:2] == ["diff", "origin/main"]
         assert git_diff.next == "run_tests"
 
     def test_run_tests_is_a_script_step_that_continues_to_review(self):
