@@ -23,6 +23,7 @@ from resolve_workflow import (  # noqa: E402
     _find_workflow_step,
     _load_child_workflow,
     _resolve_entry_leaf_for_step,
+    resolution_to_marker,
     resolve_next_from_workflow,
     resolve_workflow_routing,
     resolve_workflow_step,
@@ -173,11 +174,15 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
 
     def _enter_sub_workflow(self, scaffold_branch):
         def run(workflows_dir):
-            return resolve_next_from_workflow(
-                "plan-orchestration",
-                "sub_impl",
-                workflows_dir,
-                scaffold_branch=scaffold_branch,
+            # The resolver now returns a typed ``RouteResolution`` (issue
+            # #923); these assertions are on the legacy marker view.
+            return resolution_to_marker(
+                resolve_next_from_workflow(
+                    "plan-orchestration",
+                    "sub_impl",
+                    workflows_dir,
+                    scaffold_branch=scaffold_branch,
+                )
             )
 
         return self._in_worktree(run)

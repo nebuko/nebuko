@@ -304,9 +304,15 @@ class RouteResolution:  # @stub-protected
     parent_workflow: str = ""
     parent_workflow_step: str = ""
     reason: str = ""
+    # A surfaced mount-resolution failure (issue #671): the resolution is not a
+    # route but an error the caller must report rather than step over, so the
+    # marker view reproduces the legacy ``SKIP_AGENT`` dict.
+    skip_agent: bool = False
 
     def as_marker(self) -> Optional[dict]:
         """Legacy marker-dict view (``None`` for the member-less kinds)."""
+        if self.kind is RouteKind.UNRESOLVED and self.skip_agent:
+            return {"SKIP_AGENT": "true", "REASON": self.reason}
         if self.kind is RouteKind.ROUTE:
             # Omit an empty ``step`` so the marker matches the legacy
             # agent-hint fallback shape (``{"task": <hint>}``) exactly.
@@ -317,7 +323,17 @@ class RouteResolution:  # @stub-protected
                 marker["branch"] = self.branch
             return marker
         if self.kind is RouteKind.RUN_SCRIPT:
-            return dict(self.script or {})
+            # Legacy script marker shape (issue #541): the flag plus the
+            # script_* keys and the tagged step name.
+            marker = {
+                "run_script": True,
+                "script_path": (self.script or {}).get("path", ""),
+                "script_args_str": (self.script or {}).get("args_str", ""),
+                "timeout_minutes": (self.script or {}).get("timeout_minutes"),
+            }
+            if self.step:
+                marker["step"] = self.step
+            return marker
         if self.kind is RouteKind.SUB_WORKFLOW_ENTER:
             marker = {
                 "entered_sub_workflow": True,
@@ -367,9 +383,14 @@ def _marker_to_resolution(marker: Optional[dict]) -> Optional[RouteResolution]:
     if marker is None:
         return None
     if marker.get("SKIP_AGENT") == "true":
-        # Mount-resolution failure is surfaced by returning ``None`` from the
-        # typed API; callers keep their existing clean-failure semantics.
-        return None
+        # Mount-resolution failure (issue #671) is surfaced as a typed
+        # SKIP_AGENT resolution: callers must report it, never step over it.
+        return RouteResolution(
+            kind=RouteKind.UNRESOLVED,
+            step=str(marker.get("step") or ""),
+            reason=str(marker.get("REASON") or ""),
+            skip_agent=True,
+        )
     if marker.get("run_script"):
         return RouteResolution(
             kind=RouteKind.RUN_SCRIPT,
