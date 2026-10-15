@@ -3,7 +3,7 @@
 Review modes that apply only inside the dynamic plan workflows (`dev-review-loop`
 and `plan-orchestration`). Check the `workflow` / `step` fields of the
 `workflow_state` section first; when neither matches, follow the standard review
-flow in your role prompt unchanged (including its `round`-based dispatch).
+flow in your role prompt unchanged (including its `branch` verdict dispatch).
 
 ## Per-Step Review (dev-review-loop)
 
