@@ -1367,6 +1367,17 @@ class Engine:
                 if getattr(entry, "comment_id", None) is not None
             ]
         )
+        # A step's locator is recorded in state independently of the bounded
+        # recency window, so a step whose comment has scrolled out of that
+        # window must still resolve: otherwise a declared ``inputs: [step]``
+        # fails with "unresolved reference" even though the comment exists
+        # (issue #957). The reconciled thread ledger already carries the whole
+        # thread, so widen the index with it (memoized — no extra fetch on the
+        # path that already built the ledger).
+        ledger = self._thread_ledger_data()
+        if ledger is not None:
+            for comment_id, raw_body in ledger[1].items():
+                comment_index.setdefault(comment_id, strip_state_section(raw_body))
         previous = self._previous_state()
         records = (
             StepOutputRecord.index(previous.current_context)

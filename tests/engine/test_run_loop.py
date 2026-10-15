@@ -655,6 +655,41 @@ class TestScriptStepComments:
 
         assert count_bot_markers(engine.adapter.load_history()) == 0
 
+    def test_a_locator_outside_the_recency_window_still_resolves(
+        self, tmp_path, monkeypatch
+    ):
+        """Issue #957: bounded history must not hide a recorded step output.
+
+        The locator lives in state and is independent of the recency window, so
+        a downstream ``inputs: [step]`` must still resolve a step whose comment
+        has scrolled past the injected-history bound — otherwise a perfectly
+        reachable step fails with "unresolved reference".
+        """
+        import dataclasses
+
+        engine = dataclasses.replace(_engine(tmp_path), history_limit=1)
+        for body in ("plan comment", "later 1", "later 2"):
+            engine.adapter.post(body)
+        engine.adapter.save_state(
+            WorkflowState.model_validate(
+                {
+                    "workflow": "default",
+                    "step": "implement",
+                    "agent": "dev",
+                    "current_context": {
+                        "step_outputs": [{"step": "plan", "comment_id": "1"}]
+                    },
+                }
+            )
+        )
+
+        bounded = engine.adapter.load_history(limit=engine.history_limit)
+        assert len(bounded) == 1  # the future-named step's comment is out of window
+
+        scope = engine._step_output_scope(bounded)
+        assert "plan" in scope
+        assert "plan comment" in scope["plan"]
+
 
 class TestBenignNoNextAgentExit:
     """Issue #853: a workflow with no next agent stops green, not with exit 20."""
