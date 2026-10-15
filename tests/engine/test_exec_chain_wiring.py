@@ -8,12 +8,15 @@ addressable by a downstream ``inputs: [...]`` binding — when it is actually
 were unreachable (linter ``L2-unreachable-step``), never executed, and
 ``review``'s required inputs had nothing to bind to.
 
-These guards keep the chain structural: ``implement → git_diff → run_tests →
-review``.
+These guards keep the chain structural: ``implement → fetch_base → git_diff →
+run_tests → review``. Since #957 ``fetch_base`` materializes the remote-tracking
+``origin/main`` a shallow, ref-pinned checkout never creates, so the diff cannot
+die with ``fatal: ambiguous argument 'origin/main'``.
 """
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 from config import load_workflow
@@ -58,3 +61,18 @@ class TestExecChainIsReachable:
         review = _steps()["review"]
         bound = set(review.inputs or {})
         assert {"git_diff", "run_tests"} <= bound
+
+    def test_no_script_step_relies_on_shell_word_splitting(self):
+        """Script ``args`` round-trip through a space-join/``shlex.split``.
+
+        The resolver joins ``args`` with a space and the executor re-splits
+        that string, so a shell-quoting construct such as
+        ``path: "sh", args: ["-c", "git fetch && git diff"]`` loses its
+        grouping and runs as ``sh -c git fetch`` (issue #957). Keep every
+        script step's argv self-consistent under that contract.
+        """
+        for name, step in _steps().items():
+            if step.script is None:
+                continue
+            args = step.script.args
+            assert shlex.split(" ".join(args)) == args, name
