@@ -9,188 +9,55 @@ from types import SimpleNamespace
 from unittest import mock
 from build_output import (
     LATEST_ANSWER_FILE,
+    _is_human_gate_hold,
     _recall_aware_events,
     _resolve_pin,
     _terminal_turn_answer,
     _write_latest_answer_file,
-    agent_run_config_to_dispatch,
     apply_human_gate_intercept,
     extract_latest_answer,
     extract_standalone_answer,
     is_malformed_final_message,
     load_prev_state_or_recover,
 )
-from validate_output import strip_agent_run_config
-from workflow_state import Dispatch, HistoryEntry, WorkflowState
+from workflow_state import (
+    Appreciation,
+    HistoryEntry,
+    HoldKind,
+    RunPrefs,
+    TurnOutcome,
+    TurnStatus,
+    WorkflowState,
+)
 from workflow_state.features.comment.to_git_comment import format_collapsed_section
 from workflow_state.features.to_json.to_json import state_to_json
 
 
-class TestAgentRunConfigToDispatch(unittest.TestCase):
-    """Test the agent_run_config_to_dispatch() function."""
-
-    def test_valid_minimal_json(self):
-        """Minimal JSON with just task leaves complexity unset for the step tier."""
-        data = '{"task": "context"}'
-        result = agent_run_config_to_dispatch(data)
-        self.assertIsNotNone(result)
-        self.assertEqual(result.task_hint, "context")
-        self.assertEqual(result.status, "advance")
-        # Unset complexity -> "" so the resolver applies the workflow step's
-        # declared tier, else "medium" (issue #787).
-        self.assertEqual(result.complexity, "")
-        self.assertEqual(result.reasoning, "none")
-        self.assertIsNone(result.model)
-
-    def test_valid_full_json(self):
-        """Full JSON with all fields produces correct Dispatch object."""
-        data = json.dumps({
-            "status": "loop",
-            "task": "dev",
-            "complexity": "high",
-            "reasoning": "ultra",
-            "model": "claude-opus-4-0",
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "top_k": 50,
-            "min_p": 0.1,
-            "presence_penalty": 0.5,
-            "repetition_penalty": 1.2,
-            "workflow": "default",
-            "step": "implement",
-            "branch": "approved",
-            "parent_workflow": "parent",
-            "parent_workflow_step": "initiate",
-            "skills": "skill1",
-        })
-        result = agent_run_config_to_dispatch(data)
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "loop")
-        self.assertEqual(result.task_hint, "dev")
-        self.assertEqual(result.complexity, "high")
-        self.assertEqual(result.reasoning, "ultra")
-        self.assertEqual(result.model, "claude-opus-4-0")
-        self.assertEqual(result.temperature, 0.7)
-        self.assertEqual(result.top_p, 0.9)
-        self.assertEqual(result.top_k, 50)
-        self.assertEqual(result.min_p, 0.1)
-        self.assertEqual(result.presence_penalty, 0.5)
-        self.assertEqual(result.repetition_penalty, 1.2)
-        self.assertEqual(result.workflow, "default")
-        self.assertEqual(result.step, "implement")
-        self.assertEqual(result.branch, "approved")
-        self.assertEqual(result.parent_workflow, "parent")
-        self.assertEqual(result.parent_workflow_step, "initiate")
-        self.assertEqual(result.skills, "skill1")
-
-    def test_invalid_json_returns_none(self):
-        """Invalid JSON returns None."""
-        result = agent_run_config_to_dispatch("not valid json")
-        self.assertIsNone(result)
-
-    def test_non_dict_json_returns_none(self):
-        """JSON that is not a dict (e.g., array) returns None."""
-        result = agent_run_config_to_dispatch('[1, 2, 3]')
-        self.assertIsNone(result)
-
-    def test_empty_string_returns_none(self):
-        """Empty string returns None."""
-        result = agent_run_config_to_dispatch("")
-        self.assertIsNone(result)
-
-    def test_none_input_returns_none(self):
-        """None input returns None."""
-        result = agent_run_config_to_dispatch(None)
-        self.assertIsNone(result)
-
-    def test_missing_fields_use_defaults(self):
-        """Missing optional fields use correct defaults."""
-        data = '{}'
-        result = agent_run_config_to_dispatch(data)
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "advance")
-        # Unset complexity -> "" (issue #787); the resolver fills "medium".
-        self.assertEqual(result.complexity, "")
-        self.assertEqual(result.reasoning, "none")
-        self.assertIsNone(result.task_hint)
-
-    def test_status_field_override(self):
-        """Status field can be overridden from default."""
-        data = '{"task": "context", "status": "terminate"}'
-        result = agent_run_config_to_dispatch(data)
-        self.assertEqual(result.status, "terminate")
-
-    def test_nested_dispatch_structure(self):
-        """Agents emit {\"dispatch\": {...}, \"complexity\": \"...\"} — must unwrap."""
-        data = '{"dispatch": {"status": "advance"}, "complexity": "high"}'
-        result = agent_run_config_to_dispatch(data)
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "advance")
-        self.assertEqual(result.complexity, "high")
-
-    def test_nested_dispatch_with_all_fields(self):
-        """Nested dispatch with multiple fields plus top-level complexity."""
-        data = '{"dispatch": {"status": "loop", "task": "dev", "workflow": "custom", "step": "review"}, "complexity": "low"}'
-        result = agent_run_config_to_dispatch(data)
-        self.assertEqual(result.status, "loop")
-        self.assertEqual(result.task_hint, "dev")
-        self.assertEqual(result.complexity, "low")
-        self.assertEqual(result.workflow, "custom")
-        self.assertEqual(result.step, "review")
-
-    def test_nested_dispatch_complexity_inside_overrides_top_level(self):
-        """If complexity appears both inside dispatch and at top-level, nested wins after unwrap."""
-        data = '{"dispatch": {"status": "advance", "complexity": "high"}, "complexity": "low"}'
-        result = agent_run_config_to_dispatch(data)
-        # data.update(dispatch) puts "high" into data; data.get("complexity") sees "high"
-        self.assertEqual(result.complexity, "high")
-
-    def test_flat_format_still_works(self):
-        """Backward compat: flat format without nested dispatch still works."""
-        data = '{"status": "advance", "complexity": "medium"}'
-        result = agent_run_config_to_dispatch(data)
-        self.assertEqual(result.status, "advance")
-        self.assertEqual(result.complexity, "medium")
-
-    def test_pin_field_is_parsed(self):
-        """pin in the sentinel maps onto Dispatch.pin (issue #617)."""
-        data = '{"dispatch": {"status": "advance", "pin": true}}'
-        result = agent_run_config_to_dispatch(data)
-        self.assertIsNotNone(result)
-        self.assertTrue(result.pin)
-
-    def test_pin_defaults_to_false(self):
-        data = '{"status": "advance"}'
-        result = agent_run_config_to_dispatch(data)
-        self.assertIsNotNone(result)
-        self.assertFalse(result.pin)
-
-
 class TestResolvePin(unittest.TestCase):
-    """Test _resolve_pin() — env override and dispatch request (issue #617)."""
+    """Test _resolve_pin() — env override and run-prefs request (issue #617)."""
 
     def test_env_unset_defaults_false(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("PIN_COMMENT", None)
             self.assertFalse(_resolve_pin(None))
 
-    def test_dispatch_pin_true(self):
+    def test_prefs_pin_true(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("PIN_COMMENT", None)
-            self.assertTrue(_resolve_pin(Dispatch(status="advance", pin=True)))
+            self.assertTrue(_resolve_pin(RunPrefs(pin=True)))
 
-    def test_dispatch_pin_false(self):
+    def test_prefs_pin_false(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("PIN_COMMENT", None)
-            self.assertFalse(_resolve_pin(Dispatch(status="advance", pin=False)))
+            self.assertFalse(_resolve_pin(RunPrefs(pin=False)))
 
-    def test_env_override_wins_when_dispatch_absent(self):
+    def test_env_override_wins_when_prefs_absent(self):
         with mock.patch.dict(os.environ, {"PIN_COMMENT": "true"}):
             self.assertTrue(_resolve_pin(None))
 
-    def test_env_false_does_not_override_dispatch_pin(self):
+    def test_env_false_does_not_override_prefs_pin(self):
         with mock.patch.dict(os.environ, {"PIN_COMMENT": "false"}):
-            self.assertTrue(_resolve_pin(Dispatch(status="advance", pin=True)))
+            self.assertTrue(_resolve_pin(RunPrefs(pin=True)))
 
     def test_empty_env_is_false(self):
         with mock.patch.dict(os.environ, {"PIN_COMMENT": ""}):
@@ -200,60 +67,6 @@ class TestResolvePin(unittest.TestCase):
         for value in ("true", "1", "yes", "TRUE", "Yes"):
             with mock.patch.dict(os.environ, {"PIN_COMMENT": value}):
                 self.assertTrue(_resolve_pin(None), msg=value)
-
-
-class TestStripAgentRunConfigs(unittest.TestCase):
-    """Test the shared strip_agent_run_config() helper used by build_output."""
-
-    def test_removes_single_sentinel(self):
-        msg = 'Hello world\n<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->'
-        result = strip_agent_run_config(msg)
-        self.assertEqual(result, "Hello world")
-        self.assertNotIn("AGENT_RUN_CONFIG", result)
-
-    def test_removes_multiple_sentinels(self):
-        msg = ("First part\n"
-                '<!-- AGENT_RUN_CONFIG {"task": "architect"} -->\n'
-                "Middle part\n"
-                '<!-- AGENT_RUN_CONFIG {"task": "dev"} -->\n'
-                "Last part")
-        result = strip_agent_run_config(msg)
-        self.assertNotIn("AGENT_RUN_CONFIG", result)
-        self.assertIn("First part", result)
-        self.assertIn("Middle part", result)
-        self.assertIn("Last part", result)
-        self.assertNotIn("\n\n\n", result)
-
-    def test_noop_when_no_sentinels(self):
-        msg = "Just regular text without any sentinels"
-        result = strip_agent_run_config(msg)
-        self.assertEqual(result, msg)
-
-    def test_legacy_xml_not_stripped_here(self):
-        """Legacy <agentRunConfig> handling lives in prepare_comment only."""
-        msg = ('Response text\n'
-                '<agentRunConfig>\n'
-                '{\n'
-                '  "dispatch": {"status": "advance"}\n'
-                '}\n'
-                '</agentRunConfig>')
-        result = strip_agent_run_config(msg)
-        self.assertEqual(result, msg)
-        self.assertIn("agentRunConfig", result)
-
-    def test_truncated_sentinel_stripped(self):
-        msg = 'Response text\n<!-- AGENT_RUN_CONFIG {"task": "dev", "comple'
-        result = strip_agent_run_config(msg)
-        self.assertEqual(result, "Response text")
-        self.assertNotIn("AGENT_RUN_CONFIG", result)
-
-    def test_preserves_non_sentinel_html_comments(self):
-        msg = ("Content\n"
-                "<!-- bot-workflow-terminal -->\n"
-                '<!-- AGENT_RUN_CONFIG {"status": "advance"} -->')
-        result = strip_agent_run_config(msg)
-        self.assertIn("bot-workflow-terminal", result)
-        self.assertNotIn("AGENT_RUN_CONFIG", result)
 
 
 class TestIsMalformedFinalMessage(unittest.TestCase):
@@ -323,8 +136,25 @@ class TestIsMalformedFinalMessage(unittest.TestCase):
         self.assertTrue(is_malformed_final_message(msg))
 
 
+def _completed(appreciation="approved", **kwargs) -> TurnOutcome:
+    """A completing turn with a verdict - the shape the gate may intercept."""
+    return TurnOutcome(
+        status=TurnStatus.COMPLETED, appreciation=appreciation, **kwargs
+    )
+
+
+def _gate_hold(expected_step: str) -> TurnOutcome:
+    """The intercept's hold: released only by a gate command (issue #506)."""
+    return TurnOutcome(
+        status=TurnStatus.COMPLETED,
+        appreciation=Appreciation.HOLD,
+        hold_kind=HoldKind.AWAITING_APPROVAL,
+        note=f"human_gate:{expected_step}",
+    )
+
+
 class TestHumanGateIntercept(unittest.TestCase):
-    """Test apply_human_gate_intercept() — issue #506 human gate boundary."""
+    """Test apply_human_gate_intercept() - issue #506 human gate boundary."""
 
     def _write_workflow(self, tmpdir, name, steps_yaml):
         path = os.path.join(tmpdir, f"{name}.yaml")
@@ -337,7 +167,7 @@ class TestHumanGateIntercept(unittest.TestCase):
         return path
 
     def test_gate_step_advance_non_resume_becomes_hold(self):
-        """advance on a human_gate step (not a resume) is overridden to hold."""
+        """A completing turn on a human_gate step (not a resume) holds."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -345,12 +175,9 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
-            dispatch = Dispatch(status="advance")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "hold")
-        self.assertEqual(result.reason, "human_gate:implement")
+                result = apply_human_gate_intercept(_completed(), "wf", "implement")
+        self.assertEqual(result, _gate_hold("implement"))
 
     def test_gate_step_advance_resume_held(self):
         """Issue #648: even a /nebuko-resume-triggered run is held (no bypass)."""
@@ -361,15 +188,12 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir, "HUMAN_RESUME_INPUT": "/nebuko resume"}
-            dispatch = Dispatch(status="advance")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "hold")
-        self.assertEqual(result.reason, "human_gate:implement")
+                result = apply_human_gate_intercept(_completed(), "wf", "implement")
+        self.assertEqual(result, _gate_hold("implement"))
 
     def test_non_gate_step_advance_unchanged(self):
-        """A step without human_gate advances normally."""
+        """A step without human_gate keeps the agent's verdict."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -377,14 +201,14 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: plan\n    agent: architect\n    next: implement\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
-            dispatch = Dispatch(status="advance")
+            outcome = _completed()
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "plan")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "advance")
+                result = apply_human_gate_intercept(outcome, "wf", "plan")
+        self.assertEqual(result, outcome)
 
-    def test_gate_step_soft_kill_non_resume_becomes_hold(self):
-        """A soft_kill retry on a human_gate step holds instead of auto-retrying."""
+    def test_gate_step_soft_kill_non_resume_keeps_retrying(self):
+        """An INCOMPLETE turn is never intercepted: the gate only discards a
+        completing verdict, so a soft kill keeps its retry semantics."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -392,15 +216,16 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
-            dispatch = Dispatch(status="soft_kill")
+            soft_kill = TurnOutcome(
+                status=TurnStatus.INCOMPLETE,
+                incomplete_reason="soft_timeout",
+            )
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "hold")
-        self.assertEqual(result.reason, "human_gate:implement")
+                result = apply_human_gate_intercept(soft_kill, "wf", "implement")
+        self.assertEqual(result, soft_kill)
 
-    def test_gate_step_soft_kill_resume_held(self):
-        """Issue #648: a resume-triggered soft_kill on a gated step still holds."""
+    def test_gate_step_soft_kill_resume_keeps_retrying(self):
+        """Issue #648: a resume-triggered soft kill on a gated step still retries."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -408,15 +233,16 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir, "HUMAN_RESUME_INPUT": "/nebuko resume"}
-            dispatch = Dispatch(status="soft_kill")
+            soft_kill = TurnOutcome(
+                status=TurnStatus.INCOMPLETE,
+                incomplete_reason="soft_timeout",
+            )
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "hold")
-        self.assertEqual(result.reason, "human_gate:implement")
+                result = apply_human_gate_intercept(soft_kill, "wf", "implement")
+        self.assertEqual(result, soft_kill)
 
-    def test_gate_step_branch_bearing_becomes_hold_with_inert_branch(self):
-        """A branch-bearing advance on a gated step holds, and its branch is inert."""
+    def test_gate_step_verdict_bearing_becomes_hold_with_no_verdict(self):
+        """A verdict-bearing turn on a gated step holds; the verdict is dropped."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -424,16 +250,15 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
-            dispatch = Dispatch(status="advance", branch="approved")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "hold")
-        self.assertEqual(result.reason, "human_gate:implement")
-        self.assertIsNone(result.branch)
+                result = apply_human_gate_intercept(
+                    _completed("rejected", round=3), "wf", "implement"
+                )
+        self.assertEqual(result, _gate_hold("implement"))
+        self.assertIsNot(result.appreciation, Appreciation.REJECTED)
 
-    def test_non_gate_step_branch_preserved(self):
-        """A branch-bearing dispatch on a non-gated step is left untouched."""
+    def test_non_gate_step_verdict_preserved(self):
+        """A verdict on a non-gated step is left untouched."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -441,15 +266,14 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: plan\n    agent: architect\n    next: implement\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
-            dispatch = Dispatch(status="advance", branch="approved")
+            outcome = _completed("rejected", round=2)
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "plan")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "advance")
-        self.assertEqual(result.branch, "approved")
+                result = apply_human_gate_intercept(outcome, "wf", "plan")
+        self.assertEqual(result, outcome)
+        self.assertIs(result.appreciation, Appreciation.REJECTED)
 
-    def test_loop_not_intercepted(self):
-        """loop outcomes are never intercepted by the gate."""
+    def test_incomplete_turn_is_never_intercepted(self):
+        """An interrupted turn is never turned into a gate hold (issue #704)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -457,29 +281,16 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
-            dispatch = Dispatch(status="loop")
-            with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "loop")
-
-    def test_terminate_bypasses_gate(self):
-        """terminate outcomes are never intercepted by the gate."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self._write_workflow(
-                tmpdir,
-                "wf",
-                "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+            incomplete = TurnOutcome(
+                status=TurnStatus.INCOMPLETE,
+                incomplete_reason="interrupted",
             )
-            env = {"WORKFLOWS_DIR": tmpdir}
-            dispatch = Dispatch(status="terminate")
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "wf", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "terminate")
+                result = apply_human_gate_intercept(incomplete, "wf", "implement")
+        self.assertEqual(result, incomplete)
 
-    def test_missing_dispatch_on_gate_step_becomes_hold(self):
-        """No dispatch resolves to advance downstream; gate intercepts it as hold."""
+    def test_missing_outcome_on_gate_step_becomes_hold(self):
+        """No outcome resolves to advance downstream; gate intercepts it as hold."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -489,62 +300,47 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             with mock.patch.dict(os.environ, env, clear=False):
                 result = apply_human_gate_intercept(None, "wf", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "hold")
-        self.assertEqual(result.reason, "human_gate:implement")
+        self.assertEqual(result, _gate_hold("implement"))
 
     def test_missing_workflow_name_never_crashes(self):
-        """Missing workflow name degrades to no-op (no crash, dispatch unchanged)."""
-        dispatch = Dispatch(status="advance")
-        result = apply_human_gate_intercept(dispatch, "", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "advance")
+        """Missing workflow name degrades to no-op (no crash, outcome unchanged)."""
+        outcome = _completed()
+        result = apply_human_gate_intercept(outcome, "", "implement")
+        self.assertEqual(result, outcome)
 
     def test_missing_workflow_file_degrades_to_no_op(self):
-        """A missing/invalid workflow file must not crash and leaves advance intact."""
+        """A missing/invalid workflow file must not crash and leaves it intact."""
         with tempfile.TemporaryDirectory() as tmpdir:
             env = {"WORKFLOWS_DIR": tmpdir}
-            dispatch = Dispatch(status="advance")
+            outcome = _completed()
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(dispatch, "does-not-exist", "implement")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.status, "advance")
+                result = apply_human_gate_intercept(outcome, "does-not-exist", "implement")
+        self.assertEqual(result, outcome)
 
 
-class TestDispatchIsHumanGateHold(unittest.TestCase):
+class TestIsHumanGateHold(unittest.TestCase):
     """Issue #887: the shape detector that keeps persisted state and router aligned."""
 
     def test_gate_hold_detected(self):
-        from build_output import _dispatch_is_human_gate_hold
-
-        self.assertTrue(
-            _dispatch_is_human_gate_hold(
-                Dispatch(status="hold", reason="human_gate:plan")
-            )
-        )
+        self.assertTrue(_is_human_gate_hold(_gate_hold("plan")))
 
     def test_plain_hold_not_detected(self):
-        from build_output import _dispatch_is_human_gate_hold
-
         self.assertFalse(
-            _dispatch_is_human_gate_hold(
-                Dispatch(status="hold", reason="no-action default")
+            _is_human_gate_hold(
+                TurnOutcome(
+                    status=TurnStatus.COMPLETED,
+                    appreciation=Appreciation.HOLD,
+                    hold_kind=HoldKind.AWAITING_INPUT,
+                    note="no-action default",
+                )
             )
         )
 
-    def test_advance_not_detected(self):
-        from build_output import _dispatch_is_human_gate_hold
-
-        self.assertFalse(
-            _dispatch_is_human_gate_hold(
-                Dispatch(status="advance", reason="human_gate:plan")
-            )
-        )
+    def test_completed_without_hold_not_detected(self):
+        self.assertFalse(_is_human_gate_hold(_completed(note="human_gate:plan")))
 
     def test_none_not_detected(self):
-        from build_output import _dispatch_is_human_gate_hold
-
-        self.assertFalse(_dispatch_is_human_gate_hold(None))
+        self.assertFalse(_is_human_gate_hold(None))
 
     def test_gate_intercept_at_call_site_clears_resolution_next_step(self):
         """Issue #887: when the intercept holds a gated step, the persisted
@@ -588,8 +384,8 @@ class TestDispatchIsHumanGateHold(unittest.TestCase):
                  mock.patch.object(bo, "_build_issue_info", return_value=None), \
                  mock.patch.object(bo, "_build_pr_info", return_value=None), \
                  mock.patch.object(
-                     bo, "_resolve_dispatch",
-                     return_value=(Dispatch(status="advance"), None, "plan answer"),
+                     bo, "_resolve_outcome",
+                     return_value=(_completed(), None),
                  ), \
                  mock.patch.object(bo, "clear_run"), \
                  mock.patch.object(bo, "clear_scaffold_branch_run"), \
@@ -606,7 +402,7 @@ class TestDispatchIsHumanGateHold(unittest.TestCase):
                 finally:
                     os.chdir(cwd)
 
-        self.assertEqual(captured["dispatch"].status, "hold")
+        self.assertTrue(_is_human_gate_hold(captured["turn_outcome"]))
         self.assertEqual(captured["resolution"].next_step, "")
 
     def test_gate_intercept_at_call_site_clears_function_call(self):
@@ -652,11 +448,10 @@ class TestDispatchIsHumanGateHold(unittest.TestCase):
                  mock.patch.object(bo, "_build_issue_info", return_value=None), \
                  mock.patch.object(bo, "_build_pr_info", return_value=None), \
                  mock.patch.object(
-                     bo, "_resolve_dispatch",
+                     bo, "_resolve_outcome",
                      return_value=(
-                         Dispatch(status="advance"),
+                         _completed(),
                          FunctionCall(function="call_agent", agent_name="dev"),
-                         "plan answer",
                      ),
                  ), \
                  mock.patch.object(bo, "clear_run"), \
@@ -674,9 +469,8 @@ class TestDispatchIsHumanGateHold(unittest.TestCase):
                 finally:
                     os.chdir(cwd)
 
-        self.assertEqual(captured["dispatch"].status, "hold")
+        self.assertTrue(_is_human_gate_hold(captured["turn_outcome"]))
         self.assertIsNone(captured["function_call"])
-
 
 
 class TestHumanGateRealWorkflowYaml(unittest.TestCase):
@@ -689,8 +483,11 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
 
     @staticmethod
     def _real_workflows_dir():
-        from default_paths import config_dir
-        return config_dir("workflows")
+        # The shipped definitions, not the per-repo ``.nebuko`` override:
+        # ``config_dir`` prefers a checkout-local override directory whose
+        # contents vary per machine, so pin the packaged defaults.
+        from default_paths import checkout_root
+        return str(checkout_root() / "defaults" / "workflows")
 
     def setUp(self):
         self.env = {"WORKFLOWS_DIR": self._real_workflows_dir()}
@@ -698,30 +495,30 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
     def test_real_yaml_gated_step_intercepts_advance(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
             result = apply_human_gate_intercept(
-                Dispatch(status="advance"), "spec-driven-impl", "stub_approval"
+                _completed(), "spec-driven-impl", "stub_approval"
             )
-        self.assertEqual(result.status, "hold")
-        self.assertEqual(result.reason, "human_gate:stub_approval")
+        self.assertEqual(result, _gate_hold("stub_approval"))
 
     def test_real_yaml_gated_step_resume_held(self):
-        """Issue #648: no resume bypass — the real gated step always holds."""
+        """Issue #648: no resume bypass - the real gated step always holds."""
         with mock.patch.dict(os.environ, self.env, clear=False):
             result = apply_human_gate_intercept(
-                Dispatch(status="advance"), "spec-driven-impl", "stub_approval"
+                _completed(), "spec-driven-impl", "stub_approval"
             )
-        self.assertEqual(result.status, "hold")
+        self.assertTrue(_is_human_gate_hold(result))
 
     def test_real_yaml_non_gated_step_unchanged(self):
+        outcome = _completed()
         with mock.patch.dict(os.environ, self.env, clear=False):
             result = apply_human_gate_intercept(
-                Dispatch(status="advance"), "spec-driven-impl", "implement"
+                outcome, "spec-driven-impl", "implement"
             )
-        self.assertEqual(result.status, "advance")
+        self.assertEqual(result, outcome)
 
-    def test_real_yaml_plain_advance_from_gated_step_routes_on(self):
-        """A plain (non-resume) advance run from stub_approval is intercepted to
-        hold, but resolving its downstream routing lands on the implement step's
-        agent — proving 'next: implement' is load-bearing for the plain-advance path."""
+    def test_real_yaml_verdict_from_gated_step_routes_on(self):
+        """A plain advance run from stub_approval is intercepted to a hold, but
+        resolving its downstream routing lands on the implement step's agent -
+        proving 'next: implement' is load-bearing."""
         from resolve_config import resolve_config
         import json
         prompt_base = tempfile.mkdtemp()
@@ -730,9 +527,9 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
             with open(os.path.join(prompt_base, role, "system.md"), "w") as f:
                 f.write(f"# {role}")
         state = {
-            "version": 1, "workflow": "spec-driven-impl", "step": "stub_approval",
+            "version": 6, "workflow": "spec-driven-impl", "step": "stub_approval",
             "agent": "architect", "phase": "stub_approval", "history": [],
-            "dispatch": {"status": "advance", "complexity": "medium"},
+            "turn_outcome": {"status": "completed", "appreciation": "approved"},
         }
         body = "<!-- bot-agent-architect -->\n*Architect answer*\n\n```json\n" \
                "<!-- WORKFLOW_STATE_START -->\n" + json.dumps(state) + \
@@ -1149,13 +946,19 @@ class TestExtractLatestAnswerRecallOffset(unittest.TestCase):
              mock.patch.object(bo, "_build_pr_info", return_value=None), \
              mock.patch.object(bo, "_build_resolution", return_value=None), \
              mock.patch.object(
-                 bo, "_resolve_dispatch",
-                 return_value=(None, None, "finish summary"),
+                 bo, "_resolve_outcome",
+                 return_value=(
+                     TurnOutcome(
+                         status=TurnStatus.INCOMPLETE,
+                         incomplete_reason="no_outcome",
+                     ),
+                     None,
+                 ),
              ), \
              mock.patch.object(bo, "clear_run"), \
              mock.patch.object(
                  bo, "apply_human_gate_intercept",
-                 side_effect=lambda dispatch, **kw: dispatch,
+                 side_effect=lambda outcome, **kw: outcome,
              ), \
              mock.patch.object(bo, "build_state", return_value=NS(run_id=1)), \
              mock.patch.object(bo, "split_message", return_value=[]), \
@@ -1571,7 +1374,14 @@ class TestBuildOutputPrevStateIntegration(unittest.TestCase):
             step="scaffold",
             agent="dev",
             history=[
-                HistoryEntry(step=f"step_{i}", agent="architect", summary=f"s{i}")
+                HistoryEntry(
+                    step=f"step_{i}",
+                    agent="architect",
+                    summary=f"s{i}",
+                    turn_outcome=TurnOutcome(
+                        status=TurnStatus.COMPLETED, appreciation="approved"
+                    ),
+                )
                 for i in range(5)
             ],
         )
