@@ -69,16 +69,17 @@ class TestBridgeResolution:
         assert callable(bridge.validate_agent_output)
         assert callable(bridge.build_comment_body)
 
-    def test_dispatch_recovery_survives_a_poisoned_import_env(
+    def test_no_text_recovery_survives_a_poisoned_import_env(
         self, fresh_bridge_cache, monkeypatch
     ):
+        """#964: the rendered-sentinel scrape is gone — routing is typed only."""
         monkeypatch.setattr(
             sys, "path", [p for p in sys.path if p != str(LIB_DIR)]
         )
         monkeypatch.setitem(sys.modules, "validate_output", None)
         text = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "soft_kill"}} -->'
 
-        assert run_loop._dispatch_from_text(text) == {"status": "soft_kill"}
+        assert not hasattr(run_loop, "_dispatch_from_text")
 
 
 class TestPreflight:
