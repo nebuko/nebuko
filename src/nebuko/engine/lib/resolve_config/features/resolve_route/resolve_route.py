@@ -527,11 +527,7 @@ def _rerun_gated_step(
 def _apply_gate_successor(config: dict, wf_result: dict) -> dict:
     """Apply an ``on_result`` successor (approved|rejected) to the config."""
     if wf_result.get("run_script"):
-        config["run_script"] = {
-            "path": wf_result.get("script_path", ""),
-            "args_str": wf_result.get("script_args_str", ""),
-            "timeout_minutes": wf_result.get("timeout_minutes"),
-        }
+        config["run_script"] = _script_marker_payload(wf_result)
         config["config_step"] = wf_result.get("step", config["config_step"])
         if wf_result.get("branch"):
             config["config_branch"] = wf_result["branch"]
@@ -542,6 +538,22 @@ def _apply_gate_successor(config: dict, wf_result: dict) -> dict:
         config["config_branch"] = wf_result["branch"]
     _apply_wf_marker(config, wf_result)
     return config
+
+
+def _script_marker_payload(wf_result: dict) -> dict:
+    """The ``run_script`` config payload built from a resolver marker (issue #974).
+
+    The argv/environment values are carried as the JSON-encoded strings the
+    resolver emitted (``script_args``/``script_env``), so the config layer stays
+    a string-to-string contract exactly like the emitted environment.
+    """
+    return {
+        "command": wf_result.get("script_path", ""),
+        "args": wf_result.get("script_args", "[]"),
+        "working_dir": wf_result.get("script_working_dir", ""),
+        "env": wf_result.get("script_env", "{}"),
+        "timeout_minutes": wf_result.get("timeout_minutes"),
+    }
 
 
 def _apply_wf_marker(
@@ -739,11 +751,7 @@ def _resolve_dispatch_path(
             if wf_result.get("run_script"):
                 # Deterministic script successor (issue #541): carry the script
                 # payload instead of an agent task; build_result short-circuits.
-                config["run_script"] = {
-                    "path": wf_result.get("script_path", ""),
-                    "args_str": wf_result.get("script_args_str", ""),
-                    "timeout_minutes": wf_result.get("timeout_minutes"),
-                }
+                config["run_script"] = _script_marker_payload(wf_result)
                 config["config_step"] = wf_result.get("step", config["config_step"])
                 config["config_workflow"] = prev_state.workflow
             else:
@@ -1397,8 +1405,10 @@ def _script_step_entry(step: "WorkflowStep") -> dict:
     """
     return {
         "run_script": {
-            "path": step.script.path,
-            "args_str": " ".join(step.script.args or []),
+            "command": step.script.command,
+            "args": step.script.to_process_env()["SCRIPT_ARGS"],
+            "working_dir": step.script.working_dir or "",
+            "env": step.script.to_process_env()["SCRIPT_ENV"],
             "timeout_minutes": step.script.timeout_minutes,
         },
         "skip_reason": None,
@@ -1828,11 +1838,7 @@ def _resolve_bot_fallback_path(
                     # Deterministic script successor (issue #541): no agent task;
                     # build_result short-circuits on this.
                     config.pop("task", None)
-                    config["run_script"] = {
-                        "path": wf_result.get("script_path", ""),
-                        "args_str": wf_result.get("script_args_str", ""),
-                        "timeout_minutes": wf_result.get("timeout_minutes"),
-                    }
+                    config["run_script"] = _script_marker_payload(wf_result)
                     config["config_step"] = wf_result.get("step", config["config_step"])
                 else:
                     config["task"] = wf_result["task"]
@@ -1961,11 +1967,7 @@ def _resolve_workflow_next_step(
         if wf_result.get("run_script"):
             # Deterministic script successor (issue #541): same treatment as
             # the dispatch-driven path — build_result short-circuits on this.
-            config["run_script"] = {
-                "path": wf_result.get("script_path", ""),
-                "args_str": wf_result.get("script_args_str", ""),
-                "timeout_minutes": wf_result.get("timeout_minutes"),
-            }
+            config["run_script"] = _script_marker_payload(wf_result)
             config["config_step"] = wf_result.get("step", config["config_step"])
             if wf_result.get("branch"):
                 config["config_branch"] = wf_result["branch"]

@@ -107,7 +107,7 @@ class TestWorkflowEntryPointResolve:
 
     def test_script_entry_is_valid(self):
         wf = _wf(_agent("one", "architect"))
-        script = {"path": "x.sh", "args_str": "", "timeout_minutes": 1}
+        script = {"command": "x.sh", "args": "[]", "working_dir": "", "env": "{}", "timeout_minutes": 1}
 
         entry = WorkflowEntryPoint(workflow="wf", step="one").resolve(
             wf, lambda step, tail=None: {"task": "", "run_script": script}

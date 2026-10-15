@@ -691,6 +691,134 @@ class TestScriptStepComments:
         assert "plan comment" in scope["plan"]
 
 
+class TestScriptChainSharesOneWorkspace:
+    """Consecutive script steps see each other's checkout (issue #974).
+
+    The #957 → #965 failure this pins: ``fetch_base`` ran ``git fetch
+    origin main:refs/remotes/origin/main`` and exited 0, yet the following
+    ``git_diff`` died with ``fatal: ambiguous argument 'origin/main'`` — each
+    step was its own engine invocation on its own fresh checkout, so the ref
+    the first step materialized was gone before the second ran.
+    """
+
+    def _chain_engine(self, tmp_path, cwd: Path, monkeypatch):
+        """An engine whose *first* step is a script step writing a marker file."""
+        engine = _engine(tmp_path)
+        engine.adapter.save_state(
+            WorkflowState.model_validate(
+                {"workflow": "chain", "step": "step_one", "agent": ""}
+            )
+        )
+        results = [
+            {
+                "SKIP_AGENT": "true",
+                "RUN_SCRIPT": "true",
+                "SCRIPT_PATH": sys.executable,
+                "SCRIPT_ARGS": json.dumps(
+                    ["-c", "open('marker', 'w').write('step_one')"]
+                ),
+                "SCRIPT_WORKING_DIR": "",
+                "SCRIPT_ENV": "{}",
+                "WORKFLOW_STEP": "step_one",
+                "WORKFLOW_NAME": "chain",
+            },
+            {
+                "SKIP_AGENT": "true",
+                "RUN_SCRIPT": "true",
+                "SCRIPT_PATH": sys.executable,
+                "SCRIPT_ARGS": json.dumps(
+                    [
+                        "-c",
+                        "import pathlib, sys; "
+                        "sys.exit(0 if pathlib.Path('marker').is_file() else 9)",
+                    ]
+                ),
+                "SCRIPT_WORKING_DIR": "",
+                "SCRIPT_ENV": "{}",
+                "WORKFLOW_STEP": "step_two",
+                "WORKFLOW_NAME": "chain",
+            },
+            {"SKIP_AGENT": "false", "TASK": "dev"},
+        ]
+        calls = {"n": 0}
+
+        def resolver(**_):
+            i = min(calls["n"], len(results) - 1)
+            calls["n"] += 1
+            return results[i]
+
+        _patch_resolver(monkeypatch, resolver)
+        monkeypatch.setenv("NEBUKO_WORKSPACE", str(cwd))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+        return engine, calls
+
+    def test_a_file_written_by_step_one_is_visible_to_step_two(
+        self, tmp_path, monkeypatch
+    ):
+        workspace = tmp_path / "checkout"
+        workspace.mkdir()
+        engine, calls = self._chain_engine(tmp_path, workspace, monkeypatch)
+
+        outcome = engine.run()
+
+        # Both steps ran, in this one invocation, over this one checkout.
+        assert calls["n"] == 3
+        assert (workspace / "marker").read_text() == "step_one"
+
+        entries = engine.adapter.load_history()
+        bodies = [entry.body for entry in entries]
+        assert any("step_one command" in body for body in bodies)
+        assert any("step_two command" in body for body in bodies)
+
+        state = extract_state_from_body(outcome.posted_body)
+        assert state is not None
+        assert state.step == "step_two"
+
+    def test_the_chain_ends_at_the_first_non_script_step(
+        self, tmp_path, monkeypatch
+    ):
+        workspace = tmp_path / "checkout"
+        workspace.mkdir()
+        engine, calls = self._chain_engine(tmp_path, workspace, monkeypatch)
+
+        engine.run()
+
+        # step_one -> step_two -> a non-script result ends the chain.
+        assert calls["n"] == 3
+
+    def test_a_successor_resolution_failure_leaves_step_one_intact(
+        self, tmp_path, monkeypatch
+    ):
+        workspace = tmp_path / "checkout"
+        workspace.mkdir()
+        engine = _engine(tmp_path)
+        first = {
+            "SKIP_AGENT": "true",
+            "RUN_SCRIPT": "true",
+            "SCRIPT_PATH": sys.executable,
+            "SCRIPT_ARGS": json.dumps(["-c", "print('first')"]),
+            "WORKFLOW_STEP": "step_one",
+            "WORKFLOW_NAME": "chain",
+        }
+
+        def resolver(**_):
+            if resolver.calls:
+                raise RuntimeError("resolver exploded")
+            resolver.calls.append(1)
+            return first
+
+        resolver.calls = []
+        _patch_resolver(monkeypatch, resolver)
+        monkeypatch.setenv("NEBUKO_WORKSPACE", str(workspace))
+
+        outcome = engine.run()
+
+        assert outcome.routing.status == "terminate"
+        assert "step_one command succeeded" in outcome.posted_body
+
+
 class TestBenignNoNextAgentExit:
     """Issue #853: a workflow with no next agent stops green, not with exit 20."""
 

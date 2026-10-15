@@ -358,8 +358,10 @@ class RouteResolution:  # @stub-protected
             # script_* keys and the tagged step name.
             marker = {
                 "run_script": True,
-                "script_path": (self.script or {}).get("path", ""),
-                "script_args_str": (self.script or {}).get("args_str", ""),
+                "script_path": (self.script or {}).get("command", ""),
+                "script_args": (self.script or {}).get("args", "[]"),
+                "script_working_dir": (self.script or {}).get("working_dir", ""),
+                "script_env": (self.script or {}).get("env", "{}"),
                 "timeout_minutes": (self.script or {}).get("timeout_minutes"),
             }
             if self.step:
@@ -427,8 +429,10 @@ def _marker_to_resolution(marker: Optional[dict]) -> Optional[RouteResolution]:
             kind=RouteKind.RUN_SCRIPT,
             step=str(marker.get("step") or ""),
             script={
-                "path": marker.get("script_path", ""),
-                "args_str": marker.get("script_args_str", ""),
+                "command": marker.get("script_path", ""),
+                "args": marker.get("script_args", "[]"),
+                "working_dir": marker.get("script_working_dir", ""),
+                "env": marker.get("script_env", "{}"),
                 "timeout_minutes": marker.get("timeout_minutes"),
             },
         )
@@ -1340,7 +1344,9 @@ class SubWorkflowLeaf:
             descend to a deterministic ``script:`` step (issue #541), which
             must stay representable under this contract.
         script_path: Script to run for a ``"script"`` leaf ("" otherwise).
-        script_args: Space-joined script args for a ``"script"`` leaf.
+        script_args: JSON array of the script's argv (issue #974).
+        script_working_dir: Repo-relative working directory (issue #974).
+        script_env: JSON object of extra environment variables (issue #974).
         script_timeout: Script timeout in minutes for a ``"script"`` leaf.
         complexity: Declared complexity tier of the leaf step ("" when unset).
     """
@@ -1355,7 +1361,9 @@ class SubWorkflowLeaf:
     prompt_replace: bool = False  # @stub-protected
     kind: str = "agent"  # @stub-protected
     script_path: str = ""  # @stub-protected
-    script_args: str = ""  # @stub-protected
+    script_args: str = "[]"  # @stub-protected
+    script_working_dir: str = ""  # @stub-protected
+    script_env: str = "{}"  # @stub-protected
     script_timeout: Optional[float] = None  # @stub-protected
     # Declared complexity tier of the leaf step (issue #787); "" when unset.
     complexity: str = ""  # @stub-protected
@@ -1545,8 +1553,10 @@ def _resolve_sub_workflow_leaf(
             prompt_replace=bool(leaf.prompt_replace),
             refs=tuple(refs),
             kind="script",
-            script_path=leaf.script.path or "",
-            script_args=" ".join(leaf.script.args or []),
+            script_path=leaf.script.command or "",
+            script_args=leaf.script.to_process_env()["SCRIPT_ARGS"],
+            script_working_dir=leaf.script.working_dir or "",
+            script_env=leaf.script.to_process_env()["SCRIPT_ENV"],
             script_timeout=leaf.script.timeout_minutes,
             complexity=leaf.complexity or "",
         )
@@ -1686,6 +1696,8 @@ def _resolve_sub_workflow_entry(
             "RUN_SCRIPT": "true",
             "SCRIPT_PATH": leaf.script_path,
             "SCRIPT_ARGS": leaf.script_args,
+            "SCRIPT_WORKING_DIR": leaf.script_working_dir,
+            "SCRIPT_ENV": leaf.script_env,
             "SCRIPT_TIMEOUT_MINUTES": str(leaf.script_timeout or ""),
             "WORKFLOW_NAME": leaf.workflow,
             "WORKFLOW_STEP": leaf.step,
@@ -1951,8 +1963,8 @@ def _next_step_resolution(
         return {
             "ROLE_NAME": "",
             "RUN_SCRIPT": "true",
-            "SCRIPT_PATH": next_step.script.path,
-            "SCRIPT_ARGS": " ".join(next_step.script.args or []),
+            "SCRIPT_PATH": next_step.script.command,
+            **next_step.script.to_process_env(),
             "SCRIPT_TIMEOUT_MINUTES": str(next_step.script.timeout_minutes or ""),
             "WORKFLOW_NAME": cur_wf.name,
             "WORKFLOW_STEP": next_step_name,
@@ -2624,8 +2636,10 @@ def _marker_for_target_step(
     if target_step.script is not None:
         result = {
             "run_script": True,
-            "script_path": target_step.script.path,
-            "script_args_str": " ".join(target_step.script.args or []),
+            "script_path": target_step.script.command,
+            "script_args": target_step.script.to_process_env()["SCRIPT_ARGS"],
+            "script_working_dir": target_step.script.working_dir or "",
+            "script_env": target_step.script.to_process_env()["SCRIPT_ENV"],
             "timeout_minutes": target_step.script.timeout_minutes,
             "step": target_step.name,
         }

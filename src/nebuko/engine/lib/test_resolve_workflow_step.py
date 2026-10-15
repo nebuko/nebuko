@@ -863,7 +863,7 @@ class TestLinearScriptSuccessor:
                 {
                     "name": "post",
                     "script": {
-                        "path": "scripts/post.py",
+                        "command": "scripts/post.py",
                         "args": ["--issue", "42"],
                         "timeout_minutes": 5,
                     },
@@ -889,7 +889,7 @@ class TestLinearScriptSuccessor:
         assert r["ROLE_NAME"] == ""
         assert "REASON" not in r
         assert r["SCRIPT_PATH"] == "scripts/post.py"
-        assert r["SCRIPT_ARGS"] == "--issue 42"
+        assert r["SCRIPT_ARGS"] == '["--issue", "42"]'
         assert r["SCRIPT_TIMEOUT_MINUTES"] == "5"
         assert r["WORKFLOW_NAME"] == "parent"
         assert r["WORKFLOW_STEP"] == "post"

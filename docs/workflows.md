@@ -256,27 +256,40 @@ never intercepted, and `loop` retries within a step are not intercepted.
 ## Script Steps
 
 A step can be a **deterministic script run** instead of an agent: the engine
-executes a repo-local script, posts its raw output as a comment, and advances
-to the next step. The `script:` key is itself the step source (the nested
-object name is the kind — no separate `kind` field), like `agent:` or
-`workflow:`.
+executes a command, posts its raw output as a comment, and advances to the next
+step. The `script:` key is itself the step source (the nested object name is
+the kind — no separate `kind` field), like `agent:` or `workflow:`. The fields
+follow the Kubernetes container schema (`command` + `args`).
 
 ```yaml
 steps:
   - name: run-tests
     script:
-      path: scripts/test.sh   # required, repo-relative
-      args: ["--unit"]        # optional argv list (no shell interpolation)
-      timeout_minutes: 15     # optional, >= 1 (default 30, capped at 60)
+      command: uv               # required; executable or repo-relative script
+      args: ["run", "pytest", "-q"]  # optional argv list (no shell interpolation)
+      working_dir: src          # optional, repo-relative (default: repo root)
+      env:                      # optional, overlaid on the engine environment
+        PYTHONWARNINGS: error
+      timeout_minutes: 15       # optional, >= 1 (default 30, capped at 60)
     next: review
 ```
+
+There is no shell: `command` is executed directly with `args` as its argv
+(`[command, *args]`), so metacharacters and quoting are never interpreted. Use
+`command: sh` with `args: ["-c", "..."]` when you actually want a shell, and
+remember the whole script is argv — an argument containing spaces or quotes
+survives the round trip to the child process intact. `working_dir` is resolved
+against the session checkout (absolute paths and `..` segments are rejected)
+and `env` overrides inherited variables with the same key.
 
 Mechanics:
 
 1. The resolver detects the `script:` source and emits the execution contract
-   (`RUN_SCRIPT=true`, `SKIP_AGENT=true`, `SCRIPT_PATH`, `SCRIPT_ARGS`,
+   (`RUN_SCRIPT=true`, `SKIP_AGENT=true`, `SCRIPT_PATH`, `SCRIPT_ARGS` as a
+   JSON array, `SCRIPT_WORKING_DIR`, `SCRIPT_ENV` as a JSON object,
    `SCRIPT_TIMEOUT_MINUTES`, `WORKFLOW_STEP`) instead of a task assignment; no
-   agent is run for that step.
+   agent is run for that step. `SCRIPT_PATH` carries the `command` verbatim and
+   `SCRIPT_ARGS` is decoded with `json.loads`, so argv round-trips losslessly.
 2. The engine runs the script from `[phase:action]` (bounded by the optional
    `timeout_minutes`), capturing stdout and stderr **merged**, and posts **two**
    comments — the same comment lifecycle as an agent step:
@@ -289,7 +302,7 @@ Mechanics:
      the step's registered output.
 3. The completion body is a **`<step> command succeeded` / `command failed`**
    banner — the step name, exit code and duration only, **never the command
-   line** (path/args may carry secrets) — followed by a collapsed
+   line** (command/args may carry secrets) — followed by a collapsed
    `<details><summary>command output</summary>` fenced block with the captured
    output (so trigger-like strings in the output stay inert). Oversized output
    is truncated head+tail with a marker to stay under GitHub's comment-size
@@ -313,16 +326,32 @@ Result semantics (feeds the existing `conditions` mechanism):
 
 Security notes:
 
-- Scripts must live in the repo: `script.path` is repo-relative, absolute
-  paths and `..` segments are rejected at parse time and re-verified at
-  runtime (realpath containment inside the checkout).
-- The command line (`path` + `args`) is deliberately **not echoed** in the
+- A repo-relative `command`/`working_dir` is re-verified at runtime (realpath
+  containment inside the checkout); absolute paths and `..` segments are
+  rejected at parse time.
+- The command line (`command` + `args`) is deliberately **not echoed** in the
   posted comments; only the step name, exit code and duration appear in the
   banner. The captured *output* is posted as-is — the same trust level as an
   agent answer.
 - The script runs in the same CI job with the job's full environment and
-  permissions — the same trust level as the workflow YAML itself. Secret
-  scrubbing / sandboxed execution are deferred enhancements.
+  permissions — the same trust level as the workflow YAML itself, plus the
+  step's own `env`. Secret scrubbing / sandboxed execution are deferred
+  enhancements.
+
+### Consecutive script steps share the run workspace
+
+Every workflow step is normally its own engine invocation on a fresh, shallow,
+ref-pinned checkout, so filesystem and git state does not survive from one step
+to the next. **Consecutive `script` steps are the exception**: the engine runs
+them in a single invocation over the same session checkout, so a ref, file,
+virtualenv or generated artefact produced by one script step is visible to the
+next. The chain ends at the first step that is not a `script` step (an `agent`
+step ends the invocation exactly as before), and an unresolved or disabled
+successor simply ends the chain with the last step's outcome.
+
+This is what makes a `fetch_base` → `git_diff` chain work: the fetch
+materializes `origin/main` in the checkout and the diff resolves it, instead of
+dying with `fatal: ambiguous argument 'origin/main'`.
 
 ---
 

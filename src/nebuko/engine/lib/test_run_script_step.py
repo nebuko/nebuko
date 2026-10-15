@@ -51,7 +51,7 @@ class TestResolveNextScriptMarker:
         "    next: run-tests\n"
         "  - name: run-tests\n"
         "    script:\n"
-        "      path: scripts/test.sh\n"
+        "      command: scripts/test.sh\n"
         "      args: ['--unit']\n"
         "      timeout_minutes: 15\n"
         "    next: review\n"
@@ -66,7 +66,7 @@ class TestResolveNextScriptMarker:
         assert result["run_script"] is True
         assert "task" not in result
         assert result["script_path"] == "scripts/test.sh"
-        assert result["script_args_str"] == "--unit"
+        assert result["script_args"] == '["--unit"]'
         assert result["timeout_minutes"] == 15
         assert result["step"] == "run-tests"
 
@@ -86,7 +86,7 @@ class TestResolveNextScriptMarker:
             "    next: s\n"
             "  - name: s\n"
             "    script:\n"
-            "      path: ci/run.sh\n"
+            "      command: ci/run.sh\n"
             "    next: b\n"
             "  - name: b\n"
             "    agent: review\n"
@@ -96,7 +96,7 @@ class TestResolveNextScriptMarker:
         result = resolve_next_from_workflow("default", "a", workflows_dir)
         assert result["run_script"] is True
         assert result["script_path"] == "ci/run.sh"
-        assert result["script_args_str"] == ""
+        assert result["script_args"] == "[]"
         assert result["timeout_minutes"] is None
 
 
@@ -106,8 +106,10 @@ class TestBuildResultRunScript:
     def _config(self):
         return {
             "run_script": {
-                "path": "scripts/test.sh",
-                "args_str": "--unit --fast",
+                "command": "scripts/test.sh",
+                "args": '["--unit", "--fast"]',
+                "working_dir": "",
+                "env": "{}",
                 "timeout_minutes": 20,
             },
             "config_workflow": "default",
@@ -126,7 +128,7 @@ class TestBuildResultRunScript:
         assert result["ROLE_NAME"] == "script"
         assert result["TASK"] == ""
         assert result["SCRIPT_PATH"] == "scripts/test.sh"
-        assert result["SCRIPT_ARGS"] == "--unit --fast"
+        assert result["SCRIPT_ARGS"] == '["--unit", "--fast"]'
         assert result["SCRIPT_TIMEOUT_MINUTES"] == "20"
         assert result["WORKFLOW_STEP"] == "run-tests"
         assert "REASON" not in result
@@ -146,11 +148,11 @@ class TestBuildResultRunScript:
     def test_empty_timeout_defaults_blank(self):
         cfg = self._config()
         cfg["run_script"]["timeout_minutes"] = None
-        cfg["run_script"]["args_str"] = ""
+        cfg["run_script"]["args"] = "[]"
         prompt_base, workflows_dir = _make_dirs("")
         result = _build_result(cfg, prompt_base, workflows_dir)
         assert result["SCRIPT_TIMEOUT_MINUTES"] == ""
-        assert result["SCRIPT_ARGS"] == ""
+        assert result["SCRIPT_ARGS"] == "[]"
 
     def test_agent_task_still_routed(self):
         # Regression guard: a plain agent task must NOT pick up RUN_SCRIPT.
@@ -198,7 +200,7 @@ class TestResolveConfigEndToEnd:
         "    next: run-tests\n"
         "  - name: run-tests\n"
         "    script:\n"
-        "      path: scripts/test.sh\n"
+        "      command: scripts/test.sh\n"
         "      args: ['--unit']\n"
         "    next: review\n"
         "  - name: review\n"
@@ -220,6 +222,6 @@ class TestResolveConfigEndToEnd:
         result = resolve_config(body, prompt_base, workflows_dir)
         assert result["RUN_SCRIPT"] == "true"
         assert result["SCRIPT_PATH"] == "scripts/test.sh"
-        assert result["SCRIPT_ARGS"] == "--unit"
+        assert result["SCRIPT_ARGS"] == '["--unit"]'
         assert result["ROLE_NAME"] == "script"
         assert result["SKIP_AGENT"] == "true"

@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
@@ -628,7 +628,10 @@ class Engine:
         if step is None:
             return None
         if step.kind == "run_script":
-            return self._run_script_step(step, resolved, phases, trigger)
+            return self._run_chain_member(
+                self._run_script_step(step, resolved, phases, trigger),
+                trigger,
+            )
         result = step.execute(self.adapter)
         log.info("[phase:action] %s: %s", result.step_kind, result.detail)
         return RunOutcome(
@@ -678,6 +681,70 @@ class Engine:
             state=state,
             phases=tuple(phases),
         )
+
+    def _run_chain_member(self, outcome: RunOutcome, trigger: Trigger) -> RunOutcome:
+        """Run the successor steps of a script step's chain in this invocation.
+
+        Consecutive ``script`` steps share the run workspace (issue #974): each
+        engine invocation gets a fresh shallow checkout, so a ref or file one
+        script step creates is invisible to the next invocation — ``fetch_base``
+        could materialize ``origin/main`` and the following ``git_diff`` still
+        exited 128 (issue #957 → #965). Running them in one process keeps one
+        checkout, so the state a step produces is there for its successors.
+
+        The chain ends at the first successor that is not a ``script`` step
+        (an agent step ends the invocation exactly as before, and its own
+        successor is resolved in the next run); the returned outcome is then
+        that of the last script step executed. A disabled or unresolved
+        successor also ends the chain and yields the original outcome, so this
+        can never turn a completed script step into a failure.
+        """
+        current = outcome
+        while True:
+            chained = self._resolve_chained_script(current, trigger)
+            if chained is None:
+                return current
+            step, resolved = chained
+            current = self._run_script_step(step, resolved, [], trigger)
+
+    def _resolve_chained_script(
+        self, outcome: RunOutcome, trigger: Trigger
+    ) -> tuple[DeterministicStep, dict[str, str]] | None:
+        """Resolve ``outcome``'s successor, or ``None`` when it is not a script step."""
+        state = outcome.state
+        if state is None:
+            return None
+        body = self._chain_trigger_body(state)
+        try:
+            resolved = self.resolve(replace(trigger, body=body))
+        except Exception as exc:  # noqa: BLE001 - the chain must never fail the run
+            log.warning("[phase:action] chained step unresolved: %s", exc)
+            return None
+        step = DeterministicStep.from_resolved(resolved)
+        if step is None or step.kind != "run_script":
+            return None
+        return step, resolved
+
+    def _chain_trigger_body(self, state: WorkflowState) -> str:
+        """This run's own answer comment — the thread trigger a next run would read.
+
+        The chained step is resolved from the comment the just-finished step
+        posted, because that is the comment the GitHub gate would re-trigger the
+        workflow on. For a script step the whole comment is expressible without
+        re-reading the thread; for anything else (reached only when a chained
+        resolve already happened) the newest posted comment is used, falling
+        back to the engine-side state header.
+        """
+        posted = self.adapter.load_history(limit=1)
+        if posted:
+            return posted[-1].body
+        # Deferred: ``prepare_comment`` imports the comment feature at import
+        # time, so a module-level import here would be circular.
+        from workflow_state.features.comment.to_git_comment import (
+            format_collapsed_section,
+        )
+
+        return format_collapsed_section(state)
 
     def _advance_script_state(
         self, step: DeterministicStep, resolved: Any, result: StepResult

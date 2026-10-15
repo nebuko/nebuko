@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import sys
 
 import pytest
@@ -207,14 +208,18 @@ class TestDeterministicStepFromResolved:
             {
                 "RUN_SCRIPT": "true",
                 "SCRIPT_PATH": "scripts/clean.sh",
-                "SCRIPT_ARGS": "--all",
+                "SCRIPT_ARGS": '["--all"]',
+                "SCRIPT_WORKING_DIR": "src",
+                "SCRIPT_ENV": '{"CI": "true"}',
                 "SCRIPT_TIMEOUT_MINUTES": "5",
             }
         )
         assert step == DeterministicStep(
             kind="run_script",
             script_path="scripts/clean.sh",
-            script_args="--all",
+            script_args='["--all"]',
+            script_working_dir="src",
+            script_env='{"CI": "true"}',
             timeout_minutes=5,
         )
 
@@ -230,14 +235,14 @@ class TestDeterministicStepFromResolved:
             {
                 "RUN_SCRIPT": "true",
                 "SCRIPT_PATH": "git",
-                "SCRIPT_ARGS": "diff origin/main",
+                "SCRIPT_ARGS": '["diff", "origin/main"]',
                 "WORKFLOW_STEP": "git_diff",
             }
         )
         assert step == DeterministicStep(
             kind="run_script",
             script_path="git",
-            script_args="diff origin/main",
+            script_args='["diff", "origin/main"]',
             step_name="git_diff",
         )
 
@@ -320,7 +325,7 @@ class TestDeterministicStepExecute:
         result = DeterministicStep(
             kind="run_script",
             script_path=sys.executable,
-            script_args='-c "import sys; sys.exit(3)"',
+            script_args='["-c", "import sys; sys.exit(3)"]',
         ).execute(_RecordingAdapter())
 
         assert result.ok is False
@@ -329,7 +334,9 @@ class TestDeterministicStepExecute:
 
     def test_run_script_success_is_ok(self):
         result = DeterministicStep(
-            kind="run_script", script_path=sys.executable, script_args='-c "pass"'
+            kind="run_script",
+            script_path=sys.executable,
+            script_args='["-c", "pass"]',
         ).execute(_RecordingAdapter())
 
         assert result.ok is True
@@ -339,7 +346,7 @@ class TestDeterministicStepExecute:
         result = DeterministicStep(
             kind="run_script",
             script_path=sys.executable,
-            script_args='-c "import sys; print(\'out\'); print(\'err\', file=sys.stderr)"',
+            script_args='["-c", "import sys; print(\'out\'); print(\'err\', file=sys.stderr)"]',
         ).execute(_RecordingAdapter())
 
         assert result.ok is True
@@ -351,12 +358,78 @@ class TestDeterministicStepExecute:
         result = DeterministicStep(
             kind="run_script",
             script_path=sys.executable,
-            script_args='-c "import sys; print(\'boom\', file=sys.stderr); sys.exit(2)"',
+            script_args='["-c", "import sys; print(\'boom\', file=sys.stderr); sys.exit(2)"]',
         ).execute(_RecordingAdapter())
 
         assert result.ok is False
         assert result.affected == 2
         assert "boom" in result.output
+
+    def test_run_script_argv_round_trips_spaces_and_quotes(self):
+        """Issue #974: the JSON argv survives to the child process unchanged."""
+        result = DeterministicStep(
+            kind="run_script",
+            script_path=sys.executable,
+            script_args=json.dumps(
+                ["-c", "import sys; print(sys.argv[1:])", "a b", "say \"hi\""]
+            ),
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is True
+        assert "'a b'" in result.output
+        assert 'say "hi"' in result.output
+
+    def test_run_script_runs_in_the_working_dir_under_the_workspace(
+        self, tmp_path, monkeypatch
+    ):
+        (tmp_path / "sub").mkdir()
+        monkeypatch.setenv("NEBUKO_WORKSPACE", str(tmp_path))
+        result = DeterministicStep(
+            kind="run_script",
+            script_path=sys.executable,
+            script_args=json.dumps(
+                ["-c", "import os; print(os.path.basename(os.getcwd()))"]
+            ),
+            script_working_dir="sub",
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is True
+        assert "sub" in result.output
+
+    def test_run_script_env_overrides_the_inherited_environment(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("NEBUKO_WORKSPACE", str(tmp_path))
+        monkeypatch.setenv("NEBUKO_TEST_INHERITED", "ambient")
+        result = DeterministicStep(
+            kind="run_script",
+            script_path=sys.executable,
+            script_args=json.dumps(
+                [
+                    "-c",
+                    "import os; print(os.environ['NEBUKO_TEST_INHERITED'],"
+                    " os.environ['NEBUKO_TEST_EXTRA'])",
+                ]
+            ),
+            script_env=json.dumps(
+                {"NEBUKO_TEST_INHERITED": "overridden", "NEBUKO_TEST_EXTRA": "extra"}
+            ),
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is True
+        assert "overridden extra" in result.output
+
+    def test_run_script_malformed_json_args_fall_back_to_no_args(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("NEBUKO_WORKSPACE", str(tmp_path))
+        result = DeterministicStep(
+            kind="run_script",
+            script_path=sys.executable,
+            script_args="not json",
+        ).execute(_RecordingAdapter())
+
+        assert result.ok is True
 
     def test_run_script_timeout_is_data_not_a_crash(self, monkeypatch):
         import subprocess
