@@ -9,6 +9,9 @@ llms:
   deepseek-v4_1-flash:
     model_path: "openai/deepseek/deepseek-v4.1-flash"
     provider: "${providers.commandcode}"
+    preserve_thinking: true
+    thinking_enabled: false
+    top_p: 0.95
   glm-5_3-flash:
     model_path: "openai/z-ai/glm-5.3-flash"
     provider: "${providers.commandcode}"
@@ -17,20 +20,6 @@ llms:
     provider: "${providers.commandcode}"
     thinking_enabled: true
     preserve_thinking: true
-  
-# ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
-mcp_servers:
-  brave-search:
-    name: "brave-search"
-    command: "npx"
-    args:
-      - "-y"
-      - "@brave/brave-search-mcp-server@2.1.4"
-      - "--enabled-tools"
-      - "brave_web_search"
-      - "brave_news_search"
-    env:
-      BRAVE_API_KEY: "BRAVE_API_KEY"
 
 # ── Agents: role → model + prompt + skills + tools ──
 # Tools: terminal, file_editor, task_tracker (SDK tools)
@@ -46,6 +35,8 @@ agents:
     complexity_overrides:
       low:
         model: "${llms.deepseek-v4_1-flash}"
+        thinking_enabled: true
+        reasoning: "medium"
       high:
         temperature: 0.6
         reasoning: "high"
@@ -57,11 +48,6 @@ agents:
     prompt_file: "defaults/prompts/dev.md"
     skills: ["posting-contract", "git-pr-workflow", "complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
-    complexity_overrides:
-      low:
-        reasoning: "low"
-      high:
-        reasoning: "high"
 
   context:
     model: "${llms.deepseek-v4_1-flash}"
@@ -70,13 +56,6 @@ agents:
     prompt_file: "defaults/prompts/context.md"
     skills: ["call-agent", "posting-contract", "context-research", "complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
-    complexity_overrides:
-      low:
-        reasoning: "low"
-      high:
-        reasoning: "high"
-    mcp_servers:
-      - "${mcp_servers.brave-search}"
 
   review:
     model: "${llms.glm-5_3-flash}"

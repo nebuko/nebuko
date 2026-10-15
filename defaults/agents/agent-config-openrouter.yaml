@@ -9,15 +9,17 @@ llms:
   deepseek-v4_1-flash:
     model_path: "openrouter/deepseek/deepseek-v4.1-flash"
     provider: "${providers.openrouter}"
-  
+    preserve_thinking: true
+    thinking_enabled: false
+    top_p: 0.95
   glm-5_3-flash:
     model_path: "openrouter/z-ai/glm-5.3-flash"
     provider: "${providers.openrouter}"
-  
   mimo-2_6-pro:
     model_path: "openrouter/xiaomi/mimo-v2.6-pro"
     provider: "${providers.openrouter}"
-
+    thinking_enabled: true
+    preserve_thinking: true
 
 # ── Agents: role → model + prompt + skills + tools ──
 # Tools: terminal, file_editor, task_tracker (SDK tools)
@@ -30,6 +32,14 @@ agents:
     prompt_file: "defaults/prompts/architect.md"
     skills: ["call-agent", "posting-contract", "planning", "complexity"]
     tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    complexity_overrides:
+      low:
+        model: "${llms.deepseek-v4_1-flash}"
+        thinking_enabled: true
+        reasoning: "medium"
+      high:
+        temperature: 0.6
+        reasoning: "high"
 
   dev:
     model: "${llms.deepseek-v4_1-flash}"
@@ -53,7 +63,7 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
     skills: ["posting-contract", "plan-review", "retrospective", "complexity"]
-    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    tools: ["terminal", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"
