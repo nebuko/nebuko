@@ -61,7 +61,7 @@
     },
     "prompt": {
       "prompt": "defaults/prompts/architect.md",
-      "step_prompt": ""
+      "step_prompt": "/tmp/step_prompt.md"
     },
     "agent_ran": false
   }

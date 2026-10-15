@@ -78,7 +78,13 @@ def _prompt_selection(decision: Mapping[str, Any]) -> dict:
     selection: dict[str, str] = {}
     for key, name in (("PROMPT_LOCATION", "prompt"), ("STEP_PROMPT_FILE", "step_prompt")):
         location = decision.get(key) or ""
-        selection[name] = str(Path(location).relative_to(REPO_ROOT)) if location else ""
+        path = Path(location) if location else None
+        # Step prompts are rendered to a temp file outside the checkout.
+        selection[name] = (
+            str(path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path)
+            if path
+            else ""
+        )
     return selection
 
 
