@@ -2,9 +2,9 @@
 
 A folded run (the ``handoff`` tool called with ``fold: true``) saved its
 document and asked for a fresh start. It must not advance: ``build_output``
-overrides the agent's own dispatch with the explicit ``agent_checkpoint``
-status, which the router treats exactly like ``soft_kill`` (re-run the step in
-place, bounded by ``MAX_SOFT_RETRIES``).
+overrides the agent's own turn outcome with INCOMPLETE/AGENT_CHECKPOINT, which
+the router treats exactly like a soft kill (re-run the step in place, bounded
+by ``MAX_SOFT_RETRIES``).
 """
 
 import os
@@ -23,17 +23,17 @@ sys.path.insert(
     ),
 )
 
-from build_output import _agent_checkpoint_dispatch, build_output
+from build_output import _agent_checkpoint_outcome, build_output
 from openhands.sdk.event import MessageEvent
 from openhands.sdk.llm import Message
-from workflow_state import Dispatch
+from workflow_state import Appreciation, TurnOutcome, TurnStatus
 from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
 from metrics_schema import Metrics
 from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 
 
 def _make_conversation(events=None, run_outcome=None):
-    conv = SimpleNamespace()
+    conv = SimpleNamespace(id=None)
     conv.state = SimpleNamespace(events=events or [])
     conv.run_outcome = run_outcome
     return conv
@@ -46,22 +46,24 @@ def _assistant_answer(text):
     )
 
 
-class TestAgentCheckpointDispatch(unittest.TestCase):
-    def test_dispatch_carries_the_checkpoint_status(self):
-        dispatch = _agent_checkpoint_dispatch()
-        self.assertIsInstance(dispatch, Dispatch)
-        self.assertEqual(dispatch.status, "agent_checkpoint")
+class TestAgentCheckpointOutcome(unittest.TestCase):
+    def test_outcome_carries_the_checkpoint_reason(self):
+        outcome = _agent_checkpoint_outcome()
+        self.assertIsInstance(outcome, TurnOutcome)
+        self.assertIs(outcome.status, TurnStatus.INCOMPLETE)
+        self.assertEqual(outcome.incomplete_reason.value, "agent_checkpoint")
 
-    def test_dispatch_is_not_a_normal_advance(self):
-        self.assertNotEqual(_agent_checkpoint_dispatch().status, "advance")
+    def test_outcome_is_not_a_completion(self):
+        # A checkpoint is incompleteness, so it can never carry a verdict -
+        # that is what sends the router back to this step.
+        self.assertIsNone(_agent_checkpoint_outcome().appreciation)
 
-    def test_dispatch_explains_the_retry_contract(self):
-        reason = _agent_checkpoint_dispatch().reason
-        self.assertIn("MAX_SOFT_RETRIES", reason)
+    def test_outcome_explains_the_retry_contract(self):
+        self.assertIn("MAX_SOFT_RETRIES", _agent_checkpoint_outcome().note)
 
 
 class TestBuildOutputAgentCheckpoint(unittest.TestCase):
-    """End-to-end: a folded run persists the ``agent_checkpoint`` dispatch."""
+    """End-to-end: a folded run persists the AGENT_CHECKPOINT outcome."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -92,31 +94,50 @@ class TestBuildOutputAgentCheckpoint(unittest.TestCase):
         ):
             return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
 
-    def test_fold_overrides_an_agent_emitted_advance_dispatch(self):
-        answer = (
-            "**Work completed**: X\n"
-            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->'
-        )
+    def test_fold_overrides_an_agent_emitted_verdict(self):
+        from agent_script.features.dispatch_next_tool import record_turn_outcome
+
+        answer = "**Work completed**: X"
         conv = _make_conversation(
             events=[_assistant_answer(answer)],
             run_outcome=RunOutcome(status=OutcomeStatus.AGENT_CHECKPOINT),
         )
-
-        state = self._build(conv)["workflow_state"]
-
-        self.assertEqual(state.dispatch.status, "agent_checkpoint")
-
-    def test_successful_run_still_advances(self):
-        # Control: without the fold classification the override must not fire.
-        answer = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->'
-        conv = _make_conversation(
-            events=[_assistant_answer(answer)],
-            run_outcome=RunOutcome(status=OutcomeStatus.SUCCESS),
+        conv.id = "conv-checkpoint"
+        record_turn_outcome(
+            conv.id,
+            TurnOutcome(
+                status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED
+            ),
         )
 
         state = self._build(conv)["workflow_state"]
 
-        self.assertEqual(state.dispatch.status, "advance")
+        self.assertIs(state.turn_outcome.status, TurnStatus.INCOMPLETE)
+        self.assertEqual(
+            state.turn_outcome.incomplete_reason.value, "agent_checkpoint"
+        )
+
+    def test_successful_run_still_carries_its_verdict(self):
+        # Control: without the fold classification the override must not fire.
+        from agent_script.features.dispatch_next_tool import record_turn_outcome
+
+        answer = "**Work completed**: X"
+        conv = _make_conversation(
+            events=[_assistant_answer(answer)],
+            run_outcome=RunOutcome(status=OutcomeStatus.SUCCESS),
+        )
+        conv.id = "conv-checkpoint-control"
+        record_turn_outcome(
+            conv.id,
+            TurnOutcome(
+                status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED
+            ),
+        )
+
+        state = self._build(conv)["workflow_state"]
+
+        self.assertIs(state.turn_outcome.status, TurnStatus.COMPLETED)
+        self.assertIs(state.turn_outcome.appreciation, Appreciation.APPROVED)
 
 
 if __name__ == "__main__":

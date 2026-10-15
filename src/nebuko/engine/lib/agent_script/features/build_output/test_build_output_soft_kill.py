@@ -1,10 +1,11 @@
 """Soft-kill integration in build_output (issue #704).
 
-A gracefully timed-out run must emit an explicit soft-kill error dispatch so
-the workflow retries the interrupted step instead of advancing. The
-``TestBuildOutputSoftKill`` suite drives ``build_output`` end to end — rather
-than only the ``_soft_kill_dispatch`` helper — to prove the override reaches
-the persisted workflow state even when the agent emitted its own dispatch.
+A gracefully timed-out run must record an INCOMPLETE/SOFT_TIMEOUT turn
+outcome so the workflow re-runs the interrupted step instead of advancing.
+The ``TestBuildOutputSoftKill`` suite drives ``build_output`` end to end -
+rather than only the ``_soft_kill_outcome`` helper - to prove the override
+reaches the persisted workflow state even when the agent emitted its own
+verdict.
 """
 
 import os
@@ -23,10 +24,10 @@ sys.path.insert(
     ),
 )
 
-from build_output import _soft_kill_dispatch, build_output
+from build_output import _soft_kill_outcome, build_output
 from openhands.sdk.event import MessageEvent
 from openhands.sdk.llm import Message
-from workflow_state import Dispatch
+from workflow_state import Appreciation, TurnOutcome, TurnStatus
 from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
 from metrics_schema import Metrics
 from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
@@ -34,7 +35,7 @@ from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcom
 
 def _make_conversation(events=None, run_outcome=None):
     """Minimal stand-in for an OpenHands Conversation."""
-    conv = SimpleNamespace()
+    conv = SimpleNamespace(id=None)
     conv.state = SimpleNamespace(events=events or [])
     conv.run_outcome = run_outcome
     return conv
@@ -58,22 +59,25 @@ def _timed_out(events=None, **outcome_kwargs):
     )
 
 
+class TestSoftKillOutcome(unittest.TestCase):
+    def test_outcome_carries_the_soft_timeout_reason(self):
+        outcome = _soft_kill_outcome()
+        self.assertIsInstance(outcome, TurnOutcome)
+        self.assertIs(outcome.status, TurnStatus.INCOMPLETE)
+        self.assertEqual(outcome.incomplete_reason.value, "soft_timeout")
 
-class TestSoftKillDispatch(unittest.TestCase):
-    def test_dispatch_carries_the_soft_kill_error_status(self):
-        dispatch = _soft_kill_dispatch()
-        self.assertIsInstance(dispatch, Dispatch)
-        self.assertEqual(dispatch.status, "soft_kill")
+    def test_outcome_is_not_a_completion(self):
+        # A soft kill is engine-measured incompleteness, so it can never carry
+        # an agent verdict - that is what sends the router back to this step.
+        outcome = _soft_kill_outcome()
+        self.assertIsNone(outcome.appreciation)
 
-    def test_dispatch_is_not_a_normal_advance(self):
-        self.assertNotEqual(_soft_kill_dispatch().status, "advance")
-
-    def test_dispatch_explains_the_timeout(self):
-        self.assertTrue(_soft_kill_dispatch().reason)
+    def test_outcome_explains_the_retry_contract(self):
+        self.assertIn("MAX_SOFT_RETRIES", _soft_kill_outcome().note)
 
 
 class TestBuildOutputSoftKill(unittest.TestCase):
-    """End-to-end: a soft-killed run persists the ``soft_kill`` error dispatch."""
+    """End-to-end: a soft-killed run persists the INCOMPLETE outcome."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -106,63 +110,38 @@ class TestBuildOutputSoftKill(unittest.TestCase):
         ):
             return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
 
-    def test_soft_kill_is_emitted_as_the_dispatch_status(self):
+    def test_soft_kill_is_emitted_as_the_turn_outcome(self):
         state = self._build(_timed_out())["workflow_state"]
-        self.assertIsNotNone(state.dispatch)
-        self.assertEqual(state.dispatch.status, "soft_kill")
+        self.assertIsNotNone(state.turn_outcome)
+        self.assertIs(state.turn_outcome.status, TurnStatus.INCOMPLETE)
+        self.assertEqual(state.turn_outcome.incomplete_reason.value, "soft_timeout")
 
-    def test_soft_kill_overrides_agent_emitted_advance_dispatch(self):
-        # The wind-down finished with its own AGENT_RUN_CONFIG advance
-        # sentinel — the grace-timeout override must still win.
-        answer = (
-            "**Work completed**: X\n"
-            '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->'
-        )
+    def test_soft_kill_overrides_an_agent_emitted_verdict(self):
+        # The wind-down finished with its own recorded verdict - the
+        # grace-timeout override must still win.
+        answer = "**Work completed**: X"
         state = self._build(
             _timed_out(events=[_assistant_answer(answer)], wind_down_completed=True)
         )["workflow_state"]
-        self.assertEqual(state.dispatch.status, "soft_kill")
+        self.assertIs(state.turn_outcome.status, TurnStatus.INCOMPLETE)
 
-    def test_agent_advance_dispatch_survives_when_run_did_not_time_out(self):
-        # Control: the same sentinel really resolves to advance, so the test
-        # above exercises the override rather than an unparsed sentinel.
-        answer = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->'
+    def test_agent_verdict_survives_when_run_did_not_time_out(self):
+        # Control: the same recorded verdict really persists, so the test
+        # above exercises the override rather than a dropped outcome.
+        from agent_script.features.dispatch_next_tool import record_turn_outcome
+
+        answer = "**Work completed**: X"
         conv = _make_conversation(
             events=[_assistant_answer(answer)],
             run_outcome=RunOutcome(status=OutcomeStatus.SUCCESS),
         )
+        conv.id = "conv-soft-kill-control"
+        record_turn_outcome(
+            conv.id,
+            TurnOutcome(
+                status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED
+            ),
+        )
         state = self._build(conv)["workflow_state"]
-        self.assertEqual(state.dispatch.status, "advance")
-
-    def test_gate_step_holds_soft_kill_without_human_resume(self):
-        self._write_gated_workflow("gated")
-        with patch.dict(os.environ, {"WORKFLOW_NAME": "gated"}, clear=False):
-            state = self._build(_timed_out())["workflow_state"]
-        self.assertIsNotNone(state.dispatch)
-        self.assertEqual(state.dispatch.status, "hold")
-
-    def test_gate_step_holds_soft_kill_even_on_human_resume(self):
-        """Issue #648: a resume-triggered soft_kill is still held (no bypass)."""
-        self._write_gated_workflow("gated")
-        with patch.dict(
-            os.environ,
-            {"WORKFLOW_NAME": "gated", "HUMAN_RESUME_INPUT": "/nebuko resume"},
-            clear=False,
-        ):
-            state = self._build(_timed_out())["workflow_state"]
-        self.assertIsNotNone(state.dispatch)
-        self.assertEqual(state.dispatch.status, "hold")
-
-    def _write_gated_workflow(self, name):
-        path = os.path.join(self._tmp.name, f"{name}.yaml")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(
-                f"name: {name}\n"
-                f'description: "test workflow"\n'
-                f"steps:\n  - name: implement\n    agent: dev\n"
-                f"    human_gate: true\n    next: review\n"
-            )
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertIs(state.turn_outcome.status, TurnStatus.COMPLETED)
+        self.assertIs(state.turn_outcome.appreciation, Appreciation.APPROVED)

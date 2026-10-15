@@ -9,7 +9,7 @@
     {
       "step": "analyze",
       "agent": "architect",
-      "summary": "## Architect triage — \"Estimated human reading time seems wrong\"\n\n**Issue (from @olivier-norture):** The *estimated human reading time* metric is inflated — the reporter reads in roughly 1/2 to 1/3 of the reported estimate. The reporter's hypothesis is that **\"ctx report\"** (context-agent report) co",
+      "summary": "## Architect triage \u2014 \"Estimated human reading time seems wrong\"\n\n**Issue (from @olivier-norture):** The *estimated human reading time* metric is inflated \u2014 the reporter reads in roughly 1/2 to 1/3 of the reported estimate. The reporter's hypothesis is that **\"ctx report\"** (context-agent report) co",
       "position": [
         {
           "workflow": "default",
@@ -61,7 +61,7 @@
     {
       "step": "context",
       "agent": "context",
-      "summary": "# 🔍 Context Collection Report — \"Estimated human reading time seems wrong\" (issue #864)\n\n*Located the reading-time computation in `human_metrics.py`, its wiring in `agent_metrics.py`, the `<details>`-collapse that is supposed to exclude context-report bodies, and a live empirical measurement showing",
+      "summary": "# \ud83d\udd0d Context Collection Report \u2014 \"Estimated human reading time seems wrong\" (issue #864)\n\n*Located the reading-time computation in `human_metrics.py`, its wiring in `agent_metrics.py`, the `<details>`-collapse that is supposed to exclude context-report bodies, and a live empirical measurement showing",
       "position": [
         {
           "workflow": "default",
@@ -173,9 +173,8 @@
     }
   ],
   "turn_outcome": {
-    "status": "completed",
-    "appreciation": "hold",
-    "hold_kind": "awaiting_input",
+    "status": "incomplete",
+    "incomplete_reason": "no_outcome",
     "note": "no-action default: agent emitted no decision"
   },
   "version": 6
