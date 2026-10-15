@@ -2830,7 +2830,11 @@ def resolve_next_from_workflow(
     if marker is not None:
         return _marker_to_resolution(marker)
     kind = _classify_terminal_kind(
-        workflow_name, current_step_name, workflows_dir, local_workflows_dir,
+        workflow_name,
+        current_step_name,
+        workflows_dir,
+        local_workflows_dir,
+        branch_result=branch_result,
     )
     if kind is RouteKind.UNRESOLVED:
         return RouteResolution(kind=kind, step=current_step_name)
@@ -2844,6 +2848,7 @@ def _classify_terminal_kind(
     current_step_name: str,
     workflows_dir: str,
     local_workflows_dir: Optional[str],
+    branch_result: Optional[str] = None,
 ) -> Optional[RouteKind]:
     """Classify a ``None`` marker result: DECLARED_FINISH, UNRESOLVED, or None.
 
@@ -2852,6 +2857,12 @@ def _classify_terminal_kind(
     (conditions all ``next: null``, or a linear ``next: null``), and
     *unresolved* when the step declares forward edges that matched nothing.
     A missing workflow/step stays ``None`` (not a finish).
+
+    ``branch_result`` is the agent's verdict key. When it matches a declared
+    ``on_result`` edge whose ``next`` is ``null`` the workflow explicitly ends
+    here — the honest finish that must keep pinging ``WORKFLOW_COMPLETE``
+    (issue #923). Without it, a matched-null edge is indistinguishable from a
+    verdict-less conditions step and both would read as *unresolved*.
     """
     try:
         workflow = _load_workflow_by_reference(
@@ -2867,6 +2878,20 @@ def _classify_terminal_kind(
     if current_step is None:
         return None
     if current_step.conditions and current_step.next is None:
+        matched = next(
+            (
+                cond
+                for cond in current_step.conditions
+                if branch_result and cond.on_result == branch_result
+            ),
+            None,
+        )
+        if matched is not None:
+            return (
+                RouteKind.DECLARED_FINISH
+                if matched.next is None
+                else RouteKind.UNRESOLVED
+            )
         # Conditions exist but every reachable edge is ``next: null`` or the
         # key did not match: the internal marker resolver already raised the
         # pure "nothing matched" case as ``_StepGap``; here we only reach a

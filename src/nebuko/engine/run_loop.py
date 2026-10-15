@@ -1483,19 +1483,35 @@ class Engine:
     ) -> HumanActionNotice | None:
         """Classify the finished run into the human notice it owes, or ``None``.
 
-        An ``advance`` out of a step with no workflow successor is the
-        *completing* run reaching the end of the workflow, so it is normalized
-        to ``terminate`` before classification (issue #795); the follow-up run
-        that merely observes the terminal step skips the agent and is filtered
-        by ``agent_ran``.
+        An ``advance`` out of a step that the workflow *declares* to be its end
+        is the completing run, so it is normalized to ``terminate`` before
+        classification (issue #795); the follow-up run that merely observes the
+        terminal step skips the agent and is filtered by ``agent_ran``.
+
+        A step whose forward edges matched nothing is *not* a finish (issue
+        #924): the composer must not tell a human the workflow completed while
+        the dev/review loop still owes a round. Such a run gets an
+        ``awaiting_input`` notice instead — the same ping a plain hold raises —
+        so the human is asked to act rather than told the workflow ended.
         """
         if not agent_ran:
             return None
         status = routing.status
-        if status == "advance" and self._step_is_terminal(resolved):
-            status = "terminate"
         ensure_import_path()
         from config import HumanActionNotice
+        from resolve_workflow import RouteKind
+
+        if status == "advance" and self._step_is_terminal(resolved):
+            # The marker view collapses an honest finish and an unresolved
+            # step; the typed verdict tells them apart (issue #924).
+            if self._terminal_kind(resolved, routing.branch) is RouteKind.UNRESOLVED:
+                status = "hold"
+                routing = RoutingDecision(
+                    status="hold",
+                    reason=routing.reason or "step resolved no successor",
+                )
+            else:
+                status = "terminate"
 
         return HumanActionNotice.classify(
             status,
@@ -1526,6 +1542,33 @@ class Engine:
         return (
             _workflow_successor(workflow, step, workflows_dir, local_workflows_dir)
             is None
+        )
+
+    def _terminal_kind(self, resolved: Any, branch_result: str | None = None) -> Any:
+        """The typed :class:`RouteKind` for a step that produced no successor.
+
+        The router already distinguishes an honest ``DECLARED_FINISH`` from an
+        ``UNRESOLVED`` step (issue #923); the notice layer must read that typed
+        verdict instead of the marker view, which collapses both to ``None``
+        (issue #924). ``None`` when the workflow/step did not resolve.
+
+        ``branch_result`` is the agent's verdict key: it lets a matched
+        ``next: null`` edge read as the declared finish it is.
+        """
+        workflow = str(self._get(resolved, "WORKFLOW_NAME") or "")
+        step = str(self._get(resolved, "WORKFLOW_STEP") or "")
+        if not (workflow and step):
+            return None
+        ensure_import_path()
+        from resolve_workflow import _classify_terminal_kind
+
+        workflows_dir, local_workflows_dir = self._workflow_dirs()
+        return _classify_terminal_kind(
+            workflow,
+            step,
+            workflows_dir,
+            local_workflows_dir,
+            branch_result=branch_result or None,
         )
 
     def _workflow_dirs(self) -> tuple[str, str | None]:

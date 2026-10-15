@@ -435,6 +435,7 @@ class TestFullStateRouting:
 # ---------------------------------------------------------------------------
 
 ISSUE885_GATE_HOLD = "workflow_state_issue885_gate_hold"
+ISSUE923_REVIEW_ROUND2 = "workflow_state_issue923_review_round2"
 
 
 class TestHumanGateHoldPrecedence:
@@ -631,6 +632,70 @@ class TestNestedStepPathRouting:
         assert result["SKIP_AGENT"] == "true"
         assert "tmp_impl/workflow.yaml" in result.get("REASON", "")
         assert not result.get("WORKFLOW_POSITION_PATH")
+
+
+# ---------------------------------------------------------------------------
+# Issue #924: a verdict-less review must never look like a finished workflow
+# ---------------------------------------------------------------------------
+
+
+class TestReviewRound2Restart:
+    """Replay the captured issue-#923 round-2 state (issue #924).
+
+    The review agent was invoked, rejected the implementation and asked for a
+    second round — but it signalled that only through free text
+    (``dispatch == {"reason": "round 2"}``, no verdict key). The workflow's
+    ``review`` step declares ``on_result`` edges, so nothing matched: the
+    routing is *unresolved*, not a declared finish. Before the fix the engine
+    collapsed both to ``None`` and pinged the human "*workflow default has
+    finished at step review*" instead of re-running ``dev``.
+    """
+
+    def _replay(self, default_workflows_dir: Path, prompt_base: str, **dispatch):
+        state = _load_fixture(ISSUE923_REVIEW_ROUND2)
+        state["dispatch"] = dispatch
+        case = RoutingCase(
+            name=ISSUE923_REVIEW_ROUND2,
+            state=state,
+            workflows_dir=default_workflows_dir,
+            expected={},
+        )
+        return run_case(case, prompt_base)
+
+    def test_verdictless_capture_is_unresolved_not_a_finish(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        """The verbatim captured blob still dead-ends the resolver.
+
+        It must resolve as the *unresolved* kind, which is what the engine's
+        notice layer now reads as "needs input" instead of "workflow complete".
+        """
+        result = self._replay(
+            default_workflows_dir, prompt_base, reason="round 2",
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert result["SKIP_KIND"] == "no_next_agent"
+
+        from resolve_workflow import RouteKind, resolve_next_from_workflow
+
+        resolution = resolve_next_from_workflow(
+            "default", "review", str(default_workflows_dir),
+        )
+        assert resolution is not None
+        assert resolution.kind is RouteKind.UNRESOLVED
+
+    def test_rejected_round_2_restarts_the_dev_loop(
+        self, default_workflows_dir: Path, prompt_base: str,
+    ):
+        """With the verdict the review prompt now requires, ``dev`` restarts."""
+        result = self._replay(
+            default_workflows_dir, prompt_base,
+            status="advance", branch="rejected", reason="round 2",
+        )
+        assert result["SKIP_AGENT"] == "false"
+        assert result["TASK"] == "dev"
+        assert result["WORKFLOW_NAME"] == "default"
+        assert result["WORKFLOW_STEP"] == "implement"
 
 
 # ---------------------------------------------------------------------------
