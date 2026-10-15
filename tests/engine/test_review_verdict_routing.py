@@ -56,10 +56,10 @@ def prompt_base(tmp_path: Path) -> str:
     return str(prompts)
 
 
-def _replay(prompt_base: str, **dispatch) -> dict:
-    """Replay the captured state (verbatim, but for the dispatch) end-to-end."""
+def _replay(prompt_base: str, **outcome) -> dict:
+    """Replay the captured state (verbatim, but for the turn outcome) end-to-end."""
     state = json.loads(CAPTURED_STATE.read_text())
-    state["dispatch"] = dispatch
+    state["turn_outcome"] = outcome
     body = (
         "<!-- bot-agent-review -->\n"
         + STATE_MARKER_START + "\n"
@@ -106,7 +106,10 @@ class TestCapturedRound2Replay:
 
     def test_the_captured_verdictless_blob_routes_nowhere(self, prompt_base: str):
         """The reported dead-end: no verdict key means no routing decision."""
-        result = _replay(prompt_base, reason="round 2")
+        result = _replay(
+            prompt_base, status="incomplete", incomplete_reason="no_outcome",
+            note="round 2",
+        )
 
         assert result["SKIP_AGENT"] == "true"
         assert result["SKIP_KIND"] == "no_next_agent"
@@ -114,7 +117,7 @@ class TestCapturedRound2Replay:
     def test_the_rejected_verdict_restarts_dev_at_implement(self, prompt_base: str):
         """With the verdict the instructions now prescribe, ``dev`` restarts."""
         result = _replay(
-            prompt_base, status="advance", branch="rejected", reason="round 2",
+            prompt_base, status="completed", appreciation="rejected", round=2,
         )
 
         assert result["SKIP_AGENT"] == "false"
@@ -124,6 +127,8 @@ class TestCapturedRound2Replay:
 
     def test_the_approved_verdict_ends_the_workflow(self, prompt_base: str):
         """The terminal ``approved`` edge stays the honest, agent-free end."""
-        result = _replay(prompt_base, status="advance", branch="approved")
+        result = _replay(
+            prompt_base, status="completed", appreciation="approved"
+        )
 
         assert result["SKIP_AGENT"] == "true"
