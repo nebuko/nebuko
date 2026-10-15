@@ -5,6 +5,11 @@ steps:
   - name: analyze
     agent: architect
     complexity: low  # triage + context-query drafting is cheap
+    prompt: |
+      Analysis turn: a human issue or request just arrived.
+      - Decide what context @@context must collect (files, docs, facts).
+      - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
+      - Delegate with `dispatch_next(status='advance', complexity=…)` on the same turn as your message. Do not plan yet.
     next: context
 
   - name: context
@@ -13,6 +18,8 @@ steps:
 
   - name: plan
     agent: architect
+    prompt: |
+      Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact (or revise it if your context has a `## Human Gate Decision`), then end with `dispatch_next(status='advance', complexity=…)` on the same turn.
     next: stub
     conditions:
       - on_result: approved
