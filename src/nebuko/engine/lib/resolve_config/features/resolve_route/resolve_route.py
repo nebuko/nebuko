@@ -753,9 +753,20 @@ def _terminal_skip_result(
     prev_state: "WorkflowState",
     workflows_dir: str,
     local_workflows_dir: Optional[str],
+    wf_result: Optional[RouteResolution] = None,
 ) -> Optional[dict]:
-    """Declared end-of-workflow stop, or ``None`` when the claim is unresolved."""
+    """Declared end-of-workflow stop, or ``None`` when the claim is unresolved.
+
+    The resolver's own kind is authoritative when it supplied one: an
+    :attr:`RouteKind.UNRESOLVED` step declares forward edges that matched
+    nothing, so it is a config gap owed a human ping, never an honest finish
+    (the #923 round-2 dead-end). Only a :attr:`RouteKind.DECLARED_FINISH` —
+    or no resolution at all, when the step simply has no onward edge — stops
+    the run as a benign terminal.
+    """
     if not _is_runnable_workflow_step(prev_state, workflows_dir, local_workflows_dir):
+        return None
+    if wf_result is not None and wf_result.kind is not RouteKind.DECLARED_FINISH:
         return None
     return {
         "SKIP_AGENT": "true",
@@ -928,7 +939,9 @@ def _resolve_outcome_path(
             # round-2 dead-end).
             return _unmatched_verdict_result(outcome, prev_state, workflows_dir)
         # No verdict and nothing onward: the step is terminal.
-        terminal = _terminal_skip_result(prev_state, workflows_dir, local_workflows_dir)
+        terminal = _terminal_skip_result(
+            prev_state, workflows_dir, local_workflows_dir, wf_result
+        )
         if terminal is not None:
             return terminal
         if outcome is not None and outcome.status == TurnStatus.COMPLETED:
@@ -1980,7 +1993,9 @@ def _resolve_bot_fallback_path(
     _apply_route_resolution(config, wf_result, prev_state)
     if config["task"] or config.get("run_script"):
         return config
-    terminal = _terminal_skip_result(prev_state, workflows_dir, local_workflows_dir)
+    terminal = _terminal_skip_result(
+        prev_state, workflows_dir, local_workflows_dir, wf_result
+    )
     if terminal is not None:
         return terminal
     return _awaiting_input_result(prev_state, outcome)

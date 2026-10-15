@@ -105,14 +105,20 @@ class TestCapturedRound2Replay:
     """Replay the captured state against the shipped ``default`` workflow."""
 
     def test_the_captured_verdictless_blob_routes_nowhere(self, prompt_base: str):
-        """The reported dead-end: no verdict key means no routing decision."""
+        """The reported dead-end: no verdict key means no routing decision.
+
+        It must resolve as an *unresolved* skip — a config gap the engine pings
+        the human about — never as a benign terminal that reads like a finish
+        (issue #964).
+        """
         result = _replay(
             prompt_base, status="incomplete", incomplete_reason="no_outcome",
             note="round 2",
         )
 
         assert result["SKIP_AGENT"] == "true"
-        assert result["SKIP_KIND"] == "no_next_agent"
+        assert "SKIP_KIND" not in result
+        assert "resolved no successor" in result["REASON"]
 
     def test_the_rejected_verdict_restarts_dev_at_implement(self, prompt_base: str):
         """With the verdict the instructions now prescribe, ``dev`` restarts."""
