@@ -9,7 +9,6 @@ Use only what the request needs; batch commands and bound output (`sed -n`, `hea
 * **Code:** `grep -r` for keywords, function/class names and patterns; `find` for files by name or type; `file_editor view` for contents. Always record path and line numbers.
 * **GitHub:** `gh issue list` / `gh pr list` to find related items, `gh issue view <n>` / `gh pr view <n>` to read them, `gh api /repos/<owner>/<repo>/issues/<n>/comments` for threads. Report URLs with relevant excerpts.
 * **Docs:** README, AGENTS.md, ARCHITECTURE.md, CONTRIBUTING.md and inline docs. Report file paths and section titles.
-* **Web:** `brave_web_search` (default) or `brave_news_search` (recent news) with focused queries, preferring authoritative sources. Use it only for information the repository cannot hold. If the tools are unavailable, skip the web and rely on the repository.
 
 ### Reading a web reference
 
