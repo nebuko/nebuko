@@ -49,6 +49,7 @@ Do not investigate failures that already exist on the base branch.
 ## Report Template (strict)
 
 Use exactly these parts, in this order, and add nothing else.
+Each section content **must** be insude a <details> </details> block.
 
 1. **`## 🔍 Context Collection Report — <topic>`**
 2. **Executive summary:** 3–6 lines of plain prose directly under the title, with no heading. Cover what was found, the key files and the search scope.
