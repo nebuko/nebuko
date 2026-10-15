@@ -428,9 +428,11 @@ resolved model.
 `thinking_enabled` may also be set per tier, so an agent can re-enable thinking
 for one tier while its LLM defaults it off (the tier value wins). When thinking
 resolves to `false`, the resolver strips every reasoning-enabling request
-parameter — including the SDK's top-level `reasoning_effort` default — so
-`thinking_enabled: false` genuinely disables reasoning. `reasoning_effort` sets
-the top-level effort explicitly; leave it unset to keep the SDK default.
+parameter and sends top-level `reasoning_effort: "none"` — an explicit kill
+switch, because a missing param is read by the provider as its own default
+(reasoning on) — so `thinking_enabled: false` genuinely disables reasoning.
+`reasoning_effort` sets the top-level effort explicitly; leave it unset to keep
+the SDK default.
 
 ### Repo Complexity Policy (`complexity_policy`)
 

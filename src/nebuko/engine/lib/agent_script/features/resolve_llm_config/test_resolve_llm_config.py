@@ -236,10 +236,10 @@ agents:
         kwargs = self._chat_kwargs(cfg)
         self.assertIs(kwargs.get("enable_thinking"), False)
         self.assertNotIn("reasoning_effort", kwargs)
-        # The top-level SDK default ("high") must be explicitly neutralized, not
-        # merely absent (issue #941).
-        self.assertIn("reasoning_effort", cfg)
-        self.assertIsNone(cfg["reasoning_effort"])
+        # The top-level SDK default ("high") must be actively killed, not merely
+        # neutralized by absence: the provider reads a missing param as its own
+        # default, which is reasoning-on (issues #941, #958).
+        self.assertEqual(cfg["reasoning_effort"], "none")
 
     def test_effort_coexists_with_enable_thinking(self):
         cfg = self._resolve(reasoning="medium")
@@ -1042,16 +1042,25 @@ agents:
         kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
         self.assertIs(kwargs["enable_thinking"], False)
 
-    def test_thinking_off_neutralizes_sdk_top_level_default(self):
-        """The resolved config must carry an explicit None, not rely on absence."""
+    def test_thinking_off_sends_reasoning_effort_none(self):
+        """The resolved config must carry the ``"none"`` kill switch."""
         cfg = self._resolve()
-        self.assertIn("reasoning_effort", cfg)
-        self.assertIsNone(cfg["reasoning_effort"])
+        self.assertEqual(cfg["reasoning_effort"], "none")
 
-    def test_no_reasoning_param_reaches_the_wire(self):
-        """End-to-end: the emitted kwargs carry no reasoning-enabling parameter."""
-        options = self._emitted_options(self._resolve())
-        self.assertNotIn("reasoning_effort", options)
+    def test_reasoning_effort_none_reaches_the_wire(self):
+        """End-to-end: the SDK emits the ``"none"`` kill switch, not nothing.
+
+        Uses a model the SDK knows supports ``reasoning_effort`` — for models that
+        do not, the SDK's model-feature gate correctly drops the param.
+        """
+        cfg = self._resolve(
+            self.CONFIG_TEMPLATE.replace(
+                'model_path: "test/test-model"',
+                'model_path: "openai/deepseek-v4.1-flash"',
+            )
+        )
+        options = self._emitted_options(cfg)
+        self.assertEqual(options.get("reasoning_effort"), "none")
         self.assertNotIn("thinking", options)
 
     def test_tier_override_can_reenable_thinking(self):
@@ -1114,11 +1123,11 @@ class TestRealOpencodeConfigRoundTrip(unittest.TestCase):
         self.assertTrue(self.CONFIG.is_file(), f"missing {self.CONFIG}")
 
     def test_dev_thinking_is_fully_disabled(self):
-        """``dev`` on the thinking-off llm emits no reasoning parameter at all."""
+        """``dev`` on the thinking-off llm sends the ``"none"`` kill switch."""
         cfg = self._resolve("dev", "medium")
         kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
         self.assertIs(kwargs["enable_thinking"], False)
-        self.assertIsNone(cfg["reasoning_effort"])
+        self.assertEqual(cfg["reasoning_effort"], "none")
 
     def test_architect_low_exception_reenables_thinking(self):
         """The tier override is no longer silently dropped (issue #941)."""

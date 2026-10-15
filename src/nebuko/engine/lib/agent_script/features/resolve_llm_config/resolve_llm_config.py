@@ -401,17 +401,23 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
 
     # Top-level reasoning transport. The SDK independently defaults
     # ``reasoning_effort="high"`` and emits it for models that support the
-    # param, which defeated ``enable_thinking=false`` (issue #941): an explicit
-    # value here overrides that default, and thinking-off must explicitly send
-    # ``None`` (absence would let the SDK default stand).
+    # param, which defeated ``enable_thinking=false`` (issue #941). Thinking-off
+    # must therefore send an explicit ``"none"``: omitting the key only hands
+    # the decision back to the SDK default, and ``None`` sends nothing at all,
+    # which the provider reads as *its own* default — reasoning on (issue #958,
+    # probe-verified against the opencode endpoint). ``"none"`` is the kill
+    # switch; the SDK's ``supports_reasoning_effort`` model gate keeps it off the
+    # wire for models that do not accept the param.
     explicit_effort = None
     if tier_override is not None and tier_override.reasoning_effort is not None:
         explicit_effort = tier_override.reasoning_effort
     elif effective_ref is not None and effective_ref.reasoning_effort is not None:
         explicit_effort = effective_ref.reasoning_effort
     if thinking_on is False:
-        llm_config["reasoning_effort"] = None
-        logger.info("Thinking disabled: suppressing top-level reasoning_effort")
+        # A configured effort is meaningless while thinking is off, so the off
+        # branch wins unconditionally.
+        llm_config["reasoning_effort"] = "none"
+        logger.info("Thinking disabled: sending reasoning_effort=none")
     elif explicit_effort is not None:
         llm_config["reasoning_effort"] = explicit_effort
 
