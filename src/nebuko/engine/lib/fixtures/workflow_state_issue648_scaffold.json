@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 6,
   "workflow": "plan-orchestration",
   "step": "scaffold",
   "agent": "dev",
@@ -16,7 +16,11 @@
       ],
       "comment_ids": [
         5855519792
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved"
+      }
     },
     {
       "step": "context",
@@ -30,7 +34,11 @@
       ],
       "comment_ids": [
         5855537799
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved"
+      }
     },
     {
       "step": "plan",
@@ -44,7 +52,11 @@
       ],
       "comment_ids": [
         5855544300
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved"
+      }
     },
     {
       "step": "",
@@ -52,7 +64,11 @@
       "summary": "Human approved the #648 proposal; posted the detailed sequential plan-orchestration plan (5 steps, single PR).",
       "comment_ids": [
         5855593562
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved"
+      }
     },
     {
       "step": "scaffold",
@@ -63,7 +79,11 @@
           "workflow": "plan-orchestration",
           "step": "scaffold"
         }
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved"
+      }
     }
   ],
   "current_context": {
@@ -76,9 +96,6 @@
     "title": "human_gate: strict command approval",
     "author": "olivier-norture",
     "repo": "olivier-norture/git-flow-ai"
-  },
-  "dispatch": {
-    "reason": "Approved plan scaffolded into tmp_impl/workflow.yaml (5 steps) and pushed on the feature branch; engine resolves the next step from the workflow definition."
   },
   "resolution": {
     "task": "dev",
@@ -101,5 +118,10 @@
       "workflow": "plan-orchestration",
       "step": "scaffold"
     }
-  ]
+  ],
+  "turn_outcome": {
+    "status": "completed",
+    "appreciation": "approved",
+    "note": "Approved plan scaffolded into tmp_impl/workflow.yaml (5 steps) and pushed on the feature branch; engine resolves the next step from the workflow definition."
+  }
 }

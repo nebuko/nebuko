@@ -1,6 +1,6 @@
 {
   "run_id": 5,
-  "schema_version": 5,
+  "schema_version": 6,
   "workflow": "default",
   "step": "review",
   "agent": "review",
@@ -16,11 +16,9 @@
           "step": "analyze"
         }
       ],
-      "dispatch": {
-        "complexity": "medium",
-        "reason": "Delegating read-only fact collection on the CI agent-metrics pydantic failure so I can emit a single planning artifact at the plan gate."
-      },
-      "comment_ids": [6150631784],
+      "comment_ids": [
+        6150631784
+      ],
       "metrics": {
         "run_id": "1355d827-d9eb-4f1c-ac13-ec8771083d81",
         "model_name": "default",
@@ -50,6 +48,14 @@
         },
         "tokens_per_second": 152.7844168254484,
         "time_to_first_token": 4.257345858500003
+      },
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "Delegating read-only fact collection on the CI agent-metrics pydantic failure so I can emit a single planning artifact at the plan gate."
+      },
+      "prefs": {
+        "complexity": "medium"
       }
     },
     {
@@ -62,11 +68,9 @@
           "step": "context"
         }
       ],
-      "dispatch": {
-        "complexity": "medium",
-        "reason": "Facts on the agent-metrics pydantic failure collected and reported; returning to architect for the plan, noting commit history was unavailable due to shallow clone."
-      },
-      "comment_ids": [6150680286],
+      "comment_ids": [
+        6150680286
+      ],
       "metrics": {
         "run_id": "b4e0ee31-9221-4ed8-b7d8-1ac9b2091f83",
         "model_name": "default",
@@ -82,7 +86,21 @@
         "complexity": "medium",
         "start_time": "2026-10-13T16:51:08.909755",
         "end_time": "2026-10-13T16:53:14.999716+00:00",
-        "agent_runtimes_per_call_ms": [7894.35, 2408.71, 3409.67, 4609.56, 3911.99, 4056.15, 4125.83, 4383.86, 6981.75, 4034.83, 30439.64, 4716.94, 32320.73],
+        "agent_runtimes_per_call_ms": [
+          7894.35,
+          2408.71,
+          3409.67,
+          4609.56,
+          3911.99,
+          4056.15,
+          4125.83,
+          4383.86,
+          6981.75,
+          4034.83,
+          30439.64,
+          4716.94,
+          32320.73
+        ],
         "tool_calls_per_tool": {
           "terminal": 19,
           "dispatch_next": 2,
@@ -98,6 +116,14 @@
         },
         "tokens_per_second": 181.7885719995969,
         "time_to_first_token": 1.8105866025384632
+      },
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "Facts on the agent-metrics pydantic failure collected and reported; returning to architect for the plan, noting commit history was unavailable due to shallow clone."
+      },
+      "prefs": {
+        "complexity": "medium"
       }
     },
     {
@@ -110,12 +136,9 @@
           "step": "plan"
         }
       ],
-      "dispatch": {
-        "status": "hold",
-        "complexity": "low",
-        "reason": "human_gate:plan"
-      },
-      "comment_ids": [6150797345],
+      "comment_ids": [
+        6150797345
+      ],
       "metrics": {
         "run_id": "f5dfdd32-ceef-4962-a7b1-732f6112dbf7",
         "model_name": "default",
@@ -130,7 +153,11 @@
         "nb_tool_calls": 3,
         "start_time": "2026-10-13T16:53:48.885680",
         "end_time": "2026-10-13T16:59:41.457546+00:00",
-        "agent_runtimes_per_call_ms": [222794.19, 17426.61, 111915.61],
+        "agent_runtimes_per_call_ms": [
+          222794.19,
+          17426.61,
+          111915.61
+        ],
         "tool_calls_per_tool": {
           "dispatch_next": 2,
           "finish": 1
@@ -161,6 +188,15 @@
           }
         },
         "rationale": "evidence drift medium -> high"
+      },
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "hold",
+        "hold_kind": "awaiting_approval",
+        "note": "human_gate:plan"
+      },
+      "prefs": {
+        "complexity": "low"
       }
     },
     {
@@ -173,11 +209,9 @@
           "step": "implement"
         }
       ],
-      "dispatch": {
-        "complexity": "medium",
-        "reason": "Implementation complete and test-verified but unpublishable (token lacks workflow(s) permission); advancing per error/blocker rule so the blocker is surfaced."
-      },
-      "comment_ids": [6152515390],
+      "comment_ids": [
+        6152515390
+      ],
       "metrics": {
         "run_id": "fa48303a-e1a1-4c61-bc04-dbe165f35221",
         "model_name": "default",
@@ -194,7 +228,57 @@
         "complexity": "low",
         "start_time": "2026-10-13T18:27:30.669613",
         "end_time": "2026-10-13T18:35:41.431891+00:00",
-        "agent_runtimes_per_call_ms": [5552.92, 2373.07, 2309.97, 2374.26, 2482.63, 2343.53, 19032.14, 7534.26, 4715.98, 2388.6, 3126.13, 5702.8, 2663.36, 3982.16, 2444.15, 4076.44, 4100.89, 2738.86, 3874.77, 2577.76, 1990.29, 7532.01, 5071.51, 4708.58, 4411.59, 11076.18, 2441.18, 10715.67, 3926.2, 2922.46, 2408.53, 13066.82, 9316.44, 3606.93, 12117.97, 24997.2, 13602.0, 1657.91, 38807.84, 7074.63, 9433.72, 22015.27, 9859.93, 2772.18, 5470.53, 13231.34, 21275.72, 3164.98, 11192.67],
+        "agent_runtimes_per_call_ms": [
+          5552.92,
+          2373.07,
+          2309.97,
+          2374.26,
+          2482.63,
+          2343.53,
+          19032.14,
+          7534.26,
+          4715.98,
+          2388.6,
+          3126.13,
+          5702.8,
+          2663.36,
+          3982.16,
+          2444.15,
+          4076.44,
+          4100.89,
+          2738.86,
+          3874.77,
+          2577.76,
+          1990.29,
+          7532.01,
+          5071.51,
+          4708.58,
+          4411.59,
+          11076.18,
+          2441.18,
+          10715.67,
+          3926.2,
+          2922.46,
+          2408.53,
+          13066.82,
+          9316.44,
+          3606.93,
+          12117.97,
+          24997.2,
+          13602.0,
+          1657.91,
+          38807.84,
+          7074.63,
+          9433.72,
+          22015.27,
+          9859.93,
+          2772.18,
+          5470.53,
+          13231.34,
+          21275.72,
+          3164.98,
+          11192.67
+        ],
         "tool_calls_per_tool": {
           "terminal": 43,
           "file_editor": 7,
@@ -232,6 +316,14 @@
           }
         },
         "rationale": "evidence drift medium -> low"
+      },
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "Implementation complete and test-verified but unpublishable (token lacks workflow(s) permission); advancing per error/blocker rule so the blocker is surfaced."
+      },
+      "prefs": {
+        "complexity": "medium"
       }
     },
     {
@@ -244,9 +336,6 @@
           "step": "review"
         }
       ],
-      "dispatch": {
-        "reason": "round 2"
-      },
       "metrics": {
         "run_id": "25070047-a674-4e01-9902-ddbb7434f97d",
         "model_name": "default",
@@ -262,7 +351,20 @@
         "tool_call_error_rate": 9.090909090909092,
         "start_time": "2026-10-13T18:36:14.722377",
         "end_time": "2026-10-13T18:38:23.004453+00:00",
-        "agent_runtimes_per_call_ms": [2719.29, 7187.63, 5209.76, 3779.92, 2232.73, 2150.52, 14504.81, 33016.79, 2170.24, 5981.73, 2085.92, 12084.43],
+        "agent_runtimes_per_call_ms": [
+          2719.29,
+          7187.63,
+          5209.76,
+          3779.92,
+          2232.73,
+          2150.52,
+          14504.81,
+          33016.79,
+          2170.24,
+          5981.73,
+          2085.92,
+          12084.43
+        ],
         "tool_calls_per_tool": {
           "terminal": 7,
           "think": 1,
@@ -302,6 +404,11 @@
           }
         },
         "rationale": "evidence drift medium -> high"
+      },
+      "turn_outcome": {
+        "status": "incomplete",
+        "incomplete_reason": "no_outcome",
+        "note": "round 2"
       }
     }
   ],
@@ -441,9 +548,6 @@
       }
     ]
   },
-  "dispatch": {
-    "reason": "round 2"
-  },
   "gate_decision": {
     "status": "approved",
     "workflow": "default",
@@ -507,7 +611,13 @@
       },
       "high": {
         "min_score": 3,
-        "any_of": ["multi-issue-linkage", "reopened-issue", "high-token-burn", "large-scope", "human-friction"],
+        "any_of": [
+          "multi-issue-linkage",
+          "reopened-issue",
+          "high-token-burn",
+          "large-scope",
+          "human-friction"
+        ],
         "guidance": "HIGH — reserved for genuinely heavy work: multiple linked issues or reopened problem, cross-module/architectural change, sustained large context burn, or repeated human change-requests. Reach for HIGH only when the evidence below actually fires; an unproven HIGH erodes the cost/value of the tier."
       }
     },
@@ -548,5 +658,11 @@
       "medium": 0.5,
       "high": 0.15
     }
-  }
+  },
+  "turn_outcome": {
+    "status": "incomplete",
+    "incomplete_reason": "no_outcome",
+    "note": "round 2"
+  },
+  "version": 6
 }

@@ -40,14 +40,6 @@ from nebuko.engine.input_wiring import (
     render as render_inputs,
     to_records as step_input_records,
 )
-from workflow_state import (
-    Appreciation,
-    HoldKind,
-    IncompleteReason,
-    TurnOutcome,
-    TurnStatus,
-)
-
 from nebuko.engine.models import (
     DeterministicStep,
     ExitCode,
@@ -63,6 +55,20 @@ from nebuko.engine.paths import (
     NebukoPaths,
     ensure_import_path,
     repo_root,
+)
+
+# ``workflow_state`` lives in the frozen runtime (``LIB_DIR``) and is only
+# importable once the lib directory is on ``sys.path``; the run phases call
+# :func:`ensure_import_path` for that, so bootstrap it here for the module-level
+# entity imports below.
+ensure_import_path()
+
+from workflow_state import (  # noqa: E402  (needs the sys.path bootstrap above)
+    Appreciation,
+    HoldKind,
+    IncompleteReason,
+    TurnOutcome,
+    TurnStatus,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
@@ -666,7 +672,12 @@ class Engine:
         log.info("[phase:action] %s: %s", result.step_kind, result.detail)
         return RunOutcome(
             exit_code=ExitCode.ADVANCE,
-            turn_outcome=TurnOutcome(status=TurnStatus.COMPLETED),
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.COMPLETED,
+                appreciation=(
+                    Appreciation.APPROVED if result.ok else Appreciation.REJECTED
+                ),
+            ),
             prompt=None,
             posted_body=result.detail,
             state=None,
@@ -705,7 +716,12 @@ class Engine:
         state = self._post_script_output(state, body)
         return RunOutcome(
             exit_code=ExitCode.ADVANCE,
-            turn_outcome=TurnOutcome(status=TurnStatus.COMPLETED),
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.COMPLETED,
+                appreciation=(
+                    Appreciation.APPROVED if result.ok else Appreciation.REJECTED
+                ),
+            ),
             prompt=None,
             posted_body=body,
             state=state,
@@ -894,7 +910,9 @@ class Engine:
                     log.info("[phase:guards] no next agent — %s", reason)
                     return RunOutcome(
                         exit_code=skip.exit_code,
-                        turn_outcome=TurnOutcome(status=TurnStatus.COMPLETED),
+                        turn_outcome=TurnOutcome.for_incomplete(
+                            IncompleteReason.NO_OUTCOME, note=reason
+                        ),
                         prompt=None,
                         posted_body=None,
                         state=self._record_terminal_skip(skip),
@@ -1728,39 +1746,39 @@ class Engine:
     ) -> HumanActionNotice | None:
         """Classify the finished run into the human notice it owes, or ``None``.
 
-        The kind is derived from the run's own typed facts. A recorded hold owes
-        the approval/input ping; a run that stopped without advancing owes
-        nothing; and an agent that finished with no verdict *while the resolver
-        had to skip* (``skip_kind`` set) is not a completion — the composer must
-        not tell a human the workflow ended when nothing routed (issue #924).
-        Such a run gets the ``awaiting_input`` ping instead.
+        The kind is derived from the run's own factual turn outcome (issue
+        #964). A recorded hold owes the approval/input ping; a complete verdict
+        routed out of the terminal step is the honest workflow-complete notice;
+        and a run whose ``on_result`` edges matched nothing (``skip_kind`` set)
+        is *not* a completion — the composer must not tell a human the workflow
+        ended when nothing routed (issue #924). Such a run gets the
+        ``awaiting_input`` ping instead.
 
-        The notice's ``reason`` reuses the resolver's own skip reason when it
-        has one, so the human sees why the run stopped.
+        The notice's ``reason`` is the outcome's own note, so the human sees why
+        the run stopped.
         """
         if not agent_ran:
             return None
         ensure_import_path()
         from config import HumanActionNotice
 
-        if turn_outcome is not None and turn_outcome.appreciation is Appreciation.HOLD:
-            kind = (
-                HumanActionNotice.KINDS and "awaiting_approval"
-                if turn_outcome.hold_kind == HoldKind.AWAITING_APPROVAL
-                else "awaiting_input"
-            )
-        elif skip_kind:
-            kind = "awaiting_input"
-        else:
-            kind = "workflow_complete"
+        held = (
+            turn_outcome is not None
+            and turn_outcome.appreciation is Appreciation.HOLD
+        )
+        route_key = turn_outcome.route_key if turn_outcome is not None else None
+        terminal = (
+            False if (held or skip_kind) else self._step_is_terminal(resolved, route_key)
+        )
 
         return HumanActionNotice.classify(
-            "hold" if kind != "workflow_complete" else "terminate",
-            turn_outcome.note if turn_outcome is not None else "",
-            agent_ran=True,
+            turn_outcome,
+            terminal=terminal,
+            agent_ran=agent_ran,
             target=self._trigger_author(state),
             step=str(self._get(resolved, "WORKFLOW_STEP") or ""),
             workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
+            unresolved=bool(skip_kind),
         )
 
     def _step_skip_kind(self, resolved: Any) -> str | None:
@@ -1779,27 +1797,23 @@ class Engine:
             return "unresolved"
         return None
 
-    def _step_is_terminal(self, resolved: Any) -> bool:
-        """True when the step this run executed has no workflow successor.
+    def _step_is_terminal(self, resolved: Any, route_key: str | None = None) -> bool:
+        """True when the step this run executed is a declared workflow finish.
 
-        Only an ``advance`` out of an agent run consults this — see
-        :meth:`human_action_notice`. Reuses the router's own successor lookup so
-        the engine and the router agree on what "terminal" means.
+        Only a completed verdict consults this — see :meth:`human_action_notice`.
+        Reuses the router's own typed verdict (``DECLARED_FINISH``) so the engine
+        and the router agree on what "terminal" means; an ``UNRESOLVED`` step
+        declares onward edges that matched nothing and is *not* a finish
+        (issue #924).
         """
         workflow = str(self._get(resolved, "WORKFLOW_NAME") or "")
         step = str(self._get(resolved, "WORKFLOW_STEP") or "")
         if not (workflow and step):
             return False
         ensure_import_path()
-        from resolve_config.features.resolve_route.resolve_route import (
-            _workflow_successor,
-        )
+        from resolve_workflow import RouteKind
 
-        workflows_dir, local_workflows_dir = self._workflow_dirs()
-        return (
-            _workflow_successor(workflow, step, workflows_dir, local_workflows_dir)
-            is None
-        )
+        return self._terminal_kind(resolved, route_key) is RouteKind.DECLARED_FINISH
 
     def _terminal_kind(self, resolved: Any, branch_result: str | None = None) -> Any:
         """The typed :class:`RouteKind` for a step that produced no successor.
@@ -2250,9 +2264,12 @@ class Engine:
         payload = self._dispatch_payload(agent_result)
         if not payload:
             return TurnOutcome.for_incomplete(IncompleteReason.NO_OUTCOME)
-        return TurnOutcome.from_agent_payload(
-            payload, observed=observed or OutcomeStatus.COMPLETED
-        )
+        if observed is None:
+            ensure_import_path()
+            from agent_script.features.run_agent.run_outcome import OutcomeStatus
+
+            observed = OutcomeStatus.SUCCESS
+        return TurnOutcome.from_agent_payload(payload, observed=observed)
 
     # ── internals ────────────────────────────────────────────────────
 

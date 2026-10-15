@@ -116,6 +116,11 @@ def _outcome(appreciation: str = "approved", **overrides) -> "TurnOutcome":
     )
 
 
+def _entry_outcome() -> "TurnOutcome":
+    """The recorded turn outcome for a seeded history entry (issue #964)."""
+    return _outcome("approved")
+
+
 def _patch_resolver(monkeypatch, resolver) -> None:
     """Replace the resolver facade with ``resolver`` for a unit test.
 
@@ -517,7 +522,7 @@ class TestDeterministicActionPhase:
         assert "action" in outcome.phases
         assert "agent" not in outcome.phases
         assert outcome.exit_code == ExitCode.ADVANCE
-        assert outcome.turn_outcome.appreciation is None
+        assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
         assert outcome.posted_body == "deleted 1 comments on issue 724"
         journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
         assert journal == ""
@@ -631,9 +636,8 @@ class TestScriptStepComments:
         state = extract_state_from_body(completion)
         assert state is not None
         assert state.step == "run_tests"
-        assert state.dispatch is not None
-        assert state.dispatch.status == "advance"
-        assert state.dispatch.branch == "pass"
+        assert state.turn_outcome is not None
+        assert state.turn_outcome.appreciation is Appreciation.APPROVED
 
     def test_registers_the_completion_comment_as_the_step_output(
         self, tmp_path, monkeypatch
@@ -680,7 +684,7 @@ class TestScriptStepComments:
         assert "**run_tests command failed**" in outcome.posted_body
         assert "exit code 2" in outcome.posted_body
         state = extract_state_from_body(outcome.posted_body)
-        assert state.dispatch.branch == "fail"
+        assert state.turn_outcome.appreciation is Appreciation.REJECTED
 
     def test_the_comment_never_echoes_the_command_line(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
@@ -1326,7 +1330,14 @@ class TestHumanActionRecipient:
             "workflow": "default",
             "step": "plan",
             "agent": "architect",
-            "history": [{"step": "plan", "agent": "architect", "summary": "ok"}],
+            "history": [
+                {
+                    "step": "plan",
+                    "agent": "architect",
+                    "summary": "ok",
+                    "turn_outcome": {"status": "completed", "appreciation": "approved"},
+                }
+            ],
         }
         if started_by is not None:
             data["started_by"] = started_by
@@ -1403,7 +1414,15 @@ class TestHumanActionSinglePing:
                     "step": "implement",
                     "agent": "dev",
                     "history": [
-                        {"step": "implement", "agent": "dev", "summary": "ok"}
+                        {
+                            "step": "implement",
+                            "agent": "dev",
+                            "summary": "ok",
+                            "turn_outcome": {
+                                "status": "completed",
+                                "appreciation": "approved",
+                            },
+                        }
                     ],
                     "started_by": "workflow-starter",
                 }
@@ -1856,7 +1875,12 @@ class TestPreviousStateHandoff:
         from workflow_state.workflow_state import WorkflowState
 
         entries = [
-            HistoryEntry(step=f"step_{index}", agent="architect", summary=f"s{index}")
+            HistoryEntry(
+                step=f"step_{index}",
+                agent="architect",
+                summary=f"s{index}",
+                turn_outcome=_entry_outcome(),
+            )
             for index in range(history_len)
         ]
         return WorkflowState(
@@ -2533,7 +2557,7 @@ class TestWorkflowStateAnswerComment:
         from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
 
         state = self._agent_state(
-            history=[HistoryEntry(step="implement", agent="dev", summary="ping @@dev then continue")]
+            history=[HistoryEntry(step="implement", agent="dev", summary="ping @@dev then continue", turn_outcome=_entry_outcome())]
         )
         self._run(tmp_path, monkeypatch, state=state)
 

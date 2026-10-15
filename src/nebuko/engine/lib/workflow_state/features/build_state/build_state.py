@@ -25,7 +25,7 @@ from ...sub_domains.gate_decision.gate_decision import GateDecision
 from ...step_output_record import StepOutputRecord
 from ...sub_domains.thread_record.thread_record import ThreadRecord
 from ...sub_domains.step_input_record.step_input_record import StepInputRecord
-from ...sub_domains.turn_outcome.turn_outcome import TurnOutcome
+from ...sub_domains.turn_outcome.turn_outcome import IncompleteReason, TurnOutcome
 
 
 def _position_refs(position: Optional[dict]) -> list[StepRef]:
@@ -223,6 +223,12 @@ def build_state(
     entry_metrics = (
         StateMetrics.from_full_metrics_dict(metrics_dict) if metrics_dict else None
     )
+    # Every history entry is a routing fact (issue #964): a caller that has no
+    # measured outcome (a deterministic step, a low-level writer) records the
+    # honest "no verdict" instance instead of a null.
+    entry_outcome = turn_outcome or TurnOutcome.for_incomplete(
+        IncompleteReason.NO_OUTCOME
+    )
     entry = HistoryEntry(
         step=step,
         agent=agent,
@@ -233,7 +239,7 @@ def build_state(
         inject_context=inject_context,
         result=result,
         position=position_refs,
-        turn_outcome=turn_outcome,
+        turn_outcome=entry_outcome,
         prefs=prefs,
         metrics=entry_metrics,
         complexity_adjustment=complexity_adjustment,
