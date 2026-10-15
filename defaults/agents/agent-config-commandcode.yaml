@@ -11,6 +11,7 @@ llms:
     provider: "${providers.commandcode}"
     preserve_thinking: true
     thinking_enabled: false
+    reasoning_effort: "none"
     top_p: 0.95
   glm-5_3-flash:
     model_path: "openai/z-ai/glm-5.3-flash"
@@ -47,6 +48,7 @@ agents:
     model: "${llms.deepseek-v4_1-flash}"
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     temperature: 0.1
+    reasoning_effort: "none"
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - inject: ["posting-contract"]
@@ -57,6 +59,7 @@ agents:
     model: "${llms.deepseek-v4_1-flash}"
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
     temperature: 0.1
+    reasoning_effort: "none"
     prompt_file: "defaults/prompts/context.md"
     skills:
       - inject: ["call-agent", "posting-contract", "context-research"]
