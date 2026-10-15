@@ -102,8 +102,17 @@ Useful facts when touching this area:
   label `Dynamic Context:` is SDK console-visualization only — the model never
   sees it. The static prompt's closing line defers to that tier for the
   `dispatch_next` / `AGENT_RUN_CONFIG` contract, so keep the dynamic tier.
-- **Skills are not injected into the prompt** (removed with the registry in
-  #943). Agents read `defaults/skills/*.md` on demand. The old
-  `SKILL_CONTEXT_FILE` -> `security_policy_filename` channel had been orphaned
-  since PR #770 deleted its only producer; re-routing via
-  `AgentContext(skills=[Skill(...)])` is future work (#570).
+- **Skills reach the prompt in one of two modes** (issue #955, which closed the
+  `SKILL_CONTEXT_FILE` -> `security_policy_filename` channel orphaned when PR
+  #770 deleted its producer, and the SDK-routing work of #570). `inject` entries
+  have their full body rendered by `run_loop.build_prompt` under a
+  `## Injected skills` block (position: role prompt -> step prompt -> injected
+  skills -> inputs -> user request -> context; it survives `prompt_replace`).
+  `discover` entries become SDK `Skill` objects on
+  `AgentContext(skills=[...])` in `run_agent._build_agent_context`, which renders
+  the name + `description` catalog (`<available_skills>`) and keeps the body out
+  of the prompt until the agent calls the SDK's `invoke_skill` tool — attached
+  explicitly, because the SDK's auto-attach rule only fires for AgentSkills-format
+  skills. Both modes resolve through one value object,
+  `resolve_config/features/skill_context/skill_context.py`; the entry grammar
+  (`SkillSpec`) is shared with the linter's C5 rule.

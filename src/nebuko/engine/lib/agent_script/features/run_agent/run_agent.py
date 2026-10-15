@@ -10,6 +10,7 @@ GitHub Actions timeout (issue #489).
 import asyncio
 import dataclasses
 import os
+from typing import Any, Sequence
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.context import AgentContext
@@ -47,6 +48,9 @@ from agent_script.sub_domains.metrics.token_telemetry_collector import (
     install,
     maybe_register_langfuse,
 )
+from resolve_config.features.skill_context.skill_context import (
+    skill_context_from_env,
+)
 from resolve_config.features.team_context.team_context import compose_system_context
 
 logger = get_logger(__name__)
@@ -64,9 +68,9 @@ logger = get_logger(__name__)
 # unaffected; that tier is what the closing line below defers to. The former
 # `SKILL_CONTEXT_FILE` -> `security_policy_filename` skills channel went with the
 # registry: `SecuritySection` was its only consumer, and its only producer was
-# the legacy GHA flow deleted in PR #770. Re-routing skills through the SDK's
-# `AgentContext(skills=[...])` needs roster + step skill-name resolution and is
-# tracked separately.
+# the legacy GHA flow deleted in PR #770. Skills now reach the prompt through
+# `AgentContext(skills=[...])` (discover mode) plus the prompt builder's injected
+# block (inject mode) — see issue #955 and `skill_context.py`.
 _SYSTEM_PROMPT: str = """
 You are an autonomous software engineering agent working in a checked-out repository, running headless in CI. No human answers questions during the run, so make reasonable decisions yourself and state your assumptions in your final report.
 
@@ -159,17 +163,25 @@ def _build_mcp_servers(agent_cfg) -> dict[str, MCPServer]:
     return servers
 
 
-def _build_agent_context(role_name: str) -> AgentContext | None:
+def _build_agent_context(
+    role_name: str, skills: Sequence[Any] = ()
+) -> AgentContext | None:
     """Shared prompt sections for ``role_name`` (issue #476).
 
     Returns the exit-rules + "Your Team" block as the system-message suffix so
     it is *added* to the static system prompt rather than replacing it (issue
-    #943). ``None`` when there is nothing to inject (unknown role or an
-    unreadable roster) so the agent still boots.
+    #943). Discover-mode skills (issue #955) travel as SDK skills, which the
+    SDK lists as a name + summary catalog for on-demand retrieval. ``None``
+    when there is nothing to inject (unknown role, unreadable roster and no
+    skills) so the agent still boots.
     """
     caller = os.environ.get("CONFIG_CALLBACK", "").strip() or None
     context = compose_system_context(role_name, caller)
-    return AgentContext(system_message_suffix=context) if context else None
+    if not context and not skills:
+        return None
+    return AgentContext(
+        system_message_suffix=context, skills=list(skills)
+    )
 
 
 def _run_supervised(
@@ -278,10 +290,23 @@ def run_agent(
     include_default_tools = list(resolved.builtin_tools)
     dispatch_tool_enabled = resolved.dispatch_tool_enabled
 
+    # Discover-mode skills (issue #955) are listed as a summary catalog and read
+    # in full through the SDK's `invoke_skill` tool. The SDK only auto-attaches
+    # that tool for its own AgentSkills-format loading, so the engine requests it
+    # explicitly whenever this step has a discoverable skill.
+    skill_context = skill_context_from_env(os.environ)
+    if skill_context.needs_invoke_tool:
+        include_default_tools.append("InvokeSkillTool")
+
     logger.info(
         f"Creating {role_name} agent with tools: sdk={[t.name for t in sdk_tools]}, "
         f"builtins={include_default_tools}"
     )
+    if skill_context.injected or skill_context.discoverable:
+        logger.info(
+            f"Skills for {role_name}: injected={[d.name for d in skill_context.injected]}, "
+            f"discoverable={[d.name for d in skill_context.discoverable]}"
+        )
 
     # ── Declarative MCP servers ──────────────────────────────────
     mcp_servers = _build_mcp_servers(agent_cfg)
@@ -298,7 +323,9 @@ def run_agent(
         mcp_config=mcp_servers,
         # Replace the SDK's whole static prompt with Nebuko's own (issue #943).
         system_prompt=_SYSTEM_PROMPT,
-        agent_context=_build_agent_context(role_name),
+        agent_context=_build_agent_context(
+            role_name, skill_context.to_sdk_skills()
+        ),
         condenser=build_condenser(llm, resolve_token_budget_policy(agent_cfg)),
     )
 

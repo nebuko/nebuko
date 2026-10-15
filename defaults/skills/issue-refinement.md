@@ -1,3 +1,7 @@
+---
+description: "Refine a raw GitHub issue into a clear, actionable spec through collaborative discussion."
+---
+
 # Issue Refinement Skill
 
 Help a human create clear, well-structured, and actionable GitHub issues through

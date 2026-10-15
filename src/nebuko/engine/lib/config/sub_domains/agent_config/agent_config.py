@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from ..agent_complexity_override.agent_complexity_override import AgentComplexityOverride
 from ..llm_config.llm_config import LLMConfig
 from ..mcp_server_config.mcp_server_config import MCPServerConfig
+from ..skill_spec.skill_spec import SkillSpec
 from ..token_budget.token_budget import TokenBudgetPolicy
 
 
@@ -19,7 +20,9 @@ class AgentConfig(BaseModel):
     # One-line role description, injected into every agent's system prompt as
     # part of the generated "Your Team" section (issue #476).
     role: Optional[str] = None
-    skills: list[str] = Field(default_factory=list)
+    # Skill attachments (issue #955): each entry is `inject` (body rendered into
+    # the prompt) or `discover` (summary catalog + on-demand retrieval).
+    skills: list[SkillSpec] = Field(default_factory=list)
     tools: list[str] = Field(
         default=[
             "terminal", "file_editor", "task_tracker", "think", "finish",

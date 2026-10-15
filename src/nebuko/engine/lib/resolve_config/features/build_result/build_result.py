@@ -5,10 +5,14 @@ constructs the final KEY=value environment variable dict.
 """
 
 import json
+import os
 from typing import Optional
 
 from complexity_governor.complexity_governor import ComplexityGovernor
 from config import StepRef, WorkflowPosition
+from resolve_config.features.skill_context.skill_context import (
+    specs_to_env,
+)
 from resolve_workflow import (
     resolve_workflow_routing,
     build_workflow_position,
@@ -157,6 +161,34 @@ def _deepest_workflow_index(refs: list, workflow: str) -> Optional[int]:
         if refs[index].workflow == workflow:
             return index
     return None
+
+
+def _agent_skill_specs(role_name: str) -> list:
+    """The role's declared skill entries; empty when the roster is unreadable.
+
+    The resolver already loads the roster for routing (``TASK_TO_PROMPT``), so
+    this reads the same file rather than duplicating the roster into the
+    dispatch payload.
+    """
+    from config import load_config
+
+    path = os.environ.get("AGENT_CONFIG_PATH", "agent-config.yaml")
+    try:
+        agent = load_config(path).agents.get(role_name)
+    except Exception:  # noqa: BLE001 - a bad roster must not break resolution
+        return []
+    return list(agent.skills) if agent is not None else []
+
+
+def _skills_dir() -> str:
+    """Absolute skills directory for this run (layered, env-pinnable).
+
+    Absolute because the prompt builder and the agent child run in different
+    working directories; a relative value would resolve differently in each.
+    """
+    import default_paths
+
+    return os.path.abspath(default_paths.config_dir("skills", "SKILLS_DIR"))
 
 
 def _build_result(
@@ -314,6 +346,12 @@ def _build_result(
         "AGENT_ROUND": config.get("config_round", ""),
         "AGENT_SKILLS": config.get("config_skills", ""),
         "STEP_SKILLS": wf_result.get("STEP_SKILLS", ""),
+        # Skill attachment hand-off (issue #955): both spec lists plus the
+        # absolute skills directory, so the prompt builder and the agent child
+        # resolve the same inject/discover split from the same files.
+        "AGENT_SKILL_SPECS": specs_to_env(_agent_skill_specs(role_name)),
+        "STEP_SKILL_SPECS": wf_result.get("STEP_SKILL_SPECS", ""),
+        "SKILLS_DIR": _skills_dir(),
         "STEP_PROMPT_FILE": wf_result.get("STEP_PROMPT_FILE", ""),
         "STEP_PROMPT_REPLACE": wf_result.get("STEP_PROMPT_REPLACE", ""),
         "CONFIG_MODEL": config.get("config_model", ""),

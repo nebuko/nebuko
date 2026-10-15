@@ -1,3 +1,7 @@
+---
+description: "Branch, rebase and pull-request mechanics, including the mandatory rebase on origin/main."
+---
+
 # Git / PR Workflow Skill
 
 Procedural playbook for branch management and pull-request mechanics.

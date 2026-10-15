@@ -132,6 +132,16 @@ class TestRuleScenarios:
         issues = _by_rule(_lint("c5_missing_skill.yaml"), "C5-skill-file")
         assert [issue.location for issue in issues] == ["agents.a.skills"]
 
+    def test_c5_validates_names_inside_mode_entries(self):
+        """Issue #955: `- discover: [...]` entries are walked, not skipped."""
+        issues = _by_rule(_lint("c5_missing_skill_entry.yaml"), "C5-skill-file")
+
+        assert [issue.location for issue in issues] == ["agents.a.skills"]
+        assert "ghost-skill" in issues[0].message
+
+    def test_c5_accepts_a_resolvable_name_in_a_mode_entry(self):
+        assert _by_rule(_lint("clean_mode_skills.yaml"), "C5-skill-file") == []
+
     def test_c8_warns_on_a_missing_or_blank_role(self):
         issues = _by_rule(_lint("c8_missing_role.yaml"), "C8-missing-role")
         assert [issue.location for issue in issues] == [

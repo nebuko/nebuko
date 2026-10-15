@@ -1,3 +1,7 @@
+---
+description: "Stub-only mode: fill existing stubs and protected signatures — no new modules or APIs."
+---
+
 # Stub-Only Mode
 
 > These constraints are absolute. Violation = failed execution.

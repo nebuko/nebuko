@@ -1,3 +1,7 @@
+---
+description: "Complexity tier rubric and the `complexity_review` re-tier request contract for this repo."
+---
+
 # Complexity Governance Skill
 
 Complexity is governed **per repo** by a layered policy (`builtin` -> `repo`) and

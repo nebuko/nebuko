@@ -1,3 +1,7 @@
+---
+description: "Read-only research playbook: how to search, how deep to go, and the report template."
+---
+
 # Context Research Skill
 
 Playbook for @@context: how to search, how deep to go, and the strict report template.

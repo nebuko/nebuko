@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import WorkflowCondition, WorkflowStep
+from config import SkillSpec, WorkflowCondition, WorkflowStep
 
 
 class TestWorkflowStepSubWorkflow:
@@ -60,11 +60,14 @@ class TestWorkflowStep:
 
     def test_step_with_skills(self):
         step = WorkflowStep(name="dev", agent="dev", skill=["python"])
-        assert step.skill == ["python"]
+        assert step.skill == [SkillSpec(mode="inject", names=["python"])]
 
     def test_step_with_multiple_skills(self):
         step = WorkflowStep(name="dev", agent="dev", skill=["python", "rust"])
-        assert step.skill == ["python", "rust"]
+        assert step.skill == [
+            SkillSpec(mode="inject", names=["python"]),
+            SkillSpec(mode="inject", names=["rust"]),
+        ]
 
     def test_step_without_skills_defaults_to_none(self):
         step = WorkflowStep(name="dev", agent="dev")
@@ -104,7 +107,7 @@ class TestWorkflowStep:
             prompt="Fill in the stubs only.",
         )
         assert step.prompt == "Fill in the stubs only."
-        assert step.skill == ["stub-only"]
+        assert step.skill == [SkillSpec(mode="inject", names=["stub-only"])]
         assert step.human_gate is True
         assert step.next == "stub_review"
 
@@ -411,7 +414,7 @@ class TestWorkflowStepComplexity:
             next="context",
         )
         assert step.complexity == "low"
-        assert step.skill == ["call-agent"]
+        assert step.skill == [SkillSpec(mode="inject", names=["call-agent"])]
         assert step.next == "context"
 
 

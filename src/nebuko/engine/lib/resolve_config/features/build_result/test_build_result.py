@@ -105,8 +105,53 @@ class TestBuildResult:
         result = _build_result({"task": "architect"}, prompt_base, workflows_dir)
         assert result["AGENT_ROUND"] == ""
         assert result["AGENT_SKILLS"] == ""
+        assert result["STEP_SKILL_SPECS"] == ""
         assert result["CONFIG_MODEL"] == ""
         assert result["HUMAN_RESUME_INPUT"] == ""
+
+    def test_agent_skill_specs_come_from_the_roster(self, tmp_path, monkeypatch):
+        """Issue #955: the resolved agent roster supplies the spec payload."""
+        roster = tmp_path / "agent-config.yaml"
+        roster.write_text(
+            "agents:\n"
+            "  dev:\n"
+            "    model: ${llms.l1}\n"
+            "    prompt_file: dev.md\n"
+            "    skills:\n"
+            "      - inject: [posting-contract]\n"
+            "      - discover: [complexity]\n"
+            "llms:\n"
+            "  l1:\n"
+            "    model_path: hosted_vllm/l1\n"
+            "    provider: ${providers.p1}\n"
+            "providers:\n"
+            "  p1:\n"
+            "    api_url: http://example.test/v1\n"
+            "    api_token_env: T\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("AGENT_CONFIG_PATH", str(roster))
+        monkeypatch.setenv("SKILLS_DIR", str(tmp_path / "skills"))
+        prompt_base, workflows_dir = _make_dirs()
+
+        result = _build_result({"task": "dev"}, prompt_base, workflows_dir)
+
+        assert result["AGENT_SKILL_SPECS"] == (
+            '[{"mode":"inject","names":["posting-contract"]},'
+            '{"mode":"discover","names":["complexity"]}]'
+        )
+        assert result["SKILLS_DIR"] == str(tmp_path / "skills")
+
+    def test_an_unreadable_roster_leaves_the_spec_payload_empty(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("AGENT_CONFIG_PATH", str(tmp_path / "missing.yaml"))
+        prompt_base, workflows_dir = _make_dirs()
+
+        result = _build_result({"task": "dev"}, prompt_base, workflows_dir)
+
+        assert result["AGENT_SKILL_SPECS"] == ""
+        assert result["AGENT_SELECTED"] == "true"
 
     def test_step_prompt_file_passes_through(self):
         # Issue #551: STEP_PROMPT_FILE from resolve_workflow_routing must

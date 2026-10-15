@@ -1,3 +1,7 @@
+---
+description: "Final-fix mode: address the reviewer's feedback across the whole branch after a rejected final review."
+---
+
 # Final-Fix Mode
 
 You are in final-fix mode for a branch-mounted dynamic plan workflow (issue #462). The final PR review was rejected. Your job is to address the reviewer's feedback across the whole PR. Follow these instructions strictly.

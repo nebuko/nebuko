@@ -41,7 +41,9 @@ agents:
     role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
     temperature: 0.4
     prompt_file: "defaults/prompts/architect.md"
-    skills: ["call-agent", "posting-contract", "planning", "complexity"]
+    skills:
+      - inject: ["call-agent", "posting-contract", "planning"]
+      - discover: ["complexity"]
     tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
     complexity_overrides:
       low:
@@ -55,7 +57,9 @@ agents:
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
-    skills: ["posting-contract", "git-pr-workflow", "complexity"]
+    skills:
+      - inject: ["posting-contract"]
+      - discover: ["git-pr-workflow", "complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
     complexity_overrides:
       low:
@@ -68,7 +72,9 @@ agents:
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
     temperature: 0.1
     prompt_file: "defaults/prompts/context.md"
-    skills: ["call-agent", "posting-contract", "context-research", "complexity"]
+    skills:
+      - inject: ["call-agent", "posting-contract", "context-research"]
+      - discover: ["complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
     complexity_overrides:
       low:
@@ -83,12 +89,16 @@ agents:
     role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
-    skills: ["posting-contract", "plan-review", "retrospective", "complexity"]
+    skills:
+      - inject: ["posting-contract", "plan-review"]
+      - discover: ["retrospective", "complexity"]
     tools: ["terminal", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"
     role: "Product owner — triages and refines issues into actionable specs; never modifies code."
     prompt_file: "defaults/prompts/po.md"
-    skills: ["call-agent", "posting-contract", "issue-refinement", "complexity"]
+    skills:
+      - inject: ["call-agent", "posting-contract", "issue-refinement"]
+      - discover: ["complexity"]
     tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]

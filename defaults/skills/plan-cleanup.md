@@ -1,3 +1,7 @@
+---
+description: "Plan-cleanup mode: remove the plan workflow's temporary scaffolding before final review."
+---
+
 # Plan-Cleanup Mode
 
 You are in plan-cleanup mode for a branch-mounted dynamic plan workflow (issue #462). All plan steps have been executed and reviewed. Your job is to remove the temporary scaffolding before final review. Follow these instructions strictly.

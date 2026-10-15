@@ -2470,6 +2470,85 @@ class TestBuildPromptStepReplacement:
         assert "ROLE DEV FLOW" in prompt
 
 
+class TestBuildPromptInjectedSkills:
+    """Inject-mode skills land in full in the assembled prompt (issue #955).
+
+    Discover-mode skills are deliberately absent here: they travel to the agent
+    as an SDK catalog and are read on demand, so they must not cost prompt space.
+    """
+
+    def _resolved(
+        self, tmp_path, *, agent_specs: str = "", step_specs: str = "", replace: str = ""
+    ) -> dict:
+        base = tmp_path / "dev.md"
+        base.write_text("ROLE DEV FLOW", encoding="utf-8")
+        step = tmp_path / "step.md"
+        step.write_text("SCAFFOLD ONLY", encoding="utf-8")
+        skills = tmp_path / "skills"
+        skills.mkdir(exist_ok=True)
+        (skills / "alpha.md").write_text(
+            "---\ndescription: \"Alpha summary.\"\n---\n\n# Alpha\n\nALPHA BODY\n",
+            encoding="utf-8",
+        )
+        return {
+            "PROMPT_LOCATION": str(base),
+            "STEP_PROMPT_FILE": str(step),
+            "STEP_PROMPT_REPLACE": replace,
+            "AGENT_SKILL_SPECS": agent_specs,
+            "STEP_SKILL_SPECS": step_specs,
+            "SKILLS_DIR": str(skills),
+        }
+
+    def _inject_spec(self) -> str:
+        return '[{"mode":"inject","names":["alpha"]}]'
+
+    def test_body_lands_between_the_step_prompt_and_the_user_request(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = self._resolved(tmp_path, step_specs=self._inject_spec())
+
+        prompt = engine.build_prompt(resolved, [])
+
+        assert "## Injected skills" in prompt
+        assert "ALPHA BODY" in prompt
+        assert "description: \"Alpha summary.\"" not in prompt
+        assert (
+            prompt.index("SCAFFOLD ONLY")
+            < prompt.index("ALPHA BODY")
+            < prompt.index("--- USER REQUEST / GITHUB CONTEXT ---")
+        )
+
+    def test_injected_skills_survive_prompt_replace(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = self._resolved(
+            tmp_path, step_specs=self._inject_spec(), replace="true"
+        )
+
+        prompt = engine.build_prompt(resolved, [])
+
+        assert "ROLE DEV FLOW" not in prompt
+        assert "ALPHA BODY" in prompt
+
+    def test_discover_only_skills_render_nothing(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = self._resolved(
+            tmp_path, step_specs='[{"mode":"discover","names":["alpha"]}]'
+        )
+
+        prompt = engine.build_prompt(resolved, [])
+
+        assert "## Injected skills" not in prompt
+        assert "ALPHA BODY" not in prompt
+
+    def test_no_skills_renders_no_block(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = self._resolved(tmp_path)
+
+        prompt = engine.build_prompt(resolved, [])
+
+        assert "## Injected skills" not in prompt
+        assert "SCAFFOLD ONLY" in prompt
+
+
 class TestStepInputSeam:
     """The engine materializes declared inputs *before* the agent (issue #813).
 

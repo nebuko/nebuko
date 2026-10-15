@@ -1,3 +1,7 @@
+---
+description: "Emit the single planning artifact: root cause, approaches, chosen design, implementation steps."
+---
+
 # Planning Skill
 
 Procedural playbook for implementation plans, approval gating, and the plan
