@@ -31,8 +31,12 @@ from resolve_config.sub_domains.workflow_command.workflow_command import (  # no
     parse_workflow_command,
 )
 from workflow_state import (  # noqa: E402
-    Dispatch,
+    Appreciation,
     GateDecision,
+    HoldKind,
+    IncompleteReason,
+    TurnOutcome,
+    TurnStatus,
     WorkflowState,
 )
 
@@ -75,14 +79,23 @@ BOT = AuthorIdentity(
 def _held_state(
     *,
     step: str = "stub_approval",
-    reason: str = "human_gate:stub_approval",
+    hold_kind: HoldKind = HoldKind.AWAITING_APPROVAL,
     gate_history=None,
 ) -> WorkflowState:
+    """A state parked on its ``human_gate`` (issue #964).
+
+    A gate hold is a step-config fact: the step declares ``human_gate: true``
+    and the turn outcome records an ``awaiting_approval`` hold.
+    """
     return WorkflowState(
         workflow="default",
         step=step,
         agent="architect",
-        dispatch=Dispatch(status="hold", reason=reason),
+        turn_outcome=TurnOutcome(
+            status=TurnStatus.COMPLETED,
+            appreciation=Appreciation.HOLD,
+            hold_kind=hold_kind,
+        ),
         position=[StepRef(workflow="default", step=step)],
         gate_history=list(gate_history or []),
     )
@@ -130,7 +143,7 @@ class TestResolveGateDecisionPath(unittest.TestCase):
     def test_not_held_is_inert(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_workflow(tmpdir)
-            state = _held_state(reason="soft_kill:stub_approval")
+            state = _held_state(hold_kind=HoldKind.AWAITING_INPUT)
             cfg = _resolve_gate_decision_path(
                 state, _cmd("/nebuko approve gate"), HUMAN, tmpdir
             )
@@ -249,14 +262,18 @@ class TestResumeGuardOnGateHold(unittest.TestCase):
         self.assertIn("approve gate", reason)
         self.assertIn("reject gate", reason)
 
-    def test_resume_on_soft_kill_hold_still_resumes(self):
+    def test_resume_on_an_interrupted_step_still_resumes(self):
+        """An exhausted soft-kill halt is resumable by a human (issue #704)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_workflow(tmpdir)
             state = WorkflowState(
                 workflow="default",
                 step="implement",
                 agent="dev",
-                dispatch=Dispatch(status="hold", reason="soft_kill:implement"),
+                turn_outcome=TurnOutcome(
+                    status=TurnStatus.INCOMPLETE,
+                    incomplete_reason=IncompleteReason.SOFT_TIMEOUT,
+                ),
                 position=[StepRef(workflow="default", step="implement")],
             )
             cfg = _resolve_resume_path(

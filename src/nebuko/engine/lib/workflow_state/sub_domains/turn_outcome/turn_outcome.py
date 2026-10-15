@@ -147,16 +147,17 @@ class TurnOutcome(BaseModel):
 
         Args:
             payload: Agent-supplied fields (``appreciation``, ``hold_kind``,
-                ``required_agent``, ``round``, ``note``). When the key is
-                present its value must be a valid appreciation.
+                ``required_agent``, ``round``, ``note``). When the key carries a
+                non-empty value it must be a valid appreciation; a
+                missing/empty value means "no verdict".
             observed: The engine's ``OutcomeStatus`` for this turn.
 
         Returns:
             A validated :class:`TurnOutcome`.
 
         Raises:
-            ValueError: The payload states an appreciation that is not one of
-                ``approved``/``rejected``/``hold``.
+            ValueError: The payload states an appreciation that is present but
+                neither a valid verdict nor empty.
         """
         observed_value = getattr(observed, "value", str(observed))
         incomplete_reason = _OUTCOME_STATUS_TO_INCOMPLETE.get(observed_value)
@@ -164,12 +165,16 @@ class TurnOutcome(BaseModel):
         required_agent = _coerce_agent(payload.get("required_agent"))
         # A payload that carries the appreciation key must carry a usable
         # verdict. Defaulting a misspelling to "approved" would advance a step
-        # the agent never approved (issue #964) — fail loudly instead.
-        raises_on_unusable = "appreciation" in payload
-        appreciation = _coerce_appreciation(payload.get("appreciation"))
-        if appreciation is None and raises_on_unusable:
+        # the agent never approved (issue #964) — fail loudly instead. An
+        # explicit ``None``/empty value stays "no verdict": the engine's own
+        # observed-status call sites (soft kill, crash, no action) build
+        # hand-made payloads that name no appreciation at all.
+        has_appreciation = "appreciation" in payload
+        raw_appreciation = payload.get("appreciation")
+        appreciation = _coerce_appreciation(raw_appreciation)
+        if appreciation is None and has_appreciation and raw_appreciation not in (None, ""):
             raise ValueError(
-                f"invalid appreciation {payload.get('appreciation')!r}: expected "
+                f"invalid appreciation {raw_appreciation!r}: expected "
                 f"one of {[a.value for a in Appreciation]}"
             )
         if incomplete_reason is not None:

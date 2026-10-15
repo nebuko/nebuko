@@ -1,7 +1,8 @@
 """Per-step soft-kill retry accounting (issue #704).
 
-A soft time-kill must surface an explicit error status and a per-step retry
-budget so the workflow re-runs the interrupted step instead of advancing.
+A soft time-kill must surface an explicit INCOMPLETE turn status and a per-step
+retry budget so the workflow re-runs the interrupted step instead of advancing
+(issue #964).
 """
 
 import os
@@ -13,22 +14,37 @@ sys.path.insert(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 )
 
-from workflow_state import Dispatch, SoftRetryState, WorkflowState, build_state
-from workflow_state.sub_domains.dispatch.dispatch import DISPATCH_STATUSES
+from workflow_state import (
+    IncompleteReason,
+    SoftRetryState,
+    TurnOutcome,
+    TurnStatus,
+    WorkflowState,
+    build_state,
+)
 
 
-class TestDispatchSoftKillStatus(unittest.TestCase):
-    def test_soft_kill_is_a_valid_dispatch_status(self):
-        self.assertIn("soft_kill", DISPATCH_STATUSES)
-        self.assertEqual(Dispatch(status="soft_kill").status, "soft_kill")
+class TestInterruptedOutcomeStatus(unittest.TestCase):
+    """The soft-kill/checkpoint reasons are the interruption vocabulary."""
 
-    def test_existing_statuses_still_valid(self):
-        for status in ("advance", "loop", "hold", "terminate"):
-            self.assertEqual(Dispatch(status=status).status, status)
+    def test_soft_timeout_is_an_incomplete_reason(self):
+        outcome = TurnOutcome(
+            status=TurnStatus.INCOMPLETE,
+            incomplete_reason=IncompleteReason.SOFT_TIMEOUT,
+        )
+        self.assertEqual(outcome.status, TurnStatus.INCOMPLETE)
+        self.assertEqual(outcome.incomplete_reason, IncompleteReason.SOFT_TIMEOUT)
 
-    def test_unknown_status_is_rejected(self):
+    def test_agent_checkpoint_is_an_incomplete_reason(self):
+        outcome = TurnOutcome(
+            status=TurnStatus.INCOMPLETE,
+            incomplete_reason=IncompleteReason.AGENT_CHECKPOINT,
+        )
+        self.assertEqual(outcome.incomplete_reason, IncompleteReason.AGENT_CHECKPOINT)
+
+    def test_incomplete_without_a_reason_is_rejected(self):
         with self.assertRaises(ValueError):
-            Dispatch(status="soft_killed")
+            TurnOutcome(status=TurnStatus.INCOMPLETE)
 
 
 class TestSoftRetryStateModel(unittest.TestCase):
@@ -110,20 +126,32 @@ class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
     carries no marker and must not burn the budget (issue #704 review round 3).
     """
 
+    @staticmethod
+    def _soft_killed():
+        """The engine-measured outcome of an interrupted run (issue #964)."""
+        return TurnOutcome(
+            status=TurnStatus.INCOMPLETE,
+            incomplete_reason=IncompleteReason.SOFT_TIMEOUT,
+        )
+
+    @staticmethod
+    def _completed():
+        return TurnOutcome(status=TurnStatus.COMPLETED, appreciation="approved")
+
     def test_engine_retry_increments_the_counter(self):
         prev = build_state(
             None,
             workflow="w",
             step="implement",
             agent="dev",
-            dispatch=Dispatch(status="soft_kill"),
+            turn_outcome=self._soft_killed(),
         )
         nxt = build_state(
             prev,
             workflow="w",
             step="implement",
             agent="dev",
-            dispatch=Dispatch(status="soft_kill"),
+            turn_outcome=self._soft_killed(),
             soft_retry_attempt=True,
         )
         self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=1))
@@ -134,14 +162,14 @@ class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
             workflow="w",
             step="implement",
             agent="dev",
-            dispatch=Dispatch(status="soft_kill"),
+            turn_outcome=self._soft_killed(),
         ).model_copy(update={"soft_retry": SoftRetryState(step="implement", attempts=1)})
         nxt = build_state(
             prev,
             workflow="w",
             step="implement",
             agent="dev",
-            dispatch=Dispatch(status="soft_kill"),
+            turn_outcome=self._soft_killed(),
             soft_retry_attempt=True,
         )
         self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=2))
@@ -155,14 +183,14 @@ class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
             workflow="w",
             step="implement",
             agent="dev",
-            dispatch=Dispatch(status="soft_kill"),
+            turn_outcome=self._soft_killed(),
         ).model_copy(update={"soft_retry": SoftRetryState(step="implement", attempts=1)})
         nxt = build_state(
             prev,
             workflow="w",
             step="implement",
             agent="dev",
-            dispatch=Dispatch(status="advance"),
+            turn_outcome=self._completed(),
         )
         self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=1))
 
@@ -174,14 +202,14 @@ class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
             workflow="w",
             step="implement",
             agent="dev",
-            dispatch=Dispatch(status="soft_kill"),
+            turn_outcome=self._soft_killed(),
         ).model_copy(update={"soft_retry": SoftRetryState(step="implement", attempts=2)})
         nxt = build_state(
             prev,
             workflow="w",
             step="implement",
             agent="dev",
-            dispatch=Dispatch(status="soft_kill"),
+            turn_outcome=self._soft_killed(),
             is_human_resume=True,
         )
         self.assertEqual(nxt.soft_retry, SoftRetryState(step="implement", attempts=0))
@@ -192,7 +220,7 @@ class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
         ).model_copy(
             update={
                 "soft_retry": SoftRetryState(step="implement", attempts=2),
-                "dispatch": Dispatch(status="advance"),
+                "turn_outcome": self._completed(),
             }
         )
         nxt = build_state(
@@ -200,7 +228,7 @@ class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
             workflow="w",
             step="review",
             agent="reviewer",
-            dispatch=Dispatch(status="advance"),
+            turn_outcome=self._completed(),
         )
         self.assertEqual(nxt.soft_retry, SoftRetryState(step="review", attempts=0))
 
@@ -210,7 +238,7 @@ class TestBuildStateSoftRetryLifecycle(unittest.TestCase):
         ).model_copy(
             update={
                 "soft_retry": SoftRetryState(step="implement", attempts=1),
-                "dispatch": Dispatch(status="advance"),
+                "turn_outcome": self._completed(),
             }
         )
         nxt = build_state(prev, workflow="w", step="implement", agent="dev")

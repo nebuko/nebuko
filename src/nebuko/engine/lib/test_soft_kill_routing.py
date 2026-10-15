@@ -1,8 +1,9 @@
 """Soft-kill retry-vs-halt routing (issue #704).
 
-Given a ``soft_kill`` dispatch, the router re-runs the interrupted step while
-its per-step retry budget remains and halts the workflow for a human once the
-budget is exhausted — never advancing to the next step.
+Given an INCOMPLETE turn outcome (a soft time-kill, or an agent checkpoint),
+the router re-runs the interrupted step while its per-step retry budget remains
+and halts the workflow for a human once the budget is exhausted — never
+advancing to the next step (issue #964).
 """
 
 import json
@@ -15,11 +16,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from resolve_config import resolve_config
 from resolve_config.features.resolve_route.resolve_route import (
-    _resolve_dispatch_path,
+    _resolve_outcome_path,
     resolve_max_soft_retries,
     resolve_soft_kill_route,
 )
-from workflow_state import Dispatch, SoftRetryState, WorkflowState
+from workflow_state import (
+    IncompleteReason,
+    SoftRetryState,
+    TurnOutcome,
+    TurnStatus,
+    WorkflowState,
+)
 
 
 def _state(step="implement", agent="dev", attempts=0, counter_step="implement"):
@@ -31,16 +38,30 @@ def _state(step="implement", agent="dev", attempts=0, counter_step="implement"):
     )
 
 
+def _soft_killed(reason=IncompleteReason.SOFT_TIMEOUT):
+    """The engine-measured outcome of an interrupted run (issue #964)."""
+    return TurnOutcome(status=TurnStatus.INCOMPLETE, incomplete_reason=reason)
+
+
+def _checkpointed():
+    """An agent's own fold: incomplete with the checkpoint reason (issue #965)."""
+    return _soft_killed(IncompleteReason.AGENT_CHECKPOINT)
+
+
+def _completed():
+    return TurnOutcome(status=TurnStatus.COMPLETED, appreciation="approved")
+
+
 class TestSoftKillRoute(unittest.TestCase):
-    def test_non_soft_kill_dispatch_falls_through(self):
+    def test_a_completed_outcome_falls_through(self):
         result = resolve_soft_kill_route(
-            _state(), Dispatch(status="advance"), max_soft_retries=2
+            _state(), _completed(), max_soft_retries=2
         )
         self.assertIsNone(result)
 
     def test_retries_the_same_step_while_budget_remains(self):
         result = resolve_soft_kill_route(
-            _state(attempts=0), Dispatch(status="soft_kill"), max_soft_retries=2
+            _state(attempts=0), _soft_killed(), max_soft_retries=2
         )
         self.assertNotEqual(result.get("SKIP_AGENT"), "true")
         self.assertEqual(result["config_step"], "implement")
@@ -49,24 +70,25 @@ class TestSoftKillRoute(unittest.TestCase):
         # build_state consumes exactly one budget attempt (issue #704).
         self.assertEqual(result["config_soft_retry_attempt"], "true")
 
-    def test_retry_honors_the_dispatch_task_hint(self):
+    def test_retry_reuses_the_interrupted_steps_agent(self):
+        """The retried step's own agent runs; the outcome carries no task hint."""
         result = resolve_soft_kill_route(
             _state(agent="dev"),
-            Dispatch(status="soft_kill", task_hint="review"),
+            _soft_killed(),
             max_soft_retries=2,
         )
-        self.assertEqual(result["task"], "review")
+        self.assertEqual(result["task"], "dev")
 
     def test_second_retry_is_still_within_budget(self):
         result = resolve_soft_kill_route(
-            _state(attempts=1), Dispatch(status="soft_kill"), max_soft_retries=2
+            _state(attempts=1), _soft_killed(), max_soft_retries=2
         )
         self.assertNotEqual(result.get("SKIP_AGENT"), "true")
         self.assertEqual(result["config_step"], "implement")
 
     def test_exhausted_budget_halts_for_a_human(self):
         result = resolve_soft_kill_route(
-            _state(attempts=2), Dispatch(status="soft_kill"), max_soft_retries=2
+            _state(attempts=2), _soft_killed(), max_soft_retries=2
         )
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("implement", result["REASON"])
@@ -80,26 +102,26 @@ class TestSoftKillRoute(unittest.TestCase):
         the ``/nebuko resume`` instruction would live only in the CI log.
         """
         result = resolve_soft_kill_route(
-            _state(attempts=2), Dispatch(status="soft_kill"), max_soft_retries=2
+            _state(attempts=2), _soft_killed(), max_soft_retries=2
         )
         self.assertEqual(result["SOFT_RETRY_EXHAUSTED"], "true")
 
     def test_a_retry_does_not_carry_the_halt_marker(self):
         result = resolve_soft_kill_route(
-            _state(attempts=0), Dispatch(status="soft_kill"), max_soft_retries=2
+            _state(attempts=0), _soft_killed(), max_soft_retries=2
         )
         self.assertNotIn("SOFT_RETRY_EXHAUSTED", result)
 
     def test_zero_budget_halts_immediately(self):
         result = resolve_soft_kill_route(
-            _state(attempts=0), Dispatch(status="soft_kill"), max_soft_retries=0
+            _state(attempts=0), _soft_killed(), max_soft_retries=0
         )
         self.assertEqual(result["SKIP_AGENT"], "true")
 
     def test_counter_of_a_different_step_does_not_consume_budget(self):
         result = resolve_soft_kill_route(
             _state(step="review", agent="reviewer", attempts=5, counter_step="implement"),
-            Dispatch(status="soft_kill"),
+            _soft_killed(),
             max_soft_retries=2,
         )
         self.assertNotEqual(result.get("SKIP_AGENT"), "true")
@@ -122,15 +144,13 @@ class TestResolveMaxSoftRetries(unittest.TestCase):
         self.assertEqual(resolve_max_soft_retries({"MAX_SOFT_RETRIES": "-1"}), 0)
 
 
-class TestDispatchPathSoftKillWiring(unittest.TestCase):
-    """`_resolve_dispatch_path` must consult the soft-kill router first."""
+class TestOutcomePathSoftKillWiring(unittest.TestCase):
+    """`_resolve_outcome_path` must consult the soft-kill router first."""
 
-    def test_soft_kill_dispatch_retries_in_place(self):
-        result = _resolve_dispatch_path(
-            _state(attempts=0),
-            Dispatch(status="soft_kill"),
-            "workflows",
-        )
+    def test_soft_kill_outcome_retries_in_place(self):
+        state = _state(attempts=0)
+        state.turn_outcome = _soft_killed()
+        result = _resolve_outcome_path(state, "workflows")
         self.assertEqual(result["config_step"], "implement")
         self.assertEqual(result["task"], "dev")
 
@@ -189,7 +209,7 @@ class TestSoftKillResumeAfterHalt(unittest.TestCase):
     def test_resume_after_exhausted_soft_kill_reruns_the_step(self):
         prompt_base, workflows_dir = self._dirs()
         halted = _state(attempts=2)
-        halted.dispatch = Dispatch(status="soft_kill")
+        halted.turn_outcome = _soft_killed()
         result = resolve_config(
             self._resume_body(halted), prompt_base, workflows_dir, is_bot=False
         )
@@ -210,14 +230,14 @@ class TestAgentCheckpointRoute(unittest.TestCase):
 
     def test_checkpoint_is_not_treated_as_a_non_soft_dispatch(self):
         result = resolve_soft_kill_route(
-            _state(), Dispatch(status="agent_checkpoint"), max_soft_retries=2
+            _state(), _checkpointed(), max_soft_retries=2
         )
         self.assertIsNotNone(result)
         self.assertEqual(result["config_step"], "implement")
 
     def test_checkpoint_retries_the_same_step_while_budget_remains(self):
         result = resolve_soft_kill_route(
-            _state(attempts=0), Dispatch(status="agent_checkpoint"), max_soft_retries=2
+            _state(attempts=0), _checkpointed(), max_soft_retries=2
         )
         self.assertNotEqual(result.get("SKIP_AGENT"), "true")
         self.assertEqual(result["config_soft_retry_attempt"], "true")
@@ -225,13 +245,13 @@ class TestAgentCheckpointRoute(unittest.TestCase):
     def test_checkpoint_consumes_the_same_budget_as_a_soft_kill(self):
         """A checkpoint recorded after one soft-kill attempt is the second try."""
         result = resolve_soft_kill_route(
-            _state(attempts=1), Dispatch(status="agent_checkpoint"), max_soft_retries=2
+            _state(attempts=1), _checkpointed(), max_soft_retries=2
         )
         self.assertNotEqual(result.get("SKIP_AGENT"), "true")
 
     def test_exhausted_checkpoint_budget_halts_for_a_human(self):
         result = resolve_soft_kill_route(
-            _state(attempts=2), Dispatch(status="agent_checkpoint"), max_soft_retries=2
+            _state(attempts=2), _checkpointed(), max_soft_retries=2
         )
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertEqual(result["SOFT_RETRY_EXHAUSTED"], "true")
