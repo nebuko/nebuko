@@ -2,7 +2,6 @@
 
 import pytest
 
-from workflow_state.sub_domains.dispatch.dispatch import Dispatch
 from workflow_state.sub_domains.turn_outcome.turn_outcome import (
     Appreciation,
     HoldKind,
@@ -132,33 +131,40 @@ class TestFromAgentPayload:
         assert outcome.appreciation is None
 
 
-class TestFromLegacyDispatch:
-    def test_soft_kill_maps_to_incomplete(self):
-        outcome = TurnOutcome.from_legacy_dispatch(
-            Dispatch(status="soft_kill", reason="timeout")
-        )
-        assert outcome.status == TurnStatus.INCOMPLETE
-        assert outcome.incomplete_reason == IncompleteReason.SOFT_TIMEOUT
+class TestFromAgentPayloadRejectsBadVerdicts:
+    """A payload that carries no usable verdict must not become an approval.
 
-    def test_human_gate_hold_maps_to_awaiting_approval(self):
-        outcome = TurnOutcome.from_legacy_dispatch(
-            Dispatch(status="hold", reason="human_gate:plan")
-        )
-        assert outcome.appreciation == Appreciation.HOLD
-        assert outcome.hold_kind == HoldKind.AWAITING_APPROVAL
+    The verdict is the routing fact (issue #964); defaulting a missing or
+    misspelled appreciation to ``approved`` would silently advance a step the
+    agent never approved.
+    """
 
-    def test_branch_rejected_maps(self):
-        outcome = TurnOutcome.from_legacy_dispatch(
-            Dispatch(status="advance", branch="rejected", task_hint="dev")
-        )
-        assert outcome.appreciation == Appreciation.REJECTED
-        assert outcome.required_agent == "dev"
-
-    def test_verdictless_legacy_returns_none(self):
-        """The captured issue-#923 blob (``{"reason": "round 2"}``) is unmapped."""
-        assert (
-            TurnOutcome.from_legacy_dispatch(
-                Dispatch(status="advance", reason="round 2")
+    def test_invalid_appreciation_is_rejected(self):
+        with pytest.raises(ValueError, match="appreciation"):
+            TurnOutcome.from_agent_payload(
+                {"appreciation": "bogus"}, observed=OutcomeStatus.SUCCESS
             )
-            is None
+
+    def test_explicitly_empty_appreciation_is_rejected(self):
+        with pytest.raises(ValueError, match="appreciation"):
+            TurnOutcome.from_agent_payload(
+                {"appreciation": ""}, observed=OutcomeStatus.SUCCESS
+            )
+
+    def test_invalid_appreciation_is_still_flagged_on_an_incomplete_turn(self):
+        with pytest.raises(ValueError, match="appreciation"):
+            TurnOutcome.from_agent_payload(
+                {"appreciation": "bogus"}, observed=OutcomeStatus.GRACEFULLY_TIMED_OUT
+            )
+
+    def test_a_payload_without_the_key_is_still_honoured(self):
+        """The engine's own internal call sites build payloads by hand."""
+        outcome = TurnOutcome.from_agent_payload({}, observed=OutcomeStatus.SUCCESS)
+        assert outcome.appreciation == Appreciation.APPROVED
+
+    def test_an_engine_observed_failure_needs_no_verdict(self):
+        """The engine's observation is the fact, so no verdict is required."""
+        outcome = TurnOutcome.from_agent_payload(
+            {}, observed=OutcomeStatus.GRACEFULLY_TIMED_OUT
         )
+        assert outcome.incomplete_reason == IncompleteReason.SOFT_TIMEOUT

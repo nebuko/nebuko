@@ -147,27 +147,41 @@ class TurnOutcome(BaseModel):
 
         Args:
             payload: Agent-supplied fields (``appreciation``, ``hold_kind``,
-                ``required_agent``, ``round``, ``note``).
+                ``required_agent``, ``round``, ``note``). When the key is
+                present its value must be a valid appreciation.
             observed: The engine's ``OutcomeStatus`` for this turn.
 
         Returns:
             A validated :class:`TurnOutcome`.
+
+        Raises:
+            ValueError: The payload states an appreciation that is not one of
+                ``approved``/``rejected``/``hold``.
         """
         observed_value = getattr(observed, "value", str(observed))
         incomplete_reason = _OUTCOME_STATUS_TO_INCOMPLETE.get(observed_value)
         note = _coerce_note(payload.get("note"))
         required_agent = _coerce_agent(payload.get("required_agent"))
+        # A payload that carries the appreciation key must carry a usable
+        # verdict. Defaulting a misspelling to "approved" would advance a step
+        # the agent never approved (issue #964) — fail loudly instead.
+        raises_on_unusable = "appreciation" in payload
+        appreciation = _coerce_appreciation(payload.get("appreciation"))
+        if appreciation is None and raises_on_unusable:
+            raise ValueError(
+                f"invalid appreciation {payload.get('appreciation')!r}: expected "
+                f"one of {[a.value for a in Appreciation]}"
+            )
         if incomplete_reason is not None:
-            claimed = _coerce_appreciation(payload.get("appreciation"))
-            if claimed is not None:
+            if appreciation is not None:
                 note = (
-                    f"(agent claimed appreciation={claimed.value}; "
+                    f"(agent claimed appreciation={appreciation.value}; "
                     f"engine observed {observed_value}) {note}".strip()
                 )
             return cls.for_incomplete(incomplete_reason, note=note)
-        appreciation = _coerce_appreciation(payload.get("appreciation"))
         if appreciation is None:
-            # Should not happen: the mandatory tool field guarantees a verdict.
+            # Only reachable for a payload without the key (an internal call
+            # site); the tool itself always sends it.
             appreciation = Appreciation.APPROVED
         hold_kind = _coerce_hold_kind(payload.get("hold_kind"))
         if appreciation == Appreciation.HOLD and hold_kind is None:
