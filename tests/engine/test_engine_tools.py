@@ -19,15 +19,16 @@ class TestDefaultRegistry:
         assert spec.payload_kind == "final_message"
         assert spec.payload_fields == ("message",)
 
-    def test_dispatch_next_carries_the_routing_fields(self):
+    def test_dispatch_next_carries_the_turn_outcome_fields(self):
         spec = DEFAULT_ENGINE_TOOLS.tools["dispatch_next"]
         assert spec.payload_kind == "routing"
         assert spec.payload_fields == (
-            "status",
-            "branch",
+            "appreciation",
+            "hold_kind",
+            "required_agent",
+            "round",
+            "note",
             "complexity",
-            "reason",
-            "agent",
             "pin",
         )
 
@@ -50,50 +51,52 @@ class TestHarvest:
         assert payload.payload_kind == "final_message"
         assert payload.fields == {"message": "Full report"}
 
-    def test_harvests_the_dispatch_routing_fields(self):
+    def test_harvests_the_turn_outcome_fields(self):
         action = SimpleNamespace(
-            status="advance",
-            branch="approved",
+            appreciation="approved",
+            hold_kind="",
             complexity="high",
-            reason="done",
-            agent="review",
+            note="done",
+            required_agent="review",
             pin=True,
         )
         payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
         assert payload is not None
         assert payload.payload_kind == "routing"
         assert payload.fields == {
-            "status": "advance",
-            "branch": "approved",
+            "appreciation": "approved",
+            "hold_kind": "",
+            "required_agent": "review",
+            "round": "",
+            "note": "done",
             "complexity": "high",
-            "reason": "done",
-            "agent": "review",
             "pin": "true",
         }
 
     def test_missing_optional_fields_become_empty_strings(self):
-        action = SimpleNamespace(status="hold")
+        action = SimpleNamespace(appreciation="hold")
         payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
         assert payload.fields == {
-            "status": "hold",
-            "branch": "",
+            "appreciation": "hold",
+            "hold_kind": "",
+            "required_agent": "",
+            "round": "",
+            "note": "",
             "complexity": "",
-            "reason": "",
-            "agent": "",
             "pin": "",
         }
 
     def test_an_unset_boolean_flag_is_empty_not_false(self):
         # ``pin=False`` must read as "unset" so it never masks a fallback value.
-        action = SimpleNamespace(status="advance", pin=False)
+        action = SimpleNamespace(appreciation="approved", pin=False)
         payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
         assert payload.fields["pin"] == ""
 
     def test_none_field_is_an_empty_string(self):
-        action = SimpleNamespace(status="advance", branch=None, complexity=None, reason=None)
+        action = SimpleNamespace(appreciation="approved", hold_kind=None, note=None)
         payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
-        assert payload.fields["branch"] == ""
-        assert payload.fields["complexity"] == ""
+        assert payload.fields["hold_kind"] == ""
+        assert payload.fields["note"] == ""
 
     def test_unknown_tool_returns_none(self):
         assert DEFAULT_ENGINE_TOOLS.harvest("terminal", SimpleNamespace(message="x")) is None
