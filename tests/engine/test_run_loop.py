@@ -102,7 +102,7 @@ def _agent_result(answer: str, dispatch: dict | None = None) -> dict:
     (``appreciation``/``hold_kind``); the engine measures whether the turn
     completed. ``_outcome`` returns the same payload as a ``TurnOutcome``.
     """
-    return {"answer": answer, "dispatch": dispatch if dispatch is not None else {"appreciation": "approved"}}
+    return {"answer": answer, "turn_outcome": dispatch if dispatch is not None else {"appreciation": "approved"}}
 
 
 def _outcome(appreciation: str = "approved", **overrides) -> "TurnOutcome":
@@ -1093,7 +1093,7 @@ class TestRoutePhase:
     def test_maps_the_agents_verdict(self, tmp_path):
         engine = _engine(tmp_path)
 
-        outcome = engine.route({"dispatch": {"appreciation": "approved", "round": 2}})
+        outcome = engine.route({"turn_outcome": {"appreciation": "approved", "round": 2}})
 
         assert isinstance(outcome, TurnOutcome)
         assert outcome.status is TurnStatus.COMPLETED
@@ -1105,7 +1105,7 @@ class TestRoutePhase:
         engine = _engine(tmp_path)
 
         outcome = engine.route(
-            {"dispatch": {"appreciation": "hold", "hold_kind": "awaiting_approval"}}
+            {"turn_outcome": {"appreciation": "hold", "hold_kind": "awaiting_approval"}}
         )
 
         assert outcome.appreciation is Appreciation.HOLD
@@ -1131,7 +1131,7 @@ class TestRoutePhase:
         engine = _engine(tmp_path)
 
         outcome = engine.route(
-            {"dispatch": {"appreciation": "approved"}},
+            {"turn_outcome": {"appreciation": "approved"}},
             observed=OutcomeStatus.FAILURE,
         )
 
@@ -1143,9 +1143,9 @@ class TestRoutePhase:
         engine = _engine(tmp_path)
 
         parked = engine.route(
-            {"dispatch": {"appreciation": "hold", "hold_kind": "awaiting_input"}}
+            {"turn_outcome": {"appreciation": "hold", "hold_kind": "awaiting_input"}}
         )
-        approved = engine.route({"dispatch": {"appreciation": "approved"}})
+        approved = engine.route({"turn_outcome": {"appreciation": "approved"}})
 
         assert _exit_code_for(ExitCode.ADVANCE, parked) == ExitCode.HOLD
         assert _exit_code_for(ExitCode.ADVANCE, approved) == ExitCode.ADVANCE
@@ -1388,7 +1388,7 @@ class TestHumanActionSinglePing:
             Engine,
             "invoke_agent",
             lambda self, prompt: _agent_result(
-                "proposal", {"status": "hold", "reason": "human_gate:plan"}
+                "proposal", {"appreciation": "hold", "hold_kind": "awaiting_approval"}
             ),
         )
 
