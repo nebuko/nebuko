@@ -19,12 +19,12 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
+    from workflow_state.sub_domains.turn_outcome.turn_outcome import TurnOutcome
     from workflow_state.workflow_state import WorkflowState
 
 __all__ = [
     "Trigger",
     "CommentEntry",
-    "RoutingDecision",
     "ExitCode",
     "RunOutcome",
     "SkipKind",
@@ -33,7 +33,6 @@ __all__ = [
     "StepResult",
     "WorkflowCallFrame",
     "NebukoManifest",
-    "to_routing_decision",
     "circuit_breaker_update_notice",
 ]
 
@@ -85,16 +84,6 @@ class CommentEntry:
 
 # @stub-protected
 @dataclass(frozen=True)
-class RoutingDecision:
-    """The engine's normalized view of the ``dispatch_next`` tool payload."""
-
-    status: str  # "advance" | "loop" | "hold"
-    agent: str | None = None
-    complexity: str = "medium"
-    branch: str | None = None
-    reason: str | None = None
-
-
 # @stub-protected
 class ExitCode(IntEnum):
     """Process exit codes distinguishing the three terminal outcomes."""
@@ -108,10 +97,10 @@ class ExitCode(IntEnum):
 # @stub-protected
 @dataclass(frozen=True)
 class RunOutcome:
-    """Everything one engine run produced, including the routing decision."""
+    """Everything one engine run produced, including the turn outcome."""
 
     exit_code: ExitCode
-    routing: RoutingDecision
+    turn_outcome: "TurnOutcome"
     prompt: str | None
     posted_body: str | None
     state: WorkflowState | None
@@ -479,20 +468,3 @@ class WorkflowCallFrame:
     def pop(self) -> dict[str, str]:
         """Return the callee's declared outputs — and nothing else."""
         return dict(self.outputs)
-
-
-def to_routing_decision(args: Mapping[str, Any]) -> RoutingDecision:
-    """Normalize a ``dispatch_next``/``AGENT_RUN_CONFIG`` payload.
-
-    Tolerant of missing fields: an unknown/absent status is treated as a plain
-    ``advance`` so a hand-off is never silently dropped.
-    """
-    status = str(args.get("status") or "advance")
-    complexity = args.get("complexity") or "medium"
-    return RoutingDecision(
-        status=status,
-        agent=args.get("agent"),
-        complexity=str(complexity),
-        branch=args.get("branch"),
-        reason=args.get("reason"),
-    )

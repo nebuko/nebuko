@@ -299,17 +299,17 @@ def extract_debug_flag(trigger_body: str) -> bool:
 
 
 def _parse_trigger_body(trigger_body: str) -> tuple:
-    """Extract workflow state and dispatch from the current trigger body.
+    """Extract workflow state and its turn outcome from the trigger body.
 
     Args:
         trigger_body: Raw trigger body text.
 
     Returns:
-        Tuple of (prev_state, dispatch_obj).
+        Tuple of (prev_state, turn_outcome).
     """
     prev_state = extract_state_from_body(trigger_body)
-    dispatch_obj = prev_state.dispatch if prev_state else None
-    return (prev_state, dispatch_obj)
+    turn_outcome = prev_state.turn_outcome if prev_state else None
+    return (prev_state, turn_outcome)
 
 
 def build_trigger_commands(body: str) -> TriggerCommands:

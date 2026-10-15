@@ -28,7 +28,7 @@ the outcome.
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 if TYPE_CHECKING:
     from ....agent_script.features.run_agent.run_outcome import OutcomeStatus
@@ -93,6 +93,8 @@ class TurnOutcome(BaseModel):
         round: dev<->review cycle counter; replaces the free-text "round N".
         note: Human-facing explanation only — never routed on.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     status: TurnStatus
     appreciation: Optional[Appreciation] = None

@@ -218,15 +218,22 @@ DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
         "dispatch_next": EngineToolSpec(
             name="dispatch_next",
             payload_kind="routing",
-            # ``agent``/``pin`` carry the explicit cross-agent override that the
-            # prose sentinel used to provide; dropping them here silently
-            # reverts a hand-off to the workflow's default next step (#830).
-            payload_fields=("status", "branch", "complexity", "reason", "agent", "pin"),
+            # The factual turn outcome: the agent's verdict plus the optional
+            # cross-agent override (issue #964). Dropping a field here silently
+            # reverts the hand-off to the workflow's default next step (#830).
+            payload_fields=(
+                "appreciation",
+                "hold_kind",
+                "required_agent",
+                "round",
+                "note",
+                "complexity",
+                "pin",
+            ),
         ),
         # Typed replacement for the sentinel-carried ``function_call``
         # hand-off (issue #876). Its harvested fields are surfaced under a
-        # ``function_call`` key; the routing decision itself stays
-        # status-only (``RoutingDecision``).
+        # ``function_call`` key; the turn outcome itself carries the verdict.
         "call_agent": EngineToolSpec(
             name="call_agent",
             payload_kind="handoff",

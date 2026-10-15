@@ -23,7 +23,8 @@ from config import (
 )
 from resolve_workflow import (
     resolve_next_from_workflow,
-    resolution_to_marker,
+    RouteKind,
+    RouteResolution,
     resolve_sub_workflow_entry,
     _is_terminal_step,
     _load_workflow_by_reference,
@@ -31,13 +32,18 @@ from resolve_workflow import (
     resolve_workflow_reference,
     TASK_TO_PROMPT,
 )
-from validate_output import has_agent_run_config_marker
 from workflow_state import (
+    Appreciation,
     FunctionCall,
     GateDecision,
+    HoldKind,
+    IncompleteReason,
+    RunPrefs,
     SUPPORTED_FUNCTIONS,
-    extract_dispatch_from_state,
+    TurnOutcome,
+    TurnStatus,
     extract_state_from_body,
+    extract_turn_outcome_from_state,
 )
 
 from ..fetch_state.fetch_state import _fetch_workflow_state_from_history
@@ -148,13 +154,14 @@ def _resolve_resume_path(
 ) -> dict:
     """Resolve config to re-run the currently held step after /nebuko resume.
 
-    Validates that dispatch.status is ``hold`` (a human-gate hold) or
-    ``soft_kill`` (a retry-budget exhaustion halt, issue #704) or
-    ``agent_checkpoint`` (a fold whose retry budget is exhausted, issue #965),
-    looks up the current step in the workflow YAML, then builds a config for the
-    same step/agent (replaying so the agent can process the human's response).
-    Copies dispatch parameters from the previously stored dispatch. Injects
-    human input into current_context so the agent prompt can reference it.
+    Validates that the recorded turn outcome is a resumable hold — a
+    ``human_gate`` hold (``awaiting_approval``), an ``awaiting_input`` hold, a
+    soft-timeout exhaustion halt (issue #704) or an agent checkpoint (issue
+    #965) — looks up the current step in the workflow YAML, then builds a
+    config for the same step/agent (replaying so the agent can process the
+    human's response). Copies the run preferences from the previously stored
+    state. Injects human input into current_context so the agent prompt can
+    reference it.
 
     Args:
         prev_state: WorkflowState containing the held workflow/step/agent.
@@ -166,19 +173,31 @@ def _resolve_resume_path(
     Returns:
         Config dict for re-running the held step, or SKIP_AGENT dict.
     """
-    dispatch = prev_state.dispatch
+    outcome = prev_state.turn_outcome
+    prefs = prev_state.prefs
 
     # Both a human-gate ``hold`` and a soft-kill / agent-checkpoint exhaustion
     # halt (issues #704, #965) are resumable: an explicit human resume re-runs
     # the interrupted step.
-    if dispatch is None or dispatch.status not in (
-        "hold",
-        "soft_kill",
-        "agent_checkpoint",
-    ):
+    if outcome is None or outcome.status != TurnStatus.COMPLETED:
+        if outcome is None or outcome.incomplete_reason not in (
+            IncompleteReason.SOFT_TIMEOUT,
+            IncompleteReason.AGENT_CHECKPOINT,
+        ):
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": (
+                    "resume: step is not on hold "
+                    f"(turn_outcome='{outcome.status.value if outcome else 'none'}')"
+                ),
+            }
+    elif outcome.appreciation != Appreciation.HOLD:
         return {
             "SKIP_AGENT": "true",
-            "REASON": f"resume: step is not on hold (dispatch.status='{dispatch.status if dispatch else 'none'}')",
+            "REASON": (
+                "resume: step is not on hold "
+                f"(appreciation='{outcome.appreciation.value if outcome.appreciation else 'none'}')"
+            ),
         }
 
     # A human_gate hold is released ONLY by the dedicated gate command
@@ -186,7 +205,7 @@ def _resolve_resume_path(
     # held and points the human at the correct command. This keeps a gated
     # step's transition an engine-owned state mutation driven by a typed,
     # identity-verified decision rather than a resume re-invocation.
-    if dispatch.status == "hold" and _is_human_gate_hold(dispatch.reason):
+    if _is_human_gate_hold(outcome):
         return {
             "SKIP_AGENT": "true",
             "REASON": (
@@ -247,33 +266,35 @@ def _resolve_resume_path(
             wf_cmd.params.get("feedback", "") if wf_cmd is not None else None
         )
 
-    # Copy dispatch parameters from previous state so the step re-runs
+    # Copy the run preferences from the previous state so the step re-runs
     # with the same LLM settings (model, temperature, etc.)
     config = {
         "task": step_def.agent,
-        "config_complexity": dispatch.complexity or "",
-        "config_reasoning": dispatch.reasoning or "none",
+        "config_complexity": prefs.complexity if prefs else "",
+        "config_reasoning": "none",
         "config_temperature": (
-            str(dispatch.temperature) if dispatch.temperature is not None else ""
+            str(prefs.temperature) if prefs and prefs.temperature is not None else ""
         ),
         "config_round": "",
-        "config_model": dispatch.model or "",
-        "config_skills": dispatch.skills or "",
+        "config_model": (prefs.model or "") if prefs else "",
+        "config_skills": (prefs.skills or "") if prefs else "",
         "config_top_p": (
-            str(dispatch.top_p) if dispatch.top_p is not None else ""
+            str(prefs.top_p) if prefs and prefs.top_p is not None else ""
         ),
         "config_top_k": (
-            str(dispatch.top_k) if dispatch.top_k is not None else ""
+            str(prefs.top_k) if prefs and prefs.top_k is not None else ""
         ),
         "config_repetition_penalty": (
-            str(dispatch.repetition_penalty) if dispatch.repetition_penalty is not None else ""
+            str(prefs.repetition_penalty)
+            if prefs and prefs.repetition_penalty is not None
+            else ""
         ),
-        "config_debug": str(dispatch.debug).lower() if dispatch.debug else "",
+        "config_debug": str(prefs.debug).lower() if prefs and prefs.debug else "",
         "config_workflow": wf_name,
         "config_step": current_step_in_wf,
-        "config_branch": dispatch.branch or "",
-        "config_parent_workflow": dispatch.parent_workflow or "",
-        "config_parent_workflow_step": dispatch.parent_workflow_step or "",
+        "config_branch": "",
+        "config_parent_workflow": prev_state.parent_workflow or "",
+        "config_parent_workflow_step": prev_state.parent_workflow_step or "",
         "config_human_resume_input": human_input,
     }
 
@@ -316,14 +337,19 @@ def _trigger_comment_id() -> Optional[int]:
         return None
 
 
-def _is_human_gate_hold(reason: Optional[str]) -> bool:
-    """True when a hold dispatch was produced by the human-gate intercept."""
-    return (reason or "").startswith("human_gate:")
+def _is_human_gate_hold(outcome: Optional[TurnOutcome]) -> bool:
+    """True when the turn outcome parks the step on its ``human_gate``.
 
-
-def _gate_step_from_reason(reason: Optional[str]) -> str:
-    """Extract the gated step name from a ``human_gate:<step>`` reason."""
-    return (reason or "")[len("human_gate:"):] or ""
+    A hold is a *step-config fact* (issue #964): the workflow step declares
+    ``human_gate: true``, so the outcome carries an ``awaiting_approval`` hold
+    and the step stays parked until an identity-verified gate command releases
+    it. The legacy ``human_gate:<step>`` reason string (and its holds) are gone.
+    """
+    return bool(
+        outcome is not None
+        and outcome.appreciation == Appreciation.HOLD
+        and outcome.hold_kind == HoldKind.AWAITING_APPROVAL
+    )
 
 
 def _human_gate_hold_result(step: str) -> dict:
@@ -392,12 +418,7 @@ def _gate_hold_rejection_reason(
     """
     if prev_state is None:
         return "gate: no prior workflow state found"
-    dispatch = prev_state.dispatch
-    if (
-        dispatch is None
-        or dispatch.status != "hold"
-        or not _is_human_gate_hold(dispatch.reason)
-    ):
+    if not _is_human_gate_hold(prev_state.turn_outcome):
         return "gate: workflow is not held at a human_gate step"
     if not author.may_decide_gate():
         return (
@@ -472,7 +493,7 @@ def _route_gate_decision(
             local_workflows_dir,
             prev_state.scaffold_branch,
         )
-    wf_result = resolution_to_marker(resolve_next_from_workflow(
+    wf_result = resolve_next_from_workflow(
         wf_name,
         step_name,
         workflows_dir,
@@ -482,12 +503,18 @@ def _route_gate_decision(
         local_workflows_dir=local_workflows_dir,
         scaffold_branch=prev_state.scaffold_branch,
         history=prev_state.history,
-    ))
-    if not wf_result:
+    )
+    if wf_result is None or wf_result.kind in (
+        RouteKind.DECLARED_FINISH,
+        RouteKind.UNRESOLVED,
+    ):
         return _workflow_next_step_skip_reason(wf_name, step_name, workflows_dir)
-    if wf_result.get("SKIP_AGENT") == "true":
-        return wf_result
-    return _apply_gate_successor(config, wf_result)
+    if wf_result.skip_agent:
+        return wf_result.skip_result()
+    if wf_result.kind is RouteKind.RUN_SCRIPT:
+        return _apply_gate_successor(config, wf_result, prev_state)
+    _apply_route_resolution(config, wf_result, prev_state)
+    return config
 
 
 def _rerun_gated_step(
@@ -524,68 +551,43 @@ def _rerun_gated_step(
     return config
 
 
-def _apply_gate_successor(config: dict, wf_result: dict) -> dict:
-    """Apply an ``on_result`` successor (approved|rejected) to the config."""
-    if wf_result.get("run_script"):
-        config["run_script"] = _script_marker_payload(wf_result)
-        config["config_step"] = wf_result.get("step", config["config_step"])
-        if wf_result.get("branch"):
-            config["config_branch"] = wf_result["branch"]
-        return config
-    config["task"] = wf_result["task"]
-    config["config_step"] = wf_result.get("step", config["config_step"])
-    if wf_result.get("branch"):
-        config["config_branch"] = wf_result["branch"]
-    _apply_wf_marker(config, wf_result)
+def _apply_gate_successor(
+    config: dict,
+    wf_result: RouteResolution,
+    prev_state: "WorkflowState",
+) -> dict:
+    """Apply a script ``on_result`` successor (approved|rejected) to the config."""
+    _apply_route_resolution(config, wf_result, prev_state)
     return config
 
 
-def _script_marker_payload(wf_result: dict) -> dict:
-    """The ``run_script`` config payload built from a resolver marker (issue #974).
-
-    The argv/environment values are carried as the JSON-encoded strings the
-    resolver emitted (``script_args``/``script_env``), so the config layer stays
-    a string-to-string contract exactly like the emitted environment.
-    """
-    return {
-        "command": wf_result.get("script_path", ""),
-        "args": wf_result.get("script_args", "[]"),
-        "working_dir": wf_result.get("script_working_dir", ""),
-        "env": wf_result.get("script_env", "{}"),
-        "timeout_minutes": wf_result.get("timeout_minutes"),
-    }
-
-
-def _apply_wf_marker(
+def _sub_workflow_state_result(
     config: dict,
-    wf_result: dict,
-) -> None:
-    """Apply a sub-workflow transition marker to the resolved config.
+    wf_result: RouteResolution,
+    prev_state: "WorkflowState",
+) -> Optional[str]:
+    """Apply a sub-workflow boundary transition to the resolved config.
 
     Entry: switch ``config_workflow``/``config_step`` to the sub-workflow's
     first step and record the parent reference for the return leg.
     Exit: restore the parent workflow, resume at the step after the
     sub-workflow reference, and clear the parent tracking fields.
-    """
-    if wf_result.get("entered_sub_workflow"):
-        config["config_workflow"] = wf_result["workflow"]
-        config["config_step"] = wf_result["step"]
-        config["config_parent_workflow"] = wf_result["parent_workflow"]
-        config["config_parent_workflow_step"] = wf_result["parent_workflow_step"]
-        return
 
-    if wf_result.get("exited_sub_workflow"):
-        config["config_workflow"] = wf_result["workflow"]
-        config["config_step"] = wf_result["step"]
-        config["config_parent_workflow"] = ""
-        config["config_parent_workflow_step"] = ""
-        if wf_result.get("branch"):
-            config["config_branch"] = wf_result["branch"]
+    Returns ``None`` when the resolution is not a boundary transition, else the
+    ``"entered"``/``"exited"`` action so the caller can reset its loop guard.
+    """
+    if wf_result.kind is RouteKind.SUB_WORKFLOW_ENTER:
+        _apply_route_resolution(config, wf_result, prev_state)
+        return "entered"
+    if wf_result.kind is RouteKind.SUB_WORKFLOW_EXIT:
+        _apply_route_resolution(config, wf_result, prev_state)
+        return "exited"
+    return None
 
 
 def _callback_return_target(
     prev_state: Optional["WorkflowState"],
-    dispatch_obj: Optional[Any],
+    outcome: Optional[TurnOutcome],
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
 ) -> Optional[tuple[str, str]]:
@@ -593,13 +595,14 @@ def _callback_return_target(
 
     When an agent was reached through a ``function_call`` (the agent-as-tools
     pattern) its state carries the caller as a ``callback``. A callee that
-    finishes with an ``advance`` decision and no explicit target of its own
-    routes back to that caller instead of continuing the workflow.
+    finishes with a ``hold``/``rejected``/``approved`` verdict of its own
+    routes on that verdict; a callee that simply completed with nothing else to
+    route on returns to its caller instead of continuing the workflow.
 
     Returns ``(agent, step)`` when the callback should route the run, else
     ``None``. The callback is an *advance-only* fallback: an explicit
-    ``hold``/``loop``/``terminate`` status or an explicit target always wins,
-    which is the precedence documented in ``docs/handoff-and-callback.md``.
+    ``required_agent`` hand-off always wins, which is the precedence documented
+    in ``docs/handoff-and-callback.md``.
     """
     if prev_state is None:
         return None
@@ -610,17 +613,7 @@ def _callback_return_target(
         # Never re-enter the agent that just ran (defensive; self-calls are
         # blocked upstream).
         return None
-    status = (
-        getattr(dispatch_obj, "status", "") or "advance"
-        if dispatch_obj is not None
-        else "advance"
-    )
-    if status != "advance":
-        return None
-    if dispatch_obj is not None and any(
-        (getattr(dispatch_obj, field, "") or "").strip()
-        for field in ("task_hint", "workflow", "step")
-    ):
+    if outcome is not None and outcome.required_agent:
         # The callee named its own explicit destination: it outranks callback.
         return None
     wf_name = (getattr(prev_state, "workflow", "") or "").strip()
@@ -640,20 +633,205 @@ def _callback_return_target(
     return (callback, target_step)
 
 
-def _resolve_dispatch_path(
+def _route_config_from_prefs(
     prev_state: "WorkflowState",
-    dispatch_obj: "Dispatch",
+    prefs: Optional[RunPrefs],
+) -> dict:
+    """Base routed config: the active position plus the run preferences."""
+    return {
+        "task": "",
+        "config_complexity": (prefs.complexity if prefs else "") or "",
+        "config_reasoning": "none",
+        "config_temperature": (
+            str(prefs.temperature) if prefs and prefs.temperature is not None else ""
+        ),
+        "config_round": "",
+        "config_model": (prefs.model or "") if prefs else "",
+        "config_skills": (prefs.skills or "") if prefs else "",
+        "config_top_p": str(prefs.top_p) if prefs and prefs.top_p is not None else "",
+        "config_top_k": str(prefs.top_k) if prefs and prefs.top_k is not None else "",
+        "config_repetition_penalty": (
+            str(prefs.repetition_penalty)
+            if prefs and prefs.repetition_penalty is not None
+            else ""
+        ),
+        "config_debug": str(prefs.debug).lower() if prefs and prefs.debug else "",
+        "config_workflow": prev_state.workflow or "",
+        "config_step": prev_state.step or "",
+        "config_branch": "",
+        "config_parent_workflow": prev_state.parent_workflow or "",
+        "config_parent_workflow_step": prev_state.parent_workflow_step or "",
+    }
+
+
+def _step_declares_human_gate(
+    prev_state: "WorkflowState",
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> bool:
+    """True when the current step is declared ``human_gate: true`` (issue #964).
+
+    The gate is a step-config fact: an agent that completes a gate step without
+    a verdict of its own parks the step rather than auto-advancing past it.
+    """
+    wf_name = (prev_state.workflow or "").strip()
+    step_name = (prev_state.step or "").strip()
+    if not (wf_name and step_name):
+        return False
+    return _is_human_gate_step(wf_name, step_name, workflows_dir, local_workflows_dir)
+
+
+def _apply_route_resolution(
+    config: dict,
+    wf_result: Optional[RouteResolution],
+    prev_state: "WorkflowState",
+) -> None:
+    """Project a typed workflow resolution onto the routed config (issue #964).
+
+    ``None`` (workflow/step did not resolve) and the skip/declared-finish kinds
+    leave the config at its current position; every other kind carries the
+    successor's task/step and the sub-workflow boundary markers.
+    """
+    if wf_result is None or wf_result.skip_agent:
+        return
+    if wf_result.kind is RouteKind.RUN_SCRIPT:
+        # Deterministic script successor (issue #541): carry the script payload
+        # instead of an agent task; build_result short-circuits.
+        config["run_script"] = dict(wf_result.script or {})
+        config["config_step"] = wf_result.step or config["config_step"]
+        config["config_workflow"] = prev_state.workflow
+        return
+    if wf_result.kind is RouteKind.ROUTE:
+        config["task"] = wf_result.task
+        config["config_step"] = wf_result.step or config["config_step"]
+        config["config_workflow"] = prev_state.workflow
+        if wf_result.branch:
+            config["config_branch"] = wf_result.branch
+        return
+    if wf_result.kind is RouteKind.SUB_WORKFLOW_ENTER:
+        config["task"] = wf_result.task
+        config["config_step"] = wf_result.step or config["config_step"]
+        config["config_workflow"] = wf_result.workflow
+        config["config_parent_workflow"] = wf_result.parent_workflow
+        config["config_parent_workflow_step"] = wf_result.parent_workflow_step
+        if wf_result.branch:
+            config["config_branch"] = wf_result.branch
+        return
+    if wf_result.kind is RouteKind.SUB_WORKFLOW_EXIT:
+        config["task"] = wf_result.task
+        config["config_step"] = wf_result.step or config["config_step"]
+        config["config_workflow"] = wf_result.workflow
+        config["config_parent_workflow"] = ""
+        config["config_parent_workflow_step"] = ""
+        if wf_result.branch:
+            config["config_branch"] = wf_result.branch
+
+
+def _is_runnable_workflow_step(
+    prev_state: "WorkflowState",
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> bool:
+    """True when the current claim names a step that really exists (issue #964).
+
+    Distinguishes a genuine end-of-workflow (the step is declared and has no
+    successor) from a resolution failure (unknown/missing workflow or step),
+    which must ping for input rather than read as a finish.
+    """
+    wf_name = (prev_state.workflow or "").strip()
+    step_name = (prev_state.step or "").strip()
+    if not (wf_name and step_name):
+        return False
+    try:
+        workflow = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)
+    except Exception:
+        return False
+    return _find_step(workflow, step_name) is not None
+
+
+def _terminal_skip_result(
+    prev_state: "WorkflowState",
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> Optional[dict]:
+    """Declared end-of-workflow stop, or ``None`` when the claim is unresolved."""
+    if not _is_runnable_workflow_step(prev_state, workflows_dir, local_workflows_dir):
+        return None
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": "Terminal step reached",
+        "SKIP_KIND": "terminal",
+    }
+
+
+def _hold_skip_result(outcome: TurnOutcome, prev_state: "WorkflowState") -> dict:
+    """The skip for a ``hold`` verdict the engine cannot park (issue #964)."""
+    if outcome.hold_kind == HoldKind.AWAITING_APPROVAL:
+        return _human_gate_hold_result(prev_state.step or "")
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": f"Awaiting input: {outcome.note or 'no note'}",
+    }
+
+
+def _awaiting_input_result(
+    prev_state: "WorkflowState",
+    outcome: Optional[TurnOutcome],
+) -> dict:
+    """No verdict and no onward edge: ping for input, never fake a finish."""
+    note = (outcome.note if outcome is not None else "") or ""
+    detail = f" ({note})" if note else ""
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": (
+            f"Resolution failed: step '{prev_state.step}' in workflow "
+            f"'{prev_state.workflow}' resolved no successor{detail}"
+        ),
+    }
+
+
+def _unmatched_verdict_result(
+    outcome: TurnOutcome,
+    prev_state: "WorkflowState",
+    workflows_dir: str,
+) -> dict:
+    """A verdict that selected no declared edge (issue #964).
+
+    The workflow either declares no ``on_result`` edge for this key or declares
+    edges that all lead nowhere: the run must ping the human rather than post a
+    workflow-complete.
+    """
+    key = outcome.route_key
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": (
+            f"Resolution failed: step '{prev_state.step}' in workflow "
+            f"'{prev_state.workflow}' has no route for verdict '{key}'"
+        ),
+    }
+
+
+def _resolve_outcome_path(
+    prev_state: "WorkflowState",
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
 ) -> dict:
-    """Resolve config when a dispatch object is present in the trigger body.
+    """Resolve config from the state's factual turn outcome (issue #964).
 
-    Handles dispatch statuses (advance, loop, hold, terminate) and
-    workflow-driven step progression.
+    The routing policy, in order:
+
+    * ``INCOMPLETE / SOFT_TIMEOUT | AGENT_CHECKPOINT`` — the interrupted step is
+      retried in place while its per-step budget remains (soft-kill route).
+    * ``COMPLETED / HOLD`` (or a step declared ``human_gate: true``) — park the
+      step: human-gate hold, or an awaiting-input skip.
+    * ``COMPLETED / APPROVED | REJECTED`` — the verdict is the route key and
+      selects the workflow's ``on_result`` edge; ``required_agent`` overrides
+      the agent at the routed step.
+    * ``INCOMPLETE / FAILURE | INTERRUPTED | NO_OUTCOME`` — no route key: follow
+      the linear/default workflow edge.
 
     Args:
         prev_state: WorkflowState from the trigger body.
-        dispatch_obj: Dispatch object extracted from prev_state.
         workflows_dir: Path to workflows directory.
         local_workflows_dir: Optional consumer-local workflows dir that takes
             precedence over ``workflows_dir`` (issue #529).
@@ -661,56 +839,50 @@ def _resolve_dispatch_path(
     Returns:
         Config dict with task and all config_* variables, or SKIP_AGENT dict.
     """
-    agent_hint = dispatch_obj.task_hint or ""
-    branch_result = dispatch_obj.branch
+    outcome = prev_state.turn_outcome
+    prefs = prev_state.prefs
 
     # Soft-kill must not advance (issue #704): a soft-killed step is retried in
     # place while its per-step budget remains, and halts for a human once it is
-    # spent. ``resolve_soft_kill_route`` is a pure reader; the counter itself is
-    # advanced/reset by ``build_state`` when the retry/advance run writes state.
-    # An agent checkpoint (a ``handoff`` fold, issue #965) is deliberately routed
+    # spent. An agent checkpoint (a ``handoff`` fold, issue #965) is routed
     # through the same path: the agent chose to stop, so the step re-runs under
     # the same per-step budget rather than advancing.
-    if dispatch_obj.status in ("soft_kill", "agent_checkpoint"):
+    if outcome is not None and outcome.incomplete_reason in (
+        IncompleteReason.SOFT_TIMEOUT,
+        IncompleteReason.AGENT_CHECKPOINT,
+    ):
         soft_kill_config = resolve_soft_kill_route(
-            prev_state, dispatch_obj, resolve_max_soft_retries()
+            prev_state, outcome, resolve_max_soft_retries()
         )
         if soft_kill_config is not None:
             return soft_kill_config
 
-    # Human-gate hold precedence (issue #887): a persisted human_gate hold must
+    # Human-gate hold precedence (issues #887, #964): a recorded gate hold must
     # block auto-advance even when the workflow forward edge resolves. Checked
     # before workflow-next resolution, which would otherwise follow
     # ``plan -> implement`` and silently ignore the gate.
-    if dispatch_obj.status == "hold" and _is_human_gate_hold(dispatch_obj.reason):
-        return _human_gate_hold_result(_gate_step_from_reason(dispatch_obj.reason))
+    if _is_human_gate_hold(outcome):
+        return _human_gate_hold_result(prev_state.step or "")
 
-    config = {
-        "task": "",
-        "config_complexity": dispatch_obj.complexity or "",
-        "config_reasoning": dispatch_obj.reasoning or "none",
-        "config_temperature": str(dispatch_obj.temperature) if dispatch_obj.temperature is not None else "",
-        "config_round": "",
-        "config_model": dispatch_obj.model or "",
-        "config_skills": dispatch_obj.skills or "",
-        "config_top_p": str(dispatch_obj.top_p) if dispatch_obj.top_p is not None else "",
-        "config_top_k": str(dispatch_obj.top_k) if dispatch_obj.top_k is not None else "",
-        "config_repetition_penalty": str(dispatch_obj.repetition_penalty) if dispatch_obj.repetition_penalty is not None else "",
-        "config_debug": str(dispatch_obj.debug).lower() if dispatch_obj.debug else "",
-        "config_workflow": dispatch_obj.workflow or "",
-        "config_step": dispatch_obj.step or "",
-        "config_branch": dispatch_obj.branch or "",
-        "config_parent_workflow": dispatch_obj.parent_workflow or "",
-        "config_parent_workflow_step": dispatch_obj.parent_workflow_step or "",
-    }
+    # An agent that completed a gate step without a verdict of its own leaves
+    # the gate armed: park the step for the human rather than advancing past it.
+    if (
+        outcome is not None
+        and outcome.status == TurnStatus.COMPLETED
+        and outcome.appreciation is None
+        and _step_declares_human_gate(prev_state, workflows_dir, local_workflows_dir)
+    ):
+        return _human_gate_hold_result(prev_state.step or "")
+
+    config = _route_config_from_prefs(prev_state, prefs)
 
     # Callback return (issue #765): when this run is a callee reached through a
-    # caller's function_call, an `advance` decision with no explicit target of
-    # its own returns to the caller rather than continuing the workflow.
-    # Precedence: explicit function_call (resolved upstream) > explicit
-    # hold/loop/terminate > callback > workflow forward edge > default hold.
+    # caller's function_call, a completion with no target of its own returns to
+    # the caller rather than continuing the workflow. Precedence: explicit
+    # function_call (resolved upstream) > explicit required_agent > gate hold >
+    # callback > workflow forward edge.
     callback_target = _callback_return_target(
-        prev_state, dispatch_obj, workflows_dir, local_workflows_dir
+        prev_state, outcome, workflows_dir, local_workflows_dir
     )
     if callback_target is not None:
         target_agent, target_step = callback_target
@@ -726,67 +898,45 @@ def _resolve_dispatch_path(
 
     # Workflow-driven resolution using previous workflow state
     if prev_state and prev_state.workflow and prev_state.step:
-        parent_wf = dispatch_obj.parent_workflow or prev_state.parent_workflow or ""
-        parent_wf_step = (
-            dispatch_obj.parent_workflow_step or prev_state.parent_workflow_step or ""
-        )
-        wf_result = resolution_to_marker(resolve_next_from_workflow(
+        wf_result = resolve_next_from_workflow(
             prev_state.workflow,
             prev_state.step,
             workflows_dir,
             agent_hint=None,
-            branch_result=branch_result,
-            parent_workflow=parent_wf,
-            parent_workflow_step=parent_wf_step,
+            branch_result=outcome.route_key if outcome is not None else None,
+            parent_workflow=prev_state.parent_workflow or "",
+            parent_workflow_step=prev_state.parent_workflow_step or "",
             local_workflows_dir=local_workflows_dir,
             scaffold_branch=getattr(prev_state, "scaffold_branch", None),
             history=prev_state.history,
-        ))
-        if wf_result:
-            if wf_result.get("SKIP_AGENT") == "true":
-                # Surfaced mount-resolution failure (issue #671): a declared
-                # sub-workflow mount that could not be resolved must stop the
-                # run with a reason, not be silently stepped over.
-                return wf_result
-            if wf_result.get("run_script"):
-                # Deterministic script successor (issue #541): carry the script
-                # payload instead of an agent task; build_result short-circuits.
-                config["run_script"] = _script_marker_payload(wf_result)
-                config["config_step"] = wf_result.get("step", config["config_step"])
-                config["config_workflow"] = prev_state.workflow
-            else:
-                config["task"] = wf_result["task"]
-                config["config_step"] = wf_result.get("step", config["config_step"])
-                if wf_result.get("entered_sub_workflow") or wf_result.get("exited_sub_workflow"):
-                    _apply_wf_marker(config, wf_result)
-                else:
-                    config["config_workflow"] = prev_state.workflow
-        else:
-            dispatch_status = dispatch_obj.status or ""
-            if dispatch_status == "hold":
-                return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
-            elif dispatch_status == "terminate":
-                # Deliberate end-of-flow stop: benign, must not fail the run.
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": "Dispatch status: terminate",
-                    "SKIP_KIND": "terminal",
-                }
-            elif dispatch_status == "loop":
-                config["task"] = prev_state.agent or ""
-            elif dispatch_status == "advance":
-                config["task"] = agent_hint
-            else:
-                # Unknown dispatch status at an exhausted workflow: the step is
-                # terminal, so treat it as a benign end-of-flow stop.
-                return {
-                    "SKIP_AGENT": "true",
-                    "REASON": "Terminal step reached",
-                    "SKIP_KIND": "terminal",
-                }
-    else:
-        config["task"] = agent_hint
-
+        )
+        _apply_route_resolution(config, wf_result, prev_state)
+        if wf_result is not None and wf_result.skip_agent:
+            # Surfaced mount-resolution failure (issue #671): a declared
+            # sub-workflow mount that could not be resolved must stop the
+            # run with a reason, not be silently stepped over.
+            return wf_result.skip_result()
+        if outcome is not None and outcome.appreciation == Appreciation.HOLD:
+            return _hold_skip_result(outcome, prev_state)
+        if outcome is not None and outcome.appreciation is not None:
+            # A verdict is a routing instruction: an unmatched verdict at a
+            # workflow end is a config gap, never an honest finish (the #923
+            # round-2 dead-end).
+            return _unmatched_verdict_result(outcome, prev_state, workflows_dir)
+        if config["task"]:
+            return config
+        if config.get("run_script"):
+            return config
+        # No verdict and nothing onward: the step is terminal.
+        terminal = _terminal_skip_result(prev_state, workflows_dir, local_workflows_dir)
+        if terminal is not None:
+            return terminal
+        if outcome is not None and outcome.status == TurnStatus.COMPLETED:
+            # A completed gate step with no verdict leaves the gate armed.
+            if _step_declares_human_gate(prev_state, workflows_dir, local_workflows_dir):
+                return _human_gate_hold_result(prev_state.step or "")
+        return _awaiting_input_result(prev_state, outcome)
+    config["task"] = (outcome.required_agent if outcome else None) or prev_state.agent or ""
     return config
 
 
@@ -825,37 +975,38 @@ def resolve_max_soft_retries(env: Optional[Mapping[str, str]] = None) -> int:  #
 
 def resolve_soft_kill_route(
     prev_state: "WorkflowState",
-    dispatch_obj: "Dispatch",
+    outcome: TurnOutcome,
     max_soft_retries: int,
 ) -> Optional[dict]:  # @stub-protected
-    """Decide the retry-vs-halt route for a soft-killed step (issue #704).
+    """Decide the retry-vs-halt route for an interrupted step (issue #704).
 
-    A soft time-kill must not let the workflow advance: the interrupted step is
-    re-run in place while the per-step counter is within ``max_soft_retries``,
-    and the run halts for a human once the retries are exhausted.
-    ``_resolve_dispatch_path`` calls this before its normal workflow-next
-    resolution and returns the result as-is when it is not ``None``.
+    A soft time-kill (or an agent checkpoint, issue #965) must not let the
+    workflow advance: the interrupted step is re-run in place while the
+    per-step counter is within ``max_soft_retries``, and the run halts for a
+    human once the retries are exhausted. ``_resolve_outcome_path`` calls this
+    before its normal workflow-next resolution and returns the result as-is
+    when it is not ``None``.
 
     Args:
         prev_state: WorkflowState from the trigger body; its flat
             ``workflow``/``step`` name the step to re-run and ``soft_retry``
             carries the retry count already consumed for that step.
-        dispatch_obj: Dispatch extracted from ``prev_state``; only
-            ``status == "soft_kill"`` triggers soft-kill handling.
+        outcome: The state's turn outcome; only an INCOMPLETE outcome whose
+            reason is ``soft_timeout`` or ``agent_checkpoint`` triggers
+            soft-kill handling.
         max_soft_retries: ``MAX_SOFT_RETRIES`` workflow parameter — the number
             of retries allowed per step before halting for a human. Values
             ``< 0`` are treated as ``0`` (halt immediately).
 
     Returns:
-        ``None`` when ``dispatch_obj.status != "soft_kill"`` (fall through to
-        normal routing). Otherwise one of:
+        ``None`` when the outcome is not a soft-kill/checkpoint interruption
+        (fall through to normal routing). Otherwise one of:
 
         * **retry** — a same-step resolution config dict carrying at least
-          ``task=dispatch_obj.task_hint or prev_state.agent`` (re-run the
-          interrupted step's agent), ``config_step=prev_state.step``,
-          ``config_workflow=prev_state.workflow`` and the dispatch's LLM
-          settings, while the retries consumed for the step are below
-          ``max_soft_retries``. The dict also carries the
+          ``task=prev_state.agent`` (re-run the interrupted step's agent),
+          ``config_step=prev_state.step``, ``config_workflow=prev_state.workflow``
+          and the recorded run preferences, while the retries consumed for the
+          step are below ``max_soft_retries``. The dict also carries the
           ``config_soft_retry_attempt="true"`` marker: it is the only signal
           that tells the state writer this run is an *engine* retry, so the
           per-step budget is consumed for retries and never for a human/manual
@@ -873,7 +1024,10 @@ def resolve_soft_kill_route(
         recorded for a *different* step does not consume the current step's
         budget (treated as zero attempts).
     """
-    if dispatch_obj.status not in ("soft_kill", "agent_checkpoint"):
+    if outcome.incomplete_reason not in (
+        IncompleteReason.SOFT_TIMEOUT,
+        IncompleteReason.AGENT_CHECKPOINT,
+    ):
         return None
 
     step = prev_state.step or ""
@@ -882,30 +1036,17 @@ def resolve_soft_kill_route(
     budget = max(max_soft_retries, 0)
 
     if attempts < budget:
-        # Same-step retry: clone the dispatch's LLM preferences onto the
-        # interrupted step. Mirrors the normal dispatch config surface so
+        # Same-step retry: clone the recorded run preferences onto the
+        # interrupted step. Mirrors the normal outcome-routing config surface so
         # ``build_result`` treats the retry exactly like an in-place re-run.
         # ``config_soft_retry_attempt`` marks the run as an engine retry so the
         # state writer consumes exactly one per-step attempt for it.
-        return {
-            "task": dispatch_obj.task_hint or prev_state.agent or "",
-            "config_complexity": dispatch_obj.complexity or "",
-            "config_reasoning": dispatch_obj.reasoning or "none",
-            "config_temperature": str(dispatch_obj.temperature) if dispatch_obj.temperature is not None else "",
-            "config_round": "",
-            "config_model": dispatch_obj.model or "",
-            "config_skills": dispatch_obj.skills or "",
-            "config_top_p": str(dispatch_obj.top_p) if dispatch_obj.top_p is not None else "",
-            "config_top_k": str(dispatch_obj.top_k) if dispatch_obj.top_k is not None else "",
-            "config_repetition_penalty": str(dispatch_obj.repetition_penalty) if dispatch_obj.repetition_penalty is not None else "",
-            "config_debug": str(dispatch_obj.debug).lower() if dispatch_obj.debug else "",
-            "config_workflow": prev_state.workflow or "",
-            "config_step": step,
-            "config_branch": dispatch_obj.branch or "",
-            "config_parent_workflow": dispatch_obj.parent_workflow or "",
-            "config_parent_workflow_step": dispatch_obj.parent_workflow_step or "",
-            "config_soft_retry_attempt": "true",
-        }
+        config = _route_config_from_prefs(prev_state, prev_state.prefs)
+        config["task"] = prev_state.agent or ""
+        config["config_workflow"] = prev_state.workflow or ""
+        config["config_step"] = step
+        config["config_soft_retry_attempt"] = "true"
+        return config
 
     return {
         "SKIP_AGENT": "true",
@@ -1007,11 +1148,16 @@ def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows
     the callee.
     """
     try:
-        result = resolution_to_marker(resolve_next_from_workflow(wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir))
+        result = resolve_next_from_workflow(wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir)
     except Exception:
         result = None
-    if result and result.get("task") == callee and result.get("step"):
-        return result["step"]
+    if (
+        result is not None
+        and result.kind is RouteKind.ROUTE
+        and result.task == callee
+        and result.step
+    ):
+        return result.step
     workflow = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)
     current = _find_step(workflow, current_step)
     if current is not None and _is_mount_step(current):
@@ -1062,14 +1208,14 @@ def _workflow_successor(
     current_step: str,
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
-) -> Optional[Mapping[str, Any]]:
+) -> Optional[RouteResolution]:
     """Workflow-defined successor of ``current_step``, or None (issue #733)."""
     if not (wf_name and current_step):
         return None
     try:
-        return resolution_to_marker(resolve_next_from_workflow(
+        return resolve_next_from_workflow(
             wf_name, current_step, workflows_dir, local_workflows_dir=local_workflows_dir
-        ))
+        )
     except Exception:
         return None
 
@@ -1117,14 +1263,9 @@ def _resolve_handoff_decision(
     """
     function_call = getattr(prev_state, "function_call", None)
     callee = (getattr(function_call, "agent_name", "") or "").strip()
-    dispatch = getattr(prev_state, "dispatch", None)
-    if (
-        dispatch is not None
-        and dispatch.status == "hold"
-        and _is_human_gate_hold(dispatch.reason)
-    ):
+    if _is_human_gate_hold(getattr(prev_state, "turn_outcome", None)):
         # The current step's own hold outranks the hand-off: routing continues
-        # on the dispatch path, which applies the same guard and returns the
+        # on the outcome path, which applies the same guard and returns the
         # hold. Empty target — the gate releases to a step, not to the callee.
         return HandoffDecision("", "", "gate_hold")
     wf_name = (getattr(prev_state, "workflow", "") or "") if prev_state is not None else ""
@@ -1133,11 +1274,9 @@ def _resolve_handoff_decision(
     current_step = (getattr(prev_state, "step", "") or "") if prev_state is not None else ""
     successor = _workflow_successor(wf_name, current_step, workflows_dir, local_workflows_dir)
     if successor and _is_human_gate_step(
-        wf_name, successor.get("step", ""), workflows_dir, local_workflows_dir
+        wf_name, successor.step, workflows_dir, local_workflows_dir
     ):
-        return HandoffDecision(
-            successor.get("task", ""), successor.get("step", ""), "gate_hold"
-        )
+        return HandoffDecision(successor.task, successor.step, "gate_hold")
     target_step = _resolve_callee_step(
         wf_name, current_step, callee, workflows_dir, local_workflows_dir
     )
@@ -1770,97 +1909,81 @@ def _resolve_bot_fallback_path(
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
 ) -> dict:
-    """Resolve config for a bot comment without a dispatch object.
+    """Resolve config for a bot comment that carries state but no outcome.
 
-    Checks for dispatch in workflow state, or returns SKIP_AGENT.
+    A bot comment's answer is routed from the ``turn_outcome`` its state block
+    records (issue #964); a state with no outcome on record cannot be routed
+    and skips with a diagnostic reason.
 
     Args:
         trigger_body: Raw trigger body text.
         workflows_dir: Path to workflows directory.
+        local_workflows_dir: Optional consumer-local workflows dir (issue #529).
 
     Returns:
         Config dict with task and config_* variables, or SKIP_AGENT dict.
     """
-    dispatch = extract_dispatch_from_state(trigger_body)
-    if not dispatch:
-        # Distinguish "agent ended without any sentinel" from "a sentinel
-        # marker was present but no usable dispatch was stored" (issue #512)
-        # so the skip reason is diagnosable rather than generic.
-        if has_agent_run_config_marker(trigger_body):
-            reason = (
-                "Bot comment contains an AGENT_RUN_CONFIG sentinel but no "
-                "usable dispatch was stored (unparseable or invalid sentinel)"
-            )
-        else:
-            reason = "Bot comment without AGENT_RUN_CONFIG or dispatch"
-        return {"SKIP_AGENT": "true", "REASON": reason}
+    prev_state = extract_state_from_body(trigger_body)
+    outcome = extract_turn_outcome_from_state(trigger_body, prev_state)
+    if outcome is None:
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": "Bot comment without a recorded turn outcome",
+        }
 
     # Human-gate hold precedence (issue #887): the state-only bot path never
     # reads the workflow forward edge, but the same guard keeps the behavior
-    # uniform with `_resolve_dispatch_path` and names the release commands.
-    if dispatch.status == "hold" and _is_human_gate_hold(dispatch.reason):
-        return _human_gate_hold_result(_gate_step_from_reason(dispatch.reason))
+    # uniform with `_resolve_outcome_path` and names the release commands.
+    if _is_human_gate_hold(outcome):
+        return _human_gate_hold_result(getattr(prev_state, "step", "") or "")
 
-    config = {
-        "task": dispatch.task_hint or "",
-        "config_complexity": dispatch.complexity or "",
-        "config_reasoning": dispatch.reasoning or "none",
-        "config_temperature": str(dispatch.temperature) if dispatch.temperature is not None else "",
-        "config_round": "",
-        "config_model": dispatch.model or "",
-        "config_skills": dispatch.skills or "",
-        "config_top_p": str(dispatch.top_p) if dispatch.top_p is not None else "",
-        "config_top_k": str(dispatch.top_k) if dispatch.top_k is not None else "",
-        "config_repetition_penalty": (
-            str(dispatch.repetition_penalty) if dispatch.repetition_penalty is not None else ""
-        ),
-        "config_debug": str(dispatch.debug).lower() if dispatch.debug else "",
-        "config_workflow": dispatch.workflow or "",
-        "config_step": dispatch.step or "",
-        "config_branch": dispatch.branch or "",
-        "config_parent_workflow": dispatch.parent_workflow or "",
-        "config_parent_workflow_step": dispatch.parent_workflow_step or "",
-    }
-
-    # Resolve next agent based on dispatch status
-    if dispatch.status == "advance":
-        if not config["task"]:
-            # Auto-resolve next agent from workflow YAML
-            wf_result = resolution_to_marker(resolve_next_from_workflow(
-                config["config_workflow"], config["config_step"], workflows_dir,
-                local_workflows_dir=local_workflows_dir,
-            ))
-            if wf_result:
-                if wf_result.get("SKIP_AGENT") == "true":
-                    # Surfaced mount-resolution failure (issue #671).
-                    return wf_result
-                if wf_result.get("run_script"):
-                    # Deterministic script successor (issue #541): no agent task;
-                    # build_result short-circuits on this.
-                    config.pop("task", None)
-                    config["run_script"] = _script_marker_payload(wf_result)
-                    config["config_step"] = wf_result.get("step", config["config_step"])
-                else:
-                    config["task"] = wf_result["task"]
-                    config["config_step"] = wf_result.get("step", config["config_step"])
-    elif dispatch.status == "loop":
-        # Loop: re-dispatch current agent — use task_hint or resolve from state
-        config["task"] = dispatch.task_hint or ""
-        if not config["task"]:
-            prev_state = extract_state_from_body(trigger_body)
-            if prev_state:
-                config["task"] = prev_state.agent or ""
-    elif dispatch.status == "hold":
-        return {"SKIP_AGENT": "true", "REASON": "Dispatch status: hold"}
-    elif dispatch.status == "terminate":
-        # Deliberate end-of-flow stop: benign, must not fail the run.
+    if prev_state is None:
         return {
             "SKIP_AGENT": "true",
-            "REASON": "Dispatch status: terminate",
-            "SKIP_KIND": "terminal",
+            "REASON": "Bot comment without workflow state",
         }
 
-    return config
+    config = _route_config_from_prefs(prev_state, prev_state.prefs)
+    agent_hint = (outcome.required_agent or "").strip()
+
+    if outcome.appreciation == Appreciation.HOLD:
+        return _hold_skip_result(outcome, prev_state)
+
+    if outcome.appreciation is not None or agent_hint:
+        # A verdict (or an explicit hand-off target) routes the run.
+        config["task"] = agent_hint
+        if not config["task"]:
+            wf_result = resolve_next_from_workflow(
+                config["config_workflow"],
+                config["config_step"],
+                workflows_dir,
+                branch_result=outcome.route_key,
+                local_workflows_dir=local_workflows_dir,
+            )
+            if wf_result is not None and wf_result.skip_agent:
+                # Surfaced mount-resolution failure (issue #671).
+                return wf_result.skip_result()
+            _apply_route_resolution(config, wf_result, prev_state)
+            if not config["task"] and not config.get("run_script"):
+                return _unmatched_verdict_result(outcome, prev_state, workflows_dir)
+        return config
+
+    # No verdict: follow the linear/default workflow edge.
+    wf_result = resolve_next_from_workflow(
+        config["config_workflow"],
+        config["config_step"],
+        workflows_dir,
+        local_workflows_dir=local_workflows_dir,
+    )
+    if wf_result is not None and wf_result.skip_agent:
+        return wf_result.skip_result()
+    _apply_route_resolution(config, wf_result, prev_state)
+    if config["task"] or config.get("run_script"):
+        return config
+    terminal = _terminal_skip_result(prev_state, workflows_dir, local_workflows_dir)
+    if terminal is not None:
+        return terminal
+    return _awaiting_input_result(prev_state, outcome)
 
 
 def _recover_current_step(prev_state: "WorkflowState") -> str:
@@ -1888,11 +2011,11 @@ def _recover_current_step(prev_state: "WorkflowState") -> str:
 
 def _resolve_workflow_next_step(
     prev_state: "WorkflowState",
-    dispatch_obj: Optional[Any],
+    outcome_obj: Optional[TurnOutcome],
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
 ) -> dict:
-    """Resolve next step from workflow YAML when state exists but no dispatch.
+    """Resolve next step from workflow YAML when state carries no outcome yet.
 
     Uses prev_state.workflow + prev_state.step to look up the next agent
     in the workflow definition. When the scalar step is empty (legacy/corrupt
@@ -1900,7 +2023,8 @@ def _resolve_workflow_next_step(
 
     Args:
         prev_state: Workflow state containing workflow name and current step.
-        dispatch_obj: Optional dispatch object (expected to be None).
+        outcome_obj: The state's turn outcome, if any (it supplies only the
+            callback precedence, never a route key on this path).
         workflows_dir: Path to workflows directory.
 
     Returns:
@@ -1932,9 +2056,9 @@ def _resolve_workflow_next_step(
     }
 
     # Callback return (issue #765): same advance-only fallback as the
-    # dispatch-driven path, for callees whose state carries a caller callback.
+    # outcome-driven path, for callees whose state carries a caller callback.
     callback_target = _callback_return_target(
-        prev_state, dispatch_obj, workflows_dir, local_workflows_dir
+        prev_state, outcome_obj, workflows_dir, local_workflows_dir
     )
     if callback_target is not None:
         target_agent, target_step = callback_target
@@ -1948,7 +2072,7 @@ def _resolve_workflow_next_step(
         return config
 
     # Resolve next step from workflow YAML
-    wf_result = resolution_to_marker(resolve_next_from_workflow(
+    wf_result = resolve_next_from_workflow(
         wf_name,
         current_step,
         workflows_dir,
@@ -1959,25 +2083,16 @@ def _resolve_workflow_next_step(
         local_workflows_dir=local_workflows_dir,
         scaffold_branch=prev_state.scaffold_branch,
         history=prev_state.history,
-    ))
-    if wf_result:
-        if wf_result.get("SKIP_AGENT") == "true":
-            # Surfaced mount-resolution failure (issue #671).
-            return wf_result
-        if wf_result.get("run_script"):
-            # Deterministic script successor (issue #541): same treatment as
-            # the dispatch-driven path — build_result short-circuits on this.
-            config["run_script"] = _script_marker_payload(wf_result)
-            config["config_step"] = wf_result.get("step", config["config_step"])
-            if wf_result.get("branch"):
-                config["config_branch"] = wf_result["branch"]
-        else:
-            config["task"] = wf_result["task"]
-            config["config_step"] = wf_result.get("step", config["config_step"])
-            if wf_result.get("branch"):
-                config["config_branch"] = wf_result["branch"]
-            _apply_wf_marker(config, wf_result)
-    else:
+    )
+    if wf_result is not None and wf_result.skip_agent:
+        # Surfaced mount-resolution failure (issue #671).
+        return wf_result.skip_result()
+    if wf_result is not None and wf_result.kind not in (
+        RouteKind.DECLARED_FINISH,
+        RouteKind.UNRESOLVED,
+    ):
+        _apply_route_resolution(config, wf_result, prev_state)
+    elif config["config_step"]:
         return _workflow_next_step_skip_reason(wf_name, current_step, workflows_dir)
 
     return config

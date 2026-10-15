@@ -1,22 +1,19 @@
-"""Shared "does this run have a dispatch decision?" predicate (issue #524).
+"""Shared "did this run state a verdict?" predicate (issues #524, #964).
 
 Both the termination-path recall gate (``run_agent``) and the output-time
-dispatch resolution (``build_output._resolve_dispatch``) need to answer the
-same question: *was a next-step decision made this run?* A decision exists
-when EITHER source produced one:
+resolution (``build_output._resolve_outcome``) need to answer the same
+question: *did the agent state a turn outcome?* A verdict exists when EITHER
+structured channel produced one:
 
-1. a ``dispatch_next`` tool call (the structured, primary signal), or
-2. a parseable legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel in the final
-   message (silent compat fallback during the dual-mode migration window).
+1. a ``dispatch_next`` tool call (the primary signal), or
+2. a typed ``call_agent`` hand-off, which is itself a decision (issue #876).
 
+The legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel is **not** a source
+(issue #964): it is agent-rendered prose, and routing is engine truth.
 Defining the predicate once guarantees the two call sites cannot drift apart.
-If they did — e.g. the recall gate only checked the tool registry — every
-sentinel-only legacy run would trigger needless recall turns, inflating
-``dispatch_recall_count`` and risking a late dispatch overriding the intended
-final decision.
 
-This module is deliberately leaf-level (stdlib + ``validate_output`` + the
-dispatch registry) so it can be imported from anywhere without cycles.
+This module is deliberately leaf-level (stdlib + the typed registries) so it
+can be imported from anywhere without cycles.
 """
 
 from __future__ import annotations
@@ -26,47 +23,35 @@ from typing import Optional
 
 from openhands.sdk import get_logger
 
-from agent_script.features.build_output.build_output import (
-    agent_run_config_to_dispatch,
-)
-from agent_script.features.dispatch_next_tool import get_recorded_dispatch
+from agent_script.features.dispatch_next_tool import get_recorded_turn_outcome
 from agent_script.features.call_agent_tool import get_recorded_function_call
-from validate_output import extract_dispatch_resilient
 
 logger = get_logger(__name__)
 
 
 def has_dispatch_decision(conversation, final_message: Optional[str]) -> bool:
-    """True when the run already produced a dispatch decision.
+    """True when the run already stated a turn outcome.
 
-    Mirrors ``build_output._resolve_dispatch``'s priority: a recorded
+    Mirrors ``build_output._resolve_outcome``'s priority: a recorded
     ``dispatch_next`` tool call wins; a recorded typed ``call_agent`` hand-off
-    is itself a decision (issue #876); otherwise a legacy sentinel in the
-    final message counts only if it both parses AND maps to a valid
-    ``Dispatch`` (identical to the resolver — a present-but-unparseable or
-    invalid sentinel does NOT count, so those runs still get recalled).
-    All sources empty means no decision yet.
+    is itself a decision (issue #876). All sources empty means no verdict yet,
+    so the recall pass runs.
 
     Args:
         conversation: Object exposing the run id (``conversation.id``); the
             registry is keyed by ``str(id)``.
-        final_message: The agent's final message text, or None when no text is
-            available to scan (tool call still checked).
+        final_message: Unused — kept for call-site compatibility; the legacy
+            sentinel is no longer scanned (issue #964).
     """
     conv_id = getattr(conversation, "id", None)
     if conv_id is not None:
-        if get_recorded_dispatch(conv_id) is not None:
+        if get_recorded_turn_outcome(conv_id) is not None:
             return True
         if get_recorded_function_call(conv_id) is not None:
-            # A typed call_agent hand-off is itself the routing decision
+            # A typed call_agent hand-off is itself the turn's outcome
             # (issue #876) — suppress the recall pass, same as dispatch_next.
             return True
-    if not final_message:
-        return False
-    extract_result = extract_dispatch_resilient(final_message)
-    if extract_result.payload is None:
-        return False
-    return agent_run_config_to_dispatch(extract_result.payload) is not None
+    return False
 
 
 def agent_to_function_call(agent: str) -> dict:
