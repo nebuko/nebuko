@@ -1,12 +1,12 @@
 {
   "name": "same_agent_loop_plan_rejected",
-  "description": "A bot answer from @architect whose state sits at `plan-orchestration/plan` and whose dispatch routes `rejected` back to `plan` — the same agent at the same position: the canonical self-loop the `Prevent all agent-trigger loops` step blocks (issue #618).",
+  "description": "A bot answer from @architect whose state sits at `plan-orchestration/plan` and whose dispatch routes `rejected` back to `plan` \u2014 the same agent at the same position: the canonical self-loop the `Prevent all agent-trigger loops` step blocks (issue #618).",
   "provenance": "Recorded answer shape from the issue #590 run logs (`plan-orchestration` plan step rejected -> plan) with the `dispatch` payload the review step posts; the guard decision is the legacy block's.",
   "payload": {
     "action": "created",
     "comment": {
       "id": 5927119917,
-      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-architect -->\n<!-- workflow-continue -->\n*Architect answer*\n\n<details><summary>Workflow State</summary>\n\n<!-- WORKFLOW_STATE_START -->\n{\"version\": 5, \"workflow\": \"plan-orchestration\", \"step\": \"plan\", \"agent\": \"architect\", \"phase\": \"plan\", \"position\": [{\"workflow\": \"plan-orchestration\", \"step\": \"plan\"}], \"history\": [], \"dispatch\": {\"status\": \"advance\", \"branch\": \"rejected\"}}\n<!-- WORKFLOW_STATE_END -->\n\n</details>",
+      "body": "<!-- bot-workflow-terminal -->\n<!-- bot-agent-architect -->\n<!-- workflow-continue -->\n*Architect answer*\n\n<details><summary>Workflow State</summary>\n\n<!-- WORKFLOW_STATE_START -->\n{\"version\": 6, \"workflow\": \"plan-orchestration\", \"step\": \"plan\", \"agent\": \"architect\", \"phase\": \"plan\", \"position\": [{\"workflow\": \"plan-orchestration\", \"step\": \"plan\"}], \"history\": [], \"turn_outcome\": {\"status\": \"completed\", \"appreciation\": \"rejected\"}}\n<!-- WORKFLOW_STATE_END -->\n\n</details>",
       "created_at": "2026-10-01T09:20:00Z",
       "user": {
         "login": "github-actions[bot]",

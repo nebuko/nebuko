@@ -918,15 +918,15 @@ def _resolve_outcome_path(
             return wf_result.skip_result()
         if outcome is not None and outcome.appreciation == Appreciation.HOLD:
             return _hold_skip_result(outcome, prev_state)
-        if outcome is not None and outcome.appreciation is not None:
-            # A verdict is a routing instruction: an unmatched verdict at a
-            # workflow end is a config gap, never an honest finish (the #923
-            # round-2 dead-end).
-            return _unmatched_verdict_result(outcome, prev_state, workflows_dir)
         if config["task"]:
             return config
         if config.get("run_script"):
             return config
+        if outcome is not None and outcome.appreciation is not None:
+            # A verdict is a routing instruction: a verdict that selected no
+            # declared edge is a config gap, never an honest finish (the #923
+            # round-2 dead-end).
+            return _unmatched_verdict_result(outcome, prev_state, workflows_dir)
         # No verdict and nothing onward: the step is terminal.
         terminal = _terminal_skip_result(prev_state, workflows_dir, local_workflows_dir)
         if terminal is not None:
