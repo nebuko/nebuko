@@ -1,3 +1,7 @@
+---
+description: "Retrospective mode: analyse a completed issue's resolution trajectory and record lessons."
+---
+
 # Issue Retrospective Skill
 
 When you are invoked to analyze a *completed* issue and its resolution

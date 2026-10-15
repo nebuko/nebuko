@@ -1265,6 +1265,11 @@ class Engine:
         the recency window and pinned comments — the model never has to fetch
         them.
 
+        Inject-mode skills (issue #955) are rendered in full as an ``## Injected
+        skills`` block between the step prompt and the inputs. The block is
+        independent of ``prompt_replace``: a step that drops the role prompt
+        still carries its absolute-constraint skills.
+
         ``{{ <step> }}`` references inside the step prompt are resolved against
         ``step_scope`` in a single pass before assembly (issue #756): the value
         is the referenced step's state-stripped comment.
@@ -1274,12 +1279,24 @@ class Engine:
         sections = [] if replacing else [self._base_prompt(resolved)]
         if step_prompt:
             sections.append(f"{_STEP_HEADER}\n\n{step_prompt}")
+        injected_skills = self._render_injected_skills(resolved)
+        if injected_skills:
+            sections.append(injected_skills)
         rendered_inputs = render_inputs(list(input_results))
         if rendered_inputs:
             sections.append(rendered_inputs)
         sections.append(_USER_REQUEST_HEADER)
         sections.append(self._render_context(resolved, history))
         return "\n\n".join(section for section in sections if section)
+
+    def _render_injected_skills(self, resolved: Any) -> str:
+        """The full bodies of this step's inject-mode skills (issue #955)."""
+        from resolve_config.features.skill_context.skill_context import (
+            skill_context_from_env,
+        )
+
+        env = resolved if isinstance(resolved, Mapping) else {}
+        return skill_context_from_env(env).render_injected()
 
     def _materialize_inputs(
         self,

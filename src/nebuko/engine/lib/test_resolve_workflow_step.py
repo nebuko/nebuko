@@ -570,6 +570,11 @@ class TestScaffoldShapeNestedEntry:
         assert r["WORKFLOW_STEP"] == "implement"
         assert r["WORKFLOW_NEXT"] == "review"
         assert r["STEP_SKILLS"] == "tmp_impl/skills/step_1"
+        # The mount-descent path carries no mode information, so its specs are
+        # the inject default (issue #955).
+        assert r["STEP_SKILL_SPECS"] == (
+            '[{"mode":"inject","names":["tmp_impl/skills/step_1"]}]'
+        )
 
     def test_trigger_side_marker_matches_leaf(self, scaffold_dir):
         """Plain-trigger entry marker descends to the same leaf the runtime

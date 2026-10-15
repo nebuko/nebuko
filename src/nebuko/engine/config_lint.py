@@ -100,20 +100,22 @@ _MCP_LAYER = "mcp_servers"
 # package only becomes importable once ``ensure_import_path()`` has run.
 _APP_CONFIG: Any = None
 _REF_PATTERN: Any = None
+_SKILL_SPEC: Any = None
 
 
 def _ensure_runtime() -> None:
     """Make the legacy ``config`` package importable and cache its symbols."""
-    global _APP_CONFIG, _REF_PATTERN
+    global _APP_CONFIG, _REF_PATTERN, _SKILL_SPEC
     if _REF_PATTERN is not None:
         return
     from nebuko.engine.paths import ensure_import_path
 
     ensure_import_path()
-    from config import AppConfig, REF_PATTERN
+    from config import AppConfig, REF_PATTERN, SkillSpec
 
     _APP_CONFIG = AppConfig
     _REF_PATTERN = REF_PATTERN
+    _SKILL_SPEC = SkillSpec
 
 
 def _is_url(value: str) -> bool:
@@ -615,12 +617,15 @@ class ConfigLinter:
     def _check_skill_files(
         self, raw: dict, root: Path, skill_dirs: tuple[Path, ...]
     ) -> list[LintIssue]:
-        """C5: every ``skills`` entry must resolve to a matching skill file."""
+        """C5: every ``skills`` entry must resolve to a matching skill file.
+
+        Entries are walked through the shared :class:`SkillSpec` grammar, so the
+        mode-object shape (``- inject: [x]`` / ``- discover: [y]``) is validated
+        too — an unknown entry shape yields no names and is reported by C1.
+        """
         issues: list[LintIssue] = []
         for name, agent in _iter_agents(raw):
-            for skill in agent.get("skills") or []:
-                if not isinstance(skill, str):
-                    continue
+            for skill in _SKILL_SPEC.iter_names(agent.get("skills")):
                 candidates = _skill_candidates(root, skill_dirs, skill)
                 if not _first_existing(candidates):
                     issues.append(

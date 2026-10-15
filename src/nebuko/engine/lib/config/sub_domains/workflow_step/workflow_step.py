@@ -4,6 +4,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator, model_validator
 
+from ..skill_spec.skill_spec import SkillSpec
 from ..workflow.input_binding import InputBinding
 from ..workflow_condition.workflow_condition import WorkflowCondition
 from .hook_spec import HookSpec
@@ -44,7 +45,9 @@ class WorkflowStep(BaseModel):
     post_hook: Optional[HookSpec] = None
     next: Optional[str] = None
     conditions: Optional[list[WorkflowCondition]] = None
-    skill: Optional[list[str]] = None
+    # Step-scoped skill attachments (issue #955), same entry grammar as the
+    # agent's `skills:`; the step's mode wins over the agent's on a name clash.
+    skill: Optional[list[SkillSpec]] = None
     # Standing instruction injected into this step's agent context (issue #551).
     prompt: Optional[str] = None
     # When True and ``prompt`` is set, this step's agent context is the step

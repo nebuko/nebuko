@@ -1,0 +1,15 @@
+providers:
+  p1:
+    api_url: "http://example.test/v1"
+    api_token_env: "P1_TOKEN"
+llms:
+  l1:
+    model_path: "hosted_vllm/l1"
+    provider: "${providers.p1}"
+agents:
+  a:
+    model: "${llms.l1}"
+    prompt_file: ".agents/prompts/a.md"
+    skills:
+      - inject: ["skill-a"]
+      - discover: ["ghost-skill"]

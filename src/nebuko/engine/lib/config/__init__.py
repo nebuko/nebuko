@@ -18,6 +18,7 @@ from .sub_domains.complexity_policy.complexity_policy import (
 )
 from .sub_domains.token_budget.token_budget import TokenBudgetPolicy
 from .sub_domains.mcp_server_config.mcp_server_config import MCPServerConfig
+from .sub_domains.skill_spec.skill_spec import SkillSpec
 from .sub_domains.agent_config.agent_config import AgentConfig
 from .sub_domains.agent_start_notice.agent_start_notice import AgentStartNotice
 from .sub_domains.human_action_notice.human_action_notice import HumanActionNotice
@@ -85,6 +86,7 @@ __all__ = [
     "build_builtin_policy",
     "TokenBudgetPolicy",
     "MCPServerConfig",
+    "SkillSpec",
     "AgentConfig",
     "AgentStartNotice",
     "HumanActionNotice",

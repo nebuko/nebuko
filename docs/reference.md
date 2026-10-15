@@ -128,7 +128,7 @@ graph-level invariants below are checked offline by
 | `steps[].conditions` | step | list | no | Conditional routing, evaluated in order. |
 | `steps[].conditions[].on_result` | condition | string | yes | Result key reported by the agent (e.g., `approved`, `rejected`, `default`). |
 | `steps[].conditions[].next` | condition | string/null | yes | Target step for that result. |
-| `steps[].skill` | step | string[] | no | Skills attached to the step prompt (files in `defaults/skills/`). |
+| `steps[].skill` | step | entry[] | no | Skill attachments for this step (files in `defaults/skills/`). Each entry is a bare name (legacy, means `inject`) or `- inject: [names]` / `- discover: [names]`; the step's mode wins over the agent's for a repeated name (issue #955; see [agents-and-skills.md](./agents-and-skills.md#the-skills-system)). |
 | `steps[].prompt` | step | string | no | Standing instruction injected into this step's agent context (multi-line YAML blocks supported). May interpolate upstream step comments with `{{ <step> }}` (issue #756). See [workflows.md](./workflows.md#step-instructions-prompt). |
 | `steps[].complexity` | step | string | no | Declared complexity tier for this step's agent invocation: `low`, `medium`, or `high`. A dispatch `complexity` overrides it; otherwise it selects `agents.<name>.complexity_overrides.<tier>` and the tier temperature floor (issue #787; see [configuration.md](./configuration.md#complexity-overrides-per-tier-configuration)). |
 | `steps[].human_gate` | step | bool | no | Security boundary: the engine intercepts every advancing dispatch and holds the workflow until an identity-verified human releases it with `/nebuko approve gate` / `/nebuko reject gate` (see [workflows.md](./workflows.md#human-gates)). |

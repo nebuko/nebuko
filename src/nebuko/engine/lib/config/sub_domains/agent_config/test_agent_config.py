@@ -10,7 +10,7 @@ import yaml
 from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import ProviderConfig, LLMConfig, AgentConfig, load_config
+from config import ProviderConfig, LLMConfig, AgentConfig, SkillSpec, load_config
 
 
 class TestAgentConfig:
@@ -26,7 +26,7 @@ class TestAgentConfig:
             skills=["python"],
         )
         assert agent.temperature == 0.2
-        assert agent.skills == ["python"]
+        assert agent.skills == [SkillSpec(mode="inject", names=["python"])]
 
     def test_default_tools(self):
         """AgentConfig defaults to full tool set."""

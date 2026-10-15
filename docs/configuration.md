@@ -145,7 +145,7 @@ llms:
 | `role` | string | One-line role description, rendered into every other agent's "Your Team" section. Optional; a missing role renders a placeholder and raises the `C8-missing-role` lint warning. |
 | `temperature` | float | Per-agent temperature override (floor for complexity adjustment). |
 | `prompt_file` | string | Path to the agent's system prompt (convention: `defaults/prompts/{agent}.md`). Only the basename is used at run time — the layered lookup re-resolves it, so deployments can override a prompt by name. |
-| `skills` | string[] | Skills attached to the agent by default. |
+| `skills` | entry[] | Skill attachments (issue #955). Each entry is a bare skill name (legacy, means `inject`), `- inject: [names]` (the body is rendered into the agent's prompt) or `- discover: [names]` (name + one-line summary only, read on demand with the SDK's `invoke_skill` tool). See [agents-and-skills.md](./agents-and-skills.md#the-skills-system). |
 | `complexity_overrides` | mapping<`low` \| `medium` \| `high`, object> | Per-tier partial overrides of model/sampling/reasoning. See [Complexity Overrides](#complexity-overrides-per-tier-configuration). |
 | `tools` | string[] | Tool whitelist: `terminal`, `file_editor`, `task_tracker` (SDK tools) plus `think`, `finish`, `dispatch_next` (built-in defaults). See [agents-and-skills.md](./agents-and-skills.md). |
 | `mcp_servers` | object[] | MCP servers attached to the agent's conversation. Each entry is either an inline spec or a `${mcp_servers.<name>}` ref into the root catalog (see [MCP Servers](#mcp-servers)). |
@@ -159,7 +159,9 @@ agents:
     model: "${llms.qwen-3-6-27b}"
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     prompt_file: "defaults/prompts/dev.md"
-    skills: ["posting-contract", "git-pr-workflow"]
+    skills:
+      - inject: ["posting-contract"]
+      - discover: ["git-pr-workflow"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
 ```
 

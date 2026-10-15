@@ -102,13 +102,46 @@ markers (see
 
 A skill is a Markdown prompt file in `defaults/skills/`. An agent attaches one or
 more by default through the `skills:` field of its `agent-config.yaml` stanza; a
-workflow step attaches one or more with `skill: [name]`. Skills are **not**
-currently injected into the system prompt: each agent reads the skill files it
-needs on demand (see the instruction at the top of `defaults/prompts/dev.md`).
-The former system-channel injection (`SKILL_CONTEXT_FILE` →
-`security_policy_filename`) was removed with the SDK prompt-section registry in
-issue #943; re-routing skills through the SDK's `AgentContext(skills=[...])` is
-tracked separately.
+workflow step attaches one or more with `skill: [name]`.
+
+Every attachment carries a **delivery mode** (issue #955), written as a
+single-key entry:
+
+```yaml
+skills:
+  - inject: ["posting-contract", "planning"]   # full body rendered into the prompt
+  - discover: ["complexity"]                   # name + summary only, read on demand
+```
+
+* **`inject`** — the skill's whole body is rendered into the assembled prompt,
+  under a `## Injected skills` block, between the step prompt and the step
+  inputs. It survives `prompt_replace: true` (which only drops the role prompt
+  file), so absolute-constraint skills such as `stub-only` or `plan-cleanup`
+  keep working in `prompt_replace` workflows.
+* **`discover`** — only the skill's name and its one-line summary reach the
+  prompt, as the SDK's `<available_skills>` catalog. The agent reads the full
+  body on demand with the SDK's `invoke_skill` tool, which the engine attaches
+  automatically whenever a step has at least one discoverable skill.
+
+A bare string (`- posting-contract`, the pre-#955 form) still works and means
+`inject`, so existing configs keep their old behaviour. The agent-level and
+step-level entries are merged per step; when a name appears at both levels the
+**step's mode wins** (the step is the narrower scope). Both process the same
+`defaults/skills/` files, so the two modes can never disagree about which skills
+a step carries.
+
+Each skill file starts with frontmatter carrying the summary the catalog shows:
+
+```markdown
+---
+description: "Complexity tier rubric and the `complexity_review` re-tier request contract for this repo."
+---
+```
+
+A file without a `description` falls back to its first non-heading line. The
+former system-channel injection (`SKILL_CONTEXT_FILE` → `security_policy_filename`)
+was removed with the SDK prompt-section registry in issue #943; skills now reach
+the prompt through the two modes above.
 
 | Skill | File | Purpose |
 |-------|------|---------|
@@ -124,10 +157,11 @@ tracked separately.
 | `scaffold-plan` | [`scaffold-plan.md`](../defaults/skills/scaffold-plan.md) | Converts the approved `<planWorkflow>` JSON block into a runnable per-step `tmp_impl/workflow.yaml` sub-workflow. Used by `plan-orchestration` (issue #462). |
 | `plan-cleanup` | [`plan-cleanup.md`](../defaults/skills/plan-cleanup.md) | Removes the `tmp_impl/` scaffolding after all plan steps are done. Used by `plan-orchestration`. |
 | `final-fix` | [`final-fix.md`](../defaults/skills/final-fix.md) | Addresses the final whole-PR review feedback across all plan steps. Used by `plan-orchestration`. |
+| `complexity` | [`complexity.md`](../defaults/skills/complexity.md) | Complexity tier rubric and the `complexity_review` re-tier contract. Discovered (not injected) by every agent (issue #955). |
 | `python` | [`python.md`](../defaults/skills/python.md) | Generic Python style/testing guidance (PEP 8, type hints, pytest). |
 
 Agents carry default `skills` in their `agent-config.yaml` stanza; step-level
-skills override/augment them.
+`skill` entries are merged in, and the step's mode wins for a name it repeats.
 
 ---
 

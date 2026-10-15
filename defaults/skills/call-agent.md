@@ -1,3 +1,7 @@
+---
+description: "Hand off to a specific next agent with `call_agent`, overriding the default workflow continuation."
+---
+
 # Calling Another Agent
 
 Use this to hand off to a specific agent of your choice. This is an **imperative** signal: you decide who runs next, overriding workflow continuation.

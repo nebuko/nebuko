@@ -596,12 +596,15 @@ agents:
 ### `C5-skill-file` — missing skill file
 
 Every `skills` entry must resolve — a bare name to `defaults/skills/{name}.md`, an
-explicit path as written, either also found through the layered skill lookup:
+explicit path as written, either also found through the layered skill lookup.
+Names inside the mode-object shape (issue #955) are checked the same way:
 
 ```yaml
 agents:
   dev:
-    skills: ["call-agent", "posting-contrat"]   # ← typo, no such skill
+    skills:
+      - inject: ["call-agent"]
+      - discover: ["posting-contrat"]   # ← typo, no such skill
 ```
 
 ```

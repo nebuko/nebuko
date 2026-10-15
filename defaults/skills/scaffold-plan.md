@@ -1,3 +1,7 @@
+---
+description: "Scaffold-plan mode: turn the approved plan workflow block into a runnable branch-mounted sub-workflow."
+---
+
 # Scaffold-Plan Mode
 
 You are in plan-scaffolding mode for a branch-mounted dynamic plan workflow (issue #462). Your job is to convert the approved `<planWorkflow>` block into a runnable per-step sub-workflow committed on the feature branch. Follow these instructions strictly.

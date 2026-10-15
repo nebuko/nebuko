@@ -1,3 +1,7 @@
+---
+description: "Where the deliverable goes: the report turn's `finish` message, not routing metadata."
+---
+
 # Posting Contract — What Gets Posted to the Issue
 
 Applies to **every agent**. The engine owns the answer channel: the control

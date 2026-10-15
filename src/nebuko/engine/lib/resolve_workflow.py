@@ -34,6 +34,7 @@ from typing import Optional, Union
 import yaml
 
 from config import (
+    SkillSpec,
     WorkflowStep,
     WorkflowDefinition,
     load_config,
@@ -177,11 +178,41 @@ def resolve_workflow_routing(
     }
 
 
-def _skills_to_string(skill_list: list[str] | None) -> str:
+def _skill_names(skill_list: list | None) -> list[str]:
+    """Flatten skill entries (bare names or :class:`SkillSpec`) to names."""
+    return list(SkillSpec.iter_names(skill_list))
+
+
+def _specs_to_env(specs: list) -> str:
+    """Serialize skill entries for the flat ``KEY=value`` hand-off.
+
+    Imported lazily: ``resolve_config`` imports this module, so a module-level
+    import of its ``skill_context`` feature would close a cycle.
+    """
+    from resolve_config.features.skill_context.skill_context import specs_to_env
+
+    return specs_to_env(specs)
+
+
+def _skills_to_string(skill_list: list | None) -> str:
     """Convert an optional skill list to a comma-separated string."""
-    if not skill_list:
-        return ""
-    return ",".join(skill_list)
+    return ",".join(_skill_names(skill_list))
+
+
+def _skill_specs_json(skill_list: list | None) -> str:
+    """Serialize a step's skill entries (mode included) for the hand-off."""
+    return _specs_to_env(SkillSpec.parse_all(list(skill_list or ())))
+
+
+def _skill_specs_from_names(names: str) -> str:
+    """Inject-mode specs for a merged name string.
+
+    The sub-workflow descent collapses a leaf's skills to a name string, so the
+    mount-descent path carries no mode information; entries default to
+    ``inject``, which is also the bare-string default.
+    """
+    items = [name for name in names.split(",") if name]
+    return _specs_to_env(SkillSpec.parse_all(items))
 
 
 def _prompt_replace_flag(enabled: bool | None) -> str:
@@ -1501,6 +1532,7 @@ def _resolve_sub_workflow_entry(
             "PARENT_WORKFLOW": parent_wf_name,
             "PARENT_WORKFLOW_STEP": parent_step_name,
             "STEP_SKILLS": leaf.skill,
+            "STEP_SKILL_SPECS": _skill_specs_from_names(leaf.skill),
             "STEP_PROMPT_FILE": _write_step_prompt_file(leaf.prompt),
             "STEP_COMPLEXITY": leaf.complexity,
             "STEP_PROMPT_REPLACE": "",
@@ -1527,6 +1559,7 @@ def _resolve_sub_workflow_entry(
         "PARENT_WORKFLOW": parent_wf_name,
         "PARENT_WORKFLOW_STEP": parent_step_name,
         "STEP_SKILLS": leaf.skill,
+        "STEP_SKILL_SPECS": _skill_specs_from_names(leaf.skill),
         "STEP_PROMPT_FILE": _write_step_prompt_file(leaf.prompt),
         "STEP_COMPLEXITY": leaf.complexity,
         "STEP_PROMPT_REPLACE": _prompt_replace_flag(leaf.prompt_replace),
@@ -1767,6 +1800,7 @@ def _next_step_resolution(
             "PARENT_WORKFLOW": parent_workflow,
             "PARENT_WORKFLOW_STEP": parent_step,
             "STEP_SKILLS": _skills_to_string(next_step.skill),
+            "STEP_SKILL_SPECS": _skill_specs_json(next_step.skill),
             "STEP_PROMPT_FILE": "",
             "STEP_COMPLEXITY": next_step.complexity or "",
             "STEP_PROMPT_REPLACE": "",
@@ -1788,6 +1822,7 @@ def _next_step_resolution(
         "PARENT_WORKFLOW": parent_workflow,
         "PARENT_WORKFLOW_STEP": parent_step,
         "STEP_SKILLS": _skills_to_string(next_step.skill),
+        "STEP_SKILL_SPECS": _skill_specs_json(next_step.skill),
         "STEP_PROMPT_FILE": _write_step_prompt_file(next_step.prompt),
         "STEP_COMPLEXITY": next_step.complexity or "",
         "STEP_PROMPT_REPLACE": _prompt_replace_flag(next_step.prompt_replace),
@@ -2137,6 +2172,7 @@ def resolve_workflow_step(
         "PARENT_WORKFLOW": parent_workflow,
         "PARENT_WORKFLOW_STEP": parent_workflow_step,
         "STEP_SKILLS": _skills_to_string(current_step.skill),
+        "STEP_SKILL_SPECS": _skill_specs_json(current_step.skill),
         "STEP_PROMPT_FILE": _write_step_prompt_file(current_step.prompt),
         "STEP_COMPLEXITY": current_step.complexity or "",
         "STEP_PROMPT_REPLACE": _prompt_replace_flag(current_step.prompt_replace),

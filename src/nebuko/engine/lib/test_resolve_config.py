@@ -494,6 +494,36 @@ class TestResolveConfigWithWorkflowCommand:
         assert result["WORKFLOW_NAME"] == "with-skills"
         assert result["STEP_SKILLS"] == "python,rust"
 
+    def test_step_skill_modes_are_carried_alongside_the_name_string(self):
+        """A step can split its skills into inject and discover (issue #955)."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        with open(os.path.join(workflows_dir, "with-modes.yaml"), "w") as f:
+            f.write(
+                "name: with-modes\n"
+                "description: Workflow with skill modes\n"
+                "steps:\n"
+                "  - name: implement\n"
+                "    agent: dev\n"
+                "    skill:\n"
+                "      - inject: [python]\n"
+                "      - discover: [rust]\n"
+                "    next: null\n"
+            )
+        body = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            '{"version": 1, "workflow": "with-modes", "step": "implement", '
+            '"dispatch": {"task_hint": "dev", "workflow": "with-modes", "step": "implement"}}\n'
+            "<!-- WORKFLOW_STATE_END -->"
+        )
+
+        result = resolve_config(body, prompt_base, workflows_dir)
+
+        assert result["STEP_SKILLS"] == "python,rust"
+        assert result["STEP_SKILL_SPECS"] == (
+            '[{"mode":"inject","names":["python"]},'
+            '{"mode":"discover","names":["rust"]}]'
+        )
+
     def test_step_skills_empty_when_not_defined(self):
         """STEP_SKILLS is empty when workflow step has no skill field."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()

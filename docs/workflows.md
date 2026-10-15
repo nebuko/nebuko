@@ -37,7 +37,8 @@ steps:
 - `conditions[]` give the agent a choice of where to go, based on the result
   it reports in its dispatch (`status` / `task_hint`). Always include a
   catch-all (e.g., `default`) so routing stays deterministic.
-- `skill: [...]` attaches extra prompt context from `defaults/skills/` to that step.
+- `skill: [...]` attaches extra prompt context from `defaults/skills/` to that step; each entry is a bare
+  name (means `inject`) or `- inject: [names]` / `- discover: [names]` (issue #955).
 - `prompt:` injects a standing instruction into that step's agent context
   (see [Step Instructions](#step-instructions-prompt)).
 - `complexity: low|medium|high` declares the complexity tier for that step's
@@ -101,6 +102,14 @@ unaffected.
 per-step directives that should live inline in the workflow. Use
 `skill: [...]` for richer, multi-file, or reusable knowledge files in
 `defaults/skills/`. They compose: a step may have both.
+
+**`inject` vs `discover`.** An injected skill's whole body is rendered into the
+step prompt, so it costs context on every turn — use it for rules the agent must
+always have (the posting contract, a mode's absolute constraints). A discovered
+skill only shows its name and one-line summary; the agent pulls the body in with
+`invoke_skill` when it needs it (see
+[agents-and-skills.md](./agents-and-skills.md#the-skills-system)). A bare
+`- name` entry is injected.
 
 ---
 

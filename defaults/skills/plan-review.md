@@ -1,3 +1,7 @@
+---
+description: "Review modes for the dynamic plan workflows (dev-review-loop, plan-orchestration)."
+---
+
 # Plan-Workflow Review Skill
 
 Review modes that apply only inside the dynamic plan workflows (`dev-review-loop`
