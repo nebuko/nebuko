@@ -64,6 +64,19 @@ its own default (reasoning on, issue #958). The SDK's model-feature gate
 accept the param. Verify end-to-end with
 `select_chat_options(LLM(**cfg), {}, has_tools=True)`.
 
+The runtime counterpart of `thinking_enabled: true` is the `think` tool
+(issue #937): since the SDK's builtin `ThinkTool` is inert (it only logs the
+thought), `think` is engine-owned (`features/think_tool/`) and its executor
+latches API-level thinking on, in place, on the run's live `LLM`
+(`conversation.agent.llm`) — the same object `select_chat_options` re-reads on
+every model call, so the next call carries the thinking parameters and they stay
+on for the rest of the run. Both paths map intent to parameters through the one
+`ThinkingRequest` object (`sub_domains/thinking_request/`), so a `think` call is
+exactly equivalent to `thinking_enabled: true`. The tool name is pinned to
+`think` (the default class-name derivation would expose `think_enable`) and
+`tool_resolution.py` no longer routes `think` through `_BUILTIN_TOOL_MAP`, so
+the builtin never attaches alongside it.
+
 ## Git checkpoints in this sandbox (rebase gotchas)
 The workspace checkout is a **shallow/grafted** clone, so `git rev-list
 --left-right --count origin/main...HEAD` reports `0 0` until history is

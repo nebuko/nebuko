@@ -434,6 +434,12 @@ switch, because a missing param is read by the provider as its own default
 `reasoning_effort` sets the top-level effort explicitly; leave it unset to keep
 the SDK default.
 
+Agents that run with thinking disabled can opt in at runtime by calling the
+`think` tool (issue #937): a `think` call latches thinking on for the rest of the
+run by applying the same mapping to the live LLM, so it is equivalent to
+`thinking_enabled: true` from then on. It is enable-only and idempotent — there
+is no off-switch, and the thought itself is still logged as before.
+
 ### Repo Complexity Policy (`complexity_policy`)
 
 The app config may carry an optional **repo layer** of the complexity policy —

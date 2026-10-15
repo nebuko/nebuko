@@ -10,13 +10,20 @@ from openhands.sdk import get_logger
 from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
     build_provider_runtime,
 )
+from agent_script.sub_domains.thinking_request.thinking_request import (
+    REASONING_EFFORT_OFF,
+    REASONING_EFFORT_VALUES,
+    ThinkingRequest,
+    normalize_reasoning_effort as _normalize_reasoning_effort,
+)
 
 logger = get_logger(__name__)
 
+__all__ = ["REASONING_EFFORT_VALUES", "normalize_reasoning_effort"]
+
 # Qwen3.8 flexible-thinking vocabulary, delivered via chat_template_kwargs.
-REASONING_EFFORT_VALUES = ("xhigh", "medium", "low")
-# Aliases mapped onto the model vocabulary (e.g. OpenAI-style "high").
-_REASONING_ALIASES = {"high": "xhigh"}
+# The mapping itself lives in ``ThinkingRequest`` (issue #937) so the runtime
+# ``think`` tool reuses it; these names are re-exported for compatibility.
 
 # A high-reasoning turn can emit no bytes for minutes while the model thinks;
 # the SDK default (300s) aborts the HTTP call mid-reasoning and loses the turn
@@ -26,25 +33,8 @@ LLM_TIMEOUT_S = 900
 
 
 def normalize_reasoning_effort(raw: str | None) -> str | None:
-    """Map a dispatch ``reasoning`` value onto the Qwen flexible-thinking set.
-
-    Returns a normalized value (``xhigh`` / ``medium`` / ``low``), or ``None``
-    when the parameter should be omitted (unset, ``none``, or unrecognized).
-    ``high`` is treated as an alias for ``xhigh``.
-    """
-    if not raw:
-        return None
-    value = raw.strip().lower()
-    if value == "none":
-        return None
-    value = _REASONING_ALIASES.get(value, value)
-    if value in REASONING_EFFORT_VALUES:
-        return value
-    logger.warning(
-        f"Unrecognized reasoning effort '{raw}'; "
-        f"expected one of {sorted(REASONING_EFFORT_VALUES)}; dropping"
-    )
-    return None
+    """Deprecated alias kept for existing importers; see ``ThinkingRequest``."""
+    return _normalize_reasoning_effort(raw)
 
 
 def resolve_api_url(raw: str) -> str:
@@ -372,9 +362,16 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
 
     # ── Thinking parameters (litellm_extra_body) ─────────────────
     # Qwen3.x flexible thinking rides chat_template_kwargs, not the
-    # top-level OpenAI-style reasoning_effort field.
+    # top-level OpenAI-style reasoning_effort field. The intent → parameter
+    # mapping lives in ``ThinkingRequest`` so the runtime ``think`` tool
+    # (issue #937) applies exactly the same rules.
     litellm_extra_body = {}
     chat_template_kwargs = {}
+    preserve_thinking = (
+        effective_ref.preserve_thinking
+        if effective_ref and effective_ref.preserve_thinking is not None
+        else None
+    )
 
     # Tier override wins over the llm-level value; ``None`` inherits (#941).
     effective_thinking = (
@@ -383,21 +380,11 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         else (effective_ref.thinking_enabled if effective_ref else None)
     )
 
-    if effective_thinking is not None:
-        chat_template_kwargs["enable_thinking"] = effective_thinking
-    if effective_ref and effective_ref.preserve_thinking is not None:
-        chat_template_kwargs["preserve_thinking"] = effective_ref.preserve_thinking
-
     # Reasoning effort: ``none``/unset omits the param so the model default
     # (xhigh) applies; only emitted while thinking is on.
     llm_reasoning = os.getenv("LLM_REASONING", "none")
     if llm_reasoning in ("", "none") and tier_override and tier_override.reasoning:
         llm_reasoning = tier_override.reasoning
-    reasoning_effort = normalize_reasoning_effort(llm_reasoning)
-    thinking_on = chat_template_kwargs.get("enable_thinking", True)
-    if reasoning_effort and thinking_on:
-        chat_template_kwargs["reasoning_effort"] = reasoning_effort
-        logger.info(f"Reasoning effort: {reasoning_effort}")
 
     # Top-level reasoning transport. The SDK independently defaults
     # ``reasoning_effort="high"`` and emits it for models that support the
@@ -413,13 +400,26 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         explicit_effort = tier_override.reasoning_effort
     elif effective_ref is not None and effective_ref.reasoning_effort is not None:
         explicit_effort = effective_ref.reasoning_effort
-    if thinking_on is False:
+
+    thinking = ThinkingRequest.resolve(
+        configured_thinking=effective_thinking,
+        preserve_thinking=preserve_thinking,
+        explicit_effort=explicit_effort,
+        llm_reasoning=llm_reasoning,
+    )
+    chat_template_kwargs = thinking.merged_chat_template_kwargs(
+        chat_template_kwargs
+    )
+    if thinking.chat_template_effort:
+        logger.info(f"Reasoning effort: {thinking.chat_template_effort}")
+
+    if not thinking.thinking_on:
         # A configured effort is meaningless while thinking is off, so the off
         # branch wins unconditionally.
-        llm_config["reasoning_effort"] = "none"
-        logger.info("Thinking disabled: sending reasoning_effort=none")
-    elif explicit_effort is not None:
-        llm_config["reasoning_effort"] = explicit_effort
+        llm_config["reasoning_effort"] = REASONING_EFFORT_OFF
+        logger.info(f"Thinking disabled: sending reasoning_effort={REASONING_EFFORT_OFF}")
+    elif not thinking.top_level_effort_default and thinking.top_level_effort is not None:
+        llm_config["reasoning_effort"] = thinking.top_level_effort
 
     if chat_template_kwargs:
         litellm_extra_body["chat_template_kwargs"] = chat_template_kwargs

@@ -30,13 +30,16 @@ logger = get_logger(__name__)
 #: SDK's builtin classes handled by ``include_default_tools``).
 _SDK_TOOL_NAMES = ("terminal", "file_editor", "task_tracker")
 
-#: Config tool name -> SDK builtin class name.
-_BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
+#: Config tool name -> SDK builtin class name. ``think`` is deliberately absent:
+#: the builtin is inert (issue #937), so the engine-owned think tool takes the
+#: name through the registry branch below.
+_BUILTIN_TOOL_MAP = {"finish": "FinishTool"}
 
 _DISPATCH_TOOL_NAME = "DispatchNextTool"
 _CALL_AGENT_TOOL_NAME = "CallAgentTool"
 _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
 _COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
+_THINK_TOOL_NAME = "ThinkEnableTool"
 
 
 @dataclass(frozen=True)
@@ -167,6 +170,30 @@ def _ensure_complexity_review_tool_registered() -> None:
     _complexity_review_tool_registered = True
 
 
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
+_think_tool_registered = False
+
+
+def _ensure_think_tool_registered() -> None:
+    """Register the ``think`` ToolDefinition with the SDK registry.
+
+    The SDK's builtin ``ThinkTool`` is inert (it only logs the thought), so the
+    engine-owned tool replaces it here (issue #937). Registered under the class
+    name — the SDK resolves the registry key from the tool spec name first —
+    while the *exposed* name is the class-level ``name = "think"``.
+
+    Idempotent — safe to call on every agent run.
+    """
+    global _think_tool_registered
+    if _think_tool_registered:
+        return
+    from agent_script.features.think_tool.think_tool import ThinkEnableTool
+
+    register_tool(_THINK_TOOL_NAME, ThinkEnableTool)
+    _think_tool_registered = True
+
+
 def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolset:
     """Map configured tool names to SDK/builtin specs.
 
@@ -187,6 +214,9 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
             sdk_tools.append(Tool(name=tool_name))
         elif tool_name in _BUILTIN_TOOL_MAP:
             builtin_tools.append(_BUILTIN_TOOL_MAP[tool_name])
+        elif tool_name == "think":
+            _ensure_think_tool_registered()
+            sdk_tools.append(Tool(name=_THINK_TOOL_NAME))
         elif tool_name == "dispatch_next":
             _ensure_dispatch_tool_registered()
             sdk_tools.append(Tool(name=_DISPATCH_TOOL_NAME))
