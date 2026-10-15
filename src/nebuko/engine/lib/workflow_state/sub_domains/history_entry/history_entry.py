@@ -8,7 +8,7 @@ from complexity_governor.complexity_governor import (
     ComplexityReviewRequest,
 )
 
-from ..dispatch.dispatch import Dispatch
+from ..run_prefs.run_prefs import RunPrefs
 from ..state_metrics.state_metrics import StateMetrics
 from ..step_input_record.step_input_record import StepInputRecord
 from ..turn_outcome.turn_outcome import TurnOutcome
@@ -24,15 +24,12 @@ class HistoryEntry(BaseModel):
     # moment this step ran (issue #638). Makes the history a replayable
     # step-path log: after every run history[-1].position == WorkflowState.position.
     position: list[StepRef] = Field(default_factory=list)
-    # Routing decision emitted by THIS step (issue #685). Reuses the top-level
-    # Dispatch model so the ordered history becomes a self-contained,
-    # replayable movement log. None for legacy snapshots that predate the field.
-    dispatch: Optional[Dispatch] = None
-    # Factual outcome of THIS step's turn (issue #923): engine-measured
-    # completion + the agent's verdict, from which routing is derived. None on
-    # legacy snapshots, whose dispatch is mapped best-effort by
-    # ``TurnOutcome.from_legacy_dispatch`` at read time.
-    turn_outcome: Optional[TurnOutcome] = None  # @stub-protected
+    # Factual outcome of THIS step's turn (issue #964): engine-measured
+    # completion + the agent's verdict, from which routing is derived. Every
+    # entry is a routing fact, so the outcome is required.
+    turn_outcome: TurnOutcome  # @stub-protected
+    # Non-routing run preferences this step asked for (issue #964).
+    prefs: Optional[RunPrefs] = None  # @stub-protected
     # GitHub comment IDs of this step's output. Multi-part agent messages are
     # posted as separate comments, so an entry may reference several IDs
     # (issue #504). Legacy snapshots store a scalar `comment_id`, coerced

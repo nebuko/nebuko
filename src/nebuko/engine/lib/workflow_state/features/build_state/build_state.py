@@ -19,7 +19,7 @@ from ...sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from ...sub_domains.history_entry.history_entry import HistoryEntry
 from ...sub_domains.state_metrics.state_metrics import StateMetrics
 from ...sub_domains.step_resolution.step_resolution import StepResolution
-from ...sub_domains.dispatch.dispatch import Dispatch
+from ...sub_domains.run_prefs.run_prefs import RunPrefs
 from ...sub_domains.function_call import FunctionCall
 from ...sub_domains.gate_decision.gate_decision import GateDecision
 from ...step_output_record import StepOutputRecord
@@ -84,8 +84,8 @@ def build_state(
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
-    dispatch: Optional[Dispatch] = None,
     turn_outcome: Optional[TurnOutcome] = None,
+    prefs: Optional[RunPrefs] = None,
     function_call: Optional[FunctionCall] = None,
     callback: Optional[str] = None,
     started_by: Optional[str] = None,
@@ -128,11 +128,11 @@ def build_state(
         issue: Issue metadata (once set, persists across transitions).
         pull_request: PR metadata (once set, persists across transitions).
         resolution: Step resolution context from resolve_config (replaced each transition).
-        dispatch: Agent dispatch outcome from the AGENT_RUN_CONFIG sentinel
-            (replaced each transition).
-        turn_outcome: Factual outcome of this step's turn (issue #923) —
+        turn_outcome: Factual outcome of this step's turn (issue #964) —
             engine-measured completion + the agent's verdict — recorded on the
-            new history entry. None on legacy blobs.
+            new history entry. This is the only routing input.
+        prefs: Non-routing run preferences of this step (issue #964),
+            carried onto the entry and the state.
         function_call: Imperative agent-to-agent hand-off from the
             AGENT_RUN_CONFIG function_call section (replaced each transition;
             None clears any pending call).
@@ -233,8 +233,8 @@ def build_state(
         inject_context=inject_context,
         result=result,
         position=position_refs,
-        dispatch=dispatch,
         turn_outcome=turn_outcome,
+        prefs=prefs,
         metrics=entry_metrics,
         complexity_adjustment=complexity_adjustment,
         complexity_review_request=complexity_review_request,
@@ -336,7 +336,7 @@ def build_state(
     #   - retry path: only an engine-issued retry (``soft_retry_attempt``,
     #     emitted by ``resolve_soft_kill_route``) consumes one attempt for its
     #     step (``record``). Gating on the explicit marker — rather than on the
-    #     previous dispatch status — keeps a human/manual trigger from burning
+    #     previous outcome status — keeps a human/manual trigger from burning
     #     the budget (issue #704 review round 3).
     #   - human-resume path: an explicit human resume takes over, so the step
     #     restarts with a fresh budget (issue #704 review round 3).
@@ -367,7 +367,8 @@ def build_state(
         issue=new_issue,
         pull_request=new_pr,
         resolution=resolution,
-        dispatch=dispatch,
+        turn_outcome=turn_outcome,
+        prefs=prefs,
         function_call=function_call,
         callback=callback,
         started_by=new_started_by,

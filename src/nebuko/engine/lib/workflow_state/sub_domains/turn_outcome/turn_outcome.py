@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 from pydantic import BaseModel, model_validator
 
 if TYPE_CHECKING:
-    from ..dispatch.dispatch import Dispatch
     from ....agent_script.features.run_agent.run_outcome import OutcomeStatus
 
 
@@ -66,13 +65,6 @@ class HoldKind(str, Enum):  # @stub-protected
     AWAITING_APPROVAL = "awaiting_approval"
     AWAITING_INPUT = "awaiting_input"
 
-
-# Mapping of a workflow ``on_result`` key to the equivalent appreciation.
-_ROUTE_KEY_TO_APPRECIATION = {
-    Appreciation.APPROVED.value: Appreciation.APPROVED,
-    Appreciation.REJECTED.value: Appreciation.REJECTED,
-    Appreciation.HOLD.value: Appreciation.HOLD,
-}
 
 # Engine ``OutcomeStatus`` value -> the INCOMPLETE reason it implies.
 # ``success`` is absent: a successful run is COMPLETED (the agent supplies the
@@ -193,52 +185,6 @@ class TurnOutcome(BaseModel):
     ) -> "TurnOutcome":
         """Build an INCOMPLETE outcome for an engine-observed reason."""
         return cls(status=TurnStatus.INCOMPLETE, incomplete_reason=reason, note=note)
-
-    @classmethod
-    def from_legacy_dispatch(  # @stub-protected
-        cls, dispatch: "Dispatch"
-    ) -> Optional["TurnOutcome"]:
-        """Best-effort mapping from a legacy ``Dispatch`` (pre-#923 blobs).
-
-        Only *determinable* cases are mapped — everything else returns
-        ``None`` so the caller treats the turn as an un-routeable legacy state
-        and pings for input rather than guessing from free text:
-
-        - ``status == soft_kill`` -> INCOMPLETE / soft_timeout
-        - ``status == hold`` with ``reason`` starting ``human_gate:`` ->
-          COMPLETED / HOLD / awaiting_approval
-        - ``status == hold`` (other) -> COMPLETED / HOLD / awaiting_input
-        - ``branch`` in ``approved``/``rejected`` -> COMPLETED + appreciation
-        - anything else (notably ``branch is None`` with free-text reason) ->
-          ``None``
-        """
-        if dispatch is None:
-            return None
-        status = (dispatch.status or "").strip()
-        if status == "soft_kill":
-            return cls.for_incomplete(IncompleteReason.SOFT_TIMEOUT, note=dispatch.reason or "")
-        if status == "hold":
-            reason = dispatch.reason or ""
-            kind = (
-                HoldKind.AWAITING_APPROVAL
-                if reason.startswith("human_gate")
-                else HoldKind.AWAITING_INPUT
-            )
-            return cls(
-                status=TurnStatus.COMPLETED,
-                appreciation=Appreciation.HOLD,
-                hold_kind=kind,
-                note=dispatch.reason or "",
-            )
-        branch = (dispatch.branch or "").strip()
-        appreciation = _ROUTE_KEY_TO_APPRECIATION.get(branch)
-        if appreciation is not None:
-            return cls(
-                status=TurnStatus.COMPLETED,
-                appreciation=appreciation,
-                required_agent=dispatch.task_hint,
-            )
-        return None
 
 
 def _coerce_appreciation(value: Any) -> Optional[Appreciation]:
