@@ -57,6 +57,7 @@ class IncompleteReason(str, Enum):  # @stub-protected
     INTERRUPTED = "interrupted"
     FAILURE = "failure"
     NO_OUTCOME = "no_outcome"
+    AGENT_CHECKPOINT = "agent_checkpoint"
 
 
 class HoldKind(str, Enum):  # @stub-protected
@@ -80,6 +81,7 @@ _OUTCOME_STATUS_TO_INCOMPLETE = {
     "gracefully_timed_out": IncompleteReason.SOFT_TIMEOUT,
     "interrupted": IncompleteReason.INTERRUPTED,
     "failure": IncompleteReason.FAILURE,
+    "agent_checkpoint": IncompleteReason.AGENT_CHECKPOINT,
 }
 
 

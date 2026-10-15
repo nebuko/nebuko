@@ -45,7 +45,7 @@ agents:
     skills:
       - inject: ["call-agent", "posting-contract", "planning"]
       - discover: ["complexity"]
-    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review", "handoff"]
     complexity_overrides:
       low:
         model: "${llms.deepseek-v4_1-flash}"
@@ -62,7 +62,7 @@ agents:
     skills:
       - inject: ["posting-contract"]
       - discover: ["git-pr-workflow", "complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review", "handoff"]
     complexity_overrides:
       low:
         reasoning: "low"
@@ -78,7 +78,7 @@ agents:
     skills:
       - inject: ["call-agent", "posting-contract", "context-research"]
       - discover: ["complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review", "handoff"]
     complexity_overrides:
       low:
         reasoning: "low"
@@ -95,7 +95,7 @@ agents:
     skills:
       - inject: ["posting-contract", "plan-review"]
       - discover: ["retrospective", "complexity"]
-    tools: ["terminal", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    tools: ["terminal", "think", "finish", "dispatch_next", "call_agent", "complexity_review", "handoff"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"
@@ -104,4 +104,4 @@ agents:
     skills:
       - inject: ["call-agent", "posting-contract", "issue-refinement"]
       - discover: ["complexity"]
-    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review", "handoff"]

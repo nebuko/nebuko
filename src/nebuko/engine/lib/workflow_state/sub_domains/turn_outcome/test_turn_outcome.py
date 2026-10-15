@@ -121,6 +121,16 @@ class TestFromAgentPayload:
         )
         assert outcome.incomplete_reason == IncompleteReason.INTERRUPTED
 
+    def test_agent_checkpoint_maps_to_agent_checkpoint(self):
+        """A fold (issue #965) is an incomplete checkpoint, never a completion."""
+        outcome = TurnOutcome.from_agent_payload(
+            {"appreciation": "approved", "note": "fresh start"},
+            observed=OutcomeStatus.AGENT_CHECKPOINT,
+        )
+        assert outcome.status == TurnStatus.INCOMPLETE
+        assert outcome.incomplete_reason == IncompleteReason.AGENT_CHECKPOINT
+        assert outcome.appreciation is None
+
 
 class TestFromLegacyDispatch:
     def test_soft_kill_maps_to_incomplete(self):

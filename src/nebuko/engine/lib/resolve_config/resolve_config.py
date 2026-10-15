@@ -278,12 +278,13 @@ def resolve_config(
         and prev_state
         and prev_state.workflow
         and prev_state.dispatch
-        and prev_state.dispatch.status in ("hold", "soft_kill")
+        and prev_state.dispatch.status in ("hold", "soft_kill", "agent_checkpoint")
     ):
         # /nebuko resume — re-run the held step with human input. A
-        # soft-kill exhaustion halt (issue #704) is resumable exactly like a
-        # human-gate hold: the explicit human resume overrides the pending
-        # soft_kill status and re-runs the interrupted step.
+        # soft-kill exhaustion halt (issue #704) and an exhausted agent
+        # checkpoint (issue #965) are resumable exactly like a human-gate hold:
+        # the explicit human resume overrides the pending error status and
+        # re-runs the interrupted step.
         config = _resolve_resume_path(
             prev_state, trigger_body, workflows_dir, local_workflows_dir=local_workflows_dir,
             human_input=normalize_resume_input(wf_cmd.params.get("feedback", "")),

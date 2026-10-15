@@ -64,6 +64,23 @@ steps:
     inputs: [plan, implement, git_diff, run_tests]
     conditions:
       - on_result: approved
-        next: null
+        next: handoff_cleanup
       - on_result: rejected
         next: implement
+
+  # Session handoff cleanup (issue #965). Must run AFTER the reviewer agent: a
+  # send-back to dev still needs the document. Only the approved path passes
+  # here, and the deletion is a plain commit, so the handoff stays recoverable
+  # from the branch history.
+  - name: handoff_cleanup
+    script:
+      path: "bash"
+      args: ["scripts/handoff_cleanup.sh"]
+    next: handoff_gate_check
+
+  # The gate check fails the workflow if the handoff is somehow still present.
+  - name: handoff_gate_check
+    script:
+      path: "bash"
+      args: ["scripts/handoff_check.sh"]
+    next: null

@@ -3361,3 +3361,57 @@ class TestStepHooks:
         text = output.read_text(encoding="utf-8")
         assert f"cwd={root}" in text
         assert "repo=olivier-norture/git-flow-ai" in text
+
+
+class TestBuildPromptPreviousSessionHandoff:
+    """The previous run's handoff lands in the prompt as claims to re-check (#965).
+
+    The block is read from the session workspace, not from the resolver, so its
+    presence depends only on the file existing there.
+    """
+
+    def _resolved(self, tmp_path) -> dict:
+        base = tmp_path / "dev.md"
+        base.write_text("ROLE DEV FLOW", encoding="utf-8")
+        return {"PROMPT_LOCATION": str(base), "STEP_PROMPT_FILE": "", "STEP_PROMPT_REPLACE": ""}
+
+    def _write_handoff(self, root) -> None:
+        target = root / ".nebuko" / "handoff.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# Session handoff\n\n## Verified facts (claims to re-check)\n\n- HANDOFF FACT\n")
+
+    def test_block_lands_between_step_inputs_and_the_user_request(self, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        self._write_handoff(root)
+        engine = _engine_at_root(tmp_path, root)
+
+        prompt = engine.build_prompt(self._resolved(tmp_path), [])
+
+        assert "## Previous session handoff" in prompt
+        assert "HANDOFF FACT" in prompt
+        assert "*claim* to re-check" in prompt
+        assert prompt.index("HANDOFF FACT") < prompt.index(
+            "--- USER REQUEST / GITHUB CONTEXT ---"
+        )
+
+    def test_no_handoff_renders_no_block(self, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        engine = _engine_at_root(tmp_path, root)
+
+        prompt = engine.build_prompt(self._resolved(tmp_path), [])
+
+        assert "## Previous session handoff" not in prompt
+
+    def test_empty_handoff_renders_no_block(self, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        target = root / ".nebuko" / "handoff.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n")
+        engine = _engine_at_root(tmp_path, root)
+
+        prompt = engine.build_prompt(self._resolved(tmp_path), [])
+
+        assert "## Previous session handoff" not in prompt

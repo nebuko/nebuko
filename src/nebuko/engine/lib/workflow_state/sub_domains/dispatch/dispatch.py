@@ -2,7 +2,8 @@ from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
-DISPATCH_STATUSES = {"advance", "loop", "hold", "terminate", "soft_kill"}
+DISPATCH_STATUSES = {"advance", "loop", "hold", "terminate", "soft_kill", "agent_checkpoint"}
+
 
 class Dispatch(BaseModel):
     """Agent outcome and runtime preferences, consumed by the workflow engine.
@@ -10,16 +11,18 @@ class Dispatch(BaseModel):
     Replaces the external <!-- AGENT_RUN_CONFIG ... --> single-line HTML-comment
     sentinel with a structured field
     inside WorkflowState. Instead of agents explicitly naming the next agent,
-    they express their outcome (advance, loop, hold, terminate, soft_kill)
-    and optionally provide a task hint. The workflow engine resolves routing
-    from this field plus the workflow definition.
+    they express their outcome (advance, loop, hold, terminate, soft_kill,
+    agent_checkpoint) and optionally provide a task hint. The workflow engine
+    resolves routing from this field plus the workflow definition.
 
     Fields:
         status: Outcome indicator ("advance", "loop", "hold", "terminate",
-            "soft_kill"). ``soft_kill`` is the explicit error status emitted
-            when a step was interrupted by the soft time-kill (issue #704); the
-            engine retries the same step (bounded by MAX_SOFT_RETRIES) instead
-            of advancing.
+            "soft_kill", "agent_checkpoint"). ``soft_kill`` is the explicit
+            error status emitted when a step was interrupted by the soft
+            time-kill (issue #704); ``agent_checkpoint`` is the equivalent for a
+            folded run that saved a session handoff and asked for a fresh start
+            (issue #965). Both retry the same step (bounded by
+            MAX_SOFT_RETRIES) instead of advancing.
         task_hint: Optional suggested next agent (overrides workflow YAML).
         complexity: Complexity level for downstream agent. Empty means the
             agent declared none, so the resolver falls back to the workflow

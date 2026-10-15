@@ -104,6 +104,9 @@ _EXIT_CODE_BY_STATUS = {
     # still exits ADVANCE like the other live statuses rather than falling
     # through to the default.
     "soft_kill": ExitCode.ADVANCE,
+    # An agent checkpoint (a handoff fold, issue #965) re-triggers its retry
+    # run the same way.
+    "agent_checkpoint": ExitCode.ADVANCE,
 }
 
 
@@ -1285,9 +1288,31 @@ class Engine:
         rendered_inputs = render_inputs(list(input_results))
         if rendered_inputs:
             sections.append(rendered_inputs)
+        previous_handoff = self._render_previous_handoff()
+        if previous_handoff:
+            sections.append(previous_handoff)
         sections.append(_USER_REQUEST_HEADER)
         sections.append(self._render_context(resolved, history))
         return "\n\n".join(section for section in sections if section)
+
+    def _render_previous_handoff(self) -> str:
+        """The previous run's session handoff, framed as claims to re-check (#965).
+
+        Read from the worktree; when the cleanup step already deleted the file
+        (a human asked for another dev turn after review), the last committed
+        version is revived into the worktree first, so the block survives the
+        cleanup and the agent sees the document it is resuming from.
+        """
+        from agent_script.features.handoff_tool.handoff_document import (
+            render_handoff_block,
+        )
+        from agent_script.features.handoff_tool.handoff_store import HandoffStore
+
+        store = HandoffStore(self.repo_root)
+        body = store.load_text()
+        if not body.strip() and store.restore_from_history():
+            body = store.load_text()
+        return render_handoff_block(body)
 
     def _render_injected_skills(self, resolved: Any) -> str:
         """The full bodies of this step's inject-mode skills (issue #955)."""

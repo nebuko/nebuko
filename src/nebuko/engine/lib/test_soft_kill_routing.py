@@ -199,5 +199,44 @@ class TestSoftKillResumeAfterHalt(unittest.TestCase):
         self.assertEqual(result["HUMAN_RESUME_INPUT"], "resumed by human")
 
 
+class TestAgentCheckpointRoute(unittest.TestCase):
+    """A fold (issue #965) routes through the soft-kill retry path, with its cap.
+
+    ``agent_checkpoint`` is the dispatch a folded run carries: the step must
+    re-run in place while the per-step budget remains and halt for a human once
+    it is spent — never advance. Sharing MAX_SOFT_RETRIES with soft kills is the
+    cap that stops folding from becoming an exit from hard tasks.
+    """
+
+    def test_checkpoint_is_not_treated_as_a_non_soft_dispatch(self):
+        result = resolve_soft_kill_route(
+            _state(), Dispatch(status="agent_checkpoint"), max_soft_retries=2
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["config_step"], "implement")
+
+    def test_checkpoint_retries_the_same_step_while_budget_remains(self):
+        result = resolve_soft_kill_route(
+            _state(attempts=0), Dispatch(status="agent_checkpoint"), max_soft_retries=2
+        )
+        self.assertNotEqual(result.get("SKIP_AGENT"), "true")
+        self.assertEqual(result["config_soft_retry_attempt"], "true")
+
+    def test_checkpoint_consumes_the_same_budget_as_a_soft_kill(self):
+        """A checkpoint recorded after one soft-kill attempt is the second try."""
+        result = resolve_soft_kill_route(
+            _state(attempts=1), Dispatch(status="agent_checkpoint"), max_soft_retries=2
+        )
+        self.assertNotEqual(result.get("SKIP_AGENT"), "true")
+
+    def test_exhausted_checkpoint_budget_halts_for_a_human(self):
+        result = resolve_soft_kill_route(
+            _state(attempts=2), Dispatch(status="agent_checkpoint"), max_soft_retries=2
+        )
+        self.assertEqual(result["SKIP_AGENT"], "true")
+        self.assertEqual(result["SOFT_RETRY_EXHAUSTED"], "true")
+        self.assertIn("/nebuko resume", result["REASON"])
+
+
 if __name__ == "__main__":
     unittest.main()

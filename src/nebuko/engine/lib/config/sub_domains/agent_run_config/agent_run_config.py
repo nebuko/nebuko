@@ -24,7 +24,9 @@ from workflow_state.sub_domains.function_call.function_call import FunctionCall
 
 # Kept in sync with the ``Dispatch`` model's accepted statuses so a valid
 # dispatch payload is never rejected by the sentinel model.
-DispatchStatus = Literal["advance", "loop", "hold", "terminate", "soft_kill"]
+DispatchStatus = Literal[
+    "advance", "loop", "hold", "terminate", "soft_kill", "agent_checkpoint"
+]
 
 assert set(DispatchStatus.__args__) == set(DISPATCH_STATUSES)
 

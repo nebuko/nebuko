@@ -76,3 +76,41 @@ class TestExecChainIsReachable:
                 continue
             args = step.script.args
             assert shlex.split(" ".join(args)) == args, name
+
+
+class TestHandoffCleanupChain:
+    """The handoff cleanup runs after the reviewer, before the terminal (#965).
+
+    Ordering is load-bearing: a ``rejected`` review sends the work back to
+    ``implement``, which still needs the document, so cleanup may only sit on
+    the ``approved`` route.
+    """
+
+    def test_approved_review_goes_to_the_cleanup_step(self):
+        review = _steps()["review"]
+        approved = [c for c in review.conditions if c.on_result == "approved"]
+        assert approved and approved[0].next == "handoff_cleanup"
+
+    def test_rejected_review_still_returns_to_implement(self):
+        review = _steps()["review"]
+        rejected = [c for c in review.conditions if c.on_result == "rejected"]
+        assert rejected and rejected[0].next == "implement"
+
+    def test_cleanup_then_gate_check_then_terminal(self):
+        steps = _steps()
+        cleanup = steps["handoff_cleanup"]
+        assert cleanup.script is not None
+        assert cleanup.script.path == "bash"
+        assert cleanup.script.args == ["scripts/handoff_cleanup.sh"]
+        assert cleanup.next == "handoff_gate_check"
+
+        gate = steps["handoff_gate_check"]
+        assert gate.script is not None
+        assert gate.script.path == "bash"
+        assert gate.script.args == ["scripts/handoff_check.sh"]
+        assert gate.next is None
+
+    def test_review_precedes_the_cleanup(self):
+        """Cleanup must never run before the reviewer agent."""
+        steps = _steps()
+        assert steps["run_tests"].next == "review"
