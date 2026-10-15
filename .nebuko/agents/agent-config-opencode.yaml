@@ -19,6 +19,7 @@ llms:
     preserve_thinking: true
     thinking_enabled: false
     reasoning: "none"
+    reasoning_effort: "none"
     top_p: 0.95
   glm-5_3-flash:
     model_path: "openai/glm-5.3-flash"
@@ -70,6 +71,7 @@ agents:
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     temperature: 0.1
     reasoning: "none"
+    reasoning_effort: "none"
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - inject: ["posting-contract"]
@@ -81,6 +83,7 @@ agents:
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
     temperature: 0.1
     reasoning: "none"
+    reasoning_effort: "none"
     prompt_file: "defaults/prompts/context.md"
     skills:
       - inject: ["call-agent", "posting-contract", "context-research"]
