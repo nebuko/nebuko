@@ -57,8 +57,11 @@ and (since #941) on `AgentComplexityOverride` too — precedence tier > llm, `No
 inherits; that model now uses `extra="forbid"`. `resolve_llm_config.py` owns the
 top-level SDK `reasoning_effort`: the OpenHands SDK defaults it to `"high"` and
 emits it for models that support the param, so when thinking resolves off the
-resolver must send **an explicit `reasoning_effort=None`** (omitting the key
-lets the SDK default stand). Verify end-to-end with
+resolver must send **the explicit string `"none"`** — omitting the key lets the
+SDK default stand, and sending `None` sends nothing, which the provider reads as
+its own default (reasoning on, issue #958). The SDK's model-feature gate
+(`supports_reasoning_effort`) keeps `"none"` off the wire for models that do not
+accept the param. Verify end-to-end with
 `select_chat_options(LLM(**cfg), {}, has_tools=True)`.
 
 ## Git checkpoints in this sandbox (rebase gotchas)
