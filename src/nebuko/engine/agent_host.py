@@ -81,9 +81,9 @@ _REPORT_PROMPT = (
     "1. `finish` with `message` set to your COMPLETE, self-contained "
     "deliverable for this run - the full report that must be posted on the "
     "GitHub issue (not a one-line status note).\n"
-    "2. `dispatch_next` with your routing decision (status, plus `agent` when "
-    "you are explicitly overriding the workflow's next step, `pin`, and branch/"
-    "complexity/reason when they apply).\n"
+    "2. `dispatch_next` with your factual verdict on this turn (the required "
+    "`appreciation` of approved/rejected/hold, plus `hold_kind` with a hold, "
+    "and `required_agent`/`round`/`note`/`complexity`/`pin` when they apply).\n"
     "3. `call_agent` only when you are imperatively naming the exact agent to "
     "run next (with `agent_name`, plus optional `callback`/`complexity`) "
     "instead of letting the workflow resolve it.\n"
@@ -218,9 +218,9 @@ class InProcessAgentHost:
             "state": state,
             "console_log": console_log or _read_text(work / _CONSOLE_LOG_FILE),
         }
-        routing = _routing_payload(conversation, state)
+        routing = _turn_outcome_payload(conversation, state)
         if routing:
-            result["dispatch"] = routing
+            result["turn_outcome"] = routing
         return result
 
     def _elicit_report(self, conversation: Any) -> None:
@@ -350,57 +350,51 @@ def _report_payload(conversation: Any) -> EngineToolPayload | None:
     return getattr(conversation, _REPORT_PAYLOAD_ATTR, None)
 
 
-def _routing_payload(conversation: Any, state: Any) -> dict[str, Any] | None:
-    """The run's typed routing decision, in the engine's dispatch shape (#830).
+def _turn_outcome_payload(conversation: Any, state: Any) -> dict[str, Any] | None:
+    """The run's factual turn-outcome payload (issues #830, #964).
 
     The report turn replaces ``final_message.txt`` — the artefact the engine's
-    ``route`` phase scrapes for the legacy ``AGENT_RUN_CONFIG`` sentinel — so
-    the routing must be handed over structurally instead. Two report-turn
-    channels feed this: the harvested ``dispatch_next`` payload (status/branch/
-    complexity/reason/pin) and the harvested typed ``call_agent`` hand-off
+    ``route`` phase used to scrape for the legacy ``AGENT_RUN_CONFIG`` sentinel —
+    so the outcome must be handed over structurally instead. Two report-turn
+    channels feed this: the harvested ``dispatch_next`` payload (the agent's
+    factual verdict: ``appreciation``/``hold_kind``/``required_agent``/``round``/
+    ``note`` plus the prefs) and the harvested typed ``call_agent`` hand-off
     (issue #876) naming the exact next agent. A hand-off outranks the
-    dispatch-derived target so an imperative cross-agent call is never lost to
-    a workflow-relative dispatch. When the turn returns only ``finish``, the
-    dispatch ``build_output`` resolved into the run's workflow state (itself
-    sourced from the typed tools) is used. Runs without a report turn keep the
-    legacy text scrape unchanged.
+    state-derived target so an imperative cross-agent call is never lost to a
+    workflow-relative outcome. When the turn returns only ``finish``, the
+    outcome ``build_output`` resolved into the run's workflow state (itself
+    sourced from the typed tools) is used.
     """
     harvested = getattr(conversation, _REPORT_ROUTING_ATTR, None)
     handoff = getattr(conversation, _REPORT_FUNCTION_CALL_ATTR, None)
     direct = _drop_blanks(harvested.fields) if harvested is not None else {}
     if direct or handoff is not None:
         # The harvested fields win per key, but the report turn routinely
-        # omits the cross-agent target/pin: those live only in the work
-        # loop's resolution. Merge the state fallback underneath so an
-        # omitted key inherits it instead of silently reverting the
-        # hand-off to the workflow's default next step (issue #830). The
-        # typed ``call_agent`` target then overrides the dispatch target
-        # (issue #876).
-        fallback = _state_routing_fields(state) or {}
-        return {**fallback, **direct, **_handoff_routing_fields(handoff)}
-    if getattr(conversation, _FINALIZE_BODY_ATTR, None) is not None:
-        # A step that declares an ``output:`` shape (issue #973) routes on the
-        # typed ``finalize`` route, which the tool recorded into the run's
-        # workflow state; there is no ``finish`` payload to key off.
-        return _state_routing_fields(state)
+        # omits the cross-agent target: that lives only in the work loop's
+        # resolution. Merge the state fallback underneath so an omitted key
+        # inherits it instead of silently reverting the hand-off to the
+        # workflow's default next step (issue #830). The typed ``call_agent``
+        # target then overrides the state-derived target (issue #876).
+        fallback = _state_turn_outcome_fields(state) or {}
+        return {**fallback, **direct, **_handoff_outcome_fields(handoff)}
     if _report_payload(conversation) is None:
         return None
-    return _state_routing_fields(state)
+    return _state_turn_outcome_fields(state)
 
 
-def _handoff_routing_fields(handoff: EngineToolPayload | None) -> dict[str, Any]:
-    """A harvested report-turn ``call_agent`` as routing-payload fields.
+def _handoff_outcome_fields(handoff: EngineToolPayload | None) -> dict[str, Any]:
+    """A harvested report-turn ``call_agent`` as turn-outcome payload fields.
 
     The imperative hand-off names the exact next agent (``agent_name``), which
-    the engine's routing shape carries as ``agent`` (issue #876). Returns ``{}``
-    when there is no hand-off, so it never disturbs the dispatch-derived routing.
+    the factual outcome carries as ``required_agent`` (issue #876). Returns
+    ``{}`` when there is no hand-off, so it never disturbs the verdict.
     """
     if handoff is None:
         return {}
     fields = _drop_blanks(handoff.fields)
     mapped: dict[str, Any] = {}
     if fields.get("agent_name"):
-        mapped["agent"] = fields["agent_name"]
+        mapped["required_agent"] = fields["agent_name"]
     if fields.get("complexity"):
         mapped["complexity"] = fields["complexity"]
     return mapped
@@ -411,20 +405,23 @@ def _drop_blanks(fields: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in fields.items() if value}
 
 
-def _state_routing_fields(state: Any) -> dict[str, Any] | None:
-    """The workflow state's resolved dispatch as dispatch payload fields."""
-    dispatch = getattr(state, "dispatch", None)
-    if dispatch is None:
+def _state_turn_outcome_fields(state: Any) -> dict[str, Any] | None:
+    """The workflow state's recorded turn outcome as payload fields."""
+    outcome = getattr(state, "turn_outcome", None)
+    if outcome is None:
         return None
-    return _drop_blanks(
-        {
-            "status": dispatch.status,
-            "complexity": dispatch.complexity,
-            "branch": dispatch.branch,
-            "reason": dispatch.reason,
-            "agent": dispatch.task_hint,
-        }
-    ) or None
+    prefs = getattr(state, "prefs", None)
+    fields: dict[str, Any] = {
+        "status": outcome.status.value if outcome.status else "",
+        "appreciation": outcome.appreciation.value if outcome.appreciation else "",
+        "hold_kind": outcome.hold_kind.value if outcome.hold_kind else "",
+        "required_agent": outcome.required_agent or "",
+        "note": outcome.note or "",
+        "complexity": (getattr(prefs, "complexity", "") or "") if prefs else "",
+    }
+    if outcome.incomplete_reason:
+        fields["incomplete_reason"] = outcome.incomplete_reason.value
+    return _drop_blanks(fields) or None
 
 
 def _harvest_report(conversation: Any, tool_name: str) -> EngineToolPayload | None:

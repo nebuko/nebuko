@@ -2264,6 +2264,16 @@ class Engine:
         payload = self._dispatch_payload(agent_result)
         if not payload:
             return TurnOutcome.for_incomplete(IncompleteReason.NO_OUTCOME)
+        # The state fallback carries the engine's own recorded fact (issue #964):
+        # when the host had no report turn it hands over the outcome
+        # ``build_output`` resolved, whose ``status``/``incomplete_reason`` the
+        # agent cannot have claimed. Honour it directly so a soft-kill/journal
+        # recorded INCOMPLETE never degrades to a fabricated COMPLETED verdict.
+        if str(payload.get("status") or "") == TurnStatus.INCOMPLETE.value:
+            reason = _coerce_incomplete_reason(payload.get("incomplete_reason"))
+            return TurnOutcome.for_incomplete(
+                reason, note=str(payload.get("note") or "")
+            )
         if observed is None:
             ensure_import_path()
             from agent_script.features.run_agent.run_outcome import OutcomeStatus
@@ -2597,15 +2607,15 @@ class Engine:
         return updated
 
     def _dispatch_payload(self, agent_result: Any) -> dict[str, Any]:
-        """The agent's ``dispatch_next`` tool-call payload, or an empty mapping.
+        """The agent's factual ``dispatch_next`` payload, or an empty mapping.
 
         Only the typed tool call counts (issue #964): there is no text fallback,
         because a turn outcome is engine truth, never prose the agent rendered.
         """
         if isinstance(agent_result, Mapping):
-            dispatch = agent_result.get("dispatch")
-            if isinstance(dispatch, Mapping):
-                return dict(dispatch)
+            outcome = agent_result.get("turn_outcome")
+            if isinstance(outcome, Mapping):
+                return dict(outcome)
             if agent_result.get("appreciation"):
                 return dict(agent_result)
         return {}
@@ -2613,6 +2623,16 @@ class Engine:
     @staticmethod
     def _get(resolved: Any, key: str) -> Any:
         return resolved.get(key) if isinstance(resolved, Mapping) else None
+
+
+def _coerce_incomplete_reason(value: Any) -> IncompleteReason:
+    """The engine-recorded incomplete reason, defaulting to ``NO_OUTCOME``."""
+    if isinstance(value, IncompleteReason):
+        return value
+    try:
+        return IncompleteReason(str(value))
+    except ValueError:
+        return IncompleteReason.NO_OUTCOME
 
 
 def _hook_failure_note(phase: HookPhase, result: HookResult) -> str:
