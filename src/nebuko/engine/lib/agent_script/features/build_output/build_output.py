@@ -237,6 +237,28 @@ def _soft_kill_dispatch() -> Dispatch:  # @stub-protected
     )
 
 
+def _agent_checkpoint_dispatch() -> Dispatch:  # @stub-protected
+    """Build the checkpoint dispatch for a folded run (issue #965).
+
+    The agent called the ``handoff`` tool with ``fold: true``: it saved its
+    state and asked for a fresh start. The step did not complete, so the
+    dispatch must not advance — it carries ``agent_checkpoint``, which the
+    router treats exactly like ``soft_kill`` (re-run in place, bounded by
+    ``MAX_SOFT_RETRIES``, halt for a human once spent).
+
+    Returns:
+        A Dispatch with status ``agent_checkpoint``.
+    """
+    return Dispatch(
+        status="agent_checkpoint",
+        reason=(
+            "Agent checkpoint: the run saved a session handoff and asked to "
+            "fold (start fresh). Retry this step in place; halt for a human "
+            "once MAX_SOFT_RETRIES is exhausted."
+        ),
+    )
+
+
 def _parse_step_input_records_env() -> list[StepInputRecord]:
     """Parse this step's materialized-input records from ``STEP_INPUT_RESULTS``.
 
@@ -1265,6 +1287,19 @@ def build_output(
     if is_graceful_timeout:
         dispatch = _soft_kill_dispatch()
         logger.info("Graceful timeout — dispatch overridden with soft_kill status")
+
+    # ── Agent-checkpoint status (issue #965) ─────────────────────
+    # A folded run (the ``handoff`` tool called with ``fold: true``) saved its
+    # document and asked for a fresh start: it is an incomplete checkpoint, not
+    # a completion. Override the agent's own dispatch with the explicit
+    # ``agent_checkpoint`` status, which the router treats exactly like
+    # ``soft_kill`` (re-run the step in place, bounded by MAX_SOFT_RETRIES).
+    if (
+        run_outcome is not None
+        and run_outcome.status is OutcomeStatus.AGENT_CHECKPOINT
+    ):
+        dispatch = _agent_checkpoint_dispatch()
+        logger.info("Handoff fold — dispatch overridden with agent_checkpoint status")
 
     # ── Human gate intercept (issues #506, #648) ─────────────────
     # A gated step's dispatch is always overridden to hold: the gate is

@@ -149,9 +149,10 @@ def _resolve_resume_path(
     """Resolve config to re-run the currently held step after /nebuko resume.
 
     Validates that dispatch.status is ``hold`` (a human-gate hold) or
-    ``soft_kill`` (a retry-budget exhaustion halt, issue #704), looks up the
-    current step in the workflow YAML, then builds a config for the same
-    step/agent (replaying so the agent can process the human's response).
+    ``soft_kill`` (a retry-budget exhaustion halt, issue #704) or
+    ``agent_checkpoint`` (a fold whose retry budget is exhausted, issue #965),
+    looks up the current step in the workflow YAML, then builds a config for the
+    same step/agent (replaying so the agent can process the human's response).
     Copies dispatch parameters from the previously stored dispatch. Injects
     human input into current_context so the agent prompt can reference it.
 
@@ -167,9 +168,14 @@ def _resolve_resume_path(
     """
     dispatch = prev_state.dispatch
 
-    # Both a human-gate ``hold`` and a soft-kill exhaustion halt (issue #704)
-    # are resumable: an explicit human resume re-runs the interrupted step.
-    if dispatch is None or dispatch.status not in ("hold", "soft_kill"):
+    # Both a human-gate ``hold`` and a soft-kill / agent-checkpoint exhaustion
+    # halt (issues #704, #965) are resumable: an explicit human resume re-runs
+    # the interrupted step.
+    if dispatch is None or dispatch.status not in (
+        "hold",
+        "soft_kill",
+        "agent_checkpoint",
+    ):
         return {
             "SKIP_AGENT": "true",
             "REASON": f"resume: step is not on hold (dispatch.status='{dispatch.status if dispatch else 'none'}')",
@@ -650,7 +656,10 @@ def _resolve_dispatch_path(
     # place while its per-step budget remains, and halts for a human once it is
     # spent. ``resolve_soft_kill_route`` is a pure reader; the counter itself is
     # advanced/reset by ``build_state`` when the retry/advance run writes state.
-    if dispatch_obj.status == "soft_kill":
+    # An agent checkpoint (a ``handoff`` fold, issue #965) is deliberately routed
+    # through the same path: the agent chose to stop, so the step re-runs under
+    # the same per-step budget rather than advancing.
+    if dispatch_obj.status in ("soft_kill", "agent_checkpoint"):
         soft_kill_config = resolve_soft_kill_route(
             prev_state, dispatch_obj, resolve_max_soft_retries()
         )
@@ -856,7 +865,7 @@ def resolve_soft_kill_route(
         recorded for a *different* step does not consume the current step's
         budget (treated as zero attempts).
     """
-    if dispatch_obj.status != "soft_kill":
+    if dispatch_obj.status not in ("soft_kill", "agent_checkpoint"):
         return None
 
     step = prev_state.step or ""

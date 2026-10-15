@@ -25,6 +25,7 @@ Failure to rebase will result in merge conflicts that block the PR. This directi
    - Run: `gh pr list --search "is:pr #$ISSUE_NUMBER" --json number,headRefName --jq '.[0]'`
    - If a PR already exists → checkout its head branch and push your changes there. Do NOT create a new PR.
    - If no PR exists → proceed with creating a new branch (format: feature/issue-<ID>-<short-name>).
+   - If the `handoff` tool already created a branch for you (any `feature/nebuko-handoff-*` branch is already checked out), reuse it: commit your work there instead of creating another branch, so the handoff document and your changes travel together.
 3. **You MUST rebase your branch on `origin/main` at TWO checkpoints:**
    - **Checkpoint 1 (Start of Work):** Immediately upon starting — the CRITICAL OVERRIDE above.
    - **Checkpoint 2 (Before Creating a PR):** Final verification rebase before submitting.

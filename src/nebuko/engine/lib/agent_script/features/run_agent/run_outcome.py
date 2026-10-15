@@ -17,6 +17,7 @@ class OutcomeStatus(str, Enum):
     GRACEFULLY_TIMED_OUT = "gracefully_timed_out"
     INTERRUPTED = "interrupted"
     FAILURE = "failure"
+    AGENT_CHECKPOINT = "agent_checkpoint"
 
 
 # SDK ConversationExecutionStatus values (openhands.sdk.conversation.state).

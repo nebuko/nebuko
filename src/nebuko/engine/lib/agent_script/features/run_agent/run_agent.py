@@ -24,6 +24,7 @@ from agent_script.sub_domains.token_budget.condenser import (
 from agent_script.sub_domains.tool_resolution.tool_resolution import resolve_toolset
 
 from agent_script.features.dispatch_check import has_dispatch_decision
+from agent_script.features.handoff_tool.handoff_tool import take_fold
 from agent_script.features.run_agent.dispatch_recall import (
     MAX_DISPATCH_RECALLS,
     RECALL_PASS_BUDGET_S,
@@ -388,6 +389,21 @@ def run_agent(
         failure = classify_failure(main_error)
     else:
         outcome = classify_run(main_status, False)
+
+    # ── Handoff fold (issue #965) ───────────────────────────────
+    # The agent called the ``handoff`` tool with ``fold: true``: it wants to
+    # stop here and start fresh. The document is already saved, so the run is
+    # classified as an incomplete checkpoint — checked before the SUCCESS
+    # branch would stand, because a fold is deliberately not a completion.
+    # Routing reuses the per-step soft-retry budget (MAX_SOFT_RETRIES), which
+    # is the cap that keeps folding from becoming an exit from hard tasks.
+    fold_note = take_fold(getattr(conversation, "id", "default"))
+    if fold_note is not None and outcome in (
+        OutcomeStatus.SUCCESS,
+        OutcomeStatus.INTERRUPTED,
+    ):
+        logger.info(f"Handoff fold requested — ending as agent_checkpoint: {fold_note}")
+        outcome = OutcomeStatus.AGENT_CHECKPOINT
 
     run_outcome = RunOutcome(
         status=outcome,

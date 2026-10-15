@@ -37,6 +37,7 @@ _DISPATCH_TOOL_NAME = "DispatchNextTool"
 _CALL_AGENT_TOOL_NAME = "CallAgentTool"
 _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
 _COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
+_HANDOFF_TOOL_NAME = "HandoffTool"
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,25 @@ def _ensure_complexity_review_tool_registered() -> None:
     _complexity_review_tool_registered = True
 
 
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
+_handoff_tool_registered = False
+
+
+def _ensure_handoff_tool_registered() -> None:
+    """Register the ``handoff`` ToolDefinition with the SDK registry.
+
+    Idempotent — safe to call on every agent run.
+    """
+    global _handoff_tool_registered
+    if _handoff_tool_registered:
+        return
+    from agent_script.features.handoff_tool.handoff_tool import HandoffTool
+
+    register_tool(_HANDOFF_TOOL_NAME, HandoffTool)
+    _handoff_tool_registered = True
+
+
 def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolset:
     """Map configured tool names to SDK/builtin specs.
 
@@ -200,6 +220,9 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
         elif tool_name == "complexity_review":
             _ensure_complexity_review_tool_registered()
             sdk_tools.append(Tool(name=_COMPLEXITY_REVIEW_TOOL_NAME))
+        elif tool_name == "handoff":
+            _ensure_handoff_tool_registered()
+            sdk_tools.append(Tool(name=_HANDOFF_TOOL_NAME))
         else:
             logger.warning(
                 f"Unknown tool '{tool_name}' for agent '{role_name}' — skipping"
