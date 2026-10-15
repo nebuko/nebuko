@@ -103,6 +103,8 @@ Output your findings in this structure:
 
 ## R4. Tool Usage in Retrospective Mode
 * You have **ThinkTool** and **FinishTool** only.
+  * `think` logs the thought *and* enables API-level thinking for the rest of the
+    run (issue #937) — it is a side effect, not a no-op.
 * You do **NOT** have terminal or file editor access. All data is provided in the issue context.
 * You must NOT modify any files or code.
 

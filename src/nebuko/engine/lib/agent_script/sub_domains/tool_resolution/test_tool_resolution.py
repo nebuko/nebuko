@@ -107,10 +107,14 @@ class TestResolveToolset:
         for name in ("terminal", "file_editor", "task_tracker"):
             assert name in registered
 
-    def test_think_and_finish_map_to_builtins(self):
+    def test_think_resolves_to_engine_tool_and_finish_to_builtin(self):
         resolved = resolve_toolset(["think", "finish"], "review")
-        assert resolved.sdk_tools == ()
-        assert resolved.builtin_tools == ("ThinkTool", "FinishTool")
+        # ``think`` is engine-owned since #937 (the SDK builtin is inert), so it
+        # must not attach through ``include_default_tools`` any more.
+        assert _names(resolved.sdk_tools) == ("ThinkEnableTool",)
+        assert resolved.builtin_tools == ("FinishTool",)
+        assert resolved.has("ThinkEnableTool")
+        assert not resolved.has("ThinkTool")
 
     def test_dispatch_next_enables_dispatch(self):
         resolved = resolve_toolset(["dispatch_next"], "review")
@@ -149,7 +153,7 @@ class TestResolveToolset:
             ["terminal", "think", "dispatch_next", "report_scaffold_branch"],
             "dev",
         )
-        for name in ("terminal", "ThinkTool", "DispatchNextTool",
+        for name in ("terminal", "ThinkEnableTool", "DispatchNextTool",
                      "ScaffoldBranchReportTool"):
             assert resolved.has(name)
         assert not resolved.has("finish")
@@ -165,8 +169,10 @@ class TestResolveToolset:
             "terminal",
             "file_editor",
             "task_tracker",
+            "ThinkEnableTool",
         )
-        assert resolved.builtin_tools == ("ThinkTool", "FinishTool")
+        assert resolved.builtin_tools == ("FinishTool",)
+        assert resolved.has("ThinkEnableTool")
         assert resolved.dispatch_tool_enabled is False
 
     def test_resolved_toolset_is_frozen(self):
