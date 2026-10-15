@@ -19,11 +19,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from resolve_workflow import (  # noqa: E402
     TASK_TO_PROMPT,
+    RouteKind,
     SubWorkflowLeafError,
     _find_workflow_step,
     _load_child_workflow,
     _resolve_entry_leaf_for_step,
-    resolution_to_marker,
     resolve_next_from_workflow,
     resolve_workflow_routing,
     resolve_workflow_step,
@@ -174,15 +174,13 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
 
     def _enter_sub_workflow(self, scaffold_branch):
         def run(workflows_dir):
-            # The resolver now returns a typed ``RouteResolution`` (issue
-            # #923); these assertions are on the legacy marker view.
-            return resolution_to_marker(
-                resolve_next_from_workflow(
-                    "plan-orchestration",
-                    "sub_impl",
-                    workflows_dir,
-                    scaffold_branch=scaffold_branch,
-                )
+            # The resolver returns a typed ``RouteResolution`` (issues #923,
+            # #964); these assertions consume it directly.
+            return resolve_next_from_workflow(
+                "plan-orchestration",
+                "sub_impl",
+                workflows_dir,
+                scaffold_branch=scaffold_branch,
             )
 
         return self._in_worktree(run)
@@ -191,16 +189,16 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
         """#648 defect: the mount ref was reported as the entered workflow."""
         entered = self._enter_sub_workflow(SCAFFOLD_BRANCH)
 
-        self.assertTrue(entered.get("entered_sub_workflow"))
-        self.assertEqual(entered["workflow"], "dev-review-loop")
-        self.assertEqual(entered["step"], "implement")
+        self.assertEqual(entered.kind.value, RouteKind.SUB_WORKFLOW_ENTER.value)
+        self.assertEqual(entered.workflow, "dev-review-loop")
+        self.assertEqual(entered.step, "implement")
 
     def test_entered_child_never_reports_empty_step(self):
         """The CI signal: ``WORKFLOW_STEP=''`` with the mount ref as name."""
         entered = self._enter_sub_workflow(SCAFFOLD_BRANCH)
 
-        self.assertNotEqual(entered.get("step"), "")
-        self.assertNotEqual(entered.get("workflow"), CHILD_REF)
+        self.assertNotEqual(entered.step, "")
+        self.assertNotEqual(entered.workflow, CHILD_REF)
 
     def test_unresolvable_child_is_surfaced_not_silently_skipped(self):
         """A declared ``workflow:`` mount must never be silently stepped over.
@@ -211,9 +209,9 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
         """
         result = self._enter_sub_workflow(None)
 
-        self.assertEqual(result.get("SKIP_AGENT"), "true")
-        self.assertTrue(result.get("REASON"))
-        self.assertNotIn("entered_sub_workflow", result)
+        self.assertTrue(result.skip_agent)
+        self.assertTrue(result.reason)
+        self.assertIsNot(result.kind, RouteKind.SUB_WORKFLOW_ENTER)
 
     def test_unresolvable_mount_returns_typed_error(self):
         """The descent failure is a typed ``SubWorkflowLeafError``."""
@@ -237,7 +235,7 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
         """The reported pair must actually resolve — no manual ``resume``."""
         entered = self._enter_sub_workflow(SCAFFOLD_BRANCH)
 
-        followup = self._routing(entered["workflow"], entered["step"])
+        followup = self._routing(entered.workflow, entered.step)
 
         self.assertEqual(followup["SKIP_AGENT"], "false")
         self.assertEqual(followup["WORKFLOW_STEP"], "implement")

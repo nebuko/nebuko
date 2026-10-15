@@ -2,8 +2,8 @@
 
 Covers the resolver->env-var contract that GHA branches on:
 
-* ``resolve_next_from_workflow`` returns a distinct ``run_script`` marker
-  payload (not ``task: None``) when the successor step is a script step.
+* ``resolve_next_from_workflow`` returns a ``RouteResolution`` of kind
+  ``RUN_SCRIPT`` (not a plain route) when the successor step is a script step.
 * ``_build_result`` maps that payload to the ``RUN_SCRIPT``/``SCRIPT_PATH``/
   ... environment contract and skips agent routing entirely.
 * Full ``resolve_config`` (dispatch-driven advance) reaches the executor
@@ -17,14 +17,9 @@ from resolve_config import resolve_config
 from resolve_config.features.build_result.build_result import _build_result
 from resolve_workflow import (
     TASK_TO_PROMPT,
-    resolution_to_marker,
-    resolve_next_from_workflow as _resolve_next_typed,
+    RouteKind,
+    resolve_next_from_workflow,
 )
-
-
-def resolve_next_from_workflow(*args, **kwargs):
-    """Legacy marker-dict view of the typed resolver (issue #923)."""
-    return resolution_to_marker(_resolve_next_typed(*args, **kwargs))
 
 
 def _make_dirs(workflow_yaml: str):
@@ -63,18 +58,20 @@ class TestResolveNextScriptMarker:
     def test_script_successor_returns_marker(self):
         _, workflows_dir = _make_dirs(self.SCRIPT_WF)
         result = resolve_next_from_workflow("default", "analyze", workflows_dir)
-        assert result["run_script"] is True
-        assert "task" not in result
-        assert result["script_path"] == "scripts/test.sh"
-        assert result["script_args"] == '["--unit"]'
-        assert result["timeout_minutes"] == 15
-        assert result["step"] == "run-tests"
+        assert result.kind is RouteKind.RUN_SCRIPT
+        assert result.task == ""
+        assert result.step == "run-tests"
+        assert result.script["path"] == "scripts/test.sh"
+        assert result.script["args_str"] == "--unit"
+        assert result.script["timeout_minutes"] == 15
 
     def test_agent_successor_unaffected(self):
         _, workflows_dir = _make_dirs(self.SCRIPT_WF)
         result = resolve_next_from_workflow("default", "run-tests", workflows_dir)
-        assert result == {"task": "review", "step": "review"}
-        assert "run_script" not in result
+        assert result.kind is RouteKind.ROUTE
+        assert result.task == "review"
+        assert result.step == "review"
+        assert result.script is None
 
     def test_script_minimal_fields(self):
         yaml = (
@@ -94,10 +91,10 @@ class TestResolveNextScriptMarker:
         )
         _, workflows_dir = _make_dirs(yaml)
         result = resolve_next_from_workflow("default", "a", workflows_dir)
-        assert result["run_script"] is True
-        assert result["script_path"] == "ci/run.sh"
-        assert result["script_args"] == "[]"
-        assert result["timeout_minutes"] is None
+        assert result.kind is RouteKind.RUN_SCRIPT
+        assert result.script["path"] == "ci/run.sh"
+        assert result.script["args_str"] == ""
+        assert result.script["timeout_minutes"] is None
 
 
 class TestBuildResultRunScript:
@@ -208,16 +205,15 @@ class TestResolveConfigEndToEnd:
         "    next: null\n"
     )
 
-    def test_dispatch_advance_into_script(self):
-        """A bot comment whose dispatch advances into the script step."""
+    def test_bot_comment_advancing_into_script(self):
+        """A bot comment whose recorded outcome advances into the script step."""
         prompt_base, workflows_dir = _make_dirs(self.SCRIPT_WF)
         body = (
             "<!-- bot-workflow-terminal -->\n"
             "<!-- WORKFLOW_STATE_START -->\n"
             '{"workflow": "default", "step": "analyze", '
-            '"dispatch": {"status": "advance", "workflow": "default", "step": "analyze"}}\n'
+            '"turn_outcome": {"status": "completed", "appreciation": "approved"}}\n'
             "<!-- WORKFLOW_STATE_END -->\n"
-            "<!-- AGENT_RUN_CONFIG {\"dispatch\": {\"status\": \"advance\"}} -->"
         )
         result = resolve_config(body, prompt_base, workflows_dir)
         assert result["RUN_SCRIPT"] == "true"
