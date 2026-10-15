@@ -1,6 +1,3 @@
-# Default workflow: the standard dev chain
-# architect → context → architect (plan) → dev → review
-
 name: plan-dev-review-cmd
 description: "Standard development workflow: analyze → context → plan → implement → review"
 
@@ -36,22 +33,14 @@ steps:
   - name: implement
     agent: dev
     inputs: [plan]
-    next: fetch_base
-
-  # The workspace checkout is shallow (actions/checkout default fetch-depth: 1)
-  # and pinned to the triggering ref, so the remote-tracking ref `origin/main`
-  # does not exist. Fetch it explicitly before diffing; without this the diff
-  # dies with `fatal: ambiguous argument 'origin/main'` (issue #957).
-  - name: fetch_base
-    script:
-      path: "git"
-      args: ["fetch", "--no-tags", "--depth=50", "origin", "main:refs/remotes/origin/main"]
     next: git_diff
 
   - name: git_diff
     script:
-      path: "git"
-      args: ["diff", "origin/main", "HEAD"]
+      path: "sh"
+      args:
+        - "-c"
+        - "git fetch -q --no-tags --depth=50 origin main:refs/remotes/origin/main && git diff origin/main HEAD"
     next: run_tests
 
   - name: run_tests
