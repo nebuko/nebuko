@@ -98,6 +98,20 @@ want to try is a YAML diff, not a new stack:
 > 🚀 The full walkthrough is in [**How to adopt Nebuko**](docs/adoption.md)
 > (entrypoint, authentication, providers, runners).
 
+**One command (recommended).** Install the `nebuko` binary from the release and
+let it do steps 1–3 for you: it asks for the repository, the provider and the
+runner labels, opens a pull request with the config and the workflow, then stores
+the secrets with your own `gh` authentication.
+
+```bash
+gh release download -R nebuko/nebuko -p 'nebuko-linux-amd64' -O ~/.local/bin/nebuko
+chmod +x ~/.local/bin/nebuko
+nebuko init
+```
+
+The manual steps below stay the fallback — and the reference for what `init`
+generates. Details: [adoption.md §3](docs/adoption.md#3-the-entrypoint-copy-paste).
+
 1. **Add your agent config** at `.nebuko/agents/agent-config.yaml` — **mandatory
    for now**: it is how you keep control of which providers, models and tools
    your agents use. Start from a shipped profile:

@@ -1,0 +1,46 @@
+name: internal-release
+
+# Builds the client install path: one self-contained `nebuko` binary per OS/arch,
+# attached to the release of the tag that `nebuko init` pins in the caller
+# workflow. One tag = one version axis for the binary and the reusable workflow.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: nebuko-linux-amd64
+          - os: macos-latest
+            asset: nebuko-macos-arm64
+          - os: macos-13
+            asset: nebuko-macos-amd64
+          - os: windows-latest
+            asset: nebuko-windows-amd64.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Build the single-file binary
+        run: >-
+          uv run --with pyinstaller pyinstaller --onefile --name nebuko
+          --collect-data nebuko packaging/entry.py
+      - name: Name the asset
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv dist/nebuko.exe "dist/${{ matrix.asset }}"
+          else
+            mv dist/nebuko "dist/${{ matrix.asset }}"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.asset }}
