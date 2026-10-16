@@ -24,12 +24,16 @@ PR_URL = "https://github.com/acme/widgets/pull/7"
 
 
 class FakeHost(SetupHost):
-    def __init__(self, report=None, existing=(), app_installed=False):
+    def __init__(self, report=None, existing=(), app_installed=False, gh_available=True):
         self.report = report or PreflightReport(ok=True, missing_scopes=(), remediation="")
         self.existing = set(existing)
         self.app = app_installed
+        self.gh = gh_available
         self.prs: list[dict] = []
         self.secrets: dict[str, str] = {}
+
+    def gh_available(self):
+        return self.gh
 
     def preflight(self, target):
         return self.report
@@ -136,6 +140,34 @@ def test_missing_workflow_scope_exits_two_with_the_remediation(monkeypatch, caps
     assert "gh auth refresh -s workflow" in capsys.readouterr().err
     assert host.prs == []
     assert host.secrets == {}
+
+
+# ── gh availability ──────────────────────────────────────────────────────────
+
+
+def test_missing_gh_cli_exits_two_with_an_install_hint(monkeypatch, capsys):
+    host = FakeHost(gh_available=False)
+    _wire(monkeypatch, host)
+    _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
+
+    code = cli.main(["--repo", "acme/widgets", "--non-interactive"])
+
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "GitHub CLI (gh)" in err
+    assert "cli.github.com" in err
+    assert host.prs == []
+    assert host.secrets == {}
+
+
+def test_missing_gh_cli_fails_before_asking_anything(monkeypatch, capsys):
+    host = FakeHost(gh_available=False)
+    prompter = FakePrompter(texts=["acme/widgets"], choice="openrouter", secrets=["key", "pat"])
+    _wire(monkeypatch, host, prompter)
+
+    assert cli.main([]) == 2
+    assert prompter.texts == ["acme/widgets"]  # the check runs before any prompt
+    assert "GitHub CLI (gh)" in capsys.readouterr().err
 
 
 def test_non_interactive_requires_the_secret_env_vars(monkeypatch, capsys):

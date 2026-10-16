@@ -97,6 +97,10 @@ class SetupHost(ABC):
 
     # @stub-protected
     @abstractmethod
+    def gh_available(self) -> bool: ...
+
+    # @stub-protected
+    @abstractmethod
     def preflight(self, target: SetupTarget) -> PreflightReport: ...
 
     # @stub-protected

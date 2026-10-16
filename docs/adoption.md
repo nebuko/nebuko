@@ -85,7 +85,9 @@ and the runner labels, then:
    `gh secret set` (repository-level, or organization-level with `--org`).
 
 It uses **your own `gh` authentication**: nothing goes through a Nebuko server
-and no GitHub App is involved. Pushing `.github/workflows/*` needs the `workflow`
+and no GitHub App is involved. `init` needs the GitHub CLI (`gh`) on your
+`PATH` — it stops with an install hint before doing anything else when it is
+missing. Pushing `.github/workflows/*` needs the `workflow`
 scope — `init` checks for it up front and tells you to run
 `gh auth refresh -s workflow` when it is missing.
 

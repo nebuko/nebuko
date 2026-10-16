@@ -38,6 +38,9 @@ from nebuko.engine.init.setup import (
 
 DEFAULT_RUNS_ON = "ubuntu-latest"
 SECRET_ENV_PREFIX = "NEBUKO_SECRET_"
+GH_MISSING_MESSAGE = """\
+nebuko init: the GitHub CLI (gh) is required but was not found on PATH.
+Install it from https://cli.github.com and run `gh auth login`."""
 PAT_INSTRUCTIONS = """\
 A GitHub Personal Access Token is required (fine-grained, with Contents,
 Pull requests and Issues read/write on the target repository). Create one at
@@ -124,6 +127,10 @@ def _run(args: argparse.Namespace) -> int:
         pin_ref=args.pin_ref,
         template_dir=Path(args.template_dir) if args.template_dir else None,
     )
+    if not context.host.gh_available():
+        # Fail before any prompt: without `gh` nothing else can work.
+        print(GH_MISSING_MESSAGE, file=sys.stderr)
+        return EXIT_USAGE
     prompter: InitPrompter = NonInteractivePrompter() if args.non_interactive else InitPrompter()
     target = _resolve_target(args, prompter)
     provider = _resolve_provider(args, prompter)

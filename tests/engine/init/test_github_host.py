@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import subprocess
 
+from nebuko.engine.init import github_host
 from nebuko.engine.init.github_host import GitHubHost
 from nebuko.engine.init.ports import GeneratedFiles, SetupTarget
 
@@ -64,6 +65,14 @@ def _auth_status(scopes: str | None) -> str:
 
 
 # ── preflight ────────────────────────────────────────────────────────────────
+
+
+def test_gh_available_reflects_the_path_lookup(monkeypatch):
+    host = GitHubHost(runner=FakeRunner([]))
+    monkeypatch.setattr(github_host.shutil, "which", lambda name: "/usr/bin/gh")
+    assert host.gh_available() is True
+    monkeypatch.setattr(github_host.shutil, "which", lambda name: None)
+    assert host.gh_available() is False
 
 
 def test_preflight_ok_when_the_workflow_scope_is_present():

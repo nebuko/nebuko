@@ -9,6 +9,7 @@ argument list, in the output, or in a committed file.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from typing import Any, Callable, Sequence
 
@@ -42,6 +43,11 @@ class GitHubHost(SetupHost):
         self._runner = runner or _run
 
     # ── preflight ────────────────────────────────────────────────────────────
+
+    # @stub-protected
+    def gh_available(self) -> bool:
+        """Whether the ``gh`` CLI is on ``PATH`` at all."""
+        return shutil.which("gh") is not None
 
     # @stub-protected
     def preflight(self, target: SetupTarget) -> PreflightReport:
