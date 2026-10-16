@@ -1,0 +1,86 @@
+# ── Providers: API endpoints + auth ──
+providers:
+  openrouter:
+    api_url: "https://api.cheaperinference.com/v1"
+    api_token_env: "OPENROUTER_API_KEY"
+
+# ── LLMs: model paths referencing providers ──
+llms:
+  deepseek-v4_1-flash:
+    model_path: "openai/deepseek-v4.1-flash"
+    provider: "${providers.openrouter}"
+    preserve_thinking: true
+    thinking_enabled: false
+    reasoning_effort: "none"
+    top_p: 0.95
+  glm-5_3-flash:
+    model_path: "openai/glm-5.3-flash"
+    provider: "${providers.openrouter}"
+  mimo-2_6-pro:
+    model_path: "openai/mimo-v2.6-pro"
+    provider: "${providers.openrouter}"
+    thinking_enabled: true
+    preserve_thinking: true
+
+# ── Agents: role → model + prompt + skills + tools ──
+# Tools: terminal, file_editor, task_tracker (SDK tools)
+#        think, finish (built-in defaults)
+agents:
+  architect:
+    model: "${llms.mimo-2_6-pro}"
+    role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
+    temperature: 0.4
+    prompt_file: "defaults/prompts/architect.md"
+    skills:
+      - inject: ["call-agent", "posting-contract", "planning"]
+      - discover: ["complexity"]
+    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    complexity_overrides:
+      low:
+        model: "${llms.deepseek-v4_1-flash}"
+        thinking_enabled: true
+        reasoning: "medium"
+      high:
+        temperature: 0.6
+        reasoning: "high"
+
+  dev:
+    model: "${llms.deepseek-v4_1-flash}"
+    role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
+    temperature: 0.1
+    reasoning_effort: "none"
+    prompt_file: "defaults/prompts/dev.md"
+    skills:
+      - inject: ["posting-contract"]
+      - discover: ["git-pr-workflow", "complexity"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
+
+  context:
+    model: "${llms.deepseek-v4_1-flash}"
+    role: "Read-only context collector — gathers and compiles codebase facts for other agents."
+    temperature: 0.1
+    reasoning_effort: "none"
+    prompt_file: "defaults/prompts/context.md"
+    skills:
+      - inject: ["call-agent", "posting-contract", "context-research"]
+      - discover: ["complexity"]
+    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+
+  review:
+    model: "${llms.glm-5_3-flash}"
+    role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
+    temperature: 0.4
+    prompt_file: "defaults/prompts/review.md"
+    skills:
+      - inject: ["posting-contract", "plan-review"]
+      - discover: ["retrospective", "complexity"]
+    tools: ["terminal", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+
+  po:
+    model: "${llms.deepseek-v4_1-flash}"
+    role: "Product owner — triages and refines issues into actionable specs; never modifies code."
+    prompt_file: "defaults/prompts/po.md"
+    skills:
+      - inject: ["call-agent", "posting-contract", "issue-refinement"]
+      - discover: ["complexity"]
+    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
