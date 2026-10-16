@@ -102,10 +102,12 @@ _FINALIZE_PROMPT = (
     "markdown text of this turn, then call the `finalize` tool with your "
     "routing decision.\n\n"
     "{sections}\n\n"
-    "Call `finalize` with `route.status` ('advance' to route on, 'loop' to "
-    "repeat this step, 'hold' to wait for a human), plus `route.agent` when you "
-    "are explicitly overriding the workflow's next step, `route.pin`, and "
-    "`route.branch`/`route.complexity`/`route.reason` when they apply. Put no "
+    "Call `finalize` with `route.appreciation` ('approved' when the work meets "
+    "this step's goal, 'rejected' when it does not, 'hold' when a human must "
+    "decide), plus `route.hold_kind` when holding, `route.required_agent` when "
+    "an explicit agent must run at the routed step, and "
+    "`route.round`/`route.note`/`route.complexity`/`route.pin` when they apply. "
+    "Where the workflow goes next is engine topology, never your choice. Put no "
     "report prose in the tool arguments."
 )
 
@@ -313,7 +315,7 @@ class InProcessAgentHost:
                 log.warning("[phase:agent] finalize turn failed: %s", error)
                 return
             turn_text = _finalize_turn_text(conversation)
-            route = _finalize_route(conversation) or RouteDecision(status="hold")
+            route = _finalize_route(conversation) or RouteDecision(appreciation="hold")
             try:
                 handler.handle(route, turn_text)
             except FinalizeToolError as error:
@@ -378,6 +380,11 @@ def _turn_outcome_payload(conversation: Any, state: Any) -> dict[str, Any] | Non
         # target then overrides the state-derived target (issue #876).
         fallback = _state_turn_outcome_fields(state) or {}
         return {**fallback, **direct, **_handoff_outcome_fields(handoff)}
+    if getattr(conversation, _FINALIZE_BODY_ATTR, None) is not None:
+        # A step that declares an ``output:`` shape (issue #973) routes on the
+        # typed ``finalize`` route, which the tool recorded into the run's
+        # workflow state; there is no ``finish`` payload to key off.
+        return _state_turn_outcome_fields(state)
     if _report_payload(conversation) is None:
         return None
     return _state_turn_outcome_fields(state)

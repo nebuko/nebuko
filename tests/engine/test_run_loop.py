@@ -890,7 +890,8 @@ class TestScriptChainSharesOneWorkspace:
 
         outcome = engine.run()
 
-        assert outcome.routing.status == "terminate"
+        assert outcome.turn_outcome.status is TurnStatus.COMPLETED
+        assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
         assert "step_one command succeeded" in outcome.posted_body
 
     def test_the_chain_resolves_from_the_posted_body_not_the_thread(

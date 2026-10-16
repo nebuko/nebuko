@@ -5,7 +5,7 @@ from .finalize_tool import (
     FinalizeObservation,
     FinalizeTool,
     route_from_action,
-    route_to_dispatch,
+    route_to_turn_outcome,
 )
 
 __all__ = [
@@ -15,5 +15,5 @@ __all__ = [
     "FinalizeObservation",
     "FinalizeTool",
     "route_from_action",
-    "route_to_dispatch",
+    "route_to_turn_outcome",
 ]

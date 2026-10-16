@@ -19,7 +19,7 @@ steps:
       Analysis turn: a human issue or request just arrived.
       - Decide what context @@context must collect (files, docs, facts).
       - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
-      - End the turn with `finalize(route={status: 'advance', complexity: …})` on the same turn as your report. Do not plan yet.
+      - End the turn with `finalize(route={appreciation: 'approved', complexity: …})` on the same turn as your report. Do not plan yet.
     next: context
     output:
       fields:
@@ -41,7 +41,7 @@ steps:
   - name: plan
     agent: architect
     prompt: |
-      Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact (or revise it if your context has a `## Human Gate Decision`), then end with `finalize(route={status: 'advance', complexity: …})` on the same turn. Never `hold` on this gated step.
+      Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact (or revise it if your context has a `## Human Gate Decision`), then end with `finalize(route={appreciation: 'approved', complexity: …})` on the same turn. Never `hold` on this gated step.
     next: implement
     human_gate: true
     conditions:

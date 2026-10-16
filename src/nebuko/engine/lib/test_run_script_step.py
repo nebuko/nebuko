@@ -61,8 +61,8 @@ class TestResolveNextScriptMarker:
         assert result.kind is RouteKind.RUN_SCRIPT
         assert result.task == ""
         assert result.step == "run-tests"
-        assert result.script["path"] == "scripts/test.sh"
-        assert result.script["args_str"] == "--unit"
+        assert result.script["command"] == "scripts/test.sh"
+        assert result.script["args"] == '["--unit"]'
         assert result.script["timeout_minutes"] == 15
 
     def test_agent_successor_unaffected(self):
@@ -92,8 +92,8 @@ class TestResolveNextScriptMarker:
         _, workflows_dir = _make_dirs(yaml)
         result = resolve_next_from_workflow("default", "a", workflows_dir)
         assert result.kind is RouteKind.RUN_SCRIPT
-        assert result.script["path"] == "ci/run.sh"
-        assert result.script["args_str"] == ""
+        assert result.script["command"] == "ci/run.sh"
+        assert result.script["args"] == "[]"
         assert result.script["timeout_minutes"] is None
 
 

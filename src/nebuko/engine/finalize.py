@@ -301,13 +301,19 @@ class AgentReport(BaseModel):
 
 
 class RouteDecision(BaseModel):
-    """The routing decision carried by the terminal ``finalize`` call."""
+    """The routing decision carried by the terminal ``finalize`` call.
 
-    status: Literal["advance", "loop", "hold"] = "advance"
-    agent: Optional[str] = None
+    The factual turn-outcome vocabulary (issue #964): the agent reports what
+    happened and the engine derives the route from the workflow topology, so
+    there is no navigation intent (``advance``/``loop``) here.
+    """
+
+    appreciation: Literal["approved", "rejected", "hold"] = "hold"
+    hold_kind: Optional[Literal["awaiting_approval", "awaiting_input"]] = None
+    required_agent: Optional[str] = None
+    round: Optional[int] = None
+    note: Optional[str] = None
     complexity: Optional[str] = None
-    branch: Optional[str] = None
-    reason: Optional[str] = None
     #: Payload parity with ``dispatch_next``: a ``finalize`` route must be able
     #: to pin the step's comment for verbatim downstream injection.
     pin: bool = False
@@ -348,7 +354,7 @@ class RunTerminator:
         self.renderer = renderer or OutputRenderer(contract)
         self._post = post or (lambda body: None)
         self._apply_route = apply_route or (lambda route: None)
-        self._default = default or RouteDecision(status="hold")
+        self._default = default or RouteDecision(appreciation="hold")
 
     def finalize(self, route: RouteDecision, turn_text: str) -> AgentReport:
         """Gate the terminal emission and return the harvested report.

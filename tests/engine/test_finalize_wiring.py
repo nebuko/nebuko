@@ -17,6 +17,7 @@ import pytest
 
 from nebuko.engine.agent_host import (
     _FINALIZE_BODY_ATTR,
+    _FINALIZE_PROMPT,
     _REPORT_OFFSET_ATTR,
     _REPORT_PAYLOAD_ATTR,
     _REPORT_PROMPT,
@@ -33,6 +34,8 @@ from nebuko.engine.finalize import (
     RunTerminator,
     step_output_contract,
 )
+
+from workflow_state import Appreciation
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_FILE = REPO_ROOT / ".nebuko" / "workflows" / "default-with-output.yaml"
@@ -80,21 +83,41 @@ class TestFinalizeToolRegistration:
 
     def test_finalize_action_records_the_typed_route(self) -> None:
         from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
-            get_recorded_dispatch,
+            get_recorded_turn_outcome,
         )
         from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="c-route")[0]
         action = tool.action_from_arguments(
-            {"route": {"status": "advance", "agent": "review", "pin": True}}
+            {"route": {"appreciation": "approved", "required_agent": "review"}}
         )
         tool.executor(action)
 
-        dispatch = get_recorded_dispatch("c-route")
-        assert dispatch is not None
-        assert dispatch.status == "advance"
-        assert dispatch.task_hint == "review"
-        assert dispatch.pin is True
+        outcome = get_recorded_turn_outcome("c-route")
+        assert outcome is not None
+        assert outcome.appreciation is Appreciation.APPROVED
+        assert outcome.required_agent == "review"
+
+
+class TestFinalizePromptTeachesTheTypedSchema:
+    """The finalize prompt is agent-facing, so it must teach the live schema.
+
+    A prompt naming deleted fields (``status``/``branch``/``reason``/``loop``)
+    makes the model emit a route the tool rejects, so the terminal gate never
+    records a verdict (issue #964).
+    """
+
+    def test_prompt_names_the_typed_fields(self) -> None:
+        for field in ("appreciation", "hold_kind", "required_agent", "note"):
+            assert field in _FINALIZE_PROMPT
+
+    def test_prompt_names_every_verdict(self) -> None:
+        for verdict in ("approved", "rejected", "hold"):
+            assert verdict in _FINALIZE_PROMPT
+
+    def test_prompt_teaches_no_deleted_field(self) -> None:
+        for legacy in ("status", "branch", "reason", "loop"):
+            assert legacy not in _FINALIZE_PROMPT
 
 
 class TestFinalizeToolHandler:
@@ -106,7 +129,7 @@ class TestFinalizeToolHandler:
     def test_renders_the_posted_comment_on_a_valid_answer(self) -> None:
         handler, posted = self._handler()
 
-        report = handler.handle(RouteDecision(status="advance"), _answer())
+        report = handler.handle(RouteDecision(appreciation="approved"), _answer())
 
         assert report.title == "Wired the format"
         assert report.sections["changes"] == "- a.py"
@@ -288,7 +311,7 @@ def _host_for(
     *,
     latest_answer: str,
     step_output: str | None,
-    state_dispatch: dict[str, Any] | None = None,
+    state_turn_outcome: dict[str, Any] | None = None,
 ) -> InProcessAgentHost:
     def _run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
         return conversation
@@ -302,8 +325,8 @@ def _host_for(
             "step": "s",
             "agent": "dev",
         }
-        if state_dispatch is not None:
-            state["dispatch"] = state_dispatch
+        if state_turn_outcome is not None:
+            state["turn_outcome"] = state_turn_outcome
         Path("workflow_state.json").write_text(json.dumps(state), encoding="utf-8")
 
     pipeline = SimpleNamespace(
@@ -324,7 +347,7 @@ class TestFinalizeTurn:
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         conversation = _FinalizeConversation(
-            turns=[[_finalize_event(_answer(), {"status": "advance"})]]
+            turns=[[_finalize_event(_answer(), {"appreciation": "approved"})]]
         )
         host = _host_for(
             repo_root,
@@ -353,7 +376,7 @@ class TestFinalizeTurn:
             "call_agent": object(),
         }
         conversation = _FinalizeConversation(
-            turns=[[_finalize_event(_answer(), {"status": "advance"})]], tools=tools
+            turns=[[_finalize_event(_answer(), {"appreciation": "approved"})]], tools=tools
         )
         host = _host_for(
             repo_root,
@@ -372,11 +395,11 @@ class TestFinalizeTurn:
         _write_entry_point(repo_root)
         conversation = _FinalizeConversation(
             turns=[
-                [_finalize_event("# headline only\n", {"status": "advance"})],
+                [_finalize_event("# headline only\n", {"appreciation": "approved"})],
                 [
                     _finalize_event(
                         "# headline\n\n<!-- nebuko:section changes -->\n- a.py\n",
-                        {"status": "advance"},
+                        {"appreciation": "approved"},
                     )
                 ],
             ]
@@ -415,7 +438,7 @@ class TestFinalizeTurn:
             turns=[
                 [
                     _finalize_event(
-                        _answer(), {"status": "advance", "agent": "review", "pin": True}
+                        _answer(), {"appreciation": "approved", "required_agent": "review"}
                     )
                 ]
             ]
@@ -425,20 +448,17 @@ class TestFinalizeTurn:
             conversation,
             latest_answer="",
             step_output=STEP_OUTPUT_JSON,
-            state_dispatch={
-                "status": "advance",
-                "task_hint": "review",
-                "complexity": "",
-                "branch": None,
-                "pin": True,
-                "reason": None,
+            state_turn_outcome={
+                "status": "completed",
+                "appreciation": "approved",
+                "required_agent": "review",
             },
         )
 
         result = host.run("prompt")
 
-        assert result["dispatch"]["status"] == "advance"
-        assert result["dispatch"]["agent"] == "review"
+        assert result["turn_outcome"]["appreciation"] == "approved"
+        assert result["turn_outcome"]["required_agent"] == "review"
 
     def test_the_finalize_turn_reads_the_turn_text_and_route(
         self, tmp_path: Path
@@ -447,12 +467,16 @@ class TestFinalizeTurn:
 
         conversation = _FinalizeConversation(turns=[])
         conversation.state.events = [
-            _finalize_event(_answer(), {"status": "hold", "reason": "need input"})
+            _finalize_event(
+                _answer(),
+                {"appreciation": "hold", "hold_kind": "awaiting_input", "note": "need input"},
+            )
         ]
         setattr(conversation, _REPORT_OFFSET_ATTR, 0)
 
         assert _finalize_turn_text(conversation).startswith("# Wired the format")
         route = _finalize_route(conversation)
         assert route is not None
-        assert route.status == "hold"
-        assert route.reason == "need input"
+        assert route.appreciation == "hold"
+        assert route.hold_kind == "awaiting_input"
+        assert route.note == "need input"
