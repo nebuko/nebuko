@@ -34,6 +34,7 @@ class GitTagRefResolver(ReleaseRefResolver):
         self._repo = repo
         self._runner = runner or _run
 
+    # @stub-protected
     def latest(self) -> str:
         try:
             result = self._runner(
@@ -54,6 +55,7 @@ class StaticRefResolver(ReleaseRefResolver):
     def __init__(self, ref: str) -> None:
         self._ref = ref
 
+    # @stub-protected
     def latest(self) -> str:
         return self._ref
 

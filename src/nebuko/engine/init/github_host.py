@@ -24,6 +24,13 @@ REQUIRED_SCOPES = ("workflow",)
 REMEDIATION = "gh auth refresh -s workflow"
 
 
+class _NoActiveAccount:
+    """Sentinel: ``gh`` reports no active account for the host (logged out)."""
+
+
+_NO_ACTIVE_ACCOUNT = _NoActiveAccount()
+
+
 def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
     return subprocess.run(args, check=False, **kwargs)
 
@@ -36,11 +43,17 @@ class GitHubHost(SetupHost):
 
     # ── preflight ────────────────────────────────────────────────────────────
 
+    # @stub-protected
     def preflight(self, target: SetupTarget) -> PreflightReport:
         status = self._run(["gh", "auth", "status", "--json", "hosts"], check=False)
         if status.returncode != 0:
             return PreflightReport(ok=False, missing_scopes=(), remediation="gh auth login")
         scopes = _scopes_from_status(status.stdout, target.host)
+        if scopes is _NO_ACTIVE_ACCOUNT:
+            # `gh auth status --json hosts` exits 0 with an empty host map when
+            # no token is present, so this is the logged-out case, not "the
+            # token reports no scopes".
+            return PreflightReport(ok=False, missing_scopes=(), remediation="gh auth login")
         if scopes is None:
             scopes = self._scopes_from_headers()
         if scopes is None:
@@ -64,10 +77,12 @@ class GitHubHost(SetupHost):
 
     # ── repository state ─────────────────────────────────────────────────────
 
+    # @stub-protected
     def app_installed(self, target: SetupTarget) -> bool:
         """Always ``False`` until the Nebuko GitHub App ships (PAT mode today)."""
         return False
 
+    # @stub-protected
     def existing_paths(self, target: SetupTarget, paths: Sequence[str]) -> set[str]:
         found: set[str] = set()
         for path in paths:
@@ -81,6 +96,7 @@ class GitHubHost(SetupHost):
 
     # ── pull request ─────────────────────────────────────────────────────────
 
+    # @stub-protected
     def open_pr(
         self,
         target: SetupTarget,
@@ -170,6 +186,7 @@ class GitHubHost(SetupHost):
 
     # ── secrets ──────────────────────────────────────────────────────────────
 
+    # @stub-protected
     def set_secret(self, target: SetupTarget, name: str, value: str) -> None:
         args = ["gh", "secret", "set", name]
         if target.org:
@@ -210,8 +227,13 @@ class GitHubHost(SetupHost):
         return result
 
 
-def _scopes_from_status(stdout: str, host: str) -> set[str] | None:
-    """The active account's scopes for ``host``, or ``None`` when unreported."""
+def _scopes_from_status(stdout: str, host: str) -> set[str] | None | _NoActiveAccount:
+    """The active account's scopes for ``host``.
+
+    ``None`` means an active account exists but reports no scope list
+    (fine-grained PAT / app token); ``_NO_ACTIVE_ACCOUNT`` means ``gh`` has no
+    active account for this host at all.
+    """
     try:
         payload = json.loads(stdout)
     except (TypeError, ValueError):
@@ -224,4 +246,4 @@ def _scopes_from_status(stdout: str, host: str) -> set[str] | None:
         if raw:
             return {scope.strip() for scope in str(raw).split(",") if scope.strip()}
         return None
-    return None
+    return _NO_ACTIVE_ACCOUNT

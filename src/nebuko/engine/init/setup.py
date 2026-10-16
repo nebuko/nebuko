@@ -49,6 +49,7 @@ class SetupContext:
     host: SetupHost
 
 
+# @stub-protected
 def build_setup(
     *,
     pin_ref: str | None,
@@ -61,6 +62,7 @@ def build_setup(
     return SetupContext(source=source, refs=refs, host=GitHubHost())
 
 
+# @stub-protected
 def render_files(answers: InitAnswers, source: TemplateSource) -> GeneratedFiles:
     """Fetch the provider config and render the caller workflow."""
     agent_config = source.fetch(answers.provider.template_path, answers.pin_ref)
@@ -87,6 +89,7 @@ def secret_names(provider: ProviderProfile) -> tuple[str, ...]:
     return (*provider.secret_names, "GH_PAT")
 
 
+# @stub-protected
 def run_init(
     answers: InitAnswers,
     source: TemplateSource,

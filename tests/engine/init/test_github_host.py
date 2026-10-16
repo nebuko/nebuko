@@ -110,6 +110,16 @@ def test_preflight_reports_a_missing_login():
     assert report.remediation == "gh auth login"
 
 
+def test_preflight_reports_a_missing_login_when_no_host_is_active():
+    # `gh auth status --json hosts` exits 0 with an empty host map when no token
+    # is present, so an empty payload must not be read as "scopes unreported".
+    runner = FakeRunner([("auth status", _completed(json.dumps({"hosts": {}})))])
+    report = GitHubHost(runner=runner).preflight(TARGET)
+    assert not report.ok
+    assert report.missing_scopes == ()
+    assert report.remediation == "gh auth login"
+
+
 # ── secrets ──────────────────────────────────────────────────────────────────
 
 

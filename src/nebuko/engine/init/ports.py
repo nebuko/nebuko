@@ -30,6 +30,7 @@ class SetupTarget:
     repo: str
     org: str | None = None  # org-level secret target; None = repo-level
 
+    # @stub-protected
     @property
     def slug(self) -> str:
         return f"{self.owner}/{self.repo}"
@@ -78,6 +79,7 @@ class ProviderProfile(ABC):
 class TemplateSource(ABC):
     """Reads a repository file at a given ref."""
 
+    # @stub-protected
     @abstractmethod
     def fetch(self, path: str, ref: str) -> str: ...
 
@@ -85,6 +87,7 @@ class TemplateSource(ABC):
 class ReleaseRefResolver(ABC):
     """Resolves the release tag the generated workflow pins."""
 
+    # @stub-protected
     @abstractmethod
     def latest(self) -> str: ...
 
@@ -92,15 +95,19 @@ class ReleaseRefResolver(ABC):
 class SetupHost(ABC):
     """The forge operations ``init`` needs, all through the client's ``gh``."""
 
+    # @stub-protected
     @abstractmethod
     def preflight(self, target: SetupTarget) -> PreflightReport: ...
 
+    # @stub-protected
     @abstractmethod
     def app_installed(self, target: SetupTarget) -> bool: ...
 
+    # @stub-protected
     @abstractmethod
     def existing_paths(self, target: SetupTarget, paths: Sequence[str]) -> set[str]: ...
 
+    # @stub-protected
     @abstractmethod
     def open_pr(
         self,
@@ -111,6 +118,7 @@ class SetupHost(ABC):
         files: GeneratedFiles,
     ) -> str: ...
 
+    # @stub-protected
     @abstractmethod
     def set_secret(self, target: SetupTarget, name: str, value: str) -> None: ...
 
@@ -118,4 +126,5 @@ class SetupHost(ABC):
 class Prompter(Protocol):
     """The one prompt ``run_init`` needs; ``InitPrompter`` implements it."""
 
+    # @stub-protected
     def confirm(self, label: str, default: bool = False) -> bool: ...

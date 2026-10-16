@@ -33,6 +33,7 @@ class HttpTemplateSource(TemplateSource):
         self._base_url = base_url.rstrip("/")
         self._opener = opener or _urlopen
 
+    # @stub-protected
     def fetch(self, path: str, ref: str) -> str:
         url = f"{self._base_url}/{ref}/{path.lstrip('/')}"
         try:
@@ -47,6 +48,7 @@ class FileTemplateSource(TemplateSource):
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
 
+    # @stub-protected
     def fetch(self, path: str, ref: str) -> str:
         target = self._root / path
         try:

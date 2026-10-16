@@ -56,11 +56,13 @@ class InitPrompter:
         self._input = input_fn or input
         self._secret = secret_fn or getpass.getpass
 
+    # @stub-protected
     def ask_text(self, label: str, default: str = "") -> str:
         suffix = f" [{default}]" if default else ""
         answer = self._input(f"{label}{suffix}: ").strip()
         return answer or default
 
+    # @stub-protected
     def ask_choice(self, label: str, options: Sequence[str], default: str = "") -> str:
         print(label)
         for index, option in enumerate(options, start=1):
@@ -75,9 +77,11 @@ class InitPrompter:
                 return options[int(answer) - 1]
             print(f"Please answer with a number between 1 and {len(options)}.")
 
+    # @stub-protected
     def ask_secret(self, name: str) -> str:
         return self._secret(f"{name}: ")
 
+    # @stub-protected
     def confirm(self, label: str, default: bool = False) -> bool:
         hint = "Y/n" if default else "y/N"
         answer = self._input(f"{label} [{hint}]: ").strip().lower()
@@ -100,6 +104,7 @@ class NonInteractivePrompter(InitPrompter):
         return False
 
 
+# @stub-protected
 def main(argv: Sequence[str] | None = None) -> int:
     """Collect the answers and run the setup flow; return the exit code."""
     parser = _build_parser()

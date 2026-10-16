@@ -40,6 +40,7 @@ PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
 DEFAULT_PROVIDER_NAME = PROVIDER_PROFILES[0].name
 
 
+# @stub-protected
 def provider_by_name(name: str) -> ProviderProfile:
     """Return the profile called ``name``; raise ``ValueError`` when unknown."""
     for profile in PROVIDER_PROFILES:
