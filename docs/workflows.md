@@ -349,9 +349,11 @@ next. The chain ends at the first step that is not a `script` step (an `agent`
 step ends the invocation exactly as before), and an unresolved or disabled
 successor simply ends the chain with the last step's outcome.
 
-This is what makes a `fetch_base` → `git_diff` chain work: the fetch
-materializes `origin/main` in the checkout and the diff resolves it, instead of
-dying with `fatal: ambiguous argument 'origin/main'`.
+This is what makes a fetch-then-diff chain work: the fetch materializes
+`origin/main` in the checkout and the diff resolves it, instead of dying with
+`fatal: ambiguous argument 'origin/main'`. (The shipped example workflow no
+longer relies on it — it runs fetch and diff as one `sh -c` step — but the
+shared checkout remains the guarantee for any other multi-step setup.)
 
 ---
 

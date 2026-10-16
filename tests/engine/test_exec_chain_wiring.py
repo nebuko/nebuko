@@ -8,16 +8,12 @@ addressable by a downstream ``inputs: [...]`` binding — when it is actually
 were unreachable (linter ``L2-unreachable-step``), never executed, and
 ``review``'s required inputs had nothing to bind to.
 
-These guards keep the chain structural: ``implement → fetch_base → git_diff →
-run_tests → review``. Since #957 ``fetch_base`` materializes the remote-tracking
-``origin/main`` a shallow, ref-pinned checkout never creates, so the diff cannot
-die with ``fatal: ambiguous argument 'origin/main'``.
-
-Since #974 the *engine*, not the workflow file, closes the second half of that
-gap: consecutive script steps run in one invocation over one checkout, so the
-ref ``fetch_base`` creates is still there when ``git_diff`` runs — even though
-by structure this had to be the same argument (see
-:class:`TestScriptChainSharesOneWorkspace`).
+These guards keep the chain structural: ``implement → git_diff → run_tests →
+review``. Since #957 the diff needs the remote-tracking ``origin/main`` a
+shallow, ref-pinned checkout never creates, so the step fetches it first; since
+#965 (issue #972) fetch and diff are one ``sh -c`` step, so the base ref can
+never be separated from the diff — not even by a chain break (#974's shared
+checkout for consecutive script steps is a bonus, not the guarantee).
 """
 
 from __future__ import annotations
@@ -39,24 +35,25 @@ def _steps() -> dict:
 
 
 class TestExecChainIsReachable:
-    def test_implement_hands_off_to_fetch_base(self):
-        assert _steps()["implement"].next == "fetch_base"
+    def test_implement_hands_off_to_git_diff(self):
+        assert _steps()["implement"].next == "git_diff"
 
-    def test_fetch_base_materializes_origin_main_before_the_diff(self):
-        """The checkout is shallow: ``origin/main`` must be fetched, not assumed."""
-        fetch_base = _steps()["fetch_base"]
-        assert fetch_base.script is not None
-        assert fetch_base.script.command == "git"
-        args = fetch_base.script.args
-        assert args[0] == "fetch"
-        assert "main:refs/remotes/origin/main" in args
-        assert fetch_base.next == "git_diff"
+    def test_git_diff_fetches_the_base_ref_then_diffs_in_one_step(self):
+        """The checkout is shallow: ``origin/main`` must be fetched, not assumed.
 
-    def test_git_diff_is_a_script_step_that_continues_to_run_tests(self):
+        Fetch and diff are one ``sh -c`` step (issue #972), so the base ref can
+        never be separated from the diff by a chain break.
+        """
         git_diff = _steps()["git_diff"]
         assert git_diff.script is not None
-        assert git_diff.script.command == "git"
-        assert git_diff.script.args[:2] == ["diff", "origin/main"]
+        assert git_diff.script.command == "sh"
+        args = git_diff.script.args
+        assert args[0] == "-c"
+        script = args[1]
+        assert "main:refs/remotes/origin/main" in script
+        assert script.index("main:refs/remotes/origin/main") < script.index(
+            "git diff origin/main HEAD"
+        )
         assert git_diff.next == "run_tests"
 
     def test_run_tests_is_a_script_step_that_continues_to_review(self):
