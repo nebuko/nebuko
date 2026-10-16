@@ -129,6 +129,61 @@ def test_preflight_reports_a_missing_login_when_no_host_is_active():
     assert report.remediation == "gh auth login"
 
 
+def test_preflight_falls_back_to_the_api_when_the_status_json_is_unsupported():
+    # gh 2.77-2.79 print the modern `auth status` output but reject the `hosts`
+    # JSON field, so the status probe fails for a logged-in client.
+    runner = FakeRunner(
+        [
+            ("auth status", _completed(returncode=1, stderr='Unknown JSON field: "hosts"')),
+            ("api -i user", _completed("HTTP/2.0 200 OK\nX-OAuth-Scopes: repo, workflow\n\n{}")),
+        ]
+    )
+    report = GitHubHost(runner=runner).preflight(TARGET)
+    assert report.ok
+    assert report.missing_scopes == ()
+
+
+def test_preflight_reports_the_missing_workflow_scope_from_the_api_fallback():
+    runner = FakeRunner(
+        [
+            ("auth status", _completed(returncode=1, stderr='Unknown JSON field: "hosts"')),
+            (
+                "api -i user",
+                _completed("HTTP/2.0 200 OK\nX-OAuth-Scopes: gist, read:org, repo\n\n{}"),
+            ),
+        ]
+    )
+    report = GitHubHost(runner=runner).preflight(TARGET)
+    assert not report.ok
+    assert report.missing_scopes == ("workflow",)
+    assert report.remediation == "gh auth refresh -s workflow"
+
+
+def test_preflight_reports_a_missing_login_when_the_api_fallback_also_fails():
+    runner = FakeRunner(
+        [
+            ("auth status", _completed(returncode=1, stderr='Unknown JSON field: "hosts"')),
+            ("api -i user", _completed(returncode=1, stderr="gh: authentication required")),
+        ]
+    )
+    report = GitHubHost(runner=runner).preflight(TARGET)
+    assert not report.ok
+    assert report.missing_scopes == ()
+    assert report.remediation == "gh auth login"
+
+
+def test_preflight_does_not_block_when_the_api_fallback_reports_no_scopes():
+    runner = FakeRunner(
+        [
+            ("auth status", _completed(returncode=1, stderr='Unknown JSON field: "hosts"')),
+            ("api -i user", _completed("HTTP/2.0 200 OK\n\n{}")),
+        ]
+    )
+    report = GitHubHost(runner=runner).preflight(TARGET)
+    assert report.ok
+    assert report.missing_scopes == ()
+
+
 # ── secrets ──────────────────────────────────────────────────────────────────
 
 

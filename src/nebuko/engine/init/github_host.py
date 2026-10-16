@@ -32,6 +32,13 @@ class _NoActiveAccount:
 _NO_ACTIVE_ACCOUNT = _NoActiveAccount()
 
 
+class _Unknown:
+    """Sentinel: the probe could not determine the token's scopes."""
+
+
+_UNKNOWN = _Unknown()
+
+
 def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
     return subprocess.run(args, check=False, **kwargs)
 
@@ -52,16 +59,30 @@ class GitHubHost(SetupHost):
     # @stub-protected
     def preflight(self, target: SetupTarget) -> PreflightReport:
         status = self._run(["gh", "auth", "status", "--json", "hosts"], check=False)
-        if status.returncode != 0:
-            return PreflightReport(ok=False, missing_scopes=(), remediation="gh auth login")
-        scopes = _scopes_from_status(status.stdout, target.host)
-        if scopes is _NO_ACTIVE_ACCOUNT:
+        scopes = (
+            _scopes_from_status(status.stdout, target.host) if status.returncode == 0 else _UNKNOWN
+        )
+        if scopes is _UNKNOWN:
+            # `gh auth status --json hosts` needs the `hosts` field, which gh
+            # 2.77-2.79 reject ("Unknown JSON field"); probe the API instead of
+            # misreporting a logged-in client as logged out.
+            scopes = self._scopes_from_headers()
+            if scopes is _UNKNOWN:
+                return PreflightReport(ok=False, missing_scopes=(), remediation="gh auth login")
+        elif scopes is _NO_ACTIVE_ACCOUNT:
             # `gh auth status --json hosts` exits 0 with an empty host map when
             # no token is present, so this is the logged-out case, not "the
             # token reports no scopes".
             return PreflightReport(ok=False, missing_scopes=(), remediation="gh auth login")
-        if scopes is None:
+        elif scopes is None:
+            # An active account that reports no scope list: consult the API,
+            # but a failed lookup here must not be read as "logged out".
             scopes = self._scopes_from_headers()
+            if scopes is _UNKNOWN:
+                scopes = None
+        return self._report_for(scopes)
+
+    def _report_for(self, scopes: set[str] | None) -> PreflightReport:
         if scopes is None:
             # Fine-grained PATs and app tokens carry no scope list: there is
             # nothing to verify, so do not block the client on a guess.
@@ -71,15 +92,11 @@ class GitHubHost(SetupHost):
             return PreflightReport(ok=False, missing_scopes=missing, remediation=REMEDIATION)
         return PreflightReport(ok=True, missing_scopes=(), remediation="")
 
-    def _scopes_from_headers(self) -> set[str] | None:
+    def _scopes_from_headers(self) -> set[str] | None | _Unknown:
         result = self._run(["gh", "api", "-i", "user"], check=False)
         if result.returncode != 0:
-            return None
-        for line in result.stdout.splitlines():
-            name, _, value = line.partition(":")
-            if name.strip().lower() == "x-oauth-scopes":
-                return {scope.strip() for scope in value.split(",") if scope.strip()}
-        return None
+            return _UNKNOWN
+        return _parse_scopes_header(result.stdout)
 
     # ── repository state ─────────────────────────────────────────────────────
 
@@ -233,18 +250,35 @@ class GitHubHost(SetupHost):
         return result
 
 
-def _scopes_from_status(stdout: str, host: str) -> set[str] | None | _NoActiveAccount:
+def _parse_scopes_header(text: str) -> set[str] | None:
+    """The ``X-OAuth-Scopes`` value of a ``gh api -i`` response, if present."""
+    for line in text.splitlines():
+        name, _, value = line.partition(":")
+        if name.strip().lower() == "x-oauth-scopes":
+            return {scope.strip() for scope in value.split(",") if scope.strip()}
+    return None
+
+
+def _scopes_from_status(
+    stdout: str, host: str
+) -> set[str] | None | _NoActiveAccount | _Unknown:
     """The active account's scopes for ``host``.
 
     ``None`` means an active account exists but reports no scope list
     (fine-grained PAT / app token); ``_NO_ACTIVE_ACCOUNT`` means ``gh`` has no
-    active account for this host at all.
+    active account for this host at all; ``_UNKNOWN`` means the payload is not
+    the shape this gh release emits (older releases reject ``--json hosts``).
     """
     try:
         payload = json.loads(stdout)
     except (TypeError, ValueError):
-        return None
-    accounts = (payload.get("hosts") or {}).get(host) or []
+        return _UNKNOWN
+    if not isinstance(payload, dict):
+        return _UNKNOWN
+    hosts = payload.get("hosts")
+    if not isinstance(hosts, dict):
+        return _UNKNOWN
+    accounts = hosts.get(host) or []
     for account in accounts:
         if not account.get("active"):
             continue
