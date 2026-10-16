@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["checkout_root", "config_dir", "config_path", "user_dir"]
+__all__ = ["checkout_root", "config_dir", "config_path", "user_dir", "workflow_dirs"]
 
 
 def checkout_root() -> Path:
@@ -52,6 +52,30 @@ def config_dir(kind: str, env_var: str | None = None) -> str:
         if candidate.is_dir():
             return str(candidate)
     return str(checkout_root() / "defaults" / kind)
+
+
+# @stub-protected
+def workflow_dirs() -> tuple[str, str | None]:
+    """Workflow search roots as ``(shipped, local)``, for per-file lookup.
+
+    :func:`config_dir` returns a single directory, so a repo-local
+    ``.nebuko/workflows/`` would hide the shipped ``defaults/workflows/``
+    entirely (issue #987). Callers that resolve a workflow *by name* need both
+    layers, most-specific first — the same pair ``RunLoop._workflow_dirs``
+    builds from :class:`nebuko.engine.paths.NebukoPaths`.
+
+    Returns:
+        ``(shipped, local)``: the shipped directory (pinned by
+        ``WORKFLOWS_DIR`` when set) and the repo-local override directory, or
+        ``None`` when it is absent or identical to the shipped one.
+    """
+    shipped = os.environ.get("WORKFLOWS_DIR") or str(
+        checkout_root() / "defaults" / "workflows"
+    )
+    local = user_dir() / "workflows"
+    if local.is_dir() and local.resolve() != Path(shipped).resolve():
+        return shipped, str(local)
+    return shipped, None
 
 
 def config_path(name: str) -> str:
