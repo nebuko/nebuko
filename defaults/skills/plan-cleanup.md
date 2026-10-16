@@ -25,5 +25,5 @@ You are in plan-cleanup mode for a branch-mounted dynamic plan workflow (issue #
 
 ## Escalation Protocol
 
-If `tmp_impl/` does not exist (already cleaned) → confirm the working tree is clean, and if there is nothing to commit, simply push (if needed) and dispatch `status: "advance"`.
+If `tmp_impl/` does not exist (already cleaned) → confirm the working tree is clean, and if there is nothing to commit, simply push (if needed) and dispatch `appreciation="approved"`.
 If removing the directory would delete uncommitted work outside the scaffolding scope → stop and report the blocker clearly.

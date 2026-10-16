@@ -84,5 +84,26 @@ class TestPerformDispatchRecalls(unittest.TestCase):
         self.assertEqual(len(conv.sent_messages), 1)
 
 
+class TestDispatchRecallPromptTeachesTheTypedSchema(unittest.TestCase):
+    """The recall nudge is agent-facing, so it must teach the live tool schema.
+
+    A prompt naming deleted fields (``status``/``agent``/``reason``/``loop``)
+    makes the model emit a call the tool rejects, burning both recall attempts
+    and degrading the run to INCOMPLETE/NO_OUTCOME (issue #964).
+    """
+
+    def test_prompt_names_the_typed_fields(self):
+        for field in ("appreciation", "hold_kind", "note", "complexity"):
+            self.assertIn(field, DISPATCH_RECALL_PROMPT)
+
+    def test_prompt_names_every_verdict(self):
+        for verdict in ("approved", "rejected", "hold"):
+            self.assertIn(verdict, DISPATCH_RECALL_PROMPT)
+
+    def test_prompt_teaches_no_deleted_field(self):
+        for legacy in ("status:", "agent:", "reason:", "loop"):
+            self.assertNotIn(legacy, DISPATCH_RECALL_PROMPT)
+
+
 if __name__ == "__main__":
     unittest.main()
