@@ -55,10 +55,6 @@ WORDMARK = """
 GH_MISSING_MESSAGE = """\
 nebuko init: the GitHub CLI (gh) is required but was not found on PATH.
 Install it from https://cli.github.com and run `gh auth login`."""
-REVERT_SCOPES_HINT = """\
-If you added the `workflow` scope only for this setup, you can restore your
-gh token's previous scopes with:
-  gh auth refresh --remove-scopes workflow"""
 PAT_INSTRUCTIONS = """\
 A GitHub Personal Access Token is required (fine-grained, with Contents,
 Pull requests and Issues read/write on the target repository). Create one at
@@ -171,7 +167,6 @@ def _run(args: argparse.Namespace) -> int:
     outcome = run_init(answers, context.source, context.host, prompter)
     if outcome.code == EXIT_OK:
         print(next_steps_message(outcome.pr_url, target.slug))
-        print(REVERT_SCOPES_HINT)
     return outcome.code
 
 

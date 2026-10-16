@@ -162,16 +162,6 @@ def test_missing_workflow_scope_is_checked_before_the_secret_prompts(monkeypatch
     assert host.prs == []
 
 
-def test_success_prints_the_scope_revert_hint(monkeypatch, capsys):
-    host = FakeHost()
-    _wire(monkeypatch, host)
-    _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
-
-    assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 0
-
-    assert "gh auth refresh --remove-scopes workflow" in capsys.readouterr().out
-
-
 def test_success_prints_the_next_steps(monkeypatch, capsys):
     host = FakeHost()
     _wire(monkeypatch, host)
@@ -184,17 +174,6 @@ def test_success_prints_the_next_steps(monkeypatch, capsys):
     assert f"1. Review and merge the pull request: {PR_URL}" in out
     assert 'comment "@@dev Hello Nebuko!" on an issue in acme/widgets.' in out
     assert "Let's build something with Nebuko's agent teams" in out
-
-
-def test_the_next_steps_come_before_the_revert_hint(monkeypatch, capsys):
-    host = FakeHost()
-    _wire(monkeypatch, host)
-    _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
-
-    assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 0
-
-    out = capsys.readouterr().out
-    assert out.index("Next steps") < out.index("remove-scopes")
 
 
 def test_the_wordmark_is_printed_first(monkeypatch, capsys):
@@ -214,15 +193,6 @@ def test_the_wordmark_is_printed_before_the_gh_check(monkeypatch, capsys):
 
     assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 2
     assert capsys.readouterr().out.startswith(cli.WORDMARK)
-
-
-def test_no_revert_hint_when_the_run_fails(monkeypatch, capsys):
-    host = FakeHost(existing=(".nebuko/agents/agent-config.yaml",))
-    _wire(monkeypatch, host)
-    _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
-
-    assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 1
-    assert "remove-scopes" not in capsys.readouterr().out
 
 
 # ── gh availability ──────────────────────────────────────────────────────────

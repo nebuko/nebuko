@@ -91,10 +91,8 @@ and no GitHub App is involved. `init` needs the GitHub CLI (`gh`) on your
 missing. Pushing `.github/workflows/*` needs the `workflow`
 scope — `init` checks for it up front, before asking for any secret value, and
 tells you to run `gh auth refresh -s workflow` when it is missing. Once the
-setup succeeds it prints the command to restore your token's previous scopes
-(`gh auth refresh --remove-scopes workflow`), then the next steps: review and
-merge the pull request, and comment `@@dev Hello Nebuko!` on an issue in the
-target repository.
+setup succeeds it prints the next steps: review and merge the pull request, and
+comment `@@dev Hello Nebuko!` on an issue in the target repository.
 
 Release assets: `nebuko-linux-amd64`, `nebuko-macos-arm64`, `nebuko-macos-amd64`,
 `nebuko-windows-amd64.exe`.
