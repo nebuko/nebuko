@@ -534,6 +534,85 @@ class TestIsHumanGateHold(unittest.TestCase):
         self.assertIsNone(captured["function_call"])
 
 
+class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
+    """The gate check resolves workflows per file, not per directory (#987).
+
+    ``config_dir("workflows")`` returns the first existing *directory*, so a
+    repo-local ``.nebuko/workflows/`` used to hide the shipped
+    ``defaults/workflows/`` and silently disable every human gate.
+    """
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._repo = tempfile.mkdtemp()
+        os.chdir(self._repo)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        shutil.rmtree(self._repo, ignore_errors=True)
+
+    def _write_workflow(self, directory, name, steps_yaml):
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, f"{name}.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                f"name: {name}\n"
+                f'description: "test workflow"\n'
+                f"steps:\n{steps_yaml}"
+            )
+        return path
+
+    def test_local_workflow_does_not_hide_the_shipped_gated_step(self):
+        """Repro of #987: one local workflow must not disable the shipped gate."""
+        self._write_workflow(
+            os.path.join(self._repo, ".nebuko", "workflows"),
+            "my-custom",
+            "  - name: only\n    agent: dev\n    next: null\n",
+        )
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("WORKFLOWS_DIR", None)
+            result = apply_human_gate_intercept(_completed(), "default", "plan")
+        self.assertEqual(result, _gate_hold("plan"))
+
+    def test_local_workflow_does_not_hide_a_pinned_shipped_dir(self):
+        """A local override dir must not hide the WORKFLOWS_DIR layer either."""
+        shipped = os.path.join(self._repo, "shipped")
+        self._write_workflow(
+            shipped,
+            "gated",
+            "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+        )
+        self._write_workflow(
+            os.path.join(self._repo, ".nebuko", "workflows"),
+            "other",
+            "  - name: only\n    agent: dev\n    next: null\n",
+        )
+        with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": shipped}, clear=False):
+            result = apply_human_gate_intercept(_completed(), "gated", "implement")
+        self.assertEqual(result, _gate_hold("implement"))
+
+    def test_local_override_still_wins_over_the_shipped_file(self):
+        """Issue #529 precedence is preserved: the local file is the one read."""
+        self._write_workflow(
+            os.path.join(self._repo, "shipped"),
+            "gated",
+            "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
+        )
+        self._write_workflow(
+            os.path.join(self._repo, ".nebuko", "workflows"),
+            "gated",
+            "  - name: implement\n    agent: dev\n    next: review\n",
+        )
+        outcome = _completed()
+        with mock.patch.dict(
+            os.environ,
+            {"WORKFLOWS_DIR": os.path.join(self._repo, "shipped")},
+            clear=False,
+        ):
+            result = apply_human_gate_intercept(outcome, "gated", "implement")
+        self.assertEqual(result, outcome)
+
+
 class TestHumanGateRealWorkflowYaml(unittest.TestCase):
     """Regression against the real workflows/spec-driven-impl.yaml (issue #506).
 
