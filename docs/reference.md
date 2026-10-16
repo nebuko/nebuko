@@ -414,8 +414,10 @@ Variables the orchestrator sets/consumes per run:
 | `STEP_PROMPT_FILE` | `resolve_config` / `resolve_workflow` | Path to the step's standing instruction file (`steps[].prompt`). Empty when the step has no prompt. |
 | `CONFIG_COMPLEXITY` | `resolve_config` | Effective tier for this run (`low`/`medium`/`high`): an explicit dispatch `complexity`, else the step's `steps[].complexity`, else `medium`. Drives `agents.<name>.complexity_overrides.<tier>` and the tier temperature floor (issue #787). |
 | `RUN_SCRIPT` | `resolve_config` | `"true"` when the resolved step is a deterministic `script` step (no agent runs). |
-| `SCRIPT_PATH` | `resolve_config` | Repo-relative path of the script to run (from `script.path`). |
-| `SCRIPT_ARGS` | `resolve_config` | Space-joined argument string for the script (empty when none). |
+| `SCRIPT_PATH` | `resolve_config` | The step's `script.command` verbatim (executable or repo-relative script). |
+| `SCRIPT_ARGS` | `resolve_config` | JSON array of the step's `script.args` argv entries (empty array when none); decoded with `json.loads` at spawn. |
+| `SCRIPT_WORKING_DIR` | `resolve_config` | Repo-relative working directory for the script (from `script.working_dir`; empty → checkout root). |
+| `SCRIPT_ENV` | `resolve_config` | JSON object of extra environment variables (from `script.env`; empty object when none), overlaid on the engine environment. |
 | `SCRIPT_TIMEOUT_MINUTES` | `resolve_config` | Script timeout in minutes (empty → default 30). |
 | `PARENT_WORKFLOW` | `resolve_config` / `resolve_workflow` | Parent workflow name when the run is nested in a sub-workflow mount; empty at top level. Derived from the second-to-last `position` frame. |
 | `PARENT_WORKFLOW_STEP` | `resolve_config` | Step in the parent workflow that mounted a sub-workflow. |
