@@ -402,8 +402,13 @@ class TestResolverWithRemoteWorkflows:
     """Test resolve_workflow.py handles repo-based sub-workflow steps."""
 
     def _import_resolver(self):
+        # No reload: ``importlib.reload`` re-executes the module and rebinds
+        # ``RouteKind`` to a fresh class, which breaks the identity comparisons
+        # in every other module that imported the enum (issue #964). The tests
+        # below patch ``fetch_remote_workflow`` on the module, so the binding
+        # does not need refreshing.
         import resolve_workflow
-        importlib.reload(resolve_workflow)
+
         return resolve_workflow.resolve_workflow_routing
 
     def test_repo_step_triggers_fetch(self, tmp_path):
@@ -432,7 +437,6 @@ class TestResolverWithRemoteWorkflows:
         Path(mock_wf_path).write_text(mock_wf_content)
 
         import resolve_workflow as rw_mod
-        importlib.reload(rw_mod)
 
         with patch.object(rw_mod, "fetch_remote_workflow", return_value=mock_wf_path):
             result = resolve(
@@ -458,7 +462,6 @@ class TestResolverWithRemoteWorkflows:
         }))
 
         import resolve_workflow as rw_mod
-        importlib.reload(rw_mod)
 
         with patch.object(rw_mod, "fetch_remote_workflow", side_effect=RuntimeError("network error")):
             result = resolve(

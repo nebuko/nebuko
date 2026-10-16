@@ -40,6 +40,11 @@ def _state_body(state_json):
 def _state_json(*, history_len=1):
     from config import StepRef
     from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+    from workflow_state.sub_domains.turn_outcome.turn_outcome import (
+        Appreciation,
+        TurnOutcome,
+        TurnStatus,
+    )
     from workflow_state.workflow_state import WorkflowState
 
     state = WorkflowState(
@@ -49,7 +54,14 @@ def _state_json(*, history_len=1):
         agent="architect",
         position=[StepRef(workflow="default", step="plan")],
         history=[
-            HistoryEntry(step=f"step_{index}", agent="architect", summary=f"s{index}")
+            HistoryEntry(
+                step=f"step_{index}",
+                agent="architect",
+                summary=f"s{index}",
+                turn_outcome=TurnOutcome(
+                    status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED
+                ),
+            )
             for index in range(history_len)
         ],
     )

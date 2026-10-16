@@ -36,9 +36,9 @@ published a one-line lead-in).
    deliverable and the engine harvests and posts it (issues #822/#830).
 
 3. **`dispatch_next` fields are routing metadata.**
-   `status` / `branch` / `complexity` / `reason` carry the next-step decision.
-   Never put the deliverable in `reason` — it is one sentence of routing
-   justification. The engine reads these fields directly.
+   `appreciation` / `hold_kind` / `complexity` / `pin` carry the turn's verdict
+   and the next-step knobs. Never put the deliverable in `note` — it is one
+   sentence of justification. The engine reads these fields directly.
 
 4. **A standalone text answer is the fallback deliverable.**
    If the report turn cannot run (LLM error, no control call returned), the
@@ -54,14 +54,15 @@ published a one-line lead-in).
    also elicits the routing decision at run end. A decision-less end triggers a
    bounded recall, never a lost answer. Which decision
    is correct depends on the step:
-   - **On a `human_gate: true` step the completing dispatch is `advance`.**
-     The engine intercepts it and records the hold (`human_gate:<step>`) — that
-     interception **is** the gate. Emit the deliverable and `advance` together.
-     Never emit an explicit `hold` here: it would pause *before* the gate and
-     force a second, non-gate resume (the double-approval bug).
+   - **On a `human_gate: true` step the completing dispatch is
+     `appreciation='approved'`.** The engine intercepts it and records the hold
+     (`human_gate:<step>`) — that interception **is** the gate. Emit the
+     deliverable and the approval together. Never emit an explicit `hold` here:
+     it would pause *before* the gate and force a second, non-gate resume (the
+     double-approval bug).
    - **On a non-gated step awaiting a human**, an explicit
-     `dispatch_next(status='hold')` is correct (proposal, clarification, or
-     feedback request).
+     `dispatch_next(appreciation='hold', hold_kind='awaiting_input')` is correct
+     (proposal, clarification, or feedback request).
 
 6. **Collapse verbose detail behind `<details>`.**
    When a deliverable's detail would bury the decision, keep the decision-level
@@ -71,8 +72,11 @@ published a one-line lead-in).
    This matches the engine's `collapse_sections` primitive and keeps the issue
    thread readable (issue #866).
 
-7. **The engine appends the hand-off sentinel.**
-   Do **not** write the `AGENT_RUN_CONFIG` sentinel yourself: the engine renders it from typed state (your `dispatch_next` / `call_agent` fields) and appends it exactly once to the posted body (last payload wins). It is a durable **record** for cross-run consumers, not an agent emission requirement (issue #876).
+7. **The engine owns the hand-off record.**
+   Do **not** write an `AGENT_RUN_CONFIG` sentinel (or any other prose marker)
+   to signal routing: the engine reads your typed `dispatch_next` / `call_agent`
+   call and renders the durable workflow-state section itself. A sentinel in
+   your prose is ignored (issue #964).
 
 8. **Size is handled for you.**
    Long answers are automatically split into multiple comments (10k chars per
@@ -83,7 +87,7 @@ published a one-line lead-in).
 
 - Treating the work-loop `finish` message as the place for the report — it is
   ignored; the report turn is the answer channel.
-- Squeezing the deliverable into the `dispatch_next` `reason` field — the
+- Squeezing the deliverable into the `dispatch_next` `note` field — the
   arguments are routing metadata.
 - Ending the session with chatter ("I'll now finish…") after the real answer —
   on the fallback path that chatter becomes the posted comment.

@@ -52,7 +52,7 @@
       "WORKFLOW_STEP": null,
       "WORKFLOW_POSITION_PATH": null,
       "SKIP_AGENT": "true",
-      "REASON": "Bot comment without AGENT_RUN_CONFIG or dispatch"
+      "REASON": "Bot comment without a recorded turn outcome"
     },
     "guard": null,
     "prompt": {

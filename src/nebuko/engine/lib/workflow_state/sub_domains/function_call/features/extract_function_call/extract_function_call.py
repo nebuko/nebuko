@@ -4,15 +4,16 @@ from ...function_call import FunctionCall
 
 
 def extract_function_call(data: Optional[Dict[str, Any]]) -> Optional[FunctionCall]:
-    """Extract a FunctionCall from an AGENT_RUN_CONFIG payload dict.
+    """Extract a FunctionCall from a harvested tool-call payload dict.
 
-    The payload carries dispatch and function_call as sibling sections:
-        {"dispatch": {...}, "function_call": {"function": "call_agent", ...}}
-    Invalid payloads return None (invalid function calls must not corrupt
-    the dispatch path).
+    The payload carries the turn outcome and the function_call as sibling
+    sections:
+        {"turn_outcome": {...}, "function_call": {"function": "call_agent", ...}}
+    Invalid payloads return None (an invalid function call must not corrupt
+    the routing path).
 
     Args:
-        data: Parsed AGENT_RUN_CONFIG JSON payload.
+        data: Harvested tool-call payload dict.
 
     Returns:
         A validated FunctionCall, or None when absent/invalid.

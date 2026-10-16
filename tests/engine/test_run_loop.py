@@ -17,9 +17,18 @@ import pytest
 
 from nebuko.adapters.local import LocalAdapter
 from config import AgentStartNotice, HumanActionNotice, brand
-from nebuko.engine.models import CommentEntry, ExitCode, RoutingDecision, RunOutcome, Trigger
+from nebuko.engine.models import CommentEntry, ExitCode, RunOutcome, Trigger
 from nebuko.engine.paths import repo_root
-from workflow_state import ThreadRecord, ThreadRecordKind, build_state
+from workflow_state import (
+    Appreciation,
+    HoldKind,
+    IncompleteReason,
+    ThreadRecord,
+    ThreadRecordKind,
+    TurnOutcome,
+    TurnStatus,
+    build_state,
+)
 from workflow_state.workflow_state import WorkflowState
 from nebuko.engine.input_wiring import Materialization
 from nebuko.engine.run_loop import (
@@ -40,6 +49,7 @@ from nebuko.engine.run_loop import (
     main,
     resolved_env_overlay,
 )
+from agent_script.features.run_agent.run_outcome import OutcomeStatus
 from workflow_state import extract_state_from_body
 from workflow_state.step_output_record import StepOutputRecord
 
@@ -86,7 +96,29 @@ def _engine(
 
 
 def _agent_result(answer: str, dispatch: dict | None = None) -> dict:
-    return {"answer": answer, "dispatch": dispatch if dispatch is not None else {"status": "advance"}}
+    """A harvested agent result carrying its ``dispatch_next`` tool payload.
+
+    Since issue #964 the payload is the agent's *factual* verdict
+    (``appreciation``/``hold_kind``); the engine measures whether the turn
+    completed. ``_outcome`` returns the same payload as a ``TurnOutcome``.
+    """
+    return {"answer": answer, "turn_outcome": dispatch if dispatch is not None else {"appreciation": "approved"}}
+
+
+def _outcome(appreciation: str = "approved", **overrides) -> "TurnOutcome":
+    """The engine-side view of the ``dispatch_next`` payload above."""
+    from workflow_state import Appreciation, TurnOutcome, TurnStatus
+
+    return TurnOutcome(
+        status=TurnStatus.COMPLETED,
+        appreciation=Appreciation(appreciation),
+        **overrides,
+    )
+
+
+def _entry_outcome() -> "TurnOutcome":
+    """The recorded turn outcome for a seeded history entry (issue #964)."""
+    return _outcome("approved")
 
 
 def _patch_resolver(monkeypatch, resolver) -> None:
@@ -490,7 +522,7 @@ class TestDeterministicActionPhase:
         assert "action" in outcome.phases
         assert "agent" not in outcome.phases
         assert outcome.exit_code == ExitCode.ADVANCE
-        assert outcome.routing.status == "terminate"
+        assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
         assert outcome.posted_body == "deleted 1 comments on issue 724"
         journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
         assert journal == ""
@@ -604,9 +636,8 @@ class TestScriptStepComments:
         state = extract_state_from_body(completion)
         assert state is not None
         assert state.step == "run_tests"
-        assert state.dispatch is not None
-        assert state.dispatch.status == "advance"
-        assert state.dispatch.branch == "pass"
+        assert state.turn_outcome is not None
+        assert state.turn_outcome.appreciation is Appreciation.APPROVED
 
     def test_registers_the_completion_comment_as_the_step_output(
         self, tmp_path, monkeypatch
@@ -653,7 +684,7 @@ class TestScriptStepComments:
         assert "**run_tests command failed**" in outcome.posted_body
         assert "exit code 2" in outcome.posted_body
         state = extract_state_from_body(outcome.posted_body)
-        assert state.dispatch.branch == "fail"
+        assert state.turn_outcome.appreciation is Appreciation.REJECTED
 
     def test_the_comment_never_echoes_the_command_line(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
@@ -859,7 +890,8 @@ class TestScriptChainSharesOneWorkspace:
 
         outcome = engine.run()
 
-        assert outcome.routing.status == "terminate"
+        assert outcome.turn_outcome.status is TurnStatus.COMPLETED
+        assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
         assert "step_one command succeeded" in outcome.posted_body
 
     def test_the_chain_resolves_from_the_posted_body_not_the_thread(
@@ -1057,70 +1089,68 @@ class TestBenignNoNextAgentExit:
 
 
 class TestRoutePhase:
-    def test_maps_the_dispatch_payload(self, tmp_path):
+    """``route`` maps the harvested ``dispatch_next`` call to a ``TurnOutcome``."""
+
+    def test_maps_the_agents_verdict(self, tmp_path):
         engine = _engine(tmp_path)
 
-        decision = engine.route({"dispatch": {"status": "advance", "agent": "context", "complexity": "high"}})
+        outcome = engine.route({"turn_outcome": {"appreciation": "approved", "round": 2}})
 
-        assert isinstance(decision, RoutingDecision)
-        assert (decision.status, decision.agent, decision.complexity) == ("advance", "context", "high")
+        assert isinstance(outcome, TurnOutcome)
+        assert outcome.status is TurnStatus.COMPLETED
+        assert outcome.appreciation is Appreciation.APPROVED
+        assert outcome.round == 2
+        assert outcome.route_key == "approved"
 
-    def test_maps_a_human_gate_hold(self, tmp_path):
+    def test_maps_a_hold_with_its_kind(self, tmp_path):
         engine = _engine(tmp_path)
 
-        decision = engine.route({"dispatch": {"status": "hold", "reason": "await approval"}})
+        outcome = engine.route(
+            {"turn_outcome": {"appreciation": "hold", "hold_kind": "awaiting_approval"}}
+        )
 
-        assert decision.status == "hold"
+        assert outcome.appreciation is Appreciation.HOLD
+        assert outcome.hold_kind is HoldKind.AWAITING_APPROVAL
+        assert outcome.route_key == "hold"
 
-    def test_maps_a_soft_kill_to_advance(self, tmp_path):
-        """Issue #793: ``soft_kill`` is a live status, not a silent fall-through.
+    def test_a_verdictless_agent_is_incomplete_not_a_navigation_status(self, tmp_path):
+        """Issue #964: no ``dispatch_next`` call is a *fact*, not a default edge.
 
-        The run exits ``ADVANCE`` (its own comment re-triggers the retry)
-        rather than relying on the ``.get`` default in ``_exit_code_for``.
+        The legacy design fabricated an ``advance`` here, which is exactly the
+        bug the factual outcome makes unrepresentable (issue #924).
         """
         engine = _engine(tmp_path)
 
-        decision = engine.route({"dispatch": {"status": "soft_kill"}})
+        outcome = engine.route({"answer": "I reviewed it"})
 
-        assert decision.status == "soft_kill"
-        assert _exit_code_for(decision) == ExitCode.ADVANCE
+        assert outcome.status is TurnStatus.INCOMPLETE
+        assert outcome.incomplete_reason is IncompleteReason.NO_OUTCOME
+        assert outcome.route_key is None
 
-    def test_engine_fallback_advance_exits_advance(self, tmp_path):
-        """Issue #864: a decision-less callee with a return address exits
-        ``ADVANCE`` (0) so its callback return is honored, not a dead-end hold.
-        """
+    def test_an_interrupted_turn_never_routes_on_a_verdict(self, tmp_path):
+        """A truncated turn is engine-observed INCOMPLETE even with a verdict."""
         engine = _engine(tmp_path)
 
-        decision = engine.route(
-            {
-                "dispatch": {
-                    "status": "advance",
-                    "origin": "engine_fallback",
-                    "reason": "no-action default: agent emitted no decision; "
-                    "returning to caller 'architect'",
-                }
-            }
+        outcome = engine.route(
+            {"turn_outcome": {"appreciation": "approved"}},
+            observed=OutcomeStatus.FAILURE,
         )
 
-        assert decision.status == "advance"
-        assert _exit_code_for(decision) == ExitCode.ADVANCE
+        assert outcome.status is TurnStatus.INCOMPLETE
+        assert outcome.incomplete_reason is IncompleteReason.FAILURE
 
-    def test_engine_fallback_hold_exits_hold(self, tmp_path):
-        """A rudderless decision-less run still exits ``HOLD`` (10) (#765)."""
+    def test_only_a_parked_turn_escalates_the_exit_code(self, tmp_path):
+        """Recording an outcome must never turn a successful run red (#964)."""
         engine = _engine(tmp_path)
 
-        decision = engine.route(
-            {
-                "dispatch": {
-                    "status": "hold",
-                    "origin": "engine_fallback",
-                    "reason": "no-action default: agent emitted no decision",
-                }
-            }
+        parked = engine.route(
+            {"turn_outcome": {"appreciation": "hold", "hold_kind": "awaiting_input"}}
         )
+        approved = engine.route({"turn_outcome": {"appreciation": "approved"}})
 
-        assert decision.status == "hold"
-        assert _exit_code_for(decision) == ExitCode.HOLD
+        assert _exit_code_for(ExitCode.ADVANCE, parked) == ExitCode.HOLD
+        assert _exit_code_for(ExitCode.ADVANCE, approved) == ExitCode.ADVANCE
+        assert _exit_code_for(ExitCode.TERMINAL, parked) == ExitCode.TERMINAL
 
 
 class TestHumanActionNotice:
@@ -1139,7 +1169,7 @@ class TestHumanActionNotice:
         engine = _engine(tmp_path)
 
         notice = engine.human_action_notice(
-            routing=RoutingDecision(status="advance", branch="approved"),
+            turn_outcome=_outcome("approved"),
             agent_ran=True,
             state=None,
             resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
@@ -1159,7 +1189,10 @@ class TestHumanActionNotice:
         engine = _engine(tmp_path)
 
         notice = engine.human_action_notice(
-            routing=RoutingDecision(status="advance", reason="round 2"),
+            turn_outcome=TurnOutcome.for_incomplete(
+                IncompleteReason.NO_OUTCOME, note="round 2"
+            ),
+            skip_kind="unresolved",
             agent_ran=True,
             state=None,
             resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
@@ -1172,7 +1205,7 @@ class TestHumanActionNotice:
         engine = _engine(tmp_path)
 
         notice = engine.human_action_notice(
-            routing=RoutingDecision(status="advance"),
+            turn_outcome=_outcome("approved"),
             agent_ran=True,
             state=None,
             resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "plan"},
@@ -1185,13 +1218,15 @@ class TestHumanActionNotice:
         resolved = {"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "plan"}
 
         gate = engine.human_action_notice(
-            routing=RoutingDecision(status="hold", reason="human_gate:plan"),
+            turn_outcome=_outcome("hold", hold_kind=HoldKind.AWAITING_APPROVAL),
             agent_ran=True,
             state=None,
             resolved=resolved,
         )
         plain = engine.human_action_notice(
-            routing=RoutingDecision(status="hold", reason="awaiting feedback"),
+            turn_outcome=_outcome(
+                "hold", hold_kind=HoldKind.AWAITING_INPUT, note="awaiting feedback"
+            ),
             agent_ran=True,
             state=None,
             resolved=resolved,
@@ -1204,7 +1239,7 @@ class TestHumanActionNotice:
         engine = _engine(tmp_path)
 
         notice = engine.human_action_notice(
-            routing=RoutingDecision(status="advance"),
+            turn_outcome=_outcome("approved"),
             agent_ran=False,
             state=None,
             resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
@@ -1245,7 +1280,8 @@ class TestHumanActionNotice:
             Engine,
             "invoke_agent",
             lambda self, prompt: _agent_result(
-                "proposal", {"status": "hold", "reason": "human_gate:plan"}
+                "proposal",
+                {"appreciation": "hold", "hold_kind": "awaiting_approval", "note": "plan"},
             ),
         )
 
@@ -1295,7 +1331,14 @@ class TestHumanActionRecipient:
             "workflow": "default",
             "step": "plan",
             "agent": "architect",
-            "history": [{"step": "plan", "agent": "architect", "summary": "ok"}],
+            "history": [
+                {
+                    "step": "plan",
+                    "agent": "architect",
+                    "summary": "ok",
+                    "turn_outcome": {"status": "completed", "appreciation": "approved"},
+                }
+            ],
         }
         if started_by is not None:
             data["started_by"] = started_by
@@ -1346,7 +1389,7 @@ class TestHumanActionSinglePing:
             Engine,
             "invoke_agent",
             lambda self, prompt: _agent_result(
-                "proposal", {"status": "hold", "reason": "human_gate:plan"}
+                "proposal", {"appreciation": "hold", "hold_kind": "awaiting_approval"}
             ),
         )
 
@@ -1372,7 +1415,15 @@ class TestHumanActionSinglePing:
                     "step": "implement",
                     "agent": "dev",
                     "history": [
-                        {"step": "implement", "agent": "dev", "summary": "ok"}
+                        {
+                            "step": "implement",
+                            "agent": "dev",
+                            "summary": "ok",
+                            "turn_outcome": {
+                                "status": "completed",
+                                "appreciation": "approved",
+                            },
+                        }
                     ],
                     "started_by": "workflow-starter",
                 }
@@ -1427,27 +1478,30 @@ class TestRunLoop:
         for phase in PHASES:
             assert f"[phase:{phase}]" in caplog.text
 
-    def test_advances_on_an_advance_dispatch(self, tmp_path, monkeypatch):
+    def test_advances_on_an_approved_verdict(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
         monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
 
         outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.ADVANCE
-        assert outcome.routing.status == "advance"
+        assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
 
     def test_holds_for_a_human_gate(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
         monkeypatch.setattr(
             Engine,
             "invoke_agent",
-            lambda self, prompt: _agent_result("proposal", {"status": "hold", "reason": "await approval"}),
+            lambda self, prompt: _agent_result(
+                "proposal",
+                {"appreciation": "hold", "hold_kind": "awaiting_input", "note": "await approval"},
+            ),
         )
 
         outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.HOLD
-        assert outcome.routing.status == "hold"
+        assert outcome.turn_outcome.appreciation is Appreciation.HOLD
 
     def test_publishes_the_agent_answer(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
@@ -1822,7 +1876,12 @@ class TestPreviousStateHandoff:
         from workflow_state.workflow_state import WorkflowState
 
         entries = [
-            HistoryEntry(step=f"step_{index}", agent="architect", summary=f"s{index}")
+            HistoryEntry(
+                step=f"step_{index}",
+                agent="architect",
+                summary=f"s{index}",
+                turn_outcome=_entry_outcome(),
+            )
             for index in range(history_len)
         ]
         return WorkflowState(
@@ -2259,7 +2318,7 @@ class TestHonestPublish:
         _, outcome = self._run_with_failed_publish(tmp_path, monkeypatch)
 
         assert outcome.exit_code == ExitCode.ERROR
-        assert outcome.routing.status == "hold"
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
 
     def test_state_and_routing_still_advance(self, tmp_path, monkeypatch):
         _, outcome = self._run_with_failed_publish(tmp_path, monkeypatch)
@@ -2499,7 +2558,7 @@ class TestWorkflowStateAnswerComment:
         from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
 
         state = self._agent_state(
-            history=[HistoryEntry(step="implement", agent="dev", summary="ping @@dev then continue")]
+            history=[HistoryEntry(step="implement", agent="dev", summary="ping @@dev then continue", turn_outcome=_entry_outcome())]
         )
         self._run(tmp_path, monkeypatch, state=state)
 
@@ -2530,7 +2589,13 @@ class TestCapturedDeliverableComment:
         assert self._DELIVERABLE in outcome.posted_body
         assert self._ROUTING_NOTE not in outcome.posted_body
 
-    def test_keeps_routing_on_the_legacy_answer(self, tmp_path, monkeypatch):
+    def test_a_rendered_sentinel_never_routes_the_run(self, tmp_path, monkeypatch):
+        """Issue #964: routing is the typed tool call, never prose the agent wrote.
+
+        The deleted ``AGENT_RUN_CONFIG`` channel used to let a rendered sentinel
+        steer the next run; a stale echo (the #648 defence-in-depth case) must
+        now be inert — it is neither parsed nor posted.
+        """
         engine = _engine(tmp_path, env=RUN_ENV)
         result = {
             "answer": self._ROUTING_NOTE
@@ -2541,8 +2606,9 @@ class TestCapturedDeliverableComment:
 
         outcome = engine.run()
 
-        assert outcome.routing.status == "hold"
-        assert outcome.exit_code == ExitCode.HOLD
+        assert outcome.turn_outcome.status is TurnStatus.INCOMPLETE
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.NO_OUTCOME
+        assert outcome.exit_code == ExitCode.ADVANCE
 
 
 class TestIssueBodyContext:
@@ -2845,7 +2911,7 @@ class TestStepInputSeam:
 
         assert failure is not None
         assert failure.exit_code == ExitCode.TERMINAL
-        assert "required step input failed" in failure.routing.reason
+        assert "required step input failed" in failure.turn_outcome.note
 
     def test_over_deep_call_chain_is_terminal_before_the_agent(self, tmp_path):
         from nebuko.engine.input_wiring import MAX_CALL_FRAMES
@@ -2863,7 +2929,7 @@ class TestStepInputSeam:
         assert results == []
         assert failure is not None
         assert failure.exit_code == ExitCode.TERMINAL
-        assert "sub-workflow call depth exceeded" in failure.routing.reason
+        assert "sub-workflow call depth exceeded" in failure.turn_outcome.note
 
     def test_resolver_emission_feeds_the_engine_seam(self, tmp_path):
         """End-to-end: the trio's YAML is resolved, then materialized (issue #813).
@@ -3445,7 +3511,7 @@ class TestStepHooks:
 
         assert log.read_text(encoding="utf-8").split() == ["pre", "agent", "post"]
         assert outcome.exit_code == ExitCode.ADVANCE
-        assert outcome.routing.status == "advance"
+        assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
 
     def test_a_failing_pre_hook_skips_the_agent_and_fails_the_step(
         self, tmp_path, monkeypatch, caplog
@@ -3466,8 +3532,8 @@ class TestStepHooks:
             outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.ERROR
-        assert outcome.routing.status == "hold"
-        assert "pre_hook failed" in (outcome.routing.reason or "")
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+        assert "pre_hook failed" in outcome.turn_outcome.note
         assert "pre_hook failed" in caplog.text
 
     def test_a_failing_post_hook_does_not_change_the_step_outcome(
@@ -3489,7 +3555,7 @@ class TestStepHooks:
             outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.ADVANCE
-        assert outcome.routing.status == "advance"
+        assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
         assert "post_hook failed" in caplog.text
 
     def test_a_failing_post_hook_is_recorded_on_the_persisted_state(
@@ -3523,7 +3589,7 @@ class TestStepHooks:
         outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.ADVANCE
-        assert outcome.routing.status == "advance"
+        assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
         assert outcome.state is not None
         note = outcome.state.current_context.get("post_hook_failure")
         assert note is not None

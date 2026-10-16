@@ -54,10 +54,10 @@ _GUARD_KEYS = ("SKIP_AGENT", "AGENT_CALLS", "CIRCUIT_BREAKER_TRIPPED")
 _LEGACY_CALLER_RE = re.compile(r"<!-- bot-agent-([a-z]*) -->")
 
 # Deterministic agent result stand-in, exactly as the plan's parity harness
-# specifies: a valid answer plus an advancing dispatch.
+# specifies: a valid answer plus an approving turn outcome.
 _STUB_AGENT_RESULT: Mapping[str, Any] = {
     "answer": "*Agent answer*",
-    "dispatch": {"status": "advance", "complexity": "medium"},
+    "turn_outcome": {"status": "completed", "appreciation": "approved"},
 }
 
 

@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 6,
   "workflow": "dev-review-loop",
   "step": "review",
   "agent": "review",
@@ -25,7 +25,11 @@
       ],
       "comment_ids": [
         5814673204
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved"
+      }
     },
     {
       "step": "review",
@@ -36,7 +40,11 @@
           "workflow": "dev-review-loop",
           "step": "review"
         }
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved"
+      }
     }
   ],
   "metrics": {
@@ -68,10 +76,6 @@
     "author": "olivier-norture",
     "repo": "olivier-norture/git-flow-ai"
   },
-  "dispatch": {
-    "branch": "approved",
-    "reason": "Step 3 executor module matches the object design contract 1:1, deletion semantics and 22-test matrix verified, no blocking issues."
-  },
   "resolution": {
     "task": "review",
     "input_workflow": "dev-review-loop",
@@ -91,5 +95,10 @@
       "workflow": "dev-review-loop",
       "step": "review"
     }
-  ]
+  ],
+  "turn_outcome": {
+    "status": "completed",
+    "appreciation": "approved",
+    "note": "Step 3 executor module matches the object design contract 1:1, deletion semantics and 22-test matrix verified, no blocking issues."
+  }
 }

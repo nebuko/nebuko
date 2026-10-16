@@ -11,9 +11,12 @@ prompt can reintroduce the responsibility.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from pydantic import BaseModel, ConfigDict
+
+if TYPE_CHECKING:
+    from workflow_state import TurnOutcome
 
 # The universal bot marker (line 1) keeps bot detection exact and routes the
 # engine's own comment to the no-op bot path, so the notice can never re-enter
@@ -27,14 +30,10 @@ _HUMAN_ACTION_MARKER = "<!-- bot-human-action -->"
 AWAITING_APPROVAL = "awaiting_approval"
 AWAITING_INPUT = "awaiting_input"
 WORKFLOW_COMPLETE = "workflow_complete"
+HOLD = "hold"
 
 #: The three kinds of stop that owe a human a notification.
 KINDS = frozenset({AWAITING_APPROVAL, AWAITING_INPUT, WORKFLOW_COMPLETE})
-
-# Only these run statuses demand a human: ``hold`` (the workflow is paused) and
-# ``terminate`` (the workflow ended). Everything else — advance/loop/soft_kill —
-# either continues on its own or is handled by the resolver on a later trigger.
-_STOP_STATUSES = {"hold", "terminate"}
 
 # ``{ping}`` is the ``@login`` mention; it is the *only* place a human is
 # notified, and the engine owns it.
@@ -82,44 +81,60 @@ class HumanActionNotice(BaseModel):
     @classmethod
     def classify(
         cls,
-        outcome_status: str,
-        reason: Optional[str],
+        turn_outcome: Optional["TurnOutcome"],
         *,
+        terminal: bool,
         agent_ran: bool,
         target: str,
         step: str,
         workflow: str,
+        unresolved: bool = False,
     ) -> Optional["HumanActionNotice"]:
         """Return the notice the finished run demands, or ``None`` (no ping).
 
-        A notice is emitted only when the run stopped for a human *and* an
-        agent actually produced output for them to act on. A guard/terminal
-        skip (``agent_ran=False``) produced nothing, and a run with no
-        resolvable target cannot notify anyone, so both return ``None``.
+        The classification reads the run's factual :class:`TurnOutcome`
+        (issue #964), never a navigation status:
 
-        A ``hold`` whose reason names a ``human_gate`` is an approval request;
-        any other hold (explicit hold, no-action default) is an input request.
-        A ``terminate`` is end-of-workflow.
+        * a ``HOLD`` awaiting approval is an approval request; any other hold
+          (awaiting input) is an input request;
+        * an ``unresolved`` step — the router found no matching ``on_result``
+          edge and no linear successor — is an input request, never a claim
+          that the workflow finished (issue #924);
+        * a completed verdict routed out of a *terminal* step is the honest
+          end-of-workflow notice (``terminal`` is the router's own
+          ``DECLARED_FINISH`` verdict);
+        * an INCOMPLETE turn, or a verdict routed out of a non-terminal step,
+          owes nothing — the workflow continues on its own.
+
+        A notice is emitted only when a target resolves and an agent actually
+        produced output (``agent_ran``) or the step was unresolved; otherwise
+        ``None``.
         """
-        status = (outcome_status or "").strip()
-        if status not in _STOP_STATUSES:
+        if turn_outcome is None or not target:
             return None
-        if not agent_ran or not target:
+        if not agent_ran and not unresolved:
             return None
-        if status == "hold":
+        appreciation = getattr(turn_outcome, "appreciation", None)
+        appreciation_value = getattr(appreciation, "value", appreciation)
+        if appreciation_value == HOLD:
             kind = (
                 AWAITING_APPROVAL
-                if (reason or "").startswith("human_gate")
+                if getattr(getattr(turn_outcome, "hold_kind", None), "value", None)
+                == AWAITING_APPROVAL
                 else AWAITING_INPUT
             )
-        else:
+        elif unresolved:
+            kind = AWAITING_INPUT
+        elif terminal and appreciation_value in ("approved", "rejected"):
             kind = WORKFLOW_COMPLETE
+        else:
+            return None
         return cls(
             kind=kind,
             target=target,
             step=step or "",
             workflow=workflow or "",
-            reason=reason,
+            reason=getattr(turn_outcome, "note", "") or None,
         )
 
     # @stub-protected

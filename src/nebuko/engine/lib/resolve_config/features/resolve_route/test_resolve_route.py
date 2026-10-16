@@ -12,20 +12,33 @@ from resolve_config.features.resolve_route.resolve_route import (  # noqa: E402
 )
 
 
+def _entry(step: str, agent: str):
+    """A history entry with the mandatory factual outcome (issue #964)."""
+    from workflow_state import Appreciation, HistoryEntry, TurnOutcome, TurnStatus
+
+    return HistoryEntry(
+        step=step,
+        agent=agent,
+        turn_outcome=TurnOutcome(
+            status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED
+        ),
+    )
+
+
 class TestCountConsecutiveSameAgent:
     def test_counts_trailing_run(self):
         from workflow_state import HistoryEntry
         history = [
-            HistoryEntry(step="s1", agent="architect"),
-            HistoryEntry(step="s2", agent="dev"),
-            HistoryEntry(step="s3", agent="dev"),
-            HistoryEntry(step="s4", agent="dev"),
+            _entry("s1", "architect"),
+            _entry("s2", "dev"),
+            _entry("s3", "dev"),
+            _entry("s4", "dev"),
         ]
         assert count_consecutive_same_agent(history, "dev") == 3
 
     def test_no_run(self):
         from workflow_state import HistoryEntry
-        history = [HistoryEntry(step="s1", agent="architect")]
+        history = [_entry("s1", "architect")]
         assert count_consecutive_same_agent(history, "dev") == 0
 
     def test_empty_history(self):
@@ -467,7 +480,11 @@ class TestGatePrecedenceOverFunctionCall:
                 "workflow": "spec-driven-impl",
                 "step": "stub_review",
                 "agent": "review",
-                "dispatch": {"status": "advance", "task_hint": "dev"},
+                "turn_outcome": {
+                    "status": "completed",
+                    "appreciation": "approved",
+                    "required_agent": "dev",
+                },
                 "function_call": {"agent_name": "dev"},
             },
         )
@@ -485,15 +502,19 @@ class TestGatePrecedenceOverFunctionCall:
                 "workflow": "spec-driven-impl",
                 "step": "review",
                 "agent": "review",
-                "dispatch": {"status": "advance", "task_hint": "dev"},
+                "turn_outcome": {
+                    "status": "completed",
+                    "appreciation": "approved",
+                    "required_agent": "dev",
+                },
                 "function_call": {"agent_name": "dev"},
             },
         )
         assert result.get("WORKFLOW_STEP") != "stub"
 
-    def test_no_forward_step_without_dispatch_continues_workflow(self, tmp_path):
-        # A no-op hand-off (callee owns no forward step) with **no** dispatch
-        # object must fall through to `_resolve_workflow_next_step`, continuing
+    def test_no_forward_step_without_outcome_continues_workflow(self, tmp_path):
+        # A no-op hand-off (callee owns no forward step) with **no** recorded
+        # outcome must fall through to `_resolve_workflow_next_step`, continuing
         # the workflow from the current step rather than re-entering a
         # consumed one.
         result = self._resolve(
@@ -519,8 +540,11 @@ class TestGatePrecedenceOverFunctionCall:
         prompt_base.mkdir()
         for name in TASK_TO_PROMPT.values():
             (prompt_base / name).write_text("# prompt")
-        from default_paths import config_dir
-        workflows_dir = config_dir("workflows")
+        # The shipped definitions, not the per-repo `.nebuko` override:
+        # `config_dir` prefers a checkout-local override directory whose
+        # contents vary per machine, so pin the packaged defaults.
+        from default_paths import checkout_root
+        workflows_dir = str(checkout_root() / "defaults" / "workflows")
         block = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps(state)
@@ -542,7 +566,11 @@ class TestGatePrecedenceOverFunctionCall:
                 "workflow": "spec-driven-impl",
                 "step": "stub_review",
                 "agent": "review",
-                "dispatch": {"status": "advance", "task_hint": "dev"},
+                "turn_outcome": {
+                    "status": "completed",
+                    "appreciation": "approved",
+                    "required_agent": "dev",
+                },
                 "function_call": {"agent_name": "dev"},
             },
         )
@@ -604,20 +632,24 @@ class TestHumanGateHoldPrecedence:
         body = "<!-- bot-workflow-terminal -->\n" + block
         return resolve_config(body, prompt_base, workflows_dir, is_bot=True)
 
-    def _state(self, **dispatch):
+    def _state(self, **outcome):
         return {
             "version": 1,
             "workflow": "gated",
             "step": "plan",
             "agent": "architect",
-            "dispatch": dispatch,
+            "turn_outcome": outcome,
         }
 
     def test_gate_hold_outranks_a_resolvable_successor(self, tmp_path):
         # plan -> implement resolves, but the human_gate hold must still win.
         result = self._resolve(
             tmp_path,
-            self._state(status="hold", reason="human_gate:plan"),
+            self._state(
+                status="completed",
+                appreciation="hold",
+                hold_kind="awaiting_approval",
+            ),
         )
         assert result["SKIP_AGENT"] == "true"
         assert "human_gate:plan" in result["REASON"]
@@ -627,25 +659,38 @@ class TestHumanGateHoldPrecedence:
     def test_gate_hold_result_never_names_the_successor(self, tmp_path):
         result = self._resolve(
             tmp_path,
-            self._state(status="hold", reason="human_gate:plan"),
+            self._state(
+                status="completed",
+                appreciation="hold",
+                hold_kind="awaiting_approval",
+            ),
         )
         assert result.get("TASK") != "dev"
         assert result.get("WORKFLOW_STEP") != "implement"
 
-    def test_non_gate_hold_keeps_existing_behavior(self, tmp_path):
-        # Out of scope (plan scopes the guard to human_gate:*): a plain hold
-        # on a step with a resolvable successor still advances.
+    def test_plain_hold_parks_the_step(self, tmp_path):
+        # A hold verdict is a deliberate stop (issue #964): it parks the step
+        # for the human even when the workflow forward edge would resolve.
         result = self._resolve(
             tmp_path,
-            self._state(status="hold", reason="no-action default"),
+            self._state(
+                status="completed",
+                appreciation="hold",
+                hold_kind="awaiting_input",
+            ),
         )
-        assert result.get("TASK") == "dev"
-        assert result.get("WORKFLOW_STEP") == "implement"
+        assert result["SKIP_AGENT"] == "true"
+        assert "Awaiting input" in result["REASON"]
+        assert result.get("TASK") != "dev"
 
     def test_gate_hold_outranks_a_persisted_function_call(self, tmp_path):
         # Issue #887 round 2: a held gate whose state also carries a
         # function_call must not let the hand-off branch route to the callee.
-        state = self._state(status="hold", reason="human_gate:plan")
+        state = self._state(
+            status="completed",
+            appreciation="hold",
+            hold_kind="awaiting_approval",
+        )
         state["function_call"] = {"agent_name": "dev"}
         result = self._resolve(tmp_path, state)
         assert result["SKIP_AGENT"] == "true"
@@ -682,7 +727,7 @@ class TestCallbackReturnTarget:
             workflow="cb", step="context", agent="context", callback=callback
         ), str(tmp_path)
 
-    def test_advance_with_no_target_returns_callback_step(self, tmp_path):
+    def test_completion_with_no_target_returns_callback_step(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
 
         state, wf_dir = self._state(tmp_path, "architect")
@@ -702,18 +747,27 @@ class TestCallbackReturnTarget:
 
     def test_explicit_target_outranks_callback(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
-        from workflow_state import Dispatch
+        from workflow_state import Appreciation, TurnOutcome, TurnStatus
 
         state, wf_dir = self._state(tmp_path, "architect")
-        dispatch = Dispatch(status="advance", task_hint="dev")
-        assert _callback_return_target(state, dispatch, wf_dir) is None
+        outcome = TurnOutcome(
+            status=TurnStatus.COMPLETED,
+            appreciation=Appreciation.APPROVED,
+            required_agent="dev",
+        )
+        assert _callback_return_target(state, outcome, wf_dir) is None
 
     def test_hold_outranks_callback(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
-        from workflow_state import Dispatch
+        from workflow_state import Appreciation, HoldKind, TurnOutcome, TurnStatus
 
         state, wf_dir = self._state(tmp_path, "architect")
-        assert _callback_return_target(state, Dispatch(status="hold"), wf_dir) is None
+        hold = TurnOutcome(
+            status=TurnStatus.COMPLETED,
+            appreciation=Appreciation.HOLD,
+            hold_kind=HoldKind.AWAITING_INPUT,
+        )
+        assert _callback_return_target(state, hold, wf_dir) is None
 
     def test_callback_absent_from_workflow_falls_through(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
@@ -723,34 +777,35 @@ class TestCallbackReturnTarget:
         state, wf_dir = self._state(tmp_path, "review")
         assert _callback_return_target(state, None, wf_dir) is None
 
-    def test_engine_fallback_advance_passes_the_gate(self, tmp_path):
+    def test_engine_fallback_outcome_passes_the_gate(self, tmp_path):
         """The #864 synthesized fallback (advance, no destination) returns home.
 
         A decision-less callee with a return address now emits an
-        ``origin='engine_fallback'`` advance carrying no destination fields, so
+        ``INCOMPLETE``/``NO_OUTCOME`` outcome carrying no destination fields, so
         the existing callback gate carries it to the caller.
         """
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
-        from workflow_state import Dispatch
+        from workflow_state import IncompleteReason, TurnOutcome
 
         state, wf_dir = self._state(tmp_path, "architect")
-        dispatch = Dispatch(
-            status="advance",
-            origin="engine_fallback",
-            reason="no-action default: agent emitted no decision; returning to caller 'architect'",
+        outcome = TurnOutcome.for_incomplete(
+            IncompleteReason.NO_OUTCOME,
+            note="no-action default: agent emitted no decision; returning to caller 'architect'",
         )
-        assert _callback_return_target(state, dispatch, wf_dir) == ("architect", "answer")
+        assert _callback_return_target(state, outcome, wf_dir) == ("architect", "answer")
 
     def test_agent_explicit_hold_still_outranks_callback(self, tmp_path):
         """An explicit agent hold is never redirected to the callback (#864)."""
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
-        from workflow_state import Dispatch
+        from workflow_state import Appreciation, HoldKind, TurnOutcome, TurnStatus
 
         state, wf_dir = self._state(tmp_path, "architect")
-        assert (
-            _callback_return_target(state, Dispatch(status="hold", origin="agent"), wf_dir)
-            is None
+        hold = TurnOutcome(
+            status=TurnStatus.COMPLETED,
+            appreciation=Appreciation.HOLD,
+            hold_kind=HoldKind.AWAITING_INPUT,
         )
+        assert _callback_return_target(state, hold, wf_dir) is None
 
 
 class TestCallbackReturnAddressEndToEnd:
@@ -783,9 +838,9 @@ class TestCallbackReturnAddressEndToEnd:
         body = "<!-- bot-workflow-terminal -->\n" + block
         return resolve_config(body, prompt_base, workflows_dir, is_bot=True)
 
-    def test_callee_advance_routes_back_to_caller_not_forward_edge(self, tmp_path):
+    def test_callee_approval_routes_back_to_caller_not_forward_edge(self, tmp_path):
         # context was reached via architect's function_call (callback=architect) and ends
-        # with a bare advance. The workflow forward edge is context->dev(build);
+        # with a bare approval. The workflow forward edge is context->dev(build);
         # the callback must win and route back to architect(answer).
         result = self._resolve(
             tmp_path,
@@ -795,7 +850,7 @@ class TestCallbackReturnAddressEndToEnd:
                 "step": "context",
                 "agent": "context",
                 "callback": "architect",
-                "dispatch": {"status": "advance"},
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
             },
         )
         assert result["TASK"] == "architect"
@@ -811,19 +866,19 @@ class TestCallbackReturnAddressEndToEnd:
                 "workflow": "cb",
                 "step": "context",
                 "agent": "context",
-                "dispatch": {"status": "advance"},
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
             },
         )
         assert result["TASK"] == "dev"
         assert result["WORKFLOW_STEP"] == "build"
 
-    def test_engine_fallback_advance_returns_to_caller(self, tmp_path):
+    def test_engine_fallback_outcome_returns_to_caller(self, tmp_path):
         """The #864 fix end-to-end: a decision-less callee returns home.
 
-        The state carries the synthesized fallback (``advance`` +
-        ``origin='engine_fallback'`` with no destination) that #864 makes the
-        engine emit instead of a bare ``hold``; with ``callback: architect`` the
-        run must resolve back to the caller, not the forward edge.
+        The state carries the synthesized fallback (``INCOMPLETE`` /
+        ``NO_OUTCOME`` with no destination) that #864 makes the engine emit
+        instead of a bare ``hold``; with ``callback: architect`` the run must
+        resolve back to the caller, not the forward edge.
         """
         result = self._resolve(
             tmp_path,
@@ -833,10 +888,10 @@ class TestCallbackReturnAddressEndToEnd:
                 "step": "context",
                 "agent": "context",
                 "callback": "architect",
-                "dispatch": {
-                    "status": "advance",
-                    "origin": "engine_fallback",
-                    "reason": "no-action default: agent emitted no decision; "
+                "turn_outcome": {
+                    "status": "incomplete",
+                    "incomplete_reason": "no_outcome",
+                    "note": "no-action default: agent emitted no decision; "
                     "returning to caller 'architect'",
                 },
             },
@@ -906,7 +961,7 @@ class TestWorkflowCommandPerStepComplexity:
     """End-to-end tier pickup for ``/nebuko run workflow`` (issue #787).
 
     The issue's motivating case is the *first* step of a workflow: it never
-    receives a dispatch, so its declared ``complexity`` must reach the runtime
+    receives a turn outcome, so its declared ``complexity`` must reach the runtime
     override through ``CONFIG_COMPLEXITY`` via the workflow-command path.
     """
 
@@ -967,4 +1022,122 @@ class TestWorkflowCommandPerStepComplexity:
         )
         assert result["WORKFLOW_STEP"] == "plan"
         assert result["CONFIG_COMPLEXITY"] == "medium"
+
+
+_POLICY_WF_YAML = (
+    "name: policy\n"
+    "description: test\n"
+    "trigger:\n"
+    "  agents: [architect]\n"
+    "steps:\n"
+    "  - name: plan\n"
+    "    agent: architect\n"
+    "    next: implement\n"
+    "    conditions:\n"
+    "      - on_result: approved\n"
+    "        next: review\n"
+    "      - on_result: rejected\n"
+    "        next: revise\n"
+    "  - name: implement\n"
+    "    agent: dev\n"
+    "    next: null\n"
+    "  - name: review\n"
+    "    agent: review\n"
+    "    next: null\n"
+    "  - name: revise\n"
+    "    agent: architect\n"
+    "    next: null\n"
+)
+
+
+class TestRoutingPolicyTable:
+    """One test per row of ``resolve_route``'s routing policy (issue #964).
+
+    The policy table is the contract the migration lands on, so each row is
+    exercised through the public ``resolve_config`` entry: a regression in the
+    ordering (soft-kill > gate hold > verdict edge > linear edge) fails loudly.
+    The ``plan`` step's linear edge (``implement``) deliberately differs from
+    its ``approved`` edge (``review``), so a verdict that silently fell back to
+    the linear edge cannot pass.
+    """
+
+    @staticmethod
+    def _dirs(tmp_path):
+        from resolve_workflow import TASK_TO_PROMPT
+
+        prompt_base = tmp_path / "prompts"
+        workflows_dir = tmp_path / "workflows"
+        prompt_base.mkdir()
+        workflows_dir.mkdir()
+        for name in TASK_TO_PROMPT.values():
+            (prompt_base / name).write_text("# prompt")
+        (workflows_dir / "policy.yaml").write_text(_POLICY_WF_YAML)
+        return str(prompt_base), str(workflows_dir)
+
+    def _resolve(self, tmp_path, **outcome):
+        import json as _json
+
+        from resolve_config import resolve_config
+
+        state = {
+            "version": 1,
+            "workflow": "policy",
+            "step": "plan",
+            "agent": "architect",
+            "turn_outcome": outcome,
+        }
+        block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        prompt_base, workflows_dir = self._dirs(tmp_path)
+        body = "<!-- bot-workflow-terminal -->\n" + block
+        return resolve_config(body, prompt_base, workflows_dir, is_bot=True)
+
+    def test_approved_verdict_selects_the_on_result_edge(self, tmp_path):
+        result = self._resolve(tmp_path, status="completed", appreciation="approved")
+        assert result["WORKFLOW_STEP"] == "review"
+        assert result["TASK"] == "review"
+
+    def test_rejected_verdict_selects_the_on_result_edge(self, tmp_path):
+        result = self._resolve(tmp_path, status="completed", appreciation="rejected")
+        assert result["WORKFLOW_STEP"] == "revise"
+        assert result["TASK"] == "architect"
+
+    def test_hold_verdict_parks_the_step(self, tmp_path):
+        result = self._resolve(
+            tmp_path,
+            status="completed",
+            appreciation="hold",
+            hold_kind="awaiting_input",
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("WORKFLOW_STEP") != "review"
+
+    def test_failure_without_a_verdict_follows_the_linear_edge(self, tmp_path):
+        result = self._resolve(
+            tmp_path, status="incomplete", incomplete_reason="failure"
+        )
+        assert result["WORKFLOW_STEP"] == "implement"
+        assert result["TASK"] == "dev"
+
+    def test_interrupted_without_a_verdict_follows_the_linear_edge(self, tmp_path):
+        result = self._resolve(
+            tmp_path, status="incomplete", incomplete_reason="interrupted"
+        )
+        assert result["WORKFLOW_STEP"] == "implement"
+
+    def test_no_outcome_without_a_verdict_follows_the_linear_edge(self, tmp_path):
+        result = self._resolve(
+            tmp_path, status="incomplete", incomplete_reason="no_outcome"
+        )
+        assert result["WORKFLOW_STEP"] == "implement"
+
+    def test_soft_timeout_retries_the_step_in_place(self, tmp_path):
+        result = self._resolve(
+            tmp_path, status="incomplete", incomplete_reason="soft_timeout"
+        )
+        assert result["WORKFLOW_STEP"] == "plan"
+        assert result["TASK"] == "architect"
 

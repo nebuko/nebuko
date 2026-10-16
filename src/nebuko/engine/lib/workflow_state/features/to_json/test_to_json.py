@@ -9,6 +9,14 @@ from workflow_state import WorkflowState, HistoryEntry, StateMetrics
 from workflow_state.features.to_json.to_json import _format_json, state_to_json
 
 
+def _outcome():
+    """A completed/approved outcome — the mandatory routing fact (issue #964)."""
+    from workflow_state import Appreciation, TurnOutcome, TurnStatus
+
+    return TurnOutcome(status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED)
+
+
+
 class TestScalarArraysStayInline(unittest.TestCase):
     """Scalar arrays render on one line so metrics no longer bloat the JSON
     (issue #845)."""
@@ -46,7 +54,14 @@ class TestStateToJsonScalarArrays(unittest.TestCase):
             workflow="dev-review-loop",
             step="implement",
             agent="dev",
-            history=[HistoryEntry(step="implement", agent="dev", metrics=metrics)],
+            history=[
+                HistoryEntry(
+                    step="implement",
+                    agent="dev",
+                    turn_outcome=_outcome(),
+                    metrics=metrics,
+                )
+            ],
         )
         serialized = state_to_json(state)
         self.assertIn(

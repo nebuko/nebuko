@@ -260,6 +260,7 @@ def _round2_state() -> dict:
     state["history"] = [
         {
             "step": "implement", "agent": "dev", "summary": "",
+            "turn_outcome": {"status": "completed", "appreciation": "approved"},
             "position": [
                 {"workflow": "plan-orchestration", "step": "sub_impl"},
                 {"workflow": "tmp-impl", "step": "step_2"},
@@ -268,6 +269,7 @@ def _round2_state() -> dict:
         },
         {
             "step": "review", "agent": "review", "summary": "",
+            "turn_outcome": {"status": "completed", "appreciation": "approved"},
             "position": [
                 {"workflow": "plan-orchestration", "step": "sub_impl"},
                 {"workflow": "tmp-impl", "step": "step_2"},
@@ -364,7 +366,9 @@ class TestFullStateRouting:
     ):
         """Rejected review must loop to dev-review-loop/implement with no return-to-parent."""
         state = _load_fixture(ISSUE657_REVIEW_APPROVED)
-        state["dispatch"] = dict(state["dispatch"], branch="rejected")
+        state["turn_outcome"] = dict(
+            state["turn_outcome"], appreciation="rejected",
+        )
         case = _issue657_case(
             name=ISSUE657_REVIEW_APPROVED + "_rejected",
             state=state,
@@ -504,16 +508,23 @@ class TestHumanGateHoldPrecedence:
         assert result.get("TASK", "") != "dev"
         assert result.get("WORKFLOW_STEP", "") != "implement"
 
-    def test_non_gate_hold_still_unreachable_when_successor_resolves(
+    def test_plain_hold_parks_without_a_gate_reason(
         self, default_workflows_dir: Path, prompt_base: str,
     ):
-        """A plain (non-gate) hold on a step with a successor is out of scope:
-        the guard is scoped to ``human_gate:*`` exactly as the plan approved."""
+        """A plain (awaiting-input) hold parks the step without claiming a gate.
+
+        The human_gate guard is scoped to ``hold_kind == awaiting_approval``
+        exactly as the plan approved, so a plain hold must not read as one.
+        """
         state = _load_fixture(ISSUE885_GATE_HOLD)
-        state["dispatch"] = {"status": "hold", "reason": "no-action default"}
+        plain_hold = {
+            "status": "completed", "appreciation": "hold",
+            "hold_kind": "awaiting_input", "note": "no-action default",
+        }
+        state["turn_outcome"] = dict(plain_hold)
         for entry in state["history"]:
-            if entry.get("dispatch", {}).get("reason", "").startswith("human_gate"):
-                entry["dispatch"] = {"status": "hold", "reason": "no-action default"}
+            if entry.get("turn_outcome", {}).get("note", "").startswith("human_gate"):
+                entry["turn_outcome"] = dict(plain_hold)
         case = GateHoldCase(
             name=ISSUE885_GATE_HOLD + "_plain_hold",
             state=state,
@@ -522,8 +533,10 @@ class TestHumanGateHoldPrecedence:
         result = resolve_config(
             case.trigger_body(), prompt_base, str(default_workflows_dir), is_bot=True,
         )
-        # Documented current behavior: only a human_gate hold is guarded here.
-        assert result.get("TASK", "") == "dev"
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("TASK", "") != "dev"
+        assert "human_gate" not in result.get("REASON", "")
+        assert "Awaiting input" in result.get("REASON", "")
 
 
 # ---------------------------------------------------------------------------
@@ -643,17 +656,18 @@ class TestReviewRound2Restart:
     """Replay the captured issue-#923 round-2 state (issue #924).
 
     The review agent was invoked, rejected the implementation and asked for a
-    second round — but it signalled that only through free text
-    (``dispatch == {"reason": "round 2"}``, no verdict key). The workflow's
+    second round — but it signalled that only through free text (the recorded
+    outcome was INCOMPLETE/``no_outcome``, no verdict). The workflow's
     ``review`` step declares ``on_result`` edges, so nothing matched: the
     routing is *unresolved*, not a declared finish. Before the fix the engine
     collapsed both to ``None`` and pinged the human "*workflow default has
     finished at step review*" instead of re-running ``dev``.
     """
 
-    def _replay(self, default_workflows_dir: Path, prompt_base: str, **dispatch):
+    def _replay(self, default_workflows_dir: Path, prompt_base: str, **outcome):
         state = _load_fixture(ISSUE923_REVIEW_ROUND2)
-        state["dispatch"] = dispatch
+        if outcome:
+            state["turn_outcome"] = outcome
         case = RoutingCase(
             name=ISSUE923_REVIEW_ROUND2,
             state=state,
@@ -670,11 +684,12 @@ class TestReviewRound2Restart:
         It must resolve as the *unresolved* kind, which is what the engine's
         notice layer now reads as "needs input" instead of "workflow complete".
         """
-        result = self._replay(
-            default_workflows_dir, prompt_base, reason="round 2",
-        )
+        result = self._replay(default_workflows_dir, prompt_base)
         assert result["SKIP_AGENT"] == "true"
-        assert result["SKIP_KIND"] == "no_next_agent"
+        # Not a terminal finish: the engine's notice layer reads SKIP_KIND
+        # "terminal" as workflow-complete, so this must not carry it.
+        assert result.get("SKIP_KIND") != "terminal"
+        assert "resolved no successor" in result.get("REASON", "")
 
         from resolve_workflow import RouteKind, resolve_next_from_workflow
 
@@ -690,7 +705,7 @@ class TestReviewRound2Restart:
         """With the verdict the review prompt now requires, ``dev`` restarts."""
         result = self._replay(
             default_workflows_dir, prompt_base,
-            status="advance", branch="rejected", reason="round 2",
+            status="completed", appreciation="rejected", round=2,
         )
         assert result["SKIP_AGENT"] == "false"
         assert result["TASK"] == "dev"

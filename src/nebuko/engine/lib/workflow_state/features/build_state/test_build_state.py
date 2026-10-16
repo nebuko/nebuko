@@ -2,8 +2,20 @@ import os
 import sys
 import unittest
 
+from pydantic import ValidationError
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from workflow_state import WorkflowState, build_state, go_next, Dispatch
+from workflow_state import (
+    Appreciation,
+    HoldKind,
+    IncompleteReason,
+    RunPrefs,
+    TurnOutcome,
+    TurnStatus,
+    WorkflowState,
+    build_state,
+    go_next,
+)
 from workflow_state.workflow_state import STATE_SCHEMA_VERSION
 
 class TestBuildState(unittest.TestCase):
@@ -298,59 +310,112 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
             "workflow": "plan-orchestration",
             "step": "plan",
             "agent": "architect",
-            "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
+            "history": [
+                {
+                    "step": "analyze",
+                    "agent": "architect",
+                    "summary": "ok",
+                    # ``turn_outcome`` is a required history field (issue #964):
+                    # a v3 blob without it is no longer loadable.
+                    "turn_outcome": {"status": "incomplete", "incomplete_reason": "no_outcome"},
+                }
+            ],
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.scaffold_branch)
 
 
-class TestHistoryEntryDispatch(unittest.TestCase):
-    """History entries record the dispatch decision emitted by their step (issue #685)."""
+class TestHistoryEntryTurnOutcome(unittest.TestCase):
+    """History entries record the factual turn outcome of their step (issue #964).
 
-    def test_step_dispatch_recorded_on_entry(self):
-        d = Dispatch(status="advance", task_hint="dev", complexity="high")
+    ``turn_outcome`` replaced the legacy navigation ``dispatch``: the entry
+    keeps what the agent verified happened, plus the non-routing run
+    preferences, and the top-level field mirrors the most recent run.
+    """
+
+    def test_step_outcome_recorded_on_entry(self):
+        outcome = TurnOutcome(status=TurnStatus.COMPLETED, appreciation="approved")
+        prefs = RunPrefs(complexity="high")
         state = build_state(
-            None, workflow="w", step="plan", agent="architect", dispatch=d
+            None,
+            workflow="w",
+            step="plan",
+            agent="architect",
+            turn_outcome=outcome,
+            prefs=prefs,
         )
-        self.assertIs(state.history[-1].dispatch, d)
-        self.assertIs(state.dispatch, d)
+        self.assertIs(state.history[-1].turn_outcome, outcome)
+        self.assertEqual(state.history[-1].prefs.complexity, "high")
+        self.assertIs(state.turn_outcome, outcome)
+        self.assertEqual(state.prefs.complexity, "high")
 
-    def test_entry_dispatch_defaults_to_none(self):
+    def test_entry_outcome_defaults_to_a_no_outcome_marker(self):
+        """A step that recorded nothing still carries a factual outcome.
+
+        The engine-measured default is INCOMPLETE/NO_OUTCOME: "the agent
+        produced no verdict", which routes down the linear edge (issue #964).
+        """
         state = build_state(None, workflow="w", step="plan", agent="architect")
-        self.assertIsNone(state.history[-1].dispatch)
+        outcome = state.history[-1].turn_outcome
+        self.assertEqual(outcome.status, TurnStatus.INCOMPLETE)
+        self.assertEqual(outcome.incomplete_reason, IncompleteReason.NO_OUTCOME)
+        # The top-level field mirrors the *called* outcome, so a caller that
+        # passed nothing leaves it unset while the entry still records the fact.
+        self.assertIsNone(state.turn_outcome)
 
-    def test_each_entry_carries_its_own_dispatch(self):
+    def test_each_entry_carries_its_own_outcome(self):
         first = build_state(
             None,
             workflow="w",
             step="analyze",
             agent="architect",
-            dispatch=Dispatch(status="advance", task_hint="context", complexity="high"),
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.COMPLETED, appreciation="approved"
+            ),
+            prefs=RunPrefs(complexity="high"),
         )
         second = build_state(
             first,
             workflow="w",
             step="context",
             agent="context",
-            dispatch=Dispatch(status="hold", reason="awaiting input"),
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.COMPLETED,
+                appreciation=Appreciation.HOLD,
+                hold_kind=HoldKind.AWAITING_INPUT,
+                note="awaiting input",
+            ),
         )
-        self.assertEqual(second.history[0].dispatch.status, "advance")
-        self.assertEqual(second.history[0].dispatch.task_hint, "context")
-        self.assertEqual(second.history[1].dispatch.status, "hold")
-        # top-level dispatch reflects only the most recent run
-        self.assertEqual(second.dispatch.status, "hold")
-        self.assertEqual(second.dispatch.reason, "awaiting input")
+        self.assertEqual(second.history[0].turn_outcome.status, TurnStatus.COMPLETED)
+        self.assertEqual(second.history[0].prefs.complexity, "high")
+        self.assertEqual(second.history[1].turn_outcome.appreciation, Appreciation.HOLD)
+        # the top-level outcome reflects only the most recent run
+        self.assertEqual(second.turn_outcome.appreciation, Appreciation.HOLD)
+        self.assertEqual(second.turn_outcome.note, "awaiting input")
 
-    def test_history_dispatch_roundtrip(self):
-        d = Dispatch(status="loop", task_hint="dev", complexity="low", branch="rejected")
-        state = build_state(None, workflow="w", step="plan", agent="architect", dispatch=d)
+    def test_history_outcome_roundtrip(self):
+        outcome = TurnOutcome(status=TurnStatus.COMPLETED, appreciation="approved")
+        state = build_state(
+            None,
+            workflow="w",
+            step="plan",
+            agent="architect",
+            turn_outcome=outcome,
+            prefs=RunPrefs(complexity="low", pin=True),
+        )
         restored = WorkflowState.model_validate_json(state.model_dump_json())
-        self.assertIsNotNone(restored.history[-1].dispatch)
-        self.assertEqual(restored.history[-1].dispatch.status, "loop")
-        self.assertEqual(restored.history[-1].dispatch.branch, "rejected")
-        self.assertEqual(restored.history[-1].dispatch, restored.dispatch)
+        self.assertIsNotNone(restored.history[-1].turn_outcome)
+        self.assertEqual(restored.history[-1].turn_outcome.appreciation, Appreciation.APPROVED)
+        self.assertTrue(restored.history[-1].prefs.pin)
+        self.assertEqual(restored.history[-1].turn_outcome, restored.turn_outcome)
 
-    def test_legacy_history_entry_without_dispatch_loads(self):
+    def test_history_entry_without_an_outcome_is_rejected(self):
+        """``turn_outcome`` is required on every entry (issue #964).
+
+        The migration deliberately drops the legacy dispatch-era blobs: a
+        history entry *is* a routing fact, so an entry that cannot state one
+        must not load at all.
+        """
         data = {
             "version": 3,
             "workflow": "w",
@@ -358,8 +423,8 @@ class TestHistoryEntryDispatch(unittest.TestCase):
             "agent": "architect",
             "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
         }
-        state = WorkflowState.model_validate(data)
-        self.assertIsNone(state.history[0].dispatch)
+        with self.assertRaises(ValidationError):
+            WorkflowState.model_validate(data)
 
 
 class TestBuildStateStartedBy(unittest.TestCase):
@@ -415,7 +480,16 @@ class TestBuildStateStartedBy(unittest.TestCase):
             "workflow": "default",
             "step": "analyze",
             "agent": "architect",
-            "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
+            "history": [
+                {
+                    "step": "analyze",
+                    "agent": "architect",
+                    "summary": "ok",
+                    # ``turn_outcome`` is a required history field (issue #964):
+                    # a v3 blob without it is no longer loadable.
+                    "turn_outcome": {"status": "incomplete", "incomplete_reason": "no_outcome"},
+                }
+            ],
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.started_by)
@@ -488,7 +562,16 @@ class TestBuildStateWorkflowRef(unittest.TestCase):
             "workflow": "default",
             "step": "analyze",
             "agent": "architect",
-            "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
+            "history": [
+                {
+                    "step": "analyze",
+                    "agent": "architect",
+                    "summary": "ok",
+                    # ``turn_outcome`` is a required history field (issue #964):
+                    # a v3 blob without it is no longer loadable.
+                    "turn_outcome": {"status": "incomplete", "incomplete_reason": "no_outcome"},
+                }
+            ],
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.workflow_ref)

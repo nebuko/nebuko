@@ -6,10 +6,10 @@ and the routing decision. This tool carries the second one: a tiny, fixed
 ``route`` argument whose ``response_schema`` is the route only, so a long
 markdown payload can never truncate the routing decision.
 
-The tool records the route in the run-scoped dispatch registry (the same one
-``dispatch_next`` uses), so the engine's existing routing/state machinery reads
-it unchanged. Recording happens on the tool thread, so the registry is guarded
-by a lock.
+The tool records the route in the run-scoped turn-outcome registry (the same
+one ``dispatch_next`` uses), so the engine's existing routing/state machinery
+reads it unchanged. Recording happens on the tool thread, so the registry is
+guarded by a lock.
 """
 
 from collections.abc import Sequence
@@ -25,14 +25,15 @@ from openhands.sdk.tool.tool import (
 from rich.text import Text
 
 from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
-    record_dispatch,
+    record_turn_outcome,
 )
+from agent_script.features.run_agent.run_outcome import OutcomeStatus
 from nebuko.engine.finalize import (
     FinalizeSchemaBuilder,
     RouteDecision,
     route_from_action,
 )
-from workflow_state import Dispatch
+from workflow_state import RunPrefs, TurnOutcome
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation.base import BaseConversation
@@ -65,29 +66,49 @@ section bodies between the exact markers the prompt shows, then call this tool
 with your routing decision. Do not put the report in the tool arguments.
 
 Parameters:
-- route.status: 'advance' (route to the next step/agent), 'loop' (repeat the
-  current step), or 'hold' (wait for human input).
-- route.agent: optional explicit target agent name; omit to let the workflow
-  engine decide from the workflow definition.
+- route.appreciation: REQUIRED. Your verdict on this turn — 'approved' (the
+  work meets the step's goal), 'rejected' (it does not), or 'hold' (you cannot
+  decide; a human must).
+- route.hold_kind: only with appreciation='hold' — 'awaiting_approval' or
+  'awaiting_input'.
+- route.required_agent: optional agent name that must run at the routed step;
+  it never selects the step.
+- route.round: optional review/iteration round number this turn belongs to.
+- route.note: one-sentence justification of the verdict.
 - route.complexity: 'low' | 'medium' | 'high' for the next agent; omit to
   inherit the workflow step's declared complexity (defaults to 'medium').
-- route.branch: optional workflow branch/condition key to route on
-  (e.g. 'approved', 'rejected'); omit to let the engine use a default condition.
 - route.pin: set true to pin this step's output comment(s) for verbatim
   injection into downstream context; omit to leave unpinned.
-- route.reason: one-sentence justification of the routing decision."""  # noqa: E501
+
+Where the workflow goes next is engine topology, never your choice: the engine
+maps your appreciation onto the step's declared ``on_result`` edge."""  # noqa: E501
 
 
-def route_to_dispatch(route: RouteDecision) -> Dispatch:
-    """Map a :class:`RouteDecision` onto the canonical ``Dispatch`` model."""
-    return Dispatch(
-        status=route.status,
-        task_hint=route.agent,
-        complexity=route.complexity or "",
-        branch=route.branch,
-        pin=route.pin,
-        reason=route.reason,
+def route_to_turn_outcome(route: RouteDecision) -> TurnOutcome:
+    """Map a :class:`RouteDecision` onto the factual ``TurnOutcome`` model.
+
+    The finalize turn is engine-elicited and only runs after a completed agent
+    turn, so the engine-measured status is ``success`` (issue #964).
+    """
+    return TurnOutcome.from_agent_payload(
+        {
+            "appreciation": route.appreciation,
+            "hold_kind": route.hold_kind,
+            "required_agent": route.required_agent,
+            "round": route.round,
+            "note": route.note,
+        },
+        observed=OutcomeStatus.SUCCESS,
     )
+
+
+def route_to_prefs(route: RouteDecision) -> RunPrefs:
+    """Map the non-routing knobs of the route onto :class:`RunPrefs`.
+
+    Mirrors ``dispatch_next``'s ``action_to_prefs``: the tier and the pin are
+    run preferences, not routing facts, so they travel beside the outcome.
+    """
+    return RunPrefs(complexity=route.complexity or "", pin=route.pin)
 
 
 class FinalizeExecutor(ToolExecutor):
@@ -108,11 +129,15 @@ class FinalizeExecutor(ToolExecutor):
                 ),
                 is_error=True,
             )
-        record_dispatch(self._conversation_id, route_to_dispatch(route))
+        record_turn_outcome(
+            self._conversation_id,
+            route_to_turn_outcome(route),
+            route_to_prefs(route),
+        )
         return FinalizeObservation.from_text(
             text=(
-                f"Route recorded: status={route.status}, "
-                f"agent={route.agent or '-'}. You may now finish."
+                f"Route recorded: appreciation={route.appreciation}, "
+                f"hold_kind={route.hold_kind or '-'}. You may now finish."
             )
         )
 

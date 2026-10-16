@@ -17,6 +17,8 @@ import pytest
 from nebuko.adapters.github import GitHubAdapter
 from nebuko.engine.models import Trigger
 
+from _facts import approved_outcome as _approved_outcome
+
 ISSUE_COMMENT_PAYLOAD = {
     "action": "created",
     "comment": {
@@ -473,7 +475,12 @@ def _state_comment(*, history_len: int = 2):
     )
 
     entries = [
-        HistoryEntry(step=f"step_{index}", agent="architect", summary=f"s{index}")
+        HistoryEntry(
+            step=f"step_{index}",
+            agent="architect",
+            summary=f"s{index}",
+            turn_outcome=_approved_outcome(),
+        )
         for index in range(history_len)
     ]
     state = WorkflowState(

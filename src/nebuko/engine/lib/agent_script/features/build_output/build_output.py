@@ -22,22 +22,21 @@ from config import (
     parse_position_env,
     resolve_workflow_reference,
 )
-from config.sub_domains.agent_run_config.agent_run_config import DispatchConfig
 from github_client import get_issue_comments
 from metrics_schema import Metrics
-from validate_output import (
-    extract_dispatch_resilient,
-    has_unterminated_agent_run_config,
-    strip_agent_run_config,
-)
 from workflow_state import (
-    Dispatch,
+    Appreciation,
     FunctionCall,
     GateDecision,
+    HoldKind,
+    IncompleteReason,
     IssueInfo,
     PullRequestInfo,
+    RunPrefs,
     StepInputRecord,
     StepResolution,
+    TurnOutcome,
+    TurnStatus,
     WorkflowState,
     workflow_ref_from_env,
 )
@@ -65,7 +64,8 @@ from agent_script.features.ensure_pr.ensure_pr import (
 )
 from agent_script.features.dispatch_next_tool import (
     clear_run,
-    get_recorded_dispatch,
+    get_recorded_run_prefs,
+    get_recorded_turn_outcome,
 )
 from agent_script.features.call_agent_tool import (
     clear_run as clear_call_agent_run,
@@ -214,22 +214,22 @@ def _build_failure_summary(run_outcome: RunOutcome) -> str:  # @stub-protected
     return "\n".join(lines)
 
 
-def _soft_kill_dispatch() -> Dispatch:  # @stub-protected
-    """Build the soft-kill error dispatch for a gracefully timed-out run (#704).
+def _soft_kill_outcome() -> TurnOutcome:  # @stub-protected
+    """Build the soft-kill outcome for a gracefully timed-out run (#704).
 
     A soft time-kill (the ~20 min wind-down) interrupts the running step
-    without completing it. The dispatch handed to the workflow engine must
-    carry the explicit error status ``soft_kill`` so the router re-runs the
-    interrupted step (bounded by ``MAX_SOFT_RETRIES``) instead of advancing to
-    the next one. ``build_output`` uses this in place of the agent's own
-    dispatch whenever the run outcome is ``OutcomeStatus.GRACEFULLY_TIMED_OUT``.
+    without completing it. The outcome handed to the workflow engine must be
+    INCOMPLETE so the router re-runs the interrupted step (bounded by
+    ``MAX_SOFT_RETRIES``) instead of advancing to the next one.
+    ``build_output`` uses this in place of the agent's own outcome whenever the
+    run status is ``OutcomeStatus.GRACEFULLY_TIMED_OUT``.
 
     Returns:
-        A Dispatch with status ``soft_kill`` and the timeout reason.
+        An INCOMPLETE/SOFT_TIMEOUT outcome with the timeout note.
     """
-    return Dispatch(
-        status="soft_kill",
-        reason=(
+    return TurnOutcome.for_incomplete(
+        IncompleteReason.SOFT_TIMEOUT,
+        note=(
             "Soft time-kill: the run was interrupted by the wind-down timeout "
             "before completing the step. Retry this step in place; halt for a "
             "human once MAX_SOFT_RETRIES is exhausted."
@@ -237,21 +237,21 @@ def _soft_kill_dispatch() -> Dispatch:  # @stub-protected
     )
 
 
-def _agent_checkpoint_dispatch() -> Dispatch:  # @stub-protected
-    """Build the checkpoint dispatch for a folded run (issue #965).
+def _agent_checkpoint_outcome() -> TurnOutcome:  # @stub-protected
+    """Build the checkpoint outcome for a folded run (issue #965).
 
     The agent called the ``handoff`` tool with ``fold: true``: it saved its
     state and asked for a fresh start. The step did not complete, so the
-    dispatch must not advance — it carries ``agent_checkpoint``, which the
-    router treats exactly like ``soft_kill`` (re-run in place, bounded by
-    ``MAX_SOFT_RETRIES``, halt for a human once spent).
+    outcome must not carry a verdict — it is INCOMPLETE/AGENT_CHECKPOINT,
+    which the router treats exactly like a soft kill (re-run in place, bounded
+    by ``MAX_SOFT_RETRIES``, halt for a human once spent).
 
     Returns:
-        A Dispatch with status ``agent_checkpoint``.
+        An INCOMPLETE/AGENT_CHECKPOINT outcome.
     """
-    return Dispatch(
-        status="agent_checkpoint",
-        reason=(
+    return TurnOutcome.for_incomplete(
+        IncompleteReason.AGENT_CHECKPOINT,
+        note=(
             "Agent checkpoint: the run saved a session handoff and asked to "
             "fold (start fresh). Retry this step in place; halt for a human "
             "once MAX_SOFT_RETRIES is exhausted."
@@ -338,78 +338,19 @@ def _parse_complexity_policy_env():
         return None
 
 
-def _no_action_dispatch(diagnostic: str = "", callback: str = "") -> Dispatch:
-    """Synthesize the decision-less fallback for a run with no decision (#864).
+def _no_action_outcome(diagnostic: str = "") -> TurnOutcome:
+    """Synthesize the factual outcome of a run that emitted no verdict (#864).
 
-    An agent that ends its run without emitting any decision (no ``dispatch``
-    and no ``function_call``) is contract drift, not a normal completion. When
-    the run carries a **return address** (``callback``, i.e. it was reached
-    through a caller's ``function_call``) the bounded continuation is to
-    ``advance`` back to the caller, which re-enters with the report and decides.
-    Only a rudderless run holds for a human.
+    An agent that ends its run without calling ``dispatch_next`` has stated no
+    appreciation at all: that is contract drift, not a completion. The outcome
+    is therefore INCOMPLETE/NO_OUTCOME — the router derives the edge from the
+    workflow topology and pings a human when nothing matches, instead of
+    inventing a navigation status (issue #964).
 
-    The canonical ``DispatchConfig.fallback_for`` factory owns the fallback
-    status/precedence; this adapter maps it onto the ``Dispatch`` the workflow
-    engine consumes, carrying ``origin='engine_fallback'`` so the synthesized
-    decision is distinguishable from an agent-explicit one (#864).
+    ``diagnostic`` is kept as the human-facing note so the reason a verdict is
+    missing ("the legacy sentinel could not be parsed") survives on the thread.
     """
-    fallback = DispatchConfig.fallback_for(callback, diagnostic)
-    return Dispatch(
-        status=fallback.status,
-        reason=fallback.reason,
-        origin=fallback.origin,
-    )
-
-
-def agent_run_config_to_dispatch(json_str: str) -> Optional[Dispatch]:
-    """Convert an AGENT_RUN_CONFIG JSON string to a Dispatch object.
-
-    Maps AGENT_RUN_CONFIG payload fields (task, complexity, etc.) to Dispatch
-    (task_hint, complexity, etc.). Defaults status to 'advance'.
-
-    Args:
-        json_str: Raw JSON string from an AGENT_RUN_CONFIG sentinel.
-
-    Returns:
-        Dispatch instance, or None if parsing or validation fails.
-    """
-    try:
-        data = json.loads(json_str)
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-    if not isinstance(data, dict):
-        return None
-
-    # Auto-unwrap nested {"dispatch": {...}} structure (agents emit this shape)
-    if "dispatch" in data and isinstance(data["dispatch"], dict):
-        data.update(data["dispatch"])
-
-    # Map 'task' -> 'task_hint', default status to 'advance'
-    try:
-        return Dispatch(
-            status=data.get("status", "advance"),
-            task_hint=data.get("task"),
-            complexity=data.get("complexity") or "",
-            reasoning=data.get("reasoning", "none"),
-            model=data.get("model"),
-            temperature=data.get("temperature"),
-            top_p=data.get("top_p"),
-            top_k=data.get("top_k"),
-            min_p=data.get("min_p"),
-            presence_penalty=data.get("presence_penalty"),
-            repetition_penalty=data.get("repetition_penalty"),
-            workflow=data.get("workflow"),
-            step=data.get("step"),
-            branch=data.get("branch"),
-            parent_workflow=data.get("parent_workflow"),
-            parent_workflow_step=data.get("parent_workflow_step"),
-            skills=data.get("skills"),
-            pin=bool(data.get("pin", False)),
-        )
-    except ValidationError as e:
-        logger.warning(f"AGENT_RUN_CONFIG payload failed Dispatch validation: {e}")
-        return None
+    return TurnOutcome.for_incomplete(IncompleteReason.NO_OUTCOME, note=diagnostic)
 
 
 def _load_gated_step_def(
@@ -440,65 +381,70 @@ def _load_gated_step_def(
     return False
 
 
-def _dispatch_is_human_gate_hold(dispatch: Optional[Dispatch]) -> bool:
-    """True when a dispatch is the human-gate intercept's ``hold``.
+def _is_human_gate_hold(outcome: Optional[TurnOutcome]) -> bool:
+    """True when an outcome is the human-gate intercept's hold.
 
-    The intercept (``apply_human_gate_intercept``) is the sole producer of a
-    ``status == "hold"`` whose reason names a gate, and ``resolve_route``
-    detects the same shape, so this mirror is what keeps the persisted state
-    and the router in agreement (issue #887).
+    The intercept (:func:`apply_human_gate_intercept`) is the sole producer of
+    a ``HOLD``/``AWAITING_APPROVAL`` outcome, and ``resolve_route`` detects the
+    same shape, so this mirror is what keeps the persisted state and the router
+    in agreement (issue #887).
     """
     return bool(
-        dispatch is not None
-        and dispatch.status == "hold"
-        and (dispatch.reason or "").startswith("human_gate:")
+        outcome is not None
+        and outcome.appreciation is Appreciation.HOLD
+        and outcome.hold_kind is HoldKind.AWAITING_APPROVAL
     )
 
 
 def apply_human_gate_intercept(
-    dispatch: Optional[Dispatch],
+    outcome: Optional[TurnOutcome],
     workflow_name: str,
     workflow_step: str,
-) -> Optional[Dispatch]:
+) -> Optional[TurnOutcome]:
     """Enforce the human_gate security boundary (issues #506, #648).
 
     A step marked ``human_gate: true`` in the workflow YAML may never advance
-    on its own. There is **no** second release path: an ``advance`` dispatch
-    (or a missing dispatch, which resolves to advance downstream) is
-    overridden to ``hold``, and the only way past the gate is a recorded
+    on its own. There is **no** second release path: a completed turn (or a
+    missing outcome, which routes on topology downstream) is overridden to hold
+    ``awaiting_approval``, and the only way past the gate is a recorded
     :class:`GateDecision` written by an identity-verified
     ``/nebuko approve gate`` / ``/nebuko reject gate`` command — never by a
-    re-invocation of the agent. Loop, hold, and terminate outcomes are never
-    intercepted. A ``soft_kill`` dispatch (issue #704) is treated like
-    ``advance``: on a gated step the gate wins and the run holds for a human
-    instead of auto-retrying. An agent-supplied ``branch`` is inert on a gated
-    step — it is cleared so it cannot leak into the held state.
+    re-invocation of the agent. A hold, an incomplete turn, and a soft kill are
+    never intercepted: on a gated step the gate wins and the run holds for a
+    human instead of auto-retrying.
 
     Args:
-        dispatch: Dispatch extracted from the agent output (may be None).
+        outcome: Turn outcome resolved from the agent run (may be None).
         workflow_name: Active workflow name (WORKFLOW_NAME env).
         workflow_step: Step just executed (WORKFLOW_STEP env).
 
     Returns:
-        The (possibly overridden) Dispatch.
+        The (possibly overridden) TurnOutcome.
     """
-    if dispatch is not None and dispatch.status not in ("advance", "soft_kill"):
-        return dispatch
+    if outcome is not None and not _gate_intercepts(outcome):
+        return outcome
     if not _load_gated_step_def(workflow_name, workflow_step):
-        return dispatch
+        return outcome
     logger.info(
         f"Human gate: step '{workflow_step}' requires approval — "
-        f"intercepting {(dispatch.status if dispatch else 'advance')} as hold"
+        f"intercepting {(outcome.appreciation.value if outcome and outcome.appreciation else 'no verdict')} as hold"
     )
-    if dispatch is None:
-        dispatch = Dispatch()
-    return dispatch.model_copy(
-        update={
-            "status": "hold",
-            "reason": f"human_gate:{workflow_step}",
-            "branch": None,
-        }
+    return TurnOutcome(
+        status=TurnStatus.COMPLETED,
+        appreciation=Appreciation.HOLD,
+        hold_kind=HoldKind.AWAITING_APPROVAL,
+        note=f"human_gate:{workflow_step}",
     )
+
+
+def _gate_intercepts(outcome: TurnOutcome) -> bool:
+    """True when the gate must override this outcome.
+
+    Only a *completing* turn is intercepted: its verdict is discarded in favour
+    of the approval hold. An INCOMPLETE turn (soft kill, checkpoint, failure)
+    keeps its own outcome so the router can retry or halt it (issue #704).
+    """
+    return outcome.status is TurnStatus.COMPLETED
 
 
 def _load_prev_state() -> WorkflowState | None:
@@ -842,8 +788,8 @@ def _recall_aware_events(events: list, run_outcome) -> list:
     the full list is returned unchanged (byte-identical legacy behavior,
     keeping the #553/#555 regression suite green).
 
-    Dispatch resolution intentionally does NOT use this: the recall turn is
-    exactly where the missing dispatch decision is supplied.
+    Turn-outcome resolution intentionally does NOT use this: the recall turn is
+    exactly where the missing verdict is supplied.
     """
     offset = (
         run_outcome.dispatch_recall_event_offset
@@ -870,48 +816,6 @@ def _write_latest_answer_file(text: str) -> None:
         f.write(text)
     logger.info("Wrote latest answer artifact (%d chars)", len(text))
 
-def _merge_sentinel_routing_fields(
-    tool_dispatch: Dispatch, final_message: str
-) -> Dispatch:
-    """Merge branch/workflow/step from a co-emitted sentinel into a winning
-    tool dispatch (issue #618, defense-in-depth).
-
-    The tool call owns ``status``/``complexity``/``task_hint`` (issue #524
-    precedence is preserved). When the tool's schema left a routing field
-    unset (``None``), fill it in from the co-emitted sentinel so the two
-    channels are complementary instead of the tool silently truncating a
-    richer sentinel. A non-``None`` value the tool explicitly set is never
-    overridden.
-
-    **Frozen as compatibility-only (issue #876).** Agents no longer emit the
-    sentinel; it survives only as a legacy input. Each merge logs a deprecation
-    warning — the phase-3 gate metric for removing this path entirely.
-    """
-    if not final_message:
-        return tool_dispatch
-    extract_result = extract_dispatch_resilient(final_message)
-    if extract_result.payload is None:
-        return tool_dispatch
-    sentinel_dispatch = agent_run_config_to_dispatch(extract_result.payload)
-    if sentinel_dispatch is None:
-        return tool_dispatch
-
-    updates = {}
-    for field in ("branch", "workflow", "step"):
-        tool_value = getattr(tool_dispatch, field)
-        sentinel_value = getattr(sentinel_dispatch, field)
-        if tool_value is None and sentinel_value is not None:
-            updates[field] = sentinel_value
-    if not updates:
-        return tool_dispatch
-    logger.warning(
-        "[deprecation] merged legacy AGENT_RUN_CONFIG sentinel routing fields "
-        f"into the tool dispatch: {updates} (issue #876 — the sentinel is a "
-        "compat input only)"
-    )
-    return tool_dispatch.model_copy(update=updates)
-
-
 def _typed_function_call(conversation) -> Optional[FunctionCall]:
     """The run's recorded typed ``call_agent`` hand-off, if the tool was called.
 
@@ -925,190 +829,164 @@ def _typed_function_call(conversation) -> Optional[FunctionCall]:
     return get_recorded_function_call(conv_id)
 
 
-def _resolve_dispatch(
-    conversation, final_message: str
-) -> tuple[Optional[Dispatch], Optional[FunctionCall], str]:
-    """Resolve the run's dispatch decision from the structured signal first.
+def _resolve_outcome(
+    conversation,
+) -> tuple[TurnOutcome, RunPrefs, Optional[FunctionCall]]:
+    """Resolve the run's factual turn outcome, run prefs and typed hand-off.
 
-    Resolution priority (issue #524, extended by #876):
-      1. ``dispatch_next`` tool call — a boolean check on structured data,
-         immune to long-context format drops (the failure mode of the
-         free-text sentinel).
-      2. Typed ``call_agent`` tool call — an explicit agent-to-agent hand-off
-         with no ``dispatch_next`` sibling still *is* a decision (advance to
-         the named agent).
-      3. Legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel — silent compat
-         fallback during the dual-mode migration window.
-      4. Neither — a decision-less run: the fallback advances back to the
-         registered ``callback`` when there is a return address, else holds
-         (issue #765, #864, :func:`_no_action_dispatch`) so the engine never
-         auto-advances an unknown state.
+    Resolution priority (issue #524, extended by #876/#964):
+      1. The recorded ``dispatch_next`` tool call — a boolean check on
+         structured data. Its payload carries the agent-supplied verdict; the
+         engine-measured status comes from the run outcome (:func:`_observed_status`).
+      2. A typed ``call_agent`` tool call with no ``dispatch_next`` sibling —
+         an explicit agent-to-agent hand-off, which is itself a decision.
+      3. Neither — no verdict was stated: INCOMPLETE/NO_OUTCOME.
 
-    When the tool call wins, ``branch``/``workflow``/``step`` left unset by
-    the tool are merged in from a co-emitted sentinel (issue #618) so the
-    richer sentinel can no longer be silently truncated.
+    The legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel is **not** read
+    (issue #964): it is prose the agent rendered, and routing is now engine
+    truth. A stale echo of one is inert.
 
-    The ``function_call`` is typed-first (issue #876): a recorded ``call_agent``
-    call wins over the ``dispatch_next`` target, which in turn wins over the
-    sentinel-scraped hand-off.
-
-    Sentinels are always stripped from ``final_message`` so they never leak
-    into the visible comment body.
+    Returns:
+        The ``(turn_outcome, prefs, function_call)`` triple for this run. The
+        prefs are the non-routing knobs recorded with the outcome (issue #964);
+        they are empty when no tool call stated them.
     """
-    dispatch: Optional[Dispatch] = None
     function_call: Optional[FunctionCall] = None
-    diagnostic = ""
-
+    prefs = RunPrefs()
     conv_id = getattr(conversation, "id", None)
-    tool_dispatch = get_recorded_dispatch(conv_id) if conv_id is not None else None
+    outcome = (
+        get_recorded_turn_outcome(conv_id) if conv_id is not None else None
+    )
     typed_function_call = _typed_function_call(conversation)
 
-    if tool_dispatch is not None:
-        dispatch = _merge_sentinel_routing_fields(tool_dispatch, final_message)
-        # Explicit cross-agent targeting flows through function_call in the
-        # routing chain. The typed call_agent tool wins; otherwise the
-        # dispatch_next target is promoted to a call_agent hand-off. The shared
-        # helper validates the name against the agent roster and logs a warning
-        # on typos (issue #524).
+    if outcome is not None:
+        recorded_prefs = (
+            get_recorded_run_prefs(conv_id) if conv_id is not None else None
+        )
+        if recorded_prefs is not None:
+            prefs = recorded_prefs
         if typed_function_call is not None:
             function_call = typed_function_call
-        elif dispatch.task_hint:
+        elif outcome.required_agent:
             # Lazy import: dispatch_check imports from this module at top
             # level, so a module-level import here would be circular.
             from agent_script.features.dispatch_check import (
                 agent_to_function_call,
             )
 
-            # Carry the explicit dispatch tier (issue #787) so a hand-off
-            # without one inherits the callee step's declared tier instead of
-            # masking it with a hardcoded default.
+            # Carry the declared tier (issue #787) so a hand-off without one
+            # inherits the callee step's declared tier instead of masking it
+            # with a hardcoded default.
             function_call = FunctionCall(
-                **agent_to_function_call(dispatch.task_hint),
-                complexity=dispatch.complexity,
+                **agent_to_function_call(outcome.required_agent),
+                complexity=prefs.complexity,
             )
         logger.info(
-            f"Dispatch resolved via dispatch_next tool: status={dispatch.status}, "
-            f"agent={dispatch.task_hint or '-'}"
+            "Turn outcome resolved via dispatch_next tool: "
+            f"status={outcome.status.value}, "
+            f"appreciation={outcome.appreciation or '-'}"
         )
     elif typed_function_call is not None:
         # A typed call_agent without a dispatch_next sibling is itself the
-        # decision: advance to the named agent (issue #876). The hand-off
-        # carries the caller's declared complexity.
-        dispatch = Dispatch(
-            status="advance",
-            task_hint=typed_function_call.agent_name,
-            complexity=typed_function_call.complexity or "",
+        # turn's verdict: the callee approved the routed work (issue #876).
+        outcome = TurnOutcome(
+            status=TurnStatus.COMPLETED,
+            appreciation=Appreciation.APPROVED,
+            required_agent=typed_function_call.agent_name,
         )
+        prefs = RunPrefs(complexity=typed_function_call.complexity or "")
         function_call = typed_function_call
         logger.info(
-            "Dispatch resolved via typed call_agent tool: "
+            "Turn outcome resolved via typed call_agent tool: "
             f"agent={typed_function_call.agent_name}"
         )
-    elif final_message:
-        if has_unterminated_agent_run_config(final_message):
-            diagnostic = "unterminated AGENT_RUN_CONFIG sentinel (truncated output)"
-            logger.warning("Unterminated AGENT_RUN_CONFIG sentinel detected (truncated output)")
-        extract_result = extract_dispatch_resilient(final_message)
-        if extract_result.payload is not None:
-            dispatch = agent_run_config_to_dispatch(extract_result.payload)
-            # The extractor only returns payloads it already json-parsed,
-            # so this re-parse cannot fail (valid-JSON guarantee).
-            function_call = extract_function_call(json.loads(extract_result.payload))
-            if dispatch is not None:
-                diagnostic = ""
-                logger.warning(
-                    "[deprecation] Dispatch resolved via legacy AGENT_RUN_CONFIG "
-                    "sentinel (dispatch_next/call_agent tools not called); the "
-                    "sentinel is a compat input only (issue #876)"
-                )
-            else:
-                diagnostic = "AGENT_RUN_CONFIG payload failed Dispatch validation"
-        elif extract_result.parse_error is not None:
-            # A sentinel marker was present but no payload could be parsed
-            # (issue #512): capture an explicit diagnostic instead of failing
-            # silently with dispatch=function_call=None.
-            diagnostic = str(extract_result.parse_error)
-            logger.warning(
-                f"AGENT_RUN_CONFIG sentinel found but could not be parsed: "
-                f"{extract_result.parse_error}"
-            )
+    else:
+        # No-action default (issue #765, #864): a run that emitted neither a
+        # verdict nor a hand-off is not a completion. The engine records the
+        # absence as a fact and lets the router ping a human when topology
+        # matches nothing (issue #964).
+        outcome = _no_action_outcome()
+        logger.warning(
+            "No turn outcome emitted — recording "
+            f"{outcome.status.value}/{outcome.incomplete_reason.value}"
+        )
 
-    # Strip AGENT_RUN_CONFIG sentinels so they don't appear in the visible
-    # comment body — dispatch is stored structurally in workflow_state.dispatch.
-    final_message = strip_agent_run_config(final_message)
+    return _observed_status(conversation, outcome), prefs, function_call
 
-    # No-action default (issue #765, #864): a run that emitted neither a
-    # dispatch nor a function_call is contract drift, not a completion. With a
-    # return address (``CONFIG_CALLBACK``, set when this run was reached via a
-    # caller's function_call) the bounded continuation is to advance back to
-    # the caller; a rudderless run holds for a human. Either way the decision
-    # is tagged ``engine_fallback``.
-    if dispatch is None and function_call is None:
-        callback = os.environ.get("CONFIG_CALLBACK", "")
-        dispatch = _no_action_dispatch(diagnostic, callback=callback)
-        logger.warning(f"No action emitted — defaulting to {dispatch.status}: {dispatch.reason}")
 
-    return dispatch, function_call, final_message
+def _observed_status(conversation, outcome: TurnOutcome) -> TurnOutcome:
+    """Fold the engine-measured run status into the recorded outcome (#964).
+
+    A run that timed out, crashed, was interrupted, or folded itself into a
+    session handoff did not complete, whatever the agent said: the verdict is
+    replaced by the measured INCOMPLETE reason. ``from_agent_payload`` owns
+    that precedence; a completed run keeps its verdict untouched.
+    """
+    run_outcome = _get_run_outcome(conversation)
+    observed = run_outcome.status if run_outcome is not None else OutcomeStatus.SUCCESS
+    if observed is OutcomeStatus.SUCCESS:
+        return outcome
+    return TurnOutcome.from_agent_payload(
+        {"appreciation": outcome.appreciation}, observed=observed
+    )
 
 
 def _neutralize_self_and_pin(
-    dispatch: Optional[Dispatch],
+    outcome: TurnOutcome,
+    prefs: RunPrefs,
     function_call: Optional[FunctionCall],
     role_name: str,
-) -> tuple[Optional[Dispatch], Optional[FunctionCall]]:
+) -> tuple[TurnOutcome, RunPrefs, Optional[FunctionCall]]:
     """Neutralize a self hand-off and force the PO escalation pin (issue #876).
 
-    Two pure decisions applied to the resolved ``(dispatch, function_call)``:
+    Two pure decisions applied to the resolved ``(outcome, prefs, function_call)``:
 
     1. **Self hand-off (issue #618, defect 2a):** when the ``function_call``
-       targets the running agent it must not outrank the plain dispatch /
+       targets the running agent it must not outrank the plain outcome /
        workflow-next routing. Drop the ``function_call`` *and* the promoted
-       ``task_hint`` the typed ``call_agent`` branch copied onto the dispatch —
-       otherwise ``agent_host._routing_payload`` would re-derive an ``agent``
-       target from the neutralized hand-off and re-route to the running agent.
+       ``required_agent`` the typed ``call_agent`` branch copied onto the
+       outcome — otherwise a re-derived hand-off would re-route to the running
+       agent.
     2. **PO escalation pin (issue #876 review):** the typed ``call_agent`` tool
        exposes no ``pin`` field, so an imperatively escalating PO would lose the
-       verbatim pin its spec-comment contract requires. Force ``dispatch.pin``
+       verbatim pin its spec-comment contract requires. Force ``prefs.pin``
        engine-side on a PO hand-off.
 
-    Returns the possibly-updated ``(dispatch, function_call)`` pair; neither
-    input is mutated (``model_copy``).
+    Returns the possibly-updated triple; no input is mutated (``model_copy``).
     """
     if function_call is not None and is_self_function_call(function_call, role_name):
         logger.info(
             f"Self function_call neutralized (agent={role_name}); "
-            f"keeping plain dispatch for workflow-next routing"
+            f"keeping plain outcome for workflow-next routing"
         )
         function_call = None
-        if dispatch is not None and dispatch.task_hint == role_name:
-            dispatch = dispatch.model_copy(update={"task_hint": None})
+        if outcome.required_agent == role_name:
+            outcome = outcome.model_copy(update={"required_agent": None})
 
     if (
         role_name == "po"
         and function_call is not None
         and function_call.function == "call_agent"
-        and dispatch is not None
     ):
-        logger.info("PO imperative hand-off — forcing dispatch pin (issue #876)")
-        dispatch = dispatch.model_copy(update={"pin": True})
+        logger.info("PO imperative hand-off — forcing the pin preference (issue #876)")
+        prefs = prefs.model_copy(update={"pin": True})
 
-    return dispatch, function_call
+    return outcome, prefs, function_call
 
 
-def _resolve_pin(dispatch: Optional[Dispatch]) -> bool:
+def _resolve_pin(prefs: Optional[RunPrefs]) -> bool:
     """Resolve whether this step's output comment(s) should be pinned.
 
     Two sources, both opt-in:
       * ``PIN_COMMENT`` env — a workflow-level override mirroring the
         ``INJECT_CONTEXT`` knob. Parsed with an allow-list (empty/unset ⇒
         False) because the flag defaults to off.
-      * ``dispatch.pin`` — a per-run request from the agent's structured
-        dispatch (``dispatch_next`` tool or the ``AGENT_RUN_CONFIG``
-        sentinel), used to pin this very step's output.
+      * ``prefs.pin`` — a per-run request from the agent's ``dispatch_next``
+        call, used to pin this very step's output.
     """
     pin_str = (os.environ.get("PIN_COMMENT") or "false").strip().lower()
     pin_from_env = pin_str in ("true", "1", "yes")
-    return pin_from_env or bool(dispatch and dispatch.pin)
+    return pin_from_env or bool(prefs and prefs.pin)
 
 
 def build_output(
@@ -1254,15 +1132,15 @@ def build_output(
     pr_info = _build_pr_info()
     resolution = _build_resolution()
 
-    # ── Extract dispatch + function_call from agent output ─────────
-    dispatch, function_call, final_message = _resolve_dispatch(
-        conversation, final_message
-    )
+    # ── Extract the turn outcome + function_call from agent output ─────
+    turn_outcome, prefs, function_call = _resolve_outcome(conversation)
 
     # Self function_call neutralization (issue #618, defect 2a) + PO escalation
     # pin (issue #876 review): both decisions live in the pure helper so they
     # are directly unit-testable.
-    dispatch, function_call = _neutralize_self_and_pin(dispatch, function_call, role_name)
+    turn_outcome, prefs, function_call = _neutralize_self_and_pin(
+        turn_outcome, prefs, function_call, role_name
+    )
 
     # Clear the run-scoped dispatch registry on every exit path (issue #524):
     # build_output runs exactly once per agent run, so this must not leak into
@@ -1285,8 +1163,12 @@ def build_output(
     # place (bounded by MAX_SOFT_RETRIES) instead of advancing to the next one.
     # Applied before the human-gate intercept so a gated step still holds.
     if is_graceful_timeout:
-        dispatch = _soft_kill_dispatch()
-        logger.info("Graceful timeout — dispatch overridden with soft_kill status")
+        turn_outcome = _soft_kill_outcome()
+        # The interrupted step re-runs in place; the agent's run preferences
+        # belonged to the turn that never completed (parity with the legacy
+        # soft-kill dispatch, which carried none).
+        prefs = RunPrefs()
+        logger.info("Graceful timeout — outcome overridden with SOFT_TIMEOUT")
 
     # ── Agent-checkpoint status (issue #965) ─────────────────────
     # A folded run (the ``handoff`` tool called with ``fold: true``) saved its
@@ -1298,8 +1180,9 @@ def build_output(
         run_outcome is not None
         and run_outcome.status is OutcomeStatus.AGENT_CHECKPOINT
     ):
-        dispatch = _agent_checkpoint_dispatch()
-        logger.info("Handoff fold — dispatch overridden with agent_checkpoint status")
+        turn_outcome = _agent_checkpoint_outcome()
+        prefs = RunPrefs()
+        logger.info("Handoff fold — outcome overridden with AGENT_CHECKPOINT")
 
     # ── Human gate intercept (issues #506, #648) ─────────────────
     # A gated step's dispatch is always overridden to hold: the gate is
@@ -1316,8 +1199,8 @@ def build_output(
         os.environ.get("SOFT_RETRY_ATTEMPT", "").strip().lower()
         in ("true", "1", "yes")
     )
-    dispatch = apply_human_gate_intercept(
-        dispatch,
+    turn_outcome = apply_human_gate_intercept(
+        turn_outcome,
         workflow_name=workflow_name,
         workflow_step=workflow_step,
     )
@@ -1326,7 +1209,7 @@ def build_output(
     # advertising the ungated forward edge (``next_step`` from WORKFLOW_NEXT).
     # The hold is released only by a gate command, so no reader may follow that
     # edge; the routing guard in resolve_route no longer trusts it either.
-    if dispatch is not None and _dispatch_is_human_gate_hold(dispatch):
+    if _is_human_gate_hold(turn_outcome):
         resolution = resolution.model_copy(update={"next_step": ""})
         # The gate supersedes any agent-named hand-off (issue #887 round 2): a
         # persisted ``function_call`` would otherwise let the next bot trigger
@@ -1349,7 +1232,7 @@ def build_output(
     inject_context_str = os.environ.get("INJECT_CONTEXT", "true")
     inject_context = inject_context_str.lower() not in ("false", "0", "no")
 
-    pin = _resolve_pin(dispatch)
+    pin = _resolve_pin(prefs)
 
     new_state = build_state(
         prev_state,
@@ -1365,7 +1248,8 @@ def build_output(
         issue=issue_info,
         pull_request=pr_info,
         resolution=resolution,
-        dispatch=dispatch,
+        turn_outcome=turn_outcome,
+        prefs=prefs,
         function_call=function_call,
         callback=callback,
         started_by=os.environ.get("TRIGGER_AUTHOR") or None,

@@ -23,7 +23,7 @@ import sys
 from typing import TYPE_CHECKING
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from validate_output import AGENT_RUN_CONFIG_PATTERN, strip_agent_run_config
+from validate_output import strip_agent_run_config
 from workflow_state.features.comment.to_git_comment import (
     collapse_sections,
     format_collapsed_section,
@@ -104,111 +104,6 @@ def select_posted_body(latest_answer: str, final_message: str) -> str:
     """
     stripped = latest_answer.strip()
     return stripped if stripped else final_message
-
-
-def merge_handoff_sentinels(*sources: str) -> str:
-    # @stub-protected: signature defined by architect — do not modify
-    """Merge AGENT_RUN_CONFIG hand-off sentinels from the candidate sources.
-
-    Contract (ETL invariant — dispatch/branching must always reach the
-    comment):
-      * Scan sources left to right; the LAST sentinel payload found wins
-        (mirrors extract_dispatch_resilient's last-valid-payload rule).
-      * The winning sentinel block is returned exactly once — deduped no
-        matter how many times / in how many sources it appears.
-      * Return "" when no source contains a sentinel.
-
-    Args:
-        *sources: Raw text sources, e.g. (latest_answer, final_message).
-
-    Returns:
-        A single "<!-- AGENT_RUN_CONFIG ... -->" block, or "".
-    """
-    last_payload = ""
-    for source in sources:
-        if not source:
-            continue
-        for match in AGENT_RUN_CONFIG_PATTERN.finditer(source):
-            last_payload = match.group(1)
-    if not last_payload:
-        return ""
-    return f"<!-- AGENT_RUN_CONFIG {last_payload} -->"
-
-
-# Typed sections rendered into the engine-owned hand-off sentinel, in the
-# canonical ``AgentRunConfig`` shape (issue #830). Each entry is
-# ``(sentinel_key, model_attribute)``; only truthy fields are carried, so an
-# unset field is omitted and the payload stays minimal and JSON-stable. The
-# dispatch model names the cross-agent target ``task_hint``; the sentinel
-# spells that routing field ``agent`` (what ``to_routing_decision`` reads).
-_DISPATCH_SENTINEL_FIELDS = (
-    ("status", "status"),
-    ("branch", "branch"),
-    ("complexity", "complexity"),
-    ("reason", "reason"),
-    ("workflow", "workflow"),
-    ("step", "step"),
-    ("agent", "task_hint"),
-    ("pin", "pin"),
-)
-_FUNCTION_CALL_SENTINEL_FIELDS = (
-    ("function", "function"),
-    ("agent_name", "agent_name"),
-    ("complexity", "complexity"),
-    ("reason", "reason"),
-    ("callback", "callback"),
-)
-
-
-def render_handoff_sentinel(state: WorkflowState | None) -> str:
-    # @stub-protected: signature defined by architect — do not modify
-    """Render the AGENT_RUN_CONFIG sentinel from the run's typed dispatch.
-
-    The engine owns the routing decision as structured data
-    (``workflow_state.dispatch`` / ``function_call``); rendering the hand-off
-    sentinel from those fields — instead of scraping it out of agent prose —
-    makes the posted sentinel deterministic (issue #830). Return "" when the
-    state carries no decision, so the legacy scrape still applies.
-
-    Args:
-        state: The run's ``workflow_state.json`` artifact, or ``None``.
-
-    Returns:
-        A single "<!-- AGENT_RUN_CONFIG ... -->" block, or "".
-    """
-    payload = _handoff_sentinel_payload(state)
-    if payload is None:
-        return ""
-    return f"<!-- AGENT_RUN_CONFIG {json.dumps(payload)} -->"
-
-
-def _handoff_sentinel_payload(state: WorkflowState | None) -> dict[str, object] | None:
-    """The canonical sentinel payload from the state's typed decision, or None."""
-    if state is None:
-        return None
-    payload: dict[str, object] = {}
-    dispatch = _populated_fields(getattr(state, "dispatch", None), _DISPATCH_SENTINEL_FIELDS)
-    if dispatch:
-        payload["dispatch"] = dispatch
-    function_call = _populated_fields(
-        getattr(state, "function_call", None), _FUNCTION_CALL_SENTINEL_FIELDS
-    )
-    if function_call:
-        payload["function_call"] = function_call
-    return payload or None
-
-
-def _populated_fields(
-    source: object, fields: tuple[tuple[str, str], ...]
-) -> dict[str, object]:
-    """The truthy ``(key, attribute)`` fields of a pydantic section, as a dict."""
-    if source is None:
-        return {}
-    return {
-        key: value
-        for key, attribute in fields
-        if (value := getattr(source, attribute, None))
-    }
 
 
 def _read_latest_answer(path: str = LATEST_ANSWER_FILE) -> str:
@@ -477,12 +372,12 @@ BOT_MARKER = "<!-- bot-workflow-terminal -->"
 # hidden marker rather than on stray ``@@`` tokens in agent prose.
 CONTINUE_TOKEN = "<!-- workflow-continue -->\n"
 
-# Dispatch statuses that keep the flow alive and therefore carry the token.
-# ``soft_kill`` (issue #793) belongs here even though it is a stop: the
-# engine's own soft-kill conclusion comment must re-trigger the run so the
-# next run's ``resolve_soft_kill_route`` can retry the interrupted step in
-# place, bounded by ``MAX_SOFT_RETRIES`` (then halt for a human).
-_LIVE_STATUSES = ("advance", "loop", "soft_kill")
+# The one outcome that stops the machine's turn: a hold hands control to a
+# human, who releases it with a command rather than by re-triggering the
+# engine. Every other outcome — a verdict, or an incomplete turn the router
+# retries (soft kill, checkpoint, failure) — keeps the flow alive and
+# therefore carries the token (issue #964).
+_HOLD_APPRECIATION = "hold"
 
 # Role label for the answer header's announcement line (legacy mapping).
 _ROLE_DISPLAY_NAMES = {
@@ -500,9 +395,17 @@ def _display_name_for(role: str) -> str:
 
 
 def _continue_token(state: WorkflowState) -> str:
-    """The continue token for live dispatches; empty for hold/terminate."""
-    status = state.dispatch.status if state.dispatch else "advance"
-    return CONTINUE_TOKEN if status in _LIVE_STATUSES else ""
+    """The continue token for live turns; empty for a hold.
+
+    A hold ends the machine's turn, so the posted comment must not re-trigger
+    the engine. A run that recorded no outcome at all keeps the token: the
+    router decides whether the turn continues (issue #964).
+    """
+    turn_outcome = state.turn_outcome
+    appreciation = turn_outcome.appreciation if turn_outcome else None
+    if appreciation is not None and appreciation.value == _HOLD_APPRECIATION:
+        return ""
+    return CONTINUE_TOKEN
 
 
 def format_answer_header(role_name: str | None, state: WorkflowState | None) -> str:
@@ -553,7 +456,6 @@ def _select_fallback_body(
     trigger_author: str = "",
     role_name: str | None = None,
     recall_count: int = 0,
-    engine_sentinel: str = "",
 ) -> str:
     """The four-path publish fallback chain over explicit inputs.
 
@@ -573,10 +475,6 @@ def _select_fallback_body(
         role_name: Role for the context collapse; ``None`` reads the environment.
         recall_count: The run's ``dispatch_recall_count`` (from the workflow
             state); flags post-recall finish-fallbacks in CI logs (issue #558).
-        engine_sentinel: The engine-rendered hand-off sentinel
-            (:func:`render_handoff_sentinel`). When set it is authoritative;
-            the legacy prose scrape (:func:`merge_handoff_sentinels`) only runs
-            as a fallback (issue #830).
 
     Returns:
         The cleaned body, without the answer-comment header.
@@ -615,20 +513,13 @@ def _select_fallback_body(
 
         # ── Latest-answer ETL (issue #522) ───────────────────────
         # The agent's latest full answer is the preferred posted body; the
-        # finish message (raw) is fallback only. Both sources feed the
-        # hand-off sentinel merge so dispatch/branching always reach the
-        # comment.
+        # finish message (raw) is fallback only.
         latest_raw = latest_answer
         if latest_raw.strip():
             body_raw = select_posted_body(latest_raw, raw)
             if body_raw.strip():
                 cleaned = clean_message(body_raw)
                 if cleaned:
-                    # The engine's typed sentinel wins; only when it is absent
-                    # (legacy/agent-authored runs) do we scrape the prose.
-                    merged_sentinel = engine_sentinel or merge_handoff_sentinels(latest_raw, raw)
-                    if merged_sentinel:
-                        cleaned += "\n\n" + merged_sentinel
                     print(f"Using latest answer ({len(cleaned)} characters)", flush=True)
                     return finalized(cleaned)
 
@@ -639,8 +530,6 @@ def _select_fallback_body(
             # Latest-answer artifact empty/missing → finish message is the
             # posted body: flag post-recall fallbacks for visibility (#558).
             _warn_post_recall_fallback(recall_count)
-            if engine_sentinel:
-                cleaned += "\n\n" + engine_sentinel
             print(f"Using final_message.txt ({len(cleaned)} characters)", flush=True)
             return finalized(cleaned)
 
@@ -695,7 +584,6 @@ def build_comment_body_parts(
             trigger_author=trigger_author,
             role_name=role_name,
             recall_count=_posted_recall_count(state),
-            engine_sentinel=render_handoff_sentinel(state),
         ),
     )
 

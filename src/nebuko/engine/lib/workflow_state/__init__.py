@@ -1,14 +1,13 @@
 """Workflow state management package.
 
 Package-by-feature DDD layout:
-  sub_domains/     — domain entities (HistoryEntry, Dispatch, IssueInfo, ...)
+  sub_domains/     — domain entities (HistoryEntry, TurnOutcome, IssueInfo, ...)
   features/        — state-transition / I/O features (build_state, to_json, ...)
   workflow_state.py — facade (WorkflowState model + convenience functions)
 """
 
 # Domain entities
 from .sub_domains.history_entry.history_entry import HistoryEntry
-from .sub_domains.dispatch.dispatch import Dispatch
 from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.state_metrics.state_metrics import StateMetrics
@@ -17,6 +16,7 @@ from .sub_domains.function_call import FunctionCall, SUPPORTED_FUNCTIONS
 from .sub_domains.gate_decision.gate_decision import GateDecision
 from .sub_domains.thread_record.thread_record import ThreadRecord, ThreadRecordKind
 from .sub_domains.step_input_record.step_input_record import StepInputRecord
+from .sub_domains.run_prefs.run_prefs import RunPrefs
 from .sub_domains.turn_outcome.turn_outcome import (
     Appreciation,
     HoldKind,
@@ -35,9 +35,9 @@ from .features.get_last_state.get_last_state import (
     extract_state_from_body,
 )
 
-# Dispatch feature
-from .sub_domains.dispatch.features.get_dispatch_from_state.get_dispatch_from_state import (
-    extract_dispatch_from_state,
+# TurnOutcome feature
+from .sub_domains.turn_outcome.features.get_turn_outcome_from_state.get_turn_outcome_from_state import (
+    extract_turn_outcome_from_state,
 )
 
 # FunctionCall feature
@@ -63,7 +63,7 @@ from .workflow_state import (
 __all__ = [
     # Domain entities
     "HistoryEntry",
-    "Dispatch",
+    "RunPrefs",
     "IssueInfo",
     "PullRequestInfo",
     "StateMetrics",
@@ -85,7 +85,7 @@ __all__ = [
     "format_collapsed_section",
     "extract_latest_state_from_comments",
     "extract_state_from_body",
-    "extract_dispatch_from_state",
+    "extract_turn_outcome_from_state",
     "extract_function_call",
     # Facade
     "WorkflowState",

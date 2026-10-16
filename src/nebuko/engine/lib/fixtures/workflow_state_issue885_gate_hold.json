@@ -1,6 +1,6 @@
 {
   "run_id": 3,
-  "schema_version": 4,
+  "schema_version": 6,
   "workflow": "default",
   "step": "plan",
   "agent": "architect",
@@ -16,14 +16,17 @@
           "step": "analyze"
         }
       ],
-      "dispatch": {
-        "task_hint": "context",
-        "complexity": "high",
-        "reason": "Fresh issue; delegate context collection before designing."
-      },
       "comment_ids": [
         6112231258
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "Fresh issue; delegate context collection before designing."
+      },
+      "prefs": {
+        "complexity": "high"
+      }
     },
     {
       "step": "context",
@@ -35,13 +38,14 @@
           "step": "context"
         }
       ],
-      "dispatch": {
-        "reason": "no-action default: agent emitted no decision",
-        "origin": "engine_fallback"
-      },
       "comment_ids": [
         6112286895
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "no-action default: agent emitted no decision"
+      }
     },
     {
       "step": "plan",
@@ -53,23 +57,22 @@
           "step": "plan"
         }
       ],
-      "dispatch": {
-        "status": "hold",
-        "complexity": "high",
-        "reason": "human_gate:plan"
-      },
       "comment_ids": [
         6112299999
-      ]
+      ],
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "hold",
+        "hold_kind": "awaiting_approval",
+        "note": "human_gate:plan"
+      },
+      "prefs": {
+        "complexity": "high"
+      }
     }
   ],
   "current_context": {
     "last_run_status": "success"
-  },
-  "dispatch": {
-    "status": "hold",
-    "complexity": "high",
-    "reason": "human_gate:plan"
   },
   "resolution": {
     "task": "architect",
@@ -92,5 +95,15 @@
       "workflow": "default",
       "step": "plan"
     }
-  ]
+  ],
+  "turn_outcome": {
+    "status": "completed",
+    "appreciation": "hold",
+    "hold_kind": "awaiting_approval",
+    "note": "human_gate:plan"
+  },
+  "prefs": {
+    "complexity": "high"
+  },
+  "version": 6
 }

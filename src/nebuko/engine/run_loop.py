@@ -43,12 +43,10 @@ from nebuko.engine.input_wiring import (
 from nebuko.engine.models import (
     DeterministicStep,
     ExitCode,
-    RoutingDecision,
     RunOutcome,
     SkipOutcome,
     StepResult,
     Trigger,
-    to_routing_decision,
 )
 from nebuko.engine.paths import (
     ConfigKind,
@@ -59,10 +57,25 @@ from nebuko.engine.paths import (
     repo_root,
 )
 
+# ``workflow_state`` lives in the frozen runtime (``LIB_DIR``) and is only
+# importable once the lib directory is on ``sys.path``; the run phases call
+# :func:`ensure_import_path` for that, so bootstrap it here for the module-level
+# entity imports below.
+ensure_import_path()
+
+from workflow_state import (  # noqa: E402  (needs the sys.path bootstrap above)
+    Appreciation,
+    HoldKind,
+    IncompleteReason,
+    TurnOutcome,
+    TurnStatus,
+)
+
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
     from nebuko.adapters.base import PlatformAdapter
+    from agent_script.features.run_agent.run_outcome import OutcomeStatus
     from config import AgentStartNotice, HookSpec, HumanActionNotice, ScriptStartNotice
     from nebuko.engine.artifacts import RunArtifactStager
     from nebuko.engine.models import CommentEntry
@@ -186,8 +199,20 @@ def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
     return None
 
 
-def _exit_code_for(routing: RoutingDecision) -> ExitCode:
-    return _EXIT_CODE_BY_STATUS.get(routing.status, ExitCode.ADVANCE)
+def _exit_code_for(
+    exit_code: ExitCode, turn_outcome: TurnOutcome | None
+) -> ExitCode:
+    """The process exit code for a finished run's own outcome (issue #964).
+
+    ``exit_code`` is the code the phase already decided (the resolver's
+    ``SKIP_AGENT`` verdict, or ``ADVANCE`` when the agent ran); a *recorded*
+    outcome is what can escalate it — recording an outcome must never turn a
+    successful run red, so only a parked turn (``hold``) does.
+    """
+    if exit_code is ExitCode.ADVANCE and turn_outcome is not None:
+        if turn_outcome.appreciation is Appreciation.HOLD:
+            return ExitCode.HOLD
+    return exit_code
 
 
 def _is_bot_trigger(trigger: Trigger) -> bool:
@@ -647,7 +672,12 @@ class Engine:
         log.info("[phase:action] %s: %s", result.step_kind, result.detail)
         return RunOutcome(
             exit_code=ExitCode.ADVANCE,
-            routing=RoutingDecision(status="terminate", reason=result.detail),
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.COMPLETED,
+                appreciation=(
+                    Appreciation.APPROVED if result.ok else Appreciation.REJECTED
+                ),
+            ),
             prompt=None,
             posted_body=result.detail,
             state=None,
@@ -686,7 +716,12 @@ class Engine:
         state = self._post_script_output(state, body)
         return RunOutcome(
             exit_code=ExitCode.ADVANCE,
-            routing=RoutingDecision(status="terminate", reason=result.detail),
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.COMPLETED,
+                appreciation=(
+                    Appreciation.APPROVED if result.ok else Appreciation.REJECTED
+                ),
+            ),
             prompt=None,
             posted_body=body,
             state=state,
@@ -770,13 +805,13 @@ class Engine:
     ) -> WorkflowState:
         """Build the script step's advanced state (issue #885).
 
-        A synthetic ``advance`` dispatch with a ``pass``/``fail`` branch mirrors
-        an agent run's state, so ``conditions: on_result`` and the declared
-        ``next`` route exactly as after an agent step.
+        A synthetic ``COMPLETED`` turn outcome whose appreciation is the
+        script's ``approved``/``rejected`` verdict mirrors an agent run's state,
+        so ``conditions: on_result`` and the declared ``next`` route exactly as
+        after an agent step (issue #964).
         """
         ensure_import_path()
         from workflow_state.features.build_state.build_state import build_state
-        from workflow_state.sub_domains.dispatch.dispatch import Dispatch
 
         return build_state(
             self._previous_state(),
@@ -784,8 +819,11 @@ class Engine:
             step=step.step_name,
             agent="script",
             phase="action",
-            dispatch=Dispatch(
-                status="advance", branch="pass" if result.ok else "fail"
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.COMPLETED,
+                appreciation=(
+                    Appreciation.APPROVED if result.ok else Appreciation.REJECTED
+                ),
             ),
         )
 
@@ -872,7 +910,9 @@ class Engine:
                     log.info("[phase:guards] no next agent — %s", reason)
                     return RunOutcome(
                         exit_code=skip.exit_code,
-                        routing=RoutingDecision(status="terminate", reason=reason),
+                        turn_outcome=TurnOutcome.for_incomplete(
+                            IncompleteReason.NO_OUTCOME, note=reason
+                        ),
                         prompt=None,
                         posted_body=None,
                         state=self._record_terminal_skip(skip),
@@ -890,7 +930,9 @@ class Engine:
                     posted = None
                 return RunOutcome(
                     exit_code=ExitCode.TERMINAL,
-                    routing=RoutingDecision(status="hold", reason=reason),
+                    turn_outcome=TurnOutcome.for_incomplete(
+                        IncompleteReason.NO_OUTCOME, note=reason
+                    ),
                     prompt=None,
                     posted_body=posted,
                     state=None,
@@ -1019,12 +1061,16 @@ class Engine:
             state = self.persist(agent_result)
 
             self._enter(phases, "route")
-            routing = self.route(agent_result)
+            turn_outcome = self.route(
+                agent_result, observed=self._observed_status(agent_result)
+            )
         except Exception as exc:  # noqa: BLE001 - the driver never crashes the host
             log.exception("[phase:error] %s", exc)
             return RunOutcome(
                 exit_code=ExitCode.ERROR,
-                routing=RoutingDecision(status="hold", reason=str(exc)),
+                turn_outcome=TurnOutcome.for_incomplete(
+                    IncompleteReason.FAILURE, note=str(exc)
+                ),
                 prompt=prompt,
                 posted_body=posted_body,
                 state=state,
@@ -1037,7 +1083,9 @@ class Engine:
         if failure_reason is not None:
             return RunOutcome(
                 exit_code=ExitCode.ERROR,
-                routing=RoutingDecision(status="hold", reason=failure_reason),
+                turn_outcome=TurnOutcome.for_incomplete(
+                    IncompleteReason.FAILURE, note=failure_reason
+                ),
                 prompt=prompt,
                 posted_body=posted_body,
                 state=state,
@@ -1053,7 +1101,12 @@ class Engine:
         # before the honest-publish check below so a dropped deliverable still
         # reaches the human.
         notice = self.human_action_notice(
-            routing=routing,
+            turn_outcome=turn_outcome,
+            skip_kind=(
+                str(resolved.get("SKIP_KIND"))
+                if isinstance(resolved, Mapping) and resolved.get("SKIP_KIND")
+                else self._step_skip_kind(resolved)
+            ),
             agent_ran="publish" in phases,
             state=state,
             resolved=resolved,
@@ -1070,7 +1123,9 @@ class Engine:
             )
             return RunOutcome(
                 exit_code=ExitCode.ERROR,
-                routing=RoutingDecision(status="hold", reason=reason),
+                turn_outcome=TurnOutcome.for_incomplete(
+                    IncompleteReason.FAILURE, note=reason
+                ),
                 prompt=prompt,
                 posted_body=posted_body,
                 state=state,
@@ -1078,8 +1133,8 @@ class Engine:
             )
 
         return RunOutcome(
-            exit_code=_exit_code_for(routing),
-            routing=routing,
+            exit_code=_exit_code_for(ExitCode.ADVANCE, turn_outcome),
+            turn_outcome=turn_outcome,
             prompt=prompt,
             posted_body=posted_body,
             state=state,
@@ -1596,7 +1651,9 @@ class Engine:
         posted = self._post_terminal_notice(reason)
         return RunOutcome(
             exit_code=ExitCode.TERMINAL,
-            routing=RoutingDecision(status="hold", reason=reason),
+            turn_outcome=TurnOutcome.for_incomplete(
+                IncompleteReason.NO_OUTCOME, note=reason
+            ),
             prompt=None,
             posted_body=posted,
             state=None,
@@ -1614,7 +1671,9 @@ class Engine:
         posted = self._post_terminal_notice(reason)
         return RunOutcome(
             exit_code=ExitCode.TERMINAL,
-            routing=RoutingDecision(status="hold", reason=reason),
+            turn_outcome=TurnOutcome.for_incomplete(
+                IncompleteReason.NO_OUTCOME, note=reason
+            ),
             prompt=None,
             posted_body=posted,
             state=None,
@@ -1679,73 +1738,82 @@ class Engine:
     def human_action_notice(
         self,
         *,
-        routing: RoutingDecision,
+        turn_outcome: TurnOutcome | None,
+        skip_kind: str | None = None,
         agent_ran: bool,
         state: WorkflowState | None,
         resolved: Any,
     ) -> HumanActionNotice | None:
         """Classify the finished run into the human notice it owes, or ``None``.
 
-        An ``advance`` out of a step that the workflow *declares* to be its end
-        is the completing run, so it is normalized to ``terminate`` before
-        classification (issue #795); the follow-up run that merely observes the
-        terminal step skips the agent and is filtered by ``agent_ran``.
+        The kind is derived from the run's own factual turn outcome (issue
+        #964). A recorded hold owes the approval/input ping; a complete verdict
+        routed out of the terminal step is the honest workflow-complete notice;
+        and a run whose ``on_result`` edges matched nothing (``skip_kind`` set)
+        is *not* a completion — the composer must not tell a human the workflow
+        ended when nothing routed (issue #924). Such a run gets the
+        ``awaiting_input`` ping instead.
 
-        A step whose forward edges matched nothing is *not* a finish (issue
-        #924): the composer must not tell a human the workflow completed while
-        the dev/review loop still owes a round. Such a run gets an
-        ``awaiting_input`` notice instead — the same ping a plain hold raises —
-        so the human is asked to act rather than told the workflow ended.
+        The notice's ``reason`` is the outcome's own note, so the human sees why
+        the run stopped.
         """
         if not agent_ran:
             return None
-        status = routing.status
         ensure_import_path()
         from config import HumanActionNotice
-        from resolve_workflow import RouteKind
 
-        if status == "advance" and self._step_is_terminal(resolved):
-            # The marker view collapses an honest finish and an unresolved
-            # step; the typed verdict tells them apart (issue #924).
-            if self._terminal_kind(resolved, routing.branch) is RouteKind.UNRESOLVED:
-                status = "hold"
-                routing = RoutingDecision(
-                    status="hold",
-                    reason=routing.reason or "step resolved no successor",
-                )
-            else:
-                status = "terminate"
+        held = (
+            turn_outcome is not None
+            and turn_outcome.appreciation is Appreciation.HOLD
+        )
+        route_key = turn_outcome.route_key if turn_outcome is not None else None
+        terminal = (
+            False if (held or skip_kind) else self._step_is_terminal(resolved, route_key)
+        )
 
         return HumanActionNotice.classify(
-            status,
-            routing.reason,
-            agent_ran=True,
+            turn_outcome,
+            terminal=terminal,
+            agent_ran=agent_ran,
             target=self._trigger_author(state),
             step=str(self._get(resolved, "WORKFLOW_STEP") or ""),
             workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
+            unresolved=bool(skip_kind),
         )
 
-    def _step_is_terminal(self, resolved: Any) -> bool:
-        """True when the step this run executed has no workflow successor.
+    def _step_skip_kind(self, resolved: Any) -> str | None:
+        """The resolver's ``SKIP_KIND`` verdict for this step, or ``None``.
 
-        Only an ``advance`` out of an agent run consults this — see
-        :meth:`human_action_notice`. Reuses the router's own successor lookup so
-        the engine and the router agree on what "terminal" means.
+        ``_workflow_successor``/``_terminal_kind`` answer whether the step has a
+        declared successor; this additionally distinguishes a step whose
+        ``on_result`` edges matched nothing (issue #924), which the router
+        reports as a ``UNRESOLVED`` step with no ``next``.
+        """
+        ensure_import_path()
+        from resolve_workflow import RouteKind
+
+        kind = self._terminal_kind(resolved)
+        if kind is RouteKind.UNRESOLVED:
+            return "unresolved"
+        return None
+
+    def _step_is_terminal(self, resolved: Any, route_key: str | None = None) -> bool:
+        """True when the step this run executed is a declared workflow finish.
+
+        Only a completed verdict consults this — see :meth:`human_action_notice`.
+        Reuses the router's own typed verdict (``DECLARED_FINISH``) so the engine
+        and the router agree on what "terminal" means; an ``UNRESOLVED`` step
+        declares onward edges that matched nothing and is *not* a finish
+        (issue #924).
         """
         workflow = str(self._get(resolved, "WORKFLOW_NAME") or "")
         step = str(self._get(resolved, "WORKFLOW_STEP") or "")
         if not (workflow and step):
             return False
         ensure_import_path()
-        from resolve_config.features.resolve_route.resolve_route import (
-            _workflow_successor,
-        )
+        from resolve_workflow import RouteKind
 
-        workflows_dir, local_workflows_dir = self._workflow_dirs()
-        return (
-            _workflow_successor(workflow, step, workflows_dir, local_workflows_dir)
-            is None
-        )
+        return self._terminal_kind(resolved, route_key) is RouteKind.DECLARED_FINISH
 
     def _terminal_kind(self, resolved: Any, branch_result: str | None = None) -> Any:
         """The typed :class:`RouteKind` for a step that produced no successor.
@@ -1979,7 +2047,6 @@ class Engine:
 
         bridge = SimpleNamespace(
             validate_agent_output=validate_output.validate_agent_output,
-            extract_dispatch=validate_output.extract_dispatch,
             build_comment_body=prepare_comment.build_comment_body,
             build_comment_body_parts=prepare_comment.build_comment_body_parts,
             format_bot_marker=prepare_comment.format_bot_marker,
@@ -2157,10 +2224,62 @@ class Engine:
         StepOutputRecord(step=state.step, comment_id=comment_id).upsert_into(context)
         return state.model_copy(update={"current_context": context})
 
+    def _observed_status(self, agent_result: Any) -> OutcomeStatus:
+        """The engine-measured status of the agent turn (issue #964).
+
+        The exit facts the agent host already harvested classify the turn; the
+        agent itself never reports whether its turn completed. An unrecognised
+        or absent status is a completed turn — the same tolerance
+        :func:`classify_run` applies.
+        """
+        ensure_import_path()
+        from agent_script.features.run_agent.run_outcome import (
+            OutcomeStatus,
+            classify_run,
+        )
+
+        status = ""
+        soft_timeout = False
+        if isinstance(agent_result, Mapping):
+            status = str(agent_result.get("status") or "")
+            soft_timeout = bool(
+                agent_result.get("soft_timeout") or agent_result.get("soft_kill")
+            )
+        if not status and not soft_timeout:
+            return OutcomeStatus.SUCCESS
+        return classify_run(status, soft_timeout)
+
     # @stub-protected
-    def route(self, agent_result: Any) -> RoutingDecision:
-        """Map the agent's dispatch payload to a :class:`RoutingDecision`."""
-        return to_routing_decision(self._dispatch_payload(agent_result))
+    def route(
+        self, agent_result: Any, *, observed: OutcomeStatus | None = None
+    ) -> TurnOutcome:
+        """Map the agent's harvested tool call to its :class:`TurnOutcome`.
+
+        The outcome is *factual* (issue #964): the engine observes whether the
+        run completed (``observed``) and the agent supplies only its
+        appreciation/verdict. An agent that emitted no ``dispatch_next`` call
+        has no verdict at all — that is an ``INCOMPLETE``/``NO_OUTCOME``
+        outcome, never a fabricated navigation status.
+        """
+        payload = self._dispatch_payload(agent_result)
+        if not payload:
+            return TurnOutcome.for_incomplete(IncompleteReason.NO_OUTCOME)
+        # The state fallback carries the engine's own recorded fact (issue #964):
+        # when the host had no report turn it hands over the outcome
+        # ``build_output`` resolved, whose ``status``/``incomplete_reason`` the
+        # agent cannot have claimed. Honour it directly so a soft-kill/journal
+        # recorded INCOMPLETE never degrades to a fabricated COMPLETED verdict.
+        if str(payload.get("status") or "") == TurnStatus.INCOMPLETE.value:
+            reason = _coerce_incomplete_reason(payload.get("incomplete_reason"))
+            return TurnOutcome.for_incomplete(
+                reason, note=str(payload.get("note") or "")
+            )
+        if observed is None:
+            ensure_import_path()
+            from agent_script.features.run_agent.run_outcome import OutcomeStatus
+
+            observed = OutcomeStatus.SUCCESS
+        return TurnOutcome.from_agent_payload(payload, observed=observed)
 
     # ── internals ────────────────────────────────────────────────────
 
@@ -2488,19 +2607,32 @@ class Engine:
         return updated
 
     def _dispatch_payload(self, agent_result: Any) -> dict[str, Any]:
+        """The agent's factual ``dispatch_next`` payload, or an empty mapping.
+
+        Only the typed tool call counts (issue #964): there is no text fallback,
+        because a turn outcome is engine truth, never prose the agent rendered.
+        """
         if isinstance(agent_result, Mapping):
-            dispatch = agent_result.get("dispatch")
-            if isinstance(dispatch, Mapping):
-                return dict(dispatch)
-            if agent_result.get("status"):
+            outcome = agent_result.get("turn_outcome")
+            if isinstance(outcome, Mapping):
+                return dict(outcome)
+            if agent_result.get("appreciation"):
                 return dict(agent_result)
-        return _dispatch_from_text(
-            _answer_of(agent_result) or _final_message_of(agent_result)
-        )
+        return {}
 
     @staticmethod
     def _get(resolved: Any, key: str) -> Any:
         return resolved.get(key) if isinstance(resolved, Mapping) else None
+
+
+def _coerce_incomplete_reason(value: Any) -> IncompleteReason:
+    """The engine-recorded incomplete reason, defaulting to ``NO_OUTCOME``."""
+    if isinstance(value, IncompleteReason):
+        return value
+    try:
+        return IncompleteReason(str(value))
+    except ValueError:
+        return IncompleteReason.NO_OUTCOME
 
 
 def _hook_failure_note(phase: HookPhase, result: HookResult) -> str:
@@ -2671,22 +2803,6 @@ def _with_step_input_records(
         return env
     env[STEP_INPUT_RESULTS_ENV] = json.dumps(step_input_records(list(results)))
     return env
-
-
-def _dispatch_from_text(text: str) -> dict[str, Any]:
-    """Recover the ``AGENT_RUN_CONFIG`` dispatch payload from rendered text."""
-    if not text:
-        return {}
-    raw = _load_bridge_module("validate_output").extract_dispatch(text)
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    if isinstance(data, Mapping) and isinstance(data.get("dispatch"), Mapping):
-        return dict(data["dispatch"])
-    return dict(data) if isinstance(data, Mapping) else {}
 
 
 # @stub-protected

@@ -15,9 +15,9 @@ Never use `@@agent` mentions to call another agent: bot messages are ignored for
 
 ## Format
 
-Use the typed `call_agent` control-plane tool — it records the hand-off structurally, immune to long-context format drops. (Transitional note, issue #876: until the typed tool lands, the imperative `function_call` + `callback` hand-off is still carried by the `AGENT_RUN_CONFIG` sentinel, which the engine renders from typed state.)
+Use the typed `call_agent` control-plane tool — it records the hand-off structurally, immune to long-context format drops.
 
-Hand-off fields (do not write the sentinel yourself — the engine renders it):
+Hand-off fields (do not write a sentinel yourself — the tool records the hand-off structurally):
 
 - **One function call per message.** If several are given, the last valid one wins — but do not rely on that; supply exactly one.
 - `function` must be a registered name. Currently only `call_agent` is registered.
@@ -31,12 +31,12 @@ Hand-off fields (do not write the sentinel yourself — the engine renders it):
 When a callee finishes, the engine resolves its successor in this order (highest → lowest):
 
 1. The callee's own explicit `function_call` → route there.
-2. The callee's own explicit `dispatch` `hold` / `loop` / `terminate` → honor it.
+2. The callee's own `hold` verdict (`dispatch_next(appreciation='hold')`) → honor it; a deliberate stop is never redirected.
 3. The registered `callback` → return to the caller.
 4. The workflow forward edge (`steps[].next`) → continue the workflow.
-5. No target at all → **default `hold`** (the no-action safety net; never auto-advance an unknown state).
+5. No target at all → the run records `INCOMPLETE`/`NO_OUTCOME` (the no-action safety net; never auto-advance an unknown state).
 
-`dispatch advance` means "I am done — route me by the standard rules above". The callback (step 3) wins over the workflow edge (step 4) because it is explicit caller intent, but the callee's own action (steps 1–2) always wins over both.
+`dispatch_next(appreciation='approved')` means "I am done — route me by the standard rules above". The callback (step 3) wins over the workflow edge (step 4) because it is explicit caller intent, but the callee's own action (steps 1–2) always wins over both.
 
 ## Notes
 

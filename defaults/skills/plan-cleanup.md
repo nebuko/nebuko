@@ -15,7 +15,7 @@ You are in plan-cleanup mode for a branch-mounted dynamic plan workflow (issue #
 2. **Verify** the directory is gone (`ls tmp_impl/` should fail) and that nothing else was accidentally removed.
 3. **Commit** with message: `chore: remove plan scaffolding`
 4. **Push** to the existing PR branch (use the existing PR detection logic from your git workflow rules).
-5. **Dispatch**: call the `dispatch_next` tool with `status="advance"` (do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders it from typed state, issue #876).
+5. **Dispatch**: call the `dispatch_next` tool with `appreciation="approved"` (do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders it from typed state, issue #876).
 
 ## What You MUST NOT Do
 
@@ -25,5 +25,5 @@ You are in plan-cleanup mode for a branch-mounted dynamic plan workflow (issue #
 
 ## Escalation Protocol
 
-If `tmp_impl/` does not exist (already cleaned) → confirm the working tree is clean, and if there is nothing to commit, simply push (if needed) and dispatch `status: "advance"`.
+If `tmp_impl/` does not exist (already cleaned) → confirm the working tree is clean, and if there is nothing to commit, simply push (if needed) and dispatch `appreciation="approved"`.
 If removing the directory would delete uncommitted work outside the scaffolding scope → stop and report the blocker clearly.

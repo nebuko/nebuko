@@ -1,6 +1,6 @@
 {
   "run_id": 2,
-  "schema_version": 4,
+  "schema_version": 6,
   "workflow": "default",
   "step": "context",
   "agent": "context",
@@ -16,11 +16,6 @@
           "step": "analyze"
         }
       ],
-      "dispatch": {
-        "task_hint": "context",
-        "complexity": "medium",
-        "reason": "Fresh triage of the reading-time metric bug; need codebase facts on where reading time is computed and whether ctx-report content is included before proposing an architecture."
-      },
       "metrics": {
         "run_id": "47912d84-e7e9-4145-8d1b-42a3eecda8e0",
         "model_name": "default",
@@ -32,7 +27,12 @@
         "nb_tool_calls": 5,
         "start_time": "2026-10-10T14:29:05.525783",
         "end_time": "2026-10-10T14:29:49.210946+00:00",
-        "agent_runtimes_per_call_ms": [24316.03, 7098.54, 5220.73, 6571.84],
+        "agent_runtimes_per_call_ms": [
+          24316.03,
+          7098.54,
+          5220.73,
+          6571.84
+        ],
         "tool_calls_per_tool": {
           "think": 1,
           "dispatch_next": 2,
@@ -48,6 +48,14 @@
         },
         "tokens_per_second": 132.16222253116467,
         "time_to_first_token": 2.2037268402054906
+      },
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "Fresh triage of the reading-time metric bug; need codebase facts on where reading time is computed and whether ctx-report content is included before proposing an architecture."
+      },
+      "prefs": {
+        "complexity": "medium"
       }
     },
     {
@@ -60,10 +68,6 @@
           "step": "context"
         }
       ],
-      "dispatch": {
-        "status": "hold",
-        "reason": "no-action default: agent emitted no decision"
-      },
       "metrics": {
         "run_id": "4c4b69d4-7cea-491d-9566-03089f7cc1cd",
         "model_name": "default",
@@ -77,7 +81,43 @@
         "complexity": "medium",
         "start_time": "2026-10-10T14:30:32.612832",
         "end_time": "2026-10-10T14:35:59.421957+00:00",
-        "agent_runtimes_per_call_ms": [4025.36, 2579.02, 3197.91, 4362.64, 8292.45, 7394.88, 12244.46, 10929.11, 5255.4, 8152.87, 5974.59, 4462.98, 6419.48, 8459.87, 6438.25, 2981.79, 9287.8, 3083.46, 2793.7, 15887.65, 4900.85, 3226.26, 2668.08, 5126.89, 2456.75, 9915.55, 3010.32, 7778.03, 4088.4, 3511.88, 3386.48, 8831.81, 5754.25, 36210.17, 35782.96],
+        "agent_runtimes_per_call_ms": [
+          4025.36,
+          2579.02,
+          3197.91,
+          4362.64,
+          8292.45,
+          7394.88,
+          12244.46,
+          10929.11,
+          5255.4,
+          8152.87,
+          5974.59,
+          4462.98,
+          6419.48,
+          8459.87,
+          6438.25,
+          2981.79,
+          9287.8,
+          3083.46,
+          2793.7,
+          15887.65,
+          4900.85,
+          3226.26,
+          2668.08,
+          5126.89,
+          2456.75,
+          9915.55,
+          3010.32,
+          7778.03,
+          4088.4,
+          3511.88,
+          3386.48,
+          8831.81,
+          5754.25,
+          36210.17,
+          35782.96
+        ],
         "tool_calls_per_tool": {
           "terminal": 32,
           "file_editor": 10,
@@ -97,15 +137,17 @@
         },
         "tokens_per_second": 174.31461254929,
         "time_to_first_token": 2.374600643943995
+      },
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "hold",
+        "hold_kind": "awaiting_input",
+        "note": "no-action default: agent emitted no decision"
       }
     }
   ],
   "current_context": {
     "last_run_status": "success"
-  },
-  "dispatch": {
-    "status": "hold",
-    "reason": "no-action default: agent emitted no decision"
   },
   "resolution": {
     "task": "context",
@@ -129,5 +171,11 @@
       "workflow": "default",
       "step": "context"
     }
-  ]
+  ],
+  "turn_outcome": {
+    "status": "incomplete",
+    "incomplete_reason": "no_outcome",
+    "note": "no-action default: agent emitted no decision"
+  },
+  "version": 6
 }

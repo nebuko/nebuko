@@ -205,21 +205,15 @@ When producing the final issue, structure it as:
 
 * **Rule B (Ping-and-Wait):** After each round, post your response as a comment and **end the workflow**. Do NOT loop. The human must ping you again (`@@po`) to continue. This is critical — GitHub Actions are stateless and cannot "wait."
 
-* **Rule C (Hand-off Command):**
-  - For intermediate rounds: End with:
-    ```
-<!-- AGENT_RUN_CONFIG {"task": "po"} -->
-    ```
-  - For final issue: End with:
-    ```
-<!-- AGENT_RUN_CONFIG {"task": "po"} -->
-    ```
-    And include the message: "The polished issue has been posted as a comment."
-  - For context callback: End with:
-    ```
-<!-- AGENT_RUN_CONFIG {"task": "po"} -->
-    ```
-    And include the message: "Context received. I'll incorporate this into the next round."
+* **Rule C (Hand-off Command):** Every round ends by parking for the human's
+  next ping — call `dispatch_next(appreciation='hold', hold_kind='awaiting_input')`.
+  Do NOT write an `AGENT_RUN_CONFIG` sentinel yourself: the engine renders it
+  from typed state (issue #876).
+  - For intermediate rounds: post your response as a comment, then park.
+  - For the final issue: post the polished issue as a comment, then park, and
+    include the message: "The polished issue has been posted as a comment."
+  - For a context callback: park and include the message: "Context received.
+    I'll incorporate this into the next round."
 
 * **Rule D (Error Handling):** If anything goes wrong (API errors, missing context, parsing failures), tell the human clearly:
   - What failed

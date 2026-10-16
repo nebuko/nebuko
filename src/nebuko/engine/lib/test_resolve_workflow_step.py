@@ -1,22 +1,23 @@
 """Tests for resolve_next_from_workflow() in resolve_workflow.py."""
 
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 import yaml
 
+sys.path.insert(0, str(Path(__file__).parent))
+
+from resolve_workflow import RouteKind  # noqa: E402
+
 
 def _import_resolver():
-    import sys
-    sys.path.insert(0, str(Path(__file__).parent))
-    from resolve_workflow import resolve_next_from_workflow, resolution_to_marker
+    from resolve_workflow import resolve_next_from_workflow
 
-    # The resolver now returns a typed ``RouteResolution`` (issue #923); these
-    # tests exercise the legacy marker-dict view, so adapt through the shim.
-    return lambda *args, **kwargs: resolution_to_marker(
-        resolve_next_from_workflow(*args, **kwargs)
-    )
+    # The resolver returns a typed ``RouteResolution`` (issues #923, #964);
+    # these assertions consume it directly.
+    return resolve_next_from_workflow
 
 
 @pytest.fixture
@@ -66,14 +67,15 @@ class TestLinearNextStep:
         result = resolve(
             "linear", "analyze", str(linear_workflows_dir),
         )
-        assert result == {"task": "context", "step": "context"}
+        assert (result.task, result.step) == ("context", "context")
 
     def test_resolves_middle_step(self, linear_workflows_dir):
         resolve = _import_resolver()
         result = resolve(
             "linear", "context", str(linear_workflows_dir),
         )
-        assert result == {"task": "dev", "step": "implement"}
+        assert result.kind is RouteKind.ROUTE
+        assert (result.task, result.step) == ("dev", "implement")
 
 
 class TestConditionalBranch:
@@ -85,7 +87,8 @@ class TestConditionalBranch:
             "approval", "approval", str(conditional_workflows_dir),
             branch_result="approved",
         )
-        assert result == {"task": "dev", "step": "implement", "branch": "approved"}
+        assert result.kind is RouteKind.ROUTE
+        assert (result.task, result.step, result.branch) == ("dev", "implement", "approved")
 
     def test_rejected_branch(self, conditional_workflows_dir):
         resolve = _import_resolver()
@@ -93,7 +96,8 @@ class TestConditionalBranch:
             "approval", "approval", str(conditional_workflows_dir),
             branch_result="rejected",
         )
-        assert result == {"task": "po", "step": "spec", "branch": "rejected"}
+        assert result.kind is RouteKind.ROUTE
+        assert (result.task, result.step, result.branch) == ("po", "spec", "rejected")
 
     def test_default_branch_on_no_match(self, conditional_workflows_dir):
         resolve = _import_resolver()
@@ -101,7 +105,8 @@ class TestConditionalBranch:
             "approval", "approval", str(conditional_workflows_dir),
             branch_result="unknown_result",
         )
-        assert result == {"task": "dev", "step": "implement", "branch": "default"}
+        assert result.kind is RouteKind.ROUTE
+        assert (result.task, result.step, result.branch) == ("dev", "implement", "default")
 
     def test_no_branch_result_uses_linear_next(self, conditional_workflows_dir):
         """When branch_result is not provided, follow step.next field."""
@@ -109,7 +114,8 @@ class TestConditionalBranch:
         result = resolve(
             "approval", "approval", str(conditional_workflows_dir),
         )
-        assert result == {"task": "dev", "step": "implement"}
+        assert result.kind is RouteKind.ROUTE
+        assert (result.task, result.step) == ("dev", "implement")
 
 
 class TestTerminalStep:
@@ -120,7 +126,7 @@ class TestTerminalStep:
         result = resolve(
             "linear", "implement", str(linear_workflows_dir),
         )
-        assert result is None
+        assert result.kind is RouteKind.DECLARED_FINISH
 
 
 class TestMissingWorkflow:
@@ -154,7 +160,7 @@ class TestAgentHintFallback:
             "nonexistent", "analyze", str(linear_workflows_dir),
             agent_hint="dev",
         )
-        assert result == {"task": "dev"}
+        assert result.task == "dev"
 
     def test_hint_fallback_on_missing_step(self, linear_workflows_dir):
         resolve = _import_resolver()
@@ -162,7 +168,7 @@ class TestAgentHintFallback:
             "linear", "ghost_step", str(linear_workflows_dir),
             agent_hint="architect",
         )
-        assert result == {"task": "architect"}
+        assert result.task == "architect"
 
     def test_hint_fallback_on_terminal_step(self, linear_workflows_dir):
         resolve = _import_resolver()
@@ -170,17 +176,14 @@ class TestAgentHintFallback:
             "linear", "implement", str(linear_workflows_dir),
             agent_hint="review",
         )
-        assert result == {"task": "review"}
+        assert result.task == "review"
 
     def test_no_hint_returns_none_on_terminal(self, linear_workflows_dir):
         resolve = _import_resolver()
         result = resolve(
             "linear", "implement", str(linear_workflows_dir),
         )
-        assert result is None
-
-
-class TestSubWorkflowEntry:
+        assert result.kind is RouteKind.DECLARED_FINISH
     """Test sub-workflow entry scenarios."""
 
     @pytest.fixture
@@ -217,22 +220,18 @@ class TestSubWorkflowEntry:
         result = resolve(
             "parent", "subtask", str(sub_wf_workflows_dir),
         )
-        assert result == {
-            "entered_sub_workflow": True,
-            "task": "dev",
-            "step": "child_start",
-            "workflow": "child",
-            "parent_workflow": "parent",
-            "parent_workflow_step": "subtask",
-        }
-
+        assert result.kind is RouteKind.SUB_WORKFLOW_ENTER
+        assert (result.task, result.step) == ("dev", "child_start")
+        assert (result.workflow, result.parent_workflow, result.parent_workflow_step) == (
+            "child", "parent", "subtask"
+        )
     def test_sub_workflow_first_step_resolution(self, sub_wf_workflows_dir):
         """Resolving from the first step of a child workflow works normally."""
         resolve = _import_resolver()
         result = resolve(
             "child", "child_start", str(sub_wf_workflows_dir),
         )
-        assert result == {"task": "review", "step": "child_end"}
+        assert (result.task, result.step) == ("review", "child_end")
 
 
 class TestSubWorkflowTraversal:
@@ -273,48 +272,37 @@ class TestSubWorkflowTraversal:
         # 1. Parent's first step advances to the sub-workflow reference and
         #    descends into the child's first runnable step (issue #657): a
         #    linear target that is a mount must not yield an empty task.
-        assert resolve("parent", "analyze", str(wf_dir)) == {
-            "entered_sub_workflow": True,
-            "task": "dev",
-            "step": "impl",
-            "workflow": "child",
-            "parent_workflow": "parent",
-            "parent_workflow_step": "subtask",
-        }
-
+        entered = resolve("parent", "analyze", str(wf_dir))
+        assert entered.kind is RouteKind.SUB_WORKFLOW_ENTER
+        assert (entered.task, entered.step) == ("dev", "impl")
+        assert (entered.workflow, entered.parent_workflow, entered.parent_workflow_step) == (
+            "child", "parent", "subtask"
+        )
         # 2. Sub-workflow reference step yields an entry marker
         entry = resolve("parent", "subtask", str(wf_dir))
-        assert entry == {
-            "entered_sub_workflow": True,
-            "task": "dev",
-            "step": "impl",
-            "workflow": "child",
-            "parent_workflow": "parent",
-            "parent_workflow_step": "subtask",
-        }
-
+        assert entry.kind is RouteKind.SUB_WORKFLOW_ENTER
+        assert (entry.task, entry.step) == ("dev", "impl")
+        assert (entry.workflow, entry.parent_workflow, entry.parent_workflow_step) == (
+            "child", "parent", "subtask"
+        )
         # 3. Inside the child: normal linear resolution
         r = resolve(
             "child", "impl", str(wf_dir),
             parent_workflow="parent", parent_workflow_step="subtask",
         )
-        assert r == {"task": "review", "step": "verify"}
+        assert (r.task, r.step) == ("review", "verify")
 
         # 4. Child terminal step exits back to the parent's next step
         r = resolve(
             "child", "verify", str(wf_dir),
             parent_workflow="parent", parent_workflow_step="subtask",
         )
-        assert r == {
-            "exited_sub_workflow": True,
-            "task": "review",
-            "step": "finish",
-            "workflow": "parent",
-        }
+        assert r.kind is RouteKind.SUB_WORKFLOW_EXIT
+        assert (r.task, r.step, r.workflow) == ("review", "finish", "parent")
 
         # 5. Parent terminal (no sub-workflow context): overall terminal
         r = resolve("parent", "finish", str(wf_dir))
-        assert r is None
+        assert r.kind is RouteKind.DECLARED_FINISH
 
     def test_child_loop_stays_within_sub_workflow(self, tmp_path: Path):
         """A rejected-review loop inside the child never escapes the child."""
@@ -348,29 +336,27 @@ class TestSubWorkflowTraversal:
         parent_ctx = dict(parent_workflow="loop_parent", parent_workflow_step="run")
 
         # implement → review
-        assert resolve("loop_child", "implement", str(tmp_path), **parent_ctx) == {
-            "task": "review", "step": "review",
-        }
+        r = resolve("loop_child", "implement", str(tmp_path), **parent_ctx)
+        assert (r.task, r.step) == ("review", "review")
         # rejected → loops back inside the child (no parent escape)
-        assert resolve(
+        r = resolve(
             "loop_child", "review", str(tmp_path), branch_result="rejected", **parent_ctx,
-        ) == {"task": "dev", "step": "implement", "branch": "rejected"}
+        )
+        assert (r.task, r.step, r.branch) == ("dev", "implement", "rejected")
         # approved → child terminal → exit to parent's step after the ref
         exit_r = resolve(
             "loop_child", "review", str(tmp_path), branch_result="approved", **parent_ctx,
         )
-        assert exit_r == {
-            "exited_sub_workflow": True,
-            "task": "review",
-            "step": "done",
-            "workflow": "loop_parent",
-        }
+        assert exit_r.kind is RouteKind.SUB_WORKFLOW_EXIT
+        assert (exit_r.task, exit_r.step, exit_r.workflow) == (
+            "review", "done", "loop_parent"
+        )
 
     def test_terminal_without_parent_returns_none(self, nested_dirs):
         """Child terminal with no parent context is overall terminal."""
         wf_dir, _ = nested_dirs
         resolve = _import_resolver()
-        assert resolve("child", "verify", str(wf_dir)) is None
+        assert resolve("child", "verify", str(wf_dir)).kind is RouteKind.DECLARED_FINISH
 
     def test_path_based_workflow_reference(self, tmp_path: Path, monkeypatch):
         """resolve_next_from_workflow accepts a repo-root-relative path."""
@@ -386,10 +372,8 @@ class TestSubWorkflowTraversal:
             ],
         }))
         resolve = _import_resolver()
-        assert resolve("tmp_impl/flow.yaml", "one", str(tmp_path)) == {
-            "task": "review",
-            "step": "two",
-        }
+        path_result = resolve("tmp_impl/flow.yaml", "one", str(tmp_path))
+        assert (path_result.task, path_result.step) == ("review", "two")
 
 
 class TestThreeLevelNestingRuntime:
@@ -586,16 +570,11 @@ class TestScaffoldShapeNestedEntry:
         path runs (no task=None / Unknown agent 'None')."""
         resolve = _import_resolver()
         m = resolve("tmp-impl", "step_1", str(scaffold_dir))
-        assert m == {
-            "entered_sub_workflow": True,
-            "task": "dev",
-            "step": "implement",
-            "workflow": "dev-review-loop",
-            "parent_workflow": "tmp-impl",
-            "parent_workflow_step": "step_1",
-        }
-
-    def test_reentry_carries_next_step_skill(self, scaffold_dir):
+        assert m.kind is RouteKind.SUB_WORKFLOW_ENTER
+        assert (m.task, m.step) == ("dev", "implement")
+        assert (m.workflow, m.parent_workflow, m.parent_workflow_step) == (
+            "dev-review-loop", "tmp-impl", "step_1"
+        )
         """After step_1's loop completes, state lands on (tmp-impl, step_2):
         the descent re-enters dev-review-loop at implement and carries
         step_2's skill (not step_1's)."""
@@ -974,7 +953,7 @@ class TestCircularReference:
             "circular", "step_a", str(circular_workflows_dir),
         )
         # Single-step resolution returns the next step regardless of cycles
-        assert result == {"task": "review", "step": "step_b"}
+        assert (result.task, result.step) == ("review", "step_b")
 
     def test_circular_reference_reverse(self, circular_workflows_dir):
         """Resolving from step_b → step_a also works."""
@@ -982,7 +961,7 @@ class TestCircularReference:
         result = resolve(
             "circular", "step_b", str(circular_workflows_dir),
         )
-        assert result == {"task": "dev", "step": "step_a"}
+        assert (result.task, result.step) == ("dev", "step_a")
 
 
 class TestMissingNextStep:
@@ -1007,7 +986,7 @@ class TestMissingNextStep:
         result = resolve(
             "broken_next", "start", str(broken_next_workflows_dir),
         )
-        assert result is None
+        assert result.kind is RouteKind.UNRESOLVED
 
     def test_missing_next_step_with_hint(self, broken_next_workflows_dir):
         """When step.next references a non-existent step, use agent_hint."""
@@ -1018,8 +997,8 @@ class TestMissingNextStep:
         )
         # agent_hint only applies for terminal/missing-current-step; not for broken next
         # The current step exists and is not terminal, so it proceeds to look up the target.
-        # Target "ghost" doesn't exist → returns None (no hint fallback at this stage)
-        assert result is None
+        # Target "ghost" doesn't exist -> typed UNRESOLVED (no hint fallback here)
+        assert result.kind is RouteKind.UNRESOLVED
 
 
 class TestConditionsOnlyWorkflow:
@@ -1054,7 +1033,7 @@ class TestConditionsOnlyWorkflow:
             "conditions_only", "decision", str(conditions_only_workflows_dir),
             branch_result="approved",
         )
-        assert result == {"task": "dev", "step": "proceed", "branch": "approved"}
+        assert (result.task, result.step, result.branch) == ("dev", "proceed", "approved")
 
     def test_conditions_only_no_branch_uses_linear_next(self, conditions_only_workflows_dir):
         """Without branch_result, use the linear 'next' field (which is None here)."""
@@ -1062,8 +1041,11 @@ class TestConditionsOnlyWorkflow:
         result = resolve(
             "conditions_only", "decision", str(conditions_only_workflows_dir),
         )
-        # No branch_result, so follow step.next which is None → return None
-        assert result is None
+        # No branch_result and no linear next -> the step declares conditions
+        # but nothing matched, which is a typed UNRESOLVED (issue #964), not a
+        # silent declared finish.
+        assert result.kind is RouteKind.UNRESOLVED
+        assert "none matched" in result.reason
 
     def test_conditions_only_no_default_fallback(self, conditions_only_workflows_dir):
         """Unmatched branch with no default condition returns None."""
@@ -1072,8 +1054,9 @@ class TestConditionsOnlyWorkflow:
             "conditions_only", "decision", str(conditions_only_workflows_dir),
             branch_result="unknown",
         )
-        # No matching condition, no "default" condition → None
-        assert result is None
+        # No matching condition and no "default" condition -> typed UNRESOLVED
+        assert result.kind is RouteKind.UNRESOLVED
+        assert "unknown" in result.reason
 
     def test_conditions_only_branchless_honors_default_condition(
         self, tmp_path: Path
@@ -1099,7 +1082,7 @@ class TestConditionsOnlyWorkflow:
         }))
         resolve = _import_resolver()
         result = resolve("branchless_default", "decision", str(tmp_path))
-        assert result == {"task": "dev", "step": "proceed", "branch": "default"}
+        assert (result.task, result.step, result.branch) == ("dev", "proceed", "default")
 
     def test_conditions_only_branchless_no_default_is_terminal(
         self, conditions_only_workflows_dir
@@ -1108,7 +1091,8 @@ class TestConditionsOnlyWorkflow:
         ``default`` condition stays terminal (documents the #617 edge)."""
         resolve = _import_resolver()
         result = resolve("conditions_only", "decision", str(conditions_only_workflows_dir))
-        assert result is None
+        assert result.kind is RouteKind.UNRESOLVED
+        assert "none matched" in result.reason
 
 
 class TestEmptyWorkflowDefinition:
@@ -1139,13 +1123,18 @@ class TestEmptyWorkflowDefinition:
             "empty", "anything", str(empty_workflows_dir),
             agent_hint="dev",
         )
-        assert result == {"task": "dev"}
+        assert result.task == "dev"
 
 
 def _real_workflows_dir() -> Path:
-    """The shipped workflow dir, resolved the same way the runtime does."""
-    from default_paths import config_dir
-    return Path(config_dir("workflows"))
+    """The shipped workflow dir, not the per-repo ``.nebuko`` override.
+
+    ``config_dir`` prefers a checkout-local override directory whose contents
+    vary per machine (it may even be empty), so the shipped definitions are
+    what these resolution assertions must read.
+    """
+    from default_paths import checkout_root
+    return Path(checkout_root()) / "defaults" / "workflows"
 
 
 class TestDefaultWorkflowWithRealFile:
@@ -1159,31 +1148,34 @@ class TestDefaultWorkflowWithRealFile:
         """dispatch.advance from analyze step → context agent (context step)."""
         resolve = _import_resolver()
         result = resolve("default", "analyze", str(_real_workflows_dir()))
-        assert result == {"task": "context", "step": "context"}
+        assert (result.task, result.step) == ("context", "context")
 
     def test_context_resolves_to_architect_plan(self):
         """dispatch.advance from context step → architect agent (plan step)."""
         resolve = _import_resolver()
         result = resolve("default", "context", str(_real_workflows_dir()))
-        assert result == {"task": "architect", "step": "plan"}
+        assert (result.task, result.step) == ("architect", "plan")
 
     def test_plan_resolves_to_dev_implement(self):
         """dispatch.advance from plan step → dev agent (implement step)."""
         resolve = _import_resolver()
         result = resolve("default", "plan", str(_real_workflows_dir()))
-        assert result == {"task": "dev", "step": "implement"}
+        assert result.kind is RouteKind.ROUTE
+        assert (result.task, result.step) == ("dev", "implement")
 
     def test_implement_resolves_to_review(self):
         """dispatch.advance from implement step → review agent."""
         resolve = _import_resolver()
         result = resolve("default", "implement", str(_real_workflows_dir()))
-        assert result == {"task": "review", "step": "review"}
+        assert (result.task, result.step) == ("review", "review")
 
     def test_review_is_terminal_returns_none(self):
         """Review is the terminal step — returns None."""
         resolve = _import_resolver()
         result = resolve("default", "review", str(_real_workflows_dir()))
-        assert result is None
+        # ``review`` declares conditions and matched none, so it is a typed
+        # UNRESOLVED rather than a declared finish (issue #964).
+        assert result.kind is RouteKind.UNRESOLVED
 
     def test_body_from_issue_resolves_to_context(self):
         """End-to-end test: parse the exact body text from issue #377 and verify context is resolved.
@@ -1212,7 +1204,10 @@ class TestDefaultWorkflowWithRealFile:
             '    {\n'
             '      "step": "analyze",\n'
             '      "agent": "architect",\n'
-            '      "summary": "Architect answer summary"\n'
+            '      "summary": "Architect answer summary",\n'
+            # ``turn_outcome`` is required on every entry (issue #964); the
+            # issue-#377 body predates it, so the replay states the fact.
+            '      "turn_outcome": {"status": "completed", "appreciation": "approved"}\n'
             "    }\n"
             "  ],\n"
             '  "metrics": {\n'
@@ -1241,7 +1236,7 @@ class TestDefaultWorkflowWithRealFile:
         assert state.agent == "architect"
 
         result = resolve(state.workflow, state.step, str(_real_workflows_dir()))
-        assert result == {"task": "context", "step": "context"}
+        assert (result.task, result.step) == ("context", "context")
 
 
 def _import_return_marker_for_parent():

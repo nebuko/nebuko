@@ -14,7 +14,7 @@ steps:
       Analysis turn: a human issue or request just arrived.
       - Decide what context @@context must collect (files, docs, facts).
       - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
-      - Delegate with `dispatch_next(status='advance', complexity=…)` on the same turn as your message. Do not plan yet.
+      - Delegate with `dispatch_next(appreciation='approved', complexity=…)` on the same turn as your message. Do not plan yet.
     next: context
 
   - name: context
@@ -24,7 +24,7 @@ steps:
   - name: plan
     agent: architect
     prompt: |
-      Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact (or revise it if your context has a `## Human Gate Decision`), then end with `dispatch_next(status='advance', complexity=…)` on the same turn. Never `hold` on this gated step.
+      Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact (or revise it if your context has a `## Human Gate Decision`), then end with `dispatch_next(appreciation='approved', complexity=…)` on the same turn. Never `hold` on this gated step.
     human_gate: true
     conditions:
       - on_result: approved
@@ -101,9 +101,10 @@ steps:
       references an unclear step, STOP and report the blocker to @@architect. Do NOT
       guess at step content and do NOT implement anything.
 
-      Finish with a concise summary and end your message with (no `agent` field,
-      no self `function_call`; issue #618):
-      <!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance"}} -->
+      Finish with a concise summary and call the `dispatch_next` tool with
+      `appreciation='approved'` (no `agent` field, no self `function_call`;
+      issue #618). Do not write an `AGENT_RUN_CONFIG` sentinel yourself — the
+      engine renders it from typed state (issue #876).
     next: scaffold_review
 
   - name: scaffold_review

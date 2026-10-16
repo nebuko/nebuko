@@ -23,6 +23,38 @@ from resolve_workflow import TASK_TO_PROMPT
 import unittest
 
 
+def _history_entry(step: str, agent: str, summary: str = "") -> dict:
+    """A raw history entry carrying the mandatory factual outcome (issue #964)."""
+    return {
+        "step": step,
+        "agent": agent,
+        "summary": summary,
+        "turn_outcome": {"status": "completed", "appreciation": "approved"},
+    }
+
+
+def _completed_outcome(**overrides) -> dict:
+    """A raw ``turn_outcome`` payload for a completed turn."""
+    return {"status": "completed", "appreciation": "approved", **overrides}
+
+
+def _hold_outcome(**overrides) -> dict:
+    """A raw ``turn_outcome`` payload for a parked (resumable) turn."""
+    return {
+        "status": "completed",
+        "appreciation": "hold",
+        "hold_kind": "awaiting_input",
+        **overrides,
+    }
+
+
+def _real_workflows_dir() -> str:
+    """The shipped workflow dir, not the per-machine ``.nebuko`` override."""
+    from default_paths import checkout_root
+
+    return str(checkout_root() / "defaults" / "workflows")
+
+
 class TestIsBotComment:
     """Test bot comment detection."""
 
@@ -80,10 +112,12 @@ class TestResolveConfig:
 
     def test_json_based_dev_resolution(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        # Use dispatch embedded in WORKFLOW_STATE (XML path removed)
+        # A state carrying a turn outcome routes on it (issue #964).
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "dispatch": {"task_hint": "dev", "complexity": "high"}}\n'
+            '{"version": 6, "turn_outcome": {"status": "completed", '
+            '"appreciation": "approved", "required_agent": "dev"}, '
+            '"prefs": {"complexity": "high"}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
 
@@ -141,12 +175,14 @@ class TestResolveConfig:
 
     def test_all_config_fields_exported(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        # Use dispatch in WORKFLOW_STATE for all fields test
+        # Every non-routing knob rides on ``prefs`` (issue #964).
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "dispatch": {"task_hint": "dev", "complexity": "low", '
-            '"reasoning": "high", "temperature": 0.5, "model": "custom-model", '
-            '"top_p": 0.9, "top_k": 50, "repetition_penalty": 1.2}}\n'
+            '{"version": 6, "turn_outcome": {"status": "completed", '
+            '"appreciation": "approved", "required_agent": "dev"}, '
+            '"prefs": {"complexity": "low", "temperature": 0.5, '
+            '"model": "custom-model", "top_p": 0.9, "top_k": 50, '
+            '"repetition_penalty": 1.2}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
 
@@ -155,10 +191,11 @@ class TestResolveConfig:
         assert result["CONFIG_MODEL"] == "custom-model"
         assert result["CONFIG_TEMPERATURE"] == "0.5"
         assert result["CONFIG_TOP_P"] == "0.9"
-        # top_k uses Float in Dispatch model; str(Float(50.0)) -> "50.0"
-        assert result["CONFIG_TOP_K"] == "50.0"
+        assert result["CONFIG_TOP_K"] == "50"
         assert result["CONFIG_REPETITION_PENALTY"] == "1.2"
-        assert result["LLM_REASONING"] == "high"
+        # ``reasoning`` was a Dispatch knob with no RunPrefs counterpart: the
+        # reasoning mode now comes from the agent's complexity tier.
+        assert result["LLM_REASONING"] == "none"
 
     def test_context_complexity_handling(self):
         prompt_base, workflows_dir = self._setup_dirs()
@@ -254,23 +291,36 @@ class TestCIBotMentionRouting:
     def test_in_body_state_is_not_plain_mention(self):
         # A body embedding a full WORKFLOW_STATE is not a plain mention
         # trigger (the state JSON counts as non-mention content), so it is
-        # resolved via the dispatch path instead of the ci_mention shortcut.
+        # resolved via the state path instead of the ci_mention shortcut.
         # Real CI triggers (e.g. the sub-issue bootstrap) never embed a state
         # in the trigger body — they arrive as mention-only comments.
         prompt_base, workflows_dir = self._setup_dirs()
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(
+                "name: default\n"
+                "description: Standard workflow\n"
+                "steps:\n"
+                "  - name: analyze\n"
+                "    agent: architect\n"
+                "    next: context\n"
+                "  - name: context\n"
+                "    agent: context\n"
+                "    next: null\n"
+            )
         body = (
             "<!-- bot-workflow-terminal -->\n"
             "@@architect\n"
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "workflow": "default", "step": "analyze", '
-            '"dispatch": {"status": "advance", "task_hint": "dev", '
-            '"complexity": "medium"}}\n'
+            '{"version": 6, "workflow": "default", "step": "analyze", '
+            '"turn_outcome": {"status": "completed", "appreciation": "approved"}, '
+            '"prefs": {"complexity": "medium"}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
 
         result = resolve_config(body, prompt_base, workflows_dir)
 
-        assert result["ROLE_NAME"] == "dev"
+        # The workflow edge wins over the mention: analyze -> context.
+        assert result["ROLE_NAME"] == "context"
 
 
 
@@ -468,23 +518,25 @@ class TestResolveConfigWithWorkflowCommand:
     def test_step_skills_passed_through_from_workflow(self):
         """STEP_SKILLS from workflow resolver are passed through in resolve_config output."""
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
-        # Create a workflow with skills on a step
+        # Create a workflow whose routed-to step carries skills
         with open(os.path.join(workflows_dir, "with-skills.yaml"), "w") as f:
             f.write(
                 "name: with-skills\n"
                 "description: Workflow with skills\n"
                 "steps:\n"
+                "  - name: plan\n"
+                "    agent: architect\n"
+                "    next: implement\n"
                 "  - name: implement\n"
                 "    agent: dev\n"
                 "    skill: [python, rust]\n"
                 "    next: null\n"
             )
-        # Use dispatch in WORKFLOW_STATE to specify workflow/step (XML removed)
-        # Workflow/step must be on the dispatch object for resolve_workflow_routing to pick them up
+        # The state's turn outcome routes plan -> implement (the skilled step)
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "workflow": "with-skills", "step": "implement", '
-            '"dispatch": {"task_hint": "dev", "workflow": "with-skills", "step": "implement"}}\n'
+            '{"version": 6, "workflow": "with-skills", "step": "plan", '
+            '"turn_outcome": {"status": "completed", "appreciation": "approved"}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
 
@@ -502,6 +554,9 @@ class TestResolveConfigWithWorkflowCommand:
                 "name: with-modes\n"
                 "description: Workflow with skill modes\n"
                 "steps:\n"
+                "  - name: plan\n"
+                "    agent: architect\n"
+                "    next: implement\n"
                 "  - name: implement\n"
                 "    agent: dev\n"
                 "    skill:\n"
@@ -511,8 +566,8 @@ class TestResolveConfigWithWorkflowCommand:
             )
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "workflow": "with-modes", "step": "implement", '
-            '"dispatch": {"task_hint": "dev", "workflow": "with-modes", "step": "implement"}}\n'
+            '{"version": 6, "workflow": "with-modes", "step": "plan", '
+            '"turn_outcome": {"status": "completed", "appreciation": "approved"}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
 
@@ -540,9 +595,8 @@ class TestResolveNextAgentFromWorkflow(unittest.TestCase):
 
     @staticmethod
     def _real_workflows_dir():
-        """The shipped workflow dir, resolved the same way the runtime does."""
-        from default_paths import config_dir
-        return config_dir("workflows")
+        """The shipped workflow dir, not the per-machine ``.nebuko`` override."""
+        return _real_workflows_dir()
 
     def test_task_hint_overrides_workflow(self):
         result = resolve_next_agent_from_workflow("dev", "default", "analyze", self._real_workflows_dir())
@@ -576,23 +630,23 @@ class TestCountConsecutiveSameAgent(unittest.TestCase):
 
     def test_single_match(self):
         from workflow_state import HistoryEntry
-        history = [HistoryEntry(step="s", agent="dev")]
+        history = [HistoryEntry(step="s", agent="dev", turn_outcome=_completed_outcome())]
         count = count_consecutive_same_agent(history, "dev")
         self.assertEqual(count, 1)
 
     def test_mixed_agents(self):
         from workflow_state import HistoryEntry
         history = [
-            HistoryEntry(step="s1", agent="architect"),
-            HistoryEntry(step="s2", agent="dev"),
-            HistoryEntry(step="s3", agent="dev"),
+            HistoryEntry(step="s1", agent="architect", turn_outcome=_completed_outcome()),
+            HistoryEntry(step="s2", agent="dev", turn_outcome=_completed_outcome()),
+            HistoryEntry(step="s3", agent="dev", turn_outcome=_completed_outcome()),
         ]
         count = count_consecutive_same_agent(history, "dev")
         self.assertEqual(count, 2)
 
     def test_different_agent(self):
         from workflow_state import HistoryEntry
-        history = [HistoryEntry(step="s1", agent="architect")]
+        history = [HistoryEntry(step="s1", agent="architect", turn_outcome=_completed_outcome())]
         count = count_consecutive_same_agent(history, "dev")
         self.assertEqual(count, 0)
 
@@ -843,14 +897,14 @@ class TestDeleteCommentsCommand(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertEqual(result["COMMAND_ERROR"], "true")
 
-    def test_scoped_delete_beats_active_dispatch(self):
+    def test_scoped_delete_beats_active_turn_outcome(self):
         # A valid scoped delete must short-circuit before the cascade, exactly
         # as the unscoped one does (issue #867).
         body = (
             "/nebuko delete comments --issue 123 --from 5811583860\n\n"
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "dispatch": {"status": "advance", '
-            '"task_hint": "review", "complexity": "high"}}\n'
+            '{"version": 1, "turn_outcome": {"status": "completed", '
+            '"appreciation": "approved"}, "prefs": {"complexity": "high"}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
         result = self._resolve(body, issue_number=867)
@@ -873,7 +927,7 @@ class TestCleanCommentsCommand(unittest.TestCase):
     to fall through the human-command cascade and boot context/architect. It is now a
     recognized local command that resolves to the same deterministic
     comment-removal contract as ``/nebuko delete comments`` and starts no
-    agent, even when an active workflow dispatch is present.
+    agent, even when an active workflow turn outcome is present.
     """
 
     def _setup_dirs(self):
@@ -892,8 +946,8 @@ class TestCleanCommentsCommand(unittest.TestCase):
         )
 
     @staticmethod
-    def _state_block(dispatch):
-        state = {"version": 1, "dispatch": dispatch}
+    def _state_block(outcome):
+        state = {"version": 1, "turn_outcome": outcome}
         return (
             "<!-- WORKFLOW_STATE_START -->\n"
             + json.dumps(state)
@@ -908,11 +962,11 @@ class TestCleanCommentsCommand(unittest.TestCase):
         self.assertEqual(result["AGENT_SELECTED"], "false")
         self.assertEqual(result["ROLE_NAME"], "script")
 
-    def test_clean_ignores_active_dispatch(self):
-        # Regression #590: an active dispatch must NOT absorb the command and
-        # boot an agent; the local command still short-circuits.
+    def test_clean_ignores_active_turn_outcome(self):
+        # Regression #590: an active turn outcome must NOT absorb the command
+        # and boot an agent; the local command still short-circuits.
         body = "/nebuko clean comments\n\n" + self._state_block(
-            {"status": "advance", "task_hint": "dev", "complexity": "high"}
+            {"status": "completed", "appreciation": "approved"}
         )
         result = self._resolve(body, issue_number=590)
         self.assertEqual(result["DELETE_COMMENTS"], "true")
@@ -944,11 +998,11 @@ class TestCleanCommentsCommand(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertEqual(result["AGENT_SELECTED"], "false")
 
-    def test_clean_from_beats_active_review_dispatch(self):
-        # Regression #822: an active review dispatch must not absorb the scoped
-        # clean command and boot the review agent.
+    def test_clean_from_beats_active_review_turn_outcome(self):
+        # Regression #822: an active review turn outcome must not absorb the
+        # scoped clean command and boot the review agent.
         body = "/nebuko clean comments --from 6095548211\n\n" + self._state_block(
-            {"status": "advance", "task_hint": "review", "complexity": "high"}
+            {"status": "completed", "appreciation": "approved"}
         )
         result = self._resolve(body, issue_number=822)
         self.assertEqual(result["DELETE_COMMENTS"], "true")
@@ -997,7 +1051,7 @@ class TestCommandAttemptRouting(unittest.TestCase):
 
     Regression for issue #822 (fixed by #867): ``/nebuko clean comments
     --from <id>`` was malformed, fell through the command short-circuits and was
-    swallowed by an active workflow dispatch, which booted the review agent.
+    swallowed by an active workflow turn outcome, which booted the review agent.
     Any malformed ``/nebuko`` body now terminates with the ADR-0004 error
     contract and dispatches no agent.
     """
@@ -1024,11 +1078,7 @@ class TestCommandAttemptRouting(unittest.TestCase):
     def _active_review_state():
         state = {
             "version": 1,
-            "dispatch": {
-                "status": "advance",
-                "task_hint": "review",
-                "complexity": "high",
-            },
+            "turn_outcome": {"status": "completed", "appreciation": "approved"},
         }
         return (
             "<!-- WORKFLOW_STATE_START -->\n"
@@ -1532,7 +1582,8 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
                 "version": 1, "workflow": "default", "step": "analyze", "agent": "architect",
-                "dispatch": {"task_hint": "dev", "complexity": "medium"},
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
+                "prefs": {"complexity": "medium"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
@@ -1542,14 +1593,14 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "false")
 
     def test_workflow_driven_resolution_with_branch_result(self):
-        """Workflow-driven resolution passes branch_result from dispatch dict."""
+        """Workflow-driven resolution routes on the outcome's appreciation."""
         prompt_base, workflows_dir = self._setup_dirs()
         import json as _json
         state_json = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
                 "version": 1, "workflow": "default", "step": "analyze", "agent": "architect",
-                "dispatch": {"task_hint": "dev", "branch": "approved"},
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
@@ -1558,32 +1609,35 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         self.assertEqual(result["TASK"], "context")
 
     def test_terminal_step_returns_skip(self):
-        """Terminal step with dispatch.advance and no task_hint → resolve_next_from_workflow returns None → No valid task."""
+        """Terminal step with no task_hint → resolve_next_from_workflow returns None → terminal skip."""
         prompt_base, workflows_dir = self._setup_dirs()
         import json as _json
         # "review" is terminal (next: null) — resolve_next_from_workflow returns None
-        # dispatch.advance with no task_hint → task = "" → SKIP_AGENT: No valid task found
+        # and the skip reason names the terminal step (issue #458).
         state_json = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
                 "version": 1, "workflow": "default", "step": "review", "agent": "review",
-                "dispatch": {},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["SKIP_AGENT"], "true")
-        self.assertIn("No valid task", result["REASON"])
+        self.assertIn("Terminal step 'review'", result["REASON"])
 
     def test_fallback_to_agent_hint_when_no_workflow_state(self):
-        """When no workflow state exists, fall back to agent hint (task field)."""
+        """When no workflow state exists, fall back to the outcome's required agent."""
         prompt_base, workflows_dir = self._setup_dirs()
         import json as _json
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
-                "version": 1,
-                "dispatch": {"task_hint": "dev", "complexity": "high"},
+                "version": 6,
+                "turn_outcome": {
+                    "status": "completed", "appreciation": "approved",
+                    "required_agent": "dev",
+                },
+                "prefs": {"complexity": "high"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
@@ -1593,24 +1647,27 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "false")
 
     def test_backward_compatibility_simple_agent_run_config(self):
-        """Simple config without workflow state still works (now via dispatch in WORKFLOW_STATE)."""
+        """A state carrying only an outcome + prefs still resolves (issue #964)."""
         prompt_base, workflows_dir = self._setup_dirs()
         import json as _json
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
-                "version": 1,
-                "dispatch": {
-                    "task_hint": "dev", "complexity": "low",
-                    "reasoning": "high", "temperature": 0.5,
+                "version": 6,
+                "turn_outcome": {
+                    "status": "completed", "appreciation": "approved",
+                    "required_agent": "dev",
                 },
+                "prefs": {"complexity": "low", "temperature": 0.5},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["COMPLEXITY"], "low")
-        self.assertEqual(result["LLM_REASONING"], "high")
+        # ``reasoning`` was a legacy sentinel-only knob with no RunPrefs
+        # counterpart (issue #964): the resolver now always reports "none".
+        self.assertEqual(result["LLM_REASONING"], "none")
         self.assertEqual(result["CONFIG_TEMPERATURE"], "0.5")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
@@ -1623,7 +1680,8 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
                 "version": 1, "workflow": "default", "step": "plan", "agent": "architect",
-                "dispatch": {"task_hint": "dev", "complexity": "medium"},
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
+                "prefs": {"complexity": "medium"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
@@ -1638,7 +1696,7 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
                 "version": 1, "workflow": "nonexistent", "step": "analyze", "agent": "architect",
-                "dispatch": {"status": "advance"},
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
@@ -1647,11 +1705,11 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("REASON", result)
 
-    def test_dispatch_advance_default_workflow_analyze_to_context(self):
-        """Regression #377: dispatch.advance with no task field on default workflow resolves analyze→context.
+    def test_approved_outcome_default_workflow_analyze_to_context(self):
+        """Regression #377: an approved outcome with no task field on the default workflow resolves analyze→context.
 
         Reproduces the exact scenario from the issue: architect finishes the 'analyze' step
-        with dispatch.advance (no explicit task). The resolver should parse the workflow
+        with an approval (no explicit task). The resolver should parse the workflow
         state, find the next step in default.yaml ('context'), and select agent 'context'.
         """
         prompt_base, workflows_dir = self._setup_dirs()
@@ -1660,7 +1718,8 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
                 "version": 1, "workflow": "default", "step": "analyze", "agent": "architect",
-                "dispatch": {"status": "advance", "complexity": "medium"},
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
+                "prefs": {"complexity": "medium"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
@@ -1706,7 +1765,7 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
 
     def test_resolve_workflow_next_step_recovers_from_empty_step(self):
         """Exact #457 v2 shape: workflow='spec-driven-impl', step='' (omitted),
-        history ending at 'context', no dispatch → must resolve to plan/architect."""
+        history ending at 'context', no turn outcome → must resolve to plan/architect."""
         import json as _json
         prompt_base, workflows_dir = self._setup_spec_dirs()
         state = {
@@ -1714,8 +1773,8 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
             "workflow": "spec-driven-impl",
             "agent": "context",
             "history": [
-                {"step": "analyze", "agent": "architect", "summary": "Analyzed"},
-                {"step": "context", "agent": "context", "summary": "Collected"},
+                _history_entry("analyze", "architect", "Analyzed"),
+                _history_entry("context", "context", "Collected"),
             ],
         }
         # No "step" key — excluded by exclude_defaults serialization
@@ -1740,10 +1799,10 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
             "workflow": "spec-driven-impl",
             "agent": "dev",
             "history": [
-                {"step": "analyze", "agent": "architect", "summary": "A"},
-                {"step": "context", "agent": "context", "summary": "B"},
-                {"step": "plan", "agent": "architect", "summary": "C"},
-                {"step": "implement", "agent": "dev", "summary": "D"},
+                _history_entry("analyze", "architect", "A"),
+                _history_entry("context", "context", "B"),
+                _history_entry("plan", "architect", "C"),
+                _history_entry("implement", "dev", "D"),
             ],
         }
         state_json = (
@@ -1787,9 +1846,9 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
                 "workflow": "spec-driven-impl",
                 "step": "nonexistent",
                 "history": [
-                    {"step": "analyze", "agent": "architect", "summary": "A"},
-                    {"step": "context", "agent": "context", "summary": "B"},
-                    {"step": "nonexistent", "agent": "dev", "summary": "C"},
+                    _history_entry("analyze", "architect", "A"),
+                    _history_entry("context", "context", "B"),
+                    _history_entry("nonexistent", "dev", "C"),
                 ],
             }
         )
@@ -1821,7 +1880,7 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
                 "version": 2,
                 "workflow": "broken",
                 "step": "only",
-                "history": [{"step": "only", "agent": "architect", "summary": "A"}],
+                "history": [_history_entry("only", "architect", "A")],
             }
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
@@ -1842,7 +1901,7 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
                 "version": 2,
                 "workflow": "does-not-exist",
                 "step": "analyze",
-                "history": [{"step": "analyze", "agent": "architect", "summary": "A"}],
+                "history": [_history_entry("analyze", "architect", "A")],
             }
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
@@ -1866,7 +1925,7 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
                 "version": 2,
                 "workflow": "malformed",
                 "step": "analyze",
-                "history": [{"step": "analyze", "agent": "architect", "summary": "A"}],
+                "history": [_history_entry("analyze", "architect", "A")],
             }
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
@@ -1875,7 +1934,7 @@ class TestWorkflowNextStepEmptyStepRecovery(unittest.TestCase):
 
 
 class TestE2EDispatchWorkflowResolution(unittest.TestCase):
-    """End-to-end: agent finishes with dispatch → config resolver uses workflow YAML."""
+    """End-to-end: agent finishes with an approved outcome → resolver uses workflow YAML."""
 
     @staticmethod
     def _approval_workflow_yaml():
@@ -1905,19 +1964,19 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         )
 
     @staticmethod
-    def _build_state_json(workflow, step, agent, dispatch_status=None, dispatch_task=None):
+    def _build_state_json(workflow, step, agent, outcome=None, required_agent=None):
         import json as _json
         state = {
-            "version": 1,
+            "version": 6,
             "workflow": workflow,
             "step": step,
             "agent": agent,
         }
-        if dispatch_status:
-            state["dispatch"] = {
-                "status": dispatch_status,
-                "task": dispatch_task or "",
-                "complexity": "medium",
+        if outcome:
+            state["turn_outcome"] = {
+                "status": "completed",
+                "appreciation": "approved",
+                "required_agent": required_agent or "",
             }
         return (
             "<!-- WORKFLOW_STATE_START -->\n"
@@ -1935,62 +1994,62 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
             f.write(self._approval_workflow_yaml())
         return prompt_base, workflows_dir
 
-    def test_dispatch_advance_resolves_correct_next_agent(self):
-        """Agent finishes with dispatch→advance; resolver picks up next agent from workflow."""
+    def test_approved_outcome_resolves_correct_next_agent(self):
+        """Agent finishes with an approval; resolver picks up next agent from workflow."""
         prompt_base, workflows_dir = self._setup_dirs()
-        # Agent "po" finished step "spec", dispatch advances to next step
+        # Agent "po" finished step "spec", the approval advances to the next step
         state_json = self._build_state_json(
             workflow="approval", step="spec", agent="po",
-            dispatch_status="advance", dispatch_task="",
+            outcome="advance",
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # After "spec", next step is "spec_approval" with agent "architect"
         self.assertEqual(result["TASK"], "architect")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
-    def test_dispatch_advance_without_task_field(self):
-        """Regression: dispatch-only advance (no task field) must resolve next agent from workflow."""
+    def test_approved_outcome_without_task_field(self):
+        """Regression: an outcome-only advance (no task field) must resolve next agent from workflow."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="approval", step="spec", agent="po",
-            dispatch_status="advance",
+            outcome="advance",
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # After "spec", next step is "spec_approval" with agent "architect"
         self.assertEqual(result["TASK"], "architect")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
-    def test_dispatch_with_branch_approved(self):
-        """Dispatch with branch=approved resolves to implement step."""
+    def test_approved_outcome_with_branch_approved(self):
+        """An approved verdict resolves to the implement step."""
         prompt_base, workflows_dir = self._setup_dirs()
         import json as _json
         state_json = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
-                "version": 1, "workflow": "approval", "step": "spec_approval", "agent": "architect",
-                "dispatch": {"status": "advance", "task_hint": "dev", "branch": "approved"},
+                "version": 6, "workflow": "approval", "step": "spec_approval", "agent": "architect",
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
-        # branch_result="approved" → condition routes to "implement" → agent "dev"
+        # route_key="approved" → condition routes to "implement" → agent "dev"
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
-    def test_dispatch_with_branch_rejected(self):
-        """Dispatch with branch=rejected loops back to spec step."""
+    def test_rejected_outcome_loops_back_to_spec(self):
+        """A rejected verdict loops back to the spec step."""
         prompt_base, workflows_dir = self._setup_dirs()
         import json as _json
         state_json = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
-                "version": 1, "workflow": "approval", "step": "spec_approval", "agent": "architect",
-                "dispatch": {"status": "advance", "task_hint": "dev", "branch": "rejected"},
+                "version": 6, "workflow": "approval", "step": "spec_approval", "agent": "architect",
+                "turn_outcome": {"status": "completed", "appreciation": "rejected"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
-        # branch_result="rejected" → condition routes to "spec" → agent "po"
+        # route_key="rejected" → condition routes to "spec" → agent "po"
         self.assertEqual(result["TASK"], "po")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
@@ -2001,7 +2060,7 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         # Step 1: spec → spec_approval
         state = self._build_state_json(
             "approval", "spec", "po",
-            dispatch_status="advance", dispatch_task="",
+            outcome="advance",
         )
         result = resolve_config(state, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "architect")
@@ -2012,8 +2071,8 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         state = (
             "<!-- WORKFLOW_STATE_START -->\n"
             + _json.dumps({
-                "version": 1, "workflow": "approval", "step": "spec_approval", "agent": "architect",
-                "dispatch": {"status": "advance", "task_hint": "architect", "branch": "approved"},
+                "version": 6, "workflow": "approval", "step": "spec_approval", "agent": "architect",
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
@@ -2024,7 +2083,7 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         # Step 3: implement → review
         state = self._build_state_json(
             "approval", "implement", "dev",
-            dispatch_status="advance", dispatch_task="",
+            outcome="advance",
         )
         result = resolve_config(state, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "review")
@@ -2033,17 +2092,17 @@ class TestE2EDispatchWorkflowResolution(unittest.TestCase):
         # Step 4: review (terminal) → SKIP
         state = self._build_state_json(
             "approval", "review", "review",
-            dispatch_status="advance", dispatch_task="",
+            outcome="advance",
         )
         result = resolve_config(state, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["SKIP_AGENT"], "true")
 
 
 class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
-    """E2E: dispatch.advance with default workflow resolves next agent from workflow YAML.
+    """E2E: an approved outcome with the default workflow resolves next agent from workflow YAML.
 
     Regression test for issue #377 — ensures the exact body format from the issue
-    (WORKFLOW_STATE + dispatch.advance without task field) correctly resolves
+    (WORKFLOW_STATE + an approved outcome without task field) correctly resolves
     to the context agent when the current step is 'analyze' in the 'default' workflow.
     """
 
@@ -2072,19 +2131,19 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
 
     @staticmethod
     def _build_state_json(workflow="default", step="analyze", agent="architect",
-                          dispatch_status=None, dispatch_task=None):
+                          outcome=None, required_agent=None):
         import json as _json
         state = {
-            "version": 1,
+            "version": 6,
             "workflow": workflow,
             "step": step,
             "agent": agent,
         }
-        if dispatch_status:
-            state["dispatch"] = {
-                "status": dispatch_status,
-                "task": dispatch_task or "",
-                "complexity": "medium",
+        if outcome:
+            state["turn_outcome"] = {
+                "status": "completed",
+                "appreciation": "approved",
+                "required_agent": required_agent or "",
             }
         return (
             "<!-- WORKFLOW_STATE_START -->\n"
@@ -2102,12 +2161,12 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
             f.write(self._default_workflow_yaml())
         return prompt_base, workflows_dir
 
-    def test_dispatch_advance_analyze_resolves_to_context(self):
-        """Exact scenario from issue #377: dispatch.advance from analyze → context."""
+    def test_approved_outcome_analyze_resolves_to_context(self):
+        """Exact scenario from issue #377: an approval from analyze → context."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="default", step="analyze", agent="architect",
-            dispatch_status="advance",
+            outcome="advance",
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # After "analyze" in default workflow, next step is "context" → agent "context"
@@ -2118,12 +2177,12 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         self.assertEqual(result["WORKFLOW_STEP"], "context")
         self.assertEqual(result["WORKFLOW_NEXT"], "plan")
 
-    def test_dispatch_advance_context_resolves_to_architect(self):
-        """dispatch.advance from context step → architect (plan step)."""
+    def test_approved_outcome_context_resolves_to_architect(self):
+        """An approval from the context step → architect (plan step)."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="default", step="context", agent="context",
-            dispatch_status="advance",
+            outcome="advance",
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "architect")
@@ -2133,12 +2192,12 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         self.assertEqual(result["WORKFLOW_STEP"], "plan")
         self.assertEqual(result["WORKFLOW_NEXT"], "implement")
 
-    def test_dispatch_advance_implement_resolves_to_dev(self):
-        """dispatch.advance from plan step → dev (implement step)."""
+    def test_approved_outcome_implement_resolves_to_dev(self):
+        """An approval from the plan step → dev (implement step)."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="default", step="plan", agent="architect",
-            dispatch_status="advance",
+            outcome="advance",
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
@@ -2148,16 +2207,16 @@ class TestDispatchAdvanceDefaultWorkflow(unittest.TestCase):
         self.assertEqual(result["WORKFLOW_STEP"], "implement")
         self.assertEqual(result["WORKFLOW_NEXT"], "review")
 
-    def test_dispatch_advance_terminal_step_returns_skip(self):
-        """dispatch.advance from terminal review step → SKIP_AGENT."""
+    def test_approved_outcome_terminal_step_returns_skip(self):
+        """An approval from the terminal review step → SKIP_AGENT."""
         prompt_base, workflows_dir = self._setup_dirs()
         state_json = self._build_state_json(
             workflow="default", step="review", agent="review",
-            dispatch_status="advance",
+            outcome="advance",
         )
         result = resolve_config(state_json, prompt_base, workflows_dir, is_bot=False)
         # Terminal step: resolve_next_from_workflow returns None,
-        # dispatch.advance falls back to empty task_hint → no valid task
+        # the approval falls back to an empty task_hint → no valid task
         self.assertEqual(result["SKIP_AGENT"], "true")
 
 
@@ -2253,15 +2312,14 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
     """Integration tests using the real workflows/default.yaml file from the repo root.
 
     Regression for issue #377 — ensures the full resolve_config pipeline correctly
-    parses WORKFLOW_STATE markers, dispatch.advance without task field, and resolves
+    parses WORKFLOW_STATE markers, an approved outcome without task field, and resolves
     the next agent against the actual workflow definition on disk.
     """
 
     @staticmethod
     def _real_workflows_dir():
-        """The shipped workflow dir, resolved the same way the runtime does."""
-        from default_paths import config_dir
-        return config_dir("workflows")
+        """The shipped workflow dir, not the per-machine ``.nebuko`` override."""
+        return _real_workflows_dir()
 
     @staticmethod
     def _setup_prompt_base():
@@ -2274,11 +2332,11 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
 
     @staticmethod
     def _build_issue_body():
-        """Reproduce the body from issue #377 using dispatch in workflow state.
+        """Reproduce the body from issue #377 using a turn outcome in workflow state.
 
         Contains:
         - WORKFLOW_STATE block: workflow=default, step=analyze, agent=architect,
-          with dispatch.advance (no task field)
+          with an approved turn outcome (no task field)
         Expected: resolves to agent 'context'.
         """
         return (
@@ -2287,8 +2345,9 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
             "```json\n"
             "<!-- WORKFLOW_STATE_START -->\n"
             '{"workflow": "default", "step": "analyze", "agent": "architect", "phase": "analysis", '
-            '"dispatch": {"status": "advance"}, '
-            '"history": [{"step": "analyze", "agent": "architect", "summary": "delegate context collection"}], '
+            '"turn_outcome": {"status": "completed", "appreciation": "approved"}, '
+            '"history": [{"step": "analyze", "agent": "architect", "summary": "delegate context collection", '
+            '"turn_outcome": {"status": "completed", "appreciation": "approved"}}], '
             '"metrics": {"run_id": "d17d26d4-c4de-4808-b80b-e353d79e0563", "model_name": "default", '
             '"agent_role": "architect", "input_tokens": 8069, "output_tokens": 276, '
             '"tool_call_latency_ms": 9842.795133590698, "agent_runtime_ms": 9842.8}, '
@@ -2306,10 +2365,10 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
         )
 
     def test_exact_issue_input_resolves_to_context(self):
-        """Exact scenario from issue #377: dispatch.advance from analyze → context agent.
+        """Exact scenario from issue #377: an approval from analyze → context agent.
 
         The body contains a WORKFLOW_STATE (workflow=default, step=analyze, agent=architect)
-        and an agentRunConfig with dispatch.advance but NO task field.
+        and an agentRunConfig with an approval but NO task field.
         resolve_config should parse the state, look up the next step in the real
         workflows/default.yaml, and resolve to agent 'context'.
         """
@@ -2320,7 +2379,7 @@ class TestResolveConfigWithRealWorkflowFile(unittest.TestCase):
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=True)
 
         self.assertEqual(result["TASK"], "context",
-            "dispatch.advance from 'analyze' step in default workflow should resolve to 'context' agent")
+            "an approval from the 'analyze' step in default workflow should resolve to 'context' agent")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
 
@@ -2364,21 +2423,23 @@ class TestResumeIntegration(unittest.TestCase):
             "    next: null\n"
         )
 
-    def _build_state_json(self, workflow, step, agent, dispatch_status="hold", **kwargs):
+    def _build_state_json(self, workflow, step, agent, outcome="hold", **kwargs):
         import json
         data = {
-            "version": 1,
+            "version": 6,
             "workflow": workflow,
             "step": step,
             "agent": agent,
             "phase": step,
             "history": [],
-            "dispatch": {
-                "status": dispatch_status,
-                "complexity": kwargs.get("complexity", "high"),
-                "reasoning": kwargs.get("reasoning", "deep"),
-            },
+            "prefs": {"complexity": kwargs.get("complexity", "high")},
         }
+        if outcome == "hold":
+            data["turn_outcome"] = {
+                "status": "completed",
+                "appreciation": "hold",
+                "hold_kind": "awaiting_input",
+            }
         return json.dumps(data)
 
     def _build_trigger_body_with_state(self, command, state_json):
@@ -2407,7 +2468,7 @@ class TestResumeIntegration(unittest.TestCase):
 
             state_json = self._build_state_json(
                 workflow="default", step="implement", agent="dev",
-                dispatch_status="hold", complexity="high", reasoning="deep",
+                outcome="hold", complexity="high",
             )
             body = self._build_trigger_body_with_state("/nebuko resume --feedback Yes, approved.", state_json)
 
@@ -2431,7 +2492,7 @@ class TestResumeIntegration(unittest.TestCase):
 
             state_json = self._build_state_json(
                 workflow="default", step="implement", agent="dev",
-                dispatch_status="hold", complexity="medium",
+                outcome="hold", complexity="medium",
             )
             body = self._build_trigger_body_with_state("/nebuko resume", state_json)
 
@@ -2441,8 +2502,8 @@ class TestResumeIntegration(unittest.TestCase):
             self.assertEqual(result["TASK"], "dev")
             self.assertEqual(result["HUMAN_RESUME_INPUT"], BARE_RESUME_INPUT)
 
-    def test_resume_with_advance_dispatch_advances_to_next_step(self):
-        """Resume with dispatch.status='advance' should advance, not skip."""
+    def test_resume_with_approved_outcome_advances_to_next_step(self):
+        """Resume on a non-resumable (approved) outcome advances, not skips."""
         prompt_base = self._setup_prompt_base()
         with tempfile.TemporaryDirectory() as tmpdir:
             wf_path = os.path.join(tmpdir, "default.yaml")
@@ -2451,14 +2512,14 @@ class TestResumeIntegration(unittest.TestCase):
 
             state_json = self._build_state_json(
                 workflow="default", step="plan", agent="architect",
-                dispatch_status="advance",
+                outcome="advance",
             )
             body = self._build_trigger_body_with_state("/nebuko resume", state_json)
 
             result = resolve_config(body, prompt_base, tmpdir, is_bot=False)
 
-            # dispatch=advance routes through _resolve_dispatch_path which
-            # auto-resolves the next agent from workflow (plan → implement/dev).
+            # An approved outcome routes through _resolve_outcome_path, which
+            # auto-resolves the next agent from the workflow (plan → implement/dev).
             self.assertEqual(result["SKIP_AGENT"], "false")
             self.assertEqual(result["TASK"], "dev")
 
@@ -2472,7 +2533,7 @@ class TestResumeIntegration(unittest.TestCase):
 
             state_json = self._build_state_json(
                 workflow="default", step="review", agent="review",
-                dispatch_status="hold", complexity="low",
+                outcome="hold", complexity="low",
             )
             body = self._build_trigger_body_with_state(
                 "/nebuko resume --feedback Looks good, let me double-check.", state_json
@@ -2490,7 +2551,7 @@ class TestResumeIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_json = self._build_state_json(
                 workflow="../evil", step="plan", agent="architect",
-                dispatch_status="hold",
+                outcome="hold",
             )
             body = self._build_trigger_body_with_state("/nebuko resume", state_json)
 
@@ -2499,8 +2560,8 @@ class TestResumeIntegration(unittest.TestCase):
             self.assertEqual(result["SKIP_AGENT"], "true")
             self.assertIn("invalid or missing workflow", result["REASON"])
 
-    def test_resume_preserves_dispatch_params(self):
-        """Resume should copy dispatch LLM params (model, temperature, etc.)."""
+    def test_resume_preserves_run_prefs(self):
+        """Resume should copy the run prefs (model, temperature, etc.)."""
         prompt_base = self._setup_prompt_base()
         with tempfile.TemporaryDirectory() as tmpdir:
             wf_path = os.path.join(tmpdir, "default.yaml")
@@ -2509,16 +2570,19 @@ class TestResumeIntegration(unittest.TestCase):
 
             import json
             data = {
-                "version": 1,
+                "version": 6,
                 "workflow": "default",
                 "step": "plan",
                 "agent": "architect",
                 "phase": "plan",
                 "history": [],
-                "dispatch": {
-                    "status": "hold",
+                "turn_outcome": {
+                    "status": "completed",
+                    "appreciation": "hold",
+                    "hold_kind": "awaiting_input",
+                },
+                "prefs": {
                     "complexity": "high",
-                    "reasoning": "deep",
                     "model": "claude-sonnet-4-20250514",
                     "temperature": 0.5,
                     "top_p": 0.9,
@@ -2574,11 +2638,11 @@ class TestResumeIntegration(unittest.TestCase):
             "    next: null\n"
         )
 
-    def _build_state_json_no_dispatch(self, workflow, step, agent, **kwargs):
-        """Build workflow state JSON without a dispatch field (resolution-only).
+    def _build_state_json_no_outcome(self, workflow, step, agent, **kwargs):
+        """Build workflow state JSON without a turn outcome (resolution-only).
 
         Mirrors the WorkflowState produced by agents that post resolution.next_step
-        but do not include a dispatch object — the exact scenario from issue #420.
+        but do not include a turn outcome — the exact scenario from issue #420.
         """
         import json
         data = {
@@ -2593,11 +2657,11 @@ class TestResumeIntegration(unittest.TestCase):
             data["resolution"] = kwargs["resolution"]
         return json.dumps(data)
 
-    def test_resume_with_no_dispatch_advances_to_next_step(self):
-        """Resume with no dispatch should advance to next step, not SKIP_AGENT.
+    def test_resume_with_no_outcome_advances_to_next_step(self):
+        """Resume with no turn outcome should advance to next step, not SKIP_AGENT.
 
         Reproduces issue #420: when an agent posts WorkflowState with resolution
-        but no dispatch, issuing /nebuko resume should advance to the next step
+        but no turn outcome, issuing /nebuko resume should advance to the next step
         defined in the workflow YAML (not skip with 'step is not on hold').
         """
         prompt_base = self._setup_prompt_base()
@@ -2606,7 +2670,7 @@ class TestResumeIntegration(unittest.TestCase):
             with open(wf_path, "w") as f:
                 f.write(self._default_workflow_yaml())
 
-            state_json = self._build_state_json_no_dispatch(
+            state_json = self._build_state_json_no_outcome(
                 workflow="default", step="analyze", agent="architect",
                 resolution={"task": "architect", "next_step": "context"},
             )
@@ -2620,11 +2684,11 @@ class TestResumeIntegration(unittest.TestCase):
             self.assertEqual(result["TASK"], "context")
             self.assertEqual(result["WORKFLOW_STEP"], "context")
 
-    def test_resume_no_dispatch_with_spec_driven_workflow(self):
-        """Resume with no dispatch using spec-driven workflow (exact issue #420 scenario).
+    def test_resume_no_outcome_with_spec_driven_workflow(self):
+        """Resume with no turn outcome using spec-driven workflow (exact issue #420 scenario).
 
         PO agent completes spec step, posts resolution.next_step='spec_approval'
-        with no dispatch. User issues /nebuko resume with answers. Expected:
+        with no turn outcome. User issues /nebuko resume with answers. Expected:
         advance to spec_approval step with architect agent.
         """
         prompt_base = self._setup_prompt_base()
@@ -2637,7 +2701,7 @@ class TestResumeIntegration(unittest.TestCase):
             with open(wf_path, "w") as f:
                 f.write(self._spec_driven_workflow_yaml())
 
-            state_json = self._build_state_json_no_dispatch(
+            state_json = self._build_state_json_no_outcome(
                 workflow="spec-driven", step="spec", agent="po",
                 resolution={
                     "task": "po",
@@ -2658,13 +2722,13 @@ class TestResumeIntegration(unittest.TestCase):
             self.assertEqual(result["WORKFLOW_STEP"], "spec_approval")
 
 
-class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
-    """Regression tests: human commands must take precedence over auto-dispatch
-    when an active workflow state contains a dispatch object.
+class TestHumanCommandPrecedenceOverOutcome(unittest.TestCase):
+    """Regression tests: human commands must take precedence over auto-routing
+    when an active workflow state contains a turn outcome.
 
-    Bug: line 911 (`prev_state and dispatch_obj`) was evaluated before
+    Bug: line 911 (`prev_state and outcome_obj`) was evaluated before
     `force_next`, `wf_override`, and `not is_bot`, causing all human comments
-    to be absorbed by the dispatch path.
+    to be absorbed by the routing path.
     """
 
     @staticmethod
@@ -2698,14 +2762,15 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
         return prompt_base, workflows_dir
 
     @staticmethod
-    def _build_state_json_with_dispatch(workflow="default", step="analyze", agent="architect"):
+    def _build_state_json_with_outcome(workflow="default", step="analyze", agent="architect"):
         import json as _json
         state = {
-            "version": 3,
+            "version": 6,
             "workflow": workflow,
             "step": step,
             "agent": agent,
-            "dispatch": {"status": "advance", "complexity": "high"},
+            "turn_outcome": {"status": "completed", "appreciation": "approved"},
+            "prefs": {"complexity": "high"},
         }
         return (
             "<!-- WORKFLOW_STATE_START -->\n"
@@ -2713,49 +2778,49 @@ class TestHumanCommandPrecedenceOverDispatch(unittest.TestCase):
             + "\n<!-- WORKFLOW_STATE_END -->"
         )
 
-    def test_mention_with_dispatch_in_body_goes_to_human_path(self):
-        """@@context in body with embedded dispatch must resolve to context, not follow dispatch."""
+    def test_mention_with_outcome_in_body_goes_to_human_path(self):
+        """@@context in body with an embedded outcome must resolve to context, not follow it."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json_with_dispatch("default", "analyze", "architect")
-        # Bot comment with workflow state + dispatch, but human @@mention should win
+        state_json = self._build_state_json_with_outcome("default", "analyze", "architect")
+        # Bot comment with workflow state + outcome, but human @@mention should win
         body = "@@context gather context\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         # With the fix, @@context resolves standalone via _resolve_human_path
         self.assertEqual(result["TASK"], "context")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
-    def test_force_next_step_with_dispatch_in_body(self):
-        """/nebuko force-next-step with embedded dispatch must honor the command."""
+    def test_force_next_step_with_outcome_in_body(self):
+        """/nebuko force-next-step with an embedded outcome must honor the command."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json_with_dispatch("default", "analyze", "architect")
+        state_json = self._build_state_json_with_outcome("default", "analyze", "architect")
         body = "/nebuko force-step step --name implement\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
-    def test_workflow_override_with_dispatch_in_body(self):
-        """/nebuko command with embedded dispatch must honor the override."""
+    def test_workflow_override_with_outcome_in_body(self):
+        """/nebuko command with an embedded outcome must honor the override."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json_with_dispatch("default", "analyze", "architect")
+        state_json = self._build_state_json_with_outcome("default", "analyze", "architect")
         body = "/nebuko run workflow --name default\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["ROLE_NAME"], "architect")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
-    def test_bot_comment_with_dispatch_follows_dispatch_path(self):
-        """Bot comments (is_bot=True) with dispatch MUST still follow dispatch path."""
+    def test_bot_comment_with_outcome_follows_the_routing_path(self):
+        """Bot comments (is_bot=True) with an outcome MUST still follow the routing path."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json_with_dispatch("default", "analyze", "architect")
+        state_json = self._build_state_json_with_outcome("default", "analyze", "architect")
         body = "<!-- bot-agent-architect -->\nArchitect answer\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=True)
-        # Bot comment → dispatch path → resolves to next step (context → context)
+        # Bot comment → routing path → resolves to next step (context → context)
         self.assertEqual(result["TASK"], "context")
         self.assertEqual(result["SKIP_AGENT"], "false")
 
-    def test_force_next_with_trailing_text_and_dispatch(self):
-        """/nebuko force-step with dispatch must still work."""
+    def test_force_next_with_trailing_text_and_outcome(self):
+        """/nebuko force-step with an embedded outcome must still work."""
         prompt_base, workflows_dir = self._setup_dirs()
-        state_json = self._build_state_json_with_dispatch("default", "analyze", "architect")
+        state_json = self._build_state_json_with_outcome("default", "analyze", "architect")
         body = "/nebuko force-step step --name implement\n\n" + state_json
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
         self.assertEqual(result["TASK"], "dev")
@@ -2929,10 +2994,10 @@ class TestPlainTriggerNestedSubWorkflow(unittest.TestCase):
 
 class TestBranchRoutingRegression617:
     """Regression replay of issue #617 / #618: the plan-orchestration
-    sub-workflow must start from a persisted state whose dispatch carries
-    ``branch: approved`` (workflow=plan-orchestration, step=plan).
+    sub-workflow must start from a persisted state whose turn outcome carries
+    ``appreciation: approved`` (workflow=plan-orchestration, step=plan).
 
-    Before the fix the branch field was dropped at persistence, so the
+    Before the fix the verdict was dropped at persistence, so the
     conditions-only ``plan`` step dead-ended into "No valid task found".
     """
 
@@ -2944,16 +3009,16 @@ class TestBranchRoutingRegression617:
         return prompt_base
 
     def _real_workflows_dir(self):
-        from default_paths import config_dir
-        return config_dir("workflows")
+        """The shipped workflow dir, not the per-machine ``.nebuko`` override."""
+        return _real_workflows_dir()
 
-    def _v6_body(self, dispatch_json):
+    def _v6_body(self, turn_outcome):
         state = {
             "version": 6,
             "workflow": "plan-orchestration",
             "step": "plan",
             "agent": "architect",
-            "dispatch": dispatch_json,
+            "turn_outcome": turn_outcome,
         }
         return (
             "<!-- bot-workflow-terminal -->\n"
@@ -2964,12 +3029,12 @@ class TestBranchRoutingRegression617:
         )
 
     def test_branch_approved_routes_to_scaffold(self):
-        """Dispatch with branch=approved on step=plan routes to the
-        scaffold agent, not a skip."""
+        """An approved verdict on step=plan routes to the scaffold agent,
+        not a skip."""
         prompt_base = self._setup()
         body = self._v6_body(
-            {"status": "advance", "branch": "approved",
-             "reason": "Re-emitted approved planWorkflow with the AGENT_RUN_CONFIG sentinel to start plan-orchestration execution."}
+            {"status": "completed", "appreciation": "approved",
+             "note": "Re-emitted approved planWorkflow to start plan-orchestration execution."}
         )
         result = resolve_config(
             body, prompt_base, str(self._real_workflows_dir()), is_bot=True
@@ -2980,14 +3045,14 @@ class TestBranchRoutingRegression617:
         assert result["WORKFLOW_STEP"] == "scaffold"
 
     def test_branchless_plan_step_still_skips_without_default(self):
-        """Pre-fix persisted shape (dispatch with reason only, no branch)
-        on the conditions-only plan step without a default condition still
-        dead-ends — the branch fix in the tool/sentinel merge is what makes
-        the primary test pass."""
+        """Pre-fix persisted shape (an outcome with a note but no verdict) on
+        the conditions-only plan step without a default condition still
+        dead-ends — the verdict is what makes the primary test pass."""
         prompt_base = self._setup()
         body = self._v6_body(
-            {"status": "advance",
-             "reason": "Re-emitted approved planWorkflow with the AGENT_RUN_CONFIG sentinel to start plan-orchestration execution."}
+            {"status": "completed", "appreciation": "hold",
+             "hold_kind": "awaiting_input",
+             "note": "Re-emitted approved planWorkflow to start plan-orchestration execution."}
         )
         result = resolve_config(
             body, prompt_base, str(self._real_workflows_dir()), is_bot=True

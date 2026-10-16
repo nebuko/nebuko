@@ -28,18 +28,21 @@ route the next step and the workflow would stall.
 
 Do NOT start any new task. Do NOT restate your previous answer.
 
-Call the `dispatch_next` tool NOW with exactly these parameters:
-- status: 'advance' (proceed to the next step/agent), 'loop' (re-run the
-  current step), or 'hold' (wait for a human)
-- agent: explicit target agent name if you are handing off (e.g. 'context',
-  'dev'), otherwise omit it — the workflow definition resolves the next agent
-- complexity: 'low', 'medium', or 'high'
-- reason: one short sentence justifying the decision
+Call the `dispatch_next` tool NOW with your factual verdict on the turn:
+- appreciation: 'approved' (the work meets the step's goal), 'rejected'
+  (it does not), or 'hold' (you cannot decide — the turn needs a human)
+- hold_kind: only with appreciation='hold' — 'awaiting_approval' (a human
+  must approve before the workflow continues) or 'awaiting_input' (you need
+  information from the human)
+- note: one short sentence justifying the verdict
+- complexity: 'low', 'medium', or 'high' for the next agent (optional)
 
-Base the decision on the work you just completed. Call the tool, then finish.
+The engine derives the route from the workflow topology — you report what
+happened, not where to go. Base the verdict on the work you just completed.
+Call the tool, then finish.
 
 Your previous answer already stands as the posted deliverable — you are only
-being asked to supply the missing routing decision; do not restate or rework it.
+being asked to supply the missing turn outcome; do not restate or rework it.
 """
 
 

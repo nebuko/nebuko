@@ -1,8 +1,10 @@
-"""Tests for the shared dispatch-decision predicate (issue #524).
+"""Tests for the shared turn-outcome predicate (issues #524, #964).
 
-Round-2 blocking item: the recall gate must treat a parseable legacy
-sentinel as a decision — not just a recorded dispatch_next call — so that
-sentinel-only legacy runs never trigger needless recall turns.
+Round-2 blocking item recast onto the factual design: the recall gate must
+treat *either* structured channel (a recorded ``dispatch_next`` outcome or a
+typed ``call_agent`` hand-off) as a decision, so decision-bearing runs never
+trigger needless recall turns. The ``AGENT_RUN_CONFIG`` prose channel is gone
+(issue #964), so a message carrying only a stale echo is not a decision.
 """
 
 import unittest
@@ -11,15 +13,19 @@ from agent_script.features.dispatch_check import (
     agent_to_function_call,
     has_dispatch_decision,
 )
-from agent_script.features.dispatch_next_tool import record_dispatch, reset_registry
+from agent_script.features.dispatch_next_tool import (
+    record_turn_outcome,
+    reset_registry,
+)
 from agent_script.features.call_agent_tool import (
     record_function_call,
     reset_registry as reset_function_call_registry,
 )
-from workflow_state import Dispatch, FunctionCall
+from workflow_state import FunctionCall, TurnOutcome
 
 
-VALID_SENTINEL = (
+# A stale echo of the deleted sentinel: prose, never a routing input (#964).
+STALE_SENTINEL = (
     '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "advance", '
     '"task": "dev"}} -->'
 )
@@ -38,33 +44,32 @@ def _fresh_run_id(prefix: str) -> str:
 
 
 class TestHasDispatchDecision(unittest.TestCase):
-    """The predicate mirrors _resolve_dispatch's two sources."""
+    """The predicate mirrors _resolve_outcome's two structured sources."""
 
     def test_tool_call_counts(self):
         run_id = _fresh_run_id("run-tool")
-        record_dispatch(run_id, Dispatch(status="advance"))
+        record_turn_outcome(
+            run_id, TurnOutcome(status="completed", appreciation="approved")
+        )
         self.assertTrue(has_dispatch_decision(_FakeConv(run_id), None))
 
-    def test_parseable_sentinel_counts_without_tool_call(self):
-        """A legacy sentinel-only run is a decision: no recall fires."""
+    def test_stale_sentinel_echo_alone_is_not_a_decision(self):
+        """A sentinel-only message is no longer a decision (issue #964): the
+        run states no verdict, so the recall pass must fire."""
         run_id = _fresh_run_id("run-sentinel")
-        self.assertTrue(has_dispatch_decision(_FakeConv(run_id), VALID_SENTINEL))
+        self.assertFalse(has_dispatch_decision(_FakeConv(run_id), STALE_SENTINEL))
 
     def test_no_source_is_no_decision(self):
         run_id = _fresh_run_id("run-none")
         self.assertFalse(has_dispatch_decision(_FakeConv(run_id), "just text"))
         self.assertFalse(has_dispatch_decision(_FakeConv(run_id), None))
 
-    def test_unparseable_sentinel_does_not_count(self):
-        """A broken sentinel is NOT a decision (it fails in
-        _resolve_dispatch too) — those runs still get recalled."""
+    def test_a_malformed_sentinel_echo_is_not_a_decision(self):
         run_id = _fresh_run_id("run-bad")
         broken = "<!-- AGENT_RUN_CONFIG {not json"
         self.assertFalse(has_dispatch_decision(_FakeConv(run_id), broken))
 
-    def test_invalid_sentinel_payload_does_not_count(self):
-        """A sentinel that parses but maps to an invalid Dispatch does not
-        count — same rule as the resolver (issue #512 class)."""
+    def test_an_invalid_sentinel_echo_is_not_a_decision(self):
         run_id = _fresh_run_id("run-invalid")
         invalid = '<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "bogus"}} -->'
         self.assertFalse(has_dispatch_decision(_FakeConv(run_id), invalid))

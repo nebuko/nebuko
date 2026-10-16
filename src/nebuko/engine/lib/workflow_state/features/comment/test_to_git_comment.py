@@ -14,6 +14,14 @@ from workflow_state.features.comment.to_git_comment import (
 )
 
 
+def _outcome():
+    """A completed/approved outcome — the mandatory routing fact (issue #964)."""
+    from workflow_state import Appreciation, TurnOutcome, TurnStatus
+
+    return TurnOutcome(status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED)
+
+
+
 def _body(section: str) -> str:
     return (
         "<details>\n"
@@ -52,6 +60,7 @@ class TestFormatCollapsedSection(unittest.TestCase):
                 HistoryEntry(
                     step="implement",
                     agent="dev",
+                    turn_outcome=_outcome(),
                     metrics=StateMetrics(
                         agent_runtimes_per_call_ms=[1000.0, 2000.0, 3000.0]
                     ),

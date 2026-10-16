@@ -215,8 +215,8 @@ class TestFinalizeSchemaBuilder:
         assert "RouteDecision" in schema["$defs"]
 
     def test_build_accepts_a_route(self):
-        action = FinalizeSchemaBuilder().build()(route={"status": "advance"})
-        assert action.route.status == "advance"
+        action = FinalizeSchemaBuilder().build()(route={"appreciation": "approved"})
+        assert action.route.appreciation == "approved"
 
 
 class TestRunTerminator:
@@ -231,7 +231,7 @@ class TestRunTerminator:
         posted: list[str] = []
         routed: list[RouteDecision] = []
         terminator = self._terminator(posted, routed)
-        route = RouteDecision(status="advance", complexity="low")
+        route = RouteDecision(appreciation="approved", complexity="low")
         report = terminator.finalize(
             route, _wire(headline="Outcome", implementation="1. do it")
         )
@@ -260,4 +260,4 @@ class TestRunTerminator:
         assert report.title == "Outcome"
 
     def test_default_route_is_hold(self):
-        assert self._terminator([], []).default_route().status == "hold"
+        assert self._terminator([], []).default_route().appreciation == "hold"

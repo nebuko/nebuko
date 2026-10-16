@@ -31,7 +31,7 @@ from .features.parse_trigger.parse_trigger import (
 from .features.resolve_route.resolve_route import (
     build_author_identity_from_env,
     _resolve_resume_path,
-    _resolve_dispatch_path,
+    _resolve_outcome_path,
     _resolve_function_call_path,
     _resolve_gate_decision_path,
     _resolve_handoff_decision,
@@ -41,6 +41,25 @@ from .features.resolve_route.resolve_route import (
     _resolve_workflow_next_step,
 )
 from config import WorkflowPosition, is_self_function_call
+from workflow_state import Appreciation, IncompleteReason, TurnOutcome
+
+
+def _is_resumable_outcome(outcome: Optional[TurnOutcome]) -> bool:
+    """True when ``/nebuko resume`` may re-run the parked step (issue #964).
+
+    Both a ``hold`` verdict (human gate or awaiting input) and an interruption
+    halt — a soft time-kill (issue #704) or an exhausted agent checkpoint
+    (issue #965) — are resumable: the explicit human resume re-runs the
+    interrupted step.
+    """
+    if outcome is None:
+        return False
+    if outcome.appreciation == Appreciation.HOLD:
+        return True
+    return outcome.incomplete_reason in (
+        IncompleteReason.SOFT_TIMEOUT,
+        IncompleteReason.AGENT_CHECKPOINT,
+    )
 
 
 def _delete_comments_env(
@@ -146,8 +165,8 @@ def resolve_config(
        - Human @@mention, or CI plain-mention trigger (universal bot marker
          + mention-only body) → _resolve_human_path (parity between the two:
          the mention wins over an active dispatch).
-       - State + dispatch → _resolve_dispatch_path.
-       - State without dispatch → _resolve_workflow_next_step.
+       - State carrying a turn outcome → _resolve_outcome_path.
+       - State without an outcome → _resolve_workflow_next_step.
        - Human trigger without state → _resolve_human_path.
        - Bot fallback → _resolve_bot_fallback_path.
     5. Build result dict with all env vars (_build_result).
@@ -169,8 +188,8 @@ def resolve_config(
     if is_bot is None:
         is_bot = is_bot_comment(trigger_body)
 
-    # Parse trigger body for workflow state and dispatch
-    prev_state, dispatch_obj = _parse_trigger_body(trigger_body)
+    # Parse trigger body for workflow state and its turn outcome
+    prev_state, turn_outcome = _parse_trigger_body(trigger_body)
 
     # Check for human commands early — they take precedence over workflow state
     # regardless of whether prev_state exists (they need to resolve the command)
@@ -181,7 +200,7 @@ def resolve_config(
     if not prev_state:
         prev_state = _fetch_workflow_state_from_history(repo, issue_number)
         if prev_state:
-            dispatch_obj = prev_state.dispatch
+            turn_outcome = prev_state.turn_outcome
 
     if os.environ.get("DEBUG") or debug:
         print(f"DEBUG prev_state: {prev_state}", file=sys.stderr)
@@ -246,7 +265,7 @@ def resolve_config(
     # Human commands (explicit intent) MUST be evaluated before auto-dispatch,
     # otherwise an active workflow's dispatch object absorbs all commands.
     # Check for human commands early (independent of is_bot) so they take
-    # priority even when prev_state+dispatch exist.
+    # priority even when prev_state+turn_outcome exist.
     human_mention = not is_bot and extract_mention_agent(trigger_body)
     # CI-posted command triggers (sub-issue bootstrap "@@architect") now carry
     # the universal bot marker and so classify as bot. They are plain
@@ -277,8 +296,7 @@ def resolve_config(
         and wf_cmd.action == "resume"
         and prev_state
         and prev_state.workflow
-        and prev_state.dispatch
-        and prev_state.dispatch.status in ("hold", "soft_kill", "agent_checkpoint")
+        and _is_resumable_outcome(prev_state.turn_outcome)
     ):
         # /nebuko resume — re-run the held step with human input. A
         # soft-kill exhaustion halt (issue #704) and an exhausted agent
@@ -294,14 +312,14 @@ def resolve_config(
         and wf_cmd.action == "resume"
         and prev_state
         and prev_state.workflow
-        and prev_state.dispatch is None
+        and prev_state.turn_outcome is None
     ):
         # /nebuko resume with no dispatch — advance to next step, carrying
         # human input forward (issue #420: resolution-only state). A bare
         # resume maps to the BARE_RESUME_INPUT sentinel so the human_gate
         # interceptor (issue #506) treats this run as human-triggered.
         human_input = normalize_resume_input(wf_cmd.params.get("feedback", ""))
-        config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir)
+        config = _resolve_workflow_next_step(prev_state, turn_outcome, workflows_dir, local_workflows_dir=local_workflows_dir)
         config["config_human_resume_input"] = human_input
     elif wf_cmd is not None and wf_cmd.action == "force-step":
         # Human explicit step jump (/nebuko force-step step --name <step>) —
@@ -357,12 +375,12 @@ def resolve_config(
             # no-op. In both cases continue the workflow so the gated/successor
             # step runs and no consumed step is re-entered.
             config = (
-                _resolve_dispatch_path(
-                    prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir
+                _resolve_outcome_path(
+                    prev_state, workflows_dir, local_workflows_dir=local_workflows_dir
                 )
-                if dispatch_obj
+                if turn_outcome
                 else _resolve_workflow_next_step(
-                    prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir
+                    prev_state, turn_outcome, workflows_dir, local_workflows_dir=local_workflows_dir
                 )
             )
         else:
@@ -371,11 +389,11 @@ def resolve_config(
         # CI-posted machine trigger token (bot-trigger) — replaces the legacy
         # machine-posted @@architect comments (issue #478).
         config = _resolve_machine_trigger_path(trigger_body, workflows_dir)
-    elif prev_state and dispatch_obj:
-        # Auto-dispatch: workflow state with dispatch object — follow the workflow.
-        config = _resolve_dispatch_path(prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir)
+    elif prev_state and turn_outcome:
+        # Auto-dispatch: workflow state with a turn outcome — route on it.
+        config = _resolve_outcome_path(prev_state, workflows_dir, local_workflows_dir=local_workflows_dir)
     elif prev_state and prev_state.workflow:
-        config = _resolve_workflow_next_step(prev_state, dispatch_obj, workflows_dir, local_workflows_dir=local_workflows_dir)
+        config = _resolve_workflow_next_step(prev_state, turn_outcome, workflows_dir, local_workflows_dir=local_workflows_dir)
     elif not is_bot:
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir,

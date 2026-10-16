@@ -8,14 +8,14 @@ SUPPORTED_FUNCTIONS = {"call_agent"}
 
 
 class FunctionCall(BaseModel):
-    """Imperative agent-to-agent hand-off carried by AGENT_RUN_CONFIG.
+    """Imperative agent-to-agent hand-off carried by the typed tool call.
 
-    Second section alongside Dispatch inside the AGENT_RUN_CONFIG sentinel:
-    Dispatch expresses how *this run* ends inside a workflow (the engine
+    Second section alongside the turn outcome in the harvested payload: the
+    turn outcome expresses how *this run* ends inside a workflow (the engine
     resolves routing); FunctionCall is an explicit command naming the exact
     agent to run next, overriding workflow continuation. Consumed once by
     the next run's resolver and cleared from state (consumption by
-    supersession, same idempotency model as dispatch).
+    supersession, same idempotency model as the turn outcome).
 
     Fields:
         function: Registered function name (today: "call_agent").

@@ -13,7 +13,6 @@ from nebuko.engine.models import (
     CommentEntry,
     DeterministicStep,
     ExitCode,
-    RoutingDecision,
     RunOutcome,
     SkipKind,
     SkipOutcome,
@@ -22,6 +21,8 @@ from nebuko.engine.models import (
 )
 from workflow_state.workflow_state import WorkflowState
 from workflow_state import from_body
+
+from _facts import approved_outcome as _approved_outcome
 
 
 def _trigger(**overrides):
@@ -82,21 +83,6 @@ class TestCommentEntry:
             entry.body = "changed"
 
 
-class TestRoutingDecision:
-    def test_defaults_describe_a_plain_advance(self):
-        decision = RoutingDecision(status="advance")
-        assert (decision.agent, decision.complexity, decision.branch, decision.reason) == (
-            None,
-            "medium",
-            None,
-            None,
-        )
-
-    @pytest.mark.parametrize("status", ["advance", "loop", "hold"])
-    def test_accepts_the_three_documented_statuses(self, status):
-        assert RoutingDecision(status=status).status == status
-
-
 class TestExitCode:
     def test_values_distinguish_the_three_terminal_outcomes(self):
         assert ExitCode.ADVANCE == 0
@@ -112,17 +98,17 @@ class TestRunOutcome:
     def test_field_order_matches_the_frozen_contract(self):
         assert [f.name for f in dataclasses.fields(RunOutcome)] == [
             "exit_code",
-            "routing",
+            "turn_outcome",
             "prompt",
             "posted_body",
             "state",
             "phases",
         ]
 
-    def test_carries_the_routing_decision_and_the_emitted_phases(self):
+    def test_carries_the_turn_outcome_and_the_emitted_phases(self):
         outcome = RunOutcome(
             exit_code=ExitCode.ADVANCE,
-            routing=RoutingDecision(status="advance"),
+            turn_outcome=_approved_outcome(),
             prompt="prompt",
             posted_body="body",
             state=None,

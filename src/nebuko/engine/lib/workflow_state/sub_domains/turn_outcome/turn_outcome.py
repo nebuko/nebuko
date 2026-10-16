@@ -28,10 +28,9 @@ the outcome.
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 if TYPE_CHECKING:
-    from ..dispatch.dispatch import Dispatch
     from ....agent_script.features.run_agent.run_outcome import OutcomeStatus
 
 
@@ -67,13 +66,6 @@ class HoldKind(str, Enum):  # @stub-protected
     AWAITING_INPUT = "awaiting_input"
 
 
-# Mapping of a workflow ``on_result`` key to the equivalent appreciation.
-_ROUTE_KEY_TO_APPRECIATION = {
-    Appreciation.APPROVED.value: Appreciation.APPROVED,
-    Appreciation.REJECTED.value: Appreciation.REJECTED,
-    Appreciation.HOLD.value: Appreciation.HOLD,
-}
-
 # Engine ``OutcomeStatus`` value -> the INCOMPLETE reason it implies.
 # ``success`` is absent: a successful run is COMPLETED (the agent supplies the
 # appreciation), never an incomplete reason.
@@ -101,6 +93,8 @@ class TurnOutcome(BaseModel):
         round: dev<->review cycle counter; replaces the free-text "round N".
         note: Human-facing explanation only — never routed on.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     status: TurnStatus
     appreciation: Optional[Appreciation] = None
@@ -153,27 +147,47 @@ class TurnOutcome(BaseModel):
 
         Args:
             payload: Agent-supplied fields (``appreciation``, ``hold_kind``,
-                ``required_agent``, ``round``, ``note``).
+                ``required_agent``, ``round``, ``note``). When the key is
+                present with a value it must be a valid appreciation; an absent
+                key or an explicit ``None`` means "no verdict".
             observed: The engine's ``OutcomeStatus`` for this turn.
 
         Returns:
             A validated :class:`TurnOutcome`.
+
+        Raises:
+            ValueError: The payload states an appreciation that is present but
+                is not a valid verdict (a typo or a blank string).
         """
         observed_value = getattr(observed, "value", str(observed))
         incomplete_reason = _OUTCOME_STATUS_TO_INCOMPLETE.get(observed_value)
         note = _coerce_note(payload.get("note"))
         required_agent = _coerce_agent(payload.get("required_agent"))
+        # A payload that carries the appreciation key must carry a usable
+        # verdict. Defaulting a misspelling *or a blank string* to "approved"
+        # would advance a step the agent never approved (issue #964) — fail
+        # loudly instead. Only an explicit ``None`` (or an absent key) stays
+        # "no verdict": the engine's own observed-status call sites (soft kill,
+        # crash, no action) build hand-made payloads that name no appreciation
+        # at all.
+        has_appreciation = "appreciation" in payload
+        raw_appreciation = payload.get("appreciation")
+        appreciation = _coerce_appreciation(raw_appreciation)
+        if appreciation is None and has_appreciation and raw_appreciation is not None:
+            raise ValueError(
+                f"invalid appreciation {raw_appreciation!r}: expected "
+                f"one of {[a.value for a in Appreciation]}"
+            )
         if incomplete_reason is not None:
-            claimed = _coerce_appreciation(payload.get("appreciation"))
-            if claimed is not None:
+            if appreciation is not None:
                 note = (
-                    f"(agent claimed appreciation={claimed.value}; "
+                    f"(agent claimed appreciation={appreciation.value}; "
                     f"engine observed {observed_value}) {note}".strip()
                 )
             return cls.for_incomplete(incomplete_reason, note=note)
-        appreciation = _coerce_appreciation(payload.get("appreciation"))
         if appreciation is None:
-            # Should not happen: the mandatory tool field guarantees a verdict.
+            # Only reachable for a payload without the key (an internal call
+            # site); the tool itself always sends it.
             appreciation = Appreciation.APPROVED
         hold_kind = _coerce_hold_kind(payload.get("hold_kind"))
         if appreciation == Appreciation.HOLD and hold_kind is None:
@@ -193,52 +207,6 @@ class TurnOutcome(BaseModel):
     ) -> "TurnOutcome":
         """Build an INCOMPLETE outcome for an engine-observed reason."""
         return cls(status=TurnStatus.INCOMPLETE, incomplete_reason=reason, note=note)
-
-    @classmethod
-    def from_legacy_dispatch(  # @stub-protected
-        cls, dispatch: "Dispatch"
-    ) -> Optional["TurnOutcome"]:
-        """Best-effort mapping from a legacy ``Dispatch`` (pre-#923 blobs).
-
-        Only *determinable* cases are mapped — everything else returns
-        ``None`` so the caller treats the turn as an un-routeable legacy state
-        and pings for input rather than guessing from free text:
-
-        - ``status == soft_kill`` -> INCOMPLETE / soft_timeout
-        - ``status == hold`` with ``reason`` starting ``human_gate:`` ->
-          COMPLETED / HOLD / awaiting_approval
-        - ``status == hold`` (other) -> COMPLETED / HOLD / awaiting_input
-        - ``branch`` in ``approved``/``rejected`` -> COMPLETED + appreciation
-        - anything else (notably ``branch is None`` with free-text reason) ->
-          ``None``
-        """
-        if dispatch is None:
-            return None
-        status = (dispatch.status or "").strip()
-        if status == "soft_kill":
-            return cls.for_incomplete(IncompleteReason.SOFT_TIMEOUT, note=dispatch.reason or "")
-        if status == "hold":
-            reason = dispatch.reason or ""
-            kind = (
-                HoldKind.AWAITING_APPROVAL
-                if reason.startswith("human_gate")
-                else HoldKind.AWAITING_INPUT
-            )
-            return cls(
-                status=TurnStatus.COMPLETED,
-                appreciation=Appreciation.HOLD,
-                hold_kind=kind,
-                note=dispatch.reason or "",
-            )
-        branch = (dispatch.branch or "").strip()
-        appreciation = _ROUTE_KEY_TO_APPRECIATION.get(branch)
-        if appreciation is not None:
-            return cls(
-                status=TurnStatus.COMPLETED,
-                appreciation=appreciation,
-                required_agent=dispatch.task_hint,
-            )
-        return None
 
 
 def _coerce_appreciation(value: Any) -> Optional[Appreciation]:

@@ -2,14 +2,13 @@
 """
 Workflow-aware routing resolver for openhands-multi-agent.yml.
 
-Reads AGENT_RUN_CONFIG JSON from stdin, resolves workflow routing, and outputs
-environment variables for the GitHub Actions workflow.
+Reads the turn-outcome payload JSON from stdin, resolves workflow routing, and
+outputs environment variables for the GitHub Actions workflow.
 
 Usage:
     python resolve_workflow.py \\
         --workflows-dir workflows/ \\
         --prompt-base .agents/prompts \\
-        --agent-config-path agent-config.yaml \\
         <<EOF
     {"task": "architect", "workflow": "default", "step": "analyze"}
     EOF
@@ -114,7 +113,7 @@ def resolve_complexity_tier(
 
 
 def resolve_workflow_routing(
-    agent_config: dict,
+    agent_payload: dict,
     workflows_dir: str,
     prompt_base: str,
     local_workflows_dir: Optional[str] = None,
@@ -123,7 +122,7 @@ def resolve_workflow_routing(
     """Resolve agent routing based on workflow definition or fallback.
 
     Args:
-        agent_config: Parsed AGENT_RUN_CONFIG JSON.
+        agent_payload: The turn-outcome payload (task/workflow/step/route key).
         workflows_dir: Path to workflows/ directory.
         prompt_base: Path to prompt files directory.
         local_workflows_dir: Optional consumer-local workflows dir (issue #529).
@@ -135,12 +134,12 @@ def resolve_workflow_routing(
         Dict with ROLE_NAME, PROMPT_LOCATION, WORKFLOW_NAME, WORKFLOW_STEP,
         WORKFLOW_NEXT, PARENT_WORKFLOW, PARENT_WORKFLOW_STEP, and SKIP_AGENT.
     """
-    task = agent_config.get("task", "")
-    workflow_name = agent_config.get("workflow", "")
-    step_name = agent_config.get("step", "")
-    branch_key = agent_config.get("branch", "")
-    parent_workflow = agent_config.get("parent_workflow", "")
-    parent_workflow_step = agent_config.get("parent_workflow_step", "")
+    task = agent_payload.get("task", "")
+    workflow_name = agent_payload.get("workflow", "")
+    step_name = agent_payload.get("step", "")
+    branch_key = agent_payload.get("branch", "")
+    parent_workflow = agent_payload.get("parent_workflow", "")
+    parent_workflow_step = agent_payload.get("parent_workflow_step", "")
 
     # Validate task
     if not task:
@@ -260,20 +259,21 @@ def _write_step_prompt_file(prompt: str | None) -> str:
 
 def match_condition(
     step: WorkflowStep,
-    branch_key: str,
+    route_key: Optional[str],
 ) -> Optional[str]:
-    """Pick a condition target step name for a branch key.
+    """Pick a condition target step name for a route key.
 
-    Exact-match on ``on_result`` first, then ``default``; None when the
-    branch is not covered by the step's conditions (or it has none).
+    The route key is the turn outcome's ``appreciation`` (issue #964).
+    Exact-match on ``on_result`` first, then ``default``; None when the key is
+    not covered by the step's conditions (or it has none).
 
     Public since issue #751: the offline workflow linter imports this so its
     condition rules can never drift from the runtime's actual routing.
     """
-    if not branch_key or not step.conditions:
+    if not route_key or not step.conditions:
         return None
     for condition in step.conditions:
-        if condition.on_result == branch_key:
+        if condition.on_result == route_key:
             return condition.next
     for condition in step.conditions:
         if condition.on_result == "default":
@@ -283,17 +283,17 @@ def match_condition(
 
 def branch_key_for(
     step: WorkflowStep,
-    branch_key: str,
+    route_key: Optional[str],
 ) -> Optional[str]:
-    """Return the effective branch key for a conditional step.
+    """Return the effective route key for a conditional step.
 
     Exact match wins; an unmatched key falls back to ``"default"`` only when
     a default condition exists.
     """
-    if not branch_key or not step.conditions:
+    if not route_key or not step.conditions:
         return None
-    if match_condition(step, branch_key) is not None:
-        return branch_key
+    if match_condition(step, route_key) is not None:
+        return route_key
     if any(c.on_result == "default" for c in step.conditions):
         return "default"
     return None
@@ -335,8 +335,9 @@ class RouteResolution:  # @stub-protected
     """Immutable typed result of :func:`resolve_next_from_workflow` (issue #923).
 
     Exactly one :class:`RouteKind` variant; the optional fields carry the
-    variant's payload. :meth:`as_marker` reproduces the legacy marker dict so
-    unconverted call sites keep working during the migration.
+    variant's payload. Call sites consume this typed value directly — the
+    legacy marker dict it used to project was deleted with the dispatch model
+    (issue #964).
     """
 
     kind: RouteKind
@@ -349,71 +350,12 @@ class RouteResolution:  # @stub-protected
     parent_workflow_step: str = ""
     reason: str = ""
     # A surfaced mount-resolution failure (issue #671): the resolution is not a
-    # route but an error the caller must report rather than step over, so the
-    # marker view reproduces the legacy ``SKIP_AGENT`` dict.
+    # route but an error the caller must report rather than step over.
     skip_agent: bool = False
     # The target step's declared ``output:`` shape as JSON (issue #973), or ""
     # when it declares none. Carried through the marker view so the run loop can
     # compile the terminal finalize contract for the step it is about to run.
     step_output: str = ""
-
-    def as_marker(self) -> Optional[dict]:
-        """Legacy marker-dict view (``None`` for the member-less kinds)."""
-        if self.kind is RouteKind.UNRESOLVED and self.skip_agent:
-            return {"SKIP_AGENT": "true", "REASON": self.reason}
-        if self.kind is RouteKind.ROUTE:
-            # Omit an empty ``step`` so the marker matches the legacy
-            # agent-hint fallback shape (``{"task": <hint>}``) exactly.
-            marker: dict = {"task": self.task}
-            if self.step:
-                marker["step"] = self.step
-            if self.branch:
-                marker["branch"] = self.branch
-            if self.step_output:
-                marker["STEP_OUTPUT"] = self.step_output
-            return marker
-        if self.kind is RouteKind.RUN_SCRIPT:
-            # Legacy script marker shape (issue #541): the flag plus the
-            # script_* keys and the tagged step name.
-            marker = {
-                "run_script": True,
-                "script_path": (self.script or {}).get("command", ""),
-                "script_args": (self.script or {}).get("args", "[]"),
-                "script_working_dir": (self.script or {}).get("working_dir", ""),
-                "script_env": (self.script or {}).get("env", "{}"),
-                "timeout_minutes": (self.script or {}).get("timeout_minutes"),
-            }
-            if self.step:
-                marker["step"] = self.step
-            return marker
-        if self.kind is RouteKind.SUB_WORKFLOW_ENTER:
-            marker = {
-                "entered_sub_workflow": True,
-                "task": self.task,
-                "step": self.step,
-                "workflow": self.workflow,
-                "parent_workflow": self.parent_workflow,
-                "parent_workflow_step": self.parent_workflow_step,
-            }
-            if self.branch:
-                marker["branch"] = self.branch
-            return marker
-        if self.kind is RouteKind.SUB_WORKFLOW_EXIT:
-            marker = {
-                "exited_sub_workflow": True,
-                "task": self.task,
-                "step": self.step,
-                "workflow": self.workflow,
-            }
-            if self.branch:
-                marker["branch"] = self.branch
-            return marker
-        return None
-
-
-def resolution_to_marker(resolution: Optional[RouteResolution]) -> Optional[dict]:
-    """Compat shim: legacy marker view of a :class:`RouteResolution`."""
-    return resolution.as_marker() if resolution is not None else None
 
 
 @dataclass(frozen=True)
@@ -431,7 +373,12 @@ class _StepGap:
 
 
 def _marker_to_resolution(marker: Optional[dict]) -> Optional[RouteResolution]:
-    """Translate a legacy marker dict (or ``None``) into a typed resolution."""
+    """Translate the internal marker dict into a typed resolution.
+
+    ``_resolve_next_marker`` is the workflow-walk recursion and still speaks
+    the internal marker-dict dialect (it also recurses through sub-workflow
+    mounts); this is the single boundary that retypes it.
+    """
     if marker is None:
         return None
     if marker.get("SKIP_AGENT") == "true":
@@ -2221,7 +2168,7 @@ def resolve_workflow_step(
     Handles both normal agent steps and sub-workflow dispatch (entry and return).
 
     Args:
-        task: The agent role from AGENT_RUN_CONFIG.
+        task: The agent role from the turn-outcome payload.
         workflow_name: Name of the workflow (file in workflows/).
         step_name: Current step name within workflow.
         branch_key: Condition key for conditional routing.
@@ -2883,8 +2830,7 @@ def resolve_next_from_workflow(
     - ``None`` — the workflow/step did not resolve at all (missing file, unknown
       step), preserving the clean-failure contract.
 
-    The parameter list is unchanged; callers that still expect the marker dict
-    use :func:`resolution_to_marker` (or :meth:`RouteResolution.as_marker`).
+    Callers consume the typed :class:`RouteResolution` directly (issue #964).
     """
     marker = _resolve_next_marker(
         workflow_name,
@@ -2998,31 +2944,31 @@ def main():
         help="Path to GITHUB_ENV file to append results",
     )
     parser.add_argument(
-        "--agent-config-json",
+        "--agent-payload",
         default="",
-        help="AGENT_RUN_CONFIG JSON string (if not reading from stdin)",
+        help="Turn-outcome payload JSON string (if not reading from stdin)",
     )
     args = parser.parse_args()
 
-    # Read AGENT_RUN_CONFIG JSON
-    if args.agent_config_json:
-        agent_config_str = args.agent_config_json
+    # Read the turn-outcome payload JSON
+    if args.agent_payload:
+        agent_payload_str = args.agent_payload
     else:
-        agent_config_str = sys.stdin.read().strip()
+        agent_payload_str = sys.stdin.read().strip()
 
-    if not agent_config_str:
-        print("Error: No AGENT_RUN_CONFIG JSON provided", file=sys.stderr)
+    if not agent_payload_str:
+        print("Error: no agent payload JSON provided", file=sys.stderr)
         sys.exit(1)
 
     try:
-        agent_config = json.loads(agent_config_str)
+        agent_payload = json.loads(agent_payload_str)
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Resolve routing
     result = resolve_workflow_routing(
-        agent_config,
+        agent_payload,
         args.workflows_dir,
         args.prompt_base,
     )

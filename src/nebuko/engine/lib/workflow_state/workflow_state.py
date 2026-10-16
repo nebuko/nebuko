@@ -12,7 +12,8 @@ from config import (
 from .sub_domains.history_entry.history_entry import HistoryEntry
 from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
-from .sub_domains.dispatch.dispatch import Dispatch
+from .sub_domains.run_prefs.run_prefs import RunPrefs
+from .sub_domains.turn_outcome.turn_outcome import TurnOutcome
 from .sub_domains.gate_decision.gate_decision import GateDecision
 from .sub_domains.function_call import FunctionCall
 from .sub_domains.step_resolution.step_resolution import StepResolution
@@ -132,8 +133,9 @@ class CircuitBreakerState(BaseModel):  # @stub-protected
 # block's shape marker, pinned to ``POSITION_STATE_VERSION``). Bumped when the
 # top-level state shape changes: v1 flat -> v2 recursive position -> v3
 # universal position -> v4 (``run_id`` + ``schema_version`` split) -> v5 (thread
-# ledger + per-step input records, issue #872).
-STATE_SCHEMA_VERSION = 5
+# ledger + per-step input records, issue #872) -> v6 (``turn_outcome`` replaces
+# the legacy ``dispatch``, issue #964).
+STATE_SCHEMA_VERSION = 6
 
 
 class WorkflowState(BaseModel):
@@ -233,7 +235,11 @@ class WorkflowState(BaseModel):
     scaffold_branch: Optional[str] = None
     issue: Optional[IssueInfo] = None
     pull_request: Optional[PullRequestInfo] = None
-    dispatch: Optional[Dispatch] = None
+    # Factual outcome of the latest transition (issue #964): the router's only
+    # input. None on a state that has not yet recorded a turn.
+    turn_outcome: Optional[TurnOutcome] = None  # @stub-protected
+    # Non-routing run preferences of the latest transition (issue #964).
+    prefs: Optional[RunPrefs] = None  # @stub-protected
     # Engine-owned human gate decision (issue #648): the latest recorded
     # decision plus the full append-only audit of every decision. Written
     # only by the gate-decision resolver from an identity-verified human
@@ -241,7 +247,7 @@ class WorkflowState(BaseModel):
     gate_decision: Optional[GateDecision] = None
     gate_history: list[GateDecision] = Field(default_factory=list)
     resolution: Optional[StepResolution] = None
-    # Imperative one-shot hand-off (AGENT_RUN_CONFIG function_call section).
+    # Imperative one-shot hand-off (the typed ``call_agent`` tool call).
     # Consumed by the next run's resolver, which emits a fresh state with it
     # cleared so it cannot re-fire (consumption by supersession).
     function_call: Optional[FunctionCall] = None
@@ -379,7 +385,8 @@ def go_next(
     issue: Optional[IssueInfo] = None,
     pull_request: Optional[PullRequestInfo] = None,
     resolution: Optional[StepResolution] = None,
-    dispatch: Optional[Dispatch] = None,
+    turn_outcome: Optional[TurnOutcome] = None,
+    prefs: Optional[RunPrefs] = None,
     function_call: Optional[FunctionCall] = None,
     callback: Optional[str] = None,
     workflow_ref: Optional[str] = None,
@@ -404,7 +411,8 @@ def go_next(
         issue=issue,
         pull_request=pull_request,
         resolution=resolution,
-        dispatch=dispatch,
+        turn_outcome=turn_outcome,
+        prefs=prefs,
         function_call=function_call,
         callback=callback,
         workflow_ref=workflow_ref,

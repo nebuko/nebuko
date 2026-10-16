@@ -21,6 +21,7 @@ from nebuko.adapters.local import LocalAdapter
 from nebuko.engine.models import ExitCode, Trigger
 from nebuko.engine.paths import repo_root
 from nebuko.engine.run_loop import Engine
+from workflow_state import IncompleteReason, TurnStatus
 
 
 def _trigger(body: str = "@@dev continue", number: int = 766) -> Trigger:
@@ -48,7 +49,7 @@ def _soft_kill_result(answer: str = "work in progress"):
         "answer": answer,
         "deliverable": answer,
         "state": _state(),
-        "dispatch": {"status": "soft_kill", "reason": "soft time-kill"},
+        "turn_outcome": {"status": "incomplete", "incomplete_reason": "soft_timeout"},
     }
 
 
@@ -74,9 +75,9 @@ class TestPhaseIsolation:
             seen.append("persist")
             return real_persist(self, agent_result)
 
-        def spy_route(self, agent_result):
+        def spy_route(self, agent_result, **kwargs):
             seen.append("route")
-            return real_route(self, agent_result)
+            return real_route(self, agent_result, **kwargs)
 
         monkeypatch.setattr(Engine, "persist", spy_persist)
         monkeypatch.setattr(Engine, "route", spy_route)
@@ -99,7 +100,8 @@ class TestPhaseIsolation:
         outcome = engine.run()
 
         assert outcome.exit_code != ExitCode.ERROR
-        assert outcome.routing.status == "soft_kill"
+        assert outcome.turn_outcome.status is TurnStatus.INCOMPLETE
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.SOFT_TIMEOUT
         assert "state" in outcome.phases
         assert "route" in outcome.phases
 

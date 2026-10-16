@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import StepRef  # noqa: E402
-from workflow_state import Dispatch, HistoryEntry, WorkflowState  # noqa: E402
+from workflow_state import HistoryEntry, TurnOutcome, WorkflowState  # noqa: E402
 from workflow_state.state_codec import PrevStateLoad, WorkflowStateCodec  # noqa: E402
 from workflow_state.sub_domains.gate_decision import GateDecision  # noqa: E402
 from workflow_state.workflow_state import STATE_SCHEMA_VERSION  # noqa: E402
@@ -47,7 +47,12 @@ def _state_v7() -> WorkflowState:
         phase="execution",
         scaffold_branch="feature/issue-648-scaffold",
         history=[
-            HistoryEntry(step=f"step_{i}", agent="architect", summary=f"s{i}")
+            HistoryEntry(
+                step=f"step_{i}",
+                agent="architect",
+                summary=f"s{i}",
+                turn_outcome=TurnOutcome(status="completed", appreciation="approved"),
+            )
             for i in range(5)
         ],
         position=_branch_mounted_leaf_position(),
@@ -86,8 +91,8 @@ class TestCodecRoundTrip(unittest.TestCase):
         self.assertIsInstance(json.loads(raw), dict)
 
 
-def _state_with_per_entry_dispatch() -> WorkflowState:
-    """A state whose history entries each carry their own dispatch (issue #685)."""
+def _state_with_per_entry_outcomes() -> WorkflowState:
+    """A state whose history entries each carry their own turn outcome (#685)."""
     return WorkflowState(
         run_id=4,
         workflow="spec-driven-impl",
@@ -99,45 +104,54 @@ def _state_with_per_entry_dispatch() -> WorkflowState:
                 step="analyze",
                 agent="architect",
                 summary="a",
-                dispatch=Dispatch(status="advance", task_hint="context", reason="need context"),
+                turn_outcome=TurnOutcome(
+                    status="completed",
+                    appreciation="approved",
+                    required_agent="context",
+                    note="need context",
+                ),
             ),
             HistoryEntry(
                 step="context",
                 agent="context",
                 summary="c",
-                dispatch=Dispatch(status="hold", task_hint="architect", branch="approved"),
+                turn_outcome=TurnOutcome(
+                    status="completed",
+                    appreciation="approved",
+                    required_agent="architect",
+                ),
             ),
         ],
     )
 
 
-class TestCodecRoundTripPreservesPerEntryDispatch(unittest.TestCase):
-    """The lossless hand-off must carry each history entry's dispatch (issue #685).
+class TestCodecRoundTripPreservesPerEntryOutcomes(unittest.TestCase):
+    """The lossless hand-off must carry each history entry's outcome (issue #685).
 
     The disk hand-off (``save_prev``/``load_prev``) is the exact path where the
     history was silently dropped in #648, so the replayable movement log added in
     #685 must survive it, not just the comment-body path.
     """
 
-    def test_compact_roundtrip_preserves_dispatch_per_entry(self):
+    def test_compact_roundtrip_preserves_the_outcome_per_entry(self):
         codec = WorkflowStateCodec()
 
-        restored = codec.decode(codec.encode(_state_with_per_entry_dispatch(), compact=True))
+        restored = codec.decode(codec.encode(_state_with_per_entry_outcomes(), compact=True))
 
-        self.assertEqual(restored.history[0].dispatch.status, "advance")
-        self.assertEqual(restored.history[0].dispatch.task_hint, "context")
-        self.assertEqual(restored.history[1].dispatch.status, "hold")
-        self.assertEqual(restored.history[1].dispatch.branch, "approved")
+        self.assertEqual(restored.history[0].turn_outcome.status, "completed")
+        self.assertEqual(restored.history[0].turn_outcome.required_agent, "context")
+        self.assertEqual(restored.history[1].turn_outcome.appreciation, "approved")
+        self.assertEqual(restored.history[1].turn_outcome.required_agent, "architect")
 
-    def test_disk_handoff_preserves_dispatch_per_entry(self):
+    def test_disk_handoff_preserves_the_outcome_per_entry(self):
         with tempfile.TemporaryDirectory() as tmp:
             codec = WorkflowStateCodec(runner_temp=tmp)
 
-            codec.save_prev(_state_with_per_entry_dispatch())
+            codec.save_prev(_state_with_per_entry_outcomes())
             result = codec.load_prev()
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.state.history[1].dispatch.task_hint, "architect")
+        self.assertEqual(result.state.history[1].turn_outcome.required_agent, "architect")
 
 
 def _gate_decision(status: str, step: str = "plan") -> GateDecision:
@@ -267,6 +281,33 @@ class TestLoadPrev(unittest.TestCase):
         self.assertEqual(result.detail, "")
         self.assertEqual(result.state.run_id, 7)
         self.assertEqual(len(result.state.history), 5)
+
+    def test_v5_blob_without_turn_outcome_reports_invalid(self):
+        """A pre-#964 hand-off cannot be decoded: the outcome is mandatory.
+
+        The migration is deliberately not backward compatible (issue #964):
+        every history entry is a routing fact, so a v5 blob whose entries
+        carry no ``turn_outcome`` must surface as ``invalid`` rather than be
+        silently coerced into a fabricated verdict.
+        """
+        v5_blob = {
+            "version": 5,
+            "workflow": "default",
+            "step": "implement",
+            "agent": "dev",
+            "history": [
+                {"step": "plan", "agent": "architect", "summary": "planned"},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, HANDOFF_FILE), "w", encoding="utf-8") as f:
+                json.dump(v5_blob, f)
+
+            result = WorkflowStateCodec(runner_temp=tmp).load_prev()
+
+        self.assertEqual(result.status, "invalid")
+        self.assertIsNone(result.state)
+        self.assertIn("turn_outcome", result.detail)
 
 
 class TestPrevStateLoadModel(unittest.TestCase):

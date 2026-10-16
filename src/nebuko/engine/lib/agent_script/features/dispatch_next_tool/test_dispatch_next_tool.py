@@ -1,80 +1,90 @@
-"""Tests for the dispatch_next tool (issue #524)."""
+"""Tests for the dispatch_next tool (issues #524, #964)."""
 
 import unittest
 
+from pydantic import ValidationError
+
 from agent_script.features.dispatch_next_tool import (
-    DispatchNextAction,
     DispatchNextTool,
-    action_to_dispatch,
+    TurnOutcomeAction,
+    action_to_payload,
+    action_to_prefs,
     clear_run,
-    get_recorded_dispatch,
+    get_recorded_run_prefs,
+    get_recorded_turn_outcome,
     reset_registry,
 )
-from workflow_state import Dispatch
+from workflow_state import TurnOutcome
 
 
-class TestDispatchNextActionToDispatch(unittest.TestCase):
-    """Test the action -> Dispatch mapping."""
+class TestTurnOutcomeActionToPayload(unittest.TestCase):
+    """Test the action -> agent-payload mapping."""
 
     def setUp(self):
         reset_registry()
 
-    def test_valid_action_maps_to_dispatch(self):
-        act = DispatchNextAction(
-            status="advance", agent="context", complexity="low", reason="need context"
+    def test_valid_action_maps_to_payload(self):
+        act = TurnOutcomeAction(
+            appreciation="approved",
+            required_agent="context",
+            note="need context",
         )
-        d = action_to_dispatch(act)
-        self.assertIsInstance(d, Dispatch)
-        self.assertEqual(d.status, "advance")
-        self.assertEqual(d.task_hint, "context")
-        self.assertEqual(d.complexity, "low")
-        self.assertEqual(d.reason, "need context")
+        payload = action_to_payload(act)
+        self.assertEqual(payload["appreciation"], "approved")
+        self.assertEqual(payload["required_agent"], "context")
+        self.assertEqual(payload["note"], "need context")
 
     def test_defaults_apply(self):
-        act = DispatchNextAction(status="advance")
-        d = action_to_dispatch(act)
-        self.assertIsNotNone(d)
-        self.assertEqual(d.status, "advance")
-        self.assertIsNone(d.task_hint)
+        act = TurnOutcomeAction(appreciation="approved")
+        payload = action_to_payload(act)
+        self.assertEqual(payload, {"appreciation": "approved"})
+        prefs = action_to_prefs(act)
         # An unspecified complexity stays unset so the resolver can apply the
         # workflow step's declared tier (issue #787).
-        self.assertEqual(d.complexity, "")
-        self.assertIsNone(d.reason)
+        self.assertEqual(prefs.complexity, "")
+        self.assertFalse(prefs.pin)
 
-    def test_branch_round_trip(self):
-        """branch survives the action -> Dispatch mapping (issue #618)."""
-        act = DispatchNextAction(status="advance", branch="approved")
-        d = action_to_dispatch(act)
-        self.assertIsInstance(d, Dispatch)
-        self.assertEqual(d.branch, "approved")
+    def test_round_round_trip(self):
+        """round survives the action -> payload mapping (issue #618)."""
+        act = TurnOutcomeAction(appreciation="rejected", round=2)
+        payload = action_to_payload(act)
+        self.assertEqual(payload["round"], 2)
 
-    def test_branch_defaults_to_none(self):
-        act = DispatchNextAction(status="advance")
-        d = action_to_dispatch(act)
-        self.assertIsNotNone(d)
-        self.assertIsNone(d.branch)
+    def test_round_omitted_when_absent(self):
+        act = TurnOutcomeAction(appreciation="approved")
+        self.assertNotIn("round", action_to_payload(act))
 
     def test_pin_round_trip(self):
-        """pin survives the action -> Dispatch mapping (issue #617)."""
-        act = DispatchNextAction(status="advance", pin=True)
-        d = action_to_dispatch(act)
-        self.assertIsInstance(d, Dispatch)
-        self.assertTrue(d.pin)
+        """pin survives the action -> prefs mapping (issue #617)."""
+        act = TurnOutcomeAction(appreciation="approved", pin=True)
+        self.assertTrue(action_to_prefs(act).pin)
+        self.assertNotIn("pin", action_to_payload(act))
 
-    def test_pin_defaults_to_false(self):
-        act = DispatchNextAction(status="advance")
-        d = action_to_dispatch(act)
-        self.assertIsNotNone(d)
-        self.assertFalse(d.pin)
 
-    def test_invalid_status_raises_actionable_error(self):
-        """An invalid status is rejected loudly, not silently dropped (#864)."""
-        act = DispatchNextAction(status="bogus")
-        with self.assertRaises(ValueError) as ctx:
-            action_to_dispatch(act)
-        message = str(ctx.exception)
-        self.assertIn("advance", message)
-        self.assertIn("hold", message)
+class TestTurnOutcomeActionValidators(unittest.TestCase):
+    """The tool schema is the first gate on a usable verdict (issue #964).
+
+    A blank appreciation would read downstream as "no verdict" and advance the
+    step on the workflow's default edge, so it must never reach the payload.
+    """
+
+    def test_blank_appreciation_is_rejected(self):
+        for blank in ("", "   "):
+            with self.assertRaises(ValidationError):
+                TurnOutcomeAction(appreciation=blank)
+
+    def test_unknown_hold_kind_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            TurnOutcomeAction(appreciation="hold", hold_kind="bogus")
+
+    def test_known_hold_kinds_are_accepted(self):
+        for kind in ("awaiting_approval", "awaiting_input"):
+            act = TurnOutcomeAction(appreciation="hold", hold_kind=kind)
+            self.assertEqual(action_to_payload(act)["hold_kind"], kind)
+
+    def test_hold_kind_may_be_omitted(self):
+        act = TurnOutcomeAction(appreciation="approved")
+        self.assertNotIn("hold_kind", action_to_payload(act))
 
 
 class TestDispatchNextTool(unittest.TestCase):
@@ -88,36 +98,65 @@ class TestDispatchNextTool(unittest.TestCase):
         self.assertEqual(len(tools), 1)
         self.assertEqual(tools[0].name, "dispatch_next")
 
-    def test_executor_records_dispatch(self):
+    def test_executor_records_turn_outcome(self):
         tool = DispatchNextTool.create(conversation_id="run-1")[0]
         obs = tool.executor(
-            DispatchNextAction(status="hold", agent=None, reason="waiting")
+            TurnOutcomeAction(appreciation="hold", hold_kind="awaiting_input")
         )
         self.assertFalse(obs.is_error)
-        d = get_recorded_dispatch("run-1")
-        self.assertIsNotNone(d)
-        self.assertEqual(d.status, "hold")
-        self.assertEqual(d.task_hint, None)
+        outcome = get_recorded_turn_outcome("run-1")
+        self.assertIsNotNone(outcome)
+        self.assertEqual(outcome.appreciation.value, "hold")
+        self.assertEqual(outcome.hold_kind.value, "awaiting_input")
         clear_run("run-1")
-        self.assertIsNone(get_recorded_dispatch("run-1"))
+        self.assertIsNone(get_recorded_turn_outcome("run-1"))
+
+    def test_executor_records_the_run_prefs(self):
+        """The knobs travel with the outcome (issue #964 round 6).
+
+        ``action_to_prefs`` had no production caller, so ``pin``/``complexity``
+        were silently inert; the executor must record them alongside the
+        outcome.
+        """
+        tool = DispatchNextTool.create(conversation_id="run-prefs")[0]
+        tool.executor(
+            TurnOutcomeAction(appreciation="approved", complexity="high", pin=True)
+        )
+        prefs = get_recorded_run_prefs("run-prefs")
+        self.assertIsNotNone(prefs)
+        self.assertEqual(prefs.complexity, "high")
+        self.assertTrue(prefs.pin)
+        clear_run("run-prefs")
+        self.assertIsNone(get_recorded_run_prefs("run-prefs"))
+
+    def test_executor_records_empty_prefs_when_none_supplied(self):
+        tool = DispatchNextTool.create(conversation_id="run-no-prefs")[0]
+        tool.executor(TurnOutcomeAction(appreciation="approved"))
+        prefs = get_recorded_run_prefs("run-no-prefs")
+        self.assertIsNotNone(prefs)
+        self.assertEqual(prefs.complexity, "")
+        self.assertFalse(prefs.pin)
+        clear_run("run-no-prefs")
 
     def test_executor_rejects_invalid_payload(self):
         tool = DispatchNextTool.create(conversation_id="run-2")[0]
-        obs = tool.executor(DispatchNextAction(status="bogus"))
+        obs = tool.executor(TurnOutcomeAction(appreciation="bogus"))
         self.assertTrue(obs.is_error)
         # The error must be actionable, not a silent drop (issue #864).
-        self.assertIn("advance", obs.text)
-        self.assertIsNone(get_recorded_dispatch("run-2"))
+        self.assertIn("approved", obs.text)
+        self.assertIsNone(get_recorded_turn_outcome("run-2"))
 
-    def test_latest_dispatch_wins(self):
+    def test_latest_outcome_wins(self):
         tool = DispatchNextTool.create(conversation_id="run-3")[0]
-        tool.executor(DispatchNextAction(status="advance", agent="dev"))
-        tool.executor(DispatchNextAction(status="loop", agent=None))
-        d = get_recorded_dispatch("run-3")
-        self.assertIsNotNone(d)
-        # Guard the dereference above: a missing dispatch would raise AttributeError.
-        self.assertIsInstance(d, Dispatch)
-        self.assertEqual(d.status, "loop")
+        tool.executor(TurnOutcomeAction(appreciation="approved"))
+        tool.executor(
+            TurnOutcomeAction(appreciation="hold", hold_kind="awaiting_approval")
+        )
+        outcome = get_recorded_turn_outcome("run-3")
+        self.assertIsNotNone(outcome)
+        # Guard the dereference above: a missing outcome would raise AttributeError.
+        self.assertIsInstance(outcome, TurnOutcome)
+        self.assertEqual(outcome.appreciation.value, "hold")
         clear_run("run-3")
 
     def test_create_rejects_unknown_params(self):
@@ -132,11 +171,11 @@ class TestDispatchNextTool(unittest.TestCase):
             id = "state-uuid-1"
 
         tool = DispatchNextTool.create(conv_state=_FakeState())[0]
-        tool.executor(DispatchNextAction(status="advance"))
-        d = get_recorded_dispatch("state-uuid-1")
-        self.assertIsNotNone(d)
+        tool.executor(TurnOutcomeAction(appreciation="approved"))
+        outcome = get_recorded_turn_outcome("state-uuid-1")
+        self.assertIsNotNone(outcome)
         # Must NOT have leaked into the default key.
-        self.assertIsNone(get_recorded_dispatch("default"))
+        self.assertIsNone(get_recorded_turn_outcome("default"))
         clear_run("state-uuid-1")
 
     def test_real_sdk_resolution_keys_registry_by_state_id(self):
@@ -145,7 +184,7 @@ class TestDispatchNextTool(unittest.TestCase):
         Exercises the REAL SDK path — ``resolve_tool(Tool("DispatchNextTool"),
         conv_state)`` — exactly as the agent loop does it. The registry is
         keyed on ``str(conv_state.id)`` at write time; the recall gate and
-        ``_resolve_dispatch`` read under ``str(conversation.id)``. Because
+        ``_resolve_outcome`` read under ``str(conversation.id)``. Because
         ``Conversation.id`` returns ``state.id`` (verified in the SDK source),
         both sides use the same key. This test proves the write side: a tool
         resolved from a real (unvalidated) ConversationState records under a
@@ -162,13 +201,15 @@ class TestDispatchNextTool(unittest.TestCase):
             id=uuid.uuid4(), agent=None, workspace=None
         )
         tools = resolve_tool(Tool(name="DispatchNextTool"), state)
-        tools[0].executor(DispatchNextAction(status="advance", agent="context"))
+        tools[0].executor(
+            TurnOutcomeAction(appreciation="approved", required_agent="context")
+        )
 
         # Read side keys under str(conversation.id) == str(state.id).
-        retrieved = get_recorded_dispatch(str(state.id))
+        retrieved = get_recorded_turn_outcome(str(state.id))
         self.assertIsNotNone(retrieved)
-        self.assertEqual(retrieved.status, "advance")
-        self.assertEqual(retrieved.task_hint, "context")
+        self.assertEqual(retrieved.appreciation.value, "approved")
+        self.assertEqual(retrieved.required_agent, "context")
         clear_run(str(state.id))
 
 
