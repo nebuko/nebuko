@@ -160,7 +160,7 @@ class TestFromAgentPayloadRejectsBadVerdicts:
 
     def test_explicitly_empty_appreciation_stays_verdictless_on_a_failure(self):
         outcome = TurnOutcome.from_agent_payload(
-            {"appreciation": None}, observed=OutcomeStatus.FAILED
+            {"appreciation": None}, observed=OutcomeStatus.FAILURE
         )
         assert outcome.status == TurnStatus.INCOMPLETE
         assert outcome.appreciation is None

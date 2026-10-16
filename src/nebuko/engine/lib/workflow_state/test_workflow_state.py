@@ -5,11 +5,20 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from workflow_state import (
     WorkflowState,
+    Appreciation,
     HistoryEntry,
     StateMetrics,
+    TurnOutcome,
+    TurnStatus,
     workflow_ref_from_env,
 )
 from workflow_state.sub_domains.gate_decision import GateDecision
+
+
+def _outcome() -> TurnOutcome:
+    """A completed/approved outcome — the mandatory routing fact (issue #964)."""
+    return TurnOutcome(status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED)
+
 
 class TestWorkflowStateSchema(unittest.TestCase):
     """Test WorkflowState Pydantic schema validation."""
@@ -36,6 +45,7 @@ class TestWorkflowStateSchema(unittest.TestCase):
                     step="analyze",
                     agent="architect",
                     summary="Analyzed issue",
+                    turn_outcome=_outcome(),
                     metrics=StateMetrics(input_tokens=1000, output_tokens=500),
                 )
             ],
@@ -80,6 +90,7 @@ class TestWorkflowStateSchema(unittest.TestCase):
                 HistoryEntry(
                     step="implement", agent="dev",
                     summary="impl", position=refs,
+                    turn_outcome=_outcome(),
                 )
             ],
         )
@@ -109,7 +120,7 @@ class TestWorkflowStateSchema(unittest.TestCase):
             workflow="dev-review-loop",
             step="implement",
             agent="dev",
-            history=[HistoryEntry(step="implement", agent="dev", metrics=metrics)],
+            history=[HistoryEntry(step="implement", agent="dev", turn_outcome=_outcome(), metrics=metrics)],
         )
         raw = json.loads(to_json(state))
         self.assertEqual(raw["history"][-1]["metrics"]["input_tokens"], 1234)
@@ -316,7 +327,14 @@ class TestWorkflowRefProvenance(unittest.TestCase):
             "workflow": "default",
             "step": "analyze",
             "agent": "architect",
-            "history": [{"step": "analyze", "agent": "architect", "summary": "ok"}],
+            "history": [
+                {
+                    "step": "analyze",
+                    "agent": "architect",
+                    "summary": "ok",
+                    "turn_outcome": {"status": "completed", "appreciation": "approved"},
+                }
+            ],
         }
         state = WorkflowState.model_validate(data)
         self.assertIsNone(state.workflow_ref)

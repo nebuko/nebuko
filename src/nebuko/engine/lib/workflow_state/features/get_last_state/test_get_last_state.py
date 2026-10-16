@@ -6,6 +6,11 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+from workflow_state.sub_domains.turn_outcome.turn_outcome import (
+    Appreciation,
+    TurnOutcome,
+    TurnStatus,
+)
 from workflow_state import STATE_MARKER_START, STATE_MARKER_END
 from workflow_state.workflow_state import STATE_SCHEMA_VERSION
 from workflow_state.features.get_last_state.get_last_state import (
@@ -15,8 +20,26 @@ from workflow_state.features.get_last_state.get_last_state import (
 )
 
 
+def _entry(step: str, agent: str, **kwargs) -> HistoryEntry:
+    """Build a history entry with the mandatory factual outcome (issue #964)."""
+    kwargs.setdefault(
+        "turn_outcome",
+        TurnOutcome(status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED),
+    )
+    return HistoryEntry(step=step, agent=agent, **kwargs)
+
+
 def _make_state_json(history_entries=None, run_id=1):
     """Build a minimal WorkflowState JSON dict."""
+    entries = []
+    for entry in history_entries or []:
+        entry = dict(entry)
+        # Every history entry is a routing fact (issue #964), so the outcome is
+        # mandatory; these fixtures only care about comment-id alignment.
+        entry.setdefault(
+            "turn_outcome", {"status": "completed", "appreciation": "approved"}
+        )
+        entries.append(entry)
     return json.dumps({
         "run_id": run_id,
         "schema_version": STATE_SCHEMA_VERSION,
@@ -24,7 +47,7 @@ def _make_state_json(history_entries=None, run_id=1):
         "step": "analyze",
         "agent": "architect",
         "phase": "analysis",
-        "history": history_entries or [],
+        "history": entries,
     })
 
 
@@ -57,8 +80,8 @@ class TestEnrichHistoryWithCommentIds(unittest.TestCase):
     """Test the enrichment helper function."""
 
     def test_enriches_matching_entries(self):
-        entry_a = HistoryEntry(step="analyze", agent="architect")
-        entry_b = HistoryEntry(step="plan", agent="architect")
+        entry_a = _entry(step="analyze", agent="architect")
+        entry_b = _entry(step="plan", agent="architect")
         history = [entry_a, entry_b]
         state_comments = [{"id": 123}, {"id": 456}]
 
@@ -68,8 +91,8 @@ class TestEnrichHistoryWithCommentIds(unittest.TestCase):
         self.assertEqual(entry_b.comment_ids, [456])
 
     def test_leaves_trailing_empty_when_fewer_comments(self):
-        entry_a = HistoryEntry(step="analyze", agent="architect")
-        entry_b = HistoryEntry(step="plan", agent="architect")
+        entry_a = _entry(step="analyze", agent="architect")
+        entry_b = _entry(step="plan", agent="architect")
         history = [entry_a, entry_b]
         state_comments = [{"id": 123}]
 
@@ -83,7 +106,7 @@ class TestEnrichHistoryWithCommentIds(unittest.TestCase):
         _enrich_history_with_comment_ids([], state_comments)  # No-op
 
     def test_no_state_comments_leaves_empty(self):
-        entry = HistoryEntry(step="analyze", agent="architect")
+        entry = _entry(step="analyze", agent="architect")
         _enrich_history_with_comment_ids([entry], [])
         self.assertEqual(entry.comment_ids, [])
 
@@ -92,7 +115,7 @@ class TestMultiPartGrouping(unittest.TestCase):
     """Test that continuation parts (issue #504) are grouped into the owning entry."""
 
     def test_same_agent_parts_are_grouped(self):
-        entry_context = HistoryEntry(step="context", agent="context")
+        entry_context = _entry(step="context", agent="context")
         history = [entry_context]
         state_comment = _make_agent_state_comment(500, [{"step": "context", "agent": "context"}], 1, "context")
         part_2 = _make_part_comment(2, 2, "context", 501)
@@ -105,7 +128,7 @@ class TestMultiPartGrouping(unittest.TestCase):
         self.assertEqual(entry_context.comment_ids, [500, 501, 502])
 
     def test_other_agent_parts_are_not_grouped(self):
-        entry_context = HistoryEntry(step="context", agent="context")
+        entry_context = _entry(step="context", agent="context")
         history = [entry_context]
         state_comment = _make_agent_state_comment(500, [{"step": "context", "agent": "context"}], 1, "context")
         other_part = _make_part_comment(2, 2, "dev", 600)
@@ -117,7 +140,7 @@ class TestMultiPartGrouping(unittest.TestCase):
         self.assertEqual(entry_context.comment_ids, [500])
 
     def test_parts_before_state_comment_are_not_grouped(self):
-        entry_a = HistoryEntry(step="analyze", agent="architect")
+        entry_a = _entry(step="analyze", agent="architect")
         history = [entry_a]
         stray_part = _make_part_comment(2, 2, "architect", 400)
         state_comment = _make_agent_state_comment(500, [{"step": "analyze", "agent": "architect"}], 1, "architect")
@@ -131,7 +154,7 @@ class TestMultiPartGrouping(unittest.TestCase):
     def test_part1_header_does_not_make_state_comment_a_part(self):
         # Part 1 carries both the part header and the state section; it must be
         # treated as the state comment (not skipped as a continuation part).
-        entry_context = HistoryEntry(step="context", agent="context")
+        entry_context = _entry(step="context", agent="context")
         history = [entry_context]
         json_str = _make_state_json([{"step": "context", "agent": "context"}], 1)
         part_1_body = (
@@ -281,34 +304,34 @@ class TestEnrichPinnedCommentIds(unittest.TestCase):
 
     def test_pinned_entry_contributes_its_comment_ids(self):
         history = [
-            HistoryEntry(step="spec", agent="po", pin=True, comment_ids=[10, 11]),
-            HistoryEntry(step="dev", agent="dev", pin=False, comment_ids=[12]),
+            _entry(step="spec", agent="po", pin=True, comment_ids=[10, 11]),
+            _entry(step="dev", agent="dev", pin=False, comment_ids=[12]),
         ]
         pinned: list[int] = []
         _enrich_pinned_comment_ids(history, pinned)
         self.assertEqual(pinned, [10, 11])
 
     def test_unpinned_entries_are_ignored(self):
-        history = [HistoryEntry(step="dev", agent="dev", pin=False, comment_ids=[12])]
+        history = [_entry(step="dev", agent="dev", pin=False, comment_ids=[12])]
         pinned: list[int] = []
         _enrich_pinned_comment_ids(history, pinned)
         self.assertEqual(pinned, [])
 
     def test_existing_ids_preserved_and_deduplicated(self):
-        history = [HistoryEntry(step="spec", agent="po", pin=True, comment_ids=[10, 11])]
+        history = [_entry(step="spec", agent="po", pin=True, comment_ids=[10, 11])]
         pinned = [10, 99]
         _enrich_pinned_comment_ids(history, pinned)
         self.assertEqual(pinned, [10, 99, 11])
 
     def test_is_idempotent(self):
-        history = [HistoryEntry(step="spec", agent="po", pin=True, comment_ids=[10, 11])]
+        history = [_entry(step="spec", agent="po", pin=True, comment_ids=[10, 11])]
         pinned: list[int] = []
         _enrich_pinned_comment_ids(history, pinned)
         _enrich_pinned_comment_ids(history, pinned)
         self.assertEqual(pinned, [10, 11])
 
     def test_pinned_entry_without_comment_ids_is_noop(self):
-        history = [HistoryEntry(step="spec", agent="po", pin=True)]
+        history = [_entry(step="spec", agent="po", pin=True)]
         pinned: list[int] = []
         _enrich_pinned_comment_ids(history, pinned)
         self.assertEqual(pinned, [])

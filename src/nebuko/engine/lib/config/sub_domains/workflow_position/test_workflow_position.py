@@ -241,12 +241,24 @@ class TestWorkflowStatePositionField:
         ]
 
     def test_history_entry_carries_position(self):
-        from workflow_state import HistoryEntry
+        from workflow_state import Appreciation, HistoryEntry, TurnOutcome, TurnStatus
+
+        def _outcome():
+            return TurnOutcome(
+                status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED
+            )
         entry = HistoryEntry(step="implement", agent="dev",
-                             summary="ran", position=_CHAIN)
+                             summary="ran", position=_CHAIN,
+                             turn_outcome=_outcome())
         dumped = entry.model_dump()
         assert dumped["position"] == [r.model_dump() for r in _CHAIN]
-        legacy = HistoryEntry.model_validate({"step": "s", "agent": "a"})
+        legacy = HistoryEntry.model_validate(
+            {
+                "step": "s",
+                "agent": "a",
+                "turn_outcome": {"status": "completed", "appreciation": "approved"},
+            }
+        )
         assert legacy.position == []
 
 
