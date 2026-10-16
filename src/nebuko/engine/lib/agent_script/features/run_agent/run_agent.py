@@ -291,6 +291,11 @@ def run_agent(
     # ── Tool resolution ──────────────────────────────────────────
     default_tool_list = ["terminal", "file_editor", "task_tracker", "think", "finish"]
     agent_tools = agent_cfg.tools if agent_cfg is not None else default_tool_list
+    # A step that declares an ``output:`` shape (issue #973) ends through the
+    # terminal ``finalize`` gate; the tool must be resolvable even though the
+    # role's static tool list predates it.
+    if os.environ.get("STEP_OUTPUT") and "finalize" not in agent_tools:
+        agent_tools = [*agent_tools, "finalize"]
 
     resolved = resolve_toolset(agent_tools, role_name)
     sdk_tools = list(resolved.sdk_tools)

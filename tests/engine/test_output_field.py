@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from config import OutputField, StepOutput, WorkflowStep
+from config import OutputField, StepFieldRef, StepOutput, WorkflowStep
 
 
 class TestOutputFieldValidation:
@@ -99,3 +99,22 @@ class TestWorkflowStepOutput:
                 agent="architect",
                 output={"fields": [{"name": "Bad Name"}]},
             )
+
+
+class TestStepFieldRef:
+    """The shared ``<step>`` / ``<step>.<field>`` parser (issue #973)."""
+
+    def test_bare_step_name_is_not_a_field_ref(self):
+        ref = StepFieldRef.parse("plan")
+        assert (ref.step, ref.field) == ("plan", None)
+        assert ref.is_field_ref is False
+
+    def test_dotted_ref_splits_on_the_first_dot(self):
+        ref = StepFieldRef.parse("plan.headline")
+        assert (ref.step, ref.field) == ("plan", "headline")
+        assert ref.is_field_ref is True
+
+    def test_malformed_parts_are_rejected(self):
+        for bad in ("9lives", "plan.Bad", "plan.head-line", "plan.", ".headline"):
+            with pytest.raises(ValueError):
+                StepFieldRef.parse(bad)

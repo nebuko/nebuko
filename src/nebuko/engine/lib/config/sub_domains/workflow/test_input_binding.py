@@ -62,9 +62,14 @@ class TestInputBindingSchema:
         assert binding.source == "ref"
         assert binding.ref == "plan"
 
-    def test_dotted_step_output_reference_is_rejected(self):
+    def test_dotted_step_output_reference_is_accepted(self):
+        binding = InputBinding.model_validate("spec.patch_ready")
+        assert binding.source == "ref"
+        assert binding.ref == "spec.patch_ready"
+
+    def test_malformed_dotted_reference_is_rejected(self):
         with pytest.raises(ValueError, match="grammar"):
-            InputBinding.model_validate("spec.patch_ready")
+            InputBinding.model_validate("spec.Patch-Ready")
 
 
 class TestInputBindingResolve:

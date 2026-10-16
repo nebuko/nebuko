@@ -226,6 +226,19 @@ def _prompt_replace_flag(enabled: bool | None) -> str:
     return "true" if enabled else ""
 
 
+def _step_output_json(step: object) -> str:
+    """Serialise a step's declared ``output:`` shape for the KEY=value result.
+
+    The declared shape is a nested structure, so it travels as one JSON value
+    (issue #973); an undeclared step emits ``""`` and the consumer keeps the
+    legacy terminal contract.
+    """
+    output = getattr(step, "output", None)
+    if output is None:
+        return ""
+    return output.model_dump_json()
+
+
 def _write_step_prompt_file(prompt: str | None) -> str:
     """Write a non-empty step prompt to a temp file; return the path or ''.
 
@@ -339,6 +352,10 @@ class RouteResolution:  # @stub-protected
     # route but an error the caller must report rather than step over, so the
     # marker view reproduces the legacy ``SKIP_AGENT`` dict.
     skip_agent: bool = False
+    # The target step's declared ``output:`` shape as JSON (issue #973), or ""
+    # when it declares none. Carried through the marker view so the run loop can
+    # compile the terminal finalize contract for the step it is about to run.
+    step_output: str = ""
 
     def as_marker(self) -> Optional[dict]:
         """Legacy marker-dict view (``None`` for the member-less kinds)."""
@@ -352,6 +369,8 @@ class RouteResolution:  # @stub-protected
                 marker["step"] = self.step
             if self.branch:
                 marker["branch"] = self.branch
+            if self.step_output:
+                marker["STEP_OUTPUT"] = self.step_output
             return marker
         if self.kind is RouteKind.RUN_SCRIPT:
             # Legacy script marker shape (issue #541): the flag plus the
@@ -459,6 +478,7 @@ def _marker_to_resolution(marker: Optional[dict]) -> Optional[RouteResolution]:
         task=str(marker.get("task") or ""),
         step=str(marker.get("step") or ""),
         branch=marker.get("branch"),
+        step_output=str(marker.get("STEP_OUTPUT") or ""),
     )
 
 
@@ -1735,6 +1755,7 @@ def _resolve_sub_workflow_entry(
         "STEP_PROMPT_FILE": _write_step_prompt_file(leaf.prompt),
         "STEP_COMPLEXITY": leaf.complexity,
         "STEP_PROMPT_REPLACE": _prompt_replace_flag(leaf.prompt_replace),
+        "STEP_OUTPUT": _step_output_json(leaf),
         "SKIP_AGENT": "false",
     } | position
 
@@ -1998,6 +2019,7 @@ def _next_step_resolution(
         "STEP_PROMPT_FILE": _write_step_prompt_file(next_step.prompt),
         "STEP_COMPLEXITY": next_step.complexity or "",
         "STEP_PROMPT_REPLACE": _prompt_replace_flag(next_step.prompt_replace),
+        "STEP_OUTPUT": _step_output_json(next_step),
         "SKIP_AGENT": "false",
     }
 
@@ -2348,6 +2370,7 @@ def resolve_workflow_step(
         "STEP_PROMPT_FILE": _write_step_prompt_file(current_step.prompt),
         "STEP_COMPLEXITY": current_step.complexity or "",
         "STEP_PROMPT_REPLACE": _prompt_replace_flag(current_step.prompt_replace),
+        "STEP_OUTPUT": _step_output_json(current_step),
         "SKIP_AGENT": "false",
     }
 

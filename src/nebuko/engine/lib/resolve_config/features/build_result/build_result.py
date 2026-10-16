@@ -356,6 +356,11 @@ def _build_result(
         "SKILLS_DIR": _skills_dir(),
         "STEP_PROMPT_FILE": wf_result.get("STEP_PROMPT_FILE", ""),
         "STEP_PROMPT_REPLACE": wf_result.get("STEP_PROMPT_REPLACE", ""),
+        # Declared step-output shape (issue #973): the JSON of the step's
+        # ``output:`` block, or "" for a step that declares none. The run loop
+        # compiles it into the section prompt block and the terminal finalize
+        # gate; an undeclared step keeps the legacy finish/dispatch_next path.
+        "STEP_OUTPUT": wf_result.get("STEP_OUTPUT", ""),
         "CONFIG_MODEL": config.get("config_model", ""),
         "CONFIG_TEMPERATURE": config.get("config_temperature", ""),
         "CONFIG_TOP_P": config.get("config_top_p", ""),

@@ -37,7 +37,20 @@ from nebuko.engine.agent_runner import (
     _read_text,
 )
 from nebuko.engine.answer_capture import AnswerCapture
-from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS, EngineToolPayload
+from nebuko.engine.engine_tools import (
+    DEFAULT_ENGINE_TOOLS,
+    EngineToolPayload,
+    FinalizeToolError,
+    FinalizeToolHandler,
+)
+from nebuko.engine.finalize import (
+    OutputContract,
+    OutputRenderer,
+    RouteDecision,
+    RunTerminator,
+    route_from_action,
+    step_output_contract,
+)
 from nebuko.engine.paths import ensure_import_path
 
 __all__ = ["InProcessAgentHost"]
@@ -52,6 +65,10 @@ _REPORT_PAYLOAD_ATTR = "nebuko_report_payload"
 _REPORT_ROUTING_ATTR = "nebuko_report_routing"
 _REPORT_FUNCTION_CALL_ATTR = "nebuko_report_function_call"
 _REPORT_OFFSET_ATTR = "nebuko_report_event_offset"
+#: The rendered comment of a step that declares an ``output:`` shape (issue
+#: #973). The finalize turn replaces the report turn for such a step, so the
+#: deliverable is the engine-rendered comment, not a ``finish.message``.
+_FINALIZE_BODY_ATTR = "nebuko_finalize_body"
 
 #: Engine-elicited report turn (issue #830). After the work loop ends the
 #: engine takes the hand and asks for the deliverable in the control plane's
@@ -75,10 +92,31 @@ _REPORT_PROMPT = (
 
 _REPORT_TURN_TIMEOUT_S = 240.0
 
+#: Engine-elicited finalize turn (issue #973). A step that declares an
+#: ``output:`` shape ends with exactly two artifacts: the report as the turn's
+#: markdown text (section bodies between the declared markers) and the routing
+#: decision in the ``finalize`` tool's typed ``route`` argument.
+_FINALIZE_PROMPT = (
+    "Engine finalize turn - the work phase is over; do not call any work tool "
+    "(no terminal, file_editor, think, ...). Reply with your report as the "
+    "markdown text of this turn, then call the `finalize` tool with your "
+    "routing decision.\n\n"
+    "{sections}\n\n"
+    "Call `finalize` with `route.status` ('advance' to route on, 'loop' to "
+    "repeat this step, 'hold' to wait for a human), plus `route.agent` when you "
+    "are explicitly overriding the workflow's next step, `route.pin`, and "
+    "`route.branch`/`route.complexity`/`route.reason` when they apply. Put no "
+    "report prose in the tool arguments."
+)
+
 #: The control-plane tool names the report turn may expose (issue #830). The
 #: report exists to fill the typed control slots, so the work tools are hidden
 #: for its duration.
 _ENGINE_TOOL_NAMES = frozenset(DEFAULT_ENGINE_TOOLS.tools)
+
+#: The finalize turn's tool surface (issue #973): the terminal gate plus the
+#: delegation tool. ``finish``/``dispatch_next`` are hidden — the route is typed.
+_FINALIZE_TOOL_NAMES = frozenset({"finalize", "call_agent"})
 
 
 class InProcessAgentHost:
@@ -159,7 +197,10 @@ class InProcessAgentHost:
             capture.freeze_report_payload(report)
 
         raw_answer = _read_text(work / _LATEST_ANSWER_FILE)
-        deliverable = capture.deliverable(raw_answer)
+        # A step that declares an ``output:`` shape (issue #973) posts the
+        # engine-rendered comment, not the agent's raw turn text.
+        finalize_body = getattr(conversation, _FINALIZE_BODY_ATTR, None)
+        deliverable = finalize_body or capture.deliverable(raw_answer)
         snapshot = capture.snapshot
         if deliverable != raw_answer:
             log.info(
@@ -192,6 +233,10 @@ class InProcessAgentHost:
         fallback chain and never aborts the run.
         """
         if conversation is None:
+            return
+        contract = self._step_output_contract()
+        if contract is not None:
+            self._elicit_finalize(conversation, contract)
             return
         setattr(conversation, _REPORT_OFFSET_ATTR, _event_count(conversation))
         try:
@@ -228,6 +273,77 @@ class InProcessAgentHost:
         """Engine-started report turn's ``call_agent`` payload: the hand-off."""
         return _harvest_report(conversation, "call_agent")
 
+    def _step_output_contract(self) -> OutputContract | None:
+        """The step's declared output shape, or ``None`` for a legacy step.
+
+        The resolver hands the declaration over as ``STEP_OUTPUT`` (issue #973);
+        a step that declares none keeps the ``finish``/``dispatch_next`` path.
+        """
+        raw = (self._env or {}).get("STEP_OUTPUT") or os.environ.get("STEP_OUTPUT")
+        return step_output_contract(raw)
+
+    def _elicit_finalize(self, conversation: Any, contract: OutputContract) -> None:
+        """Take the hand for a step that declares an ``output:`` shape (#973).
+
+        One engine-elicited turn carries both artifacts: the report as the
+        turn's markdown text and the route in the ``finalize`` tool's typed
+        argument. The engine extracts the declared sections, renders the posted
+        comment and stows it as the deliverable. A malformed answer gets exactly
+        one retry naming the offending field; a second failure salvages the
+        completed sections and logs loudly (fix 7, #973).
+        """
+        setattr(conversation, _REPORT_OFFSET_ATTR, _event_count(conversation))
+        prompt = _FINALIZE_PROMPT.format(sections=contract.prompt_block())
+        rendered: list[str] = []
+        terminator = RunTerminator(
+            contract,
+            post=rendered.append,
+            # The route is recorded by the finalize tool's executor into the
+            # run-scoped dispatch registry, which ``build_output`` reads; the
+            # terminator's own hook stays a no-op so the route is applied once.
+            apply_route=lambda route: None,
+        )
+        handler = FinalizeToolHandler(terminator)
+        for attempt in (1, 2):
+            try:
+                with _tools_only(conversation, _FINALIZE_TOOL_NAMES):
+                    _send_and_run(conversation, prompt)
+            except Exception as error:  # noqa: BLE001 - degrade to the fallback chain
+                log.warning("[phase:agent] finalize turn failed: %s", error)
+                return
+            turn_text = _finalize_turn_text(conversation)
+            route = _finalize_route(conversation) or RouteDecision(status="hold")
+            try:
+                handler.handle(route, turn_text)
+            except FinalizeToolError as error:
+                if attempt == 2:
+                    log.error(
+                        "[phase:agent] finalize turn failed twice (%s); "
+                        "salvaging the completed sections",
+                        error,
+                    )
+                    report = handler.salvage(turn_text)
+                    body = OutputRenderer(contract).render(report.sections)
+                    if body:
+                        rendered.append(body)
+                    break
+                log.warning(
+                    "[phase:agent] finalize turn rejected (%s); retrying once",
+                    error,
+                )
+                prompt = (
+                    f"{prompt}\n\nThe previous attempt failed: {error}. Fix the "
+                    "section bodies and call `finalize` again."
+                )
+                continue
+            break
+        if rendered:
+            setattr(conversation, _FINALIZE_BODY_ATTR, rendered[-1])
+            log.info(
+                "[phase:agent] finalize turn rendered the posted comment (%d chars)",
+                len(rendered[-1]),
+            )
+
 
 def _report_payload(conversation: Any) -> EngineToolPayload | None:
     """The report turn's harvested ``finish`` payload, if the turn produced one."""
@@ -262,6 +378,11 @@ def _routing_payload(conversation: Any, state: Any) -> dict[str, Any] | None:
         # (issue #876).
         fallback = _state_routing_fields(state) or {}
         return {**fallback, **direct, **_handoff_routing_fields(handoff)}
+    if getattr(conversation, _FINALIZE_BODY_ATTR, None) is not None:
+        # A step that declares an ``output:`` shape (issue #973) routes on the
+        # typed ``finalize`` route, which the tool recorded into the run's
+        # workflow state; there is no ``finish`` payload to key off.
+        return _state_routing_fields(state)
     if _report_payload(conversation) is None:
         return None
     return _state_routing_fields(state)
@@ -324,24 +445,29 @@ def _harvest_report(conversation: Any, tool_name: str) -> EngineToolPayload | No
 
 @contextlib.contextmanager
 def _report_tools_only(conversation: Any) -> Iterator[None]:
-    """Restrict the report turn's tool surface to the control plane (issue #830).
+    """Restrict the report turn's tool surface to the control plane (issue #830)."""
+    with _tools_only(conversation, _ENGINE_TOOL_NAMES):
+        yield
 
-    The report turn exists to fill the typed control slots, so the work tools
-    must not be callable while it runs. The SDK resolves each step's toolset
-    from the agent's private ``_tools`` map (read fresh per LLM call), so the
-    host swaps in the engine tools for the turn's duration and restores the
+
+@contextlib.contextmanager
+def _tools_only(conversation: Any, allowed: frozenset[str]) -> Iterator[None]:
+    """Restrict a control turn's tool surface to ``allowed`` (issues #830, #973).
+
+    The report/finalize turn exists to fill the typed control slots, so the work
+    tools must not be callable while it runs. The SDK resolves each step's
+    toolset from the agent's private ``_tools`` map (read fresh per LLM call), so
+    the host swaps in the allowed tools for the turn's duration and restores the
     original map afterwards — the same private seam the SDK's own runtime tool
     registration uses. Hosts that do not expose that map (or that would not be
-    narrowed) are left untouched; the report prompt still constrains the turn.
+    narrowed) are left untouched; the turn prompt still constrains the turn.
     """
     agent = getattr(conversation, "agent", None)
     resolved = getattr(agent, "_tools", None)
     if not isinstance(resolved, dict) or not resolved:
         yield
         return
-    narrowed = {
-        name: tool for name, tool in resolved.items() if name in _ENGINE_TOOL_NAMES
-    }
+    narrowed = {name: tool for name, tool in resolved.items() if name in allowed}
     if not narrowed or len(narrowed) == len(resolved):
         yield
         return
@@ -355,11 +481,57 @@ def _report_tools_only(conversation: Any) -> Iterator[None]:
             object.__setattr__(agent, "_tools", tools)
 
     _install(narrowed)
-    log.info("[phase:agent] report turn tool surface restricted to %s", sorted(narrowed))
+    log.info("[phase:agent] control turn tool surface restricted to %s", sorted(narrowed))
     try:
         yield
     finally:
         _install(resolved)
+
+
+def _finalize_turn_text(conversation: Any) -> str:
+    """The finalize turn's markdown text: the report the engine renders (#973).
+
+    The report rides in the turn that calls ``finalize``, so it surfaces as the
+    action event's ``thought`` (the SDK emits no standalone ``MessageEvent`` for
+    a turn that also carries a tool call). The last agent message is the
+    fallback when the tool call and its text landed on different turns.
+    """
+    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
+    text = ""
+    for event in _events(conversation)[offset:]:
+        if getattr(event, "tool_name", None) == "finalize":
+            text = _content_text(getattr(event, "thought", None)).strip() or text
+        elif getattr(event, "tool_name", None) is None:
+            message = getattr(event, "llm_message", None)
+            if message is not None:
+                text = _content_text(getattr(message, "content", None)).strip() or text
+    return text
+
+
+def _finalize_route(conversation: Any) -> RouteDecision | None:
+    """The typed route of the finalize turn's last ``finalize`` call (#973)."""
+    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
+    route: RouteDecision | None = None
+    for event in _events(conversation)[offset:]:
+        if getattr(event, "tool_name", None) != "finalize":
+            continue
+        candidate = route_from_action(getattr(event, "action", None))
+        if candidate is not None:
+            route = candidate
+    return route
+
+
+def _content_text(content: object) -> str:
+    """Join an SDK message content value into plain text (mirrors the capture)."""
+    if isinstance(content, str):
+        return content
+    if not content:
+        return ""
+    parts: list[str] = []
+    for item in content:  # type: ignore[union-attr]
+        text = getattr(item, "text", None)
+        parts.append(text if isinstance(text, str) else str(item))
+    return "".join(parts)
 
 
 def _send_and_run(conversation: Any, prompt: str) -> None:

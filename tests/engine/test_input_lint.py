@@ -128,6 +128,15 @@ class TestStepOutputRules:
     def test_resolvable_step_and_prompt_refs_are_clean(self):
         assert _lint("step_refs_clean.yaml", strict=True) == []
 
+    def test_dotted_ref_to_a_declared_field_is_clean(self):
+        """``<step>.<field>`` resolves when the step declares the field (#973)."""
+        assert _lint("l10_dotted_field_ref_clean.yaml", strict=True) == []
+
+    def test_dotted_ref_to_an_undeclared_field_is_reported(self):
+        issues = _lint("l10_dotted_field_ref_unknown.yaml")
+        assert ("L10-input-ref", "warning", "implement") in _wiring(issues)
+        assert ("L11-prompt-ref", "warning", "implement") in _tuples(issues)
+
 
 class TestExampleWorkflowLint:
     """The documented worked example lints clean under ``--strict`` (#756)."""

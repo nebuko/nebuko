@@ -17,7 +17,7 @@ heading, ``<details>``) so extraction can return the model's body verbatim.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -26,7 +26,12 @@ from pydantic import BaseModel, Field, model_validator
 #: ``-->`` would break the section marker.
 NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
 
+#: Step names keep the pre-existing reference grammar (issue #756), so a
+#: ``step.field`` ref never narrows the set of addressable steps.
+STEP_NAME_PATTERN = r"^[A-Za-z_][A-Za-z0-9_-]*$"
+
 _NAME_RE = re.compile(NAME_PATTERN)
+_STEP_NAME_RE = re.compile(STEP_NAME_PATTERN)
 
 
 class OutputField(BaseModel):
@@ -101,3 +106,41 @@ class StepOutput(BaseModel):
         if sum(1 for field in self.fields if field.title) > 1:
             raise ValueError("at most one output field may set 'title: true'")
         return self
+
+
+class StepFieldRef(BaseModel):
+    """A ``<step>`` or ``<step>.<field>`` reference (issue #973).
+
+    One parser shared by prompt interpolation, ``inputs`` binding and the
+    linter, so the three surfaces cannot drift apart. ``field`` is set only for
+    the dotted form, which addresses one declared section of the step's posted
+    comment instead of the whole comment.
+    """
+
+    step: str
+    field: Optional[str] = None
+
+    @classmethod
+    def parse(cls, raw: str) -> "StepFieldRef":
+        """Split ``raw`` on the first dot and validate both parts.
+
+        Raises ``ValueError`` when either part is malformed, so a typo fails at
+        load time rather than degrading to an unresolved reference at run time.
+        """
+        step, dot, field = str(raw).partition(".")
+        if not _STEP_NAME_RE.match(step):
+            raise ValueError(
+                f"step reference {raw!r}: '{step}' must match {STEP_NAME_PATTERN}"
+            )
+        if dot and not field:
+            raise ValueError(f"step reference {raw!r}: the field part is empty")
+        if field and not _NAME_RE.match(field):
+            raise ValueError(
+                f"step reference {raw!r}: field '{field}' must match {NAME_PATTERN}"
+            )
+        return cls(step=step, field=field or None)
+
+    @property
+    def is_field_ref(self) -> bool:
+        """True when the reference addresses one declared section."""
+        return self.field is not None

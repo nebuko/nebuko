@@ -3046,6 +3046,65 @@ class TestStepOutputScope:
         rendered = engine._render_step_prompt("{{ ghost }}", {"plan": "P"})
         assert rendered == "_(unavailable: ghost)_"
 
+    def test_declared_output_sections_are_addressable(self, tmp_path, monkeypatch):
+        """A step declaring ``output:`` exposes ``<step>.<field>`` refs (#973)."""
+        from config import StepOutput
+
+        engine = _engine(tmp_path)
+        output = StepOutput.model_validate(
+            {"fields": [{"name": "headline", "title": True}, {"name": "decision"}]}
+        )
+        monkeypatch.setattr(Engine, "_declared_outputs", lambda self: {"plan": output})
+        scope = {
+            "plan": (
+                "# Ship it\n\n"
+                "## Decision\n"
+                "<!-- nebuko:section decision -->\n"
+                "do it\n"
+                "<!-- /nebuko:section -->"
+            )
+        }
+        engine._add_declared_sections(scope)
+        assert scope["plan.headline"] == "Ship it"
+        assert scope["plan.decision"] == "do it"
+
+    def test_undeclared_steps_contribute_no_dotted_refs(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(Engine, "_declared_outputs", lambda self: {})
+        scope = {"plan": "THE PLAN"}
+        engine._add_declared_sections(scope)
+        assert scope == {"plan": "THE PLAN"}
+
+    def test_declared_outputs_reads_the_workflow_definition(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        engine = _engine(tmp_path)
+        wf_dir = tmp_path / "workflows"
+        wf_dir.mkdir()
+        (wf_dir / "w.yaml").write_text(
+            "name: w\n"
+            "description: d\n"
+            "steps:\n"
+            "  - name: plan\n"
+            "    agent: architect\n"
+            "    next: null\n"
+            "    output:\n"
+            "      fields:\n"
+            "        - name: headline\n"
+            "          title: true\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(Engine, "_workflow_dirs", lambda self: (str(wf_dir), None))
+        monkeypatch.setattr(
+            Engine, "_previous_state", lambda self: SimpleNamespace(workflow="w")
+        )
+        assert list(engine._declared_outputs()) == ["plan"]
+
+    def test_declared_outputs_is_empty_without_a_workflow(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(Engine, "_previous_state", lambda self: None)
+        assert engine._declared_outputs() == {}
+
 
 def _thread_record(
     record_id,

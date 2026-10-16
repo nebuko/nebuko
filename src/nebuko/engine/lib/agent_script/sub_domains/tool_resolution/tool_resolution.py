@@ -35,6 +35,7 @@ _BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
 
 _DISPATCH_TOOL_NAME = "DispatchNextTool"
 _CALL_AGENT_TOOL_NAME = "CallAgentTool"
+_FINALIZE_TOOL_NAME = "FinalizeTool"
 _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
 _COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
 _HANDOFF_TOOL_NAME = "HandoffTool"
@@ -128,6 +129,25 @@ def _ensure_call_agent_tool_registered() -> None:
 
 # Module-level guard: register_tool logs a warning on re-registration, so in
 # long-lived processes (or repeated test runs) we register only once.
+_finalize_tool_registered = False
+
+
+def _ensure_finalize_tool_registered() -> None:
+    """Register the ``finalize`` ToolDefinition with the SDK registry.
+
+    Idempotent — safe to call on every agent run.
+    """
+    global _finalize_tool_registered
+    if _finalize_tool_registered:
+        return
+    from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+
+    register_tool(_FINALIZE_TOOL_NAME, FinalizeTool)
+    _finalize_tool_registered = True
+
+
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
 _scaffold_branch_tool_registered = False
 
 
@@ -214,6 +234,9 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
         elif tool_name == "call_agent":
             _ensure_call_agent_tool_registered()
             sdk_tools.append(Tool(name=_CALL_AGENT_TOOL_NAME))
+        elif tool_name == "finalize":
+            _ensure_finalize_tool_registered()
+            sdk_tools.append(Tool(name=_FINALIZE_TOOL_NAME))
         elif tool_name == "report_scaffold_branch":
             _ensure_scaffold_branch_tool_registered()
             sdk_tools.append(Tool(name=_SCAFFOLD_BRANCH_TOOL_NAME))
