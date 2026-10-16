@@ -1405,9 +1405,15 @@ class Engine:
         additive ``role prompt + step prompt`` behaviour.
 
         Deterministically materialized step inputs (issue #813) are injected as
-        labeled blocks between the step prompt and the user request, alongside
-        the recency window and pinned comments — the model never has to fetch
-        them.
+        labeled blocks between the step prompt and the user request — the model
+        never has to fetch them.
+
+        A step that declares inputs is *scoped to them* (issue #889): its
+        declared sections are emitted exactly once by the deterministic seam and
+        the unscoped ``## Recent thread`` scan is suppressed, so a record can not
+        enter a second time through the reverse-comment-history walk and an
+        undeclared agent output (e.g. the context answer) can not leak in. Steps
+        that declare no inputs keep the recency window unchanged.
 
         Inject-mode skills (issue #955) are rendered in full as an ``## Injected
         skills`` block between the step prompt and the inputs. The block is
@@ -1436,7 +1442,12 @@ class Engine:
         if previous_handoff:
             sections.append(previous_handoff)
         sections.append(_USER_REQUEST_HEADER)
-        sections.append(self._render_context(resolved, history))
+        # A step with declared inputs is composed by reference: the
+        # deterministic blocks above are its whole material, so the
+        # reverse-comment-history render is dropped (issue #889).
+        sections.append(
+            self._render_context(resolved, history, include_thread=not input_results)
+        )
         return "\n\n".join(section for section in sections if section)
 
     def _render_step_output(self, resolved: Any) -> str:
@@ -2376,7 +2387,20 @@ class Engine:
             path = self.repo_root / path
         return path.read_text(encoding="utf-8") if path.is_file() else ""
 
-    def _render_context(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
+    def _render_context(
+        self,
+        resolved: Any,
+        history: Sequence[CommentEntry],
+        *,
+        include_thread: bool = True,
+    ) -> str:
+        """Render the trigger/task context and (optionally) the recent thread.
+
+        ``include_thread`` is False for a step that declares inputs (issue
+        #889): its context is fully materialized by the deterministic
+        step-inputs seam, so the unscoped recent-thread scan is suppressed to
+        keep each record to a single emission.
+        """
         trigger = self._get(resolved, _TRIGGER_KEY)
         parts: list[str] = []
         if isinstance(trigger, Trigger):
@@ -2390,7 +2414,8 @@ class Engine:
         gate_section = _render_gate_decision(self._get(resolved, "GATE_DECISION"))
         if gate_section:
             parts.append(gate_section)
-        parts.append("## Recent thread\n\n" + self._render_recent_thread(history))
+        if include_thread:
+            parts.append("## Recent thread\n\n" + self._render_recent_thread(history))
         return "\n\n".join(part for part in parts if part)
 
     def _render_recent_thread(self, history: Sequence[CommentEntry]) -> str:

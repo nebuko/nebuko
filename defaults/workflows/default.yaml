@@ -37,6 +37,11 @@ steps:
   
   - name: review
     agent: review
+    # Fan-in (#755): the architect plan + the dev output, materialized once as
+    # deterministic step inputs. A step that declares inputs is composed by
+    # reference (issue #889), so neither is re-injected through the unscoped
+    # reverse-comment-history walk.
+    inputs: [plan, implement]
     conditions:
       - on_result: approved
         next: null
