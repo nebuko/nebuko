@@ -36,9 +36,9 @@ published a one-line lead-in).
    deliverable and the engine harvests and posts it (issues #822/#830).
 
 3. **`dispatch_next` fields are routing metadata.**
-   `status` / `branch` / `complexity` / `reason` carry the next-step decision.
-   Never put the deliverable in `reason` — it is one sentence of routing
-   justification. The engine reads these fields directly.
+   `appreciation` / `hold_kind` / `complexity` / `pin` carry the turn's verdict
+   and the next-step knobs. Never put the deliverable in `note` — it is one
+   sentence of justification. The engine reads these fields directly.
 
 4. **A standalone text answer is the fallback deliverable.**
    If the report turn cannot run (LLM error, no control call returned), the
@@ -84,7 +84,7 @@ published a one-line lead-in).
 
 - Treating the work-loop `finish` message as the place for the report — it is
   ignored; the report turn is the answer channel.
-- Squeezing the deliverable into the `dispatch_next` `reason` field — the
+- Squeezing the deliverable into the `dispatch_next` `note` field — the
   arguments are routing metadata.
 - Ending the session with chatter ("I'll now finish…") after the real answer —
   on the fallback path that chatter becomes the posted comment.

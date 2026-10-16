@@ -2,6 +2,8 @@
 
 import unittest
 
+from pydantic import ValidationError
+
 from agent_script.features.dispatch_next_tool import (
     DispatchNextTool,
     TurnOutcomeAction,
@@ -56,6 +58,32 @@ class TestTurnOutcomeActionToPayload(unittest.TestCase):
         act = TurnOutcomeAction(appreciation="approved", pin=True)
         self.assertTrue(action_to_prefs(act).pin)
         self.assertNotIn("pin", action_to_payload(act))
+
+
+class TestTurnOutcomeActionValidators(unittest.TestCase):
+    """The tool schema is the first gate on a usable verdict (issue #964).
+
+    A blank appreciation would read downstream as "no verdict" and advance the
+    step on the workflow's default edge, so it must never reach the payload.
+    """
+
+    def test_blank_appreciation_is_rejected(self):
+        for blank in ("", "   "):
+            with self.assertRaises(ValidationError):
+                TurnOutcomeAction(appreciation=blank)
+
+    def test_unknown_hold_kind_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            TurnOutcomeAction(appreciation="hold", hold_kind="bogus")
+
+    def test_known_hold_kinds_are_accepted(self):
+        for kind in ("awaiting_approval", "awaiting_input"):
+            act = TurnOutcomeAction(appreciation="hold", hold_kind=kind)
+            self.assertEqual(action_to_payload(act)["hold_kind"], kind)
+
+    def test_hold_kind_may_be_omitted(self):
+        act = TurnOutcomeAction(appreciation="approved")
+        self.assertNotIn("hold_kind", action_to_payload(act))
 
 
 class TestDispatchNextTool(unittest.TestCase):

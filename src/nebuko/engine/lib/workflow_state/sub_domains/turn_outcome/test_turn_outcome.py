@@ -145,18 +145,30 @@ class TestFromAgentPayloadRejectsBadVerdicts:
                 {"appreciation": "bogus"}, observed=OutcomeStatus.SUCCESS
             )
 
-    def test_explicitly_empty_appreciation_means_no_verdict(self):
-        """``""``/``None`` is a missing verdict, not a typo.
+    def test_blank_appreciation_is_rejected(self):
+        """A present-but-blank verdict is unusable, not a missing one.
+
+        The tool layer rejects ``""`` outright (issue #964); the domain layer
+        must not be the weaker of the two, or a hand-built payload could still
+        read as "no verdict" and advance the step.
+        """
+        for blank in ("", "   "):
+            with pytest.raises(ValueError, match="appreciation"):
+                TurnOutcome.from_agent_payload(
+                    {"appreciation": blank}, observed=OutcomeStatus.SUCCESS
+                )
+
+    def test_explicitly_none_appreciation_means_no_verdict(self):
+        """An explicit ``None`` is a missing verdict, not a typo.
 
         The engine's own observed-status call sites (soft kill, crash, no
         action) put an explicit ``None`` in the payload when they name no
         verdict; only a *present but unusable* string is an error.
         """
-        for empty in ("", None):
-            outcome = TurnOutcome.from_agent_payload(
-                {"appreciation": empty}, observed=OutcomeStatus.SUCCESS
-            )
-            assert outcome.appreciation == Appreciation.APPROVED
+        outcome = TurnOutcome.from_agent_payload(
+            {"appreciation": None}, observed=OutcomeStatus.SUCCESS
+        )
+        assert outcome.appreciation == Appreciation.APPROVED
 
     def test_explicitly_empty_appreciation_stays_verdictless_on_a_failure(self):
         outcome = TurnOutcome.from_agent_payload(

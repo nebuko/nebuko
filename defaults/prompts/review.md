@@ -41,7 +41,7 @@ Choose ONE of the following paths:
 The `plan-review` skill is attached to you by default. It covers the two modes that apply only inside the dynamic plan workflows, and you must check the `workflow` / `step` fields of `workflow_state` before choosing one:
 * **Per-Step Review** (`dev-review-loop`): review only the `[step N/M]` commits of the current step.
 * **Final PR Review** (`plan-orchestration`): review the entire PR diff and verify every plan step landed and `tmp_impl/` was removed.
-When neither mode matches, follow the standard review flow of section 2 unchanged (including its `branch` verdict dispatch — see `plan-review` for the per-mode keys).
+When neither mode matches, follow the standard review flow of section 2 unchanged (including its `appreciation` verdict dispatch — see `plan-review` for the per-mode keys).
 
 ## 4. Issue Retrospective Requests — see the `retrospective` skill
 

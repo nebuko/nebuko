@@ -20,10 +20,10 @@ from openhands.sdk.tool.tool import (
     ToolDefinition,
     ToolExecutor,
 )
-from pydantic import Field
+from pydantic import Field, field_validator
 from rich.text import Text
 
-from workflow_state import RunPrefs, TurnOutcome
+from workflow_state import Appreciation, HoldKind, RunPrefs, TurnOutcome
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation.base import BaseConversation
@@ -79,6 +79,37 @@ class TurnOutcomeAction(Action):
             "is injected verbatim into downstream agents' context."
         ),
     )
+
+    @field_validator("appreciation")
+    @classmethod
+    def _require_a_verdict(cls, value: str) -> str:
+        """Reject a blank verdict, which downstream reads as "no verdict".
+
+        ``TurnOutcome.from_agent_payload`` treats a missing appreciation as "no
+        verdict" and the router then advances on the workflow's default edge, so
+        an empty string here would silently approve a step the agent never
+        approved (issue #964). An unrecognized *non-blank* value is left to the
+        executor, which reports it as an actionable tool error.
+        """
+        if not value.strip():
+            raise ValueError(
+                "appreciation is required: one of "
+                f"{[a.value for a in Appreciation]}"
+            )
+        return value
+
+    @field_validator("hold_kind")
+    @classmethod
+    def _require_a_known_hold_kind(cls, value: Optional[str]) -> Optional[str]:
+        """Reject an unknown hold kind instead of coercing it to a default."""
+        if value is None:
+            return None
+        if value not in {kind.value for kind in HoldKind}:
+            raise ValueError(
+                f"invalid hold_kind {value!r}: expected one of "
+                f"{[kind.value for kind in HoldKind]}"
+            )
+        return value
 
 
 class TurnOutcomeObservation(Observation):
