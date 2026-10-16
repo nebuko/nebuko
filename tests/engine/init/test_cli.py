@@ -142,6 +142,42 @@ def test_missing_workflow_scope_exits_two_with_the_remediation(monkeypatch, caps
     assert host.secrets == {}
 
 
+def test_missing_workflow_scope_is_checked_before_the_secret_prompts(monkeypatch, capsys):
+    host = FakeHost(
+        report=PreflightReport(
+            ok=False, missing_scopes=("workflow",), remediation="gh auth refresh -s workflow"
+        )
+    )
+    prompter = FakePrompter(texts=["acme/widgets"], choice="openrouter", secrets=["key", "pat"])
+    _wire(monkeypatch, host, prompter)
+
+    code = cli.main([])
+
+    assert code == 2
+    assert prompter.secret_values == ["key", "pat"]  # the scope check runs before any secret prompt
+    assert "gh auth refresh -s workflow" in capsys.readouterr().err
+    assert host.prs == []
+
+
+def test_success_prints_the_scope_revert_hint(monkeypatch, capsys):
+    host = FakeHost()
+    _wire(monkeypatch, host)
+    _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
+
+    assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 0
+
+    assert "gh auth refresh --remove-scopes workflow" in capsys.readouterr().out
+
+
+def test_no_revert_hint_when_the_run_fails(monkeypatch, capsys):
+    host = FakeHost(existing=(".nebuko/agents/agent-config.yaml",))
+    _wire(monkeypatch, host)
+    _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
+
+    assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 1
+    assert "remove-scopes" not in capsys.readouterr().out
+
+
 # ── gh availability ──────────────────────────────────────────────────────────
 
 

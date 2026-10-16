@@ -30,8 +30,10 @@ from nebuko.engine.init.providers import (
 )
 from nebuko.engine.init.setup import (
     EXIT_ERRORS,
+    EXIT_OK,
     EXIT_USAGE,
     build_setup,
+    preflight_message,
     run_init,
     secret_names,
 )
@@ -41,6 +43,10 @@ SECRET_ENV_PREFIX = "NEBUKO_SECRET_"
 GH_MISSING_MESSAGE = """\
 nebuko init: the GitHub CLI (gh) is required but was not found on PATH.
 Install it from https://cli.github.com and run `gh auth login`."""
+REVERT_SCOPES_HINT = """\
+If you added the `workflow` scope only for this setup, you can restore your
+gh token's previous scopes with:
+  gh auth refresh --remove-scopes workflow"""
 PAT_INSTRUCTIONS = """\
 A GitHub Personal Access Token is required (fine-grained, with Contents,
 Pull requests and Issues read/write on the target repository). Create one at
@@ -133,6 +139,12 @@ def _run(args: argparse.Namespace) -> int:
         return EXIT_USAGE
     prompter: InitPrompter = NonInteractivePrompter() if args.non_interactive else InitPrompter()
     target = _resolve_target(args, prompter)
+    report = context.host.preflight(target)
+    if not report.ok:
+        # Check the token before asking for any secret value: the client can
+        # refresh the scope and re-run without re-entering the values.
+        print(preflight_message(report), file=sys.stderr)
+        return EXIT_USAGE
     provider = _resolve_provider(args, prompter)
     answers = InitAnswers(
         target=target,
@@ -142,7 +154,10 @@ def _run(args: argparse.Namespace) -> int:
         secrets=_collect_secrets(args, prompter, context.host, target, provider),
         force=args.force,
     )
-    return run_init(answers, context.source, context.host, prompter)
+    code = run_init(answers, context.source, context.host, prompter)
+    if code == EXIT_OK:
+        print(REVERT_SCOPES_HINT)
+    return code
 
 
 def _resolve_target(args: argparse.Namespace, prompter: InitPrompter) -> SetupTarget:

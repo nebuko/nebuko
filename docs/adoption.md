@@ -88,8 +88,10 @@ It uses **your own `gh` authentication**: nothing goes through a Nebuko server
 and no GitHub App is involved. `init` needs the GitHub CLI (`gh`) on your
 `PATH` — it stops with an install hint before doing anything else when it is
 missing. Pushing `.github/workflows/*` needs the `workflow`
-scope — `init` checks for it up front and tells you to run
-`gh auth refresh -s workflow` when it is missing.
+scope — `init` checks for it up front, before asking for any secret value, and
+tells you to run `gh auth refresh -s workflow` when it is missing. Once the
+setup succeeds it prints the command to restore your token's previous scopes
+(`gh auth refresh --remove-scopes workflow`).
 
 Release assets: `nebuko-linux-amd64`, `nebuko-macos-arm64`, `nebuko-macos-amd64`,
 `nebuko-windows-amd64.exe`.

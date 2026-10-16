@@ -1,7 +1,9 @@
 """The ``nebuko init`` orchestration (issue #991).
 
 ``render_files`` is pure (template in, files out); ``run_init`` is the flow:
-preflight → render → idempotence check → pull request → secrets → summary.
+render → idempotence check → pull request → secrets → summary. The ``gh``
+preflight runs in the CLI *before* the prompts, so a missing scope is reported
+before the client is asked for any secret value.
 """
 
 from __future__ import annotations
@@ -97,11 +99,6 @@ def run_init(
     prompter: Prompter,
 ) -> int:
     """Run the setup flow and return the process exit code (0/1/2)."""
-    report = host.preflight(answers.target)
-    if not report.ok:
-        print(preflight_message(report), file=sys.stderr)
-        return EXIT_USAGE
-
     generated = render_files(answers, source)
     existing = host.existing_paths(
         answers.target, (generated.agent_config_path, generated.workflow_path)
