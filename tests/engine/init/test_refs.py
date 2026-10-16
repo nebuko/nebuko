@@ -58,3 +58,16 @@ def test_latest_falls_back_when_no_tag_is_semver():
 
 def test_static_resolver_returns_its_ref():
     assert StaticRefResolver("v9.9.9").latest() == "v9.9.9"
+
+
+def test_default_runner_shells_out_to_gh(monkeypatch):
+    calls: list[tuple[list[str], dict]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append((list(args), kwargs))
+        return _completed("v0.0.3\n")
+
+    monkeypatch.setattr("nebuko.engine.init.refs.subprocess.run", fake_run)
+    assert GitTagRefResolver().latest() == "v0.0.3"
+    assert calls[0][1]["capture_output"] is True
+    assert calls[0][1]["text"] is True

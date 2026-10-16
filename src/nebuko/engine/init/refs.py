@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import subprocess
-from typing import Callable
+from typing import Any, Callable
 
 from nebuko.engine.init.ports import ReleaseRefResolver
 
@@ -19,8 +19,8 @@ DEFAULT_WORKFLOW_REF = "v0.0.2"
 _SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(args, capture_output=True, text=True, check=False)
+def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+    return subprocess.run(args, check=False, **kwargs)
 
 
 class GitTagRefResolver(ReleaseRefResolver):
