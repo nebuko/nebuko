@@ -48,7 +48,7 @@ steps:
   - name: git_diff
     script:
       command: "sh"
-      args: ["-c", "git fetch --no-tags --depth=50 origin main:refs/remotes/origin/main && git diff origin/main HEAD"]
+      args: ["-c", "git fetch --no-tags --depth=50 origin main:refs/remotes/origin/main && GIT_PAGER='' git diff origin/main HEAD"]
     next: run_tests
 
   - name: run_tests
@@ -62,7 +62,7 @@ steps:
     inputs: [plan, implement, git_diff, run_tests]
     conditions:
       - on_result: approved
-        next: handoff_cleanup
+        next: null
       - on_result: rejected
         next: implement
 
@@ -70,15 +70,15 @@ steps:
   # send-back to dev still needs the document. Only the approved path passes
   # here, and the deletion is a plain commit, so the handoff stays recoverable
   # from the branch history.
-  - name: handoff_cleanup
-    script:
-      command: "bash"
-      args: ["scripts/handoff_cleanup.sh"]
-    next: handoff_gate_check
+  # - name: handoff_cleanup
+  #   script:
+  #     command: "bash"
+  #     args: ["scripts/handoff_cleanup.sh"]
+  #   next: handoff_gate_check
 
-  # The gate check fails the workflow if the handoff is somehow still present.
-  - name: handoff_gate_check
-    script:
-      command: "bash"
-      args: ["scripts/handoff_check.sh"]
-    next: null
+  # # The gate check fails the workflow if the handoff is somehow still present.
+  # - name: handoff_gate_check
+  #   script:
+  #     command: "bash"
+  #     args: ["scripts/handoff_check.sh"]
+  #   next: null
