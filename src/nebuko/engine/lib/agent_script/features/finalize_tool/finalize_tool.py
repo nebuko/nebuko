@@ -33,7 +33,7 @@ from nebuko.engine.finalize import (
     RouteDecision,
     route_from_action,
 )
-from workflow_state import TurnOutcome
+from workflow_state import RunPrefs, TurnOutcome
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation.base import BaseConversation
@@ -102,6 +102,15 @@ def route_to_turn_outcome(route: RouteDecision) -> TurnOutcome:
     )
 
 
+def route_to_prefs(route: RouteDecision) -> RunPrefs:
+    """Map the non-routing knobs of the route onto :class:`RunPrefs`.
+
+    Mirrors ``dispatch_next``'s ``action_to_prefs``: the tier and the pin are
+    run preferences, not routing facts, so they travel beside the outcome.
+    """
+    return RunPrefs(complexity=route.complexity or "", pin=route.pin)
+
+
 class FinalizeExecutor(ToolExecutor):
     def __init__(self, conversation_id: str = "default") -> None:
         self._conversation_id = conversation_id
@@ -120,7 +129,11 @@ class FinalizeExecutor(ToolExecutor):
                 ),
                 is_error=True,
             )
-        record_turn_outcome(self._conversation_id, route_to_turn_outcome(route))
+        record_turn_outcome(
+            self._conversation_id,
+            route_to_turn_outcome(route),
+            route_to_prefs(route),
+        )
         return FinalizeObservation.from_text(
             text=(
                 f"Route recorded: appreciation={route.appreciation}, "

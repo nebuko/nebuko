@@ -10,6 +10,7 @@ from agent_script.features.dispatch_next_tool import (
     action_to_payload,
     action_to_prefs,
     clear_run,
+    get_recorded_run_prefs,
     get_recorded_turn_outcome,
     reset_registry,
 )
@@ -109,6 +110,33 @@ class TestDispatchNextTool(unittest.TestCase):
         self.assertEqual(outcome.hold_kind.value, "awaiting_input")
         clear_run("run-1")
         self.assertIsNone(get_recorded_turn_outcome("run-1"))
+
+    def test_executor_records_the_run_prefs(self):
+        """The knobs travel with the outcome (issue #964 round 6).
+
+        ``action_to_prefs`` had no production caller, so ``pin``/``complexity``
+        were silently inert; the executor must record them alongside the
+        outcome.
+        """
+        tool = DispatchNextTool.create(conversation_id="run-prefs")[0]
+        tool.executor(
+            TurnOutcomeAction(appreciation="approved", complexity="high", pin=True)
+        )
+        prefs = get_recorded_run_prefs("run-prefs")
+        self.assertIsNotNone(prefs)
+        self.assertEqual(prefs.complexity, "high")
+        self.assertTrue(prefs.pin)
+        clear_run("run-prefs")
+        self.assertIsNone(get_recorded_run_prefs("run-prefs"))
+
+    def test_executor_records_empty_prefs_when_none_supplied(self):
+        tool = DispatchNextTool.create(conversation_id="run-no-prefs")[0]
+        tool.executor(TurnOutcomeAction(appreciation="approved"))
+        prefs = get_recorded_run_prefs("run-no-prefs")
+        self.assertIsNotNone(prefs)
+        self.assertEqual(prefs.complexity, "")
+        self.assertFalse(prefs.pin)
+        clear_run("run-no-prefs")
 
     def test_executor_rejects_invalid_payload(self):
         tool = DispatchNextTool.create(conversation_id="run-2")[0]

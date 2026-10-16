@@ -98,6 +98,30 @@ class TestFinalizeToolRegistration:
         assert outcome.appreciation is Appreciation.APPROVED
         assert outcome.required_agent == "review"
 
+    def test_finalize_action_records_the_route_prefs(self) -> None:
+        """The route's tier/pin travel with the outcome (issue #964 round 6)."""
+        from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+            get_recorded_run_prefs,
+        )
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+
+        tool = FinalizeTool.create(conversation_id="c-route-prefs")[0]
+        action = tool.action_from_arguments(
+            {
+                "route": {
+                    "appreciation": "approved",
+                    "complexity": "high",
+                    "pin": True,
+                }
+            }
+        )
+        tool.executor(action)
+
+        prefs = get_recorded_run_prefs("c-route-prefs")
+        assert prefs is not None
+        assert prefs.complexity == "high"
+        assert prefs.pin is True
+
 
 class TestFinalizePromptTeachesTheTypedSchema:
     """The finalize prompt is agent-facing, so it must teach the live schema.

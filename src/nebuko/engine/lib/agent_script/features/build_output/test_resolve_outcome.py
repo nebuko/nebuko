@@ -58,9 +58,11 @@ def _resolved(conv_id: str, outcome=None, function_call=None, message="answer"):
 class TestResolveOutcome(unittest.TestCase):
     """The recorded tool call is the resolution authority."""
 
-    def _resolve(self, fake, outcome=None, function_call=None, message="answer"):
+    def _resolve(self, fake, outcome=None, function_call=None, prefs=None):
         with mock.patch(
             "build_output.get_recorded_turn_outcome", return_value=outcome
+        ), mock.patch(
+            "build_output.get_recorded_run_prefs", return_value=prefs
         ), mock.patch(
             "build_output.get_recorded_function_call", return_value=function_call
         ):
@@ -72,7 +74,7 @@ class TestResolveOutcome(unittest.TestCase):
         recorded = TurnOutcome(
             status="completed", appreciation="hold", hold_kind="awaiting_input"
         )
-        resolved, function_call = self._resolve(
+        resolved, _, function_call = self._resolve(
             _FakeConv("conv-stale"), outcome=recorded
         )
         self.assertEqual(resolved, recorded)
@@ -83,30 +85,48 @@ class TestResolveOutcome(unittest.TestCase):
         recorded = TurnOutcome(
             status="completed", appreciation="approved", required_agent="context"
         )
-        resolved, function_call = self._resolve(
+        resolved, _, function_call = self._resolve(
             _FakeConv("conv-target"), outcome=recorded
         )
         self.assertEqual(resolved, recorded)
         self.assertEqual(function_call.agent_name, "context")
 
     def test_prefs_complexity_rides_the_derived_hand_off_separately(self):
-        """The declared tier is a non-routing run preference (issue #787), so
-        it travels on RunPrefs, never on the outcome."""
+        """The declared tier is a non-routing run preference (issue #787): it
+        rides out of resolution on RunPrefs and onto the derived hand-off,
+        never on the outcome itself.
+
+        This pins the mapper; the write lane (tool call -> registry ->
+        resolution) is covered by ``TestAgentPrefsReachTheResolution`` in
+        ``test_build_output``.
+        """
         recorded = TurnOutcome(
             status="completed", appreciation="approved", required_agent="context"
         )
-        _, function_call = self._resolve(
-            _FakeConv("conv-fc-complexity"), outcome=recorded
+        _, prefs, function_call = self._resolve(
+            _FakeConv("conv-fc-complexity"),
+            outcome=recorded,
+            prefs=RunPrefs(complexity="high"),
         )
         self.assertEqual(function_call.agent_name, "context")
         # The tier is not part of the routing fact at all.
         self.assertNotIn("complexity", recorded.model_dump())
-        self.assertEqual(RunPrefs(complexity="high").complexity, "high")
+        # ...but it is carried beside it, and onto the derived hand-off.
+        self.assertEqual(prefs.complexity, "high")
+        self.assertEqual(function_call.complexity, "high")
+
+    def test_no_recorded_prefs_defaults_to_empty(self):
+        """A recorded outcome with no prefs beside it resolves to an empty
+        RunPrefs, so the resolver applies the step's declared tier (#787)."""
+        recorded = TurnOutcome(status="completed", appreciation="approved")
+        _, prefs, _ = self._resolve(_FakeConv("conv-no-prefs"), outcome=recorded)
+        self.assertEqual(prefs, RunPrefs())
+        self.assertFalse(prefs.pin)
 
     def test_no_verdict_anywhere_defaults_to_a_no_outcome_record(self):
         """Neither source yields a decision: record the absence of a verdict
         (issue #765/#864) instead of silently auto-advancing the workflow."""
-        resolved, function_call = self._resolve(_FakeConv("conv-none"))
+        resolved, _, function_call = self._resolve(_FakeConv("conv-none"))
         self.assertEqual(resolved.status.value, "incomplete")
         self.assertEqual(resolved.incomplete_reason.value, "no_outcome")
         self.assertIsNone(function_call)
@@ -114,7 +134,7 @@ class TestResolveOutcome(unittest.TestCase):
     def test_a_stale_unparsable_sentinel_echo_is_not_a_decision(self):
         """A present-but-unparsable sentinel echo is still a decision-less run
         (the echo is inert since #964)."""
-        resolved, function_call = self._resolve(
+        resolved, _, function_call = self._resolve(
             _FakeConv("conv-broken"),
         )
         self.assertEqual(resolved.incomplete_reason.value, "no_outcome")
@@ -122,7 +142,7 @@ class TestResolveOutcome(unittest.TestCase):
 
     def test_a_stale_patch_sentinel_echo_is_never_applied(self):
         """The deleted JSON-patch helper cannot be reached from prose (#964)."""
-        resolved, _ = self._resolve(_FakeConv("conv-patch"))
+        resolved, _, _ = self._resolve(_FakeConv("conv-patch"))
         self.assertEqual(resolved.status.value, "incomplete")
         self.assertIsNone(resolved.required_agent)
 
@@ -130,7 +150,7 @@ class TestResolveOutcome(unittest.TestCase):
         """A workflow-relative outcome (no explicit target) must not
         fabricate a function_call."""
         recorded = TurnOutcome(status="completed", appreciation="approved")
-        resolved, function_call = self._resolve(
+        resolved, _, function_call = self._resolve(
             _FakeConv("conv-noagent"), outcome=recorded
         )
         self.assertEqual(resolved, recorded)
@@ -196,7 +216,7 @@ class TestIssue864FixtureReplay(unittest.TestCase):
         ), mock.patch(
             "build_output.get_recorded_function_call", return_value=None
         ), mock.patch.dict(os.environ, {"CONFIG_CALLBACK": "architect"}):
-            outcome, function_call = _resolve_outcome(fake)
+            outcome, _, function_call = _resolve_outcome(fake)
 
         self.assertEqual(outcome.status.value, "incomplete")
         self.assertEqual(outcome.incomplete_reason.value, "no_outcome")
@@ -212,7 +232,7 @@ class TestIssue864FixtureReplay(unittest.TestCase):
         ), mock.patch(
             "build_output.get_recorded_function_call", return_value=None
         ), mock.patch.dict(os.environ, env, clear=True):
-            outcome, _ = _resolve_outcome(fake)
+            outcome, _, _ = _resolve_outcome(fake)
 
         self.assertEqual(outcome.status.value, "incomplete")
         self.assertEqual(outcome.incomplete_reason.value, "no_outcome")
@@ -236,12 +256,12 @@ class TestStaleSentinelEchoIsInert(unittest.TestCase):
 
     def test_a_sentinel_verdict_cannot_override_the_recorded_one(self):
         recorded = TurnOutcome(status="completed", appreciation="approved")
-        resolved, _ = self._resolve("conv-merge", recorded)
+        resolved, _, _ = self._resolve("conv-merge", recorded)
         self.assertIs(resolved.appreciation, Appreciation.APPROVED)
 
     def test_a_sentinel_target_cannot_fabricate_a_hand_off(self):
         recorded = TurnOutcome(status="completed", appreciation="approved")
-        _, function_call = self._resolve("conv-merge-none", recorded)
+        _, _, function_call = self._resolve("conv-merge-none", recorded)
         self.assertIsNone(function_call)
 
 
@@ -265,15 +285,23 @@ class TestTypedCallAgentResolution(unittest.TestCase):
         call = FunctionCall(
             function="call_agent", agent_name="context", complexity="high"
         )
-        outcome, function_call = self._resolve(_FakeConv("conv-typed-only"), None, call)
+        outcome, _, function_call = self._resolve(_FakeConv("conv-typed-only"), None, call)
         self.assertIs(outcome.appreciation, Appreciation.APPROVED)
         self.assertEqual(outcome.required_agent, "context")
         self.assertEqual(function_call.agent_name, "context")
 
+    def test_typed_call_agent_carries_its_declared_tier(self):
+        """The hand-off's declared tier rides on RunPrefs (issue #787)."""
+        call = FunctionCall(
+            function="call_agent", agent_name="context", complexity="high"
+        )
+        _, prefs, _ = self._resolve(_FakeConv("conv-typed-tier"), None, call)
+        self.assertEqual(prefs.complexity, "high")
+
     def test_typed_call_agent_beats_the_legacy_sentinel(self):
         """A typed hand-off wins over a co-emitted sentinel function_call."""
         call = FunctionCall(function="call_agent", agent_name="context")
-        outcome, function_call = self._resolve(
+        outcome, _, function_call = self._resolve(
             _FakeConv("conv-typed-beats-sentinel"), None, call
         )
         self.assertEqual(outcome.required_agent, "context")
@@ -283,7 +311,7 @@ class TestTypedCallAgentResolution(unittest.TestCase):
         """When both tools are called, the imperative hand-off target is kept."""
         recorded = TurnOutcome(status="completed", appreciation="approved")
         call = FunctionCall(function="call_agent", agent_name="context")
-        outcome, function_call = self._resolve(
+        outcome, _, function_call = self._resolve(
             _FakeConv("conv-typed-beats-dispatch"), recorded, call
         )
         self.assertEqual(outcome, recorded)

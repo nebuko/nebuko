@@ -69,6 +69,66 @@ class TestResolvePin(unittest.TestCase):
                 self.assertTrue(_resolve_pin(None), msg=value)
 
 
+class TestAgentPrefsReachTheResolution(unittest.TestCase):
+    """Agent-supplied run prefs are wired end to end (issue #964 round 6).
+
+    The round-6 blocker: ``action_to_prefs`` had no production caller, so
+    ``dispatch_next(pin=True, complexity="high")`` was silently inert. The
+    recorded knobs must reach ``_resolve_outcome`` and drive ``_resolve_pin``.
+    """
+
+    def setUp(self):
+        from agent_script.features.dispatch_next_tool import reset_registry
+
+        reset_registry()
+
+    def test_dispatch_next_prefs_reach_resolution_and_pin(self):
+        import build_output as bo
+        from agent_script.features.dispatch_next_tool import (
+            DispatchNextTool,
+            TurnOutcomeAction,
+        )
+
+        conversation = SimpleNamespace(id="conv-prefs", run_outcome=None)
+        tool = DispatchNextTool.create(conversation_id="conv-prefs")[0]
+        tool.executor(
+            TurnOutcomeAction(appreciation="approved", complexity="high", pin=True)
+        )
+
+        outcome, prefs, function_call = bo._resolve_outcome(conversation)
+        self.assertIs(outcome.appreciation, Appreciation.APPROVED)
+        self.assertIsNone(function_call)
+        self.assertEqual(prefs.complexity, "high")
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PIN_COMMENT", None)
+            self.assertTrue(_resolve_pin(prefs))
+
+    def test_finalize_route_prefs_reach_resolution_and_pin(self):
+        import build_output as bo
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+
+        tool = FinalizeTool.create(conversation_id="conv-finalize-prefs")[0]
+        tool.executor(
+            tool.action_from_arguments(
+                {
+                    "route": {
+                        "appreciation": "approved",
+                        "complexity": "low",
+                        "pin": True,
+                    }
+                }
+            )
+        )
+
+        conversation = SimpleNamespace(id="conv-finalize-prefs", run_outcome=None)
+        outcome, prefs, _ = bo._resolve_outcome(conversation)
+        self.assertIs(outcome.appreciation, Appreciation.APPROVED)
+        self.assertEqual(prefs.complexity, "low")
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PIN_COMMENT", None)
+            self.assertTrue(_resolve_pin(prefs))
+
+
 class TestIsMalformedFinalMessage(unittest.TestCase):
     """Test the is_malformed_final_message() function."""
 
@@ -385,7 +445,7 @@ class TestIsHumanGateHold(unittest.TestCase):
                  mock.patch.object(bo, "_build_pr_info", return_value=None), \
                  mock.patch.object(
                      bo, "_resolve_outcome",
-                     return_value=(_completed(), None),
+                     return_value=(_completed(), RunPrefs(), None),
                  ), \
                  mock.patch.object(bo, "clear_run"), \
                  mock.patch.object(bo, "clear_scaffold_branch_run"), \
@@ -451,6 +511,7 @@ class TestIsHumanGateHold(unittest.TestCase):
                      bo, "_resolve_outcome",
                      return_value=(
                          _completed(),
+                         RunPrefs(),
                          FunctionCall(function="call_agent", agent_name="dev"),
                      ),
                  ), \
@@ -952,6 +1013,7 @@ class TestExtractLatestAnswerRecallOffset(unittest.TestCase):
                          status=TurnStatus.INCOMPLETE,
                          incomplete_reason="no_outcome",
                      ),
+                     RunPrefs(),
                      None,
                  ),
              ), \

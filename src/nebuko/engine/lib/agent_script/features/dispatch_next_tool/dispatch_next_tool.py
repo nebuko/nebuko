@@ -143,16 +143,30 @@ answer. The parameters above are factual metadata only; never stuff the report i
 
 # ── Run-scoped turn-outcome registry ──────────────────────────────────────
 # Keys are opaque run ids (conversation id, or the literal "default" key for
-# single-run processes and tests). The latest outcome wins.
+# single-run processes and tests). The latest outcome wins. The non-routing
+# run preferences travel with the outcome (issue #964): they are recorded by
+# the same tool call, so they share its lifecycle.
 
 _registry_lock = Lock()
 _outcome_registry: dict[str, TurnOutcome] = {}
+_prefs_registry: dict[str, RunPrefs] = {}
 
 
-def record_turn_outcome(conversation_id: str, outcome: TurnOutcome) -> None:
-    """Store the most recent turn outcome for a run (thread-safe)."""
+def record_turn_outcome(
+    conversation_id: str,
+    outcome: TurnOutcome,
+    prefs: Optional[RunPrefs] = None,
+) -> None:
+    """Store the most recent turn outcome (and its run prefs) for a run.
+
+    ``prefs`` defaults to an empty :class:`RunPrefs` so a caller that only has
+    an outcome (tests, engine-synthesized outcomes) still leaves the registry
+    consistent — the two entries are always written together.
+    """
+    key = str(conversation_id)
     with _registry_lock:
-        _outcome_registry[str(conversation_id)] = outcome
+        _outcome_registry[key] = outcome
+        _prefs_registry[key] = prefs if prefs is not None else RunPrefs()
     logger.info(
         f"dispatch_next recorded for run {conversation_id}: "
         f"status={outcome.status.value}, appreciation={outcome.appreciation}, "
@@ -166,16 +180,25 @@ def get_recorded_turn_outcome(conversation_id: str) -> Optional[TurnOutcome]:
         return _outcome_registry.get(str(conversation_id))
 
 
-def clear_run(conversation_id: str) -> None:
-    """Drop the recorded outcome for a run (cleanup after output build)."""
+def get_recorded_run_prefs(conversation_id: str) -> Optional[RunPrefs]:
+    """Return the run prefs recorded with the latest outcome, or None."""
     with _registry_lock:
-        _outcome_registry.pop(str(conversation_id), None)
+        return _prefs_registry.get(str(conversation_id))
+
+
+def clear_run(conversation_id: str) -> None:
+    """Drop the recorded outcome and prefs for a run (cleanup after output)."""
+    key = str(conversation_id)
+    with _registry_lock:
+        _outcome_registry.pop(key, None)
+        _prefs_registry.pop(key, None)
 
 
 def reset_registry() -> None:
     """Clear every run (intended for tests)."""
     with _registry_lock:
         _outcome_registry.clear()
+        _prefs_registry.clear()
 
 
 def action_to_payload(action: TurnOutcomeAction) -> dict[str, Any]:
@@ -222,7 +245,9 @@ class DispatchNextExecutor(ToolExecutor):
                 f"dispatch_next rejected for run {self._conversation_id}: {e}"
             )
             return TurnOutcomeObservation.from_text(text=str(e), is_error=True)
-        record_turn_outcome(self._conversation_id, outcome)
+        record_turn_outcome(
+            self._conversation_id, outcome, action_to_prefs(action)
+        )
         return TurnOutcomeObservation.from_text(
             text=(
                 f"Turn outcome recorded: appreciation={outcome.appreciation}, "

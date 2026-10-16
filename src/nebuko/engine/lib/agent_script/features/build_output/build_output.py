@@ -64,6 +64,7 @@ from agent_script.features.ensure_pr.ensure_pr import (
 )
 from agent_script.features.dispatch_next_tool import (
     clear_run,
+    get_recorded_run_prefs,
     get_recorded_turn_outcome,
 )
 from agent_script.features.call_agent_tool import (
@@ -830,8 +831,8 @@ def _typed_function_call(conversation) -> Optional[FunctionCall]:
 
 def _resolve_outcome(
     conversation,
-) -> tuple[TurnOutcome, Optional[FunctionCall]]:
-    """Resolve the run's factual turn outcome and typed hand-off.
+) -> tuple[TurnOutcome, RunPrefs, Optional[FunctionCall]]:
+    """Resolve the run's factual turn outcome, run prefs and typed hand-off.
 
     Resolution priority (issue #524, extended by #876/#964):
       1. The recorded ``dispatch_next`` tool call — a boolean check on
@@ -846,9 +847,12 @@ def _resolve_outcome(
     truth. A stale echo of one is inert.
 
     Returns:
-        The ``(turn_outcome, function_call)`` pair for this run.
+        The ``(turn_outcome, prefs, function_call)`` triple for this run. The
+        prefs are the non-routing knobs recorded with the outcome (issue #964);
+        they are empty when no tool call stated them.
     """
     function_call: Optional[FunctionCall] = None
+    prefs = RunPrefs()
     conv_id = getattr(conversation, "id", None)
     outcome = (
         get_recorded_turn_outcome(conv_id) if conv_id is not None else None
@@ -856,6 +860,11 @@ def _resolve_outcome(
     typed_function_call = _typed_function_call(conversation)
 
     if outcome is not None:
+        recorded_prefs = (
+            get_recorded_run_prefs(conv_id) if conv_id is not None else None
+        )
+        if recorded_prefs is not None:
+            prefs = recorded_prefs
         if typed_function_call is not None:
             function_call = typed_function_call
         elif outcome.required_agent:
@@ -865,7 +874,13 @@ def _resolve_outcome(
                 agent_to_function_call,
             )
 
-            function_call = FunctionCall(**agent_to_function_call(outcome.required_agent))
+            # Carry the declared tier (issue #787) so a hand-off without one
+            # inherits the callee step's declared tier instead of masking it
+            # with a hardcoded default.
+            function_call = FunctionCall(
+                **agent_to_function_call(outcome.required_agent),
+                complexity=prefs.complexity,
+            )
         logger.info(
             "Turn outcome resolved via dispatch_next tool: "
             f"status={outcome.status.value}, "
@@ -879,6 +894,7 @@ def _resolve_outcome(
             appreciation=Appreciation.APPROVED,
             required_agent=typed_function_call.agent_name,
         )
+        prefs = RunPrefs(complexity=typed_function_call.complexity or "")
         function_call = typed_function_call
         logger.info(
             "Turn outcome resolved via typed call_agent tool: "
@@ -895,7 +911,7 @@ def _resolve_outcome(
             f"{outcome.status.value}/{outcome.incomplete_reason.value}"
         )
 
-    return _observed_status(conversation, outcome), function_call
+    return _observed_status(conversation, outcome), prefs, function_call
 
 
 def _observed_status(conversation, outcome: TurnOutcome) -> TurnOutcome:
@@ -1117,13 +1133,13 @@ def build_output(
     resolution = _build_resolution()
 
     # ── Extract the turn outcome + function_call from agent output ─────
-    turn_outcome, function_call = _resolve_outcome(conversation)
+    turn_outcome, prefs, function_call = _resolve_outcome(conversation)
 
     # Self function_call neutralization (issue #618, defect 2a) + PO escalation
     # pin (issue #876 review): both decisions live in the pure helper so they
     # are directly unit-testable.
     turn_outcome, prefs, function_call = _neutralize_self_and_pin(
-        turn_outcome, RunPrefs(), function_call, role_name
+        turn_outcome, prefs, function_call, role_name
     )
 
     # Clear the run-scoped dispatch registry on every exit path (issue #524):
@@ -1148,6 +1164,10 @@ def build_output(
     # Applied before the human-gate intercept so a gated step still holds.
     if is_graceful_timeout:
         turn_outcome = _soft_kill_outcome()
+        # The interrupted step re-runs in place; the agent's run preferences
+        # belonged to the turn that never completed (parity with the legacy
+        # soft-kill dispatch, which carried none).
+        prefs = RunPrefs()
         logger.info("Graceful timeout — outcome overridden with SOFT_TIMEOUT")
 
     # ── Agent-checkpoint status (issue #965) ─────────────────────
@@ -1161,6 +1181,7 @@ def build_output(
         and run_outcome.status is OutcomeStatus.AGENT_CHECKPOINT
     ):
         turn_outcome = _agent_checkpoint_outcome()
+        prefs = RunPrefs()
         logger.info("Handoff fold — outcome overridden with AGENT_CHECKPOINT")
 
     # ── Human gate intercept (issues #506, #648) ─────────────────
