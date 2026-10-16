@@ -6,11 +6,14 @@ reused ``workflow_state.workflow_state.WorkflowState`` — never re-declared her
 
 from __future__ import annotations
 
-import shlex
+import json
+import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field, replace
 from enum import Enum, IntEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict
@@ -33,6 +36,8 @@ __all__ = [
     "to_routing_decision",
     "circuit_breaker_update_notice",
 ]
+
+log = logging.getLogger(__name__)
 
 
 # @stub-protected
@@ -197,8 +202,10 @@ class DeterministicStep:
     kind: Literal["delete_comments", "run_script", "update_circuit_breaker"]
     issue: str = ""  # delete_comments: target issue
     from_comment: str = ""  # delete_comments: --from boundary ("" = all)
-    script_path: str = ""  # run_script
-    script_args: str = ""
+    script_path: str = ""  # run_script: the `command` (executable or repo-local script)
+    script_args: str = "[]"  # run_script: JSON array of argv entries (issue #974)
+    script_working_dir: str = ""  # run_script: repo-relative cwd ("" = workspace root)
+    script_env: str = "{}"  # run_script: JSON object merged over the engine env
     timeout_minutes: int | None = None
     step_name: str = ""  # run_script: workflow step name (from WORKFLOW_STEP)
     circuit_breaker_value: int = 0  # update_circuit_breaker: new per-issue limit
@@ -225,7 +232,9 @@ class DeterministicStep:
             return cls(
                 kind="run_script",
                 script_path=str(resolved.get("SCRIPT_PATH") or ""),
-                script_args=str(resolved.get("SCRIPT_ARGS") or ""),
+                script_args=str(resolved.get("SCRIPT_ARGS") or "[]"),
+                script_working_dir=str(resolved.get("SCRIPT_WORKING_DIR") or ""),
+                script_env=str(resolved.get("SCRIPT_ENV") or "{}"),
                 timeout_minutes=int(timeout) if timeout.isdigit() else None,
                 step_name=str(resolved.get("WORKFLOW_STEP") or ""),
             )
@@ -253,7 +262,7 @@ class DeterministicStep:
                 )
             if self.kind == "update_circuit_breaker":
                 return self._execute_circuit_breaker_update(adapter)
-            return self._execute_script()
+            return self._execute_script(_session_workspace())
         except Exception as exc:  # noqa: BLE001 - a step failure is data, not a crash
             return StepResult(step_kind=self.kind, ok=False, detail=str(exc), affected=0)
 
@@ -295,8 +304,15 @@ class DeterministicStep:
             affected=self.circuit_breaker_value,
         )
 
-    def _execute_script(self) -> StepResult:
+    def _execute_script(self, workspace: Path | None = None) -> StepResult:
         """Run the script, capturing combined output and timing it.
+
+        ``argv`` is ``[command, *args]`` — no shell — with the args decoded from
+        the resolver's JSON array, so an entry containing spaces or quotes
+        reaches the child verbatim (issue #974). The process runs in the
+        session workspace (or ``working_dir`` under it) with the engine
+        environment overlaid by the step's ``env``; ``HookRunner`` uses the
+        same anchor.
 
         A timeout is data, not a crash (issue #885): it returns ``ok=False`` with
         the partial output and no exit code, mirroring a non-zero exit. Output is
@@ -304,10 +320,15 @@ class DeterministicStep:
         the interleaved stream a terminal would.
         """
         timeout = self.timeout_minutes * 60 if self.timeout_minutes else None
+        cwd, env = _script_process_context(
+            workspace, self.script_working_dir, self.script_env
+        )
         started = time.monotonic()
         try:
             completed = subprocess.run(
-                [self.script_path, *shlex.split(self.script_args)],
+                [self.script_path, *_script_argv(self.script_args)],
+                cwd=cwd,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -330,6 +351,74 @@ class DeterministicStep:
             output=completed.stdout or "",
             duration_seconds=time.monotonic() - started,
         )
+
+
+def _session_workspace() -> Path | None:
+    """The session checkout a script step runs in, or ``None`` when unknown.
+
+    Script steps are leaf vocabulary and must stay free of workspace policy, so
+    the directory is read here from the same env contract the platform sets for
+    the engine (``GITHUB_WORKSPACE`` in CI, ``NEBUKO_WORKSPACE`` for a local
+    host) rather than injected through the model.
+    """
+    for key in ("NEBUKO_WORKSPACE", "GITHUB_WORKSPACE"):
+        value = os.environ.get(key)
+        if value:
+            return Path(value)
+    return None
+
+
+def _script_argv(encoded: str) -> list[str]:
+    """Decode the resolver's JSON argv array; malformed input means no args.
+
+    Degradation is logged, never silent: a legacy shell-string ``SCRIPT_ARGS``
+    (the pre-#974 ``" ".join`` contract) is not valid JSON, and losing every
+    argument without a trace would be indistinguishable from a step that
+    genuinely declared none.
+    """
+    try:
+        decoded = json.loads(encoded or "[]")
+    except ValueError:
+        log.warning("SCRIPT_ARGS is not valid JSON; running with no arguments")
+        return []
+    if not isinstance(decoded, list):
+        log.warning("SCRIPT_ARGS is not a JSON array; running with no arguments")
+        return []
+    return [str(arg) for arg in decoded]
+
+
+def _script_process_context(
+    workspace: Path | None, working_dir: str, encoded_env: str
+) -> tuple[str | None, dict[str, str] | None]:
+    """The ``(cwd, env)`` for a script child (issue #974).
+
+    The step's ``working_dir`` is anchored at the session ``workspace`` and the
+    environment is the engine's own overlaid by the step's ``env`` (explicit
+    keys win). Without a workspace — a host with no session directory — both
+    stay ``None``, so the child inherits the ambient process state as before.
+    """
+    if workspace is None:
+        return None, None
+    cwd = Path(workspace) / working_dir if working_dir else Path(workspace)
+    env = {**os.environ, **_script_env(encoded_env)}
+    return str(cwd), env
+
+
+def _script_env(encoded: str) -> dict[str, str]:
+    """Decode the resolver's JSON env object; malformed input means no overlay.
+
+    Like :func:`_script_argv`, a malformed value degrades with a log line so a
+    dropped ``env`` block is visible rather than silently ignored.
+    """
+    try:
+        decoded = json.loads(encoded or "{}")
+    except ValueError:
+        log.warning("SCRIPT_ENV is not valid JSON; running with no env overlay")
+        return {}
+    if not isinstance(decoded, dict):
+        log.warning("SCRIPT_ENV is not a JSON object; running with no env overlay")
+        return {}
+    return {str(k): str(v) for k, v in decoded.items()}
 
 
 def circuit_breaker_update_notice(value: int, agent_calls: int) -> str:

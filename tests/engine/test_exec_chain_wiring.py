@@ -12,12 +12,20 @@ These guards keep the chain structural: ``implement → fetch_base → git_diff 
 run_tests → review``. Since #957 ``fetch_base`` materializes the remote-tracking
 ``origin/main`` a shallow, ref-pinned checkout never creates, so the diff cannot
 die with ``fatal: ambiguous argument 'origin/main'``.
+
+Since #974 the *engine*, not the workflow file, closes the second half of that
+gap: consecutive script steps run in one invocation over one checkout, so the
+ref ``fetch_base`` creates is still there when ``git_diff`` runs — even though
+by structure this had to be the same argument (see
+:class:`TestScriptChainSharesOneWorkspace`).
 """
 
 from __future__ import annotations
 
-import shlex
+import json
 from pathlib import Path
+
+import pytest
 
 from config import load_workflow
 
@@ -38,7 +46,7 @@ class TestExecChainIsReachable:
         """The checkout is shallow: ``origin/main`` must be fetched, not assumed."""
         fetch_base = _steps()["fetch_base"]
         assert fetch_base.script is not None
-        assert fetch_base.script.path == "git"
+        assert fetch_base.script.command == "git"
         args = fetch_base.script.args
         assert args[0] == "fetch"
         assert "main:refs/remotes/origin/main" in args
@@ -47,14 +55,14 @@ class TestExecChainIsReachable:
     def test_git_diff_is_a_script_step_that_continues_to_run_tests(self):
         git_diff = _steps()["git_diff"]
         assert git_diff.script is not None
-        assert git_diff.script.path == "git"
+        assert git_diff.script.command == "git"
         assert git_diff.script.args[:2] == ["diff", "origin/main"]
         assert git_diff.next == "run_tests"
 
     def test_run_tests_is_a_script_step_that_continues_to_review(self):
         run_tests = _steps()["run_tests"]
         assert run_tests.script is not None
-        assert run_tests.script.path == "uv"
+        assert run_tests.script.command == "uv"
         assert run_tests.next == "review"
 
     def test_review_consumes_both_script_outputs(self):
@@ -62,20 +70,19 @@ class TestExecChainIsReachable:
         bound = set(review.inputs or {})
         assert {"git_diff", "run_tests"} <= bound
 
-    def test_no_script_step_relies_on_shell_word_splitting(self):
-        """Script ``args`` round-trip through a space-join/``shlex.split``.
+    def test_argv_survives_the_executor_contract_unchanged(self):
+        """``args`` reach the child verbatim — no shell, no re-splitting.
 
-        The resolver joins ``args`` with a space and the executor re-splits
-        that string, so a shell-quoting construct such as
-        ``path: "sh", args: ["-c", "git fetch && git diff"]`` loses its
-        grouping and runs as ``sh -c git fetch`` (issue #957). Keep every
-        script step's argv self-consistent under that contract.
+        The executor decodes the resolver's JSON array into ``[command, *args]``
+        (issue #974), so a quoted construct such as
+        ``command: "sh", args: ["-c", "git fetch && git diff"]`` keeps its
+        grouping instead of running as ``sh -c git fetch`` (issue #957).
         """
         for name, step in _steps().items():
             if step.script is None:
                 continue
-            args = step.script.args
-            assert shlex.split(" ".join(args)) == args, name
+            env = step.script.to_process_env()
+            assert json.loads(env["SCRIPT_ARGS"]) == (step.script.args or []), name
 
 
 class TestHandoffCleanupChain:
@@ -100,13 +107,13 @@ class TestHandoffCleanupChain:
         steps = _steps()
         cleanup = steps["handoff_cleanup"]
         assert cleanup.script is not None
-        assert cleanup.script.path == "bash"
+        assert cleanup.script.command == "bash"
         assert cleanup.script.args == ["scripts/handoff_cleanup.sh"]
         assert cleanup.next == "handoff_gate_check"
 
         gate = steps["handoff_gate_check"]
         assert gate.script is not None
-        assert gate.script.path == "bash"
+        assert gate.script.command == "bash"
         assert gate.script.args == ["scripts/handoff_check.sh"]
         assert gate.next is None
 

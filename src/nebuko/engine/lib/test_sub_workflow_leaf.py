@@ -290,7 +290,7 @@ class TestScriptLeafResolution(unittest.TestCase):
             "steps:\n"
             "  - name: build\n"
             "    script:\n"
-            "      path: scripts/build.py\n"
+            "      command: scripts/build.py\n"
             "      args: ['--flag', '1']\n"
             "      timeout_minutes: 5\n"
             "    next: null\n"
@@ -309,7 +309,7 @@ class TestScriptLeafResolution(unittest.TestCase):
         self.assertEqual(leaf.agent, "")
         self.assertEqual(leaf.step, "build")
         self.assertEqual(leaf.script_path, "scripts/build.py")
-        self.assertEqual(leaf.script_args, "--flag 1")
+        self.assertEqual(leaf.script_args, '["--flag", "1"]')
         self.assertEqual(leaf.script_timeout, 5)
         self.assertEqual(
             leaf.refs[-1], {"workflow": leaf.workflow, "step": leaf.step}
@@ -325,5 +325,5 @@ class TestScriptLeafResolution(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertEqual(result["RUN_SCRIPT"], "true")
         self.assertEqual(result["SCRIPT_PATH"], "scripts/build.py")
-        self.assertEqual(result["SCRIPT_ARGS"], "--flag 1")
+        self.assertEqual(result["SCRIPT_ARGS"], '["--flag", "1"]')
         self.assertEqual(result["SCRIPT_TIMEOUT_MINUTES"], "5")

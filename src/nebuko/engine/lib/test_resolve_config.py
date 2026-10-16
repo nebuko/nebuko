@@ -1309,7 +1309,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
             "    next: run_check\n"
             "  - name: run_check\n"
             "    script:\n"
-            "      path: scripts/check.py\n"
+            "      command: scripts/check.py\n"
             "      args: [\"--fast\"]\n"
             "      timeout_minutes: 5\n"
             "    next: finalize\n"
@@ -1331,7 +1331,7 @@ class TestForceNextStepSubWorkflow(unittest.TestCase):
         self.assertEqual(result["RUN_SCRIPT"], "true")
         self.assertEqual(result["ROLE_NAME"], "script")
         self.assertEqual(result["SCRIPT_PATH"], "scripts/check.py")
-        self.assertEqual(result["SCRIPT_ARGS"], "--fast")
+        self.assertEqual(result["SCRIPT_ARGS"], '["--fast"]')
         self.assertEqual(result["SCRIPT_TIMEOUT_MINUTES"], "5")
         self.assertEqual(result["WORKFLOW_NAME"], "scriptparent")
         self.assertEqual(result["WORKFLOW_STEP"], "run_check")

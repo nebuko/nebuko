@@ -57,7 +57,7 @@ class TestWorkflowDefinition:
             steps=[
                 WorkflowStep(
                     name="build",
-                    script={"path": "scripts/build.py"},
+                    script={"command": "scripts/build.py"},
                     next=None,
                 )
             ],

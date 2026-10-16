@@ -116,8 +116,10 @@ graph-level invariants below are checked offline by
 | `steps[].agent` | step | string | one of `agent`/`workflow`/`repo`/`script` | Agent role executing the step. |
 | `steps[].workflow` | step | string/path | one of `agent`/`workflow`/`repo`/`script` | Sub-workflow to mount instead of an agent (name or path like `tmp_impl/workflow.yaml`). |
 | `steps[].script` | step | object | one of `agent`/`workflow`/`repo`/`script` | Deterministic, non-agent script execution (see below). |
-| `steps[].script.path` | script | string | yes (with `script`) | Repo-relative path of the script to run. Absolute paths and `..` segments are rejected. |
-| `steps[].script.args` | script | string[] | no | Arguments passed to the script (argv list, no shell interpolation). |
+| `steps[].script.command` | script | string | yes (with `script`) | Executable to run (`uv`, `git`, or a repo-relative script such as `scripts/test.sh`). Absolute paths and `..` segments are rejected. |
+| `steps[].script.args` | script | string[] | no | Arguments passed to `command` (argv list, no shell interpolation). Entries survive to the child process verbatim, spaces and quotes included. |
+| `steps[].script.working_dir` | script | string | no | Repo-relative working directory for the command; defaults to the checkout root. Absolute paths and `..` segments are rejected. |
+| `steps[].script.env` | script | map<string,string> | no | Extra environment variables for the command; these override inherited variables with the same key. |
 | `steps[].script.timeout_minutes` | script | int | no | Execution timeout in minutes (≥ 1; default 30, capped at 60). |
 | `steps[].pre_hook` | step | object | no | Deterministic command run **in the session workspace immediately before the agent** (issue #884). Fail-closed: a non-zero exit or timeout skips the agent and fails the step. Agent steps only. |
 | `steps[].post_hook` | step | object | no | Deterministic command run **in the session workspace immediately after the agent attempt** (issue #884), even when the agent fails. Fail-open: its failure is recorded but never changes the step outcome or routing. Agent steps only. |
@@ -156,8 +158,10 @@ steps:
 - Conditions are evaluated in order; include a catch-all (e.g., `default`) to
   keep routing deterministic.
 - A step must declare exactly one of `agent`, `workflow`, `repo`, or `script`.
-- A `script` step is deterministic and non-agent: it runs the repo-local script
-  named by `script.path`, posts its output as a comment, then advances. The
+- A `script` step is deterministic and non-agent: it runs `script.command`
+  with `script.args` as argv (no shell), posts its output as a comment, then
+  advances. Consecutive `script` steps run in one engine invocation over the
+  same checkout, so state one step creates is visible to the next. The
   result is reported as `pass` (exit 0) or `fail` (non-zero exit / timeout) so
   `conditions[]` can route on it (e.g., `on_result: fail → dev`). **A failing
   script still advances** the workflow in v1 — it does not hold or terminate;
@@ -174,9 +178,12 @@ Script step example:
 steps:
   - name: run-tests
     script:
-      path: scripts/test.sh   # repo-relative, required
-      args: ["--unit"]        # optional argv list
-      timeout_minutes: 15     # optional, default 30
+      command: uv             # required (executable or repo-relative script)
+      args: ["run", "pytest"]  # optional argv list
+      working_dir: src         # optional, repo-relative
+      env:                     # optional, overrides inherited keys
+        CI: "true"
+      timeout_minutes: 15      # optional, default 30
     next: review
 ```
 
