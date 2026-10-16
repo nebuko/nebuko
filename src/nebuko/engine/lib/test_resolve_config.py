@@ -23,6 +23,38 @@ from resolve_workflow import TASK_TO_PROMPT
 import unittest
 
 
+def _history_entry(step: str, agent: str, summary: str = "") -> dict:
+    """A raw history entry carrying the mandatory factual outcome (issue #964)."""
+    return {
+        "step": step,
+        "agent": agent,
+        "summary": summary,
+        "turn_outcome": {"status": "completed", "appreciation": "approved"},
+    }
+
+
+def _completed_outcome(**overrides) -> dict:
+    """A raw ``turn_outcome`` payload for a completed turn."""
+    return {"status": "completed", "appreciation": "approved", **overrides}
+
+
+def _hold_outcome(**overrides) -> dict:
+    """A raw ``turn_outcome`` payload for a parked (resumable) turn."""
+    return {
+        "status": "completed",
+        "appreciation": "hold",
+        "hold_kind": "awaiting_input",
+        **overrides,
+    }
+
+
+def _real_workflows_dir() -> str:
+    """The shipped workflow dir, not the per-machine ``.nebuko`` override."""
+    from default_paths import checkout_root
+
+    return str(checkout_root() / "defaults" / "workflows")
+
+
 class TestIsBotComment:
     """Test bot comment detection."""
 
@@ -80,10 +112,12 @@ class TestResolveConfig:
 
     def test_json_based_dev_resolution(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        # Use dispatch embedded in WORKFLOW_STATE (XML path removed)
+        # A state carrying a turn outcome routes on it (issue #964).
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "dispatch": {"task_hint": "dev", "complexity": "high"}}\n'
+            '{"version": 6, "turn_outcome": {"status": "completed", '
+            '"appreciation": "approved", "required_agent": "dev"}, '
+            '"prefs": {"complexity": "high"}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
 
@@ -141,12 +175,14 @@ class TestResolveConfig:
 
     def test_all_config_fields_exported(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        # Use dispatch in WORKFLOW_STATE for all fields test
+        # Every non-routing knob rides on ``prefs`` (issue #964).
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "dispatch": {"task_hint": "dev", "complexity": "low", '
-            '"reasoning": "high", "temperature": 0.5, "model": "custom-model", '
-            '"top_p": 0.9, "top_k": 50, "repetition_penalty": 1.2}}\n'
+            '{"version": 6, "turn_outcome": {"status": "completed", '
+            '"appreciation": "approved", "required_agent": "dev"}, '
+            '"prefs": {"complexity": "low", "temperature": 0.5, '
+            '"model": "custom-model", "top_p": 0.9, "top_k": 50, '
+            '"repetition_penalty": 1.2}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
 
@@ -155,10 +191,11 @@ class TestResolveConfig:
         assert result["CONFIG_MODEL"] == "custom-model"
         assert result["CONFIG_TEMPERATURE"] == "0.5"
         assert result["CONFIG_TOP_P"] == "0.9"
-        # top_k uses Float in Dispatch model; str(Float(50.0)) -> "50.0"
-        assert result["CONFIG_TOP_K"] == "50.0"
+        assert result["CONFIG_TOP_K"] == "50"
         assert result["CONFIG_REPETITION_PENALTY"] == "1.2"
-        assert result["LLM_REASONING"] == "high"
+        # ``reasoning`` was a Dispatch knob with no RunPrefs counterpart: the
+        # reasoning mode now comes from the agent's complexity tier.
+        assert result["LLM_REASONING"] == "none"
 
     def test_context_complexity_handling(self):
         prompt_base, workflows_dir = self._setup_dirs()
@@ -254,23 +291,36 @@ class TestCIBotMentionRouting:
     def test_in_body_state_is_not_plain_mention(self):
         # A body embedding a full WORKFLOW_STATE is not a plain mention
         # trigger (the state JSON counts as non-mention content), so it is
-        # resolved via the dispatch path instead of the ci_mention shortcut.
+        # resolved via the state path instead of the ci_mention shortcut.
         # Real CI triggers (e.g. the sub-issue bootstrap) never embed a state
         # in the trigger body — they arrive as mention-only comments.
         prompt_base, workflows_dir = self._setup_dirs()
+        with open(os.path.join(workflows_dir, "default.yaml"), "w") as f:
+            f.write(
+                "name: default\n"
+                "description: Standard workflow\n"
+                "steps:\n"
+                "  - name: analyze\n"
+                "    agent: architect\n"
+                "    next: context\n"
+                "  - name: context\n"
+                "    agent: context\n"
+                "    next: null\n"
+            )
         body = (
             "<!-- bot-workflow-terminal -->\n"
             "@@architect\n"
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "workflow": "default", "step": "analyze", '
-            '"dispatch": {"status": "advance", "task_hint": "dev", '
-            '"complexity": "medium"}}\n'
+            '{"version": 6, "workflow": "default", "step": "analyze", '
+            '"turn_outcome": {"status": "completed", "appreciation": "approved"}, '
+            '"prefs": {"complexity": "medium"}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
 
         result = resolve_config(body, prompt_base, workflows_dir)
 
-        assert result["ROLE_NAME"] == "dev"
+        # The workflow edge wins over the mention: analyze -> context.
+        assert result["ROLE_NAME"] == "context"
 
 
 
@@ -479,12 +529,11 @@ class TestResolveConfigWithWorkflowCommand:
                 "    skill: [python, rust]\n"
                 "    next: null\n"
             )
-        # Use dispatch in WORKFLOW_STATE to specify workflow/step (XML removed)
-        # Workflow/step must be on the dispatch object for resolve_workflow_routing to pick them up
+        # Use the state's turn outcome to specify workflow/step (XML removed)
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
-            '{"version": 1, "workflow": "with-skills", "step": "implement", '
-            '"dispatch": {"task_hint": "dev", "workflow": "with-skills", "step": "implement"}}\n'
+            '{"version": 6, "workflow": "with-skills", "step": "implement", '
+            '"turn_outcome": {"status": "completed", "appreciation": "approved"}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
 

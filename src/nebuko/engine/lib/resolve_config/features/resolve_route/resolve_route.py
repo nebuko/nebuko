@@ -595,14 +595,14 @@ def _callback_return_target(
 
     When an agent was reached through a ``function_call`` (the agent-as-tools
     pattern) its state carries the caller as a ``callback``. A callee that
-    finishes with a ``hold``/``rejected``/``approved`` verdict of its own
-    routes on that verdict; a callee that simply completed with nothing else to
-    route on returns to its caller instead of continuing the workflow.
+    finishes with a ``hold`` verdict of its own routes on that verdict; a callee
+    that completed without a destination of its own returns to its caller
+    instead of continuing the workflow.
 
     Returns ``(agent, step)`` when the callback should route the run, else
     ``None``. The callback is an *advance-only* fallback: an explicit
-    ``required_agent`` hand-off always wins, which is the precedence documented
-    in ``docs/handoff-and-callback.md``.
+    ``required_agent`` hand-off or a deliberate ``hold`` always wins, which is
+    the precedence documented in ``docs/handoff-and-callback.md``.
     """
     if prev_state is None:
         return None
@@ -612,6 +612,10 @@ def _callback_return_target(
     if callback == (getattr(prev_state, "agent", "") or "").strip():
         # Never re-enter the agent that just ran (defensive; self-calls are
         # blocked upstream).
+        return None
+    if outcome is not None and outcome.appreciation == Appreciation.HOLD:
+        # A deliberate stop is never redirected to the callback: it routes on
+        # its own verdict (issue #964).
         return None
     if outcome is not None and outcome.required_agent:
         # The callee named its own explicit destination: it outranks callback.
@@ -2107,10 +2111,11 @@ def _resolve_workflow_next_step(
         RouteKind.UNRESOLVED,
     ):
         _apply_route_resolution(config, wf_result, prev_state)
-    elif config["config_step"]:
-        return _workflow_next_step_skip_reason(wf_name, current_step, workflows_dir)
-
-    return config
+    if config["task"] or config.get("run_script"):
+        return config
+    # Nothing resolved to a successor: disambiguate the skip reason (issue #458)
+    # so a real config failure never reads as a benign end-of-workflow.
+    return _workflow_next_step_skip_reason(wf_name, current_step, workflows_dir)
 
 
 def _workflow_next_step_skip_reason(
