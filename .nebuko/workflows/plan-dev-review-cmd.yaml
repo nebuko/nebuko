@@ -48,7 +48,7 @@ steps:
   - name: git_diff
     script:
       command: "sh"
-      args: ["-c", "git fetch --no-tags --depth=50 origin main:refs/remotes/origin/main && git diff origin/main HEAD"]
+      args: ["-c", "git fetch --no-tags --depth=50 origin main:refs/remotes/origin/main && GIT_PAGER='' git diff origin/main HEAD"]
     next: run_tests
 
   - name: run_tests
