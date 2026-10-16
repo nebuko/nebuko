@@ -39,6 +39,11 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# The caller workflow is the one packaged artifact: no existing tag contains it,
+# so it cannot be fetched at the pinned ref like the provider templates.
+"nebuko.engine.init" = ["templates/*.yaml"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src", "src/nebuko/engine/lib"]
 testpaths = ["tests"]

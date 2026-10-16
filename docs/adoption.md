@@ -61,6 +61,46 @@ Adding Nebuko to a repository gives you:
 Adopting Nebuko is three commits' worth of work, in this order: the agent
 config, the workflow, then the secrets that config needs.
 
+### Step 0 — or let `nebuko init` do steps 1–3 (recommended)
+
+Install the `nebuko` binary from the release whose tag you want to pin, then run
+the interactive setup:
+
+```bash
+gh release download -R nebuko/nebuko -p 'nebuko-linux-amd64' -O ~/.local/bin/nebuko
+chmod +x ~/.local/bin/nebuko
+nebuko init
+```
+
+`nebuko init` asks for the target repository (or organization), the LLM provider
+and the runner labels, then:
+
+1. generates `.nebuko/agents/agent-config.yaml` from the chosen provider's
+   template at the pinned tag;
+2. generates `.github/workflows/nebuko.yaml`, pinned to that tag and passing
+   only the secrets the provider needs (plus `GH_PAT`);
+3. opens a branch and a pull request with those two files — **no secret value is
+   ever committed**;
+4. asks for each secret value with hidden input and stores it with
+   `gh secret set` (repository-level, or organization-level with `--org`).
+
+It uses **your own `gh` authentication**: nothing goes through a Nebuko server
+and no GitHub App is involved. Pushing `.github/workflows/*` needs the `workflow`
+scope — `init` checks for it up front and tells you to run
+`gh auth refresh -s workflow` when it is missing.
+
+Release assets: `nebuko-linux-amd64`, `nebuko-macos-arm64`, `nebuko-macos-amd64`,
+`nebuko-windows-amd64.exe`.
+
+Flags for scripted installs: `--repo`, `--org`, `--provider`, `--runs-on`,
+`--pin-ref`, `--template-dir`, `--non-interactive` (secret values from
+`NEBUKO_SECRET_<NAME>`), `--force`. Re-running `init` on an initialized
+repository asks before overwriting, and refuses in `--non-interactive` mode
+unless `--force` is given.
+
+The manual steps below remain the fallback — and the reference for exactly what
+`init` generates.
+
 ### Step 1 — Create your agent config (mandatory)
 
 Every adopting repository **must** provide its own
