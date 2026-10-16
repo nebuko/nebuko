@@ -530,8 +530,73 @@ path (`inputs: [<step>]`, `{{ <step> }}` prompt references, locator storage,
 locator backfill at publish and read time). This supersedes the earlier
 "output path is forward-looking" note: the named-output grammar
 (`outputs:` / `<step>.<name>`) was **removed** in favour of step-name
-references; a leftover `steps[].outputs:` key or dotted ref fails at load time
-with a #756 migration hint.
+references; a leftover `steps[].outputs:` key fails at load time with a #756
+migration hint. The dotted form is valid again **only** for a field a step
+declares in its `output:` block (issue #973, below): `{{ plan.headline }}` and
+`inputs: {summary: plan.headline}` resolve to that one section, while a dotted
+ref to an undeclared field is reported by the linter (`L10-input-ref`,
+`L11-prompt-ref`).
+
+### Declared Step Output — The `output:` Shape (issue #973)
+
+A step may additionally declare the **shape of its own posted comment** with an
+`output:` block. This is opt-in: a step without `output:` keeps the legacy
+`finish` / `dispatch_next` terminal contract byte-for-byte.
+
+```yaml
+steps:
+  - name: implement
+    agent: dev
+    next: review
+    output:
+      fields:
+        - name: headline            # the comment's `#` lead-in
+          title: true
+        - name: changes             # a `## Changes` section (required)
+          description: What changed, with file paths.
+        - name: verification        # optional: absent ⇒ no heading, no markers
+          required: false
+        - name: matrix              # a table field
+          type: table
+          columns: [case, result]
+```
+
+Field keys:
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `name` | `^[a-z][a-z0-9_]*$` | — | Section id; also the marker name. |
+| `type` | `text` \| `table` | `text` | A `table` field requires `columns`. |
+| `description` | string | `""` | Shown in the prompt block's field list. |
+| `heading` | string | capitalized `name` | The rendered `##` heading. |
+| `title` | bool | `false` | At most one `text` field; its body is the `#` lead-in. |
+| `collapsed` | bool | `false` | Wrap the body in `<details>`. |
+| `required` | bool | `true` | A missing required section fails the turn. |
+| `columns` | list | `[]` | Column names for a `table` field. |
+
+**Terminal contract.** For a step that declares `output:`, the engine appends
+the section prompt block to the step prompt and exposes the terminal `finalize`
+tool (with `call_agent` for delegation; `finish`/`dispatch_next` are hidden).
+The turn carries exactly two artifacts:
+
+- the **report** — the turn's markdown text, written as section bodies between
+  the exact markers the prompt block shows; and
+- the **route** — the `finalize` tool's typed `route` argument
+  (`status`/`agent`/`complexity`/`branch`/`pin`/`reason`), exposed to the model
+  as the tool's `response_schema` so a long markdown payload can never truncate
+  the routing decision.
+
+The engine — never the model — owns the markdown wrappers (`#` title, `##`
+headings, `<details>`), extracts the bodies, validates them (known names,
+required present, no `<!--` injection) and renders the posted comment. A
+malformed answer gets exactly one retry naming the offending field; a second
+failure salvages the completed sections and logs loudly. A truncated turn is
+salvaged the same way and routes `hold`.
+
+See [`.nebuko/workflows/default-with-output.yaml`](../.nebuko/workflows/default-with-output.yaml)
+for a runnable copy of `default` that declares `output:` on its report-posting
+steps (`analyze`, `plan`, `implement`, `review`); `context` stays undeclared
+because its comment is the free-form data payload downstream steps consume.
 
 ---
 

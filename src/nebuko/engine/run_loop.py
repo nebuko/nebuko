@@ -20,6 +20,12 @@ from dataclasses import dataclass, field, replace
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
+from nebuko.engine.finalize import (
+    OutputContract,
+    OutputRenderer,
+    SectionExtractionError,
+    step_output_contract,
+)
 from nebuko.engine.hook_runner import (
     HookPhase,
     HookResult,
@@ -1362,6 +1368,9 @@ class Engine:
         sections = [] if replacing else [self._base_prompt(resolved)]
         if step_prompt:
             sections.append(f"{_STEP_HEADER}\n\n{step_prompt}")
+        output_block = self._render_step_output(resolved)
+        if output_block:
+            sections.append(output_block)
         injected_skills = self._render_injected_skills(resolved)
         if injected_skills:
             sections.append(injected_skills)
@@ -1374,6 +1383,16 @@ class Engine:
         sections.append(_USER_REQUEST_HEADER)
         sections.append(self._render_context(resolved, history))
         return "\n\n".join(section for section in sections if section)
+
+    def _render_step_output(self, resolved: Any) -> str:
+        """The declared step-output section prompt block (issue #973).
+
+        A step that declares ``output:`` writes its report as section bodies
+        between the exact markers the block shows; the engine renders the
+        headings and wrappers. An undeclared step contributes nothing.
+        """
+        contract = step_output_contract(self._get(resolved, "STEP_OUTPUT"))
+        return contract.prompt_block() if contract is not None else ""
 
     def _render_previous_handoff(self) -> str:
         """The previous run's session handoff, framed as claims to re-check (#965).
@@ -1498,7 +1517,58 @@ class Engine:
             state = extract_state_from_body(entry.body)
             if state and state.step and state.step not in scope:
                 scope[state.step] = strip_state_section(entry.body)
+        self._add_declared_sections(scope)
         return scope
+
+    def _add_declared_sections(self, scope: dict[str, str]) -> None:
+        """Register ``<step>.<field>`` refs for declared output sections (#973).
+
+        A step that declares ``output:`` posts a comment whose sections are
+        addressable individually, so a downstream step can consume one section
+        (``{{ plan.headline }}`` / ``inputs: {x: plan.headline}``) instead of the
+        whole comment. The declaration is read from the workflow definition; a
+        step without one contributes no dotted refs, and a section that cannot be
+        read back is simply not registered (the ref then degrades as usual).
+        """
+        declared = self._declared_outputs()
+        if not declared:
+            return
+        for step, body in list(scope.items()):
+            output = declared.get(step)
+            if output is None:
+                continue
+            renderer = OutputRenderer(OutputContract.from_step_output(output))
+            for field in renderer.contract.fields:
+                try:
+                    section = renderer.extract_section(body, field.name)
+                except SectionExtractionError:
+                    continue
+                if section is not None:
+                    scope[f"{step}.{field.name}"] = section
+
+    def _declared_outputs(self) -> dict[str, Any]:
+        """The workflow's per-step ``output:`` declarations, keyed by step name."""
+        previous = self._previous_state()
+        name = str(getattr(previous, "workflow", "") or "") if previous else ""
+        if not name:
+            return {}
+        ensure_import_path()
+        from config import load_workflow, load_workflow_with_dirs
+
+        workflows_dir, local_workflows_dir = self._workflow_dirs()
+        try:
+            path = load_workflow_with_dirs(
+                name, workflows_dir, local_workflows_dir or ""
+            )
+            definition = load_workflow(str(path))
+        except Exception as exc:  # noqa: BLE001 - a missing definition is not fatal
+            log.warning("[phase:prompt] declared outputs unavailable: %s", exc)
+            return {}
+        return {
+            step.name: step.output
+            for step in definition.steps
+            if step.output is not None
+        }
 
     def _render_step_prompt(
         self, step_prompt: str, step_scope: Mapping[str, str] | None

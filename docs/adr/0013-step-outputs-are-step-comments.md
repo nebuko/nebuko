@@ -34,6 +34,11 @@ output object: naming a step in data-flow position is the entire protocol.
 - No `steps[].outputs` key. The pre-#756 declaration and its
   `<step>.<out>` reference form are **removed**; a leftover key or dotted ref
   fails at load time with a migration hint (see *Migration*).
+  *Amended by #973:* a step may now declare the **shape of its own comment**
+  with `steps[].output` (see [workflows.md](../workflows.md#declared-step-output--the-output-shape-issue-973)),
+  and the dotted form is re-introduced **only** for a field that declaration
+  names — `<step>.<field>` addresses one declared section. A dotted ref to an
+  undeclared field is still a lint error.
 - A data-flow reference is a **bare step name**. Two surfaces consume it:
   - the step `inputs:` seam — `inputs: [plan]` (list shorthand) or the mapping
     form `inputs: {context: plan}` for an alias; and
@@ -119,7 +124,9 @@ goal of this ADR.
   loader fails with: *"'outputs' was removed from a step by issue #756; a
   step's output is its posted comment, referenced by the step name…"*.
 - `<step>.<out>` → `{{ <step> }}` (prompt) or `inputs: [<step>]`. A dotted
-  non-`input.*` ref fails with a `#756` migration hint.
+  non-`input.*` ref fails with a `#756` migration hint. *Amended by #973:* a
+  dotted ref naming a field the step declares in its `output:` block is valid
+  again and resolves to that section.
 - `input.<name>` workflow-input references from ADR-0009 are **unchanged**.
 - A step with no `inputs`/`prompt` behaves exactly as today: no prompt
   rewriting is required for existing workflows.

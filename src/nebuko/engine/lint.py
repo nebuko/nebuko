@@ -135,15 +135,25 @@ def _step_targets(step: Any) -> tuple[str, ...]:
 def _ref_in_scope(
     ref: str, declared: Mapping[str, Any], steps: Mapping[str, Any]
 ) -> bool:
-    """True when a consumer reference resolves (issue #756, ADR-0013).
+    """True when a consumer reference resolves (issues #756, #973, ADR-0013).
 
     ``input.<name>`` names a declared workflow parameter; a bare ``<step>``
-    names a declared step, whose posted comment is the value. ``input`` is the
-    reserved namespace prefix (flagged separately), never a valid step ref.
+    names a declared step, whose posted comment is the value; ``<step>.<field>``
+    names one section the step declares in its ``output:`` block. ``input`` is
+    the reserved namespace prefix (flagged separately), never a valid step ref.
     """
     if ref.startswith("input."):
         return ref[len("input."):] in declared
-    return ref in steps and ref != "input"
+    step_name, _, field = ref.partition(".")
+    if step_name == "input":
+        return False
+    target = steps.get(step_name)
+    if target is None:
+        return False
+    if not field:
+        return True
+    output = getattr(target, "output", None)
+    return output is not None and any(f.name == field for f in output.fields)
 
 
 def _location(graph: _WorkflowGraph, step_name: str | None) -> str:
@@ -468,16 +478,20 @@ class WorkflowLinter:
         """L11-prompt-ref: every ``{{ <step> }}`` must name an existing step.
 
         A step's output is its posted comment (issue #756, ADR-0013), so a
-        prompt reference resolves to the referenced step's full comment. A
-        reference to an unknown step degrades to ``_(unavailable: …)_`` at run
-        time; the linter reports it ahead of the run instead.
+        prompt reference resolves to the referenced step's full comment; the
+        dotted form (``{{ <step>.<field> }}``) resolves to one section the step
+        declares in its ``output:`` block (issue #973). A reference to an
+        unknown step or undeclared field degrades to ``_(unavailable: …)_`` at
+        run time; the linter reports it ahead of the run instead.
         """
-        steps = {step.name for step in definition.steps}
+        steps = {step.name: step for step in definition.steps}
         pattern = _prompt_ref_pattern()
         issues: list[LintIssue] = []
         for step in definition.steps:
             for ref in pattern.findall(step.prompt or ""):
-                if ref in steps and ref != "input":
+                if ref.startswith("input."):
+                    continue  # the input-wiring rules own this namespace
+                if _ref_in_scope(ref, {}, steps):
                     continue
                 issues.append(
                     LintIssue(
@@ -545,10 +559,10 @@ class WorkflowLinter:
     ) -> list[LintIssue]:
         """An ``agent`` step's bindings must resolve against the frame scope.
 
-        Two reference shapes are in scope (issue #756): ``input.<name>`` for a
-        declared workflow parameter, and a bare ``<step>`` naming a step whose
-        posted comment is the value. The pre-#756 ``<step>.<out>`` grammar is
-        rejected at load time, so it never reaches this check.
+        Three reference shapes are in scope: ``input.<name>`` for a declared
+        workflow parameter, a bare ``<step>`` naming a step whose posted comment
+        is the value (issue #756), and ``<step>.<field>`` naming one section the
+        step declares in its ``output:`` block (issue #973).
         """
         issues: list[LintIssue] = []
         for name, binding in bindings.items():

@@ -1,0 +1,97 @@
+# Default workflow with the declared step-output format (issue #973).
+#
+# A copy of `defaults/workflows/default.yaml` where the report-posting steps
+# declare an `output:` shape: the agent writes its report as section bodies
+# between the engine's markers and ends with the terminal `finalize` tool
+# carrying the routing decision. The engine renders the posted comment.
+#
+# `context` deliberately declares no output: its comment is the free-form data
+# payload downstream steps consume, not a report.
+
+name: default-with-output
+description: "Standard development workflow with declared step outputs: analyze → context → plan → implement → review"
+
+steps:
+  - name: analyze
+    agent: architect
+    complexity: low
+    prompt: |
+      Analysis turn: a human issue or request just arrived.
+      - Decide what context @@context must collect (files, docs, facts).
+      - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
+      - End the turn with `finalize(route={status: 'advance', complexity: …})` on the same turn as your report. Do not plan yet.
+    next: context
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the request and the analysis.
+        - name: context_request
+          collapsed: true
+          required: false
+          description: What @@context must collect (files, docs, facts).
+        - name: assumptions
+          required: false
+          description: Defaults you will proceed with if context is thin.
+
+  - name: context
+    agent: context
+    next: plan
+
+  - name: plan
+    agent: architect
+    prompt: |
+      Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact (or revise it if your context has a `## Human Gate Decision`), then end with `finalize(route={status: 'advance', complexity: …})` on the same turn. Never `hold` on this gated step.
+    next: implement
+    human_gate: true
+    conditions:
+      - on_result: approved
+        next: implement
+      - on_result: rejected
+        next: context
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the plan.
+        - name: decision
+          description: The chosen approach and the key rulings.
+        - name: design
+          collapsed: true
+          required: false
+          description: The Object Design Contract (classes, fields, methods).
+        - name: questions
+          required: false
+          description: Open questions for the human gate.
+
+  - name: implement
+    agent: dev
+    next: review
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the change.
+        - name: changes
+          description: What changed, with file paths.
+        - name: verification
+          required: false
+          description: Tests run and their results.
+
+  - name: review
+    agent: review
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: implement
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line verdict summary.
+        - name: findings
+          description: Review findings, round by round.
+        - name: verdict
+          required: false
+          description: The decision and its justification.

@@ -55,6 +55,8 @@ __all__ = [
     "SECTION_CLOSE",
     "SECTION_OPEN",
     "SectionExtractionError",
+    "route_from_action",
+    "step_output_contract",
 ]
 
 #: Canonical section markers. The open marker names the field; the close marker
@@ -85,6 +87,45 @@ def _reject_marker_injection(name: str, body: str) -> None:
             f"output field '{name}': the body must not contain '<!--' — the "
             "section marker layer owns HTML comments"
         )
+
+
+def step_output_contract(raw: Any) -> Optional["OutputContract"]:
+    """Compile the resolver's ``STEP_OUTPUT`` JSON into an :class:`OutputContract`.
+
+    ``None`` means the step declares no output shape, so the run keeps the
+    legacy ``finish`` / ``dispatch_next`` terminal contract (issue #973). A
+    malformed declaration is a configuration error: it is logged and treated as
+    undeclared rather than crashing the run.
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        output = StepOutput.model_validate_json(raw)
+    except Exception as exc:  # noqa: BLE001 - a bad declaration must not crash the run
+        log.warning("STEP_OUTPUT is not a valid step-output declaration: %s", exc)
+        return None
+    return OutputContract.from_step_output(output)
+
+
+def route_from_action(action: object) -> Optional["RouteDecision"]:
+    """Read the typed route out of a ``finalize`` action's structured output.
+
+    The route arrives through the tool's ``response_schema`` (issue #973), so it
+    lands in ``action.structured_output`` rather than in a declared action field.
+    Returns ``None`` when the action carries no parseable route, so a malformed
+    call surfaces to the agent instead of poisoning downstream routing.
+    """
+    raw = getattr(action, "structured_output", None)
+    if not isinstance(raw, dict):
+        return None
+    route = raw.get("route")
+    if route is None:
+        return None
+    try:
+        return RouteDecision.model_validate(route)
+    except Exception as exc:  # noqa: BLE001 - a bad route must not crash the run
+        log.warning("finalize route failed RouteDecision validation: %s", exc)
+        return None
 
 
 class OutputContract(BaseModel):
@@ -267,6 +308,9 @@ class RouteDecision(BaseModel):
     complexity: Optional[str] = None
     branch: Optional[str] = None
     reason: Optional[str] = None
+    #: Payload parity with ``dispatch_next``: a ``finalize`` route must be able
+    #: to pin the step's comment for verbatim downstream injection.
+    pin: bool = False
 
 
 class FinalizeSchemaBuilder:

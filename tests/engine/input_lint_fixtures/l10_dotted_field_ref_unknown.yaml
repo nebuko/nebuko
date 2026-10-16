@@ -1,0 +1,16 @@
+name: dotted-field-ref-unknown
+description: "A dotted ref names a field the upstream step does not declare"
+steps:
+  - name: plan
+    agent: architect
+    next: implement
+    output:
+      fields:
+        - name: headline
+          title: true
+  - name: implement
+    agent: dev
+    inputs:
+      summary: plan.ghost
+    prompt: "Ghost: {{ plan.ghost }}"
+    next: null

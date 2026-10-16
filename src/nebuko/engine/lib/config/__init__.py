@@ -37,7 +37,11 @@ from .sub_domains.workflow.input_binding import (
 from .sub_domains.workflow.workflow_input_spec import WorkflowInputSpec
 from .sub_domains.workflow_condition.workflow_condition import WorkflowCondition
 from .sub_domains.workflow_step.hook_spec import HookSpec
-from .sub_domains.workflow_step.output_field import OutputField, StepOutput
+from .sub_domains.workflow_step.output_field import (
+    OutputField,
+    StepFieldRef,
+    StepOutput,
+)
 from .sub_domains.workflow_step.script_step_spec import ScriptStepSpec
 from .sub_domains.workflow_step.workflow_step import WorkflowStep
 from .sub_domains.workflow_definition.workflow_definition import WorkflowDefinition
@@ -104,6 +108,7 @@ __all__ = [
     "INPUT_REF_PATTERN",
     "HookSpec",
     "OutputField",
+    "StepFieldRef",
     "StepOutput",
     "ScriptStepSpec",
     "WorkflowStep",

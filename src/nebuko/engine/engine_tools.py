@@ -18,15 +18,21 @@ read that replaces the former free-text/``Thought:`` heuristics.
 
 from __future__ import annotations
 
-from typing import Final, Literal, Mapping, Optional
+import re
+from typing import TYPE_CHECKING, Any, Final, Literal, Mapping, Optional
 
 from pydantic import BaseModel, ConfigDict
+
+if TYPE_CHECKING:
+    from nebuko.engine.finalize import AgentReport, RouteDecision, RunTerminator
 
 __all__ = [
     "DEFAULT_ENGINE_TOOLS",
     "EngineToolPayload",
     "EngineToolRegistry",
     "EngineToolSpec",
+    "FinalizeToolError",
+    "FinalizeToolHandler",
     "PayloadKind",
     "WorkLoopPresence",
 ]
@@ -34,8 +40,10 @@ __all__ = [
 # ``final_message`` — the tool's argument is the agent's final message (finish);
 # ``routing`` — the tool's arguments carry the workflow routing decision;
 # ``handoff`` — the tool's arguments carry an imperative agent-to-agent
-# hand-off (call_agent), surfaced under a ``function_call`` key.
-PayloadKind = Literal["final_message", "routing", "handoff"]
+# hand-off (call_agent), surfaced under a ``function_call`` key;
+# ``finalize`` — the terminal gate of a step that declares an ``output:``
+# shape: the report rides in the turn text and the tool carries the route only.
+PayloadKind = Literal["final_message", "routing", "handoff", "finalize"]
 
 # Work-loop role of an engine tool: ``terminator`` ends the run (finish);
 # ``hidden`` is a control signal the work loop keeps running past (dispatch_next).
@@ -105,12 +113,80 @@ class EngineToolRegistry(BaseModel):
         """The tool's role in the work loop: ``terminator`` or ``hidden``.
 
         ``finish`` is the explicit completion signal (its payload is ignored in
-        the work loop); ``dispatch_next`` and any unknown tool are ``hidden``.
+        the work loop); ``finalize`` is the terminal gate of an output step;
+        ``dispatch_next`` and any unknown tool are ``hidden``.
         """
         spec = self.tools.get(tool_name)
-        if spec is not None and spec.payload_kind == "final_message":
+        if spec is not None and spec.payload_kind in ("final_message", "finalize"):
             return "terminator"
         return "hidden"
+
+
+class FinalizeToolError(Exception):
+    """Tool-layer finalize failure; retryable exactly once (fix 7, #973).
+
+    The tool layer surfaces the first extraction/validation failure as one
+    retryable error naming the offending field, so the agent can repair its
+    answer; a second failure is re-raised unchanged and fails the run loudly.
+    """
+
+    field: str = ""
+    retryable: bool = True
+
+    def __init__(
+        self, message: str, *, field: str = "", retryable: bool = True
+    ) -> None:
+        super().__init__(message)
+        self.field = field
+        self.retryable = retryable
+
+
+class FinalizeToolHandler:
+    """Adapts :class:`RunTerminator` to the engine tool layer (issue #973).
+
+    ``handle`` delegates to the terminator's extract → validate → render → post
+    gate; the first :class:`SectionExtractionError` / :class:`MarkerInjectionError`
+    becomes one retryable :class:`FinalizeToolError` naming the field, and a
+    second failure propagates (fail loudly). ``salvage`` harvests the completed
+    sections of a truncated turn without ever raising.
+    """
+
+    def __init__(self, terminator: "RunTerminator") -> None:
+        self.terminator = terminator
+        self.retried = False
+
+    def response_schema(self) -> dict[str, Any]:
+        """The route-only JSON schema the SDK exposes as ``response_schema``."""
+        from nebuko.engine.finalize import FinalizeSchemaBuilder
+
+        return FinalizeSchemaBuilder().as_response_schema()
+
+    def handle(self, route: "RouteDecision", turn_text: str) -> "AgentReport":
+        """Gate the terminal emission; retry once, then fail loudly."""
+        from nebuko.engine.finalize import (
+            MarkerInjectionError,
+            SectionExtractionError,
+        )
+
+        try:
+            return self.terminator.finalize(route, turn_text)
+        except (SectionExtractionError, MarkerInjectionError) as exc:
+            if self.retried:
+                raise
+            self.retried = True
+            raise FinalizeToolError(
+                str(exc), field=_named_field(str(exc)), retryable=True
+            ) from exc
+
+    def salvage(self, turn_text: str) -> "AgentReport":
+        """Harvest the completed sections of a truncated turn; never raises."""
+        return self.terminator.salvage(turn_text)
+
+
+def _named_field(message: str) -> str:
+    """The field name quoted in a section error message (``""`` when absent)."""
+    match = re.search(r"'([^']+)'", message)
+    return match.group(1) if match else ""
 
 
 def _field_text(value: object) -> str:
@@ -155,6 +231,14 @@ DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
             name="call_agent",
             payload_kind="handoff",
             payload_fields=("function", "agent_name", "callback", "task", "complexity"),
+        ),
+        # Terminal gate of a step that declares an ``output:`` shape (issue
+        # #973): the report rides in the turn text as section bodies, so the
+        # tool's only argument is the typed route.
+        "finalize": EngineToolSpec(
+            name="finalize",
+            payload_kind="finalize",
+            payload_fields=("route",),
         ),
     }
 )

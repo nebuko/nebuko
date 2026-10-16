@@ -95,8 +95,11 @@ class TestRenderPromptRefs(unittest.TestCase):
         self.assertEqual(render_prompt_refs("", {}), "")
 
     def test_pattern_only_matches_step_names(self):
-        # ``{{ 1bad }}`` and ``{{ a.b }}`` are not step-name references.
-        self.assertEqual(PROMPT_REF_PATTERN.findall("{{ 1bad }} {{ a.b }}"), [])
+        # ``{{ 1bad }}`` is not a step-name reference; ``{{ a.b }}`` is the
+        # dotted ``<step>.<field>`` form (issue #973).
+        self.assertEqual(PROMPT_REF_PATTERN.findall("{{ 1bad }}"), [])
+        self.assertEqual(PROMPT_REF_PATTERN.findall("{{ a.b }}"), ["a.b"])
+        self.assertEqual(PROMPT_REF_PATTERN.findall("{{ a.Bad }}"), [])
 
 
 if __name__ == "__main__":

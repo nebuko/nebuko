@@ -23,8 +23,12 @@ from typing import Mapping, Optional
 
 from ...step_output_record import StepOutputRecord
 
-#: ``{{ <step> }}`` inside a step prompt; the group is the referenced step name.
-PROMPT_REF_PATTERN = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_-]*)\s*}}")
+#: ``{{ <step> }}`` or ``{{ <step>.<field> }}`` inside a step prompt; the group
+#: is the referenced step name, optionally dotted with a declared output field
+#: (issue #973).
+PROMPT_REF_PATTERN = re.compile(
+    r"{{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[a-z][a-z0-9_]*)?)\s*}}"
+)
 
 
 @dataclass(frozen=True)
