@@ -2,7 +2,7 @@
 providers:
   openrouter:
     api_url: "https://api.cheaperinference.com/v1"
-    api_token_env: "OPENROUTER_API_KEY"
+    api_token_env: "CHEAPINFERENCE_API_KEY"
 
 # ── LLMs: model paths referencing providers ──
 llms:
