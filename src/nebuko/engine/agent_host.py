@@ -44,10 +44,12 @@ from nebuko.engine.engine_tools import (
     FinalizeToolHandler,
 )
 from nebuko.engine.finalize import (
+    MarkerInjectionError,
     OutputContract,
     OutputRenderer,
     RouteDecision,
     RunTerminator,
+    SectionExtractionError,
     route_from_action,
     step_output_contract,
 )
@@ -318,7 +320,14 @@ class InProcessAgentHost:
             route = _finalize_route(conversation) or RouteDecision(appreciation="hold")
             try:
                 handler.handle(route, turn_text)
-            except FinalizeToolError as error:
+            # The handler re-raises the raw extraction error on the second
+            # failure by design (the tool layer fails loudly); the host is the
+            # layer that degrades gracefully, so it catches both (issue #995).
+            except (
+                FinalizeToolError,
+                SectionExtractionError,
+                MarkerInjectionError,
+            ) as error:
                 if attempt == 2:
                     log.error(
                         "[phase:agent] finalize turn failed twice (%s); "

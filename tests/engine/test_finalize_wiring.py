@@ -441,6 +441,39 @@ class TestFinalizeTurn:
         assert "previous attempt failed" in conversation.prompts[1]
         assert result["deliverable"].startswith("# headline")
 
+    def test_repro_995_a_second_malformed_finalize_turn_salvages_instead_of_aborting(
+        self, tmp_path: Path
+    ) -> None:
+        """Reproduces #995: two lead-in-less finalize turns must not abort the run.
+
+        Pre-fix, the handler re-raised the raw ``SectionExtractionError`` on the
+        second failure and ``_elicit_finalize`` only caught ``FinalizeToolError``,
+        so ``host.run`` raised: ``SectionExtractionError: title field 'headline':
+        the '# ' lead-in is missing`` — the ``default-with-output`` step never
+        started. The documented contract (one retry, then salvage) now holds.
+        """
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        no_lead_in = "## Summary\n\nprose with no required lead-in\n"
+        conversation = _FinalizeConversation(
+            turns=[
+                [_finalize_event(no_lead_in, {"appreciation": "approved"})],
+                [_finalize_event(no_lead_in, {"appreciation": "approved"})],
+            ]
+        )
+        host = _host_for(
+            repo_root,
+            conversation,
+            latest_answer="",
+            step_output=STEP_OUTPUT_JSON,
+        )
+
+        result = host.run("prompt")
+
+        assert len(conversation.prompts) == 2
+        assert "previous attempt failed" in conversation.prompts[1]
+        assert result is not None
+
     def test_a_step_without_output_keeps_the_report_turn(self, tmp_path: Path) -> None:
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
