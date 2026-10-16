@@ -68,8 +68,12 @@ def _trigger(body: str = "@@dev fix it", number: int = 590, issue_body: str = ""
     )
 
 
-def _engine(tmp_path, trigger=None, *, name: str = "run-1", env=None) -> Engine:
-    adapter = LocalAdapter(tmp_path / "runs" / name, trigger=trigger or _trigger())
+def _engine(
+    tmp_path, trigger=None, *, name: str = "run-1", env=None, adapter=None
+) -> Engine:
+    adapter = adapter or LocalAdapter(
+        tmp_path / "runs" / name, trigger=trigger or _trigger()
+    )
     # Production runs with ``dict(os.environ)``, where GitHub Actions always sets
     # ``GITHUB_REPOSITORY``; the fixture mirrors that so the child-identity seed
     # (issue #739) resolves for every run-flow test.
@@ -541,18 +545,33 @@ class TestScriptStepComments:
     """
 
     def _stub_script(
-        self, monkeypatch, script_args: str = '-c "print(\'hello\')"', **extra
+        self, monkeypatch, script_args: list[str] | None = None, **extra
     ) -> None:
         resolved = {
             "SKIP_AGENT": "true",
             "RUN_SCRIPT": "true",
             "SCRIPT_PATH": sys.executable,
-            "SCRIPT_ARGS": script_args,
+            "SCRIPT_ARGS": json.dumps(script_args or ["-c", "print('hello')"]),
             "WORKFLOW_STEP": "run_tests",
             "WORKFLOW_NAME": "default",
         }
         resolved.update(extra)
-        _stub_resolved(monkeypatch, resolved)
+        calls = {"n": 0}
+
+        def resolver(**_):
+            # The run's own resolve is the script step; the chain's successor
+            # resolve (issue #974) finds no further script step, so the chain
+            # ends after one member — what a real workflow's last step does.
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return resolved
+            return {
+                "SKIP_AGENT": "true",
+                "REASON": "no next step",
+                "SKIP_KIND": "no_next_agent",
+            }
+
+        _patch_resolver(monkeypatch, resolver)
 
     def test_posts_a_start_notice_and_a_state_carrying_completion(
         self, tmp_path, monkeypatch
@@ -626,7 +645,7 @@ class TestScriptStepComments:
     ):
         engine = _engine(tmp_path)
         self._stub_script(
-            monkeypatch, script_args='-c "import sys; sys.exit(2)"'
+            monkeypatch, script_args=["-c", "import sys; sys.exit(2)"]
         )
 
         outcome = engine.run()
@@ -638,7 +657,7 @@ class TestScriptStepComments:
 
     def test_the_comment_never_echoes_the_command_line(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
-        self._stub_script(monkeypatch, script_args='-c "import sys; sys.exit(0)"')
+        self._stub_script(monkeypatch, script_args=["-c", "import sys; sys.exit(0)"])
 
         outcome = engine.run()
 
@@ -691,6 +710,29 @@ class TestScriptStepComments:
         assert "plan comment" in scope["plan"]
 
 
+class _SnapshotCachingAdapter(LocalAdapter):
+    """``LocalAdapter`` carrying ``GitHubAdapter``'s per-run thread caching.
+
+    ``GitHubAdapter`` fetches the thread once and reuses that snapshot for the
+    adapter's lifetime; ``post`` does not invalidate it. A chain that resolved
+    its successor from ``load_history`` would therefore read the *pre-run*
+    newest comment — the trigger — re-resolve the same step and loop forever
+    (issue #974 review). ``load_history_calls`` lets a test pin that the chain
+    never re-reads the thread.
+    """
+
+    def __init__(self, run_dir, *, trigger=None):
+        super().__init__(run_dir, trigger=trigger)
+        self._snapshot = None
+        self.load_history_calls = 0
+
+    def load_history(self, *, limit=None):
+        self.load_history_calls += 1
+        if self._snapshot is None:
+            self._snapshot = list(super().load_history(limit=limit))
+        return self._snapshot
+
+
 class TestScriptChainSharesOneWorkspace:
     """Consecutive script steps see each other's checkout (issue #974).
 
@@ -701,9 +743,9 @@ class TestScriptChainSharesOneWorkspace:
     the first step materialized was gone before the second ran.
     """
 
-    def _chain_engine(self, tmp_path, cwd: Path, monkeypatch):
+    def _chain_engine(self, tmp_path, cwd: Path, monkeypatch, adapter=None):
         """An engine whose *first* step is a script step writing a marker file."""
-        engine = _engine(tmp_path)
+        engine = _engine(tmp_path, adapter=adapter)
         engine.adapter.save_state(
             WorkflowState.model_validate(
                 {"workflow": "chain", "step": "step_one", "agent": ""}
@@ -775,6 +817,8 @@ class TestScriptChainSharesOneWorkspace:
         state = extract_state_from_body(outcome.posted_body)
         assert state is not None
         assert state.step == "step_two"
+        # The chained step's phase record survives into the outcome.
+        assert "action" in outcome.phases
 
     def test_the_chain_ends_at_the_first_non_script_step(
         self, tmp_path, monkeypatch
@@ -817,6 +861,38 @@ class TestScriptChainSharesOneWorkspace:
 
         assert outcome.routing.status == "terminate"
         assert "step_one command succeeded" in outcome.posted_body
+
+    def test_the_chain_resolves_from_the_posted_body_not_the_thread(
+        self, tmp_path, monkeypatch
+    ):
+        """The chain must not re-read the thread to find its successor.
+
+        ``GitHubAdapter`` caches the thread snapshot for the adapter's lifetime
+        and ``post`` does not invalidate it, so a chain that re-read the thread
+        sees the pre-run trigger comment, re-resolves its own step and loops
+        (issue #974 review). The seeded journal makes the stale snapshot's
+        newest body *equal* the trigger body, which is exactly the condition
+        that made the memoized resolve hand back step_one again.
+        """
+        workspace = tmp_path / "checkout"
+        workspace.mkdir()
+        trigger_body = "@@dev fix it"
+        run_dir = tmp_path / "runs" / "run-1"
+        LocalAdapter(run_dir).post(trigger_body)  # the pre-run thread's newest comment
+        adapter = _SnapshotCachingAdapter(run_dir, trigger=_trigger(body=trigger_body))
+        engine, calls = self._chain_engine(
+            tmp_path, workspace, monkeypatch, adapter=adapter
+        )
+
+        outcome = engine.run()
+
+        # step_one -> step_two -> a non-script result, with no re-resolution.
+        assert calls["n"] == 3
+        # Only ``run()``'s own history read; the chain never re-read the thread.
+        assert adapter.load_history_calls == 1
+        state = extract_state_from_body(outcome.posted_body)
+        assert state is not None
+        assert state.step == "step_two"
 
 
 class TestBenignNoNextAgentExit:

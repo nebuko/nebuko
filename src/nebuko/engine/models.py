@@ -7,6 +7,7 @@ reused ``workflow_state.workflow_state.WorkflowState`` — never re-declared her
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
@@ -35,6 +36,8 @@ __all__ = [
     "to_routing_decision",
     "circuit_breaker_update_notice",
 ]
+
+log = logging.getLogger(__name__)
 
 
 # @stub-protected
@@ -366,12 +369,22 @@ def _session_workspace() -> Path | None:
 
 
 def _script_argv(encoded: str) -> list[str]:
-    """Decode the resolver's JSON argv array; malformed input means no args."""
+    """Decode the resolver's JSON argv array; malformed input means no args.
+
+    Degradation is logged, never silent: a legacy shell-string ``SCRIPT_ARGS``
+    (the pre-#974 ``" ".join`` contract) is not valid JSON, and losing every
+    argument without a trace would be indistinguishable from a step that
+    genuinely declared none.
+    """
     try:
         decoded = json.loads(encoded or "[]")
     except ValueError:
+        log.warning("SCRIPT_ARGS is not valid JSON; running with no arguments")
         return []
-    return [str(arg) for arg in decoded] if isinstance(decoded, list) else []
+    if not isinstance(decoded, list):
+        log.warning("SCRIPT_ARGS is not a JSON array; running with no arguments")
+        return []
+    return [str(arg) for arg in decoded]
 
 
 def _script_process_context(
@@ -392,12 +405,20 @@ def _script_process_context(
 
 
 def _script_env(encoded: str) -> dict[str, str]:
-    """Decode the resolver's JSON env object; malformed input means no overlay."""
+    """Decode the resolver's JSON env object; malformed input means no overlay.
+
+    Like :func:`_script_argv`, a malformed value degrades with a log line so a
+    dropped ``env`` block is visible rather than silently ignored.
+    """
     try:
         decoded = json.loads(encoded or "{}")
     except ValueError:
+        log.warning("SCRIPT_ENV is not valid JSON; running with no env overlay")
         return {}
-    return {str(k): str(v) for k, v in decoded.items()} if isinstance(decoded, dict) else {}
+    if not isinstance(decoded, dict):
+        log.warning("SCRIPT_ENV is not a JSON object; running with no env overlay")
+        return {}
+    return {str(k): str(v) for k, v in decoded.items()}
 
 
 def circuit_breaker_update_notice(value: int, agent_calls: int) -> str:

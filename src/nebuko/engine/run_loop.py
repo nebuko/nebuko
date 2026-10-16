@@ -96,6 +96,11 @@ _RESOLUTION_FAILURE_RE = re.compile(
     r"|not found in workflow\b"
 )
 
+# A script chain can never be longer than the workflow's own step count; the
+# cap is a defensive stop for a resolver that keeps handing back the same
+# successor, which would otherwise spin the invocation forever (issue #974).
+_MAX_CHAIN_STEPS = 50
+
 _EXIT_CODE_BY_STATUS = {
     "advance": ExitCode.ADVANCE,
     "loop": ExitCode.ADVANCE,
@@ -697,15 +702,22 @@ class Engine:
         successor is resolved in the next run); the returned outcome is then
         that of the last script step executed. A disabled or unresolved
         successor also ends the chain and yields the original outcome, so this
-        can never turn a completed script step into a failure.
+        can never turn a completed script step into a failure. The iteration
+        cap is defensive: a resolver that keeps returning the same successor
+        would otherwise spin this invocation forever.
         """
         current = outcome
-        while True:
+        phases = list(outcome.phases)
+        for _ in range(_MAX_CHAIN_STEPS):
             chained = self._resolve_chained_script(current, trigger)
             if chained is None:
                 return current
             step, resolved = chained
-            current = self._run_script_step(step, resolved, [], trigger)
+            current = self._run_script_step(step, resolved, phases, trigger)
+        log.warning(
+            "[phase:action] script chain stopped after %d steps", _MAX_CHAIN_STEPS
+        )
+        return current
 
     def _resolve_chained_script(
         self, outcome: RunOutcome, trigger: Trigger
@@ -714,7 +726,7 @@ class Engine:
         state = outcome.state
         if state is None:
             return None
-        body = self._chain_trigger_body(state)
+        body = self._chain_trigger_body(outcome)
         try:
             resolved = self.resolve(replace(trigger, body=body))
         except Exception as exc:  # noqa: BLE001 - the chain must never fail the run
@@ -725,26 +737,27 @@ class Engine:
             return None
         return step, resolved
 
-    def _chain_trigger_body(self, state: WorkflowState) -> str:
+    def _chain_trigger_body(self, outcome: RunOutcome) -> str:
         """This run's own answer comment — the thread trigger a next run would read.
 
         The chained step is resolved from the comment the just-finished step
         posted, because that is the comment the GitHub gate would re-trigger the
-        workflow on. For a script step the whole comment is expressible without
-        re-reading the thread; for anything else (reached only when a chained
-        resolve already happened) the newest posted comment is used, falling
-        back to the engine-side state header.
+        workflow on. The body comes from the outcome rather than a fresh
+        ``load_history``: ``GitHubAdapter`` caches the thread snapshot for the
+        adapter's lifetime and ``post`` does not invalidate it, so re-reading
+        the thread here returns the pre-run trigger comment — the chain would
+        then resolve its own step again and loop (issue #974 review). The
+        engine-side state header is the fallback for an outcome with no body.
         """
-        posted = self.adapter.load_history(limit=1)
-        if posted:
-            return posted[-1].body
+        if outcome.posted_body:
+            return outcome.posted_body
         # Deferred: ``prepare_comment`` imports the comment feature at import
         # time, so a module-level import here would be circular.
         from workflow_state.features.comment.to_git_comment import (
             format_collapsed_section,
         )
 
-        return format_collapsed_section(state)
+        return format_collapsed_section(outcome.state)
 
     def _advance_script_state(
         self, step: DeterministicStep, resolved: Any, result: StepResult

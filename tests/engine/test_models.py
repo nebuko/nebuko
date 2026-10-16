@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import sys
 
 import pytest
@@ -420,16 +421,34 @@ class TestDeterministicStepExecute:
         assert "overridden extra" in result.output
 
     def test_run_script_malformed_json_args_fall_back_to_no_args(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, caplog
     ):
         monkeypatch.setenv("NEBUKO_WORKSPACE", str(tmp_path))
-        result = DeterministicStep(
-            kind="run_script",
-            script_path=sys.executable,
-            script_args="not json",
-        ).execute(_RecordingAdapter())
+        with caplog.at_level(logging.WARNING, logger="nebuko.engine.models"):
+            result = DeterministicStep(
+                kind="run_script",
+                script_path=sys.executable,
+                script_args="not json",
+            ).execute(_RecordingAdapter())
 
         assert result.ok is True
+        # Degradation is logged, never silent (issue #974 review).
+        assert "SCRIPT_ARGS is not valid JSON" in caplog.text
+
+    def test_run_script_malformed_json_env_falls_back_to_no_overlay(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("NEBUKO_WORKSPACE", str(tmp_path))
+        with caplog.at_level(logging.WARNING, logger="nebuko.engine.models"):
+            result = DeterministicStep(
+                kind="run_script",
+                script_path=sys.executable,
+                script_args=json.dumps(["-c", "print('ok')"]),
+                script_env="not json",
+            ).execute(_RecordingAdapter())
+
+        assert result.ok is True
+        assert "SCRIPT_ENV is not valid JSON" in caplog.text
 
     def test_run_script_timeout_is_data_not_a_crash(self, monkeypatch):
         import subprocess
