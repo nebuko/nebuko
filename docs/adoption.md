@@ -72,8 +72,9 @@ chmod +x ~/.local/bin/nebuko
 nebuko init
 ```
 
-`nebuko init` asks for the target repository (or organization), the LLM provider
-and the runner labels, then:
+`nebuko init` asks for the target repository (or organization), where the
+secrets should live (repository level by default, or organization level), the
+LLM provider and the runner labels, then:
 
 1. generates `.nebuko/agents/agent-config.yaml` from the chosen provider's
    template at the pinned tag;
@@ -82,7 +83,7 @@ and the runner labels, then:
 3. opens a branch and a pull request with those two files — **no secret value is
    ever committed**;
 4. asks for each secret value with hidden input and stores it with
-   `gh secret set` (repository-level, or organization-level with `--org`).
+   `gh secret set` at the level you chose (`--org <name>` skips the prompt).
 
 It uses **your own `gh` authentication**: nothing goes through a Nebuko server
 and no GitHub App is involved. `init` needs the GitHub CLI (`gh`) on your
@@ -91,7 +92,9 @@ missing. Pushing `.github/workflows/*` needs the `workflow`
 scope — `init` checks for it up front, before asking for any secret value, and
 tells you to run `gh auth refresh -s workflow` when it is missing. Once the
 setup succeeds it prints the command to restore your token's previous scopes
-(`gh auth refresh --remove-scopes workflow`).
+(`gh auth refresh --remove-scopes workflow`), then the next steps: review and
+merge the pull request, and comment `@@dev Hello Nebuko!` on an issue in the
+target repository.
 
 Release assets: `nebuko-linux-amd64`, `nebuko-macos-arm64`, `nebuko-macos-amd64`,
 `nebuko-windows-amd64.exe`.

@@ -15,6 +15,7 @@ from nebuko.engine.init.providers import PROVIDER_PROFILES, provider_by_name
 from nebuko.engine.init.setup import (
     AGENT_CONFIG_PATH,
     WORKFLOW_PATH,
+    next_steps_message,
     render_files,
 )
 from nebuko.engine.init.sources import FileTemplateSource
@@ -94,3 +95,11 @@ def test_workflow_is_valid_yaml_with_the_expected_job():
         "OPENCODE_GO_API_KEY": "${{ secrets.OPENCODE_GO_API_KEY }}",
         "GH_PAT": "${{ secrets.GH_PAT }}",
     }
+
+
+def test_next_steps_message_names_the_pull_request_and_the_slug():
+    message = next_steps_message("https://github.com/acme/widgets/pull/7", "acme/widgets")
+    assert "Next steps" in message
+    assert "1. Review and merge the pull request: https://github.com/acme/widgets/pull/7" in message
+    assert 'comment "@@dev Hello Nebuko!" on an issue in acme/widgets.' in message
+    assert message.endswith("Let's build something with Nebuko's agent teams 🤝")

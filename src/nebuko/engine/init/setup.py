@@ -1,7 +1,7 @@
 """The ``nebuko init`` orchestration (issue #991).
 
 ``render_files`` is pure (template in, files out); ``run_init`` is the flow:
-render → idempotence check → pull request → secrets → summary. The ``gh``
+render → idempotence check → pull request → secrets → outcome. The ``gh``
 preflight runs in the CLI *before* the prompts, so a missing scope is reported
 before the client is asked for any secret value.
 """
@@ -40,6 +40,12 @@ AGENT_CONFIG_PATH = ".nebuko/agents/agent-config.yaml"
 WORKFLOW_PATH = ".github/workflows/nebuko.yaml"
 BRANCH = "nebuko/init"
 PR_TITLE = "chore: add Nebuko agent configuration and workflow"
+NEXT_STEPS = """\
+Next steps
+1. Review and merge the pull request: {url}
+2. Once merged, try it: comment "@@dev Hello Nebuko!" on an issue in {slug}.
+
+Let's build something with Nebuko's agent teams 🤝"""
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,14 @@ class SetupContext:
     source: TemplateSource
     refs: ReleaseRefResolver
     host: SetupHost
+
+
+@dataclass(frozen=True)
+class SetupOutcome:
+    """What a finished ``run_init`` produced: the exit code and the PR URL."""
+
+    code: int
+    pr_url: str = ""
 
 
 # @stub-protected
@@ -97,8 +111,8 @@ def run_init(
     source: TemplateSource,
     host: SetupHost,
     prompter: Prompter,
-) -> int:
-    """Run the setup flow and return the process exit code (0/1/2)."""
+) -> SetupOutcome:
+    """Run the setup flow and return the exit code plus the pull-request URL."""
     generated = render_files(answers, source)
     existing = host.existing_paths(
         answers.target, (generated.agent_config_path, generated.workflow_path)
@@ -109,7 +123,7 @@ def run_init(
             f"{listed} already exist(s) in {answers.target.slug}; overwrite?", default=False
         ):
             print(f"Aborted: {listed} left untouched (pass --force to overwrite).", file=sys.stderr)
-            return EXIT_ERRORS
+            return SetupOutcome(EXIT_ERRORS)
 
     url = host.open_pr(answers.target, BRANCH, PR_TITLE, _pr_body(answers), generated)
     print(f"Pull request: {url}")
@@ -122,7 +136,12 @@ def run_init(
             continue
         host.set_secret(answers.target, name, value)
         print(f"Secret {name} set on {scope}.")
-    return EXIT_OK
+    return SetupOutcome(EXIT_OK, url)
+
+
+def next_steps_message(url: str, slug: str) -> str:
+    """The closing message: what the client does once the setup succeeded."""
+    return NEXT_STEPS.format(url=url, slug=slug)
 
 
 def preflight_message(report: PreflightReport) -> str:

@@ -12,6 +12,7 @@ import argparse
 import getpass
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -33,6 +34,7 @@ from nebuko.engine.init.setup import (
     EXIT_OK,
     EXIT_USAGE,
     build_setup,
+    next_steps_message,
     preflight_message,
     run_init,
     secret_names,
@@ -40,6 +42,16 @@ from nebuko.engine.init.setup import (
 
 DEFAULT_RUNS_ON = "ubuntu-latest"
 SECRET_ENV_PREFIX = "NEBUKO_SECRET_"
+SECRET_SCOPE_REPOSITORY = "repository"
+SECRET_SCOPE_ORGANIZATION = "organization"
+WORDMARK = """
+███╗   ██╗███████╗██████╗ ██╗   ██╗██╗  ██╗ ██████╗
+████╗  ██║██╔════╝██╔══██╗██║   ██║██║ ██╔╝██╔═══██╗
+██╔██╗ ██║█████╗  ██████╔╝██║   ██║█████╔╝ ██║   ██║
+██║╚██╗██║██╔══╝  ██╔══██╗██║   ██║██╔═██╗ ██║   ██║
+██║ ╚████║███████╗██████╔╝╚██████╔╝██║  ██╗╚██████╔╝
+╚═╝  ╚═══╝╚══════╝╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝
+"""
 GH_MISSING_MESSAGE = """\
 nebuko init: the GitHub CLI (gh) is required but was not found on PATH.
 Install it from https://cli.github.com and run `gh auth login`."""
@@ -129,6 +141,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
+    print(WORDMARK)
     context = build_setup(
         pin_ref=args.pin_ref,
         template_dir=Path(args.template_dir) if args.template_dir else None,
@@ -145,6 +158,7 @@ def _run(args: argparse.Namespace) -> int:
         # refresh the scope and re-run without re-entering the values.
         print(preflight_message(report), file=sys.stderr)
         return EXIT_USAGE
+    target = _resolve_secret_scope(args, prompter, target)
     provider = _resolve_provider(args, prompter)
     answers = InitAnswers(
         target=target,
@@ -154,10 +168,11 @@ def _run(args: argparse.Namespace) -> int:
         secrets=_collect_secrets(args, prompter, context.host, target, provider),
         force=args.force,
     )
-    code = run_init(answers, context.source, context.host, prompter)
-    if code == EXIT_OK:
+    outcome = run_init(answers, context.source, context.host, prompter)
+    if outcome.code == EXIT_OK:
+        print(next_steps_message(outcome.pr_url, target.slug))
         print(REVERT_SCOPES_HINT)
-    return code
+    return outcome.code
 
 
 def _resolve_target(args: argparse.Namespace, prompter: InitPrompter) -> SetupTarget:
@@ -169,7 +184,25 @@ def _resolve_target(args: argparse.Namespace, prompter: InitPrompter) -> SetupTa
     owner, _, name = repo.partition("/")
     if not owner or not name:
         raise UsageError(f"invalid repository {repo!r}; expected owner/name")
-    return SetupTarget(host="github.com", owner=owner, repo=name, org=args.org)
+    return SetupTarget(host="github.com", owner=owner, repo=name)
+
+
+def _resolve_secret_scope(
+    args: argparse.Namespace, prompter: InitPrompter, target: SetupTarget
+) -> SetupTarget:
+    """Where the secrets land: repository level (default) or organization level."""
+    if args.org:
+        return replace(target, org=args.org)
+    if args.non_interactive:
+        return target
+    scope = prompter.ask_choice(
+        "Store the secrets at repository level or organization level?",
+        (SECRET_SCOPE_REPOSITORY, SECRET_SCOPE_ORGANIZATION),
+        default=SECRET_SCOPE_REPOSITORY,
+    )
+    if scope != SECRET_SCOPE_ORGANIZATION:
+        return target
+    return replace(target, org=prompter.ask_text("Organization", target.owner))
 
 
 def _resolve_provider(args: argparse.Namespace, prompter: InitPrompter) -> ProviderProfile:
@@ -227,7 +260,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", help="target repository as owner/name")
     parser.add_argument(
         "--org",
-        help="store the secrets at organization level instead of repository level",
+        help="store the secrets at organization level (skips the interactive scope prompt)",
     )
     parser.add_argument(
         "--provider",
