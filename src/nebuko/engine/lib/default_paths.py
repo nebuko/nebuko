@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["checkout_root", "config_dir", "config_path", "user_dir"]
+__all__ = ["checkout_root", "config_dir", "config_path", "user_dir", "workflow_dirs"]
 
 
 def checkout_root() -> Path:
@@ -52,6 +52,29 @@ def config_dir(kind: str, env_var: str | None = None) -> str:
         if candidate.is_dir():
             return str(candidate)
     return str(checkout_root() / "defaults" / kind)
+
+
+def workflow_dirs() -> tuple[str, str | None]:
+    """Workflow search roots as ``(shipped, local)``, for per-file lookup.
+
+    :func:`config_dir` returns a single directory, so a repo that adds one
+    workflow under ``.nebuko/workflows/`` would shadow every shipped workflow
+    (``default.yaml`` included). Workflow lookups must instead scan both
+    layers file by file, local first — the same pair the typed engine builds
+    in ``RunLoop._workflow_dirs``.
+
+    Returns:
+        ``(shipped, local)``: ``shipped`` is ``WORKFLOWS_DIR`` when set, else
+        ``<checkout>/defaults/workflows``; ``local`` is the repo's
+        ``.nebuko/workflows`` when it exists (and differs), else ``None``.
+    """
+    shipped = os.environ.get("WORKFLOWS_DIR") or str(
+        checkout_root() / "defaults" / "workflows"
+    )
+    local = user_dir() / "workflows"
+    if local.is_dir() and local.resolve() != Path(shipped).resolve():
+        return shipped, str(local)
+    return shipped, None
 
 
 def config_path(name: str) -> str:

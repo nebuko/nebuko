@@ -689,8 +689,8 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
 
     @staticmethod
     def _real_workflows_dir():
-        from default_paths import config_dir
-        return config_dir("workflows")
+        from default_paths import workflow_dirs
+        return workflow_dirs()[0]
 
     def setUp(self):
         self.env = {"WORKFLOWS_DIR": self._real_workflows_dir()}

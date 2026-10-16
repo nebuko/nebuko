@@ -14,8 +14,8 @@ import yaml
 
 def _real_workflows_dir() -> str:
     """The shipped workflow dir, resolved the same way the runtime does."""
-    from default_paths import config_dir
-    return config_dir("workflows")
+    from default_paths import workflow_dirs
+    return workflow_dirs()[0]
 
 
 # ── Skills Helper Tests ──────────────────────────────────────────────

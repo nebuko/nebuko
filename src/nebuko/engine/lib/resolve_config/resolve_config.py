@@ -452,12 +452,12 @@ def main():
     )
     parser.add_argument(
         "--workflows-dir",
-        default=default_paths.config_dir("workflows", "WORKFLOWS_DIR"),
+        default=default_paths.workflow_dirs()[0],
         help="Path to workflows directory",
     )
     parser.add_argument(
         "--local-workflows-dir",
-        default=None,
+        default=default_paths.workflow_dirs()[1],
         help="Consumer-local workflows dir taking precedence over "
         "--workflows-dir (issue #529)",
     )

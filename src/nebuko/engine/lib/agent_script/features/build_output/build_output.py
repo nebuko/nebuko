@@ -19,6 +19,7 @@ from config import (
     CommentSizePolicy,
     is_self_function_call,
     load_workflow,
+    load_workflow_with_dirs,
     parse_position_env,
     resolve_workflow_reference,
 )
@@ -428,8 +429,18 @@ def _load_gated_step_def(
     try:
         import default_paths
 
-        workflows_dir = default_paths.config_dir("workflows", "WORKFLOWS_DIR")
-        ref = resolve_workflow_reference(workflow_name, workflows_dir)
+        # Per-file layered lookup (local override first, then shipped): a
+        # single-directory lookup let one custom workflow in
+        # .nebuko/workflows/ hide the shipped default.yaml, so this check
+        # returned False and the gate was silently skipped.
+        shipped_dir, local_dir = default_paths.workflow_dirs()
+        if workflow_name.lower().endswith((".yaml", ".yml")) and not workflow_name.startswith("workflows/"):
+            ref = resolve_workflow_reference(workflow_name, shipped_dir)
+        else:
+            name = workflow_name.removeprefix("workflows/")
+            for suffix in (".yaml", ".yml"):
+                name = name.removesuffix(suffix)
+            ref = load_workflow_with_dirs(name, shipped_dir, local_dir or "")
         wf_def = load_workflow(str(ref))
     except Exception as e:
         logger.warning(f"Human gate check: could not load workflow '{workflow_name}': {e}")

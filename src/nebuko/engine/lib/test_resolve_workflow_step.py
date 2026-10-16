@@ -1144,8 +1144,8 @@ class TestEmptyWorkflowDefinition:
 
 def _real_workflows_dir() -> Path:
     """The shipped workflow dir, resolved the same way the runtime does."""
-    from default_paths import config_dir
-    return Path(config_dir("workflows"))
+    from default_paths import workflow_dirs
+    return Path(workflow_dirs()[0])
 
 
 class TestDefaultWorkflowWithRealFile:

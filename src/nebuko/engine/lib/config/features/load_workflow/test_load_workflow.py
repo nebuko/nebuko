@@ -131,8 +131,8 @@ class TestLoadWorkflow:
 
     def test_load_real_default_workflow(self):
         """Load the actual workflows/default.yaml and verify structure."""
-        from default_paths import config_dir
-        workflow_path = os.path.join(config_dir("workflows"), "default.yaml")
+        from default_paths import workflow_dirs
+        workflow_path = os.path.join(workflow_dirs()[0], "default.yaml")
         if not Path(workflow_path).exists():
             pytest.skip(f"Workflow file not found: {workflow_path}")
         wf = load_workflow(workflow_path)
@@ -149,8 +149,8 @@ class TestLoadWorkflow:
 
     def test_load_real_review_only_workflow(self):
         """Load the actual workflows/review-only.yaml."""
-        from default_paths import config_dir
-        workflow_path = os.path.join(config_dir("workflows"), "review-only.yaml")
+        from default_paths import workflow_dirs
+        workflow_path = os.path.join(workflow_dirs()[0], "review-only.yaml")
         if not Path(workflow_path).exists():
             pytest.skip(f"Workflow file not found: {workflow_path}")
         wf = load_workflow(workflow_path)
