@@ -8,6 +8,7 @@ from ..skill_spec.skill_spec import SkillSpec
 from ..workflow.input_binding import InputBinding
 from ..workflow_condition.workflow_condition import WorkflowCondition
 from .hook_spec import HookSpec
+from .output_field import StepOutput
 from .script_step_spec import ScriptStepSpec
 
 
@@ -72,6 +73,11 @@ class WorkflowStep(BaseModel):
     # names is shorthand for referencing those upstream steps (issue #756).
     # @stub-protected
     inputs: Optional[dict[str, InputBinding]] = None
+    # Declared output shape (issue #973): the ordered sections of this step's
+    # posted comment. The engine compiles it into the section prompt block, the
+    # render/validate spec applied at the terminal ``finalize`` gate, and the
+    # route-only ``response_schema``. None = the step declares no output shape.
+    output: Optional[StepOutput] = None
 
     @field_validator("inputs", mode="before")
     @classmethod
