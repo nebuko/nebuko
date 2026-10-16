@@ -103,10 +103,13 @@ on:
         description: 'API key for Command Code LLM provider (optional - only needed if you want to use it as provider)'
         required: false
       OPENCODE_GO_API_KEY:
-        description: 'API key for the OpenCode Go LLM provider (optional - only needed if you want to use it as provider)'
+        description: 'API key for the OpenCode LLM provider (optional - only needed if you want to use it as provider)'
         required: false
       OPENROUTER_API_KEY:
-        description: 'Provider API key, referenced by api_token_env in the agent config (used by the default OpenRouter provider)'
+        description: 'API key for the OpenRouter LLM provider (optional - only needed if you want to use it as provider)'
+        required: false
+      CHEAPERINFERENCE_API_KEY:
+        description: 'API key for the Cheaper Inference LLM provider (optional - only needed if you want to use it as provider)'
         required: false
       LOCAL_VLLM_API_TOKEN:
         description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
@@ -296,6 +299,7 @@ jobs:
                 GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                 AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
                 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+                CHEAPERINFERENCE_API_KEY: ${{ secrets.CHEAPERINFERENCE_API_KEY }}
                 LOCAL_VLLM_API_TOKEN: ${{ secrets.LOCAL_VLLM_API_TOKEN }}
                 COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
                 OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
