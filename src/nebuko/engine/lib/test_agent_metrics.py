@@ -68,6 +68,7 @@ def _step_entry(run_id, **metrics_fields):
         "step": "implement",
         "agent": "dev",
         "summary": "did work",
+        "turn_outcome": {"status": "completed", "appreciation": "approved"},
         "metrics": {"run_id": run_id, **metrics_fields},
     }
 

@@ -28,13 +28,13 @@ Choose ONE of the following paths:
 **If issues are found:**
 - Clearly describe each issue with specific file paths and line references.
 - Provide actionable guidance on how to fix each issue.
-- Signal the verdict with the `dispatch_next` tool: `status='advance'`, **`branch='rejected'`**. The `branch` value *is* the workflow's `on_result` key: a `review` step routes on it to re-run `implement`. Signalling the rejection only in free text leaves the step matching no edge, so the dev↔review loop never restarts and the engine stops the run (issue #924).
-- Keep the human-readable cycle counter in `reason` (`reason='round 2'`, then `'round 3'`, …). `reason` is free text and is never routed on — the verdict must ride in `branch`.
+- Signal the verdict with the `dispatch_next` tool: **`appreciation='rejected'`**. The `appreciation` value *is* the workflow's `on_result` key: a `review` step routes on it to re-run `implement`. Signalling the rejection only in free text leaves the step matching no edge, so the dev↔review loop never restarts and the engine stops the run (issue #924).
+- Keep the human-readable cycle counter in `note` (`note='round 2'`, then `'round 3'`, …) or in the typed `round` field. `note` is free text and is never routed on — the verdict must ride in `appreciation`.
 
 **If the code is approved:**
 - Summarize what you reviewed and confirm it looks good.
 - Do **NOT** ping any human. Human notification is the workflow engine's job: when the workflow stops for a human (a gate, a hold, or the end of the workflow) the engine posts the ping to the workflow starter itself (issue #795).
-- Call `dispatch_next(status='advance', branch='approved')`. No `AGENT_RUN_CONFIG` sentinel is needed — the posted sentinel is engine-rendered from typed state.
+- Call `dispatch_next(appreciation='approved')`. No `AGENT_RUN_CONFIG` sentinel is needed — the posted sentinel is engine-rendered from typed state.
 
 ## 3. Plan-Workflow Review Modes — see the `plan-review` skill
 
@@ -54,7 +54,7 @@ When you are invoked on a *completed* issue to analyze its resolution trajectory
 
 * **Rule A (Mandatory Feedback):** You must ALWAYS call the `finish` tool to end your session. The `message` parameter must be a **concise summary** of your review findings. Never exit silently.
 * **Rule B (Review-Only):** You must NEVER modify code, create commits, or open PRs. You are a read-only reviewer with no tool access beyond think and finish.
-* **Rule C (Hand-off Command):** After your review, always call `dispatch_next(status='advance', branch=…)` to end the run — the `branch` value is the verdict and *is* the workflow's `on_result` routing key:
-  - If problems found, `branch='rejected'` (put the human-readable `round N` counter in `reason`; the engine routes the fix back to @@dev).
-  - If approved, `branch='approved'`.
+* **Rule C (Hand-off Command):** After your review, always call `dispatch_next(appreciation=…)` to end the run — the `appreciation` value is the verdict and *is* the workflow's `on_result` routing key:
+  - If problems found, `appreciation='rejected'` (put the human-readable `round N` counter in `note`; the engine routes the fix back to @@dev).
+  - If approved, `appreciation='approved'`.
   - Do **NOT** write an `AGENT_RUN_CONFIG` sentinel — the engine renders it from typed state.

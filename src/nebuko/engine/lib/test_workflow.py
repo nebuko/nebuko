@@ -13,9 +13,9 @@ import yaml
 
 
 def _real_workflows_dir() -> str:
-    """The shipped workflow dir, resolved the same way the runtime does."""
-    from default_paths import config_dir
-    return config_dir("workflows")
+    """The shipped workflow dir, not the per-machine ``.nebuko`` override."""
+    from default_paths import checkout_root
+    return os.path.join(checkout_root(), "defaults", "workflows")
 
 
 # ── Skills Helper Tests ──────────────────────────────────────────────

@@ -54,14 +54,15 @@ published a one-line lead-in).
    also elicits the routing decision at run end. A decision-less end triggers a
    bounded recall, never a lost answer. Which decision
    is correct depends on the step:
-   - **On a `human_gate: true` step the completing dispatch is `advance`.**
-     The engine intercepts it and records the hold (`human_gate:<step>`) — that
-     interception **is** the gate. Emit the deliverable and `advance` together.
-     Never emit an explicit `hold` here: it would pause *before* the gate and
-     force a second, non-gate resume (the double-approval bug).
+   - **On a `human_gate: true` step the completing dispatch is
+     `appreciation='approved'`.** The engine intercepts it and records the hold
+     (`human_gate:<step>`) — that interception **is** the gate. Emit the
+     deliverable and the approval together. Never emit an explicit `hold` here:
+     it would pause *before* the gate and force a second, non-gate resume (the
+     double-approval bug).
    - **On a non-gated step awaiting a human**, an explicit
-     `dispatch_next(status='hold')` is correct (proposal, clarification, or
-     feedback request).
+     `dispatch_next(appreciation='hold', hold_kind='awaiting_input')` is correct
+     (proposal, clarification, or feedback request).
 
 6. **Collapse verbose detail behind `<details>`.**
    When a deliverable's detail would bury the decision, keep the decision-level

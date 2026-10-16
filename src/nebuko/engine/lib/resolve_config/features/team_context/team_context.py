@@ -25,8 +25,10 @@ SHARED_EXIT_RULES = """# Strict Output & Exit Rules
   silently. Your last free-form text answer is the deliverable that gets posted to
   the issue, so make it complete and self-contained (see the `posting-contract`
   skill).
-* **Rule B (Exactly One Sentinel):** End with exactly one `AGENT_RUN_CONFIG`
-  sentinel, in your `finish` message. Never repeat it inside the body you post.
+* **Rule B (Exactly One Sentinel):** Do **not** write the `AGENT_RUN_CONFIG`
+  sentinel yourself. The engine renders it from your typed `dispatch_next` /
+  `call_agent` decision and appends it exactly once to the posted body; it is a
+  durable record for cross-run consumers, never an agent emission.
 * **Rule C (Never End Without a Decision):** Terminate through `finish` or
   `dispatch_next`. An ending that carries neither triggers an engine recall pass
   whose short status note can clobber your posted answer.

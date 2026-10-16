@@ -282,6 +282,33 @@ class TestLoadPrev(unittest.TestCase):
         self.assertEqual(result.state.run_id, 7)
         self.assertEqual(len(result.state.history), 5)
 
+    def test_v5_blob_without_turn_outcome_reports_invalid(self):
+        """A pre-#964 hand-off cannot be decoded: the outcome is mandatory.
+
+        The migration is deliberately not backward compatible (issue #964):
+        every history entry is a routing fact, so a v5 blob whose entries
+        carry no ``turn_outcome`` must surface as ``invalid`` rather than be
+        silently coerced into a fabricated verdict.
+        """
+        v5_blob = {
+            "version": 5,
+            "workflow": "default",
+            "step": "implement",
+            "agent": "dev",
+            "history": [
+                {"step": "plan", "agent": "architect", "summary": "planned"},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, HANDOFF_FILE), "w", encoding="utf-8") as f:
+                json.dump(v5_blob, f)
+
+            result = WorkflowStateCodec(runner_temp=tmp).load_prev()
+
+        self.assertEqual(result.status, "invalid")
+        self.assertIsNone(result.state)
+        self.assertIn("turn_outcome", result.detail)
+
 
 class TestPrevStateLoadModel(unittest.TestCase):
     def test_detail_defaults_to_empty(self):

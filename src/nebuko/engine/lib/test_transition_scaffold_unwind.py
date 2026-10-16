@@ -200,7 +200,7 @@ def _final_review_approved_state() -> dict:
         "parent_workflow": "",
         "parent_workflow_step": "",
         "scaffold_branch": SCAFFOLD_BRANCH,
-        "dispatch": {"branch": "approved", "task_hint": "dev"},
+        "turn_outcome": {"status": "completed", "appreciation": "approved"},
         "resolution": {
             "selected_workflow": "plan-orchestration",
             "selected_step": "final_review",
@@ -298,13 +298,15 @@ def _step1_review_approved_full_stack_state() -> dict:
         "agent": "review",
         "phase": "review",
         "history": [
-            {"step": "implement", "agent": "dev", "summary": "", "position": stack_impl},
-            {"step": "review", "agent": "review", "summary": "", "position": stack_review},
+            {"step": "implement", "agent": "dev", "summary": "", "position": stack_impl,
+             "turn_outcome": {"status": "completed", "appreciation": "approved"}},
+            {"step": "review", "agent": "review", "summary": "", "position": stack_review,
+             "turn_outcome": {"status": "completed", "appreciation": "approved"}},
         ],
         "parent_workflow": "plan-orchestration",
         "parent_workflow_step": "sub_impl",
         "scaffold_branch": SCAFFOLD_BRANCH,
-        "dispatch": {"branch": "approved", "task_hint": "dev"},
+        "turn_outcome": {"status": "completed", "appreciation": "approved"},
         "resolution": {
             "selected_workflow": "dev-review-loop",
             "selected_step": "review",
