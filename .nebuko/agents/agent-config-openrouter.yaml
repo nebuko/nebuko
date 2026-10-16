@@ -3,86 +3,31 @@ providers:
   openrouter:
     api_url: "https://openrouter.ai/api/v1"
     api_token_env: "OPENROUTER_API_KEY"
-  local_vllm:
-    api_url: "http://192.168.1.64:30080/v1"
-    api_token_env: "LOCAL_VLLM_API_TOKEN"
 
 # ── LLMs: model paths referencing providers ──
 llms:
-  deepseek-v4-pro:
-    model_path: "openrouter/deepseek/deepseek-v4-pro"
+  deepseek-v4_1-flash:
+    model_path: "openrouter/deepseek/deepseek-v4.1-flash@preset/my-deepseek-v4-flash"
     provider: "${providers.openrouter}"
-    default_temperature: 0.2
-    input_price: 2.0
-    output_price: 8.0
-
-  deepseek-v4-flash:
-    model_path: "openrouter/deepseek/deepseek-v4-flash"
+    preserve_thinking: true
+    thinking_enabled: false
+    reasoning_effort: "none"
+    top_p: 0.95
+  glm-5_3-flash:
+    model_path: "openrouter/z-ai/glm-5.3-flash@preset/glm-5-3"
     provider: "${providers.openrouter}"
-    default_temperature: 0.0
-    input_price: 0.12
-    output_price: 0.18
-  
-  claude-sonnet-5:
-    model_path: "openrouter/anthropic/claude-sonnet-5"
+  mimo-2_6-pro:
+    model_path: "openrouter/xiaomi/mimo-v2.6-pro"
     provider: "${providers.openrouter}"
-
-  qwen-3-6-30b:
-    model_path: "hosted_vllm/qwen-3-6-30b-a3b"
-    provider: "${providers.local_vllm}"
-    default_temperature: 1.0
-    input_price: 0.35
-    output_price: 0.40
     thinking_enabled: true
     preserve_thinking: true
-    max_output_tokens: 32768
-    top_p: 0.95
-    top_k: 20
-    min_p: 0.0
-    presence_penalty: 0.75
-    repetition_penalty: 1.0
-    stop_sequences: ["<|eot_id|>", "<|end_of_turn|>"]
-
-  qwen-3-6-27b:
-    model_path: "hosted_vllm/qwen-3-6-27b"
-    provider: "${providers.local_vllm}"
-    default_temperature: 0.4
-    input_price: 0.35
-    output_price: 0.40
-    thinking_enabled: true
-    preserve_thinking: true
-    max_output_tokens: 65536
-    top_p: 0.95
-    top_k: 20
-    min_p: 0.0
-    presence_penalty: 0.0
-    repetition_penalty: 1.0
-    stop_sequences: []
-
-  mimo-2-5:
-    model_path: "openrouter/xiaomi/mimo-v2.5"
-    provider: "${providers.openrouter}"
-
-# ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
-mcp_servers:
-  brave-search:
-    name: "brave-search"
-    command: "npx"
-    args:
-      - "-y"
-      - "@brave/brave-search-mcp-server@2.1.4"
-      - "--enabled-tools"
-      - "brave_web_search"
-      - "brave_news_search"
-    env:
-      BRAVE_API_KEY: "BRAVE_API_KEY"
 
 # ── Agents: role → model + prompt + skills + tools ──
 # Tools: terminal, file_editor, task_tracker (SDK tools)
 #        think, finish (built-in defaults)
 agents:
   architect:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.mimo-2_6-pro}"
     role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
     temperature: 0.4
     prompt_file: "defaults/prompts/architect.md"
@@ -90,11 +35,20 @@ agents:
       - inject: ["call-agent", "posting-contract", "planning"]
       - discover: ["complexity"]
     tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    complexity_overrides:
+      low:
+        model: "${llms.deepseek-v4_1-flash}"
+        thinking_enabled: true
+        reasoning: "medium"
+      high:
+        temperature: 0.6
+        reasoning: "high"
 
   dev:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.deepseek-v4_1-flash}"
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     temperature: 0.1
+    reasoning_effort: "none"
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - inject: ["posting-contract"]
@@ -102,29 +56,28 @@ agents:
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
 
   context:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.deepseek-v4_1-flash}"
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
     temperature: 0.1
+    reasoning_effort: "none"
     prompt_file: "defaults/prompts/context.md"
     skills:
       - inject: ["call-agent", "posting-contract", "context-research"]
       - discover: ["complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
-    mcp_servers:
-      - "${mcp_servers.brave-search}"
 
   review:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.glm-5_3-flash}"
     role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
     skills:
       - inject: ["posting-contract", "plan-review"]
       - discover: ["retrospective", "complexity"]
-    tools: ["think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    tools: ["terminal", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
 
   po:
-    model: "${llms.qwen-3-6-27b}"
+    model: "${llms.deepseek-v4_1-flash}"
     role: "Product owner — triages and refines issues into actionable specs; never modifies code."
     prompt_file: "defaults/prompts/po.md"
     skills:

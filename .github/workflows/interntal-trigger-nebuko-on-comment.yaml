@@ -15,7 +15,7 @@ jobs:
   agent:
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
     with:
-      agent_config_path: ".nebuko/agents/agent-config-opencode.yaml"
+      agent_config_path: ".nebuko/agents/agent-config-openrouter.yaml"
     secrets:
       GH_PAT: ${{ secrets.GH_PAT }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
