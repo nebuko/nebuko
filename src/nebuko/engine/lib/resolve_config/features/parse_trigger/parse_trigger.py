@@ -44,6 +44,10 @@ __all__ = [
 #: them is ineligible to carry a gate decision (issue #648), even when its
 #: author passes the identity check — defence in depth against a compromised
 #: human account echoing agent output.
+#:
+#: ``AGENT_RUN_CONFIG`` is kept as a stale-echo guard (issue #964): the
+#: sentinel is no longer produced or read, but a comment echoing the deleted
+#: marker is still machine-authored output and must not carry a gate decision.
 MACHINE_TOKENS: tuple[str, ...] = (
     "<!-- bot-workflow-terminal -->",
     "<!-- bot-agent-",
@@ -202,8 +206,8 @@ def extract_mention_agent(trigger_body: str) -> Optional[str]:
     """Extract the last @@mention agent name from a *human* trigger body.
 
     Bot comments (``<!-- bot-agent-... -->`` marker) NEVER yield a mention:
-    agents communicate via the AGENT_RUN_CONFIG ``function_call`` section,
-    and a stray ``@@`` in bot prose must not re-route execution (issue #478).
+    agents communicate via the typed ``call_agent`` tool call, and a stray
+    ``@@`` in bot prose must not re-route execution (issue #478).
     Ignored mentions are logged to stderr for diagnosability.
 
     Args:

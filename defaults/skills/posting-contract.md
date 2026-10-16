@@ -72,8 +72,11 @@ published a one-line lead-in).
    This matches the engine's `collapse_sections` primitive and keeps the issue
    thread readable (issue #866).
 
-7. **The engine appends the hand-off sentinel.**
-   Do **not** write the `AGENT_RUN_CONFIG` sentinel yourself: the engine renders it from typed state (your `dispatch_next` / `call_agent` fields) and appends it exactly once to the posted body (last payload wins). It is a durable **record** for cross-run consumers, not an agent emission requirement (issue #876).
+7. **The engine owns the hand-off record.**
+   Do **not** write an `AGENT_RUN_CONFIG` sentinel (or any other prose marker)
+   to signal routing: the engine reads your typed `dispatch_next` / `call_agent`
+   call and renders the durable workflow-state section itself. A sentinel in
+   your prose is ignored (issue #964).
 
 8. **Size is handled for you.**
    Long answers are automatically split into multiple comments (10k chars per

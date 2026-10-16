@@ -1023,3 +1023,121 @@ class TestWorkflowCommandPerStepComplexity:
         assert result["WORKFLOW_STEP"] == "plan"
         assert result["CONFIG_COMPLEXITY"] == "medium"
 
+
+_POLICY_WF_YAML = (
+    "name: policy\n"
+    "description: test\n"
+    "trigger:\n"
+    "  agents: [architect]\n"
+    "steps:\n"
+    "  - name: plan\n"
+    "    agent: architect\n"
+    "    next: implement\n"
+    "    conditions:\n"
+    "      - on_result: approved\n"
+    "        next: review\n"
+    "      - on_result: rejected\n"
+    "        next: revise\n"
+    "  - name: implement\n"
+    "    agent: dev\n"
+    "    next: null\n"
+    "  - name: review\n"
+    "    agent: review\n"
+    "    next: null\n"
+    "  - name: revise\n"
+    "    agent: architect\n"
+    "    next: null\n"
+)
+
+
+class TestRoutingPolicyTable:
+    """One test per row of ``resolve_route``'s routing policy (issue #964).
+
+    The policy table is the contract the migration lands on, so each row is
+    exercised through the public ``resolve_config`` entry: a regression in the
+    ordering (soft-kill > gate hold > verdict edge > linear edge) fails loudly.
+    The ``plan`` step's linear edge (``implement``) deliberately differs from
+    its ``approved`` edge (``review``), so a verdict that silently fell back to
+    the linear edge cannot pass.
+    """
+
+    @staticmethod
+    def _dirs(tmp_path):
+        from resolve_workflow import TASK_TO_PROMPT
+
+        prompt_base = tmp_path / "prompts"
+        workflows_dir = tmp_path / "workflows"
+        prompt_base.mkdir()
+        workflows_dir.mkdir()
+        for name in TASK_TO_PROMPT.values():
+            (prompt_base / name).write_text("# prompt")
+        (workflows_dir / "policy.yaml").write_text(_POLICY_WF_YAML)
+        return str(prompt_base), str(workflows_dir)
+
+    def _resolve(self, tmp_path, **outcome):
+        import json as _json
+
+        from resolve_config import resolve_config
+
+        state = {
+            "version": 1,
+            "workflow": "policy",
+            "step": "plan",
+            "agent": "architect",
+            "turn_outcome": outcome,
+        }
+        block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        prompt_base, workflows_dir = self._dirs(tmp_path)
+        body = "<!-- bot-workflow-terminal -->\n" + block
+        return resolve_config(body, prompt_base, workflows_dir, is_bot=True)
+
+    def test_approved_verdict_selects_the_on_result_edge(self, tmp_path):
+        result = self._resolve(tmp_path, status="completed", appreciation="approved")
+        assert result["WORKFLOW_STEP"] == "review"
+        assert result["TASK"] == "review"
+
+    def test_rejected_verdict_selects_the_on_result_edge(self, tmp_path):
+        result = self._resolve(tmp_path, status="completed", appreciation="rejected")
+        assert result["WORKFLOW_STEP"] == "revise"
+        assert result["TASK"] == "architect"
+
+    def test_hold_verdict_parks_the_step(self, tmp_path):
+        result = self._resolve(
+            tmp_path,
+            status="completed",
+            appreciation="hold",
+            hold_kind="awaiting_input",
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("WORKFLOW_STEP") != "review"
+
+    def test_failure_without_a_verdict_follows_the_linear_edge(self, tmp_path):
+        result = self._resolve(
+            tmp_path, status="incomplete", incomplete_reason="failure"
+        )
+        assert result["WORKFLOW_STEP"] == "implement"
+        assert result["TASK"] == "dev"
+
+    def test_interrupted_without_a_verdict_follows_the_linear_edge(self, tmp_path):
+        result = self._resolve(
+            tmp_path, status="incomplete", incomplete_reason="interrupted"
+        )
+        assert result["WORKFLOW_STEP"] == "implement"
+
+    def test_no_outcome_without_a_verdict_follows_the_linear_edge(self, tmp_path):
+        result = self._resolve(
+            tmp_path, status="incomplete", incomplete_reason="no_outcome"
+        )
+        assert result["WORKFLOW_STEP"] == "implement"
+
+    def test_soft_timeout_retries_the_step_in_place(self, tmp_path):
+        result = self._resolve(
+            tmp_path, status="incomplete", incomplete_reason="soft_timeout"
+        )
+        assert result["WORKFLOW_STEP"] == "plan"
+        assert result["TASK"] == "architect"
+

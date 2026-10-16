@@ -8,9 +8,9 @@ from pydantic import BaseModel
 class WorkflowCondition(BaseModel):
     """Conditional routing within a workflow step.
 
-    Evaluates the ``dispatch.branch`` value emitted by the agent at the end
-    of a step and routes to the matching ``next`` target. Conventionally used
-    values for ``on_result`` are:
+    Evaluates the turn outcome's ``route_key`` (the agent's ``appreciation``
+    verdict) at the end of a step and routes to the matching ``next`` target.
+    Conventionally used values for ``on_result`` are:
 
     - **approved** — Human (or model proxy) confirmed readiness to proceed.
     - **rejected** — Human requested changes; route back to an earlier step.

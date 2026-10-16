@@ -145,8 +145,9 @@ class InProcessAgentHost:
 
         Returns the mapping :func:`nebuko.engine.agent_runner.run_legacy_agent` returns,
         plus a ``deliverable`` key holding the captured answer. ``answer`` keeps
-        its legacy value so routing/validation — which read the dispatch sentinel
-        out of it — are unchanged; only the posted body prefers ``deliverable``.
+        its legacy value so routing/validation — which read the run's outcome
+        from the workflow state, never from this text — are unchanged; only the
+        posted body prefers ``deliverable``.
 
         Raises:
             EngineAgentUnavailable: Setup failed before the run began.
@@ -183,10 +184,10 @@ class InProcessAgentHost:
     ) -> dict[str, Any]:
         """Read the run artefacts back, adding the captured deliverable.
 
-        ``answer`` stays the legacy ``latest_answer.md`` value: routing and
-        validation read the ``AGENT_RUN_CONFIG`` sentinel out of it, and a
-        captured deliverable may legitimately carry that sentinel on a different
-        turn. The posted body is the new ``deliverable`` key (issue #740).
+        ``answer`` stays the legacy ``latest_answer.md`` value: a captured
+        deliverable may legitimately carry a stale ``AGENT_RUN_CONFIG`` echo on
+        a different turn, and the posted body is the new ``deliverable`` key
+        (issue #740).
         """
         capture = AnswerCapture()
         for event in getattr(getattr(conversation, "state", None), "events", None) or []:

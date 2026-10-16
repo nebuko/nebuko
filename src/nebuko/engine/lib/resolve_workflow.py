@@ -113,7 +113,7 @@ def resolve_complexity_tier(
 
 
 def resolve_workflow_routing(
-    agent_config: dict,
+    agent_payload: dict,
     workflows_dir: str,
     prompt_base: str,
     local_workflows_dir: Optional[str] = None,
@@ -122,7 +122,7 @@ def resolve_workflow_routing(
     """Resolve agent routing based on workflow definition or fallback.
 
     Args:
-        agent_config: Parsed AGENT_RUN_CONFIG JSON.
+        agent_payload: The turn-outcome payload (task/workflow/step/route key).
         workflows_dir: Path to workflows/ directory.
         prompt_base: Path to prompt files directory.
         local_workflows_dir: Optional consumer-local workflows dir (issue #529).
@@ -134,12 +134,12 @@ def resolve_workflow_routing(
         Dict with ROLE_NAME, PROMPT_LOCATION, WORKFLOW_NAME, WORKFLOW_STEP,
         WORKFLOW_NEXT, PARENT_WORKFLOW, PARENT_WORKFLOW_STEP, and SKIP_AGENT.
     """
-    task = agent_config.get("task", "")
-    workflow_name = agent_config.get("workflow", "")
-    step_name = agent_config.get("step", "")
-    branch_key = agent_config.get("branch", "")
-    parent_workflow = agent_config.get("parent_workflow", "")
-    parent_workflow_step = agent_config.get("parent_workflow_step", "")
+    task = agent_payload.get("task", "")
+    workflow_name = agent_payload.get("workflow", "")
+    step_name = agent_payload.get("step", "")
+    branch_key = agent_payload.get("branch", "")
+    parent_workflow = agent_payload.get("parent_workflow", "")
+    parent_workflow_step = agent_payload.get("parent_workflow_step", "")
 
     # Validate task
     if not task:
@@ -2168,7 +2168,7 @@ def resolve_workflow_step(
     Handles both normal agent steps and sub-workflow dispatch (entry and return).
 
     Args:
-        task: The agent role from AGENT_RUN_CONFIG.
+        task: The agent role from the turn-outcome payload.
         workflow_name: Name of the workflow (file in workflows/).
         step_name: Current step name within workflow.
         branch_key: Condition key for conditional routing.

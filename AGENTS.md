@@ -104,7 +104,7 @@ Useful facts when touching this area:
   `resolve_config/features/team_context/`) plus datetime and secrets. The literal
   label `Dynamic Context:` is SDK console-visualization only — the model never
   sees it. The static prompt's closing line defers to that tier for the
-  `dispatch_next` / `AGENT_RUN_CONFIG` contract, so keep the dynamic tier.
+  `dispatch_next` / `call_agent` contract, so keep the dynamic tier.
 - **Skills reach the prompt in one of two modes** (issue #955, which closed the
   `SKILL_CONTEXT_FILE` -> `security_policy_filename` channel orphaned when PR
   #770 deleted its producer, and the SDK-routing work of #570). `inject` entries

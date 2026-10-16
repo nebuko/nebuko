@@ -133,9 +133,9 @@ def build_state(
             new history entry. This is the only routing input.
         prefs: Non-routing run preferences of this step (issue #964),
             carried onto the entry and the state.
-        function_call: Imperative agent-to-agent hand-off from the
-            AGENT_RUN_CONFIG function_call section (replaced each transition;
-            None clears any pending call).
+        function_call: Imperative agent-to-agent hand-off from the typed
+            ``call_agent`` tool call (replaced each transition; None clears
+            any pending call).
         callback: Return address for a function-call callee (issue #765),
             carried from the caller's ``function_call.callback``. None clears
             it, so a stale callback cannot re-fire on a later transition.

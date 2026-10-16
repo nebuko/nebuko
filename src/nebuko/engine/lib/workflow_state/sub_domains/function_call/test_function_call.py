@@ -1,4 +1,4 @@
-"""Tests for the FunctionCall model and its AGENT_RUN_CONFIG extractor."""
+"""Tests for the FunctionCall model and its typed hand-off extractor."""
 
 import pytest
 

@@ -15,9 +15,9 @@ Never use `@@agent` mentions to call another agent: bot messages are ignored for
 
 ## Format
 
-Use the typed `call_agent` control-plane tool — it records the hand-off structurally, immune to long-context format drops. (Transitional note, issue #876: until the typed tool lands, the imperative `function_call` + `callback` hand-off is still carried by the `AGENT_RUN_CONFIG` sentinel, which the engine renders from typed state.)
+Use the typed `call_agent` control-plane tool — it records the hand-off structurally, immune to long-context format drops.
 
-Hand-off fields (do not write the sentinel yourself — the engine renders it):
+Hand-off fields (do not write a sentinel yourself — the tool records the hand-off structurally):
 
 - **One function call per message.** If several are given, the last valid one wins — but do not rely on that; supply exactly one.
 - `function` must be a registered name. Currently only `call_agent` is registered.

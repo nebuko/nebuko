@@ -247,7 +247,7 @@ class WorkflowState(BaseModel):
     gate_decision: Optional[GateDecision] = None
     gate_history: list[GateDecision] = Field(default_factory=list)
     resolution: Optional[StepResolution] = None
-    # Imperative one-shot hand-off (AGENT_RUN_CONFIG function_call section).
+    # Imperative one-shot hand-off (the typed ``call_agent`` tool call).
     # Consumed by the next run's resolver, which emits a fresh state with it
     # cleared so it cannot re-fire (consumption by supersession).
     function_call: Optional[FunctionCall] = None
