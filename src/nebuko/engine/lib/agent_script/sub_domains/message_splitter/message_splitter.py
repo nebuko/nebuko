@@ -1,9 +1,18 @@
 """Message splitting — pure functions for splitting long messages into parts."""
 
+import os
 import re
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from config import CommentSizePolicy
+
+# ``prepare_comment`` sits at the ``lib`` root; this module is a sub-domain three
+# levels down, so the bootstrap mirrors ``run_loop.ensure_import_path`` rather
+# than relying on the caller's ``sys.path``.
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+from prepare_comment import ANSWER_CONTINUATION_TOKEN  # noqa: E402
 
 
 def split_message(message: str, max_length: int = 10000) -> list[str]:
@@ -188,10 +197,14 @@ def split_comment_body(
     header_reserve = len(f"*(Part {max_parts}/{max_parts})*\n\n") + len(marker)
     per_part = max(1, budget - header_reserve)
     first_limit = max(1, per_part - len(head))
+    # Only the continuation parts carry the inertness stamp (issue #1002), so
+    # their content budget is the smaller one; part 1 keeps the full budget and
+    # its boundary-aware packing.
+    continuation_limit = max(1, per_part - len(_continuation_header()))
 
-    chunks = _pack_body(body, first_limit, per_part)
+    chunks = _pack_body(body, first_limit, continuation_limit)
     if len(chunks) > max_parts:
-        chunks = _fold_overflow(chunks, max_parts, per_part)
+        chunks = _fold_overflow(chunks, max_parts, continuation_limit)
 
     total = len(chunks)
     parts: list[CommentPart] = []
@@ -200,25 +213,57 @@ def split_comment_body(
         if index == 1:
             text = head + part_header + chunk
         else:
-            text = marker + part_header + chunk
+            # Continuation parts are inert (issue #1002): the stamp is the
+            # gate's negative match, and the payload they would otherwise
+            # re-post is neutralized the same way ``escape_agent_triggers``
+            # neutralizes a stray ``@@`` token.
+            text = marker + _continuation_header() + part_header + _neutralize_triggers(chunk)
         parts.append(CommentPart(index=index, total=total, body=text))
     return parts
 
 
-def _pack_body(body: str, full_limit: int, last_limit: int) -> list[str]:
-    """Greedily split ``body`` so every chunk fits ``full_limit`` and the last fits ``last_limit``.
+def _continuation_header() -> str:
+    """The inertness stamp prepended to every continuation part (issue #1002)."""
+    return f"{ANSWER_CONTINUATION_TOKEN}\n"
 
-    Each chunk is filled to ``full_limit`` while the remainder still exceeds the
-    (smaller) last-chunk limit, so the trailing chunk is the only one that must
-    clear room for ``tail`` — and it never exceeds it.
+
+def _neutralize_triggers(content: str) -> str:
+    """Break the trigger payloads a continuation part must not re-post (#1002).
+
+    The issue_comment gate fires on the ``<!-- workflow-continue -->`` and
+    ``<!-- bot-trigger:`` substrings and on raw ``@@agent`` tokens. Escaping the
+    markers (rather than deleting them) keeps the quoted text readable while the
+    substring match fails; the trigger payload itself rides on part 1 only.
+    """
+    content = re.sub(
+        r"<!--\s*(workflow-continue|bot-trigger:)\s*(-->)?",
+        lambda m: m.group(0).replace("<!--", "<!----", 1),
+        content,
+    )
+    return re.sub(
+        r"(?<![\w])@@([A-Za-z0-9_-]+)",
+        lambda m: m.group(0).replace("@@", "@@\u200b", 1),
+        content,
+    )
+
+
+def _pack_body(body: str, first_limit: int, continuation_limit: int) -> list[str]:
+    """Greedily split ``body`` into a first chunk within ``first_limit`` and continuations within ``continuation_limit``.
+
+    The two limits differ because the parts are framed differently: part 1
+    carries the answer header (which may be long) instead of the continuation
+    stamp, so charging it the stamp's room would needlessly shrink the first
+    chunk below a paragraph boundary (issue #1002).
     """
     chunks: list[str] = []
     remaining = body
-    while len(remaining) > last_limit:
-        chunk, remaining = _take_chunk(remaining, full_limit)
+    limit = first_limit
+    while len(remaining) > limit:
+        chunk, remaining = _take_chunk(remaining, limit)
         if not chunk:  # defensive: guarantee progress so the loop always ends
-            chunk, remaining = remaining[:full_limit], remaining[full_limit:]
+            chunk, remaining = remaining[:limit], remaining[limit:]
         chunks.append(chunk)
+        limit = continuation_limit
     chunks.append(remaining)
     return chunks
 

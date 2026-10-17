@@ -26,6 +26,7 @@ from .features.parse_trigger.parse_trigger import (
     normalize_resume_input,
     extract_debug_flag,
     extract_machine_trigger,
+    is_answer_continuation,
     _parse_trigger_body,
 )
 from .features.resolve_route.resolve_route import (
@@ -185,6 +186,17 @@ def resolve_config(
     Returns:
         Dict with all environment variables to set.
     """
+    # A continuation part of a split answer is inert by construction (issue
+    # #1002): its trigger payload was escaped at the publish seam because the
+    # payload belongs to part 1 alone. Should one ever reach the resolver — a
+    # hand-posted body, a newer gate — it must resolve to nothing rather than
+    # boot a second run for the same logical answer (issue #994).
+    if is_answer_continuation(trigger_body):
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": "Answer continuation part; trigger payload lives on part 1",
+        }
+
     if is_bot is None:
         is_bot = is_bot_comment(trigger_body)
 
