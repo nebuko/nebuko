@@ -41,10 +41,10 @@ steps:
   # dies with `fatal: ambiguous argument 'origin/main'` (issue #957).
   #
   # Fetch and diff are deliberately ONE `sh -c` step (human decision at the
-  # #965 gate): the base ref can then never be separated from the diff, not even
-  # by a chain break. #974's shared checkout for consecutive script steps is a
-  # bonus, not the guarantee. `&&` fails fast, so a fetch failure never prints a
-  # bogus diff.
+  # #965 gate): the base ref can then never be separated from the diff, and each
+  # script step runs in its own engine invocation with its own checkout (issue
+  # #994), so cross-step workspace state is never relied upon. `&&` fails fast,
+  # so a fetch failure never prints a bogus diff.
   - name: git_diff
     script:
       command: "sh"

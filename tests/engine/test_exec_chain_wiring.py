@@ -12,8 +12,8 @@ These guards keep the chain structural: ``implement → git_diff → run_tests �
 review``. Since #957 the diff needs the remote-tracking ``origin/main`` a
 shallow, ref-pinned checkout never creates, so the step fetches it first; since
 #965 (issue #972) fetch and diff are one ``sh -c`` step, so the base ref can
-never be separated from the diff — not even by a chain break (#974's shared
-checkout for consecutive script steps is a bonus, not the guarantee).
+never be separated from the diff. Each step runs in its own engine invocation
+(issue #994), so cross-step workspace state is not relied upon at all.
 """
 
 from __future__ import annotations

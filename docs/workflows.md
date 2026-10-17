@@ -311,8 +311,15 @@ Mechanics:
    (`current_context.step_outputs` → `{step, comment_id}`), so a downstream
    `inputs: [<step>]` binds to it exactly like an agent answer (ADR-0013), and
    the `<!-- workflow-continue -->` token re-triggers the workflow gate so the
-   chain continues automatically. The script's distinct `bot-command-*` tag is
-   never counted as an agent turn by the circuit breaker.
+   **next** step runs — in its **own** engine invocation. The script's distinct
+   `bot-command-*` tag is never counted as an agent turn by the circuit breaker.
+
+   Exactly one script step runs per invocation (issue #994): the completion
+   comment is the *only* thing that advances the workflow, so two independent
+   advance mechanisms can never fire for the same edge. To chain several
+   commands, put them in one step — `command: sh, args: ["-c", "a && b"]`.
+   Cross-step state does not survive, so a step must not depend on a file, ref
+   or virtualenv an earlier step produced.
 
 Result semantics (feeds the existing `conditions` mechanism):
 
@@ -337,23 +344,6 @@ Security notes:
   permissions — the same trust level as the workflow YAML itself, plus the
   step's own `env`. Secret scrubbing / sandboxed execution are deferred
   enhancements.
-
-### Consecutive script steps share the run workspace
-
-Every workflow step is normally its own engine invocation on a fresh, shallow,
-ref-pinned checkout, so filesystem and git state does not survive from one step
-to the next. **Consecutive `script` steps are the exception**: the engine runs
-them in a single invocation over the same session checkout, so a ref, file,
-virtualenv or generated artefact produced by one script step is visible to the
-next. The chain ends at the first step that is not a `script` step (an `agent`
-step ends the invocation exactly as before), and an unresolved or disabled
-successor simply ends the chain with the last step's outcome.
-
-This is what makes a fetch-then-diff chain work: the fetch materializes
-`origin/main` in the checkout and the diff resolves it, instead of dying with
-`fatal: ambiguous argument 'origin/main'`. (The shipped example workflow no
-longer relies on it — it runs fetch and diff as one `sh -c` step — but the
-shared checkout remains the guarantee for any other multi-step setup.)
 
 ---
 
