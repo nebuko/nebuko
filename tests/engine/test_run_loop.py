@@ -591,9 +591,10 @@ class TestScriptStepComments:
         calls = {"n": 0}
 
         def resolver(**_):
-            # The run's own resolve is the script step; the chain's successor
-            # resolve (issue #974) finds no further script step, so the chain
-            # ends after one member — what a real workflow's last step does.
+            # One invocation resolves one step (issue #994): the script step
+            # itself. Its successor is resolved by the *next* run, from this
+            # step's completion comment — this resolver only guards against an
+            # unexpected extra resolve inside the same run.
             calls["n"] += 1
             if calls["n"] == 1:
                 return resolved
@@ -741,188 +742,101 @@ class TestScriptStepComments:
         assert "plan comment" in scope["plan"]
 
 
-class _SnapshotCachingAdapter(LocalAdapter):
-    """``LocalAdapter`` carrying ``GitHubAdapter``'s per-run thread caching.
+class TestOneScriptStepPerInvocation:
+    """One engine invocation advances exactly one script step (issue #994).
 
-    ``GitHubAdapter`` fetches the thread once and reuses that snapshot for the
-    adapter's lifetime; ``post`` does not invalidate it. A chain that resolved
-    its successor from ``load_history`` would therefore read the *pre-run*
-    newest comment — the trigger — re-resolve the same step and loop forever
-    (issue #974 review). ``load_history_calls`` lets a test pin that the chain
-    never re-reads the thread.
+    The regression from #964: a ``script`` step whose successor is also a
+    ``script`` step ran *both* in the same invocation (the #974 in-invocation
+    chain, ``run_loop._run_chain_member``) while the step's own completion
+    comment — which always carries ``<!-- workflow-continue -->`` — started a
+    second run for that successor. Two advance mechanisms for one edge meant the
+    successor (``run_tests`` after ``git_diff``) executed twice.
+
+    The successor is now reached only through the completion comment, so a
+    single invocation runs a single script step and the next invocation runs the
+    next one.
     """
 
-    def __init__(self, run_dir, *, trigger=None):
-        super().__init__(run_dir, trigger=trigger)
-        self._snapshot = None
-        self.load_history_calls = 0
-
-    def load_history(self, *, limit=None):
-        self.load_history_calls += 1
-        if self._snapshot is None:
-            self._snapshot = list(super().load_history(limit=limit))
-        return self._snapshot
-
-
-class TestScriptChainSharesOneWorkspace:
-    """Consecutive script steps see each other's checkout (issue #974).
-
-    The #957 → #965 failure this pins: ``fetch_base`` ran ``git fetch
-    origin main:refs/remotes/origin/main`` and exited 0, yet the following
-    ``git_diff`` died with ``fatal: ambiguous argument 'origin/main'`` — each
-    step was its own engine invocation on its own fresh checkout, so the ref
-    the first step materialized was gone before the second ran.
-    """
-
-    def _chain_engine(self, tmp_path, cwd: Path, monkeypatch, adapter=None):
-        """An engine whose *first* step is a script step writing a marker file."""
-        engine = _engine(tmp_path, adapter=adapter)
-        engine.adapter.save_state(
-            WorkflowState.model_validate(
-                {"workflow": "chain", "step": "step_one", "agent": ""}
-            )
-        )
-        results = [
-            {
-                "SKIP_AGENT": "true",
-                "RUN_SCRIPT": "true",
-                "SCRIPT_PATH": sys.executable,
-                "SCRIPT_ARGS": json.dumps(
-                    ["-c", "open('marker', 'w').write('step_one')"]
-                ),
-                "SCRIPT_WORKING_DIR": "",
-                "SCRIPT_ENV": "{}",
-                "WORKFLOW_STEP": "step_one",
-                "WORKFLOW_NAME": "chain",
-            },
-            {
-                "SKIP_AGENT": "true",
-                "RUN_SCRIPT": "true",
-                "SCRIPT_PATH": sys.executable,
-                "SCRIPT_ARGS": json.dumps(
-                    [
-                        "-c",
-                        "import pathlib, sys; "
-                        "sys.exit(0 if pathlib.Path('marker').is_file() else 9)",
-                    ]
-                ),
-                "SCRIPT_WORKING_DIR": "",
-                "SCRIPT_ENV": "{}",
-                "WORKFLOW_STEP": "step_two",
-                "WORKFLOW_NAME": "chain",
-            },
-            {"SKIP_AGENT": "false", "TASK": "dev"},
-        ]
-        calls = {"n": 0}
-
-        def resolver(**_):
-            i = min(calls["n"], len(results) - 1)
-            calls["n"] += 1
-            return results[i]
-
-        _patch_resolver(monkeypatch, resolver)
-        monkeypatch.setenv("NEBUKO_WORKSPACE", str(cwd))
-        monkeypatch.setattr(
-            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
-        )
-        return engine, calls
-
-    def test_a_file_written_by_step_one_is_visible_to_step_two(
-        self, tmp_path, monkeypatch
-    ):
-        workspace = tmp_path / "checkout"
-        workspace.mkdir()
-        engine, calls = self._chain_engine(tmp_path, workspace, monkeypatch)
-
-        outcome = engine.run()
-
-        # Both steps ran, in this one invocation, over this one checkout.
-        assert calls["n"] == 3
-        assert (workspace / "marker").read_text() == "step_one"
-
-        entries = engine.adapter.load_history()
-        bodies = [entry.body for entry in entries]
-        assert any("step_one command" in body for body in bodies)
-        assert any("step_two command" in body for body in bodies)
-
-        state = extract_state_from_body(outcome.posted_body)
-        assert state is not None
-        assert state.step == "step_two"
-        # The chained step's phase record survives into the outcome.
-        assert "action" in outcome.phases
-
-    def test_the_chain_ends_at_the_first_non_script_step(
-        self, tmp_path, monkeypatch
-    ):
-        workspace = tmp_path / "checkout"
-        workspace.mkdir()
-        engine, calls = self._chain_engine(tmp_path, workspace, monkeypatch)
-
-        engine.run()
-
-        # step_one -> step_two -> a non-script result ends the chain.
-        assert calls["n"] == 3
-
-    def test_a_successor_resolution_failure_leaves_step_one_intact(
-        self, tmp_path, monkeypatch
-    ):
-        workspace = tmp_path / "checkout"
-        workspace.mkdir()
-        engine = _engine(tmp_path)
-        first = {
+    @staticmethod
+    def _script_result(step: str, body: str) -> dict:
+        return {
             "SKIP_AGENT": "true",
             "RUN_SCRIPT": "true",
             "SCRIPT_PATH": sys.executable,
-            "SCRIPT_ARGS": json.dumps(["-c", "print('first')"]),
-            "WORKFLOW_STEP": "step_one",
+            "SCRIPT_ARGS": json.dumps(["-c", f"print({body!r})"]),
+            "SCRIPT_WORKING_DIR": "",
+            "SCRIPT_ENV": "{}",
+            "WORKFLOW_STEP": step,
             "WORKFLOW_NAME": "chain",
         }
 
+    def _run_once(self, tmp_path, monkeypatch, result: dict) -> tuple[Engine, dict]:
+        """One engine invocation resolving exactly one script step.
+
+        A fresh ``Engine`` per invocation over the *same* run dir mirrors the
+        host: each GHA run is a new process that re-resolves from scratch, so
+        the per-run resolve memo does not carry across the two runs.
+        """
+        calls = {"n": 0}
+
         def resolver(**_):
-            if resolver.calls:
-                raise RuntimeError("resolver exploded")
-            resolver.calls.append(1)
-            return first
+            calls["n"] += 1
+            return result
 
-        resolver.calls = []
         _patch_resolver(monkeypatch, resolver)
-        monkeypatch.setenv("NEBUKO_WORKSPACE", str(workspace))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+        engine = _engine(tmp_path)
+        engine.run()
+        return engine, calls
 
-        outcome = engine.run()
+    def _bodies(self, engine: Engine) -> list[str]:
+        return [entry.body for entry in engine.adapter.load_history()]
 
-        assert outcome.turn_outcome.status is TurnStatus.COMPLETED
-        assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
-        assert "step_one command succeeded" in outcome.posted_body
-
-    def test_the_chain_resolves_from_the_posted_body_not_the_thread(
+    def test_a_script_step_does_not_run_its_script_successor_in_the_same_invocation(
         self, tmp_path, monkeypatch
     ):
-        """The chain must not re-read the thread to find its successor.
-
-        ``GitHubAdapter`` caches the thread snapshot for the adapter's lifetime
-        and ``post`` does not invalidate it, so a chain that re-read the thread
-        sees the pre-run trigger comment, re-resolves its own step and loops
-        (issue #974 review). The seeded journal makes the stale snapshot's
-        newest body *equal* the trigger body, which is exactly the condition
-        that made the memoized resolve hand back step_one again.
-        """
-        workspace = tmp_path / "checkout"
-        workspace.mkdir()
-        trigger_body = "@@dev fix it"
-        run_dir = tmp_path / "runs" / "run-1"
-        LocalAdapter(run_dir).post(trigger_body)  # the pre-run thread's newest comment
-        adapter = _SnapshotCachingAdapter(run_dir, trigger=_trigger(body=trigger_body))
-        engine, calls = self._chain_engine(
-            tmp_path, workspace, monkeypatch, adapter=adapter
+        engine, calls = self._run_once(
+            tmp_path, monkeypatch, self._script_result("step_one", "body one")
         )
 
-        outcome = engine.run()
+        bodies = self._bodies(engine)
+        # Exactly one start notice + one completion for step_one: neither the
+        # successor's start notice nor its completion landed in this run.
+        assert sum("step_one command started" in body for body in bodies) == 1
+        assert sum("step_one command succeeded" in body for body in bodies) == 1
+        assert not any("step_two command" in body for body in bodies)
+        assert "body two" not in "".join(bodies)
+        # One invocation, one resolve — the chain never re-resolved mid-run.
+        assert calls["n"] == 1
 
-        # step_one -> step_two -> a non-script result, with no re-resolution.
-        assert calls["n"] == 3
-        # Only ``run()``'s own history read; the chain never re-read the thread.
-        assert adapter.load_history_calls == 1
-        state = extract_state_from_body(outcome.posted_body)
+    def test_the_successor_script_step_runs_in_the_next_invocation(
+        self, tmp_path, monkeypatch
+    ):
+        engine, _ = self._run_once(
+            tmp_path, monkeypatch, self._script_result("step_one", "body one")
+        )
+
+        # The completion comment is stamped with step_one and carries the token
+        # that starts the successor's own run.
+        completion = self._bodies(engine)[-1]
+        assert "<!-- workflow-continue -->" in completion
+        state = extract_state_from_body(completion)
+        assert state is not None
+        assert state.step == "step_one"
+
+        # The next invocation resolves the successor and runs only it.
+        engine, calls = self._run_once(
+            tmp_path, monkeypatch, self._script_result("step_two", "body two")
+        )
+
+        assert calls["n"] == 1
+        bodies = self._bodies(engine)
+        assert sum("step_two command started" in body for body in bodies) == 1
+        assert sum("step_two command succeeded" in body for body in bodies) == 1
+        assert "body two" in bodies[-1]
+        state = extract_state_from_body(bodies[-1])
         assert state is not None
         assert state.step == "step_two"
 
