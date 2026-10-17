@@ -742,6 +742,105 @@ class TestScriptStepComments:
         assert "plan comment" in scope["plan"]
 
 
+class TestOneScriptStepPerInvocation:
+    """One engine invocation advances exactly one script step (issue #994).
+
+    The regression from #964: a ``script`` step whose successor is also a
+    ``script`` step ran *both* in the same invocation (the #974 in-invocation
+    chain, ``run_loop._run_chain_member``) while the step's own completion
+    comment — which always carries ``<!-- workflow-continue -->`` — started a
+    second run for that successor. Two advance mechanisms for one edge meant the
+    successor (``run_tests`` after ``git_diff``) executed twice.
+
+    The successor is now reached only through the completion comment, so a
+    single invocation runs a single script step and the next invocation runs the
+    next one.
+    """
+
+    @staticmethod
+    def _script_result(step: str, body: str) -> dict:
+        return {
+            "SKIP_AGENT": "true",
+            "RUN_SCRIPT": "true",
+            "SCRIPT_PATH": sys.executable,
+            "SCRIPT_ARGS": json.dumps(["-c", f"print({body!r})"]),
+            "SCRIPT_WORKING_DIR": "",
+            "SCRIPT_ENV": "{}",
+            "WORKFLOW_STEP": step,
+            "WORKFLOW_NAME": "chain",
+        }
+
+    def _run_once(self, tmp_path, monkeypatch, result: dict) -> tuple[Engine, dict]:
+        """One engine invocation resolving exactly one script step.
+
+        A fresh ``Engine`` per invocation over the *same* run dir mirrors the
+        host: each GHA run is a new process that re-resolves from scratch, so
+        the per-run resolve memo does not carry across the two runs.
+        """
+        calls = {"n": 0}
+
+        def resolver(**_):
+            calls["n"] += 1
+            return result
+
+        _patch_resolver(monkeypatch, resolver)
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+        engine = _engine(tmp_path)
+        engine.run()
+        return engine, calls
+
+    def _bodies(self, engine: Engine) -> list[str]:
+        return [entry.body for entry in engine.adapter.load_history()]
+
+    def test_a_script_step_does_not_run_its_script_successor_in_the_same_invocation(
+        self, tmp_path, monkeypatch
+    ):
+        engine, calls = self._run_once(
+            tmp_path, monkeypatch, self._script_result("step_one", "body one")
+        )
+
+        bodies = self._bodies(engine)
+        # Exactly one start notice + one completion for step_one: neither the
+        # successor's start notice nor its completion landed in this run.
+        assert sum("step_one command started" in body for body in bodies) == 1
+        assert sum("step_one command succeeded" in body for body in bodies) == 1
+        assert not any("step_two command" in body for body in bodies)
+        assert "body two" not in "".join(bodies)
+        # One invocation, one resolve — the chain never re-resolved mid-run.
+        assert calls["n"] == 1
+
+    def test_the_successor_script_step_runs_in_the_next_invocation(
+        self, tmp_path, monkeypatch
+    ):
+        engine, _ = self._run_once(
+            tmp_path, monkeypatch, self._script_result("step_one", "body one")
+        )
+
+        # The completion comment is stamped with step_one and carries the token
+        # that starts the successor's own run.
+        completion = self._bodies(engine)[-1]
+        assert "<!-- workflow-continue -->" in completion
+        state = extract_state_from_body(completion)
+        assert state is not None
+        assert state.step == "step_one"
+
+        # The next invocation resolves the successor and runs only it.
+        engine, calls = self._run_once(
+            tmp_path, monkeypatch, self._script_result("step_two", "body two")
+        )
+
+        assert calls["n"] == 1
+        bodies = self._bodies(engine)
+        assert sum("step_two command started" in body for body in bodies) == 1
+        assert sum("step_two command succeeded" in body for body in bodies) == 1
+        assert "body two" in bodies[-1]
+        state = extract_state_from_body(bodies[-1])
+        assert state is not None
+        assert state.step == "step_two"
+
+
 class TestBenignNoNextAgentExit:
     """Issue #853: a workflow with no next agent stops green, not with exit 20."""
 
