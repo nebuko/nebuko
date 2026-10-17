@@ -179,6 +179,7 @@ jobs:
               contains(github.event.issue.body, '@@ctx') ||
               contains(github.event.issue.body, '/nebuko'))) ||
             (github.event_name == 'issue_comment' &&
+             !contains(github.event.comment.body, '<!-- bot-answer-continuation -->') &&
              (
               ((inputs.CALLER_AUTH == 'off' ||
                 contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
