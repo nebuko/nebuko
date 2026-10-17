@@ -238,7 +238,10 @@ source of truth so `build_output`'s debug part files and the publish seam's
 multi-comment post never disagree. At publish time `split_comment_body` packs
 the answer into up to `CommentSizePolicy.max_parts` comments (default 4), with
 the state-bearing header on the first part; parts 2..N are posted as
-continuation comments and grouped back onto the state comment on re-read.
+continuation comments and grouped back onto the state comment on re-read. Only
+part 1 keeps the trigger payload — continuation parts are stamped
+`<!-- bot-answer-continuation -->` and their payload is escaped, so a split
+answer triggers the engine once (issues #994, #1002).
 
 ---
 

@@ -183,7 +183,11 @@ for every agent (no per-agent code paths):
    header rides on the *first* part — the bot marker on its line 1 keeps the
    whole run CI-gate exempt, and the later parts are grouped onto that state
    comment on re-read (issue #504). The legacy single-comment 60k truncation is
-   gone, so a long `context` report reaches @@architect in full.
+   gone, so a long `context` report reaches @@architect in full. Continuation
+   parts are inert (issue #1002): each is stamped
+   `<!-- bot-answer-continuation -->` — a token the `run-task` gate rejects — and
+   its copy of the trigger payload is escaped, so one logical answer fires
+   exactly one run (issue #994).
 
 **Shared contract** — the rule "the report turn's `finish.message` is the
 deliverable; the work-loop finish message is an optional note" lives in a single

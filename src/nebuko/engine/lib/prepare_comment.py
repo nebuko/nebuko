@@ -372,6 +372,15 @@ BOT_MARKER = "<!-- bot-workflow-terminal -->"
 # hidden marker rather than on stray ``@@`` tokens in agent prose.
 CONTINUE_TOKEN = "<!-- workflow-continue -->\n"
 
+# Marks an answer comment as a *continuation* of a multi-part answer (issue
+# #1002). One logical answer is posted as several comments when it exceeds
+# ``CommentSizePolicy``; only the first part carries the trigger payload, so the
+# issue_comment gate must reject every body stamped with this token, otherwise
+# each part fires the workflow again (issue #994: one context answer split in
+# two booted two architect runs). The literal is pinned to the gate expression
+# in ``.github/workflows/nebuko-workflow.yaml`` by a parity test.
+ANSWER_CONTINUATION_TOKEN = "<!-- bot-answer-continuation -->"
+
 # The one outcome that stops the machine's turn: a hold hands control to a
 # human, who releases it with a command rather than by re-triggering the
 # engine. Every other outcome — a verdict, or an incomplete turn the router

@@ -296,7 +296,11 @@ step that read `final_message_parts_count.txt` / `final_message_part_{N}.txt` is
 no longer the mechanism; those files remain as debug artifacts. The split is
 governed by `CommentSizePolicy` (default 60,000 chars per comment, up to 4
 parts). The state-bearing header is on part 1, so the continuation parts carry no
-continue token and do not re-trigger the workflow.
+continue token and do not re-trigger the workflow: each is stamped
+`<!-- bot-answer-continuation -->` and has its trigger payload
+(`<!-- workflow-continue -->`, `<!-- bot-trigger:`) escaped, and the `run-task`
+gate rejects any comment carrying that stamp (issue #1002 — before the fix each
+part fired its own run, issue #994).
 
 ---
 

@@ -1570,6 +1570,45 @@ class TestRunLoop:
             assert "@@dev" not in part.body and "@@architect" not in part.body
             assert extract_mention_agent(part.body) is None
 
+    def test_only_the_first_part_can_re_trigger_the_engine(self, tmp_path, monkeypatch):
+        """A split answer fires the next run once, not once per part (#1002).
+
+        Every published comment carries the trigger payload the issue_comment
+        gate matches on — the continue token and the bot marker footer. When the
+        answer is split, each continuation part is its own comment event, so the
+        gate fires once per part and one logical answer boots N runs (issue
+        #994: a ``*(Part 2/2)*`` comment started a second architect run).
+        Exactly one part may therefore carry the payload; the others must be
+        stamped as answer continuations, a token the gate rejects on.
+        """
+        from config import CommentSizePolicy
+
+        engine = _engine(tmp_path)
+        long_answer = "\n\n".join(f"Section {i} " + "x" * 80 for i in range(30))
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result(long_answer))
+        monkeypatch.setattr(
+            Engine,
+            "_comment_size_policy",
+            staticmethod(lambda: CommentSizePolicy(max_comment_chars=400, max_parts=10)),
+        )
+
+        engine.run()
+
+        entries = engine.adapter.load_history()
+        parts = [entry for entry in entries if "*(Part " in entry.body]
+        assert len(parts) > 1
+
+        triggerable = [
+            part.body
+            for part in parts
+            if "<!-- workflow-continue -->" in part.body
+        ]
+        assert len(triggerable) == 1, "exactly one part may carry the continue token"
+        assert parts[0].body in triggerable, "the state-bearing part keeps the payload"
+        for part in parts[1:]:
+            assert "<!-- workflow-continue -->" not in part.body
+            assert "<!-- bot-answer-continuation -->" in part.body
+
     def test_publish_neutralizes_agent_triggers_before_posting(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
         monkeypatch.setattr(

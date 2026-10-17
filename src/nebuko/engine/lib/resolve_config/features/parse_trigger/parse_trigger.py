@@ -53,11 +53,32 @@ MACHINE_TOKENS: tuple[str, ...] = (
     "<!-- bot-agent-",
     "<!-- bot-trigger",
     "<!-- bot-summarizer-trigger -->",
+    "<!-- bot-answer-continuation -->",
     "AGENT_RUN_CONFIG",
 )
 
 #: Universal bot marker prefixed to every CI-posted comment (issue #474).
 UNIVERSAL_BOT_MARKER = "<!-- bot-workflow-terminal -->"
+
+#: Marks a comment as a *continuation part* of a multi-part answer (issue
+#: #1002). The answer's trigger payload rides on part 1 only; a body carrying
+#: this token is inert by construction — it must never route an agent, even if
+#: it reaches the engine (the GHA gate rejects it too). Mirrors
+#: ``prepare_comment.ANSWER_CONTINUATION_TOKEN``, which stays the single
+#: producer-side source of truth; a parity test pins the two literals.
+ANSWER_CONTINUATION_MARKER = "<!-- bot-answer-continuation -->"
+
+
+def is_answer_continuation(trigger_body: str) -> bool:
+    """True when the body is a continuation part of a split answer (issue #1002).
+
+    Args:
+        trigger_body: Raw trigger body text.
+
+    Returns:
+        True if the body carries the continuation stamp.
+    """
+    return ANSWER_CONTINUATION_MARKER in trigger_body
 
 
 def has_universal_bot_marker(trigger_body: str) -> bool:
