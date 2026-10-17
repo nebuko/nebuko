@@ -826,6 +826,20 @@ def _unmatched_verdict_result(
     }
 
 
+def _declared_finish_result() -> dict:
+    """The benign terminal skip for a declared end-of-workflow (issue #1006).
+
+    A matched ``verdict -> next: null`` edge carries no task, exactly like the
+    unmatched-verdict case, but it *is* the declared route: it stops the run
+    quietly instead of logging a bogus "no route for verdict" warning.
+    """
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": "Terminal step reached",
+        "SKIP_KIND": "terminal",
+    }
+
+
 def _unmatched_verdict_fallback(
     outcome: TurnOutcome,
     prev_state: "WorkflowState",
@@ -839,8 +853,10 @@ def _unmatched_verdict_fallback(
     then a ``null`` finish. Both are benign terminal no-ops (``exit 0``); the
     warning keeps the gap visible in the CI log without failing the host run.
 
-    A claim that names no real workflow/step keeps the clean-failure contract:
-    there is nothing to fall back *to*, so it stays a ``Resolution failed``.
+    A declared ``verdict -> next: null`` edge never reaches here (it is the
+    honest finish, see :func:`_declared_finish_result`). A claim that names no
+    real workflow/step keeps the clean-failure contract: there is nothing to
+    fall back *to*, so it stays a ``Resolution failed``.
     """
     if not _is_runnable_workflow_step(
         prev_state, workflows_dir, local_workflows_dir
@@ -1011,6 +1027,10 @@ def _resolve_outcome_path(
         if config.get("run_script"):
             return config
         if outcome is not None and outcome.appreciation is not None:
+            # A declared ``verdict -> next: null`` edge is an honest finish, not
+            # a routing gap (issue #1006): only an unmatched verdict falls back.
+            if wf_result is not None and wf_result.kind is RouteKind.DECLARED_FINISH:
+                return _declared_finish_result()
             # A verdict that selected no declared edge on a reachable step is a
             # routing gap, not a broken run: fall back to the step's `default`
             # edge, then to a benign null finish (issue #1006).
@@ -2057,6 +2077,10 @@ def _resolve_bot_fallback_path(
                 return wf_result.skip_result()
             _apply_route_resolution(config, wf_result, prev_state)
             if not config["task"] and not config.get("run_script"):
+                # A declared ``verdict -> next: null`` edge is an honest finish
+                # (issue #1006); only an unmatched verdict falls back.
+                if wf_result is not None and wf_result.kind is RouteKind.DECLARED_FINISH:
+                    return _declared_finish_result()
                 # Same fallback chain as the outcome path (issue #1006): the
                 # verdict gap must not fail the bot run either.
                 return _unmatched_verdict_fallback(

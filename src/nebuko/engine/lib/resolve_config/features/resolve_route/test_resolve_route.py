@@ -1182,6 +1182,38 @@ _VERDICT_FALLBACK_WITH_DEFAULT_WF_YAML = (
 )
 
 
+# Same shape but the ``default`` edge itself is ``next: null``: a declared
+# edge, so a verdict it matches is an honest finish rather than a gap (#1006).
+_VERDICT_FALLBACK_WITH_NULL_DEFAULT_WF_YAML = (
+    "name: fallback_default_null\n"
+    "description: test\n"
+    "steps:\n"
+    "  - name: review\n"
+    "    agent: review\n"
+    "    conditions:\n"
+    "      - on_result: approved\n"
+    "        next: null\n"
+    "      - on_result: default\n"
+    "        next: null\n"
+)
+
+
+# The step declares only ``rejected -> next: null`` and no ``default`` edge, so
+# ``approved`` is a verdict it does not name: nothing to fall back to but the
+# benign ``null`` finish (issue #1006). ``hold`` cannot stand in here — the
+# engine parks it before any routing, on both the agent and bot paths.
+_VERDICT_NO_DEFAULT_WF_YAML = (
+    "name: fallback_no_default\n"
+    "description: test\n"
+    "steps:\n"
+    "  - name: review\n"
+    "    agent: review\n"
+    "    conditions:\n"
+    "      - on_result: rejected\n"
+    "        next: null\n"
+)
+
+
 class TestUnmatchedVerdictFallback:
     """Route -> ``default`` -> ``null``, never a hard failure (issue #1006).
 
@@ -1246,20 +1278,32 @@ class TestUnmatchedVerdictFallback:
         assert result.get("TASK") == "dev"
         assert result["WORKFLOW_STEP"] == "implement"
 
-    def test_declared_null_verdict_is_a_benign_finish(self, tmp_path):
-        # Regression guard (issue #924): ``approved -> next: null`` is the
-        # honest end of the workflow, exit 0, no error.
+    def test_declared_null_verdict_is_a_benign_finish(self, tmp_path, capsys):
+        # Regression guard (issues #924/#1006): ``approved -> next: null`` is a
+        # *declared* edge, so it must stop the run quietly — no "no route for
+        # verdict" warning, no fallback, no error.
         result = self._review(tmp_path, "approved")
         assert result["SKIP_AGENT"] == "true"
         assert result.get("SKIP_KIND") == "terminal"
-        assert "Resolution failed" not in result["REASON"]
+        assert result["REASON"] == "Terminal step reached"
+        assert "no route for verdict" not in result["REASON"]
+        assert "falling back" not in result["REASON"]
+        assert "Warning:" not in capsys.readouterr().err
 
     def test_unmatched_verdict_without_default_is_a_benign_finish(self, tmp_path):
         # The bug of issue #1006: a verdict the step does not declare used to
         # raise ``Resolution failed: ... has no route for verdict`` and exit 20.
-        # ``approved`` is not declared on this ``review`` step (it declares
-        # ``rejected``), so the run must fall back to a benign null finish.
-        result = self._review(tmp_path, "approved")
+        # This ``review`` step declares only ``rejected``, so ``approved`` is
+        # unmatched and the run must fall back to a benign null finish.
+        result = self._resolve(
+            tmp_path,
+            "fallback_no_default",
+            "review",
+            _VERDICT_NO_DEFAULT_WF_YAML,
+            "fallback_no_default",
+            status="completed",
+            appreciation="approved",
+        )
         assert result["SKIP_AGENT"] == "true"
         assert result.get("SKIP_KIND") == "terminal"
         assert "falling back to a null finish" in result["REASON"]
@@ -1278,6 +1322,25 @@ class TestUnmatchedVerdictFallback:
         )
         assert result["WORKFLOW_STEP"] == "implement"
         assert result.get("TASK") == "dev"
+
+    def test_declared_default_null_edge_is_a_benign_fallback(self, tmp_path, capsys):
+        # The step declares ``default -> next: null``, so a verdict it does not
+        # name falls back to that declared null finish: benign (exit 0), with
+        # the warning naming the step, verdict and chosen fallback.
+        result = self._resolve(
+            tmp_path,
+            "fallback_default_null",
+            "review",
+            _VERDICT_FALLBACK_WITH_NULL_DEFAULT_WF_YAML,
+            "fallback_default_null",
+            status="completed",
+            appreciation="rejected",
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("SKIP_KIND") == "terminal"
+        assert "falling back to a null finish" in result["REASON"]
+        assert "Resolution failed" not in result["REASON"]
+        assert "Warning:" in capsys.readouterr().err
 
     def test_unknown_step_still_fails_resolution(self, tmp_path):
         result = self._resolve(
