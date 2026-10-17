@@ -1,6 +1,5 @@
 """Message splitting — pure functions for splitting long messages into parts."""
 
-import os
 import re
 import sys
 from dataclasses import dataclass
@@ -9,8 +8,10 @@ from pathlib import Path
 from config import CommentSizePolicy
 
 # ``prepare_comment`` sits at the ``lib`` root; this module is a sub-domain three
-# levels down, so the bootstrap mirrors ``run_loop.ensure_import_path`` rather
-# than relying on the caller's ``sys.path``.
+# levels down, so importing it needs an explicit bootstrap rather than the
+# caller's ``sys.path``. ``parents[4]`` is the ``engine`` directory: putting it
+# on ``sys.path`` makes ``lib`` reachable as the ``nebuko.engine.lib`` package,
+# which the rest of the run already imports from.
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 from prepare_comment import ANSWER_CONTINUATION_TOKEN  # noqa: E402
 
