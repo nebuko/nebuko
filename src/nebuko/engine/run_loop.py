@@ -1027,7 +1027,10 @@ class Engine:
             skip_kind=(
                 str(resolved.get("SKIP_KIND"))
                 if isinstance(resolved, Mapping) and resolved.get("SKIP_KIND")
-                else self._step_skip_kind(resolved)
+                else self._step_skip_kind(
+                    resolved,
+                    turn_outcome.route_key if turn_outcome is not None else None,
+                )
             ),
             agent_ran="publish" in phases,
             state=state,
@@ -1689,8 +1692,17 @@ class Engine:
             and turn_outcome.appreciation is Appreciation.HOLD
         )
         route_key = turn_outcome.route_key if turn_outcome is not None else None
-        terminal = (
-            False if (held or skip_kind) else self._step_is_terminal(resolved, route_key)
+        # ``terminal`` and ``unresolved`` must stay mutually exclusive, so the
+        # caller supplies both from the one skip fact (issue #996): a plain
+        # advance carries no skip kind and is not a completion; a declared
+        # finish is the honest end of the workflow; every other skip is an
+        # input request, never a fake finish.
+        terminal = skip_kind == "terminal" or (
+            not (held or skip_kind)
+            and self._step_is_terminal(resolved, route_key)
+        )
+        unresolved = bool(skip_kind) and not (
+            skip_kind == "terminal" and route_key in ("approved", "rejected")
         )
 
         return HumanActionNotice.classify(
@@ -1700,24 +1712,37 @@ class Engine:
             target=self._trigger_author(state),
             step=str(self._get(resolved, "WORKFLOW_STEP") or ""),
             workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
-            unresolved=bool(skip_kind),
+            unresolved=unresolved,
         )
 
-    def _step_skip_kind(self, resolved: Any) -> str | None:
-        """The resolver's ``SKIP_KIND`` verdict for this step, or ``None``.
+    def _step_skip_kind(
+        self, resolved: Any, route_key: str | None = None
+    ) -> str | None:
+        """The resolver's skip kind for a run it *stopped*, or ``None``.
 
-        ``_workflow_successor``/``_terminal_kind`` answer whether the step has a
-        declared successor; this additionally distinguishes a step whose
-        ``on_result`` edges matched nothing (issue #924), which the router
-        reports as a ``UNRESOLVED`` step with no ``next``.
+        Only a resolver stop (``SKIP_AGENT`` truthy — set by every skip
+        producer) owes a skip kind; a run that routed to a successor continues
+        and is not a skip at all, so ``_classify_terminal_kind`` must never be
+        consulted for it (issue #996): a step with a live forward edge
+        (``context: next: plan``) would otherwise read as ``UNRESOLVED`` and
+        mislabel every advance as "needs your input".
+
+        For a stopped run the step's typed :class:`RouteKind` distinguishes a
+        declared finish (``"terminal"``) from an unresolved step whose
+        ``on_result`` edges matched nothing or found no successor
+        (``"unresolved"``, issues #924/#923). ``route_key`` is the turn's
+        verdict: it lets a matched ``next: null`` edge read as the declared
+        finish it is.
         """
+        if not (isinstance(resolved, Mapping) and _is_true(resolved.get("SKIP_AGENT"))):
+            return None
         ensure_import_path()
         from resolve_workflow import RouteKind
 
-        kind = self._terminal_kind(resolved)
-        if kind is RouteKind.UNRESOLVED:
-            return "unresolved"
-        return None
+        kind = self._terminal_kind(resolved, route_key)
+        if kind is RouteKind.DECLARED_FINISH:
+            return "terminal"
+        return "unresolved"
 
     def _step_is_terminal(self, resolved: Any, route_key: str | None = None) -> bool:
         """True when the step this run executed is a declared workflow finish.

@@ -1219,6 +1219,141 @@ class TestHumanActionNotice:
             encoding="utf-8"
         )
 
+
+class TestStepSkipKindIsOnlyForAStop:
+    """Issue #996: a run that *advanced* owes no skip kind.
+
+    ``_classify_terminal_kind`` answers "what is a step that produced no
+    successor?", so consulting it for a run that routed to a successor
+    mislabels every advance as ``unresolved`` — the spurious "paused at step
+    `context` and needs your input" notice the engine posted while the
+    workflow happily continued.
+    """
+
+    def test_an_advance_out_of_a_mid_workflow_step_owes_no_skip_kind(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        kind = engine._step_skip_kind(
+            {"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "context"}
+        )
+
+        assert kind is None
+
+    def test_a_routed_successor_never_reads_as_unresolved(self, tmp_path):
+        """The resolver's own ``SKIP_AGENT: false`` is an advance, not a stop."""
+        engine = _engine(tmp_path)
+
+        kind = engine._step_skip_kind(
+            {
+                "SKIP_AGENT": "false",
+                "WORKFLOW_NAME": "default",
+                "WORKFLOW_STEP": "context",
+            }
+        )
+
+        assert kind is None
+
+    def test_a_stop_without_a_skip_kind_classifies_as_unresolved(self, tmp_path):
+        """A resolver stop whose edges matched nothing still pings for input."""
+        engine = _engine(tmp_path)
+
+        kind = engine._step_skip_kind(
+            {
+                "SKIP_AGENT": "true",
+                "WORKFLOW_NAME": "default",
+                "WORKFLOW_STEP": "review",
+            }
+        )
+
+        assert kind == "unresolved"
+
+    def test_a_declared_finish_classifies_as_terminal(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        kind = engine._step_skip_kind(
+            {
+                "SKIP_AGENT": "true",
+                "WORKFLOW_NAME": "default",
+                "WORKFLOW_STEP": "review",
+            },
+            "approved",
+        )
+
+        assert kind == "terminal"
+
+
+class TestHumanActionNoticeOnAnAdvance:
+    """Issue #996: the notice boundary must not fabricate a stop."""
+
+    def test_an_advance_posts_no_notice(self, tmp_path, monkeypatch):
+        """The reported defect: `context` advanced yet pinged "needs your input"."""
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "false",
+                "TASK": "architect",
+                "WORKFLOW_NAME": "default",
+                "WORKFLOW_STEP": "context",
+                "WORKFLOW_NEXT": "plan",
+            },
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result("facts")
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        journal = tmp_path / "runs" / "run-1" / "journal.md"
+        assert not journal.exists() or "<!-- bot-human-action -->" not in journal.read_text(
+            encoding="utf-8"
+        )
+
+    def test_a_declared_finish_reports_workflow_complete(self, tmp_path):
+        """A stop the resolver labelled ``terminal`` is the honest finish."""
+        engine = _engine(tmp_path)
+
+        notice = engine.human_action_notice(
+            turn_outcome=_outcome("approved"),
+            skip_kind="terminal",
+            agent_ran=True,
+            state=None,
+            resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
+        )
+
+        assert notice is not None
+        assert notice.kind == "workflow_complete"
+
+    def test_a_terminal_stop_without_a_verdict_still_asks_for_input(self, tmp_path):
+        """``terminal`` alone is not a completion: it needs the finish verdict."""
+        engine = _engine(tmp_path)
+
+        notice = engine.human_action_notice(
+            turn_outcome=TurnOutcome.for_incomplete(IncompleteReason.NO_OUTCOME),
+            skip_kind="terminal",
+            agent_ran=True,
+            state=None,
+            resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
+        )
+
+        assert notice is not None
+        assert notice.kind == "awaiting_input"
+
+    def test_a_no_next_agent_stop_keeps_asking_for_input(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        notice = engine.human_action_notice(
+            turn_outcome=TurnOutcome.for_incomplete(IncompleteReason.NO_OUTCOME),
+            skip_kind="no_next_agent",
+            agent_ran=True,
+            state=None,
+            resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "review"},
+        )
+
+        assert notice is not None
+        assert notice.kind == "awaiting_input"
+
     def test_the_engine_publish_neutralizes_agent_human_pings(self, tmp_path, monkeypatch):
         """An agent-composed human mention is inert by the time it is posted."""
         engine = _engine(tmp_path)
