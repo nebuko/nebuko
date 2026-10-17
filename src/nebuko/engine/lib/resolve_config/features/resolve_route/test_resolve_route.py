@@ -1141,3 +1141,156 @@ class TestRoutingPolicyTable:
         assert result["WORKFLOW_STEP"] == "plan"
         assert result["TASK"] == "architect"
 
+
+# A ``review`` step shaped exactly like ``defaults/workflows/default.yaml``:
+# ``approved -> next: null`` is declared, ``rejected`` routes back, and there is
+# no ``default`` condition and no linear ``next`` (issue #1006).
+_VERDICT_FALLBACK_WF_YAML = (
+    "name: fallback\n"
+    "description: test\n"
+    "steps:\n"
+    "  - name: implement\n"
+    "    agent: dev\n"
+    "    next: review\n"
+    "  - name: review\n"
+    "    agent: review\n"
+    "    conditions:\n"
+    "      - on_result: approved\n"
+    "        next: null\n"
+    "      - on_result: rejected\n"
+    "        next: implement\n"
+)
+
+
+# Same shape plus an explicit ``default`` edge (like ``think.yaml``): a
+# verdict the step does not declare must take the fallback first (issue #1006).
+# The step declares only ``rejected``, so ``approved`` is the unmatched key.
+_VERDICT_FALLBACK_WITH_DEFAULT_WF_YAML = (
+    "name: fallback_default\n"
+    "description: test\n"
+    "steps:\n"
+    "  - name: implement\n"
+    "    agent: dev\n"
+    "    next: review\n"
+    "  - name: review\n"
+    "    agent: review\n"
+    "    conditions:\n"
+    "      - on_result: rejected\n"
+    "        next: null\n"
+    "      - on_result: default\n"
+    "        next: implement\n"
+)
+
+
+class TestUnmatchedVerdictFallback:
+    """Route -> ``default`` -> ``null``, never a hard failure (issue #1006).
+
+    ``default.yaml``'s ``review`` step declares ``approved`` yet the run died
+    with ``Resolution failed: step 'review' in workflow 'default' has no route
+    for verdict 'approved'`` and exit 20. A *known* step whose verdict selects
+    no edge is a config gap owed a warning, not a terminal error: it falls back
+    to the step's ``default`` edge, and to a benign ``null`` finish when there
+    is none. Only genuinely unknown workflow/step names keep failing.
+    """
+
+    @staticmethod
+    def _dirs(tmp_path, yaml: str, name: str):
+        from resolve_workflow import TASK_TO_PROMPT
+
+        prompt_base = tmp_path / "prompts"
+        workflows_dir = tmp_path / "workflows"
+        prompt_base.mkdir(exist_ok=True)
+        workflows_dir.mkdir(exist_ok=True)
+        for task in TASK_TO_PROMPT.values():
+            (prompt_base / task).write_text("# prompt")
+        (workflows_dir / f"{name}.yaml").write_text(yaml)
+        return str(prompt_base), str(workflows_dir)
+
+    def _resolve(self, tmp_path, workflow: str, step: str, yaml: str, name: str, **outcome):
+        import json as _json
+
+        from resolve_config import resolve_config
+
+        state = {
+            "version": 1,
+            "workflow": workflow,
+            "step": step,
+            "agent": "review",
+            "turn_outcome": outcome,
+        }
+        block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + _json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        prompt_base, workflows_dir = self._dirs(tmp_path, yaml, name)
+        body = "<!-- bot-workflow-terminal -->\n" + block
+        return resolve_config(body, prompt_base, workflows_dir, is_bot=True)
+
+    def _review(self, tmp_path, verdict: str, **extra):
+        return self._resolve(
+            tmp_path,
+            "fallback",
+            "review",
+            _VERDICT_FALLBACK_WF_YAML,
+            "fallback",
+            status="completed",
+            appreciation=verdict,
+            **extra,
+        )
+
+    def test_declared_verdict_is_routed(self, tmp_path):
+        # Regression guard (issues #924/#935): the declared ``rejected`` edge
+        # must win, never be swallowed by the fallback chain.
+        result = self._review(tmp_path, "rejected")
+        assert result.get("TASK") == "dev"
+        assert result["WORKFLOW_STEP"] == "implement"
+
+    def test_declared_null_verdict_is_a_benign_finish(self, tmp_path):
+        # Regression guard (issue #924): ``approved -> next: null`` is the
+        # honest end of the workflow, exit 0, no error.
+        result = self._review(tmp_path, "approved")
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("SKIP_KIND") == "terminal"
+        assert "Resolution failed" not in result["REASON"]
+
+    def test_unmatched_verdict_without_default_is_a_benign_finish(self, tmp_path):
+        # The bug of issue #1006: a verdict the step does not declare used to
+        # raise ``Resolution failed: ... has no route for verdict`` and exit 20.
+        # ``approved`` is not declared on this ``review`` step (it declares
+        # ``rejected``), so the run must fall back to a benign null finish.
+        result = self._review(tmp_path, "approved")
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("SKIP_KIND") == "terminal"
+        assert "falling back to a null finish" in result["REASON"]
+        assert "Resolution failed" not in result["REASON"]
+        assert result.get("TASK") is None
+
+    def test_unmatched_verdict_takes_the_default_edge_when_declared(self, tmp_path):
+        result = self._resolve(
+            tmp_path,
+            "fallback_default",
+            "review",
+            _VERDICT_FALLBACK_WITH_DEFAULT_WF_YAML,
+            "fallback_default",
+            status="completed",
+            appreciation="approved",
+        )
+        assert result["WORKFLOW_STEP"] == "implement"
+        assert result.get("TASK") == "dev"
+
+    def test_unknown_step_still_fails_resolution(self, tmp_path):
+        result = self._resolve(
+            tmp_path,
+            "fallback",
+            "no_such_step",
+            _VERDICT_FALLBACK_WF_YAML,
+            "fallback",
+            status="completed",
+            appreciation="approved",
+        )
+        assert result["SKIP_AGENT"] == "true"
+        assert "Resolution failed" in result["REASON"]
+        assert result.get("SKIP_KIND") != "terminal"
+
+
