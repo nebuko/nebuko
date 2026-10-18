@@ -458,6 +458,8 @@ class TestHumanGateHoldVerdict(unittest.TestCase):
         """No ``SKIP_KIND`` must keep the pre-existing terminal failure."""
         skip = SkipOutcome.from_verdict({"SKIP_AGENT": "true", "REASON": "boom"})
         self.assertIs(skip.kind, SkipKind.CONFIG_ERROR)
+        self.assertFalse(skip.is_benign)
+        self.assertEqual(skip.exit_code, ExitCode.TERMINAL)
 
 
 class TestGateNoopVerdict(unittest.TestCase):
