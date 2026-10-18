@@ -596,10 +596,11 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
     """The agent-answer comment carries the workflow state (issue #736).
 
     The Stage B cutover dropped the legacy comment-assembly step.
-    ``build_comment_body`` restores it on the *agent-answer* comment: the bot
-    marker on line 1 (issue #478), the caller marker, a deterministic continue
-    token while the flow stays alive, the collapsed state section, the role
-    answer line and finally the answer text.
+    ``build_comment_body`` restores it on the *agent-answer* comment: the
+    deterministic continue token on line 1 while the flow stays alive (issue
+    #978 — the workflow gate matches it with ``startsWith``), then the bot
+    marker (issue #478), the caller marker, the collapsed state section, the
+    role answer line and finally the answer text.
     """
 
     BOT_MARKER = "<!-- bot-workflow-terminal -->"
@@ -643,8 +644,9 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
             state=resolved,
         )
 
-    def test_puts_the_bot_marker_on_the_first_line(self):
-        self.assertEqual(self._body().splitlines()[0], self.BOT_MARKER)
+    def test_puts_the_continue_token_on_the_first_line(self):
+        """Issue #978: the gate anchors the token with ``startsWith``."""
+        self.assertTrue(self._body().startswith(self.CONTINUE_TOKEN))
 
     def test_embeds_the_collapsed_state_section(self):
         from workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
@@ -655,13 +657,13 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
         self.assertIn(STATE_MARKER_END, body)
         self.assertIn('"step": "stub"', body)
 
-    def test_orders_marker_token_state_role_line_and_answer(self):
+    def test_orders_token_marker_state_role_line_and_answer(self):
         body = self._body()
 
         self.assertIn("<!-- bot-agent-dev -->", body)
         self.assertIn("*Developer answer*", body)
-        self.assertLess(body.index("<!-- bot-agent-dev -->"), body.index(self.CONTINUE_TOKEN))
-        self.assertLess(body.index(self.CONTINUE_TOKEN), body.index("*Developer answer*"))
+        self.assertLess(body.index(self.CONTINUE_TOKEN), body.index(self.BOT_MARKER))
+        self.assertLess(body.index("<!-- bot-agent-dev -->"), body.index("*Developer answer*"))
         self.assertLess(body.index("*Developer answer*"), body.index(self.ANSWER))
 
     def test_carries_the_continue_token_for_an_advancing_run(self):
@@ -675,6 +677,30 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
             self.CONTINUE_TOKEN,
             self._body(appreciation="hold", hold_kind="awaiting_input"),
         )
+
+    def test_omits_the_token_for_a_crashed_run(self):
+        """Issue #978: a crashed run is a notification — it re-triggers nothing.
+
+        The failure contract is hold-for-human (``/nebuko resume``); a token
+        would fire a fresh run on a rate-limit-exhausted provider.
+        """
+        from workflow_state.sub_domains.turn_outcome.turn_outcome import (
+            IncompleteReason,
+            TurnOutcome,
+        )
+        from workflow_state.workflow_state import WorkflowState
+
+        state = WorkflowState(
+            version=7,
+            workflow="spec-driven-impl",
+            step="implement",
+            agent="dev",
+            turn_outcome=TurnOutcome.for_incomplete(IncompleteReason.FAILURE),
+        )
+        body = self._body(state=state)
+
+        self.assertNotIn(self.CONTINUE_TOKEN, body)
+        self.assertIn(self.ANSWER, body)
 
     def test_carries_the_continue_token_without_any_recorded_outcome(self):
         """Issue #964: with no outcome the token stays — the router decides.
@@ -700,9 +726,9 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
     def test_keeps_the_header_but_omits_the_section_without_a_state(self):
         body = self._body(state=None)
 
-        self.assertEqual(body.splitlines()[0], self.BOT_MARKER)
+        self.assertTrue(body.startswith(self.CONTINUE_TOKEN))
         self.assertIn("<!-- bot-agent-dev -->", body)
-        self.assertIn(self.CONTINUE_TOKEN, body)
+        self.assertIn(self.BOT_MARKER, body)
         self.assertNotIn("<!-- WORKFLOW_STATE_START -->", body)
         self.assertIn(self.ANSWER, body)
 

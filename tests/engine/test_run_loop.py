@@ -54,6 +54,7 @@ from workflow_state import extract_state_from_body
 from workflow_state.step_output_record import StepOutputRecord
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
+CONTINUE_TOKEN = "<!-- workflow-continue -->"
 WORKFLOW_STATE_MARKER = "<!-- WORKFLOW_STATE_START -->"
 
 # The GitHub host surface the removed bash acknowledgment step read (issue #720).
@@ -1694,12 +1695,15 @@ class TestRunLoop:
         entries = engine.adapter.load_history()
         parts = [entry for entry in entries if "*(Part " in entry.body]
         assert len(parts) > 1
-        # Part 1 opens with the answer-comment header (the terminal marker is
-        # stripped by the adapter on read) and the first continuation header;
-        # every later part is an ordered continuation fragment with no header.
-        # The header therefore stays on part 1, keeping the run CI-gate exempt
-        # and the parts grouped onto that history entry (issues #504, #913).
-        assert parts[0].body.startswith(BOT_AGENT_MARKER)
+        # Part 1 opens with the answer-comment header — the continue token
+        # first (issue #978: the workflow gate anchors it with ``startsWith``,
+        # so it must be line 1), then the bot marker — followed by the first
+        # continuation header; every later part is an ordered continuation
+        # fragment with no header. The header therefore stays on part 1,
+        # keeping the run CI-gate exempt and the parts grouped onto that
+        # history entry (issues #504, #913).
+        assert parts[0].body.startswith(CONTINUE_TOKEN)
+        assert BOT_AGENT_MARKER in parts[0].body
         assert parts[0].body.count("*(Part 1/") == 1
         for offset, part in enumerate(parts[1:], start=2):
             # Continuation parts carry the bot marker so the ledger classifies

@@ -689,7 +689,9 @@ class TestReviewRound2Restart:
         # Not a terminal finish: the engine's notice layer reads SKIP_KIND
         # "terminal" as workflow-complete, so this must not carry it.
         assert result.get("SKIP_KIND") != "terminal"
-        assert "resolved no successor" in result.get("REASON", "")
+        # #978: the verdictless turn parks on the missing outcome rather than a
+        # missing successor; either way it is an unresolved skip, not a finish.
+        assert "no verdict" in result.get("REASON", "")
 
         from resolve_workflow import RouteKind, resolve_next_from_workflow
 

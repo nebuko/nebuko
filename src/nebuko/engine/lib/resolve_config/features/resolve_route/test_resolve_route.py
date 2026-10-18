@@ -1055,10 +1055,17 @@ class TestRoutingPolicyTable:
 
     The policy table is the contract the migration lands on, so each row is
     exercised through the public ``resolve_config`` entry: a regression in the
-    ordering (soft-kill > gate hold > verdict edge > linear edge) fails loudly.
-    The ``plan`` step's linear edge (``implement``) deliberately differs from
-    its ``approved`` edge (``review``), so a verdict that silently fell back to
-    the linear edge cannot pass.
+    ordering (soft-kill > stop status > gate hold > verdict edge > linear edge)
+    fails loudly. The ``plan`` step's linear edge (``implement``) deliberately
+    differs from its ``approved`` edge (``review``), so a verdict that silently
+    fell back to the linear edge cannot pass.
+
+    Amended by #978: an *incomplete* turn never follows the linear edge. A
+    ``FAILURE`` turn is a notification and holds for a human; ``INTERRUPTED``
+    and ``SOFT_TIMEOUT`` retry the step in place; ``NO_OUTCOME`` (an agent that
+    emitted no verdict at all) is also a notification, so a *bot* trigger
+    carrying it performs no action. Only a ``COMPLETED`` verdict routes on the
+    workflow edges.
     """
 
     @staticmethod
@@ -1115,24 +1122,34 @@ class TestRoutingPolicyTable:
         assert result["SKIP_AGENT"] == "true"
         assert result.get("WORKFLOW_STEP") != "review"
 
-    def test_failure_without_a_verdict_follows_the_linear_edge(self, tmp_path):
+    def test_failure_without_a_verdict_parks_the_step(self, tmp_path):
+        """A crashed run is a notification: no successor, no advance (#978)."""
         result = self._resolve(
             tmp_path, status="incomplete", incomplete_reason="failure"
         )
-        assert result["WORKFLOW_STEP"] == "implement"
-        assert result["TASK"] == "dev"
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("WORKFLOW_STEP") != "implement"
 
-    def test_interrupted_without_a_verdict_follows_the_linear_edge(self, tmp_path):
+    def test_interrupted_without_a_verdict_retries_the_step_in_place(self, tmp_path):
+        """An interrupted run decided nothing: retry in place, never advance (#978)."""
         result = self._resolve(
             tmp_path, status="incomplete", incomplete_reason="interrupted"
         )
-        assert result["WORKFLOW_STEP"] == "implement"
+        assert result["WORKFLOW_STEP"] == "plan"
+        assert result["TASK"] == "architect"
 
-    def test_no_outcome_without_a_verdict_follows_the_linear_edge(self, tmp_path):
+    def test_no_outcome_without_a_verdict_is_a_notification(self, tmp_path):
+        """A bot trigger with no verdict carries no dispatch information (#978).
+
+        The linear-edge fallback is now reachable only from a *human* trigger
+        (``resolve_config``'s legacy branch); a bot notification performs no
+        action, exactly like a crashed run's comment.
+        """
         result = self._resolve(
             tmp_path, status="incomplete", incomplete_reason="no_outcome"
         )
-        assert result["WORKFLOW_STEP"] == "implement"
+        assert result["SKIP_AGENT"] == "true"
+        assert result.get("WORKFLOW_STEP") != "implement"
 
     def test_soft_timeout_retries_the_step_in_place(self, tmp_path):
         result = self._resolve(

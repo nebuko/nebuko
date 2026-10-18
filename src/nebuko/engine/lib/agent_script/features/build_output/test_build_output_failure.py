@@ -111,7 +111,13 @@ class TestBuildOutputFailure(unittest.TestCase):
         self.assertIn(RESUME_COMMAND, result["final_message"])
         self.assertNotIn("unreachable", result["final_message"].lower())
 
-    def test_existing_final_message_is_not_overridden(self):
+    def test_a_crash_overrides_partial_prose_with_the_notification(self):
+        """A crashed run is a notification, whatever prose it left behind.
+
+        Partial prose is not a deliverable (issue #978): the notification
+        summary replaces it, so the comment cannot carry the routing payload
+        of a turn that never completed.
+        """
         text = "**Work completed**: X"
         msg = MessageEvent(
             llm_message=Message(role="assistant", content=text),
@@ -124,7 +130,12 @@ class TestBuildOutputFailure(unittest.TestCase):
                 conv, Metrics(agent_role="dev"), None, prev_state=None
             )
         ep.assert_not_called()
-        self.assertIn("**Work completed**", result["final_message"])
+        self.assertIn("The run failed.", result["final_message"])
+        self.assertIn(RESUME_COMMAND, result["final_message"])
+        state = result["workflow_state"]
+        self.assertEqual(state.turn_outcome.status.value, "incomplete")
+        self.assertEqual(state.turn_outcome.incomplete_reason.value, "failure")
+        self.assertIsNone(state.turn_outcome.appreciation)
 
 
 if __name__ == "__main__":

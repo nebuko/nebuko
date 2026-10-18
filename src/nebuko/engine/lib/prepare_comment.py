@@ -383,10 +383,20 @@ ANSWER_CONTINUATION_TOKEN = "<!-- bot-answer-continuation -->"
 
 # The one outcome that stops the machine's turn: a hold hands control to a
 # human, who releases it with a command rather than by re-triggering the
-# engine. Every other outcome — a verdict, or an incomplete turn the router
-# retries (soft kill, checkpoint, failure) — keeps the flow alive and
-# therefore carries the token (issue #964).
+# engine. A crashed run does the same (issue #978): its comment is a
+# notification, never a dispatch, so it must not re-trigger anything either.
+# Every other outcome — a verdict, or an incomplete turn the router retries
+# (soft kill, interruption, checkpoint) — keeps the flow alive and therefore
+# carries the token (issue #964).
 _HOLD_APPRECIATION = "hold"
+
+# Incomplete reasons whose turn ends the machine's turn outright (issue #978).
+# A crashed run holds for a human exactly like a hold verdict: the engine
+# already chose ``/nebuko resume`` as the failure contract, so re-triggering
+# would just burn another run. An interruption is deliberately *not* here: the
+# router retries it in place, so its comment must keep the token (issue #978
+# review fix 2 — token and router must agree on the same policy).
+_NOTIFICATION_INCOMPLETE_REASONS = frozenset({"failure"})
 
 # Role label for the answer header's announcement line (legacy mapping).
 _ROLE_DISPLAY_NAMES = {
@@ -404,15 +414,21 @@ def _display_name_for(role: str) -> str:
 
 
 def _continue_token(state: WorkflowState) -> str:
-    """The continue token for live turns; empty for a hold.
+    """The continue token for live turns; empty for a run that stops here.
 
     A hold ends the machine's turn, so the posted comment must not re-trigger
-    the engine. A run that recorded no outcome at all keeps the token: the
-    router decides whether the turn continues (issue #964).
+    the engine; a crashed run (INCOMPLETE/FAILURE) is a notification and ends
+    it the same way (issue #978). A run that recorded no outcome at all keeps
+    the token: the router decides whether the turn continues (issue #964).
     """
     turn_outcome = state.turn_outcome
-    appreciation = turn_outcome.appreciation if turn_outcome else None
+    if turn_outcome is None:
+        return CONTINUE_TOKEN
+    appreciation = turn_outcome.appreciation
     if appreciation is not None and appreciation.value == _HOLD_APPRECIATION:
+        return ""
+    reason = turn_outcome.incomplete_reason
+    if reason is not None and reason.value in _NOTIFICATION_INCOMPLETE_REASONS:
         return ""
     return CONTINUE_TOKEN
 
@@ -425,14 +441,18 @@ def format_answer_header(role_name: str | None, state: WorkflowState | None) -> 
     A run that emitted no state still gets the bot marker, caller marker and
     continue token (matching the legacy step when the file was absent); only the
     collapsed state section is omitted.
+
+    The continue token is the **first line** when present (issue #978): the
+    workflow gate matches it with ``startsWith``, so an occurrence embedded in
+    the state/history JSON — or quoted in agent prose — can never fire a run.
     """
     role = (role_name or "").strip() or "unknown"
     token = CONTINUE_TOKEN if state is None else _continue_token(state)
     section = "" if state is None else format_collapsed_section(state)
     return (
+        f"{token}"
         f"{BOT_MARKER}\n"
         f"<!-- bot-agent-{role} -->\n"
-        f"{token}"
         f"{section}"
         f"\n*{_display_name_for(role)} answer*\n\n"
     )
