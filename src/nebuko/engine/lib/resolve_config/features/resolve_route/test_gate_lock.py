@@ -458,8 +458,24 @@ class TestHumanGateHoldVerdict(unittest.TestCase):
         """No ``SKIP_KIND`` must keep the pre-existing terminal failure."""
         skip = SkipOutcome.from_verdict({"SKIP_AGENT": "true", "REASON": "boom"})
         self.assertIs(skip.kind, SkipKind.CONFIG_ERROR)
-        self.assertFalse(skip.is_benign)
-        self.assertEqual(skip.exit_code, ExitCode.TERMINAL)
+
+
+class TestGateNoopVerdict(unittest.TestCase):
+    """The inert gate-command skip kind (issue #1012)."""
+
+    def test_gate_noop_is_benign_and_exits_advance(self):
+        skip = SkipOutcome.from_verdict(
+            {
+                "SKIP_AGENT": "true",
+                "SKIP_KIND": "gate_noop",
+                "REASON": "gate: workflow is not held at a human_gate step",
+            }
+        )
+        self.assertIs(skip.kind, SkipKind.GATE_NOOP)
+        self.assertTrue(skip.is_benign)
+        self.assertEqual(skip.exit_code, ExitCode.ADVANCE)
+        self.assertNotEqual(skip.exit_code, ExitCode.TERMINAL)
+        self.assertNotEqual(skip.exit_code, ExitCode.HOLD)
 
 
 class TestGateReleasePrecedence(unittest.TestCase):

@@ -239,6 +239,7 @@ validation. The notice is classified from the run outcome:
 | terminal step, on the run that produced its output | *workflow complete* |
 | `soft_kill` while the soft-retry budget remains | none (transient retry) |
 | terminal `SKIP_AGENT` on a follow-up run | none (nothing new to act on) |
+| gate command with nothing it may decide (issue #1012) | none — the engine posts the skip reason (`skipping agent — <reason>`) and exits 0 |
 
 The recipient is the **workflow starter** (`WorkflowState.started_by`, captured
 from the first trigger and carried forward), falling back to the issue author

@@ -481,7 +481,14 @@ def _resolve_gate_decision_path(
     """
     rejection = _gate_hold_rejection_reason(prev_state, author)
     if rejection:
-        return {"SKIP_AGENT": "true", "REASON": rejection}
+        # A gate command that cannot act is inert, not a failure (issue #1012):
+        # the benign kind makes the guards phase exit 0 and post the reason
+        # instead of the fail-safe CONFIG_ERROR exit 20.
+        return {
+            "SKIP_AGENT": "true",
+            "SKIP_KIND": "gate_noop",
+            "REASON": rejection,
+        }
 
     decision = _build_gate_decision(prev_state, wf_cmd, author)
     config = _route_gate_decision(
