@@ -14,7 +14,10 @@ class WorkflowCondition(BaseModel):
 
     - **approved** — Human (or model proxy) confirmed readiness to proceed.
     - **rejected** — Human requested changes; route back to an earlier step.
-    - **default** — Fallback when no other condition matches.
+    - **default** — Fallback when no other condition matches. A verdict the
+      step does not declare falls back to this edge, and to a benign ``null``
+      finish (``exit 0``) when the step declares no ``default`` either
+      (issue #1006).
 
     Custom values (e.g. ``needs_more_info``) are supported for workflow-specific
     branching. The semantic evaluation of "approved" vs "rejected" is the

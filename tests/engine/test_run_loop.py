@@ -1001,6 +1001,32 @@ class TestBenignNoNextAgentExit:
         assert outcome.exit_code == ExitCode.ADVANCE
         assert outcome.state is None
 
+    def test_an_unmatched_verdict_fallback_stays_green(self, tmp_path, monkeypatch):
+        """Issue #1006: a verdict gap on a known step must not exit 20.
+
+        The resolver used to return ``Resolution failed: step 'review' in
+        workflow 'default' has no route for verdict 'approved'`` with no
+        ``SKIP_KIND``, which ``SkipOutcome`` defaulted to ``CONFIG_ERROR`` →
+        ``ExitCode.TERMINAL`` (20). The fallback is a benign terminal no-op.
+        """
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "REASON": (
+                    "step 'review' in workflow 'default' has no route for "
+                    "verdict 'approved'; falling back to a null finish"
+                ),
+                "SKIP_KIND": "terminal",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+
 
 class TestRoutePhase:
     """``route`` maps the harvested ``dispatch_next`` call to a ``TurnOutcome``."""

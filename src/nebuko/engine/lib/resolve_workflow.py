@@ -2911,12 +2911,11 @@ def _classify_terminal_kind(
                 if matched.next is None
                 else RouteKind.UNRESOLVED
             )
-        # Conditions exist but every reachable edge is ``next: null`` or the
-        # key did not match: the internal marker resolver already raised the
-        # pure "nothing matched" case as ``_StepGap``; here we only reach a
-        # genuine all-null terminal, which is a declared finish.
-        if all(cond.next is None for cond in current_step.conditions):
-            return RouteKind.DECLARED_FINISH
+        # Conditions exist but the verdict named no edge. Whether that is an
+        # honest finish depends on the *matched* edge, never on the shape of
+        # the others: without a match there is no declared end to honour, and
+        # reporting one would silently finish a step whose real forward edge
+        # the verdict simply did not name (issue #1006).
         return RouteKind.UNRESOLVED
     if current_step.next is None:
         return RouteKind.DECLARED_FINISH
