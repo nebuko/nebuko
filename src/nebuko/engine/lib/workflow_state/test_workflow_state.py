@@ -311,6 +311,49 @@ class TestStateMetricsProviderHealth(unittest.TestCase):
         self.assertEqual(metrics.time_to_first_token, 0.62)
 
 
+class TestStateMetricsToolTime(unittest.TestCase):
+    """Tool execution time survives the workflow-state metrics mirror (#1016)."""
+
+    def test_tool_time_extracted_from_full_metrics_dict(self):
+        metrics = StateMetrics.from_full_metrics_dict(
+            {
+                "input_tokens": 10,
+                "tool_time_per_tool": {"terminal": {"total_ms": 1200.0, "count": 3}},
+                "tool_runtime_ms": 1200.0,
+                "wall_clock_ms": 45000.0,
+            }
+        )
+        self.assertEqual(
+            metrics.tool_time_per_tool, {"terminal": {"total_ms": 1200.0, "count": 3}}
+        )
+        self.assertEqual(metrics.tool_runtime_ms, 1200.0)
+        self.assertEqual(metrics.wall_clock_ms, 45000.0)
+
+    def test_tool_time_defaults_when_absent(self):
+        metrics = StateMetrics.from_full_metrics_dict({"input_tokens": 10})
+        self.assertEqual(metrics.tool_time_per_tool, {})
+        self.assertEqual(metrics.tool_runtime_ms, 0.0)
+        self.assertEqual(metrics.wall_clock_ms, 0.0)
+
+    def test_tool_time_round_trips_from_metrics_to_dict(self):
+        from metrics_schema import Metrics
+
+        original = Metrics(
+            run_id="r1",
+            model_name="gpt-4",
+            agent_role="dev",
+            tool_time_per_tool={"bash": {"total_ms": 250.5, "count": 1}},
+            tool_runtime_ms=250.5,
+            wall_clock_ms=3000.0,
+        )
+        metrics = StateMetrics.from_full_metrics_dict(original.to_dict())
+        self.assertEqual(
+            metrics.tool_time_per_tool, {"bash": {"total_ms": 250.5, "count": 1}}
+        )
+        self.assertEqual(metrics.tool_runtime_ms, 250.5)
+        self.assertEqual(metrics.wall_clock_ms, 3000.0)
+
+
 class TestWorkflowRefProvenance(unittest.TestCase):
     """The pinned ref of the reusable workflow survives the state codec
     (issue #862). It is provenance only: the checkout pin is resolved by the

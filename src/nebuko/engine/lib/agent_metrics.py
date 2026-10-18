@@ -112,26 +112,37 @@ def deduplicate_metrics(metrics_list):
     return unique
 
 
+def _copy_per_tool_dict(per_tool):
+    """Copy a per-tool dict one level deep, cloning nested value dicts."""
+    if not per_tool:
+        return {}
+    return {
+        tool: dict(values) if isinstance(values, dict) else values
+        for tool, values in per_tool.items()
+    }
+
+
 def _merge_per_tool_dict(base, override):
     """
     Merge two per-tool dicts: base and override.
-    
+
     Values from override are added to base. Handles both simple numeric
     values and nested token dicts (input/output/cache_hit/reasoning).
-    
+
     Args:
         base: First per-tool dict (may be None or empty)
         override: Second per-tool dict (may be None or empty)
-        
+
     Returns:
         Merged per-tool dict
     """
+    # Never alias a source metrics dict: nested buckets are summed in place.
     if not base:
-        return override or {}
+        return _copy_per_tool_dict(override)
     if not override:
-        return base
-    
-    merged = dict(base)
+        return _copy_per_tool_dict(base)
+
+    merged = _copy_per_tool_dict(base)
     for tool, values in override.items():
         if tool in merged:
             existing = merged[tool]
@@ -152,8 +163,8 @@ def _merge_per_tool_dict(base, override):
                 # Simple numeric values: sum them
                 merged[tool] = existing + values
         else:
-            merged[tool] = values
-    
+            merged[tool] = dict(values) if isinstance(values, dict) else values
+
     return merged
 
 
@@ -369,12 +380,15 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         "total_context_window": 0,
         "latency_sum": 0.0,
         "llm_runtime_sum": 0.0,
+        "tool_runtime_sum": 0.0,
+        "wall_clock_sum": 0.0,
         "tool_calls_sum": 0,
         "error_rate_sum": 0.0,
         "review_fix_requests_sum": 0,
         "tool_calls_per_tool": {},
         "errors_per_tool": {},
         "tokens_per_tool": {},
+        "tool_time_per_tool": {},
         "tps_sum": 0.0,
         "tps_count": 0,
         "ttft_sum": 0.0,
@@ -406,6 +420,9 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
             reasoning_tokens = m.reasoning_tokens
             cache_hit_rate = m.cache_hit_rate
             cache_hit_tokens = m.cache_hit_tokens
+            tool_time_per_tool = m.tool_time_per_tool
+            tool_runtime = m.tool_runtime_ms
+            wall_clock = m.wall_clock_ms
         else:
             # Legacy dict support
             agent = m.get("agent_role", "unknown")
@@ -426,6 +443,9 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
             reasoning_tokens = m.get("reasoning_tokens", 0)
             cache_hit_rate = m.get("cache_hit_rate", 0.0)
             cache_hit_tokens = m.get("cache_hit_tokens", 0)
+            tool_time_per_tool = m.get("tool_time_per_tool", {})
+            tool_runtime = m.get("tool_runtime_ms", 0.0)
+            wall_clock = m.get("wall_clock_ms", 0.0)
 
         agg = aggregated[agent]
         agg["runs"] += 1
@@ -438,6 +458,8 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         agg["total_context_window"] += context_window
         agg["latency_sum"] += latency
         agg["llm_runtime_sum"] += runtime
+        agg["tool_runtime_sum"] += tool_runtime
+        agg["wall_clock_sum"] += wall_clock
         agg["tool_calls_sum"] += tool_calls
         agg["error_rate_sum"] += error_rate
         agg["review_fix_requests_sum"] += fix_requests
@@ -454,6 +476,9 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         )
         agg["tokens_per_tool"] = _merge_per_tool_dict(
             agg["tokens_per_tool"], tokens_per_tool
+        )
+        agg["tool_time_per_tool"] = _merge_per_tool_dict(
+            agg["tool_time_per_tool"], tool_time_per_tool
         )
 
     return aggregated

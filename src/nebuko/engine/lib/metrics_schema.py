@@ -47,6 +47,16 @@ class Metrics:
         tool_calls_per_tool: Mapping of tool name to call count.
         errors_per_tool: Mapping of tool name to error count.
         tokens_per_tool: Mapping of tool name to token usage breakdown.
+        tool_time_per_tool: Mapping of tool name to
+            ``{"total_ms": float, "count": int}`` tool execution time (issue
+            #1016). The mean is derived (``total_ms / count``) and never
+            persisted, so the buckets merge by plain summation across runs.
+            Durations are ``ObservationEvent.timestamp - ActionEvent.timestamp``
+            and therefore an upper bound (SDK and hook overhead included);
+            parallel calls overlap, so sums may exceed ``wall_clock_ms``.
+        tool_runtime_ms: Total tool execution time in milliseconds (sum of all
+            matched per-call durations).
+        wall_clock_ms: Wall-clock time in milliseconds (``end_time - start_time``).
         review_fix_requests: Number of times review asked dev to fix something.
         dispatch_recall_count: Number of recall turns injected because the agent
             ended without calling dispatch_next (issue #524).
@@ -78,6 +88,9 @@ class Metrics:
     tool_calls_per_tool: Dict[str, int] = field(default_factory=dict)
     errors_per_tool: Dict[str, int] = field(default_factory=dict)
     tokens_per_tool: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    tool_time_per_tool: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    tool_runtime_ms: float = 0.0
+    wall_clock_ms: float = 0.0
     review_fix_requests: int = 0
     dispatch_recall_count: int = 0
     tokens_per_second: float | None = None

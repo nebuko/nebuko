@@ -204,6 +204,9 @@ class TestMetricsSchema(unittest.TestCase):
             },
             review_fix_requests=2,
             cost=0.0123,
+            tool_time_per_tool={"terminal": {"total_ms": 1200.0, "count": 5}},
+            tool_runtime_ms=1200.0,
+            wall_clock_ms=60000.0,
         )
 
     def test_to_dict_roundtrip(self):
@@ -231,6 +234,9 @@ class TestMetricsSchema(unittest.TestCase):
         self.assertEqual(restored.tokens_per_tool, original.tokens_per_tool)
         self.assertEqual(restored.review_fix_requests, original.review_fix_requests)
         self.assertEqual(restored.cost, original.cost)
+        self.assertEqual(restored.tool_time_per_tool, original.tool_time_per_tool)
+        self.assertEqual(restored.tool_runtime_ms, original.tool_runtime_ms)
+        self.assertEqual(restored.wall_clock_ms, original.wall_clock_ms)
 
     def test_from_dict_with_missing_optional_fields(self):
         """from_dict should handle missing optional fields gracefully."""
@@ -257,6 +263,10 @@ class TestMetricsSchema(unittest.TestCase):
         self.assertEqual(m.review_fix_requests, 0)
         self.assertEqual(m.cost, 0.0)
         self.assertIsNone(m.error)
+        # Tool-time fields default when an older payload omits them (issue #1016).
+        self.assertEqual(m.tool_time_per_tool, {})
+        self.assertEqual(m.tool_runtime_ms, 0.0)
+        self.assertEqual(m.wall_clock_ms, 0.0)
 
     def test_from_dict_with_error_field(self):
         """from_dict should handle error field."""
@@ -324,7 +334,8 @@ class TestMetricsSchema(unittest.TestCase):
             "complexity", "tool_call_latency_ms", "agent_runtime_ms",
             "agent_runtimes_per_call_ms", "nb_tool_calls", "tool_call_error_rate",
             "start_time", "end_time", "tool_calls_per_tool", "errors_per_tool",
-            "tokens_per_tool", "review_fix_requests", "dispatch_recall_count",
+            "tokens_per_tool", "tool_time_per_tool", "tool_runtime_ms",
+            "wall_clock_ms", "review_fix_requests", "dispatch_recall_count",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -1299,7 +1310,8 @@ class TestPerToolAggregationAgent(unittest.TestCase):
     """Test per-tool aggregation in aggregate_by_agent."""
 
     def _make_metric(self, agent, tool_calls_per_tool=None, errors_per_tool=None,
-                     tokens_per_tool=None):
+                     tokens_per_tool=None, tool_time_per_tool=None,
+                     tool_runtime_ms=None, wall_clock_ms=None):
         metric = {
             "agent_role": agent,
             "input_tokens": 100,
@@ -1314,6 +1326,12 @@ class TestPerToolAggregationAgent(unittest.TestCase):
             metric["errors_per_tool"] = errors_per_tool
         if tokens_per_tool is not None:
             metric["tokens_per_tool"] = tokens_per_tool
+        if tool_time_per_tool is not None:
+            metric["tool_time_per_tool"] = tool_time_per_tool
+        if tool_runtime_ms is not None:
+            metric["tool_runtime_ms"] = tool_runtime_ms
+        if wall_clock_ms is not None:
+            metric["wall_clock_ms"] = wall_clock_ms
         return metric
 
     def test_merge_per_tool_across_runs(self):
@@ -1362,6 +1380,62 @@ class TestPerToolAggregationAgent(unittest.TestCase):
         self.assertEqual(result["architect"]["tool_calls_per_tool"], {})
         self.assertEqual(result["architect"]["errors_per_tool"], {})
         self.assertEqual(result["architect"]["tokens_per_tool"], {})
+        self.assertEqual(result["architect"]["tool_time_per_tool"], {})
+        self.assertEqual(result["architect"]["tool_runtime_sum"], 0.0)
+        self.assertEqual(result["architect"]["wall_clock_sum"], 0.0)
+
+    def test_merge_tool_time_per_tool_across_runs(self):
+        """Tool time buckets sum total_ms and count; the mean stays derived."""
+        metrics = [
+            self._make_metric("dev", tool_time_per_tool={
+                "terminal": {"total_ms": 1000.0, "count": 4}
+            }),
+            self._make_metric("dev", tool_time_per_tool={
+                "terminal": {"total_ms": 500.0, "count": 1},
+                "bash": {"total_ms": 300.0, "count": 2},
+            }),
+        ]
+        result = aggregate_by_agent(metrics)
+        bucket = result["dev"]["tool_time_per_tool"]["terminal"]
+        self.assertEqual(bucket["total_ms"], 1500.0)
+        self.assertEqual(bucket["count"], 5)
+        self.assertEqual(bucket["total_ms"] / bucket["count"], 300.0)
+        self.assertEqual(result["dev"]["tool_time_per_tool"]["bash"],
+                         {"total_ms": 300.0, "count": 2})
+
+    def test_merge_does_not_mutate_source_metrics(self):
+        """Merging tool-time buckets must not alias the source dicts."""
+        source = {"terminal": {"total_ms": 100.0, "count": 1}}
+        metrics = [
+            self._make_metric("dev", tool_time_per_tool=source),
+            self._make_metric("dev", tool_time_per_tool={"terminal": {"total_ms": 100.0, "count": 1}}),
+        ]
+        aggregate_by_agent(metrics)
+        self.assertEqual(source, {"terminal": {"total_ms": 100.0, "count": 1}})
+
+    def test_sums_tool_runtime_and_wall_clock(self):
+        metrics = [
+            self._make_metric("dev", tool_runtime_ms=1200.0, wall_clock_ms=60000.0),
+            self._make_metric("dev", tool_runtime_ms=800.0, wall_clock_ms=30000.0),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["dev"]["tool_runtime_sum"], 2000.0)
+        self.assertEqual(result["dev"]["wall_clock_sum"], 90000.0)
+
+    def test_reads_tool_time_from_metrics_objects(self):
+        metrics = [
+            Metrics(
+                agent_role="dev",
+                tool_time_per_tool={"terminal": {"total_ms": 250.0, "count": 2}},
+                tool_runtime_ms=250.0,
+                wall_clock_ms=1000.0,
+            ),
+        ]
+        result = aggregate_by_agent(metrics)
+        self.assertEqual(result["dev"]["tool_time_per_tool"]["terminal"],
+                         {"total_ms": 250.0, "count": 2})
+        self.assertEqual(result["dev"]["tool_runtime_sum"], 250.0)
+        self.assertEqual(result["dev"]["wall_clock_sum"], 1000.0)
 
 
 class TestPerToolAggregationModel(unittest.TestCase):

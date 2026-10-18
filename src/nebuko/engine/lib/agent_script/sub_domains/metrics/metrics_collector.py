@@ -155,6 +155,74 @@ def _compute_tool_calls_per_tool(conversation):
     return tool_counts
 
 
+def _duration_ms(start_iso: str, end_iso: str) -> float:
+    """
+    Milliseconds between two ISO-8601 timestamps.
+
+    SDK event timestamps are naive local ISO while ``end_time`` is UTC-aware,
+    so naive values are read as local time (``astimezone()``) to keep mixed
+    pairs subtractable. Unparseable or negative deltas yield 0.0.
+    """
+    start = _parse_iso(start_iso)
+    end = _parse_iso(end_iso)
+    if start is None or end is None:
+        return 0.0
+    return max((end - start).total_seconds() * 1000.0, 0.0)
+
+
+def _parse_iso(value):
+    """Parse an ISO-8601 string into an aware datetime, or None."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed
+
+
+def _compute_tool_time_per_tool(conversation):
+    """
+    Sum tool execution time per tool_name from action→observation deltas.
+
+    Each agent ActionEvent is matched to its ObservationEvent through
+    ``action_id`` → ``ActionEvent.id``; the delta is an upper bound on the
+    tool's own execution time (it includes SDK and hook overhead). Parallel
+    calls overlap, so the per-call sums may exceed wall-clock time.
+
+    Args:
+        conversation: The OpenHands Conversation object
+
+    Returns:
+        dict: Mapping of tool_name to {"total_ms": float, "count": int}
+    """
+    events = getattr(getattr(conversation, "state", None), "events", None) or []
+
+    obs_map = {}
+    for event in events:
+        if isinstance(event, ObservationEvent) and getattr(event, "action_id", None):
+            obs_map[event.action_id] = event
+
+    tool_time = {}
+    for event in events:
+        if not isinstance(event, ActionEvent) or event.source != "agent":
+            continue
+        observation = obs_map.get(getattr(event, "id", None))
+        if observation is None:
+            continue
+        tool_name = getattr(event, "tool_name", None) or "unknown"
+        bucket = tool_time.setdefault(tool_name, {"total_ms": 0.0, "count": 0})
+        bucket["total_ms"] += _duration_ms(event.timestamp, observation.timestamp)
+        bucket["count"] += 1
+
+    for bucket in tool_time.values():
+        bucket["total_ms"] = round(bucket["total_ms"], 2)
+
+    return tool_time
+
+
 def _compute_errors_per_tool(conversation):
     """
     Count observation errors per tool_name.
@@ -327,6 +395,10 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
         tool_calls_per_tool = _compute_tool_calls_per_tool(conversation)
         errors_per_tool = _compute_errors_per_tool(conversation)
         tokens_per_tool = _compute_tokens_per_tool(combined_metrics)
+        tool_time_per_tool = _compute_tool_time_per_tool(conversation)
+        tool_runtime_ms = round(
+            sum(bucket["total_ms"] for bucket in tool_time_per_tool.values()), 2
+        )
 
         # Provider cache/reasoning signals (issue #888).
         cache_hit_rate = _cache_hit_rate(combined_metrics)
@@ -338,6 +410,8 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
             first_event = conversation.state.events[0]
             if hasattr(first_event, 'timestamp'):
                 start_time = first_event.timestamp
+        end_time = datetime.now(timezone.utc).isoformat()
+        wall_clock_ms = round(_duration_ms(start_time, end_time), 2)
 
         # Provider-health indicators captured over the run's LLM calls (#829).
         tokens_per_second = captured.tokens_per_second
@@ -363,10 +437,13 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
             nb_tool_calls=nb_tool_calls,
             tool_call_error_rate=tool_call_error_rate,
             start_time=start_time,
-            end_time=datetime.now(timezone.utc).isoformat(),
+            end_time=end_time,
             tool_calls_per_tool=tool_calls_per_tool,
             errors_per_tool=errors_per_tool,
             tokens_per_tool=tokens_per_tool,
+            tool_time_per_tool=tool_time_per_tool,
+            tool_runtime_ms=tool_runtime_ms,
+            wall_clock_ms=wall_clock_ms,
             tokens_per_second=tokens_per_second,
             time_to_first_token=time_to_first_token,
         )

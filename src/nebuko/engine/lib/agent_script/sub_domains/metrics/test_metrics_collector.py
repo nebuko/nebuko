@@ -392,3 +392,157 @@ class TestEffectiveModelNameRecorded:
         os.environ.pop("CONFIG_COMPLEXITY", None)
         metrics = collect_llm_metrics(_conversation_with_usage(usage), None)
         assert metrics.model_name == "test-model"
+
+
+def _make_action(action_id, tool_name, timestamp, source="agent"):
+    from openhands.sdk.event.llm_convertible.action import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall
+
+    return ActionEvent(
+        id=action_id,
+        source=source,
+        tool_name=tool_name,
+        tool_call_id=f"call_{action_id}",
+        thought=[],
+        timestamp=timestamp,
+        tool_call=MessageToolCall(
+            id=f"call_{action_id}", name=tool_name, arguments="{}", origin="completion"
+        ),
+        llm_response_id=f"resp_{action_id}",
+        summary="",
+    )
+
+
+def _make_observation(obs_id, action_id, tool_name, timestamp):
+    from openhands.sdk.event.llm_convertible.observation import ObservationEvent
+
+    # model_construct bypasses the discriminated-union validation of observation.
+    return ObservationEvent.model_construct(
+        id=obs_id,
+        source="environment",
+        tool_name=tool_name,
+        tool_call_id=f"call_{action_id}",
+        action_id=action_id,
+        timestamp=timestamp,
+        observation=None,
+    )
+
+
+def _conversation_with_events(events):
+    class _State:
+        pass
+
+    class _Conversation:
+        id = "run-1"
+        conversation_stats = _Stats()
+        state = _State()
+
+    _Conversation.state.events = events
+    return _Conversation()
+
+
+class TestToolExecutionTime:
+    """Per-tool execution time from action->observation deltas (issue #1016)."""
+
+    def test_matched_pair_records_total_and_count(self):
+        events = [
+            _make_action("a1", "terminal", "2026-01-01T00:00:00"),
+            _make_observation("o1", "a1", "terminal", "2026-01-01T00:00:00.250000"),
+        ]
+
+        metrics = collect_llm_metrics(_conversation_with_events(events))
+
+        assert metrics.tool_time_per_tool == {"terminal": {"total_ms": 250.0, "count": 1}}
+        assert metrics.tool_runtime_ms == 250.0
+
+    def test_multiple_calls_accumulate_in_one_bucket(self):
+        events = [
+            _make_action("a1", "terminal", "2026-01-01T00:00:00"),
+            _make_observation("o1", "a1", "terminal", "2026-01-01T00:00:00.100000"),
+            _make_action("a2", "terminal", "2026-01-01T00:00:01"),
+            _make_observation("o2", "a2", "terminal", "2026-01-01T00:00:01.300000"),
+        ]
+
+        metrics = collect_llm_metrics(_conversation_with_events(events))
+
+        assert metrics.tool_time_per_tool["terminal"] == {"total_ms": 400.0, "count": 2}
+        assert metrics.tool_runtime_ms == 400.0
+
+    def test_unmatched_action_and_observation_are_skipped(self):
+        events = [
+            _make_action("a1", "terminal", "2026-01-01T00:00:00"),
+            _make_observation("o1", "a_missing", "terminal", "2026-01-01T00:00:00.500000"),
+        ]
+
+        metrics = collect_llm_metrics(_conversation_with_events(events))
+
+        assert metrics.tool_time_per_tool == {}
+        assert metrics.tool_runtime_ms == 0.0
+
+    def test_parallel_calls_overlap_and_sum_above_wall_clock(self):
+        """Busy-time sums: each overlapping call counts in full."""
+        events = [
+            _make_action("a1", "terminal", "2026-01-01T00:00:00"),
+            _make_action("a2", "bash", "2026-01-01T00:00:00"),
+            _make_observation("o1", "a1", "terminal", "2026-01-01T00:00:00.600000"),
+            _make_observation("o2", "a2", "bash", "2026-01-01T00:00:00.600000"),
+        ]
+
+        metrics = collect_llm_metrics(_conversation_with_events(events))
+
+        assert metrics.tool_time_per_tool == {
+            "terminal": {"total_ms": 600.0, "count": 1},
+            "bash": {"total_ms": 600.0, "count": 1},
+        }
+        assert metrics.tool_runtime_ms == 1200.0
+        # Both calls span the same 600 ms window, so busy time exceeds the
+        # 600 ms of wall clock the two events cover.
+        assert metrics.tool_runtime_ms > 600.0
+
+    def test_user_sourced_actions_are_ignored(self):
+        events = [
+            _make_action("a1", "terminal", "2026-01-01T00:00:00", source="user"),
+            _make_observation("o1", "a1", "terminal", "2026-01-01T00:00:00.400000"),
+        ]
+
+        metrics = collect_llm_metrics(_conversation_with_events(events))
+
+        assert metrics.tool_time_per_tool == {}
+
+    def test_wall_clock_spans_start_and_end(self):
+        events = [
+            _make_action("a1", "terminal", "2026-01-01T00:00:00"),
+            _make_observation("o1", "a1", "terminal", "2026-01-01T00:00:00.100000"),
+        ]
+
+        metrics = collect_llm_metrics(_conversation_with_events(events))
+
+        assert metrics.wall_clock_ms >= 100.0
+        assert metrics.end_time
+
+    def test_no_events_yields_defaults(self):
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.tool_time_per_tool == {}
+        assert metrics.tool_runtime_ms == 0.0
+        # No events: start_time falls back to now, so wall clock is ~0.
+        assert metrics.wall_clock_ms >= 0.0
+
+    def test_negative_delta_clamps_to_zero(self):
+        from agent_script.sub_domains.metrics.metrics_collector import _duration_ms
+
+        assert _duration_ms("2026-01-01T00:00:05", "2026-01-01T00:00:00") == 0.0
+
+    def test_mixed_naive_and_aware_timestamps_subtract(self):
+        from agent_script.sub_domains.metrics.metrics_collector import _duration_ms
+
+        naive = "2026-01-01T00:00:00"
+        aware = "2026-01-01T00:00:01+00:00"
+        # Naive is read as local time, so the delta is finite either way.
+        assert _duration_ms(naive, aware) >= 0.0
+
+    def test_unparseable_timestamps_yield_zero(self):
+        from agent_script.sub_domains.metrics.metrics_collector import _duration_ms
+
+        assert _duration_ms("not-a-date", "2026-01-01T00:00:00") == 0.0
+        assert _duration_ms(None, None) == 0.0
