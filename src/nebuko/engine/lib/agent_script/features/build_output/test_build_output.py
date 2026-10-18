@@ -10,6 +10,7 @@ from unittest import mock
 from build_output import (
     LATEST_ANSWER_FILE,
     _is_human_gate_hold,
+    _parse_gate_released_env,
     _recall_aware_events,
     _resolve_pin,
     _terminal_turn_answer,
@@ -22,6 +23,8 @@ from build_output import (
 )
 from workflow_state import (
     Appreciation,
+    GateLock,
+    GateStatus,
     HistoryEntry,
     HoldKind,
     RunPrefs,
@@ -236,7 +239,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             )
             env = {"WORKFLOWS_DIR": tmpdir}
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(_completed(), "wf", "implement")
+                result, _ = apply_human_gate_intercept(_completed(), "wf", "implement")
         self.assertEqual(result, _gate_hold("implement"))
 
     def test_gate_step_advance_resume_held(self):
@@ -249,7 +252,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             )
             env = {"WORKFLOWS_DIR": tmpdir, "HUMAN_RESUME_INPUT": "/nebuko resume"}
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(_completed(), "wf", "implement")
+                result, _ = apply_human_gate_intercept(_completed(), "wf", "implement")
         self.assertEqual(result, _gate_hold("implement"))
 
     def test_non_gate_step_advance_unchanged(self):
@@ -263,7 +266,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             outcome = _completed()
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(outcome, "wf", "plan")
+                result, _ = apply_human_gate_intercept(outcome, "wf", "plan")
         self.assertEqual(result, outcome)
 
     def test_gate_step_soft_kill_non_resume_keeps_retrying(self):
@@ -281,7 +284,7 @@ class TestHumanGateIntercept(unittest.TestCase):
                 incomplete_reason="soft_timeout",
             )
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(soft_kill, "wf", "implement")
+                result, _ = apply_human_gate_intercept(soft_kill, "wf", "implement")
         self.assertEqual(result, soft_kill)
 
     def test_gate_step_soft_kill_resume_keeps_retrying(self):
@@ -298,7 +301,7 @@ class TestHumanGateIntercept(unittest.TestCase):
                 incomplete_reason="soft_timeout",
             )
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(soft_kill, "wf", "implement")
+                result, _ = apply_human_gate_intercept(soft_kill, "wf", "implement")
         self.assertEqual(result, soft_kill)
 
     def test_gate_step_verdict_bearing_becomes_hold_with_no_verdict(self):
@@ -311,7 +314,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             )
             env = {"WORKFLOWS_DIR": tmpdir}
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(
+                result, _ = apply_human_gate_intercept(
                     _completed("rejected", round=3), "wf", "implement"
                 )
         self.assertEqual(result, _gate_hold("implement"))
@@ -328,7 +331,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             outcome = _completed("rejected", round=2)
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(outcome, "wf", "plan")
+                result, _ = apply_human_gate_intercept(outcome, "wf", "plan")
         self.assertEqual(result, outcome)
         self.assertIs(result.appreciation, Appreciation.REJECTED)
 
@@ -346,7 +349,7 @@ class TestHumanGateIntercept(unittest.TestCase):
                 incomplete_reason="interrupted",
             )
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(incomplete, "wf", "implement")
+                result, _ = apply_human_gate_intercept(incomplete, "wf", "implement")
         self.assertEqual(result, incomplete)
 
     def test_missing_outcome_on_gate_step_becomes_hold(self):
@@ -359,13 +362,13 @@ class TestHumanGateIntercept(unittest.TestCase):
             )
             env = {"WORKFLOWS_DIR": tmpdir}
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(None, "wf", "implement")
+                result, _ = apply_human_gate_intercept(None, "wf", "implement")
         self.assertEqual(result, _gate_hold("implement"))
 
     def test_missing_workflow_name_never_crashes(self):
         """Missing workflow name degrades to no-op (no crash, outcome unchanged)."""
         outcome = _completed()
-        result = apply_human_gate_intercept(outcome, "", "implement")
+        result, _ = apply_human_gate_intercept(outcome, "", "implement")
         self.assertEqual(result, outcome)
 
     def test_missing_workflow_file_degrades_to_no_op(self):
@@ -374,8 +377,270 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             outcome = _completed()
             with mock.patch.dict(os.environ, env, clear=False):
-                result = apply_human_gate_intercept(outcome, "does-not-exist", "implement")
+                result, _ = apply_human_gate_intercept(outcome, "does-not-exist", "implement")
         self.assertEqual(result, outcome)
+
+
+class TestGateLockArming(unittest.TestCase):
+    """The intercept arms a root-level ``GateLock`` (issue #1003).
+
+    The lock is the single source of truth for "the workflow may not advance".
+    It is independent of the turn outcome and never edits the hand-off, so an
+    agent parked on a gated step can still delegate (``call_agent``).
+    """
+
+    def _write_workflow(self, tmpdir, name, steps_yaml):
+        path = os.path.join(tmpdir, f"{name}.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                f"name: {name}\n"
+                f'description: "test workflow"\n'
+                f"steps:\n{steps_yaml}"
+            )
+        return path
+
+    def test_intercept_arms_the_lock_at_the_gated_step(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
+            )
+            with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
+                _, gate = apply_human_gate_intercept(_completed(), "wf", "plan")
+        self.assertIsNotNone(gate)
+        self.assertEqual(gate.step, "plan")
+        self.assertTrue(gate.armed())
+        self.assertEqual(gate.consult_rounds, 0)
+
+    def test_intercept_carries_a_prior_lock_forward(self):
+        prior = GateLock(step="plan", consult_rounds=2, last_handoff="context")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
+            )
+            with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
+                _, gate = apply_human_gate_intercept(
+                    _completed(), "wf", "plan", gate=prior
+                )
+        self.assertEqual(gate, prior)
+
+    def test_intercept_arms_a_gate_that_was_released(self):
+        released = GateLock(step="plan", status=GateStatus.RELEASED)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
+            )
+            with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
+                _, gate = apply_human_gate_intercept(
+                    _completed(), "wf", "plan", gate=released
+                )
+        self.assertTrue(gate.armed())
+
+    def test_non_gated_step_arms_nothing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    next: implement\n",
+            )
+            with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
+                _, gate = apply_human_gate_intercept(_completed(), "wf", "plan")
+        self.assertIsNone(gate)
+
+    def test_release_env_marks_the_lock_released(self):
+        """The gate-decision run's own persist is released, not re-armed.
+
+        The release is applied by ``main`` *after* the intercept (which always
+        re-arms a gated step), so this exercises the same two steps in order.
+        """
+        prior = GateLock(step="plan")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
+            )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "GATE_DECISION": json.dumps(
+                    {
+                        "status": "approved",
+                        "workflow": "wf",
+                        "target_step": "plan",
+                        "decided_by": "olivier",
+                        "decided_at": "2026-10-18T10:00:00+00:00",
+                    }
+                ),
+                "GATE_RELEASED": "true",
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                _, gate = apply_human_gate_intercept(
+                    _completed(), "wf", "plan", gate=prior
+                )
+                # The call site's release step (``build_output.main``).
+                self.assertTrue(_parse_gate_released_env())
+                if _parse_gate_released_env() and gate is not None:
+                    gate = gate.model_copy(update={"status": GateStatus.RELEASED})
+        self.assertIsNotNone(gate)
+        self.assertFalse(gate.armed())
+        self.assertIs(gate.status, GateStatus.RELEASED)
+
+    def test_release_is_ignored_when_no_lock_is_armed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"WORKFLOWS_DIR": tmpdir, "GATE_RELEASED": "true"},
+                clear=False,
+            ):
+                _, gate = apply_human_gate_intercept(_completed(), "wf", "plan")
+        self.assertTrue(gate.armed())
+
+    def test_consult_env_spends_one_round_on_the_persisted_lock(self):
+        """Issue #1003 review: ``consume_consult`` has a production caller.
+
+        The delegated consult's run is started with ``GATE_CONSULT=<callee>``
+        (set by the consult resolution in ``resolve_config``). The lock carried
+        by that run's ``build_state`` must have spent exactly one consult round,
+        which is what bounds the gate fan-out at ``MAX_CONSULT_ROUNDS``.
+        """
+        import build_output as bo
+        from types import SimpleNamespace as NS
+        from workflow_state import GateLock, RunPrefs, WorkflowState
+
+        prior = WorkflowState(
+            workflow="wf",
+            step="plan",
+            agent="architect",
+            gate=GateLock(step="plan"),
+        )
+        captured = {}
+
+        def _capture_build_state(prev_state, **kwargs):
+            captured.update(kwargs)
+            return NS(run_id=1)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
+            )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "WORKFLOW_NAME": "wf",
+                "WORKFLOW_STEP": "review",
+                "ROLE_NAME": "context",
+                "GATE_CONSULT": "context",
+            }
+            conversation = NS(
+                state=NS(events=[_msg_event("callee answer")]),
+                id="conv-1003-consult",
+                run_outcome=None,
+            )
+            metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+            with mock.patch.object(bo, "get_agent_final_response", return_value="callee answer"), \
+                 mock.patch.object(bo, "_load_prev_state", return_value=prior), \
+                 mock.patch.object(bo, "_build_issue_info", return_value=None), \
+                 mock.patch.object(bo, "_build_pr_info", return_value=None), \
+                 mock.patch.object(
+                     bo, "_resolve_outcome",
+                     return_value=(_completed(), RunPrefs(), None),
+                 ), \
+                 mock.patch.object(bo, "clear_run"), \
+                 mock.patch.object(bo, "clear_call_agent_run"), \
+                 mock.patch.object(bo, "clear_scaffold_branch_run"), \
+                 mock.patch.object(bo, "clear_complexity_review_run"), \
+                 mock.patch.object(bo, "get_recorded_review_request", return_value=None), \
+                 mock.patch.object(bo, "build_state", side_effect=_capture_build_state), \
+                 mock.patch.object(bo, "split_message", return_value=[]), \
+                 mock.patch.object(bo, "_write_output_files", return_value=None), \
+                 mock.patch.dict(os.environ, env, clear=False):
+                cwd = os.getcwd()
+                os.chdir(tmpdir)
+                try:
+                    bo.build_output(conversation, metrics)
+                finally:
+                    os.chdir(cwd)
+
+        gate = captured["gate"]
+        self.assertIsNotNone(gate)
+        self.assertEqual(gate.consult_rounds, 1)
+        self.assertEqual(gate.last_handoff, "context")
+        self.assertTrue(gate.armed())
+
+    def test_no_consult_env_leaves_the_lock_round_untouched(self):
+        """A non-consult run must not spend a round (issue #1003 review)."""
+        import build_output as bo
+        from types import SimpleNamespace as NS
+        from workflow_state import GateLock, RunPrefs, WorkflowState
+
+        prior = WorkflowState(
+            workflow="wf",
+            step="plan",
+            agent="architect",
+            gate=GateLock(step="plan", consult_rounds=1, last_handoff="context"),
+        )
+        captured = {}
+
+        def _capture_build_state(prev_state, **kwargs):
+            captured.update(kwargs)
+            return NS(run_id=1)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
+            )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "WORKFLOW_NAME": "wf",
+                "WORKFLOW_STEP": "plan",
+                "ROLE_NAME": "architect",
+            }
+            conversation = NS(
+                state=NS(events=[_msg_event("plan answer")]),
+                id="conv-1003-no-consult",
+                run_outcome=None,
+            )
+            metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+            with mock.patch.object(bo, "get_agent_final_response", return_value="plan answer"), \
+                 mock.patch.object(bo, "_load_prev_state", return_value=prior), \
+                 mock.patch.object(bo, "_build_issue_info", return_value=None), \
+                 mock.patch.object(bo, "_build_pr_info", return_value=None), \
+                 mock.patch.object(
+                     bo, "_resolve_outcome",
+                     return_value=(_completed(), RunPrefs(), None),
+                 ), \
+                 mock.patch.object(bo, "clear_run"), \
+                 mock.patch.object(bo, "clear_call_agent_run"), \
+                 mock.patch.object(bo, "clear_scaffold_branch_run"), \
+                 mock.patch.object(bo, "clear_complexity_review_run"), \
+                 mock.patch.object(bo, "get_recorded_review_request", return_value=None), \
+                 mock.patch.object(bo, "build_state", side_effect=_capture_build_state), \
+                 mock.patch.object(bo, "split_message", return_value=[]), \
+                 mock.patch.object(bo, "_write_output_files", return_value=None), \
+                 mock.patch.dict(os.environ, env, clear=True):
+                cwd = os.getcwd()
+                os.chdir(tmpdir)
+                try:
+                    bo.build_output(conversation, metrics)
+                finally:
+                    os.chdir(cwd)
+
+        gate = captured["gate"]
+        self.assertIsNotNone(gate)
+        self.assertEqual(gate.consult_rounds, 1)
 
 
 class TestIsHumanGateHold(unittest.TestCase):
@@ -465,9 +730,10 @@ class TestIsHumanGateHold(unittest.TestCase):
         self.assertTrue(_is_human_gate_hold(captured["turn_outcome"]))
         self.assertEqual(captured["resolution"].next_step, "")
 
-    def test_gate_intercept_at_call_site_clears_function_call(self):
-        """Issue #887 round 2: the intercept must also drop any agent-named
-        hand-off, else the next bot trigger routes past the released-to gate."""
+    def test_gate_intercept_at_call_site_preserves_function_call_and_arms_gate(self):
+        """Issue #1003: the intercept raises the root gate but must NOT drop the
+        agent's ``call_agent`` hand-off — the outcome and the delegation are
+        orthogonal, so a gated agent may still consult another agent."""
         from types import SimpleNamespace as NS
 
         import build_output as bo
@@ -531,7 +797,13 @@ class TestIsHumanGateHold(unittest.TestCase):
                     os.chdir(cwd)
 
         self.assertTrue(_is_human_gate_hold(captured["turn_outcome"]))
-        self.assertIsNone(captured["function_call"])
+        # The hand-off survives the intercept (issue #1003) …
+        self.assertIsNotNone(captured["function_call"])
+        self.assertEqual(captured["function_call"].agent_name, "dev")
+        # … and the root gate is armed for the gated step.
+        self.assertIsNotNone(captured["gate"])
+        self.assertEqual(captured["gate"].step, "plan")
+        self.assertTrue(captured["gate"].armed())
 
 
 class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
@@ -571,7 +843,7 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
         )
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("WORKFLOWS_DIR", None)
-            result = apply_human_gate_intercept(_completed(), "default", "plan")
+            result, _ = apply_human_gate_intercept(_completed(), "default", "plan")
         self.assertEqual(result, _gate_hold("plan"))
 
     def test_local_workflow_does_not_hide_a_pinned_shipped_dir(self):
@@ -588,7 +860,7 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
             "  - name: only\n    agent: dev\n    next: null\n",
         )
         with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": shipped}, clear=False):
-            result = apply_human_gate_intercept(_completed(), "gated", "implement")
+            result, _ = apply_human_gate_intercept(_completed(), "gated", "implement")
         self.assertEqual(result, _gate_hold("implement"))
 
     def test_local_override_still_wins_over_the_shipped_file(self):
@@ -609,7 +881,7 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
             {"WORKFLOWS_DIR": os.path.join(self._repo, "shipped")},
             clear=False,
         ):
-            result = apply_human_gate_intercept(outcome, "gated", "implement")
+            result, _ = apply_human_gate_intercept(outcome, "gated", "implement")
         self.assertEqual(result, outcome)
 
 
@@ -634,7 +906,7 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
 
     def test_real_yaml_gated_step_intercepts_advance(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
-            result = apply_human_gate_intercept(
+            result, _ = apply_human_gate_intercept(
                 _completed(), "spec-driven-impl", "stub_approval"
             )
         self.assertEqual(result, _gate_hold("stub_approval"))
@@ -642,7 +914,7 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
     def test_real_yaml_gated_step_resume_held(self):
         """Issue #648: no resume bypass - the real gated step always holds."""
         with mock.patch.dict(os.environ, self.env, clear=False):
-            result = apply_human_gate_intercept(
+            result, _ = apply_human_gate_intercept(
                 _completed(), "spec-driven-impl", "stub_approval"
             )
         self.assertTrue(_is_human_gate_hold(result))
@@ -650,7 +922,7 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
     def test_real_yaml_non_gated_step_unchanged(self):
         outcome = _completed()
         with mock.patch.dict(os.environ, self.env, clear=False):
-            result = apply_human_gate_intercept(
+            result, _ = apply_human_gate_intercept(
                 outcome, "spec-driven-impl", "implement"
             )
         self.assertEqual(result, outcome)
@@ -1099,7 +1371,7 @@ class TestExtractLatestAnswerRecallOffset(unittest.TestCase):
              mock.patch.object(bo, "clear_run"), \
              mock.patch.object(
                  bo, "apply_human_gate_intercept",
-                 side_effect=lambda outcome, **kw: outcome,
+                 side_effect=lambda outcome, **kw: (outcome, None),
              ), \
              mock.patch.object(bo, "build_state", return_value=NS(run_id=1)), \
              mock.patch.object(bo, "split_message", return_value=[]), \

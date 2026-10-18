@@ -44,6 +44,7 @@ from nebuko.engine.models import (
     DeterministicStep,
     ExitCode,
     RunOutcome,
+    SkipKind,
     SkipOutcome,
     StepResult,
     Trigger,
@@ -824,6 +825,26 @@ class Engine:
                 # silently swallow the ping or soften the exit (issue #853).
                 soft_kill_halt = _is_true(self._get(resolved, "SOFT_RETRY_EXHAUSTED"))
                 command_error = _is_true(verdict.get("COMMAND_ERROR"))
+                if skip.kind is SkipKind.HUMAN_GATE_HOLD:
+                    # An armed root gate (issue #1003) is a deliberate stop,
+                    # not a workflow end and not a failure: no terminal notice,
+                    # no terminal_reason journal — the previous state (gate and
+                    # position) is preserved verbatim so the human's gate
+                    # command resumes exactly where the workflow parked. The
+                    # run exits HOLD (10) so the host run stays green; without
+                    # this branch the verdict fell through to CONFIG_ERROR and
+                    # exited 20.
+                    log.info("[phase:guards] gate held — %s", reason)
+                    return RunOutcome(
+                        exit_code=skip.exit_code,
+                        turn_outcome=TurnOutcome.for_incomplete(
+                            IncompleteReason.NO_OUTCOME, note=reason
+                        ),
+                        prompt=None,
+                        posted_body=None,
+                        state=None,
+                        phases=tuple(phases),
+                    )
                 if skip.is_benign and not (soft_kill_halt or command_error):
                     # A workflow that has no next agent (or reached its terminal
                     # step) is a deliberate no-op, not a failure: record the

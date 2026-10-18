@@ -29,6 +29,8 @@ from workflow_state import (
     Appreciation,
     FunctionCall,
     GateDecision,
+    GateLock,
+    GateStatus,
     HoldKind,
     IncompleteReason,
     IssueInfo,
@@ -304,6 +306,31 @@ def _parse_gate_decision_env() -> Optional[GateDecision]:
         return None
 
 
+def _parse_gate_released_env() -> bool:
+    """True when this run releases the root-level gate lock (issue #1003).
+
+    Set by the gate-decision resolution in ``resolve_config`` alongside
+    ``GATE_DECISION``: the decision is the only authorized release, so the
+    armed :class:`GateLock` is marked ``RELEASED`` rather than carried forward.
+    """
+    return os.environ.get("GATE_RELEASED", "").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
+
+def _parse_gate_consult_env() -> str:
+    """The callee of a gate consultation resolved this run (issue #1003).
+
+    Set by the consult resolution in ``resolve_config`` alongside the routed
+    callee config: this run *is* the delegated ``call_agent``, so the root lock
+    spends one consult round before it is carried forward. An empty value means
+    the run is not a consultation.
+    """
+    return os.environ.get("GATE_CONSULT", "").strip()
+
+
 def _parse_complexity_adjustment_env() -> Optional[ComplexityAdjustment]:
     """Parse the boundary complexity adjustment from ``COMPLEXITY_ADJUSTMENT``.
 
@@ -414,8 +441,9 @@ def apply_human_gate_intercept(
     outcome: Optional[TurnOutcome],
     workflow_name: str,
     workflow_step: str,
-) -> Optional[TurnOutcome]:
-    """Enforce the human_gate security boundary (issues #506, #648).
+    gate: Optional[GateLock] = None,
+) -> tuple[Optional[TurnOutcome], Optional[GateLock]]:
+    """Enforce the human_gate security boundary (issues #506, #648, #1003).
 
     A step marked ``human_gate: true`` in the workflow YAML may never advance
     on its own. There is **no** second release path: a completed turn (or a
@@ -427,27 +455,46 @@ def apply_human_gate_intercept(
     never intercepted: on a gated step the gate wins and the run holds for a
     human instead of auto-retrying.
 
+    The lock itself is *root-level metadata* (issue #1003): it is raised here,
+    independently of the turn outcome and of the workflow position, and it
+    blocks the workflow advance only — an agent-to-agent ``call_agent`` from
+    the gated step stays legal. An already-armed lock for the same step is
+    preserved verbatim (a re-run of the gated step must not reset the consult
+    budget); a lock for a different step is re-armed for this one.
+
     Args:
         outcome: Turn outcome resolved from the agent run (may be None).
         workflow_name: Active workflow name (WORKFLOW_NAME env).
         workflow_step: Step just executed (WORKFLOW_STEP env).
+        gate: The previous root-level lock carried by the workflow state, if
+            any (issue #1003).
 
     Returns:
-        The (possibly overridden) TurnOutcome.
+        The ``(outcome, gate)`` pair: the possibly-overridden TurnOutcome and
+        the root-level :class:`GateLock` (``None`` when this step is not gated).
     """
     if outcome is not None and not _gate_intercepts(outcome):
-        return outcome
+        return outcome, gate
     if not _load_gated_step_def(workflow_name, workflow_step):
-        return outcome
+        return outcome, gate
     logger.info(
         f"Human gate: step '{workflow_step}' requires approval — "
         f"intercepting {(outcome.appreciation.value if outcome and outcome.appreciation else 'no verdict')} as hold"
     )
-    return TurnOutcome(
-        status=TurnStatus.COMPLETED,
-        appreciation=Appreciation.HOLD,
-        hold_kind=HoldKind.AWAITING_APPROVAL,
-        note=f"human_gate:{workflow_step}",
+    if gate is None or gate.step != workflow_step or not gate.armed():
+        # A fresh step re-arms; a lock already armed for this step is preserved
+        # verbatim so a re-run cannot reset the consult budget. A *released*
+        # lock (the human's decision was consumed) is re-armed: the step is
+        # still gated, so entering it must raise the lock again.
+        gate = GateLock(step=workflow_step)
+    return (
+        TurnOutcome(
+            status=TurnStatus.COMPLETED,
+            appreciation=Appreciation.HOLD,
+            hold_kind=HoldKind.AWAITING_APPROVAL,
+            note=f"human_gate:{workflow_step}",
+        ),
+        gate,
     )
 
 
@@ -1198,12 +1245,16 @@ def build_output(
         prefs = RunPrefs()
         logger.info("Handoff fold — outcome overridden with AGENT_CHECKPOINT")
 
-    # ── Human gate intercept (issues #506, #648) ─────────────────
+    # ── Human gate intercept (issues #506, #648, #1003) ──────────
     # A gated step's dispatch is always overridden to hold: the gate is
     # released ONLY by an engine-owned GateDecision recorded from an
     # identity-verified `/nebuko approve gate` / `/nebuko reject gate`.
     # The run's trigger source is no longer an authorization input, so an
     # agent (or a human-echoed command) can never release the gate here.
+    # The intercept also raises the root-level GateLock (issue #1003) — the
+    # lock is workflow metadata, independent of the turn outcome and of the
+    # position, and it blocks the workflow *advance* only: a ``call_agent``
+    # from the gated step stays legal.
     is_human_resume = bool(os.environ.get("HUMAN_RESUME_INPUT", "").strip())
     # Engine soft-kill retry marker (issue #704): emitted only by the
     # soft-kill retry resolution. Forwarded to build_state so the per-step
@@ -1213,11 +1264,23 @@ def build_output(
         os.environ.get("SOFT_RETRY_ATTEMPT", "").strip().lower()
         in ("true", "1", "yes")
     )
-    turn_outcome = apply_human_gate_intercept(
+    turn_outcome, gate = apply_human_gate_intercept(
         turn_outcome,
         workflow_name=workflow_name,
         workflow_step=workflow_step,
+        gate=prev_state.gate if prev_state is not None else None,
     )
+    if _parse_gate_released_env() and gate is not None:
+        # A recorded gate decision is the only authorized release (issue
+        # #1003): mark the lock released so it stops blocking the advance while
+        # the audit trail (gate_history) keeps the decision itself.
+        gate = gate.model_copy(update={"status": GateStatus.RELEASED})
+    gate_consult = _parse_gate_consult_env()
+    if gate_consult and gate is not None:
+        # This run is the delegated consult (issue #1003): spend one round from
+        # the root lock so the persisted ``consult_rounds`` actually counts the
+        # delegation and ``MAX_CONSULT_ROUNDS`` bounds the fan-out.
+        gate = gate.consume_consult(gate_consult)
     # Consistency fix (issue #887): when the intercept converts a completing
     # dispatch to a human_gate hold, the persisted resolution must not keep
     # advertising the ungated forward edge (``next_step`` from WORKFLOW_NEXT).
@@ -1225,10 +1288,11 @@ def build_output(
     # edge; the routing guard in resolve_route no longer trusts it either.
     if _is_human_gate_hold(turn_outcome):
         resolution = resolution.model_copy(update={"next_step": ""})
-        # The gate supersedes any agent-named hand-off (issue #887 round 2): a
-        # persisted ``function_call`` would otherwise let the next bot trigger
-        # route straight to the callee, past the unreleased gate.
-        function_call = None
+        # The gate supersedes any workflow *advance* (issue #887 round 2), but
+        # it must NOT destroy the agent's imperative hand-off (issue #1003):
+        # ``call_agent`` is orthogonal to the outcome, so a gated agent that
+        # consults another agent keeps its ``function_call``. The resolver
+        # routes the consult and returns to the gated step with the gate armed.
 
     # ── Recovery log: capture execution trace on failure ──────────
     if is_graceful_timeout or not final_message or is_malformed_final_message(final_message):
@@ -1274,6 +1338,7 @@ def build_output(
         soft_retry_attempt=soft_retry_attempt,
         is_human_resume=is_human_resume,
         gate_decision=_parse_gate_decision_env(),
+        gate=gate,
         workflow_ref=workflow_ref_from_env(os.environ),
         complexity_adjustment=_parse_complexity_adjustment_env(),
         complexity_review_request=complexity_review_request,

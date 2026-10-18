@@ -15,6 +15,7 @@ from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.run_prefs.run_prefs import RunPrefs
 from .sub_domains.turn_outcome.turn_outcome import TurnOutcome
 from .sub_domains.gate_decision.gate_decision import GateDecision
+from .sub_domains.gate_lock.gate_lock import GateLock, GateStatus
 from .sub_domains.function_call import FunctionCall
 from .sub_domains.step_resolution.step_resolution import StepResolution
 from .sub_domains.thread_record.thread_record import ThreadRecord
@@ -186,6 +187,12 @@ class WorkflowState(BaseModel):
             key.
         gate_history: Full append-only audit of every gate decision for this
             workflow run, oldest first. Empty on legacy blobs without the key.
+        gate: Root-level human-gate lock (issue #1003), independent of
+            ``position`` and of any step's ``turn_outcome``. Set when an armed
+            ``human_gate`` step is entered and cleared by a gate command; it
+            blocks the workflow *advance* only — a ``call_agent`` consult from
+            the gated step stays legal. ``None`` on legacy blobs and once
+            released, so they load unchanged.
         position: Flat workflow step path, outermost-first; last ref = the
             step actually executed (issue #638). The flat ``workflow``/
             ``step`` fields keep leaf (v1) semantics.
@@ -246,6 +253,13 @@ class WorkflowState(BaseModel):
     # command; None/empty on legacy blobs, which keep loading unchanged.
     gate_decision: Optional[GateDecision] = None
     gate_history: list[GateDecision] = Field(default_factory=list)
+    # Root-level human-gate lock (issue #1003). Raised when an armed
+    # ``human_gate`` step is entered and cleared only by a gate command; it
+    # blocks the workflow *advance* and never an agent-to-agent ``call_agent``.
+    # Independent of ``position`` and of any step's ``turn_outcome``, so a
+    # gated agent can end its turn with a real verdict and still delegate.
+    # ``None`` on legacy blobs (and once released), which load unchanged.
+    gate: Optional[GateLock] = None
     resolution: Optional[StepResolution] = None
     # Imperative one-shot hand-off (the typed ``call_agent`` tool call).
     # Consumed by the next run's resolver, which emits a fresh state with it
@@ -390,6 +404,7 @@ def go_next(
     function_call: Optional[FunctionCall] = None,
     callback: Optional[str] = None,
     workflow_ref: Optional[str] = None,
+    gate: Optional[GateLock] = None,
 ) -> WorkflowState:
     from .features.build_state.build_state import build_state
     return build_state(
@@ -416,4 +431,5 @@ def go_next(
         function_call=function_call,
         callback=callback,
         workflow_ref=workflow_ref,
+        gate=gate,
     )
