@@ -18,10 +18,15 @@ dependencies = [
 [project.optional-dependencies]
 # The agent runtime is installed by CI / the dev shell; kept optional so the
 # library (engine + adapters) can be imported without pulling the SDK.
+# Pinned to a commit SHA, not `main` (issue #982): upstream moves several
+# commits a day, and an unpinned install makes any run's behavior
+# unreproducible. Bump the SHA in one place — here, the CI install step in
+# `.github/workflows/nebuko-workflow.yaml`, and `uv.lock` (re-resolve with
+# `uv lock`).
 runtime = [
     "litellm",
-    "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk",
-    "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools",
+    "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@8ba966d1d3af49f08e04349c055009e1614b48d6#subdirectory=openhands-sdk",
+    "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@8ba966d1d3af49f08e04349c055009e1614b48d6#subdirectory=openhands-tools",
 ]
 
 [project.scripts]

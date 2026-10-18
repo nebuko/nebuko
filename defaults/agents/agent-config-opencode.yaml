@@ -60,7 +60,7 @@ agents:
     skills:
       - inject: ["posting-contract"]
       - discover: ["git-pr-workflow", "complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "report_scaffold_branch", "complexity_review"]
 
   context:
     model: "${llms.deepseek-v4_1-flash}"
@@ -71,7 +71,7 @@ agents:
     skills:
       - inject: ["call-agent", "posting-contract", "context-research"]
       - discover: ["complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
 
   review:
     model: "${llms.glm-5_3-flash}"
@@ -81,7 +81,7 @@ agents:
     skills:
       - inject: ["posting-contract", "plan-review"]
       - discover: ["retrospective", "complexity"]
-    tools: ["terminal", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "think", "finish", "dispatch_next", "call_agent", "complexity_review"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"

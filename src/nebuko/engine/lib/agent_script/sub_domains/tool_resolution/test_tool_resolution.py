@@ -129,6 +129,20 @@ class TestResolveToolset:
         assert _names(resolved.sdk_tools) == ("ScaffoldBranchReportTool",)
         assert resolved.dispatch_tool_enabled is False
 
+    def test_terminal_batch_registers_alongside_terminal(self):
+        resolved = resolve_toolset(["terminal", "terminal_batch"], "context")
+        assert _names(resolved.sdk_tools) == ("terminal", "TerminalBatchTool")
+        assert "terminal_batch" in list_registered_tools()
+        assert resolved.dispatch_tool_enabled is False
+
+    def test_terminal_batch_without_terminal_is_skipped_with_warning(self, caplog):
+        # The batch tool runs on the terminal tool's session, so emitting it
+        # alone would register a tool that cannot execute.
+        with caplog.at_level(logging.WARNING):
+            resolved = resolve_toolset(["terminal_batch"], "context")
+        assert resolved.sdk_tools == ()
+        assert "'terminal_batch' requires 'terminal'" in caplog.text
+
     def test_engine_tools_resolve_via_sdk(self):
         resolved = resolve_toolset(
             ["dispatch_next", "report_scaffold_branch"], "dev"
