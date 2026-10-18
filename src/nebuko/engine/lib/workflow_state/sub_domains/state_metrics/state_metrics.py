@@ -36,6 +36,9 @@ class StateMetrics(BaseModel):
     tool_calls_per_tool: dict[str, int] = Field(default_factory=dict)
     errors_per_tool: dict[str, int] = Field(default_factory=dict)
     tokens_per_tool: dict[str, dict[str, int]] = Field(default_factory=dict)
+    tool_time_per_tool: dict[str, dict[str, float]] = Field(default_factory=dict)
+    tool_runtime_ms: float = 0.0
+    wall_clock_ms: float = 0.0
     dispatch_recall_count: int = 0
     tokens_per_second: Optional[float] = None
     time_to_first_token: Optional[float] = None
@@ -68,6 +71,9 @@ class StateMetrics(BaseModel):
             tool_calls_per_tool=dict(data.get("tool_calls_per_tool") or {}),
             errors_per_tool=dict(data.get("errors_per_tool") or {}),
             tokens_per_tool=dict(data.get("tokens_per_tool") or {}),
+            tool_time_per_tool=dict(data.get("tool_time_per_tool") or {}),
+            tool_runtime_ms=data.get("tool_runtime_ms", 0.0),
+            wall_clock_ms=data.get("wall_clock_ms", 0.0),
             dispatch_recall_count=data.get("dispatch_recall_count", 0),
             tokens_per_second=data.get("tokens_per_second"),
             time_to_first_token=data.get("time_to_first_token"),
