@@ -119,8 +119,11 @@ _FINALIZE_PROMPT = (
 _ENGINE_TOOL_NAMES = frozenset(DEFAULT_ENGINE_TOOLS.tools)
 
 #: The finalize turn's tool surface (issue #973): the terminal gate plus the
-#: delegation tool. ``finish``/``dispatch_next`` are hidden — the route is typed.
-_FINALIZE_TOOL_NAMES = frozenset({"finalize", "call_agent"})
+#: delegation tool and ``finish``. ``finish`` is exposed because the ``finalize``
+#: observation says "You may now finish": without it the model cannot terminate
+#: the turn and loops on repeated ``finalize`` calls (issue #1014). ``dispatch_next``
+#: stays hidden — the route is typed.
+_FINALIZE_TOOL_NAMES = frozenset({"finalize", "call_agent", "finish"})
 
 
 class InProcessAgentHost:
@@ -314,8 +317,18 @@ class InProcessAgentHost:
                 with _tools_only(conversation, _FINALIZE_TOOL_NAMES):
                     _send_and_run(conversation, prompt)
             except Exception as error:  # noqa: BLE001 - degrade to the fallback chain
-                log.warning("[phase:agent] finalize turn failed: %s", error)
-                return
+                # The turn broke mid-flight; the text it already emitted may
+                # still carry the completed sections, so salvage rather than
+                # dropping the report on the floor (issue #1014).
+                log.warning(
+                    "[phase:agent] finalize turn failed (%s); salvaging the "
+                    "turn text seen so far",
+                    error,
+                )
+                body = _salvage_finalize_body(handler, contract, conversation)
+                if body:
+                    rendered.append(body)
+                break
             turn_text = _finalize_turn_text(conversation)
             route = _finalize_route(conversation) or RouteDecision(appreciation="hold")
             try:
@@ -334,8 +347,7 @@ class InProcessAgentHost:
                         "salvaging the completed sections",
                         error,
                     )
-                    report = handler.salvage(turn_text)
-                    body = OutputRenderer(contract).render(report.sections)
+                    body = _salvage_finalize_body(handler, contract, conversation)
                     if body:
                         rendered.append(body)
                     break
@@ -355,6 +367,26 @@ class InProcessAgentHost:
                 "[phase:agent] finalize turn rendered the posted comment (%d chars)",
                 len(rendered[-1]),
             )
+        else:
+            # No section survived; the run silently degrades to the work-loop
+            # ``finish`` note. Name it so the loss is diagnosable from console.txt
+            # (issue #1014).
+            log.warning(
+                "[phase:agent] finalize turn rendered no comment; falling back "
+                "to the captured deliverable (the work-loop finish note)"
+            )
+
+
+def _salvage_finalize_body(
+    handler: FinalizeToolHandler, contract: OutputContract, conversation: Any
+) -> str:
+    """Render the completed sections of a broken finalize turn (issue #1014).
+
+    ``salvage`` never raises; an empty result means no section survived, and the
+    caller keeps the fallback chain.
+    """
+    report = handler.salvage(_finalize_turn_text(conversation))
+    return OutputRenderer(contract).render(report.sections)
 
 
 def _report_payload(conversation: Any) -> EngineToolPayload | None:
@@ -502,37 +534,64 @@ def _tools_only(conversation: Any, allowed: frozenset[str]) -> Iterator[None]:
         _install(resolved)
 
 
-def _finalize_turn_text(conversation: Any) -> str:
-    """The finalize turn's markdown text: the report the engine renders (#973).
+def _finalize_anchor_index(conversation: Any) -> int:
+    """Index of the harvested ``finalize`` event, or ``-1`` when there is none.
 
-    The report rides in the turn that calls ``finalize``, so it surfaces as the
-    action event's ``thought`` (the SDK emits no standalone ``MessageEvent`` for
-    a turn that also carries a tool call). The last agent message is the
-    fallback when the tool call and its text landed on different turns.
+    Both the report text and the route read from this single anchor: the last
+    ``finalize`` action event at or after ``_REPORT_OFFSET_ATTR``. Events after
+    the ``finalize`` call (a trailing status message, a repeated call) can never
+    move the anchor, so the posted body and the recorded route always come from
+    the same turn (issue #1014).
     """
     offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
-    text = ""
-    for event in _events(conversation)[offset:]:
-        if getattr(event, "tool_name", None) == "finalize":
-            text = _content_text(getattr(event, "thought", None)).strip() or text
-        elif getattr(event, "tool_name", None) is None:
-            message = getattr(event, "llm_message", None)
-            if message is not None:
-                text = _content_text(getattr(message, "content", None)).strip() or text
-    return text
+    events = _events(conversation)
+    for index in range(len(events) - 1, offset - 1, -1):
+        if getattr(events[index], "tool_name", None) == "finalize":
+            return index
+    return -1
+
+
+def _finalize_turn_text(conversation: Any) -> str:
+    """Report text anchored to the harvested ``finalize`` event's turn.
+
+    Precedence: the anchor ``finalize`` action event's ``thought``; else the
+    nearest preceding agent message; never an event after that ``finalize``
+    call. The report rides in the turn that calls ``finalize``, so it surfaces
+    as the action event's ``thought`` (the SDK emits no standalone
+    ``MessageEvent`` for a turn that also carries a tool call); the nearest
+    preceding agent message is the fallback when the tool call and its text
+    landed on different turns.
+    """
+    anchor = _finalize_anchor_index(conversation)
+    if anchor < 0:
+        return ""
+    text = _content_text(getattr(_events(conversation)[anchor], "thought", None)).strip()
+    if text:
+        return text
+    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
+    events = _events(conversation)
+    for index in range(anchor - 1, offset - 1, -1):
+        if getattr(events[index], "tool_name", None) is not None:
+            continue
+        message = getattr(events[index], "llm_message", None)
+        if message is None:
+            continue
+        text = _content_text(getattr(message, "content", None)).strip()
+        if text:
+            return text
+    return ""
 
 
 def _finalize_route(conversation: Any) -> RouteDecision | None:
-    """The typed route of the finalize turn's last ``finalize`` call (#973)."""
-    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
-    route: RouteDecision | None = None
-    for event in _events(conversation)[offset:]:
-        if getattr(event, "tool_name", None) != "finalize":
-            continue
-        candidate = route_from_action(getattr(event, "action", None))
-        if candidate is not None:
-            route = candidate
-    return route
+    """The typed route of the finalize turn's last ``finalize`` call (#973).
+
+    Uses the same event anchor as :func:`_finalize_turn_text`, so a trailing
+    event can never decouple the harvested report from its route (issue #1014).
+    """
+    anchor = _finalize_anchor_index(conversation)
+    if anchor < 0:
+        return None
+    return route_from_action(getattr(_events(conversation)[anchor], "action", None))
 
 
 def _content_text(content: object) -> str:

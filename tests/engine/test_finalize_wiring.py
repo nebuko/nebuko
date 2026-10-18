@@ -294,6 +294,17 @@ def _finalize_event(text: str, route: dict[str, Any] | None = None) -> object:
     )
 
 
+def _agent_message_event(text: str) -> object:
+    """A standalone agent ``MessageEvent`` (the fallback turn-text carrier)."""
+    from openhands.sdk.event import MessageEvent
+    from openhands.sdk.llm.message import Message, TextContent
+
+    return MessageEvent(
+        source="agent",
+        llm_message=Message(role="assistant", content=[TextContent(text=text)]),
+    )
+
+
 class _FakeAgent:
     def __init__(self, tools: dict[str, Any]) -> None:
         import threading
@@ -411,7 +422,7 @@ class TestFinalizeTurn:
 
         host.run("prompt")
 
-        assert conversation.tools_seen == [{"finalize", "call_agent"}]
+        assert conversation.tools_seen == [{"finalize", "call_agent", "finish"}]
         assert set(conversation.agent._tools) == set(tools)
 
     def test_retries_once_then_salvages_a_truncated_turn(self, tmp_path: Path) -> None:
@@ -537,3 +548,121 @@ class TestFinalizeTurn:
         assert route.appreciation == "hold"
         assert route.hold_kind == "awaiting_input"
         assert route.note == "need input"
+
+
+class TestFinalizeHarvestAnchor:
+    """The report and its route are anchored to the ``finalize`` event (#1014)."""
+
+    def _conversation(self, events: list[Any]) -> _FinalizeConversation:
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = events
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+        return conversation
+
+    def test_a_trailing_message_cannot_clobber_the_report(self) -> None:
+        from nebuko.engine.agent_host import _finalize_turn_text
+
+        conversation = self._conversation(
+            [
+                _finalize_event(_answer(), {"appreciation": "approved"}),
+                _agent_message_event("Plan complete and approved for hand-off."),
+            ]
+        )
+
+        text = _finalize_turn_text(conversation)
+
+        assert text.startswith("# Wired the format")
+        assert "hand-off" not in text
+
+    def test_a_preceding_message_is_the_fallback_when_the_thought_is_empty(self) -> None:
+        from nebuko.engine.agent_host import _finalize_turn_text
+
+        conversation = self._conversation(
+            [
+                _agent_message_event(_answer()),
+                _finalize_event("", {"appreciation": "approved"}),
+                _agent_message_event("Done."),
+            ]
+        )
+
+        assert _finalize_turn_text(conversation).startswith("# Wired the format")
+
+    def test_a_trailing_message_cannot_decouple_body_and_route(self) -> None:
+        from nebuko.engine.agent_host import _finalize_route, _finalize_turn_text
+
+        conversation = self._conversation(
+            [
+                _finalize_event(
+                    _answer(), {"appreciation": "approved", "required_agent": "review"}
+                ),
+                _agent_message_event("just a note"),
+            ]
+        )
+
+        assert _finalize_turn_text(conversation).startswith("# Wired the format")
+        route = _finalize_route(conversation)
+        assert route is not None
+        assert route.appreciation == "approved"
+        assert route.required_agent == "review"
+
+    def test_events_before_the_offset_are_ignored(self) -> None:
+        from nebuko.engine.agent_host import _finalize_route, _finalize_turn_text
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = [
+            _finalize_event(_answer(), {"appreciation": "approved"}),
+            _agent_message_event("a later turn"),
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 1)
+
+        # The pre-offset ``finalize`` is out of the harvest window: no anchor,
+        # so no report and no route are read from it.
+        assert _finalize_turn_text(conversation) == ""
+        assert _finalize_route(conversation) is None
+
+    def test_an_empty_harvest_logs_and_falls_back_without_raising(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FinalizeConversation(turns=[[_agent_message_event("no report")]])
+        host = _host_for(
+            repo_root,
+            conversation,
+            latest_answer="work-loop finish note",
+            step_output=STEP_OUTPUT_JSON,
+        )
+
+        with caplog.at_level("WARNING", logger="nebuko.engine.agent_host"):
+            result = host.run("prompt")
+
+        assert getattr(conversation, _FINALIZE_BODY_ATTR, None) is None
+        assert result["deliverable"] == "no report"
+        assert any("rendered no comment" in record.message for record in caplog.records)
+
+    def test_a_broken_turn_salvages_the_text_seen_so_far(self, tmp_path: Path) -> None:
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+
+        class _BrokenConversation(_FinalizeConversation):
+            def send_message(self, prompt: str) -> None:
+                # The turn emits the completed sections, then the send/run seam
+                # breaks before the harvest would normally run.
+                self.prompts.append(prompt)
+                self.state.events.extend(
+                    [_finalize_event(_answer(), {"appreciation": "approved"})]
+                )
+                raise RuntimeError("send broke after emitting the report")
+
+        conversation = _BrokenConversation(turns=[])
+        host = _host_for(
+            repo_root,
+            conversation,
+            latest_answer="work-loop finish note",
+            step_output=STEP_OUTPUT_JSON,
+        )
+
+        result = host.run("prompt")
+
+        assert result["deliverable"].startswith("# Wired the format")
+        assert "## Changes" in result["deliverable"]
