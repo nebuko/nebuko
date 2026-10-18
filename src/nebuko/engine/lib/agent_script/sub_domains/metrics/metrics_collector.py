@@ -233,18 +233,24 @@ def _compute_errors_per_tool(conversation):
     Returns:
         dict: Mapping of tool_name to error count
     """
-    observation_events = [e for e in conversation.state.events if isinstance(e, ObservationEvent)]
+    events = getattr(getattr(conversation, "state", None), "events", None) or []
+
+    # Observations only carry the id of their originating action, so resolve
+    # the tool name through ActionEvent.id -> tool_name.
+    action_tool_names = {}
+    for event in events:
+        if isinstance(event, ActionEvent):
+            action_tool_names[getattr(event, "id", None)] = (
+                getattr(event, "tool_name", None) or "unknown"
+            )
 
     errors_per_tool = {}
-    for event in observation_events:
-        # Get the tool_name from the related action event
-        tool_name = "unknown"
-        if hasattr(event, 'action_event') and event.action_event:
-            action = event.action_event
-            if hasattr(action, 'tool_name'):
-                tool_name = action.tool_name
+    for event in events:
+        if not isinstance(event, ObservationEvent):
+            continue
         # Check if this observation is an error
         if hasattr(event, 'observation') and hasattr(event.observation, 'is_error') and event.observation.is_error:
+            tool_name = action_tool_names.get(getattr(event, "action_id", None), "unknown")
             errors_per_tool[tool_name] = errors_per_tool.get(tool_name, 0) + 1
 
     return errors_per_tool

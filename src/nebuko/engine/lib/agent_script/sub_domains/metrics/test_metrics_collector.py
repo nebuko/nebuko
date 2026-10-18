@@ -1,6 +1,7 @@
 """Tests for wiring captured token telemetry into the run Metrics (issue #829)."""
 
 import time
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -413,7 +414,7 @@ def _make_action(action_id, tool_name, timestamp, source="agent"):
     )
 
 
-def _make_observation(obs_id, action_id, tool_name, timestamp):
+def _make_observation(obs_id, action_id, tool_name, timestamp, is_error=False):
     from openhands.sdk.event.llm_convertible.observation import ObservationEvent
 
     # model_construct bypasses the discriminated-union validation of observation.
@@ -424,7 +425,7 @@ def _make_observation(obs_id, action_id, tool_name, timestamp):
         tool_call_id=f"call_{action_id}",
         action_id=action_id,
         timestamp=timestamp,
-        observation=None,
+        observation=MagicMock(is_error=is_error) if is_error else None,
     )
 
 
@@ -546,3 +547,30 @@ class TestToolExecutionTime:
 
         assert _duration_ms("not-a-date", "2026-01-01T00:00:00") == 0.0
         assert _duration_ms(None, None) == 0.0
+
+
+class TestErrorsPerTool:
+    """Error observations are attributed through action_id -> ActionEvent.id."""
+
+    def test_error_counted_under_matching_action_tool_name(self):
+        events = [
+            _make_action("a1", "terminal", "2026-01-01T00:00:00"),
+            _make_observation(
+                "o1", "a1", "terminal", "2026-01-01T00:00:00.250000", is_error=True
+            ),
+        ]
+
+        metrics = collect_llm_metrics(_conversation_with_events(events))
+
+        assert metrics.errors_per_tool == {"terminal": 1}
+
+    def test_orphan_error_observation_falls_back_to_unknown(self):
+        events = [
+            _make_observation(
+                "o1", "missing", "terminal", "2026-01-01T00:00:00.250000", is_error=True
+            ),
+        ]
+
+        metrics = collect_llm_metrics(_conversation_with_events(events))
+
+        assert metrics.errors_per_tool == {"unknown": 1}
