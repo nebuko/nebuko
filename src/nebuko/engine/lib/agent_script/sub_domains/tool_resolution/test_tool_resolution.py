@@ -16,7 +16,7 @@ import textwrap
 from pathlib import Path
 
 from openhands.sdk.tool import Tool
-from openhands.sdk.tool.registry import list_registered_tools
+from openhands.sdk.tool.registry import list_registered_tools, resolve_tool
 
 from agent_script.sub_domains.tool_resolution.tool_resolution import (
     ResolvedToolset,
@@ -128,6 +128,28 @@ class TestResolveToolset:
         resolved = resolve_toolset(["report_scaffold_branch"], "dev")
         assert _names(resolved.sdk_tools) == ("ScaffoldBranchReportTool",)
         assert resolved.dispatch_tool_enabled is False
+
+    def test_terminal_batch_registers_alongside_terminal(self):
+        resolved = resolve_toolset(["terminal", "terminal_batch"], "context")
+        assert _names(resolved.sdk_tools) == ("terminal", "terminal_batch")
+        assert "terminal_batch" in list_registered_tools()
+        assert resolved.dispatch_tool_enabled is False
+
+    def test_terminal_batch_spec_is_resolvable_by_the_sdk(self):
+        # The emitted Tool name must be the registry key, not the class name:
+        # a mismatch only shows up at Agent init as a KeyError.
+        resolved = resolve_toolset(["terminal", "terminal_batch"], "context")
+        spec = next(t for t in resolved.sdk_tools if t.name == "terminal_batch")
+        definitions = resolve_tool(spec, None)
+        assert [d.name for d in definitions] == ["terminal_batch"]
+
+    def test_terminal_batch_without_terminal_is_skipped_with_warning(self, caplog):
+        # The batch tool runs on the terminal tool's session, so emitting it
+        # alone would register a tool that cannot execute.
+        with caplog.at_level(logging.WARNING):
+            resolved = resolve_toolset(["terminal_batch"], "context")
+        assert resolved.sdk_tools == ()
+        assert "'terminal_batch' requires 'terminal'" in caplog.text
 
     def test_engine_tools_resolve_via_sdk(self):
         resolved = resolve_toolset(

@@ -33,6 +33,11 @@ _SDK_TOOL_NAMES = ("terminal", "file_editor", "task_tracker")
 #: Config tool name -> SDK builtin class name.
 _BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
 
+#: The name ``TerminalBatchTool`` auto-derives from its class name, and the
+#: name the SDK registry is keyed by — the two must stay in step, because
+#: ``resolve_tool`` looks the emitted ``Tool`` spec up in that registry.
+_TERMINAL_BATCH_TOOL_NAME = "terminal_batch"
+
 _DISPATCH_TOOL_NAME = "DispatchNextTool"
 _CALL_AGENT_TOOL_NAME = "CallAgentTool"
 _FINALIZE_TOOL_NAME = "FinalizeTool"
@@ -83,6 +88,30 @@ def _register_if_missing(tool_class) -> None:
     if tool_class.name in list_registered_tools():
         return
     register_tool(tool_class.name, tool_class)
+
+
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
+_terminal_batch_tool_registered = False
+
+
+def _ensure_terminal_batch_tool_registered() -> None:
+    """Register the ``terminal_batch`` ToolDefinition with the SDK registry.
+
+    The engine-authored wrapper around the SDK's ``terminal`` tool: it takes a
+    list of single statements and replays them on one persistent session, so a
+    multi-step explore costs one model turn instead of one per command
+    (issue #982). Idempotent — safe to call on every agent run.
+    """
+    global _terminal_batch_tool_registered
+    if _terminal_batch_tool_registered:
+        return
+    from agent_script.features.terminal_batch_tool.terminal_batch_tool import (
+        TerminalBatchTool,
+    )
+
+    register_tool(TerminalBatchTool.name, TerminalBatchTool)
+    _terminal_batch_tool_registered = True
 
 
 # Module-level guard: register_tool logs a warning on re-registration, so in
@@ -217,6 +246,15 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
     requested = list(tool_names)
     if any(name in _SDK_TOOL_NAMES for name in requested):
         ensure_sdk_tools_registered()
+    # ``terminal_batch`` replays its commands through the ``terminal`` tool's
+    # session, so configuring it without ``terminal`` would be a silent no-op
+    # at call time. Warn instead of emitting a tool that cannot run.
+    if "terminal_batch" in requested and "terminal" not in requested:
+        logger.warning(
+            f"'terminal_batch' requires 'terminal' for agent '{role_name}' "
+            "— skipping the batch tool"
+        )
+        requested = [name for name in requested if name != "terminal_batch"]
 
     sdk_tools: list[Tool] = []
     builtin_tools: list[str] = []
@@ -227,6 +265,9 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
             sdk_tools.append(Tool(name=tool_name))
         elif tool_name in _BUILTIN_TOOL_MAP:
             builtin_tools.append(_BUILTIN_TOOL_MAP[tool_name])
+        elif tool_name == "terminal_batch":
+            _ensure_terminal_batch_tool_registered()
+            sdk_tools.append(Tool(name=_TERMINAL_BATCH_TOOL_NAME))
         elif tool_name == "dispatch_next":
             _ensure_dispatch_tool_registered()
             sdk_tools.append(Tool(name=_DISPATCH_TOOL_NAME))
