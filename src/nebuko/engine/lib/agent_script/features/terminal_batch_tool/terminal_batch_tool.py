@@ -259,10 +259,26 @@ class TerminalBatchExecutor(ToolExecutor):
                 stopped = action.stop_on_failure
                 continue
 
-            observation = executor(
-                TerminalAction(command=command, timeout=action.timeout),
-                conversation,
-            )
+            try:
+                observation = executor(
+                    TerminalAction(command=command, timeout=action.timeout),
+                    conversation,
+                )
+            except Exception as exc:
+                # One bad entry must not cost the whole batch: the executor
+                # raises for cases the SDK does not turn into an error
+                # observation (a dead session, a reset/input conflict, ...),
+                # and the commands before it already ran and have results.
+                logger.warning(f"terminal_batch: command {index} raised: {exc}")
+                failed += 1
+                exit_codes.append(None)
+                results.append(
+                    f"[{index}/{total}] $ {command}\n"
+                    f"(raised {type(exc).__name__}: {exc})"
+                )
+                stopped = action.stop_on_failure
+                continue
+
             exit_codes.append(observation.exit_code)
             working_dir = observation.metadata.working_dir or working_dir
             results.append(_render_result(index, total, command, observation))

@@ -33,7 +33,11 @@ _SDK_TOOL_NAMES = ("terminal", "file_editor", "task_tracker")
 #: Config tool name -> SDK builtin class name.
 _BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
 
-_TERMINAL_BATCH_TOOL_NAME = "TerminalBatchTool"
+#: The name ``TerminalBatchTool`` auto-derives from its class name, and the
+#: name the SDK registry is keyed by — the two must stay in step, because
+#: ``resolve_tool`` looks the emitted ``Tool`` spec up in that registry.
+_TERMINAL_BATCH_TOOL_NAME = "terminal_batch"
+
 _DISPATCH_TOOL_NAME = "DispatchNextTool"
 _CALL_AGENT_TOOL_NAME = "CallAgentTool"
 _FINALIZE_TOOL_NAME = "FinalizeTool"

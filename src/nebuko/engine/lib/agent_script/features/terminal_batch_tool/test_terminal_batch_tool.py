@@ -140,15 +140,58 @@ class TestExecutor:
         assert observation.is_error is True
         assert "could not start a shell session" in observation.text
 
+    def test_a_raising_command_is_isolated_to_its_entry(self, bound_tool):
+        real, calls = bound_tool.executor._executor, []
+
+        class _RaisingExecutor:
+            def __call__(self, action, conversation=None):
+                calls.append(action.command)
+                if action.command == "boom":
+                    raise RuntimeError("session died")
+                return real(action, conversation)
+
+        bound_tool.executor._executor = _RaisingExecutor()
+        observation = bound_tool.executor(
+            TerminalBatchAction(
+                commands=["echo before", "boom", "echo after"], timeout=20
+            )
+        )
+
+        assert calls == ["echo before", "boom", "echo after"]
+        assert observation.exit_codes == [0, None, 0]
+        assert observation.failed_count == 1
+        assert observation.is_error is True
+        assert "before" in observation.results[0]
+        assert "raised RuntimeError: session died" in observation.results[1]
+        assert "after" in observation.results[2]
+
+    def test_a_raising_command_stops_the_batch_when_asked(self, bound_tool):
+        real = bound_tool.executor._executor
+
+        class _RaisingExecutor:
+            def __call__(self, action, conversation=None):
+                if action.command == "boom":
+                    raise RuntimeError("session died")
+                return real(action, conversation)
+
+        bound_tool.executor._executor = _RaisingExecutor()
+        observation = bound_tool.executor(
+            TerminalBatchAction(
+                commands=["boom", "echo after"], stop_on_failure=True, timeout=20
+            )
+        )
+        assert observation.exit_codes == [None, None]
+        assert "skipped" in observation.results[1]
+
 
 class TestResolution:
     def test_terminal_batch_resolves_through_tool_resolution(self):
         resolved = resolve_toolset(["terminal", "terminal_batch"], "context")
         assert [t.name for t in resolved.sdk_tools] == [
             "terminal",
-            "TerminalBatchTool",
+            "terminal_batch",
         ]
-        assert resolved.has("TerminalBatchTool")
+        assert resolved.has("terminal_batch")
         assert resolved.dispatch_tool_enabled is False
 
     def test_registered_under_its_own_name(self):
