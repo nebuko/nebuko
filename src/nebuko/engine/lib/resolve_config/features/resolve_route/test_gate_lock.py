@@ -51,6 +51,7 @@ from workflow_state import (  # noqa: E402
     TurnStatus,
     WorkflowState,
 )
+from workflow_state.features.build_state.build_state import build_state  # noqa: E402
 
 
 # A hand-off the parse-time registry accepts but the routing guard rejects
@@ -296,6 +297,118 @@ class TestGateConsultRouting(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_workflow(tmpdir)
             self.assertIsNone(_resolve_gate_consult(state, state.gate, tmpdir))
+
+
+class TestGateConsultEndToEnd(unittest.TestCase):
+    """Full consult round-trip through ``resolve_config`` (issue #1003).
+
+    The helper-level cases above prove the routing *policy*; these drive the
+    same path from a persisted workflow-state body the way production does, and
+    prove the consult budget actually survives a transition: the resolver
+    routes to the callee, ``build_output`` re-arms the lock, and the round
+    counter (``gate.consult_rounds``) is persisted on the emitted state.
+    """
+
+    def _dirs(self, tmpdir: str) -> tuple[str, str]:
+        prompt_base = os.path.join(tmpdir, "prompts")
+        workflows_dir = os.path.join(tmpdir, "workflows")
+        os.makedirs(prompt_base, exist_ok=True)
+        os.makedirs(workflows_dir, exist_ok=True)
+        _write_workflow(workflows_dir)
+        return prompt_base, workflows_dir
+
+    def _state_body(self, state: WorkflowState) -> str:
+        block = (
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + state.model_dump_json()
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+        return "<!-- bot-workflow-terminal -->\n" + block
+
+    def test_consult_routes_to_the_callee_through_resolve_config(self):
+        state = _gated_state(function_call=_consult_call("context"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_base, workflows_dir = self._dirs(tmpdir)
+            cfg = resolve_config(
+                self._state_body(state), prompt_base, workflows_dir, is_bot=True
+            )
+        self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg["TASK"], "context")
+        # The callback returns to the emitter, whose position is untouched.
+        self.assertEqual(cfg["CONFIG_CALLBACK"], "architect")
+
+    def test_round_trip_persists_the_consumed_consult_round(self):
+        """Resolver → build_output: the consult round survives the transition."""
+        state = _gated_state(function_call=_consult_call("context"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_base, workflows_dir = self._dirs(tmpdir)
+            cfg = resolve_config(
+                self._state_body(state), prompt_base, workflows_dir, is_bot=True
+            )
+            self.assertEqual(cfg["TASK"], "context")
+            # What build_output.main does for the callee's run: the lock is
+            # re-armed for the *gated* step, spending one consult round.
+            gate = GateLock(step="plan").consume_consult(cfg["TASK"])
+            advanced = build_state(
+                state,
+                workflow="default",
+                step="plan",
+                agent="architect",
+                turn_outcome=state.turn_outcome,
+                function_call=state.function_call,
+                position=[StepRef(workflow="default", step="plan")],
+                gate=gate,
+            )
+        self.assertEqual(advanced.step, "plan")
+        self.assertEqual(advanced.gate.consult_rounds, 1)
+        self.assertEqual(advanced.gate.last_handoff, "context")
+        self.assertTrue(advanced.gate.armed())
+
+    def test_bare_retrigger_on_an_armed_gate_holds_with_exit_10(self):
+        """Regression for the reported exit 20: a re-trigger must hold, not fail."""
+        state = _gated_state(function_call=_consult_call("context"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_base, workflows_dir = self._dirs(tmpdir)
+            cfg = resolve_config(
+                self._state_body(state), prompt_base, workflows_dir, is_bot=True
+            )
+            # The consult was routed, so the callee's run clears the hand-off;
+            # the next bare trigger on the same armed gate must be a benign hold.
+            state.function_call = None
+            cfg = resolve_config(
+                self._state_body(state), prompt_base, workflows_dir, is_bot=True
+            )
+        self.assertEqual(cfg["SKIP_AGENT"], "true")
+        outcome = SkipOutcome.from_verdict(cfg)
+        self.assertIs(outcome.kind, SkipKind.HUMAN_GATE_HOLD)
+        self.assertTrue(outcome.is_benign)
+        self.assertIs(outcome.exit_code, ExitCode.HOLD)
+
+    def test_exhausted_budget_holds_and_names_the_spent_rounds(self):
+        spent = GateLock(
+            step="plan", consult_rounds=MAX_CONSULT_ROUNDS, last_handoff="context"
+        )
+        state = _gated_state(gate=spent, function_call=_consult_call("context"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_base, workflows_dir = self._dirs(tmpdir)
+            cfg = resolve_config(
+                self._state_body(state), prompt_base, workflows_dir, is_bot=True
+            )
+        self.assertEqual(cfg["SKIP_AGENT"], "true")
+        self.assertEqual(cfg["SKIP_KIND"], "human_gate_hold")
+        self.assertIn("consult budget", cfg["REASON"])
+        self.assertIs(SkipOutcome.from_verdict(cfg).exit_code, ExitCode.HOLD)
+
+    def test_forward_edge_stays_suppressed_while_armed(self):
+        """``plan -> implement`` must never fire on an armed gate."""
+        state = _gated_state()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_base, workflows_dir = self._dirs(tmpdir)
+            cfg = resolve_config(
+                self._state_body(state), prompt_base, workflows_dir, is_bot=True
+            )
+        self.assertEqual(cfg["SKIP_AGENT"], "true")
+        self.assertNotEqual(cfg.get("TASK"), "dev")
 
 
 class TestHumanGateHoldVerdict(unittest.TestCase):

@@ -382,11 +382,14 @@ def resolve_config(
         handoff = _resolve_handoff_decision(
             prev_state, workflows_dir, local_workflows_dir=local_workflows_dir
         )
-        if handoff.reason_code == "gate_hold" and _armed_gate(prev_state) is not None:
+        if _armed_gate(prev_state) is not None:
             # Consult from an armed gate (issue #1003): the gate blocks the
             # workflow advance, never a delegation — route the hand-off through
             # the outcome path, which applies the same guard, spends one
-            # consult round and returns the callee config.
+            # consult round and returns the callee config. This holds for a
+            # *forward-step* hand-off (``function_call``) exactly as for the
+            # ``gate_hold`` shape: both must respect the consult budget, so a
+            # spent budget degrades to the benign hold instead of bypassing it.
             config = _resolve_outcome_path(
                 prev_state, workflows_dir, local_workflows_dir=local_workflows_dir
             )
