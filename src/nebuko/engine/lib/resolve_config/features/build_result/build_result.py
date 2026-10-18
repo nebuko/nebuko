@@ -391,6 +391,10 @@ def _build_result(
         # and ``build_state`` persists it — the release is recorded in workflow
         # state, outside the agent loop.
         "GATE_DECISION": config.get("config_gate_decision", ""),
+        # Root-level gate release (issue #1003): set by the gate-decision
+        # resolution. ``build_output`` turns it into a RELEASED ``GateLock`` so
+        # the armed lock never outlives the human decision.
+        "GATE_RELEASED": config.get("config_gate_released", ""),
         # Complexity governance (issue #869): the pinned policy snapshot and the
         # boundary drift adjustment. ``build_output`` parses both and
         # ``build_state`` persists them — the decision is recorded in workflow

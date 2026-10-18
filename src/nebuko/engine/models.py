@@ -114,6 +114,11 @@ class SkipKind(Enum):
     NO_NEXT_AGENT = "no_next_agent"  # benign — nothing left to dispatch
     TERMINAL = "terminal"  # benign — terminal marker / workflow exhausted
     CONFIG_ERROR = "config_error"  # failure — workflow not found / bad config
+    # Benign — an armed root gate is holding the workflow (issue #1003): the
+    # run stops deliberately and the human releases it with a gate command.
+    # Without this kind the resolver's gate skip defaulted to CONFIG_ERROR and
+    # exited 20 instead of the hold exit 10.
+    HUMAN_GATE_HOLD = "human_gate_hold"
 
 
 # @stub-protected
@@ -122,11 +127,11 @@ class SkipOutcome:
     """The typed verdict for a run that stops without dispatching an agent.
 
     Single source of truth for *why* the guards phase skipped the agent and the
-    exit code that follows: a benign verdict (``NO_NEXT_AGENT`` / ``TERMINAL``)
-    is a deliberate no-op and must not fail the host run, while a
-    ``CONFIG_ERROR`` keeps the existing terminal failure exit. Resolver verdicts
-    may omit the kind — an unclassified reason defaults to ``CONFIG_ERROR`` so
-    behaviour is never softened by accident.
+    exit code that follows: a benign verdict (``NO_NEXT_AGENT`` / ``TERMINAL`` /
+    ``HUMAN_GATE_HOLD``) is a deliberate no-op and must not fail the host run,
+    while a ``CONFIG_ERROR`` keeps the existing terminal failure exit. Resolver
+    verdicts may omit the kind — an unclassified reason defaults to
+    ``CONFIG_ERROR`` so behaviour is never softened by accident.
     """
 
     kind: SkipKind
@@ -135,11 +140,20 @@ class SkipOutcome:
     # @stub-protected
     @property
     def is_benign(self) -> bool:
-        return self.kind in (SkipKind.NO_NEXT_AGENT, SkipKind.TERMINAL)
+        return self.kind in (
+            SkipKind.NO_NEXT_AGENT,
+            SkipKind.TERMINAL,
+            SkipKind.HUMAN_GATE_HOLD,
+        )
 
     # @stub-protected
     @property
     def exit_code(self) -> ExitCode:
+        if self.kind is SkipKind.HUMAN_GATE_HOLD:
+            # An armed gate is a deliberate stop, not a workflow end: exit
+            # ``HOLD`` (10) so the host run stays green and the human is the
+            # only one who can resume it (issue #1003).
+            return ExitCode.HOLD
         return ExitCode.ADVANCE if self.is_benign else ExitCode.TERMINAL
 
     @classmethod

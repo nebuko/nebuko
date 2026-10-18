@@ -1220,6 +1220,90 @@ class TestHumanActionNotice:
         )
 
 
+class TestArmedGateHoldExit:
+    """Issue #1003: an armed root gate is a benign hold, never exit 20.
+
+    A trigger landing on an armed ``human_gate`` step with no hand-off returns a
+    ``HUMAN_GATE_HOLD`` skip. Before the dedicated guard branch the verdict
+    carried no ``SKIP_KIND``, defaulted to ``CONFIG_ERROR`` and exited 20
+    (``TERMINAL``) — the reported failure.
+    """
+
+    def test_an_armed_gate_skip_exits_hold(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SKIP_KIND": "human_gate_hold",
+                "REASON": "human_gate:plan held — use /nebuko approve gate",
+            },
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.HOLD
+        assert outcome.exit_code != ExitCode.TERMINAL
+
+    def test_the_gate_hold_never_posts_a_notice_or_journals_a_terminal(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SKIP_KIND": "human_gate_hold",
+                "REASON": "human_gate:plan held",
+            },
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+
+        engine.run()
+
+        journal = tmp_path / "runs" / "run-1" / "journal.md"
+        text = journal.read_text(encoding="utf-8") if journal.exists() else ""
+        assert "<!-- bot-human-action -->" not in text
+        assert "bot-workflow-terminal" not in text
+
+    def test_the_gate_lock_and_position_are_left_untouched(self, tmp_path, monkeypatch):
+        """The hold must not rewrite state: the human's gate command resumes it."""
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SKIP_KIND": "human_gate_hold",
+                "REASON": "human_gate:plan held",
+            },
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+        saved: list = []
+        monkeypatch.setattr(LocalAdapter, "save_state", lambda self, state: saved.append(state))
+
+        outcome = engine.run()
+
+        assert outcome.state is None
+        assert saved == []
+
+    def test_an_unclassified_skip_still_terminates(self, tmp_path, monkeypatch):
+        """Fail-closed guard: no ``SKIP_KIND`` keeps the exit-20 behaviour."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "true", "REASON": "boom"})
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+
+
 class TestStepSkipKindIsOnlyForAStop:
     """Issue #996: a run that *advanced* owes no skip kind.
 

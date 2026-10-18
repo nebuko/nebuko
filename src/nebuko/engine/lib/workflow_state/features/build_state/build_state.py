@@ -22,6 +22,7 @@ from ...sub_domains.step_resolution.step_resolution import StepResolution
 from ...sub_domains.run_prefs.run_prefs import RunPrefs
 from ...sub_domains.function_call import FunctionCall
 from ...sub_domains.gate_decision.gate_decision import GateDecision
+from ...sub_domains.gate_lock.gate_lock import GateLock
 from ...step_output_record import StepOutputRecord
 from ...sub_domains.thread_record.thread_record import ThreadRecord
 from ...sub_domains.step_input_record.step_input_record import StepInputRecord
@@ -94,6 +95,7 @@ def build_state(
     is_human_resume: bool = False,
     gate_decision: Optional[GateDecision] = None,
     workflow_ref: Optional[str] = None,
+    gate: Optional[GateLock] = None,
     complexity_adjustment: Optional[ComplexityAdjustment] = None,
     complexity_review_request: Optional[ComplexityReviewRequest] = None,
     complexity_policy: Optional[ComplexityPolicy] = None,
@@ -162,6 +164,11 @@ def build_state(
             by an identity-verified ``/nebuko approve|reject gate`` command.
             Recorded as the latest decision and appended to ``gate_history``;
             None carries the previous values forward.
+        gate: The root-level human-gate lock (issue #1003). None preserves the
+            previous lock verbatim; a :class:`GateLock` replaces it (arming it
+            on entering a gated step, releasing it with ``RELEASED`` when a
+            gate command clears it). The lock lives at the root, never inside a
+            step entry, so it is independent of ``position``.
         workflow_ref: Pinned ref of the reusable workflow that defined this run
             (issue #862), read from ``job.workflow_ref``. None preserves the
             previous value (``None`` on legacy blobs), so a run hosted outside
@@ -192,6 +199,7 @@ def build_state(
         base_circuit_breaker = CircuitBreakerState()
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
+        base_gate: Optional[GateLock] = None
         base_complexity_policy: Optional[ComplexityPolicy] = None
         base_thread: list[ThreadRecord] = []
     else:
@@ -210,6 +218,7 @@ def build_state(
         base_circuit_breaker = prev_state.circuit_breaker
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
+        base_gate = prev_state.gate
         base_complexity_policy = prev_state.complexity_policy
         base_thread = list(prev_state.thread)
 
@@ -300,6 +309,11 @@ def build_state(
         new_gate_decision = base_gate_decision
         new_gate_history = base_gate_history
 
+    # Root-level human-gate lock (issue #1003): an explicitly supplied lock
+    # replaces the previous one (arm on entering a gated step, release when a
+    # gate command clears it); None carries the previous lock forward verbatim.
+    new_gate = gate if gate is not None else base_gate
+
     # Resolved complexity policy snapshot (issue #869): pinned at run start and
     # carried forward; a later run re-pins only when it supplies a fresh one.
     new_complexity_policy = (
@@ -387,6 +401,7 @@ def build_state(
         circuit_breaker=base_circuit_breaker,
         gate_decision=new_gate_decision,
         gate_history=new_gate_history,
+        gate=new_gate,
         complexity_policy=new_complexity_policy,
         thread=thread if thread is not None else base_thread,
     )

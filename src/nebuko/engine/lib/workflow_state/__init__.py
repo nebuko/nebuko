@@ -14,6 +14,7 @@ from .sub_domains.state_metrics.state_metrics import StateMetrics
 from .sub_domains.step_resolution.step_resolution import StepResolution
 from .sub_domains.function_call import FunctionCall, SUPPORTED_FUNCTIONS
 from .sub_domains.gate_decision.gate_decision import GateDecision
+from .sub_domains.gate_lock.gate_lock import MAX_CONSULT_ROUNDS, GateLock, GateStatus
 from .sub_domains.thread_record.thread_record import ThreadRecord, ThreadRecordKind
 from .sub_domains.step_input_record.step_input_record import StepInputRecord
 from .sub_domains.run_prefs.run_prefs import RunPrefs
@@ -71,6 +72,9 @@ __all__ = [
     "FunctionCall",
     "SUPPORTED_FUNCTIONS",
     "GateDecision",
+    "GateLock",
+    "GateStatus",
+    "MAX_CONSULT_ROUNDS",
     "ThreadRecord",
     "ThreadRecordKind",
     "StepInputRecord",

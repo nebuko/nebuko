@@ -31,6 +31,7 @@ from .features.parse_trigger.parse_trigger import (
 )
 from .features.resolve_route.resolve_route import (
     build_author_identity_from_env,
+    _armed_gate,
     _resolve_resume_path,
     _resolve_outcome_path,
     _resolve_function_call_path,
@@ -381,7 +382,15 @@ def resolve_config(
         handoff = _resolve_handoff_decision(
             prev_state, workflows_dir, local_workflows_dir=local_workflows_dir
         )
-        if handoff.reason_code in ("gate_hold", "dispatch"):
+        if handoff.reason_code == "gate_hold" and _armed_gate(prev_state) is not None:
+            # Consult from an armed gate (issue #1003): the gate blocks the
+            # workflow advance, never a delegation — route the hand-off through
+            # the outcome path, which applies the same guard, spends one
+            # consult round and returns the callee config.
+            config = _resolve_outcome_path(
+                prev_state, workflows_dir, local_workflows_dir=local_workflows_dir
+            )
+        elif handoff.reason_code in ("gate_hold", "dispatch"):
             # Gate precedence (issue #733): a `human_gate` successor outranks
             # the hand-off. No forward step for the callee (`dispatch`) is a
             # no-op. In both cases continue the workflow so the gated/successor
