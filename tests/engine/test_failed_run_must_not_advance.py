@@ -35,9 +35,21 @@ from workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / "defaults" / "workflows"
 
+BOT_MARKER = "<!-- bot-workflow-terminal -->"
 CONTINUE_TOKEN = "<!-- workflow-continue -->"
+# The single line-1 composition shared with ``prepare_comment`` and the gate.
+LIVE_HEADER_LINE = BOT_MARKER + CONTINUE_TOKEN
+GATE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nebuko-workflow.yaml"
 
 RESUME_COMMAND = "/nebuko resume"
+
+
+def _gate_expression() -> str:
+    """The ``run-task`` job's ``if`` expression from the workflow gate."""
+    import yaml
+
+    workflow = yaml.safe_load(GATE_WORKFLOW.read_text(encoding="utf-8"))
+    return workflow["jobs"]["run-task"]["if"]
 
 
 @pytest.fixture
@@ -219,50 +231,54 @@ class TestContinueTokenIsPrefixAnchored:
     """The token must be a prefix, never an embedded substring (issue #978)."""
 
     def test_the_gate_anchors_the_token_with_startswith(self):
-        """The GHA gate must not match the literal inside state/history (#978).
+        """The GHA gate must match the token by prefix, never as a substring.
 
-        The one-line YAML edit (``contains`` -> ``startsWith``) needs a token
-        with ``workflow`` scope, which this run does not have. Until a human or
-        a ``workflow``-scoped token applies it, this is an expected failure
-        rather than a silently red suite; the assertion is written against the
-        *fixed* expression, so flipping the YAML turns it green without an edit
-        here. Defects A and B already make such a re-trigger a no-op.
+        A ``contains`` match also fires on the literal embedded in the
+        serialized state/history (or quoted in agent prose), which is what kept
+        the chain alive after the crashed run. The gate anchors the *composed*
+        line-1 prefix, so a token that is not the posted line 1 cannot fire.
         """
-        import yaml
-
-        workflow = yaml.safe_load(
-            (REPO_ROOT / ".github" / "workflows" / "nebuko-workflow.yaml").read_text(
-                encoding="utf-8"
-            )
-        )
-        expression = workflow["jobs"]["run-task"]["if"]
-
-        if f"contains(github.event.comment.body, '{CONTINUE_TOKEN}')" in expression:
-            pytest.xfail(
-                "YAML edit blocked on a workflow-scoped token — issue #978; "
-                "apply the startsWith edit to .github/workflows/nebuko-workflow.yaml"
-            )
+        expression = _gate_expression()
 
         assert (
-            f"startsWith(github.event.comment.body, '{CONTINUE_TOKEN}')" in expression
+            f"startsWith(github.event.comment.body, '{LIVE_HEADER_LINE}')"
+            in expression
         )
         assert (
-            f"contains(github.event.comment.body, '{CONTINUE_TOKEN}')" not in expression
+            f"contains(github.event.comment.body, '{CONTINUE_TOKEN}')"
+            not in expression
         )
 
-    def test_live_run_body_starts_with_the_continue_token(self, prompt_base: str):
+    def test_the_gate_lets_a_live_comment_reach_its_token_disjunct(self):
+        """The bot-marker guards must exempt a live answer's line 1.
+
+        A live comment *does* start with the bot marker, so the marker guards
+        would otherwise drop it before the token disjunct is ever evaluated.
+        """
+        expression = _gate_expression()
+
+        token_branch = expression.split(
+            f"startsWith(github.event.comment.body, '{LIVE_HEADER_LINE}')", 1
+        )[0]
+        last_guards = token_branch.rsplit("!startsWith(github.event.comment.body,", 2)
+        assert len(last_guards) == 3
+        for guard in last_guards[1:]:
+            assert "bot-agent-" in guard or "bot-workflow-terminal" in guard
+
+    def test_live_run_body_starts_with_the_marker_and_token(self, prompt_base: str):
         from prepare_comment import format_answer_header
 
         header = format_answer_header("dev", _implement_state())
 
-        assert header.startswith(CONTINUE_TOKEN)
+        assert header.split("\n", 1)[0] == LIVE_HEADER_LINE
 
     def test_failed_run_body_does_not_start_with_the_continue_token(
         self, prompt_base: str
     ):
         body = _build_failure_body(_crashed_implement_state())
 
-        assert not body.startswith(CONTINUE_TOKEN)
+        assert not body.startswith(LIVE_HEADER_LINE)
+        assert CONTINUE_TOKEN not in body.split("\n", 1)[0]
 
     def test_token_embedded_in_history_cannot_trigger(self, prompt_base: str):
         state = _implement_state().model_copy(
@@ -273,14 +289,61 @@ class TestContinueTokenIsPrefixAnchored:
             }
         )
         body = (
-            "<!-- bot-workflow-terminal -->\n"
+            f"{BOT_MARKER}\n"
             "<!-- bot-agent-dev -->\n"
             "plain notification\n"
             + _state_block(state)
         )
 
         assert CONTINUE_TOKEN in body
-        assert not body.startswith(CONTINUE_TOKEN)
+        assert not body.startswith(LIVE_HEADER_LINE)
+
+
+class TestPostedBodySatisfiesTheGateAnchors:
+    """The gate reads the *posted* body, not the pre-posting header (#978).
+
+    ``post_comment`` runs every body through ``ensure_bot_marker``, which
+    prepends the marker when line 1 does not already start with it. A header
+    that puts the token on its own first line therefore reaches GitHub with an
+    injected marker above it, and a ``startsWith`` gate never matches — a
+    stall regression the ``LocalAdapter``-backed tests cannot see because
+    ``_strip_injected_marker`` erases the injected line on the way back.
+    """
+
+    def test_a_posted_live_answer_still_matches_the_gate_anchor(self):
+        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.github_client import ensure_bot_marker
+
+        posted = ensure_bot_marker(format_answer_header("dev", _implement_state()))
+
+        assert posted.startswith(LIVE_HEADER_LINE)
+
+    def test_the_seam_leaves_a_live_answer_byte_identical(self):
+        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.github_client import ensure_bot_marker
+
+        header = format_answer_header("dev", _implement_state())
+
+        assert ensure_bot_marker(header) == header
+
+    def test_a_posted_crashed_run_notification_keeps_no_token(self):
+        from nebuko.engine.lib.github_client import ensure_bot_marker
+
+        posted = ensure_bot_marker(_build_failure_body(_crashed_implement_state()))
+
+        assert not posted.startswith(LIVE_HEADER_LINE)
+        assert CONTINUE_TOKEN not in posted
+
+    def test_a_posted_live_answer_is_still_classified_as_a_bot_comment(self):
+        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.github_client import ensure_bot_marker
+        from resolve_config.features.parse_trigger.parse_trigger import (
+            UNIVERSAL_BOT_MARKER,
+        )
+
+        posted = ensure_bot_marker(format_answer_header("dev", _implement_state()))
+
+        assert posted.split("\n", 1)[0].startswith(UNIVERSAL_BOT_MARKER)
 
 
 def _parked_state(
@@ -342,7 +405,7 @@ class TestInterruptedTurnIsNotABurntRun:
 
         header = format_answer_header("dev", _parked_state("interrupted"))
 
-        assert header.startswith(CONTINUE_TOKEN)
+        assert header.split("\n", 1)[0] == LIVE_HEADER_LINE
 
     def test_interrupted_turn_retries_the_step_in_place(self, prompt_base: str):
         body = (

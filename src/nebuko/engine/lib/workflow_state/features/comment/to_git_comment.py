@@ -84,12 +84,11 @@ def wrap_script_comment(step: str, state: WorkflowState, body: str) -> str:
     """
     # Deferred: ``prepare_comment`` imports this module at import time, so a
     # module-level import here would be circular.
-    from prepare_comment import BOT_MARKER, CONTINUE_TOKEN
+    from prepare_comment import LIVE_HEADER_LINE
 
     return (
-        f"{BOT_MARKER}\n"
+        f"{LIVE_HEADER_LINE}\n"
         f"<!-- bot-command-{step} -->\n"
-        f"{CONTINUE_TOKEN}"
         f"{format_collapsed_section(state)}"
         f"{body}"
     )
@@ -206,11 +205,16 @@ _LABEL_STATE_BLOCK_RE = re.compile(
     flags=re.DOTALL,
 )
 
+# Routing noise on one line: a live answer carries the bot marker *and* the
+# continue token on line 1 (``prepare_comment.LIVE_HEADER_LINE``, issue #978),
+# so a run of consecutive marker comments is stripped as a unit.
 _BOT_MARKER_LINE_RE = re.compile(
-    r"(?m)^[ \t]*<!--[ \t]*"
+    r"(?m)^[ \t]*"
+    r"(?:<!--[ \t]*"
     r"(?:bot-workflow-terminal|bot-agent-[A-Za-z0-9_\-]+|bot-command-[A-Za-z0-9_\-]+"
     r"|bot-human-action|workflow-continue)"
-    r"[ \t]*-->[ \t]*\n?"
+    r"[ \t]*-->[ \t]*)+"
+    r"\n?"
 )
 
 

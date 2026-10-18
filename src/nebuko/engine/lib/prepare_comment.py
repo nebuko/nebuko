@@ -370,7 +370,15 @@ BOT_MARKER = "<!-- bot-workflow-terminal -->"
 
 # Deterministic continuation token (issue #478): the next CI run fires on this
 # hidden marker rather than on stray ``@@`` tokens in agent prose.
-CONTINUE_TOKEN = "<!-- workflow-continue -->\n"
+CONTINUE_TOKEN = "<!-- workflow-continue -->"
+
+# Line 1 of a live turn's comment: the bot marker *followed by* the continue
+# token (issue #978 review fix). The two anchors have to hold on the same line —
+# the publish seam (``ensure_bot_marker``) prepends BOT_MARKER unless the body
+# already starts with it, while the workflow gate matches the token with
+# ``startsWith``. Emitting them apart makes the gate's anchor unreachable on the
+# posted body. Keep this the single source of that composition.
+LIVE_HEADER_LINE = BOT_MARKER + CONTINUE_TOKEN
 
 # Marks an answer comment as a *continuation* of a multi-part answer (issue
 # #1002). One logical answer is posted as several comments when it exceeds
@@ -413,8 +421,9 @@ def _display_name_for(role: str) -> str:
     return _ROLE_DISPLAY_NAMES.get(role, role.capitalize())
 
 
-def _continue_token(state: WorkflowState) -> str:
-    """The continue token for live turns; empty for a run that stops here.
+def _header_line(state: WorkflowState) -> str:
+    """Line 1 of the answer comment: marker+token for a live turn, marker only
+    for a run that stops here (a hold verdict or a crashed-run notification).
 
     A hold ends the machine's turn, so the posted comment must not re-trigger
     the engine; a crashed run (INCOMPLETE/FAILURE) is a notification and ends
@@ -423,14 +432,14 @@ def _continue_token(state: WorkflowState) -> str:
     """
     turn_outcome = state.turn_outcome
     if turn_outcome is None:
-        return CONTINUE_TOKEN
+        return LIVE_HEADER_LINE
     appreciation = turn_outcome.appreciation
     if appreciation is not None and appreciation.value == _HOLD_APPRECIATION:
-        return ""
+        return BOT_MARKER
     reason = turn_outcome.incomplete_reason
     if reason is not None and reason.value in _NOTIFICATION_INCOMPLETE_REASONS:
-        return ""
-    return CONTINUE_TOKEN
+        return BOT_MARKER
+    return LIVE_HEADER_LINE
 
 
 def format_answer_header(role_name: str | None, state: WorkflowState | None) -> str:
@@ -442,16 +451,18 @@ def format_answer_header(role_name: str | None, state: WorkflowState | None) -> 
     continue token (matching the legacy step when the file was absent); only the
     collapsed state section is omitted.
 
-    The continue token is the **first line** when present (issue #978): the
-    workflow gate matches it with ``startsWith``, so an occurrence embedded in
-    the state/history JSON — or quoted in agent prose — can never fire a run.
+    A live turn's continue token rides on **line 1**, right behind the bot
+    marker (:data:`LIVE_HEADER_LINE`, issue #978): the workflow gate matches the
+    token with ``startsWith``, so an occurrence embedded in the state/history
+    JSON — or quoted in agent prose — can never fire a run, and the publish
+    seam's ``ensure_bot_marker`` leaves the line alone because it already starts
+    with the marker.
     """
     role = (role_name or "").strip() or "unknown"
-    token = CONTINUE_TOKEN if state is None else _continue_token(state)
+    header_line = LIVE_HEADER_LINE if state is None else _header_line(state)
     section = "" if state is None else format_collapsed_section(state)
     return (
-        f"{token}"
-        f"{BOT_MARKER}\n"
+        f"{header_line}\n"
         f"<!-- bot-agent-{role} -->\n"
         f"{section}"
         f"\n*{_display_name_for(role)} answer*\n\n"

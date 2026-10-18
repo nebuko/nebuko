@@ -119,7 +119,7 @@ class TestCapturedRound2Replay:
         assert result["SKIP_AGENT"] == "true"
         assert "SKIP_KIND" not in result
         # #978: a verdictless turn is a notification, so the reason names the
-        # missing outcome instead of a missing successor — still an unresolved
+        # missing outcome instead of a missing successor â€” still an unresolved
         # skip the engine pings a human about, never a terminal finish.
         assert "no verdict" in result["REASON"]
 

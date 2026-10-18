@@ -55,6 +55,7 @@ from workflow_state.step_output_record import StepOutputRecord
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
 CONTINUE_TOKEN = "<!-- workflow-continue -->"
+LIVE_HEADER_LINE = "<!-- bot-workflow-terminal -->" + CONTINUE_TOKEN
 WORKFLOW_STATE_MARKER = "<!-- WORKFLOW_STATE_START -->"
 
 # The GitHub host surface the removed bash acknowledgment step read (issue #720).
@@ -1695,14 +1696,15 @@ class TestRunLoop:
         entries = engine.adapter.load_history()
         parts = [entry for entry in entries if "*(Part " in entry.body]
         assert len(parts) > 1
-        # Part 1 opens with the answer-comment header — the continue token
-        # first (issue #978: the workflow gate anchors it with ``startsWith``,
-        # so it must be line 1), then the bot marker — followed by the first
-        # continuation header; every later part is an ordered continuation
-        # fragment with no header. The header therefore stays on part 1,
-        # keeping the run CI-gate exempt and the parts grouped onto that
-        # history entry (issues #504, #913).
-        assert parts[0].body.startswith(CONTINUE_TOKEN)
+        # Part 1 opens with the answer-comment header — the bot marker with
+        # the continue token behind it on line 1 (issue #978: the workflow gate
+        # anchors the token with ``startsWith``, and the publish seam only
+        # injects the marker when the body does not already start with it) —
+        # followed by the first continuation header; every later part is an
+        # ordered continuation fragment with no header. The header therefore
+        # stays on part 1, keeping the run CI-gate exempt and the parts grouped
+        # onto that history entry (issues #504, #913).
+        assert parts[0].body.startswith(LIVE_HEADER_LINE)
         assert BOT_AGENT_MARKER in parts[0].body
         assert parts[0].body.count("*(Part 1/") == 1
         for offset, part in enumerate(parts[1:], start=2):
@@ -2731,7 +2733,9 @@ class TestWorkflowStateAnswerComment:
     def test_puts_the_bot_marker_on_the_answer_comment_first_line(self, tmp_path, monkeypatch):
         self._run(tmp_path, monkeypatch, state=self._agent_state())
 
-        assert self._answer(tmp_path).splitlines()[0] == "<!-- bot-workflow-terminal -->"
+        first_line = self._answer(tmp_path).splitlines()[0]
+        assert first_line.startswith("<!-- bot-workflow-terminal -->")
+        assert first_line.endswith(CONTINUE_TOKEN)
 
     def test_carries_the_continue_token_for_an_advancing_run(self, tmp_path, monkeypatch):
         self._run(tmp_path, monkeypatch, state=self._agent_state())
