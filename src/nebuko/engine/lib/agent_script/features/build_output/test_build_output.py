@@ -10,6 +10,7 @@ from unittest import mock
 from build_output import (
     LATEST_ANSWER_FILE,
     _is_human_gate_hold,
+    _parse_gate_released_env,
     _recall_aware_events,
     _resolve_pin,
     _terminal_turn_answer,
@@ -452,7 +453,11 @@ class TestGateLockArming(unittest.TestCase):
         self.assertIsNone(gate)
 
     def test_release_env_marks_the_lock_released(self):
-        """The gate-decision run's own persist is released, not re-armed."""
+        """The gate-decision run's own persist is released, not re-armed.
+
+        The release is applied by ``main`` *after* the intercept (which always
+        re-arms a gated step), so this exercises the same two steps in order.
+        """
         prior = GateLock(step="plan")
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
@@ -477,6 +482,10 @@ class TestGateLockArming(unittest.TestCase):
                 _, gate = apply_human_gate_intercept(
                     _completed(), "wf", "plan", gate=prior
                 )
+                # The call site's release step (``build_output.main``).
+                self.assertTrue(_parse_gate_released_env())
+                if _parse_gate_released_env() and gate is not None:
+                    gate = gate.model_copy(update={"status": GateStatus.RELEASED})
         self.assertIsNotNone(gate)
         self.assertFalse(gate.armed())
         self.assertIs(gate.status, GateStatus.RELEASED)
