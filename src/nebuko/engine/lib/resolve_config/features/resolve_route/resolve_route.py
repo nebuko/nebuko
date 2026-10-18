@@ -427,6 +427,11 @@ def _resolve_gate_consult(
         # config error: surface it rather than masking it as a benign hold.
         return config
     callee = (function_call.agent_name or "").strip()
+    # Mark the resolution (issue #1003 review): the callee's run must spend one
+    # consult round from the lock. The marker rides the routed config →
+    # ``GATE_CONSULT`` env → ``build_output``, so the persisted lock actually
+    # counts the consultation and ``MAX_CONSULT_ROUNDS`` is enforced.
+    config["config_gate_consult"] = callee
     print(
         f"Gate consult: '{gate.step}' armed — delegating to '{callee}' "
         f"({gate.consult_rounds + 1}/{MAX_CONSULT_ROUNDS})",
@@ -998,6 +1003,22 @@ def _resolve_outcome_path(
                 prev_state.step or "", _consult_exhausted_note(prev_state)
             )
         return _human_gate_hold_result(prev_state.step or "")
+
+    # Armed-gate guard, outcome-independent (issue #1003): the two branches
+    # above key off a recorded outcome shape, so a state edge that carries an
+    # armed lock but no turn_outcome (or a completing verdict) could otherwise
+    # fall through and advance past the gate. The lock is root metadata, so it
+    # must block the advance whatever the outcome says.
+    armed = _armed_gate(prev_state)
+    if armed is not None:
+        consult = _resolve_gate_consult(
+            prev_state, armed, workflows_dir, local_workflows_dir
+        )
+        if consult is not None:
+            return consult
+        return _human_gate_hold_result(
+            prev_state.step or "", _consult_exhausted_note(prev_state)
+        )
 
     config = _route_config_from_prefs(prev_state, prefs)
 

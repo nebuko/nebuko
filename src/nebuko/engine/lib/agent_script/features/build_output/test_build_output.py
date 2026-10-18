@@ -505,6 +505,143 @@ class TestGateLockArming(unittest.TestCase):
                 _, gate = apply_human_gate_intercept(_completed(), "wf", "plan")
         self.assertTrue(gate.armed())
 
+    def test_consult_env_spends_one_round_on_the_persisted_lock(self):
+        """Issue #1003 review: ``consume_consult`` has a production caller.
+
+        The delegated consult's run is started with ``GATE_CONSULT=<callee>``
+        (set by the consult resolution in ``resolve_config``). The lock carried
+        by that run's ``build_state`` must have spent exactly one consult round,
+        which is what bounds the gate fan-out at ``MAX_CONSULT_ROUNDS``.
+        """
+        import build_output as bo
+        from types import SimpleNamespace as NS
+        from workflow_state import GateLock, RunPrefs, WorkflowState
+
+        prior = WorkflowState(
+            workflow="wf",
+            step="plan",
+            agent="architect",
+            gate=GateLock(step="plan"),
+        )
+        captured = {}
+
+        def _capture_build_state(prev_state, **kwargs):
+            captured.update(kwargs)
+            return NS(run_id=1)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
+            )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "WORKFLOW_NAME": "wf",
+                "WORKFLOW_STEP": "review",
+                "ROLE_NAME": "context",
+                "GATE_CONSULT": "context",
+            }
+            conversation = NS(
+                state=NS(events=[_msg_event("callee answer")]),
+                id="conv-1003-consult",
+                run_outcome=None,
+            )
+            metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+            with mock.patch.object(bo, "get_agent_final_response", return_value="callee answer"), \
+                 mock.patch.object(bo, "_load_prev_state", return_value=prior), \
+                 mock.patch.object(bo, "_build_issue_info", return_value=None), \
+                 mock.patch.object(bo, "_build_pr_info", return_value=None), \
+                 mock.patch.object(
+                     bo, "_resolve_outcome",
+                     return_value=(_completed(), RunPrefs(), None),
+                 ), \
+                 mock.patch.object(bo, "clear_run"), \
+                 mock.patch.object(bo, "clear_call_agent_run"), \
+                 mock.patch.object(bo, "clear_scaffold_branch_run"), \
+                 mock.patch.object(bo, "clear_complexity_review_run"), \
+                 mock.patch.object(bo, "get_recorded_review_request", return_value=None), \
+                 mock.patch.object(bo, "build_state", side_effect=_capture_build_state), \
+                 mock.patch.object(bo, "split_message", return_value=[]), \
+                 mock.patch.object(bo, "_write_output_files", return_value=None), \
+                 mock.patch.dict(os.environ, env, clear=False):
+                cwd = os.getcwd()
+                os.chdir(tmpdir)
+                try:
+                    bo.build_output(conversation, metrics)
+                finally:
+                    os.chdir(cwd)
+
+        gate = captured["gate"]
+        self.assertIsNotNone(gate)
+        self.assertEqual(gate.consult_rounds, 1)
+        self.assertEqual(gate.last_handoff, "context")
+        self.assertTrue(gate.armed())
+
+    def test_no_consult_env_leaves_the_lock_round_untouched(self):
+        """A non-consult run must not spend a round (issue #1003 review)."""
+        import build_output as bo
+        from types import SimpleNamespace as NS
+        from workflow_state import GateLock, RunPrefs, WorkflowState
+
+        prior = WorkflowState(
+            workflow="wf",
+            step="plan",
+            agent="architect",
+            gate=GateLock(step="plan", consult_rounds=1, last_handoff="context"),
+        )
+        captured = {}
+
+        def _capture_build_state(prev_state, **kwargs):
+            captured.update(kwargs)
+            return NS(run_id=1)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
+            )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "WORKFLOW_NAME": "wf",
+                "WORKFLOW_STEP": "plan",
+                "ROLE_NAME": "architect",
+            }
+            conversation = NS(
+                state=NS(events=[_msg_event("plan answer")]),
+                id="conv-1003-no-consult",
+                run_outcome=None,
+            )
+            metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+            with mock.patch.object(bo, "get_agent_final_response", return_value="plan answer"), \
+                 mock.patch.object(bo, "_load_prev_state", return_value=prior), \
+                 mock.patch.object(bo, "_build_issue_info", return_value=None), \
+                 mock.patch.object(bo, "_build_pr_info", return_value=None), \
+                 mock.patch.object(
+                     bo, "_resolve_outcome",
+                     return_value=(_completed(), RunPrefs(), None),
+                 ), \
+                 mock.patch.object(bo, "clear_run"), \
+                 mock.patch.object(bo, "clear_call_agent_run"), \
+                 mock.patch.object(bo, "clear_scaffold_branch_run"), \
+                 mock.patch.object(bo, "clear_complexity_review_run"), \
+                 mock.patch.object(bo, "get_recorded_review_request", return_value=None), \
+                 mock.patch.object(bo, "build_state", side_effect=_capture_build_state), \
+                 mock.patch.object(bo, "split_message", return_value=[]), \
+                 mock.patch.object(bo, "_write_output_files", return_value=None), \
+                 mock.patch.dict(os.environ, env, clear=True):
+                cwd = os.getcwd()
+                os.chdir(tmpdir)
+                try:
+                    bo.build_output(conversation, metrics)
+                finally:
+                    os.chdir(cwd)
+
+        gate = captured["gate"]
+        self.assertIsNotNone(gate)
+        self.assertEqual(gate.consult_rounds, 1)
+
 
 class TestIsHumanGateHold(unittest.TestCase):
     """Issue #887: the shape detector that keeps persisted state and router aligned."""

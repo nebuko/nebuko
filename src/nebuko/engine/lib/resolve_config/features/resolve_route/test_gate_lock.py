@@ -298,6 +298,41 @@ class TestGateConsultRouting(unittest.TestCase):
             _write_workflow(tmpdir)
             self.assertIsNone(_resolve_gate_consult(state, state.gate, tmpdir))
 
+    def test_armed_gate_holds_even_without_a_turn_outcome(self):
+        """The lock is root metadata: no outcome must still block the advance.
+
+        A resolution-only state edge can carry an armed lock with no
+        ``turn_outcome``; without the outcome-independent guard the router would
+        fall through to the prefs path and advance past the gate.
+        """
+        state = _gated_state()
+        state.turn_outcome = None
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_outcome_path(state, tmpdir)
+        self.assertEqual(cfg["SKIP_AGENT"], "true")
+        self.assertEqual(cfg["SKIP_KIND"], "human_gate_hold")
+        self.assertNotEqual(cfg.get("task"), "dev")
+
+    def test_armed_gate_holds_a_verdict_bearing_completion(self):
+        """A completing verdict must not advance past an armed gate.
+
+        The gate-hold branch keys off the *hold* shape, so a verdict-bearing
+        completion (a re-entered step that finished with its own verdict) would
+        otherwise fall through to the forward edge; the outcome-independent
+        guard keeps the advance blocked.
+        """
+        state = _gated_state(
+            outcome=TurnOutcome(
+                status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_outcome_path(state, tmpdir)
+        self.assertEqual(cfg["SKIP_AGENT"], "true")
+        self.assertEqual(cfg["SKIP_KIND"], "human_gate_hold")
+
 
 class TestGateConsultEndToEnd(unittest.TestCase):
     """Full consult round-trip through ``resolve_config`` (issue #1003).
@@ -337,8 +372,14 @@ class TestGateConsultEndToEnd(unittest.TestCase):
         # The callback returns to the emitter, whose position is untouched.
         self.assertEqual(cfg["CONFIG_CALLBACK"], "architect")
 
-    def test_round_trip_persists_the_consumed_consult_round(self):
-        """Resolver → build_output: the consult round survives the transition."""
+    def test_round_trip_marks_the_consult_for_the_callee_run(self):
+        """Resolver → build_result: the consult resolution carries the callee.
+
+        The marker is what production ``build_output`` consumes to spend the
+        round (see ``test_build_output.TestGateLockArming``). Asserting it here
+        pins the dispatcher half of the round-trip: a routed consult must
+        advertise its callee, otherwise the lock never advances its counter.
+        """
         state = _gated_state(function_call=_consult_call("context"))
         with tempfile.TemporaryDirectory() as tmpdir:
             prompt_base, workflows_dir = self._dirs(tmpdir)
@@ -346,23 +387,9 @@ class TestGateConsultEndToEnd(unittest.TestCase):
                 self._state_body(state), prompt_base, workflows_dir, is_bot=True
             )
             self.assertEqual(cfg["TASK"], "context")
-            # What build_output.main does for the callee's run: the lock is
-            # re-armed for the *gated* step, spending one consult round.
-            gate = GateLock(step="plan").consume_consult(cfg["TASK"])
-            advanced = build_state(
-                state,
-                workflow="default",
-                step="plan",
-                agent="architect",
-                turn_outcome=state.turn_outcome,
-                function_call=state.function_call,
-                position=[StepRef(workflow="default", step="plan")],
-                gate=gate,
-            )
-        self.assertEqual(advanced.step, "plan")
-        self.assertEqual(advanced.gate.consult_rounds, 1)
-        self.assertEqual(advanced.gate.last_handoff, "context")
-        self.assertTrue(advanced.gate.armed())
+            # ``resolve_config`` returns the built result: the consult marker
+            # must survive as the ``GATE_CONSULT`` env the callee run reads.
+            self.assertEqual(cfg["GATE_CONSULT"], "context")
 
     def test_bare_retrigger_on_an_armed_gate_holds_with_exit_10(self):
         """Regression for the reported exit 20: a re-trigger must hold, not fail."""

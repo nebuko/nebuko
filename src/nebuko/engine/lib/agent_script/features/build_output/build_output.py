@@ -320,6 +320,17 @@ def _parse_gate_released_env() -> bool:
     )
 
 
+def _parse_gate_consult_env() -> str:
+    """The callee of a gate consultation resolved this run (issue #1003).
+
+    Set by the consult resolution in ``resolve_config`` alongside the routed
+    callee config: this run *is* the delegated ``call_agent``, so the root lock
+    spends one consult round before it is carried forward. An empty value means
+    the run is not a consultation.
+    """
+    return os.environ.get("GATE_CONSULT", "").strip()
+
+
 def _parse_complexity_adjustment_env() -> Optional[ComplexityAdjustment]:
     """Parse the boundary complexity adjustment from ``COMPLEXITY_ADJUSTMENT``.
 
@@ -1264,6 +1275,12 @@ def build_output(
         # #1003): mark the lock released so it stops blocking the advance while
         # the audit trail (gate_history) keeps the decision itself.
         gate = gate.model_copy(update={"status": GateStatus.RELEASED})
+    gate_consult = _parse_gate_consult_env()
+    if gate_consult and gate is not None:
+        # This run is the delegated consult (issue #1003): spend one round from
+        # the root lock so the persisted ``consult_rounds`` actually counts the
+        # delegation and ``MAX_CONSULT_ROUNDS`` bounds the fan-out.
+        gate = gate.consume_consult(gate_consult)
     # Consistency fix (issue #887): when the intercept converts a completing
     # dispatch to a human_gate hold, the persisted resolution must not keep
     # advertising the ungated forward edge (``next_step`` from WORKFLOW_NEXT).
