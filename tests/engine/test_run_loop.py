@@ -123,6 +123,35 @@ def _entry_outcome() -> "TurnOutcome":
     return _outcome("approved")
 
 
+def _arm_gate_lock(engine: Engine, step: str = "plan") -> None:
+    """Persist an *armed*, engine-owned gate before the run starts (#1033).
+
+    The lock lives at the root of the persisted state, so seeding it is the
+    harness equivalent of the engine reaching a gated transition: the agent's
+    own verdict stays free (``approved`` here), and the gate alone is what owes
+    the human an approval ping and blocks the advance.
+    """
+    from workflow_state.workflow_state import WorkflowState
+    from workflow_state.sub_domains.gate_lock.gate_lock import GateLock, GateStatus
+
+    state = engine.adapter.load_state()
+    if state is None:
+        state = WorkflowState.model_validate(
+            {
+                "version": 7,
+                "workflow": "default",
+                "step": step,
+                "agent": "architect",
+                "started_by": "olivier-norture",
+            }
+        )
+    engine.adapter.save_state(
+        state.model_copy(
+            update={"gate": GateLock(step=step, status=GateStatus.ARMED)}
+        )
+    )
+
+
 def _patch_resolver(monkeypatch, resolver) -> None:
     """Replace the resolver facade with ``resolver`` for a unit test.
 
@@ -1048,11 +1077,11 @@ class TestRoutePhase:
         engine = _engine(tmp_path)
 
         outcome = engine.route(
-            {"turn_outcome": {"appreciation": "hold", "hold_kind": "awaiting_approval"}}
+            {"turn_outcome": {"appreciation": "hold", "hold_kind": "awaiting_input"}}
         )
 
         assert outcome.appreciation is Appreciation.HOLD
-        assert outcome.hold_kind is HoldKind.AWAITING_APPROVAL
+        assert outcome.hold_kind is HoldKind.AWAITING_INPUT
         assert outcome.route_key == "hold"
 
     def test_a_verdictless_agent_is_incomplete_not_a_navigation_status(self, tmp_path):
@@ -1155,16 +1184,13 @@ class TestHumanActionNotice:
 
         assert notice is None
 
-    def test_a_hold_escalates_to_an_approval_or_input_notice(self, tmp_path):
+    def test_a_hold_escalates_to_an_input_notice(self, tmp_path):
+        """Issue #1033: ``awaiting_approval`` is gone — only a human gate
+        (engine-owned) produces an approval ping; an agent hold is always an
+        input request."""
         engine = _engine(tmp_path)
         resolved = {"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "plan"}
 
-        gate = engine.human_action_notice(
-            turn_outcome=_outcome("hold", hold_kind=HoldKind.AWAITING_APPROVAL),
-            agent_ran=True,
-            state=None,
-            resolved=resolved,
-        )
         plain = engine.human_action_notice(
             turn_outcome=_outcome(
                 "hold", hold_kind=HoldKind.AWAITING_INPUT, note="awaiting feedback"
@@ -1174,7 +1200,6 @@ class TestHumanActionNotice:
             resolved=resolved,
         )
 
-        assert gate is not None and gate.kind == "awaiting_approval"
         assert plain is not None and plain.kind == "awaiting_input"
 
     def test_a_run_that_skipped_the_agent_never_pings(self, tmp_path):
@@ -1226,9 +1251,13 @@ class TestHumanActionNotice:
                 "proposal", {"appreciation": "approved", "note": "plan"}
             ),
         )
-        # TODO(#1033 step 12): arm the engine-owned GateLock on the persisted
-        # state here; the check below then asserts the approval ping.
-        pytest.skip("pending: arm the engine-owned gate lock in the harness")
+        _arm_gate_lock(engine)
+
+        engine.run()
+
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
+        assert journal.count("<!-- bot-human-action -->") == 1
+        assert "is waiting for your approval" in journal
 
     def test_a_guard_skip_never_posts_a_human_notice(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
@@ -1611,14 +1640,16 @@ class TestHumanActionSinglePing:
     """A stop pings a human exactly once (issue #795)."""
 
     def test_a_gated_hold_posts_exactly_one_notice(self, tmp_path, monkeypatch):
+        """#1033: the engine-owned gate — not an agent hold — is the ping."""
         engine = _engine(tmp_path)
         monkeypatch.setattr(
             Engine,
             "invoke_agent",
             lambda self, prompt: _agent_result(
-                "proposal", {"appreciation": "hold", "hold_kind": "awaiting_approval"}
+                "proposal", {"appreciation": "approved"}
             ),
         )
+        _arm_gate_lock(engine)
 
         engine.run()
 

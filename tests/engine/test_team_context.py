@@ -88,9 +88,10 @@ class TestRender:
         rendered = TeamContext.from_config(roster, "dev").render()
         assert "You were called by" not in rendered
 
-    def test_caller_line_present_with_caller(self, roster: AppConfig) -> None:
+    def test_caller_is_never_rendered(self, roster: AppConfig) -> None:
+        """Issue #1033: the callback is engine-owned and hidden from the callee."""
         rendered = TeamContext.from_config(roster, "dev", caller="architect").render()
-        assert "You were called by architect — your result returns to architect." in rendered
+        assert "You were called by" not in rendered
 
 
 class TestBuildTeamSection:

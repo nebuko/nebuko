@@ -176,8 +176,8 @@ def _finish_turn(text: str) -> object:
     return _end_tool_turn("finish", text)
 
 
-def _dispatch_turn(text: str) -> object:
-    return _end_tool_turn("dispatch_next", text)
+def _finalize_turn(text: str) -> object:
+    return _end_tool_turn("finalize", text)
 
 
 def _install_fake_pipeline(
@@ -242,14 +242,14 @@ def test_run_engine_agent_returns_the_captured_deliverable(monkeypatch, tmp_path
 def test_run_engine_agent_recovers_a_deliverable_sharing_the_end_tool_turn(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """#555/#738: the deliverable shares the ``dispatch_next`` turn, so it is not
-    a ``MessageEvent``; the legacy ``latest_answer.md`` holds the trailing
+    """#555/#738: the deliverable shares the closing ``finalize`` turn, so it is
+    not a ``MessageEvent``; the legacy ``latest_answer.md`` holds the trailing
     ``finish`` note. The capture recovers the shared-turn deliverable."""
     repo_root = tmp_path / "checkout"
     _write_entry_point(repo_root)
     _install_fake_pipeline(
         monkeypatch,
-        events=[_dispatch_turn("Full proposal"), _finish_turn("short note")],
+        events=[_finalize_turn("Full proposal"), _finish_turn("short note")],
         latest_answer="short note",
     )
 

@@ -108,6 +108,10 @@ def test_no_skills_keeps_the_plain_team_context(monkeypatch):
 def test_a_malformed_spec_payload_never_breaks_the_run(monkeypatch, env_var):
     from agent_script.features.run_agent import run_agent as module
 
+    # The other channel must be empty too: an ambient value (e.g. under a live
+    # agent run) would legitimately attach the invoke tool and mask the point.
+    for name in (AGENT_SKILL_SPECS_ENV, STEP_SKILL_SPECS_ENV):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(env_var, "{not json")
     monkeypatch.setenv(SKILLS_DIR_ENV, str(SKILLS_DIR))
 

@@ -75,8 +75,8 @@ class TestDeliverableSelection:
         capture = _capture(_msg_event("Full architecture proposal"), _action_event("finish", "short note"))
         assert capture.deliverable() == "Full architecture proposal"
 
-    def test_dispatch_next_note_does_not_clobber_an_earlier_message(self):
-        capture = _capture(_msg_event("Full report"), _action_event("dispatch_next", "routing"))
+    def test_finalize_note_does_not_clobber_an_earlier_message(self):
+        capture = _capture(_msg_event("Full report"), _action_event("finalize", "routing"))
         assert capture.deliverable() == "Full report"
 
     def test_latest_message_before_the_boundary_wins(self):
@@ -87,15 +87,16 @@ class TestDeliverableSelection:
 
     def test_answer_sharing_the_end_tool_turn_is_captured(self):
         """#555: an assistant response with text + a tool call emits no
-        MessageEvent, so the end-tool turn's own thought is the deliverable."""
-        capture = _capture(_action_event("dispatch_next", "deliverable on the tool turn"))
+        MessageEvent, so the closing ``finalize`` turn's own thought is the
+        deliverable (its typed payload carries only the verdict)."""
+        capture = _capture(_action_event("finalize", "deliverable on the tool turn"))
         assert capture.deliverable("legacy fallback") == "deliverable on the tool turn"
 
     def test_shared_turn_deliverable_survives_a_trailing_finish_note(self):
-        """#738/#555: the deliverable shares the dispatch_next turn; a later
-        finish note must not clobber it (legacy latest-wins would)."""
+        """#738/#555: the deliverable shares the closing turn; a later finish
+        note must not clobber it (legacy latest-wins would)."""
         capture = _capture(
-            _action_event("dispatch_next", "Full proposal"),
+            _action_event("finalize", "Full proposal"),
             _action_event("finish", "short note"),
         )
         assert capture.deliverable("short note") == "Full proposal"
@@ -209,17 +210,17 @@ class TestTypedEngineToolPayloads:
         assert capture.deliverable() == "Report via engine"
         assert capture.snapshot.source == "report_finish"
 
-    def test_a_routing_payload_is_never_a_deliverable(self):
-        """``dispatch_next``'s typed fields are routing metadata, not a report —
-        the shared-turn thought remains the captured deliverable."""
+    def test_a_verdict_payload_is_never_a_deliverable(self):
+        """``finalize``'s typed ``turn_outcome`` is routing metadata, not a
+        report — the shared-turn thought remains the captured deliverable."""
         from types import SimpleNamespace
 
         capture = _capture(
             _duck_end_tool(
-                "dispatch_next",
+                "finalize",
                 thought="Full proposal",
                 action=SimpleNamespace(
-                    status="hold", branch="", complexity="high", reason="awaiting review"
+                    turn_outcome=SimpleNamespace(appreciation="hold")
                 ),
             )
         )
