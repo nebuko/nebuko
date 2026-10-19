@@ -48,7 +48,7 @@ from nebuko.engine.finalize import (
     RouteDecision,
     RunTerminator,
     SectionExtractionError,
-    route_from_action,
+    turn_outcome_from_action,
     step_output_contract,
 )
 from nebuko.engine.paths import ensure_import_path
@@ -76,8 +76,8 @@ _FINALIZE_PROMPT = (
     "Engine finalize turn - the work phase is over; do not call any work tool "
     "(no terminal, file_editor, think, ...). Write your COMPLETE, "
     "self-contained report as the markdown text of this turn - the full "
-    "deliverable that must be posted on the issue (not a one-line status "
-    "note) - then call the `finalize` tool with your turn outcome.\n\n"
+    "deliverable that must be posted on the issue (never a one-line note) - "
+    "then call the `finalize` tool with your turn outcome.\n\n"
     "{sections}\n"
     "Call `finalize` with `turn_outcome.appreciation` ('approved' when the "
     "work meets this step's goal, 'rejected' when it does not, 'hold' only "
@@ -95,6 +95,11 @@ _FINALIZE_PROMPT = (
 #: is not a routing channel and its message is only a fallback deliverable. The
 #: removed ``dispatch_next``/``call_agent`` are hidden — the outcome is typed.
 _FINALIZE_TOOL_NAMES = frozenset({"finalize", "finish"})
+
+#: Watchdog budget for one engine-elicited closing turn (seconds). A turn that
+#: outlives it is interrupted and the caller keeps the deterministic fallback
+#: chain (issues #830, #1033).
+_CLOSING_TURN_TIMEOUT_S = 240.0
 
 
 class InProcessAgentHost:
@@ -472,15 +477,30 @@ def _finalize_turn_text(conversation: Any) -> str:
 
 
 def _finalize_route(conversation: Any) -> RouteDecision | None:
-    """The typed route of the finalize turn's last ``finalize`` call (#973).
+    """The typed route of the finalize turn's last ``finalize`` call (#1033).
 
-    Uses the same event anchor as :func:`_finalize_turn_text`, so a trailing
-    event can never decouple the harvested report from its route (issue #1014).
+    The agent's ``turn_outcome`` is the single verdict channel; this reader
+    keeps the lenient worker-side shape (:class:`RouteDecision`) for the local
+    report-extraction call, which never routes. Uses the same event anchor as
+    :func:`_finalize_turn_text`, so a trailing event can never decouple the
+    harvested report from its route (issue #1014).
     """
     anchor = _finalize_anchor_index(conversation)
     if anchor < 0:
         return None
-    return route_from_action(getattr(_events(conversation)[anchor], "action", None))
+    outcome = turn_outcome_from_action(
+        getattr(_events(conversation)[anchor], "action", None)
+    )
+    if outcome is None:
+        return None
+    return RouteDecision(
+        appreciation=outcome.appreciation,
+        hold_kind=outcome.hold_kind,
+        round=outcome.round,
+        note=outcome.note,
+        complexity=outcome.complexity,
+        pin=outcome.pin,
+    )
 
 
 def _content_text(content: object) -> str:
@@ -503,7 +523,7 @@ def _run_closing_turn(conversation: Any, prompt: str) -> None:
 
 
 def _send_and_run(conversation: Any, prompt: str) -> None:
-    """Send ``prompt`` and run one bounded pass (report turn, issue #830).
+    """Send ``prompt`` and run one bounded pass (closing turn, issues #830, #1033).
 
     Runs ``conversation.run`` on a worker thread so a hung turn cannot consume
     the whole job budget: on timeout the engine interrupts the conversation,
@@ -512,7 +532,7 @@ def _send_and_run(conversation: Any, prompt: str) -> None:
     conversation.send_message(prompt)
     worker = threading.Thread(target=conversation.run, daemon=True)
     worker.start()
-    worker.join(_REPORT_TURN_TIMEOUT_S)
+    worker.join(_CLOSING_TURN_TIMEOUT_S)
     if worker.is_alive():
         log.warning("[phase:agent] report turn exceeded its budget - interrupting")
         with contextlib.suppress(Exception):

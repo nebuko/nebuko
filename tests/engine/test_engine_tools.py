@@ -1,7 +1,7 @@
-"""Unit tests for the engine-tool control-plane registry (issue #830).
+"""Unit tests for the engine-tool control-plane registry (issues #830, #1033).
 
 The registry is the declarative contract between the engine and every agent:
-``finish`` -> the final message, ``dispatch_next`` -> the routing decision.
+``finish`` -> the final message, ``finalize`` -> the typed turn outcome.
 These tests drive the structural typed-field read with plain duck-typed actions
 and with a real SDK ``FinishAction``, so the classification matches production.
 """
@@ -19,24 +19,20 @@ class TestDefaultRegistry:
         assert spec.payload_kind == "final_message"
         assert spec.payload_fields == ("message",)
 
-    def test_dispatch_next_carries_the_turn_outcome_fields(self):
-        spec = DEFAULT_ENGINE_TOOLS.tools["dispatch_next"]
-        assert spec.payload_kind == "routing"
-        assert spec.payload_fields == (
-            "appreciation",
-            "hold_kind",
-            "required_agent",
-            "round",
-            "note",
-            "complexity",
-            "pin",
-        )
+    def test_finalize_carries_the_turn_outcome(self):
+        spec = DEFAULT_ENGINE_TOOLS.tools["finalize"]
+        assert spec.payload_kind == "finalize"
+        assert spec.payload_fields == ("turn_outcome",)
 
     def test_finish_is_the_work_loop_terminator(self):
         assert DEFAULT_ENGINE_TOOLS.work_loop_presence("finish") == "terminator"
 
-    def test_dispatch_next_is_hidden_in_the_work_loop(self):
-        assert DEFAULT_ENGINE_TOOLS.work_loop_presence("dispatch_next") == "hidden"
+    def test_the_removed_tools_are_not_in_the_default_control_plane(self):
+        # Issue #1033: ``dispatch_next``/``call_agent`` are gone from every
+        # agent's tool list; ``finalize`` is the one terminal tool.
+        for name in ("dispatch_next", "call_agent"):
+            assert name not in DEFAULT_ENGINE_TOOLS.tools
+        assert DEFAULT_ENGINE_TOOLS.work_loop_presence("finalize") == "terminator"
 
     def test_unknown_tool_is_hidden(self):
         assert DEFAULT_ENGINE_TOOLS.work_loop_presence("terminal") == "hidden"
@@ -51,52 +47,35 @@ class TestHarvest:
         assert payload.payload_kind == "final_message"
         assert payload.fields == {"message": "Full report"}
 
-    def test_harvests_the_turn_outcome_fields(self):
+    def test_reads_the_turn_outcome_argument(self):
         action = SimpleNamespace(
-            appreciation="approved",
-            hold_kind="",
-            complexity="high",
-            note="done",
-            required_agent="review",
-            pin=True,
+            structured_output={
+                "turn_outcome": {
+                    "appreciation": "approved",
+                    "complexity": "high",
+                    "note": "done",
+                }
+            }
         )
-        payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
-        assert payload is not None
-        assert payload.payload_kind == "routing"
-        assert payload.fields == {
+        payload = DEFAULT_ENGINE_TOOLS.finalize_payload(action)
+        assert payload == {
             "appreciation": "approved",
-            "hold_kind": "",
-            "required_agent": "review",
-            "round": "",
-            "note": "done",
             "complexity": "high",
-            "pin": "true",
+            "note": "done",
         }
 
-    def test_missing_optional_fields_become_empty_strings(self):
-        action = SimpleNamespace(appreciation="hold")
-        payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
-        assert payload.fields == {
-            "appreciation": "hold",
-            "hold_kind": "",
-            "required_agent": "",
-            "round": "",
-            "note": "",
-            "complexity": "",
-            "pin": "",
-        }
+    def test_reads_a_declared_turn_outcome_field(self):
+        action = SimpleNamespace(
+            turn_outcome=SimpleNamespace(
+                appreciation="hold", hold_kind="awaiting_input"
+            )
+        )
+        payload = DEFAULT_ENGINE_TOOLS.finalize_payload(action)
+        assert payload == {"appreciation": "hold", "hold_kind": "awaiting_input"}
 
-    def test_an_unset_boolean_flag_is_empty_not_false(self):
-        # ``pin=False`` must read as "unset" so it never masks a fallback value.
-        action = SimpleNamespace(appreciation="approved", pin=False)
-        payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
-        assert payload.fields["pin"] == ""
-
-    def test_none_field_is_an_empty_string(self):
-        action = SimpleNamespace(appreciation="approved", hold_kind=None, note=None)
-        payload = DEFAULT_ENGINE_TOOLS.harvest("dispatch_next", action)
-        assert payload.fields["hold_kind"] == ""
-        assert payload.fields["note"] == ""
+    def test_an_action_without_a_turn_outcome_is_empty(self):
+        assert DEFAULT_ENGINE_TOOLS.finalize_payload(SimpleNamespace()) == {}
+        assert DEFAULT_ENGINE_TOOLS.finalize_payload(None) == {}
 
     def test_unknown_tool_returns_none(self):
         assert DEFAULT_ENGINE_TOOLS.harvest("terminal", SimpleNamespace(message="x")) is None

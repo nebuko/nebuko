@@ -124,12 +124,21 @@ class EngineToolRegistry(BaseModel):
         for source in sources:
             if not isinstance(source, Mapping):
                 continue
-            outcome = source.get("turn_outcome")
-            if isinstance(outcome, Mapping):
-                return dict(outcome)
-            route = source.get("route")
-            if isinstance(route, Mapping):
-                return dict(route)
+            for key in ("turn_outcome", "route", "appreciation"):
+                # ``turn_outcome`` first (the canonical typed argument), then
+                # the pre-#1033 flat ``route``/top-level shapes a not-yet
+                # migrated worker may still send.
+                if key == "appreciation":
+                    if key in source:
+                        return dict(source)
+                    break
+                nested = source.get(key)
+                if isinstance(nested, Mapping):
+                    return dict(nested)
+                if nested is not None and not isinstance(nested, Mapping):
+                    dumped = _as_mapping(nested)
+                    if dumped is not None:
+                        return dumped
         return {}
 
     def work_loop_presence(self, tool_name: str) -> WorkLoopPresence:
@@ -211,6 +220,16 @@ def _named_field(message: str) -> str:
     """The field name quoted in a section error message (``""`` when absent)."""
     match = re.search(r"'([^']+)'", message)
     return match.group(1) if match else ""
+
+
+def _as_mapping(value: object) -> Optional[dict[str, Any]]:
+    """A mapping view of a pydantic model (or another duck-typed outcome)."""
+    if isinstance(value, BaseModel):
+        try:
+            return value.model_dump(exclude_none=True)
+        except Exception:  # noqa: BLE001 - an unreadable action must not crash
+            return None
+    return None
 
 
 def _field_text(value: object) -> str:

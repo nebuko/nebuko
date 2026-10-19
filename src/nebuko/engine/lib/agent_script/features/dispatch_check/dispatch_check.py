@@ -1,12 +1,13 @@
-"""Shared "did this run state a verdict?" predicate (issues #524, #964).
+"""Shared "did this run state a verdict?" predicate (issues #524, #964, #1033).
 
 Both the termination-path recall gate (``run_agent``) and the output-time
 resolution (``build_output._resolve_outcome``) need to answer the same
 question: *did the agent state a turn outcome?* A verdict exists when EITHER
 structured channel produced one:
 
-1. a ``dispatch_next`` tool call (the primary signal), or
-2. a typed ``call_agent`` hand-off, which is itself a decision (issue #876).
+1. a ``finalize`` turn outcome (the primary signal), or
+2. a typed agent-to-agent hand-off recorded without one (a partial write,
+   issue #876).
 
 The legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel is **not** a source
 (issue #964): it is agent-rendered prose, and routing is engine truth.
@@ -33,9 +34,9 @@ def has_dispatch_decision(conversation, final_message: Optional[str]) -> bool:
     """True when the run already stated a turn outcome.
 
     Mirrors ``build_output._resolve_outcome``'s priority: a recorded
-    ``dispatch_next`` tool call wins; a recorded typed ``call_agent`` hand-off
-    is itself a decision (issue #876). All sources empty means no verdict yet,
-    so the recall pass runs.
+    ``finalize`` turn outcome wins; a recorded typed hand-off is itself a
+    decision (issue #876). All sources empty means no verdict yet, so the
+    recall pass runs.
 
     Args:
         conversation: Object exposing the run id (``conversation.id``); the
@@ -48,14 +49,14 @@ def has_dispatch_decision(conversation, final_message: Optional[str]) -> bool:
         if get_recorded_turn_outcome(conv_id) is not None:
             return True
         if get_recorded_function_call(conv_id) is not None:
-            # A typed call_agent hand-off is itself the turn's outcome
-            # (issue #876) — suppress the recall pass, same as dispatch_next.
+            # A recorded hand-off is itself the turn's outcome (issue #876) —
+            # suppress the recall pass, same as a finalize turn outcome.
             return True
     return False
 
 
 def agent_to_function_call(agent: str) -> dict:
-    """Build the ``call_agent`` function_call spec for an explicit agent target.
+    """Build the function-call spec for an explicit agent target.
 
     Cross-agent targeting flows through ``function_call`` in the routing chain,
     so the tool path must keep that state field populated when it names a
@@ -98,7 +99,7 @@ def _warn_unknown_agent(agent: str) -> None:
     if roster and agent not in roster:
         env_role = os.environ.get("ROLE_NAME", "")
         logger.warning(
-            f"dispatch_next named unknown agent '{agent}' "
+            f"finalize named unknown agent '{agent}' "
             f"(role={env_role or '-'}, roster={sorted(roster)}) — "
             "target may be a typo; downstream routing will reject it."
         )

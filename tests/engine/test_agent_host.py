@@ -18,10 +18,8 @@ import pytest
 
 from nebuko.engine.agent_host import (
     InProcessAgentHost,
-    _REPORT_FUNCTION_CALL_ATTR,
-    _REPORT_PAYLOAD_ATTR,
-    _REPORT_PROMPT,
-    _REPORT_ROUTING_ATTR,
+    _FINALIZE_BODY_ATTR,
+    _FINALIZE_PROMPT,
 )
 from nebuko.engine.agent_runner import EngineAgentUnavailable
 from workflow_state import Appreciation, TurnOutcome, TurnStatus
@@ -89,45 +87,25 @@ def _finish_report_event(message: str) -> object:
     )
 
 
-def _dispatch_report_event(**fields: Any) -> object:
-    """A real ``dispatch_next`` action carrying the factual turn outcome."""
-    from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
-        TurnOutcomeAction,
-    )
+def _finalize_report_event(report: str, **outcome: Any) -> object:
+    """A real ``finalize`` action: the turn text is the report, the args the outcome.
+
+    Ellipsis-free by construction: this is the one terminal channel every step
+    ends through (issue #1033), so the closing turn carries both artifacts.
+    """
+    from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
     return ActionEvent(
         source="agent",
-        tool_name="dispatch_next",
-        thought=[TextContent(text="")],
-        action=TurnOutcomeAction(**fields),
-        tool_call_id="tc-report-dispatch",
+        tool_name="finalize",
+        thought=[TextContent(text=report)],
+        action=FinalizeAction(turn_outcome=outcome),
+        tool_call_id="tc-report-finalize",
         tool_call=MessageToolCall(
-            id="tc-report-dispatch",
-            name="dispatch_next",
-            arguments="{}",
-            origin="completion",
-        ),
-        llm_response_id="r2",
-    )
-
-
-def _call_agent_report_event(**fields: Any) -> object:
-    """A real ``call_agent`` action carrying the typed hand-off (issue #876)."""
-    from agent_script.features.call_agent_tool.call_agent_tool import CallAgentAction
-    from openhands.sdk.event import ActionEvent
-    from openhands.sdk.llm.message import MessageToolCall, TextContent
-
-    return ActionEvent(
-        source="agent",
-        tool_name="call_agent",
-        thought=[TextContent(text="")],
-        action=CallAgentAction(**fields),
-        tool_call_id="tc-report-call-agent",
-        tool_call=MessageToolCall(
-            id="tc-report-call-agent",
-            name="call_agent",
+            id="tc-report-finalize",
+            name="finalize",
             arguments="{}",
             origin="completion",
         ),
@@ -330,20 +308,19 @@ def test_run_binds_the_explicit_repo_root_workspace(tmp_path: Path) -> None:
     assert os.fspath(seen["cwd"]) != os.fspath(repo_root)
 
 
-class TestEngineElicitedReportTurn:
-    """#822/#830: the engine takes the hand at run end to fill the typed slots."""
+class TestEngineElicitedClosingTurn:
+    """#1033: one closing ``finalize`` turn ends every step, carrying both artifacts."""
 
-    def test_posts_the_typed_finish_message_over_the_work_loop_note(
+    def test_posts_the_closing_turn_text_as_the_deliverable(
         self, tmp_path: Path
     ) -> None:
-        """The report turn's ``finish.message`` is the posted deliverable — the
-        exact #822 fix (the work loop's latest_answer.md is a one-liner)."""
+        """Without an ``output:`` shape the turn text *is* the posted report."""
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         report = "## Wind-down\n\n- Rebased on origin/main\n- Tests: 115 passed"
         conversation = _FakeConversation(
             events=[_end_tool_turn("finish", "Work pushed and PR updated.")],
-            report_events=[_finish_report_event(report)],
+            report_events=[_finalize_report_event(report, appreciation="approved")],
         )
         host = _host_for(
             repo_root, conversation, latest_answer="Work pushed and PR updated."
@@ -354,52 +331,57 @@ class TestEngineElicitedReportTurn:
         assert result["deliverable"] == report
         # ``answer`` stays the legacy value so routing is unchanged.
         assert result["answer"] == "Work pushed and PR updated."
-        assert conversation.prompts == [_REPORT_PROMPT]
-        assert getattr(conversation, _REPORT_PAYLOAD_ATTR).fields["message"] == report
+        assert conversation.prompts == [_FINALIZE_PROMPT.format(sections="")]
+        assert getattr(conversation, _FINALIZE_BODY_ATTR) == report
 
     def test_harvests_the_typed_turn_outcome_payload(self, tmp_path: Path) -> None:
-        """``dispatch_next``'s typed fields (not prose) carry the turn outcome."""
+        """The ``finalize`` turn outcome (not prose) carries the verdict."""
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         conversation = _FakeConversation(
             events=[_end_tool_turn("finish", "note")],
             report_events=[
-                _finish_report_event("Full report"),
-                _dispatch_report_event(
-                    appreciation="approved", complexity="high", note="ship it"
+                _finalize_report_event(
+                    "Full report",
+                    appreciation="approved",
+                    complexity="high",
+                    note="ship it",
                 ),
             ],
         )
         host = _host_for(repo_root, conversation, latest_answer="note")
 
-        host.run("prompt")
+        result = host.run("prompt")
 
-        routing = getattr(conversation, _REPORT_ROUTING_ATTR)
-        assert routing.payload_kind == "routing"
-        assert routing.fields["appreciation"] == "approved"
-        assert routing.fields["complexity"] == "high"
-        assert routing.fields["note"] == "ship it"
+        assert result["turn_outcome"] == {
+            "status": "completed",
+            "appreciation": "approved",
+            "complexity": "high",
+            "note": "ship it",
+        }
 
-    def test_restricts_the_tool_surface_to_the_control_plane(
+    def test_restricts_the_tool_surface_to_the_terminal_gate(
         self, tmp_path: Path
     ) -> None:
-        """The report turn exposes only the engine tools, then restores the map."""
+        """The closing turn exposes ``finalize``/``finish``, then restores the map."""
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         tools = {
             "terminal": object(),
             "file_editor": object(),
             "finish": object(),
-            "dispatch_next": object(),
+            "finalize": object(),
         }
         conversation = _FakeConversation(
-            events=[], report_events=[_finish_report_event("report")], tools=tools
+            events=[],
+            report_events=[_finalize_report_event("report", appreciation="approved")],
+            tools=tools,
         )
         host = _host_for(repo_root, conversation, latest_answer="")
 
         host.run("prompt")
 
-        assert set(conversation.tools_seen_during_run) == {"finish", "dispatch_next"}
+        assert set(conversation.tools_seen_during_run) == {"finalize", "finish"}
         assert set(conversation.agent._tools) == set(tools)
 
     def test_reports_an_empty_tool_map_without_restricting(self, tmp_path: Path) -> None:
@@ -407,16 +389,18 @@ class TestEngineElicitedReportTurn:
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         conversation = _FakeConversation(
-            events=[], report_events=[_finish_report_event("report")], tools={}
+            events=[],
+            report_events=[_finalize_report_event("report", appreciation="approved")],
+            tools={},
         )
         host = _host_for(repo_root, conversation, latest_answer="")
 
         assert host.run("prompt")["deliverable"] == "report"
 
-    def test_failed_report_turn_falls_back_to_the_boundary_capture(
+    def test_failed_closing_turn_falls_back_to_the_boundary_capture(
         self, tmp_path: Path
     ) -> None:
-        """A failed report turn never aborts the run; the freeze chain holds."""
+        """A failed closing turn never aborts the run; the freeze chain holds."""
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         conversation = _FakeConversation(
@@ -431,29 +415,21 @@ class TestEngineElicitedReportTurn:
         result = host.run("prompt")
 
         assert result["deliverable"] == "Full architecture proposal"
-        assert getattr(conversation, _REPORT_PAYLOAD_ATTR, None) is None
-        assert getattr(conversation, _REPORT_ROUTING_ATTR, None) is None
+        assert getattr(conversation, _FINALIZE_BODY_ATTR, None) is None
+        assert "turn_outcome" not in result
 
-    def test_exposes_the_typed_turn_outcome_to_the_engine(
-        self, tmp_path: Path
-    ) -> None:
-        """#830: ``route`` reads the typed tool call, not the report-turn prose.
-
-        The report turn replaces ``final_message.txt`` — the artefact ``route``
-        used to scrape for the legacy sentinel — so without this hand-off a
-        ``hold`` run would silently default to ``approved``.
-        """
+    def test_exposes_a_hold_with_awaiting_input(self, tmp_path: Path) -> None:
+        """#1033: ``hold`` means the agent needs human input, nothing else."""
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         conversation = _FakeConversation(
             events=[_end_tool_turn("finish", "note")],
             report_events=[
-                _finish_report_event("Full report"),
-                _dispatch_report_event(
+                _finalize_report_event(
+                    "Full report",
                     appreciation="hold",
-                    hold_kind="awaiting_approval",
-                    complexity="high",
-                    note="await approval",
+                    hold_kind="awaiting_input",
+                    note="which plan?",
                 ),
             ],
         )
@@ -461,76 +437,26 @@ class TestEngineElicitedReportTurn:
 
         result = host.run("prompt")
 
-        assert result["turn_outcome"] == {
-            "appreciation": "hold",
-            "hold_kind": "awaiting_approval",
-            "complexity": "high",
-            "note": "await approval",
-        }
         outcome = TurnOutcome.from_agent_payload(
             result["turn_outcome"], observed=_SUCCESS
         )
         assert outcome.status is TurnStatus.COMPLETED
         assert outcome.appreciation is Appreciation.HOLD
-        assert outcome.hold_kind.value == "awaiting_approval"
-        assert outcome.note == "await approval"
+        assert outcome.hold_kind.value == "awaiting_input"
+        assert outcome.note == "which plan?"
 
-    def test_typed_turn_outcome_beats_the_state_fallback(
-        self, tmp_path: Path
-    ) -> None:
-        """The report turn's own field wins; an omitted field is inherited.
-
-        ``build_output`` resolves the run's turn outcome from the typed
-        ``dispatch_next`` tool into the workflow state. The report turn's
-        ``dispatch_next`` is authoritative for the fields it sets, while a
-        field it omits (here the cross-agent target) still falls back to that
-        resolution instead of silently dropping the hand-off (issue #830).
-        """
+    def test_agent_call_names_the_hand_off_target(self, tmp_path: Path) -> None:
+        """#1033: ``turn_outcome.agent_call`` is the only hand-off channel."""
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         conversation = _FakeConversation(
             events=[_end_tool_turn("finish", "note")],
             report_events=[
-                _finish_report_event("Full report"),
-                _dispatch_report_event(appreciation="hold", note="await approval"),
-            ],
-        )
-        host = _host_for(
-            repo_root,
-            conversation,
-            latest_answer="note",
-            state_turn_outcome={
-                "status": "completed",
-                "appreciation": "approved",
-                "required_agent": "review",
-            },
-        )
-
-        result = host.run("prompt")
-
-        assert result["turn_outcome"] == {
-            "status": "completed",
-            "appreciation": "hold",
-            "required_agent": "review",
-            "note": "await approval",
-        }
-
-    def test_report_turn_required_agent_reaches_the_outcome(
-        self, tmp_path: Path
-    ) -> None:
-        """#830: a report-turn ``dispatch_next(required_agent=...)`` survives.
-
-        The report turn is the sole source of the typed fact after a report
-        run, so its cross-agent override must reach the turn outcome.
-        """
-        repo_root = tmp_path / "checkout"
-        _write_entry_point(repo_root)
-        conversation = _FakeConversation(
-            events=[_end_tool_turn("finish", "note")],
-            report_events=[
-                _finish_report_event("Full report"),
-                _dispatch_report_event(
-                    appreciation="approved", required_agent="review", pin=True
+                _finalize_report_event(
+                    "Full report",
+                    appreciation="approved",
+                    complexity="high",
+                    agent_call={"agent_name": "context", "task": "collect facts"},
                 ),
             ],
         )
@@ -538,122 +464,14 @@ class TestEngineElicitedReportTurn:
 
         result = host.run("prompt")
 
-        assert result["turn_outcome"]["required_agent"] == "review"
-        assert result["turn_outcome"]["pin"] == "true"
-        outcome = TurnOutcome.from_agent_payload(result["turn_outcome"], observed=_SUCCESS)
-        assert outcome.required_agent == "review"
-
-    def test_harvests_the_typed_call_agent_handoff(self, tmp_path: Path) -> None:
-        """A report-turn ``call_agent`` is harvested as the typed hand-off."""
-        repo_root = tmp_path / "checkout"
-        _write_entry_point(repo_root)
-        conversation = _FakeConversation(
-            events=[_end_tool_turn("finish", "note")],
-            report_events=[
-                _finish_report_event("Full report"),
-                _call_agent_report_event(agent_name="context", complexity="high"),
-            ],
-        )
-        host = _host_for(repo_root, conversation, latest_answer="note")
-
-        host.run("prompt")
-
-        handoff = getattr(conversation, _REPORT_FUNCTION_CALL_ATTR)
-        assert handoff.fields["agent_name"] == "context"
-        assert handoff.fields["complexity"] == "high"
-
-    def test_report_turn_call_agent_reaches_the_turn_outcome(
-        self, tmp_path: Path
-    ) -> None:
-        """#876: a report-turn ``call_agent`` names the exact next agent.
-
-        Without the structural merge the imperative hand-off would be dropped
-        and the run would revert to the workflow's default next step.
-        """
-        repo_root = tmp_path / "checkout"
-        _write_entry_point(repo_root)
-        conversation = _FakeConversation(
-            events=[_end_tool_turn("finish", "note")],
-            report_events=[
-                _finish_report_event("Full report"),
-                _call_agent_report_event(agent_name="context", complexity="high"),
-            ],
-        )
-        host = _host_for(repo_root, conversation, latest_answer="note")
-
-        result = host.run("prompt")
-
-        assert result["turn_outcome"]["required_agent"] == "context"
+        assert result["turn_outcome"]["agent_call"] == {
+            "agent_name": "context",
+            "task": "collect facts",
+        }
         assert result["turn_outcome"]["complexity"] == "high"
-        outcome = TurnOutcome.from_agent_payload(result["turn_outcome"], observed=_SUCCESS)
-        assert (outcome.required_agent, result["turn_outcome"]["complexity"]) == (
-            "context",
-            "high",
-        )
 
-    def test_report_turn_call_agent_target_beats_a_state_target(
-        self, tmp_path: Path
-    ) -> None:
-        """The imperative hand-off outranks the state-derived target (#876)."""
-        repo_root = tmp_path / "checkout"
-        _write_entry_point(repo_root)
-        conversation = _FakeConversation(
-            events=[_end_tool_turn("finish", "note")],
-            report_events=[
-                _finish_report_event("Full report"),
-                _dispatch_report_event(
-                    appreciation="approved", required_agent="review"
-                ),
-                _call_agent_report_event(agent_name="context"),
-            ],
-        )
-        host = _host_for(repo_root, conversation, latest_answer="note")
-
-        result = host.run("prompt")
-
-        assert result["turn_outcome"]["required_agent"] == "context"
-        outcome = TurnOutcome.from_agent_payload(result["turn_outcome"], observed=_SUCCESS)
-        assert outcome.required_agent == "context"
-
-    def test_routes_from_the_state_when_the_report_returns_only_finish(
-        self, tmp_path: Path
-    ) -> None:
-        """A report turn with no ``dispatch_next`` still routes structurally.
-
-        ``build_output`` resolves the run's turn outcome from the typed
-        ``dispatch_next`` tool into the workflow state; the host hands that
-        resolution to ``route`` so the ``AGENT_RUN_CONFIG`` sentinel is never
-        needed after a report turn.
-        """
-        repo_root = tmp_path / "checkout"
-        _write_entry_point(repo_root)
-        conversation = _FakeConversation(
-            events=[_end_tool_turn("finish", "note")],
-            report_events=[_finish_report_event("Full report")],
-        )
-        host = _host_for(
-            repo_root,
-            conversation,
-            latest_answer="note",
-            state_turn_outcome={
-                "status": "completed",
-                "appreciation": "hold",
-                "hold_kind": "awaiting_approval",
-                "note": "await approval",
-            },
-        )
-
-        result = host.run("prompt")
-
-        assert result["turn_outcome"] == {
-            "status": "completed",
-            "appreciation": "hold",
-            "hold_kind": "awaiting_approval",
-            "note": "await approval",
-        }
-
-    def test_no_turn_outcome_key_without_a_report_turn(self, tmp_path: Path) -> None:
-        """The legacy path is untouched: no report turn, no typed outcome."""
+    def test_no_turn_outcome_key_without_a_closing_turn(self, tmp_path: Path) -> None:
+        """No closing turn means no typed outcome to hand the engine."""
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         host = _host(

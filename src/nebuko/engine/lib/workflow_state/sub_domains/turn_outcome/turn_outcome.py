@@ -143,6 +143,15 @@ class TurnOutcome(BaseModel):
             raise ValueError("hold_kind is only valid when appreciation == hold")
         if self.appreciation == Appreciation.HOLD and self.hold_kind is None:
             raise ValueError("hold_kind is required when appreciation == hold")
+        if self.hold_kind is not None and self.hold_kind is not HoldKind.AWAITING_INPUT:
+            # An approval gate is engine-owned run state, never an agent verdict
+            # (issue #1033); a persisted legacy ``awaiting_approval`` reaches the
+            # model only through ``_tolerate_legacy_fields``, which rewrites it.
+            raise ValueError(
+                f"hold_kind {self.hold_kind.value!r} is not an agent verdict: an "
+                "approval gate is engine-owned; the only hold kind is "
+                f"'{HoldKind.AWAITING_INPUT.value}'"
+            )
         return self
 
     @property

@@ -52,13 +52,15 @@ class TeamContext:
     """The "Your Team" section of an agent's system prompt.
 
     Built from the live roster (:meth:`from_config`) and rendered to Markdown
-    (:meth:`render`). ``caller`` is the agent that invoked this one, when the run
-    was started by a bot hand-off rather than a human trigger.
+    (:meth:`render`). It never names the caller (issue #1033): the return
+    address is engine-owned run state the callee must not see or depend on.
     """
 
     self_name: str
     self_role: str
     teammates: tuple[TeammateInfo, ...]
+    # Deprecated no-op kept for call-site compatibility (issue #1033): the
+    # callback is engine-owned and never rendered into the callee's context.
     caller: Optional[str] = None
     self_tools: tuple[str, ...] = ()
 
@@ -112,10 +114,6 @@ class TeamContext:
             "(the engine's `callback` routes it) — treat it as a conversation turn, "
             "not fire-and-forget."
         )
-        if self.caller:
-            lines.append(
-                f"You were called by {self.caller} — your result returns to {self.caller}."
-            )
         return "\n".join(lines) + "\n"
 
 

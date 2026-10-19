@@ -1,7 +1,7 @@
-"""Dispatch recall — bounded cognitive recall when a run ends without dispatch.
+"""Dispatch recall — bounded cognitive recall when a run ends without a verdict.
 
-The ``dispatch_next`` tool makes the missing-decision case programmatically
-detectable (issue #524). When the run nevertheless ends without one, this
+The terminal ``finalize`` tool makes the missing-decision case programmatically
+detectable (issues #524, #1033). When the run nevertheless ends without one, this
 prompt is injected as a short, focused follow-up turn (max
 ``MAX_DISPATCH_RECALLS`` times) asking the model for the next-step decision
 — a cognitive question, so the answer comes from the model, not a heuristic.
@@ -20,22 +20,23 @@ MAX_DISPATCH_RECALLS = 2
 RECALL_PASS_BUDGET_S = 300.0
 
 DISPATCH_RECALL_PROMPT = """\
-⚠️ MISSING NEXT-STEP DECISION — dispatch_next REQUIRED
+⚠️  MISSING TURN OUTCOME — finalize REQUIRED
 
-Your previous answer contained no next-step decision: you ended the run
-WITHOUT calling the `dispatch_next` tool, so the workflow engine cannot
-route the next step and the workflow would stall.
+Your previous answer contained no turn outcome: the run ended WITHOUT a
+`finalize` call, so the workflow engine cannot route the next step and the
+workflow would stall.
 
 Do NOT start any new task. Do NOT restate your previous answer.
 
-Call the `dispatch_next` tool NOW with your factual verdict on the turn:
-- appreciation: 'approved' (the work meets the step's goal), 'rejected'
-  (it does not), or 'hold' (you cannot decide — the turn needs a human)
-- hold_kind: only with appreciation='hold' — 'awaiting_approval' (a human
-  must approve before the workflow continues) or 'awaiting_input' (you need
-  information from the human)
-- note: one short sentence justifying the verdict
-- complexity: 'low', 'medium', or 'high' for the next agent (optional)
+Call the `finalize` tool NOW with your factual turn outcome:
+- turn_outcome.appreciation: 'approved' (the work meets the step's goal),
+  'rejected' (it does not), or 'hold' (you are blocked and need information
+  from a human)
+- turn_outcome.hold_kind: REQUIRED with appreciation='hold', and only then:
+  'awaiting_input' (an approval gate is engine-owned, never a hold kind)
+- turn_outcome.note: one short sentence justifying the verdict
+- turn_outcome.complexity: 'low', 'medium', or 'high' for the next agent
+  (optional)
 
 The engine derives the route from the workflow topology — you report what
 happened, not where to go. Base the verdict on the work you just completed.

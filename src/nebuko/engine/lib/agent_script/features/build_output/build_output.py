@@ -99,9 +99,9 @@ LATEST_ANSWER_FILE = "latest_answer.md"
 # their full deliverable on the same turn as these control-plane calls.
 FINISH_TOOL_NAME = FinishTool.name
 DISPATCH_NEXT_TOOL_NAME = "dispatch_next"
-# The engine-elicited finalize turn of a declared-output step (issue #973).
-# Unlike ``finish`` / ``dispatch_next`` its turn text is not a deliverable, so
-# the recall-turn guard must not fall back to it (issue #1020).
+# Every step now ends through the engine-elicited finalize turn (issue #1033),
+# whose text is the report; the engine prompt that quotes the section skeleton
+# must never be harvested as the deliverable (issues #1020, #1032).
 FINALIZE_TOOL_NAME = "finalize"
 
 
@@ -375,7 +375,7 @@ def _parse_complexity_policy_env():
 def _no_action_outcome(diagnostic: str = "") -> TurnOutcome:
     """Synthesize the factual outcome of a run that emitted no verdict (#864).
 
-    An agent that ends its run without calling ``dispatch_next`` has stated no
+    An agent that ends its run without a ``finalize`` verdict has stated no
     appreciation at all: that is contract drift, not a completion. The outcome
     is therefore INCOMPLETE/NO_OUTCOME — the router derives the edge from the
     workflow topology and pings a human when nothing matches, instead of
@@ -429,44 +429,44 @@ def _load_gated_step_def(
 
 
 def _is_human_gate_hold(outcome: Optional[TurnOutcome]) -> bool:
-    """True when an outcome is the human-gate intercept's hold.
+    """True when an outcome parks the step on an engine-owned human gate.
 
-    The intercept (:func:`apply_human_gate_intercept`) is the sole producer of
-    a ``HOLD``/``AWAITING_APPROVAL`` outcome, and ``resolve_route`` detects the
-    same shape, so this mirror is what keeps the persisted state and the router
-    in agreement (issue #887).
+    Legacy compatibility only (issue #1033): the engine no longer *produces*
+    such an outcome — a gate is the root :class:`GateLock` — but a state
+    persisted before the migration still carries the old shape, so the mirror
+    is kept for reading it back.
     """
     return bool(
         outcome is not None
         and outcome.appreciation is Appreciation.HOLD
-        and outcome.hold_kind is HoldKind.AWAITING_APPROVAL
+        and outcome.hold_kind is HoldKind.AWAITING_INPUT
+        and (outcome.note or "").startswith("human_gate:")
     )
 
 
-def apply_human_gate_intercept(
+def apply_gate_lock(
     outcome: Optional[TurnOutcome],
     workflow_name: str,
     workflow_step: str,
     gate: Optional[GateLock] = None,
 ) -> tuple[Optional[TurnOutcome], Optional[GateLock]]:
-    """Enforce the human_gate security boundary (issues #506, #648, #1003).
+    """Raise the engine-owned gate lock; never touch the agent's verdict (#1033).
 
     A step marked ``human_gate: true`` in the workflow YAML may never advance
-    on its own. There is **no** second release path: a completed turn (or a
-    missing outcome, which routes on topology downstream) is overridden to hold
-    ``awaiting_approval``, and the only way past the gate is a recorded
-    :class:`GateDecision` written by an identity-verified
-    ``/nebuko approve gate`` / ``/nebuko reject gate`` command — never by a
-    re-invocation of the agent. A hold, an incomplete turn, and a soft kill are
-    never intercepted: on a gated step the gate wins and the run holds for a
-    human instead of auto-retrying.
+    on its own, but that is a fact about **run state**, not about the agent's
+    turn: the lock is raised at the root of the workflow state and the routing
+    layer refuses to advance while it is armed (issues #506, #648, #1003,
+    #1033). The only way past the gate is a recorded :class:`GateDecision`
+    written by an identity-verified ``/nebuko approve gate`` /
+    ``/nebuko reject gate`` command — never by a re-invocation of the agent.
 
-    The lock itself is *root-level metadata* (issue #1003): it is raised here,
-    independently of the turn outcome and of the workflow position, and it
-    blocks the workflow advance only — an agent-to-agent ``call_agent`` from
-    the gated step stays legal. An already-armed lock for the same step is
-    preserved verbatim (a re-run of the gated step must not reset the consult
-    budget); a lock for a different step is re-armed for this one.
+    The outcome is returned **unchanged**: fabricating an
+    ``awaiting_approval`` hold here was what made an approval gate an
+    agent-visible verdict, and it destroyed the agent's real appreciation.
+    The lock is raised independently of the turn outcome and of the workflow
+    position, and it blocks the workflow advance only — an ``agent_call``
+    hand-off from the gated step stays legal (its pending ``function_call`` is
+    resolved first).
 
     Args:
         outcome: Turn outcome resolved from the agent run (may be None).
@@ -476,42 +476,19 @@ def apply_human_gate_intercept(
             any (issue #1003).
 
     Returns:
-        The ``(outcome, gate)`` pair: the possibly-overridden TurnOutcome and
-        the root-level :class:`GateLock` (``None`` when this step is not gated).
+        The ``(outcome, gate)`` pair: the untouched TurnOutcome and the
+        root-level :class:`GateLock` (``None`` when this step is not gated).
     """
-    if outcome is not None and not _gate_intercepts(outcome):
-        return outcome, gate
     if not _load_gated_step_def(workflow_name, workflow_step):
         return outcome, gate
-    logger.info(
-        f"Human gate: step '{workflow_step}' requires approval — "
-        f"intercepting {(outcome.appreciation.value if outcome and outcome.appreciation else 'no verdict')} as hold"
-    )
-    if gate is None or gate.step != workflow_step or not gate.armed():
-        # A fresh step re-arms; a lock already armed for this step is preserved
-        # verbatim so a re-run cannot reset the consult budget. A *released*
-        # lock (the human's decision was consumed) is re-armed: the step is
-        # still gated, so entering it must raise the lock again.
-        gate = GateLock(step=workflow_step)
-    return (
-        TurnOutcome(
-            status=TurnStatus.COMPLETED,
-            appreciation=Appreciation.HOLD,
-            hold_kind=HoldKind.AWAITING_APPROVAL,
-            note=f"human_gate:{workflow_step}",
-        ),
-        gate,
-    )
-
-
-def _gate_intercepts(outcome: TurnOutcome) -> bool:
-    """True when the gate must override this outcome.
-
-    Only a *completing* turn is intercepted: its verdict is discarded in favour
-    of the approval hold. An INCOMPLETE turn (soft kill, checkpoint, failure)
-    keeps its own outcome so the router can retry or halt it (issue #704).
-    """
-    return outcome.status is TurnStatus.COMPLETED
+    if gate is not None and gate.step == workflow_step and gate.armed():
+        # A lock already armed for this step is preserved verbatim so a re-run
+        # cannot reset the consult budget; a *released* lock (the human's
+        # decision consumed) is re-armed below: the step is still gated, so
+        # entering it raises the lock again.
+        return outcome, gate
+    logger.info(f"Human gate: step '{workflow_step}' requires approval — arming gate lock")
+    return outcome, GateLock(step=workflow_step)
 
 
 def _load_prev_state() -> WorkflowState | None:
@@ -728,8 +705,8 @@ def _write_output_files(final_message: str, message_parts: list[str], new_state:
 def _terminal_turn_answer(event, tool_name: str) -> str:
     """Return the answer text of a terminal (control-plane) turn's action event.
 
-    When the LLM emits the full answer and a ``finish`` / ``dispatch_next``
-    tool call in the same turn (the issue #553/#555 regression path), the SDK
+    When the LLM emits the full answer and a control-plane tool call in the
+    same turn (the issue #553/#555 regression path), the SDK
     stores the text in ``ActionEvent.thought`` and emits no standalone
     ``MessageEvent``. Where the deliverable lives differs by tool:
 
@@ -739,8 +716,10 @@ def _terminal_turn_answer(event, tool_name: str) -> str:
         The turn text is only a fallback for a finish call whose action or
         message is absent/empty (the #553 shape, and ``get_agent_final_response``'s
         own guard).
-      * ``dispatch_next`` — its arguments are one-sentence routing metadata, so
-        the turn text stands in for the deliverable (the #555 shape).
+      * a step without an ``output:`` shape ends through the same ``finalize``
+        turn, whose turn text *is* the deliverable. A legacy ``dispatch_next``
+        turn's arguments were one-sentence routing metadata, so its turn text
+        stood in for the deliverable (the #555 shape).
 
     Action events of any other tool return ``""`` so mid-run commentary
     attached to other tool calls is never mistaken for the answer.
@@ -761,16 +740,16 @@ def _terminal_turn_answer(event, tool_name: str) -> str:
 def _is_engine_finalize_turn(event) -> bool:
     """Whether a terminal turn is the engine's ``finalize`` turn (issue #1020).
 
-    A step that declares an ``output:`` shape (issue #973) is driven by one
-    engine-elicited finalize turn: the engine prompts it, hides every tool but
-    the terminal gate, and takes the report from the turn's text. The prompt
+    Every step is driven by one engine-elicited finalize turn (issue #1033):
+    the engine prompts it, hides every tool but the terminal gate, and takes the
+    report from the turn's text. The prompt
     embeds the section skeleton, so when the model answers with no text of its
     own — or when an engine prompt from an earlier turn is replayed into a recall
     turn — the only text left on that turn is the engine's own prompt. The event
     shape (a bare ``ActionEvent`` with a non-empty ``thought``) is otherwise
-    indistinguishable from the ``finish`` / ``dispatch_next`` shapes whose turn
-    text *is* the deliverable, so the engine prompt would be harvested as the
-    answer and the posted comment would be the template.
+    indistinguishable from a bygone control turn whose text *was* the
+    deliverable, so the engine prompt would be harvested as the answer and the
+    posted comment would be the template.
 
     The finalize action declares no field, so the turn is recognized by its tool
     name or by the ``workflow`` attribute the action serializer carries — both
@@ -810,7 +789,7 @@ def extract_latest_answer(
     #555 and #830):
       * **Latest-wins scan** — the text of the last assistant
         ``MessageEvent`` with non-empty content, or the answer of the agent's
-        ``finish`` / ``dispatch_next`` turns. When the full answer and one of
+        control-plane turns. When the full answer and one of
         those tool calls share a turn, the SDK emits no standalone
         ``MessageEvent`` for it — previously such answers were lost and
         posting fell back to the short finish message.
@@ -820,8 +799,8 @@ def extract_latest_answer(
         text is a one-line lead-in; reading the argument is what stops the
         posted answer being truncated. The turn text is used only when the
         action or its message is absent/empty.
-      * **``dispatch_next`` turns answer with their turn text** — their
-        arguments are routing metadata and must never be posted as the answer.
+      * **control turns answer with their turn text** — a routing argument is
+        metadata and must never be posted as the answer.
       * All other tool actions are ignored — their accompanying text is
         mid-run commentary, not a deliverable.
       * Return ``""`` when no agent text answer exists; callers then fall
@@ -840,10 +819,10 @@ def extract_latest_answer(
         The latest agent text answer, or ``""`` if none.
     """
     # Scan forward with latest-wins: every newer agent answer replaces the
-    # previous one, so the last non-empty answer is kept. Finish and
-    # dispatch_next turns are candidates like any other answer — under the
-    # posting-contract skill agents may post the deliverable before calling
-    # them, and the report must still be captured then.
+    # previous one, so the last non-empty answer is kept. Control-plane turns
+    # are candidates like any other answer — under the posting-contract skill
+    # agents may post the deliverable before calling them, and the report must
+    # still be captured then.
     latest = ""
     for event in events or []:
         if not isinstance(event, (MessageEvent, ActionEvent)):
@@ -940,11 +919,11 @@ def _write_latest_answer_file(text: str) -> None:
     logger.info("Wrote latest answer artifact (%d chars)", len(text))
 
 def _typed_function_call(conversation) -> Optional[FunctionCall]:
-    """The run's recorded typed ``call_agent`` hand-off, if the tool was called.
+    """The run's recorded typed agent-to-agent hand-off, if one was named.
 
-    The structured replacement for the sentinel-carried ``function_call``
-    (issue #876, PR-2). Returns ``None`` when the tool was not called, so
-    resolution falls back to the ``dispatch_next`` target / legacy sentinel.
+    The single imperative hand-off channel (issues #876, #1033): ``finalize``
+    records ``turn_outcome.agent_call`` here. Returns ``None`` when no hand-off
+    was named, so resolution keeps the plain turn outcome.
     """
     conv_id = getattr(conversation, "id", None)
     if conv_id is None:
@@ -958,11 +937,12 @@ def _resolve_outcome(
     """Resolve the run's factual turn outcome, run prefs and typed hand-off.
 
     Resolution priority (issue #524, extended by #876/#964):
-      1. The recorded ``dispatch_next`` tool call — a boolean check on
-         structured data. Its payload carries the agent-supplied verdict; the
-         engine-measured status comes from the run outcome (:func:`_observed_status`).
-      2. A typed ``call_agent`` tool call with no ``dispatch_next`` sibling —
-         an explicit agent-to-agent hand-off, which is itself a decision.
+      1. The ``finalize`` tool call's recorded ``turn_outcome`` — a boolean
+         check on structured data. Its payload carries the agent-supplied
+         verdict; the engine-measured status comes from the run outcome
+         (:func:`_observed_status`).
+      2. A recorded agent-to-agent hand-off with no outcome (a partial tool
+         write) — itself a decision.
       3. Neither — no verdict was stated: INCOMPLETE/NO_OUTCOME.
 
     The legacy ``<!-- AGENT_RUN_CONFIG ... -->`` sentinel is **not** read
@@ -988,39 +968,27 @@ def _resolve_outcome(
         )
         if recorded_prefs is not None:
             prefs = recorded_prefs
-        if typed_function_call is not None:
-            function_call = typed_function_call
-        elif outcome.required_agent:
-            # Lazy import: dispatch_check imports from this module at top
-            # level, so a module-level import here would be circular.
-            from agent_script.features.dispatch_check import (
-                agent_to_function_call,
-            )
-
-            # Carry the declared tier (issue #787) so a hand-off without one
-            # inherits the callee step's declared tier instead of masking it
-            # with a hardcoded default.
-            function_call = FunctionCall(
-                **agent_to_function_call(outcome.required_agent),
-                complexity=prefs.complexity,
-            )
+        # The typed hand-off (finalize's ``turn_outcome.agent_call``, issue
+        # #1033) is the single imperative-channel source: it is recorded into
+        # the function-call registry and consumed here.
+        function_call = typed_function_call
         logger.info(
-            "Turn outcome resolved via dispatch_next tool: "
+            "Turn outcome resolved via finalize turn_outcome: "
             f"status={outcome.status.value}, "
             f"appreciation={outcome.appreciation or '-'}"
         )
     elif typed_function_call is not None:
-        # A typed call_agent without a dispatch_next sibling is itself the
-        # turn's verdict: the callee approved the routed work (issue #876).
+        # Defensive: a hand-off recorded without its outcome (a partial tool
+        # write) is itself the turn's verdict — the caller approved the routed
+        # work. A successful finalize always records both.
         outcome = TurnOutcome(
             status=TurnStatus.COMPLETED,
             appreciation=Appreciation.APPROVED,
-            required_agent=typed_function_call.agent_name,
         )
         prefs = RunPrefs(complexity=typed_function_call.complexity or "")
         function_call = typed_function_call
         logger.info(
-            "Turn outcome resolved via typed call_agent tool: "
+            "Turn outcome resolved via typed agent_call: "
             f"agent={typed_function_call.agent_name}"
         )
     else:
@@ -1066,14 +1034,12 @@ def _neutralize_self_and_pin(
 
     1. **Self hand-off (issue #618, defect 2a):** when the ``function_call``
        targets the running agent it must not outrank the plain outcome /
-       workflow-next routing. Drop the ``function_call`` *and* the promoted
-       ``required_agent`` the typed ``call_agent`` branch copied onto the
-       outcome — otherwise a re-derived hand-off would re-route to the running
-       agent.
-    2. **PO escalation pin (issue #876 review):** the typed ``call_agent`` tool
-       exposes no ``pin`` field, so an imperatively escalating PO would lose the
-       verbatim pin its spec-comment contract requires. Force ``prefs.pin``
-       engine-side on a PO hand-off.
+       workflow-next routing, so the ``function_call`` is dropped (issue #1033:
+       the hand-off has no second copy on the outcome).
+    2. **PO escalation pin (issue #876 review):** the hand-off exposes no
+       ``pin`` field, so an imperatively escalating PO would lose the verbatim
+       pin its spec-comment contract requires. Force ``prefs.pin`` engine-side
+       on a PO hand-off.
 
     Returns the possibly-updated triple; no input is mutated (``model_copy``).
     """
@@ -1083,8 +1049,6 @@ def _neutralize_self_and_pin(
             f"keeping plain outcome for workflow-next routing"
         )
         function_call = None
-        if outcome.required_agent == role_name:
-            outcome = outcome.model_copy(update={"required_agent": None})
 
     if (
         role_name == "po"
@@ -1104,8 +1068,8 @@ def _resolve_pin(prefs: Optional[RunPrefs]) -> bool:
       * ``PIN_COMMENT`` env — a workflow-level override mirroring the
         ``INJECT_CONTEXT`` knob. Parsed with an allow-list (empty/unset ⇒
         False) because the flag defaults to off.
-      * ``prefs.pin`` — a per-run request from the agent's ``dispatch_next``
-        call, used to pin this very step's output.
+      * ``prefs.pin`` — a per-run request from the agent's ``finalize``
+        turn outcome, used to pin this very step's output.
     """
     pin_str = (os.environ.get("PIN_COMMENT") or "false").strip().lower()
     pin_from_env = pin_str in ("true", "1", "yes")
@@ -1142,8 +1106,8 @@ def build_output(
 
     # ── Latest-answer capture (issue #522) ────────────────────────
     # The full deliverable is the agent's last answer: a standalone message,
-    # or — for a ``finish`` terminator — its typed ``finish.message`` (the
-    # #822/#830 shape), or the turn text for ``dispatch_next``.
+    # or — for a ``finish`` terminator — its typed ``finish.message`` (only the
+    # fallback source after #1033; the closing turn's text is the report).
     # Recall-aware capture (issue #558): events after the recorded
     # pre-recall offset belong to the engine-injected recall turns and are
     # excluded so their short routing/status text cannot clobber the
@@ -1321,15 +1285,16 @@ def build_output(
         prefs = RunPrefs()
         logger.info("Handoff fold — outcome overridden with AGENT_CHECKPOINT")
 
-    # ── Human gate intercept (issues #506, #648, #1003) ──────────
-    # A gated step's dispatch is always overridden to hold: the gate is
-    # released ONLY by an engine-owned GateDecision recorded from an
-    # identity-verified `/nebuko approve gate` / `/nebuko reject gate`.
-    # The run's trigger source is no longer an authorization input, so an
-    # agent (or a human-echoed command) can never release the gate here.
-    # The intercept also raises the root-level GateLock (issue #1003) — the
-    # lock is workflow metadata, independent of the turn outcome and of the
-    # position, and it blocks the workflow *advance* only: a ``call_agent``
+    # ── Human gate lock (issues #506, #648, #1003, #1033) ────────
+    # A gated step may never advance on its own: the engine raises the
+    # root-level GateLock and the routing layer refuses to advance while it is
+    # armed (``resolve_route._gate_pending``). The gate is released ONLY by an
+    # engine-owned GateDecision recorded from an identity-verified
+    # `/nebuko approve gate` / `/nebuko reject gate`; the run's trigger source
+    # is not an authorization input, so an agent (or a human-echoed command)
+    # can never release the gate here. The agent's own verdict is left intact —
+    # the lock is workflow metadata, independent of the turn outcome and of the
+    # position, and it blocks the workflow *advance* only: an ``agent_call``
     # from the gated step stays legal.
     is_human_resume = bool(os.environ.get("HUMAN_RESUME_INPUT", "").strip())
     # Engine soft-kill retry marker (issue #704): emitted only by the
@@ -1340,7 +1305,7 @@ def build_output(
         os.environ.get("SOFT_RETRY_ATTEMPT", "").strip().lower()
         in ("true", "1", "yes")
     )
-    turn_outcome, gate = apply_human_gate_intercept(
+    turn_outcome, gate = apply_gate_lock(
         turn_outcome,
         workflow_name=workflow_name,
         workflow_step=workflow_step,
@@ -1357,15 +1322,14 @@ def build_output(
         # the root lock so the persisted ``consult_rounds`` actually counts the
         # delegation and ``MAX_CONSULT_ROUNDS`` bounds the fan-out.
         gate = gate.consume_consult(gate_consult)
-    # Consistency fix (issue #887): when the intercept converts a completing
-    # dispatch to a human_gate hold, the persisted resolution must not keep
-    # advertising the ungated forward edge (``next_step`` from WORKFLOW_NEXT).
-    # The hold is released only by a gate command, so no reader may follow that
-    # edge; the routing guard in resolve_route no longer trusts it either.
-    if _is_human_gate_hold(turn_outcome):
+    # Consistency fix (issues #887, #1033): a step that parks on an armed gate
+    # must not keep advertising the ungated forward edge (``next_step`` from
+    # WORKFLOW_NEXT) — no reader may follow it while the lock blocks the
+    # advance. The agent's imperative hand-off is untouched (issue #1003): the
+    # resolver routes it first and returns to the gated step with the gate
+    # still armed.
+    if gate is not None and gate.armed() and gate.step == workflow_step:
         resolution = resolution.model_copy(update={"next_step": ""})
-        # The gate supersedes any workflow *advance* (issue #887 round 2), but
-        # it must NOT destroy the agent's imperative hand-off (issue #1003):
         # ``call_agent`` is orthogonal to the outcome, so a gated agent that
         # consults another agent keeps its ``function_call``. The resolver
         # routes the consult and returns to the gated step with the gate armed.
