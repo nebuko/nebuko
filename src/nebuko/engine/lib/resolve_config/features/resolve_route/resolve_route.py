@@ -700,8 +700,8 @@ def _callback_return_target(
 
     Returns ``(agent, step)`` when the callback should route the run, else
     ``None``. The callback is an *advance-only* fallback: an explicit
-    ``required_agent`` hand-off or a deliberate ``hold`` always wins, which is
-    the precedence documented in ``docs/handoff-and-callback.md``.
+    ``turn_outcome.agent_call`` hand-off or a deliberate ``hold`` always wins,
+    which is the precedence documented in ``docs/handoff-and-callback.md``.
     """
     if prev_state is None:
         return None

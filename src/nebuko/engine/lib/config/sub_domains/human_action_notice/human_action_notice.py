@@ -89,14 +89,16 @@ class HumanActionNotice(BaseModel):
         step: str,
         workflow: str,
         unresolved: bool = False,
+        gate_pending: bool = False,
     ) -> Optional["HumanActionNotice"]:
         """Return the notice the finished run demands, or ``None`` (no ping).
 
         The classification reads the run's factual :class:`TurnOutcome`
         (issue #964), never a navigation status:
 
-        * a ``HOLD`` awaiting approval is an approval request; any other hold
-          (awaiting input) is an input request;
+        * a pending engine-owned gate (``gate_pending``) is an approval request
+          — the gate, not the agent, is what blocks the advance (issue #1033);
+        * a ``HOLD`` is an input request;
         * an ``unresolved`` step — the router found no matching ``on_result``
           edge and no linear successor — is an input request, never a claim
           that the workflow finished (issue #924);
@@ -116,13 +118,10 @@ class HumanActionNotice(BaseModel):
             return None
         appreciation = getattr(turn_outcome, "appreciation", None)
         appreciation_value = getattr(appreciation, "value", appreciation)
-        if appreciation_value == HOLD:
-            kind = (
-                AWAITING_APPROVAL
-                if getattr(getattr(turn_outcome, "hold_kind", None), "value", None)
-                == AWAITING_APPROVAL
-                else AWAITING_INPUT
-            )
+        if gate_pending:
+            kind = AWAITING_APPROVAL
+        elif appreciation_value == HOLD:
+            kind = AWAITING_INPUT
         elif unresolved:
             kind = AWAITING_INPUT
         elif terminal and appreciation_value in ("approved", "rejected"):
