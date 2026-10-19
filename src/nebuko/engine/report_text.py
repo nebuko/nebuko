@@ -1,7 +1,7 @@
 """The closing turn's report text, harvested from the conversation events (#1038).
 
-The engine-elicited closing turn carries the report as its markdown text and
-ends with one ``finalize`` call. Both the host (which posts the report) and the
+The engine-elicited closing turn ends with one ``finalize`` call whose ``report``
+argument is the report (its turn text is the fallback). Both the host (which posts the report) and the
 ``finalize`` executor (which refuses a text-less call) read the report through
 this one module, so they agree on what "the report" is.
 
@@ -58,13 +58,12 @@ def finalize_anchor_index(conversation: Any) -> int:
 def closing_turn_report_text(conversation: Any) -> str:
     """Report text anchored to the harvested ``finalize`` event's turn.
 
-    Precedence: the anchor ``finalize`` action event's ``thought``; else the
-    nearest preceding *agent-authored* message; never an event after that
-    ``finalize`` call. The report rides in the turn that calls ``finalize``, so
-    it surfaces as the action event's ``thought`` (the SDK emits no standalone
-    ``MessageEvent`` for a turn that also carries a tool call); the nearest
-    preceding agent message is the fallback when the tool call and its text
-    landed on different turns.
+    Precedence: the anchor ``finalize`` action's typed ``report`` argument (the
+    canonical channel, issue #1038); else the action event's ``thought`` (a
+    model that wrote the report as turn text; the SDK emits no standalone
+    ``MessageEvent`` for a turn that also carries a tool call); else the nearest
+    preceding *agent-authored* message when the tool call and its text landed on
+    different turns. Never an event after that ``finalize`` call.
 
     The fallback accepts ``source == "agent"`` messages only: the engine's own
     finalize prompt is a ``user``-sourced ``MessageEvent`` that embeds the
@@ -74,6 +73,9 @@ def closing_turn_report_text(conversation: Any) -> str:
     if anchor < 0:
         return ""
     events = events_of(conversation)
+    argument = getattr(getattr(events[anchor], "action", None), "report", None)
+    if isinstance(argument, str) and argument.strip():
+        return argument.strip()
     text = content_text(getattr(events[anchor], "thought", None)).strip()
     if text:
         return text

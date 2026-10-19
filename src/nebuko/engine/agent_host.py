@@ -74,33 +74,33 @@ _MISSING = object()
 _FINALIZE_BODY_ATTR = "nebuko_finalize_body"
 
 #: Engine-elicited closing turn (issues #973, #1033). Every step ends through
-#: the one terminal tool: the report is the turn's markdown text and the
-#: ``finalize`` tool carries the typed ``turn_outcome``. An ``output:``
+#: the one terminal tool: the ``finalize`` call carries the report (its
+#: ``report`` argument) and the typed ``turn_outcome``. An ``output:``
 #: declaration only decides how the report is extracted and rendered.
 _FINALIZE_PROMPT = (
     "Engine finalize turn - the work phase is over; do not call any work tool "
-    "(no terminal, file_editor, think, ...). Write your COMPLETE, "
-    "self-contained report as the markdown text of this turn - the full "
-    "deliverable that must be posted on the issue (never a one-line note) - "
-    "then call the `finalize` tool with your turn outcome.\n\n"
+    "(no terminal, file_editor, think, ...). Call the `finalize` tool once. Put "
+    "your COMPLETE, self-contained report in its `report` argument - the full "
+    "deliverable that must be posted on the issue (never a one-line note) - and "
+    "your turn outcome in `turn_outcome`.\n\n"
     "{sections}\n"
-    "Call `finalize` with `turn_outcome.appreciation` ('approved' when the "
+    "Set `turn_outcome.appreciation` ('approved' when the "
     "work meets this step's goal, 'rejected' when it does not, 'hold' only "
     "when you are blocked and need information from a human), plus "
     "`turn_outcome.hold_kind` = 'awaiting_input' with a hold, "
     "`turn_outcome.agent_call` = {{agent_name, task}} when you are imperatively "
     "naming the exact agent to run next, and "
     "`turn_outcome.round`/`note`/`complexity`/`pin` when they apply. "
-    "Where the workflow goes next is engine topology, never your choice. Put no "
-    "report prose in the tool arguments."
+    "Where the workflow goes next is engine topology, never your choice. "
+    "Nothing is posted if `report` is empty."
 )
 
 #: Prepended to the closing prompt when the previous attempt called ``finalize``
-#: with no report text (issue #1038): the report must ride in the turn's text.
+#: with no report (issue #1038): the report is the call's ``report`` argument.
 _FINALIZE_RETRY_PROMPT = (
-    "Your previous finalize turn carried no report text, so nothing could be "
-    "posted. Write the full report as the markdown text of this turn first, "
-    "then call `finalize`."
+    "Your previous finalize call carried no report, so nothing could be "
+    "posted. Call `finalize` again with the full report in its `report` "
+    "argument."
 )
 
 #: The closing turn's tool surface (issues #973, #1014): the terminal tool plus

@@ -23,6 +23,7 @@ from openhands.sdk.tool.tool import (
     ToolDefinition,
     ToolExecutor,
 )
+from pydantic import Field
 from rich.text import Text
 
 from agent_script.features.call_agent_tool.call_agent_tool import (
@@ -51,20 +52,30 @@ FINALIZE_TOOL_NAME = "finalize"
 
 #: Refusal for a finalize call whose turn carries no report text (issue #1038).
 NO_REPORT_TEXT = (
-    "finalize rejected: this turn has no report text. The report is the markdown "
-    "text of the turn that calls finalize, and nothing is posted without it. Write "
-    "the full report as the text of this turn, then call finalize again. A "
-    "'report posted' note is not a report."
+    "finalize rejected: no report. The report is the `report` argument of "
+    "finalize, and nothing is posted without it. Call finalize again with the "
+    "full markdown report in `report`. A 'report posted' note is not a report."
 )
 
 
 class FinalizeAction(Action):
     """Action for the terminal ``finalize`` tool.
 
-    The report rides in the turn text, so the action declares no field of its
-    own: the ``turn_outcome`` arrives through the tool's ``response_schema``
-    and lands in ``action.structured_output``.
+    ``report`` is the step's deliverable, read structurally by the engine (issue
+    #1038). It is optional in the schema because only the engine's closing turn
+    owes one - the work loop and the dispatch recall pass end with the outcome
+    alone - and the executor enforces it there. The ``turn_outcome`` arrives
+    through the tool's ``response_schema`` and lands in ``action.structured_output``.
     """
+
+    report: str = Field(
+        default="",
+        description=(
+            "The COMPLETE, self-contained markdown report that is posted on the "
+            "issue (never a one-line note). Required in the engine's closing "
+            "turn."
+        ),
+    )
 
 
 class FinalizeObservation(Observation):
@@ -77,12 +88,11 @@ class FinalizeObservation(Observation):
 
 FINALIZE_DESCRIPTION = f"""End this step: record your turn outcome for the workflow.
 
-The report itself is the markdown text of this turn. Write the report first
-(when the prompt shows section markers, put the section bodies between the
-exact markers), then call this tool with your turn outcome. Do not put the
-report in the tool arguments.
-
 Parameters:
+- report: the COMPLETE, self-contained markdown report that is posted on the
+  issue (never a one-line note). REQUIRED in the engine's closing turn. When
+  the prompt shows section markers, put the section bodies between the exact
+  markers inside this report.
 - turn_outcome.appreciation: REQUIRED. Your verdict on this turn —
   'approved' (the work meets the step's goal), 'rejected' (it does not), or
   'hold' (you are blocked and need information from a human).

@@ -498,9 +498,9 @@ class StrictFinalizePayload(TurnOutcomePayload):
 class FinalizeSchemaBuilder:
     """Builds the ``turn_outcome``-only ``finalize`` tool schema (issue #1033).
 
-    The report rides in the turn's text, so the tool's top-level arguments are
-    exactly ``turn_outcome`` — a tiny, fixed shape that cannot be truncated by
-    a long markdown payload.
+    This is the ``response_schema`` half of the tool: exactly ``turn_outcome``,
+    a tiny, fixed shape. The report is the other half, the ``report`` field
+    declared on ``FinalizeAction`` (issue #1038), so the SDK merges the two.
     """
 
     def __init__(self, base: type[TurnOutcomePayload] = StrictFinalizePayload) -> None:

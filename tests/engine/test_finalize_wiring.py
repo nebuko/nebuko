@@ -81,6 +81,17 @@ class TestFinalizeToolRegistration:
         assert isinstance(schema, dict)
         assert list(schema["properties"]) == ["turn_outcome"]
 
+    def test_finalize_tool_takes_the_report_as_an_argument(self) -> None:
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+
+        tool = FinalizeTool.create(conversation_id="c-report")[0]
+        action = tool.action_from_arguments(
+            {"report": "## Plan\n\nthe change", "turn_outcome": {"appreciation": "approved"}}
+        )
+
+        assert action.report == "## Plan\n\nthe change"
+        assert action.structured_output["turn_outcome"]["appreciation"] == "approved"
+
     def test_finalize_action_records_the_typed_turn_outcome(self) -> None:
         from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
             get_recorded_turn_outcome,
@@ -357,13 +368,15 @@ def _write_entry_point(repo_root: Path) -> None:
     script.write_text("# imported, never executed\n", encoding="utf-8")
 
 
-def _finalize_event(text: str, route: dict[str, Any] | None = None) -> object:
+def _finalize_event(
+    text: str, route: dict[str, Any] | None = None, report: str = ""
+) -> object:
     """A real ``finalize`` action event carrying the turn's report text."""
     from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
-    action = FinalizeAction()
+    action = FinalizeAction(report=report)
     if route is not None:
         action._structured_output = {"turn_outcome": route}
     return ActionEvent(
@@ -431,6 +444,11 @@ def _engine_prompt_event(text: str) -> object:
         source="user",
         llm_message=Message(role="user", content=[TextContent(text=text)]),
     )
+
+
+def _finalize_event_with_report(report: str, route: dict[str, Any] | None = None) -> object:
+    """A ``finalize`` call whose ``report`` argument carries the deliverable."""
+    return _finalize_event("", route, report=report)
 
 
 def _finalize_event_without_thought(route: dict[str, Any] | None = None) -> object:
@@ -1015,7 +1033,7 @@ class TestFinalizeHarvestAnchor:
         result = host.run("prompt")
 
         assert len(conversation.prompts) == 2
-        assert "carried no report text" in conversation.prompts[1]
+        assert "carried no report" in conversation.prompts[1]
         assert getattr(conversation, _FINALIZE_BODY_ATTR, None) == plan
         assert result["deliverable"] == plan
 
@@ -1086,6 +1104,68 @@ class TestFinalizeHarvestAnchor:
 
         assert not observation.is_error
         assert _recorded_turn_outcome_fields(conversation) is not None
+
+    def test_the_report_argument_is_the_report(self) -> None:
+        from nebuko.engine.report_text import closing_turn_report_text
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = [
+            _finalize_event_with_report("## Plan\n\nthe change", {"appreciation": "approved"})
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        assert closing_turn_report_text(conversation) == "## Plan\n\nthe change"
+
+    def test_the_report_argument_wins_over_the_turn_text(self) -> None:
+        from nebuko.engine.report_text import closing_turn_report_text
+
+        event = _finalize_event(
+            "lead-in text", {"appreciation": "approved"}, report="the report"
+        )
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = [event]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        assert closing_turn_report_text(conversation) == "the report"
+
+    def test_a_finalize_call_with_a_report_argument_is_posted_without_a_retry(
+        self, tmp_path: Path
+    ) -> None:
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        plan = "## Plan\n\n1. **`a.py`** - the change"
+        conversation = _FinalizeConversation(
+            turns=[[_finalize_event_with_report(plan, {"appreciation": "approved"})]]
+        )
+        host = _host_for(
+            repo_root, conversation, latest_answer="work-loop finish note", step_output=None
+        )
+
+        result = host.run("prompt")
+
+        assert len(conversation.prompts) == 1
+        assert "`report` argument" in conversation.prompts[0]
+        assert result["deliverable"] == plan
+
+    def test_a_blank_report_argument_is_refused_in_the_closing_turn(self) -> None:
+        from agent_script.features.finalize_tool.finalize_tool import (
+            NO_REPORT_TEXT,
+            FinalizeExecutor,
+        )
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.id = "conv-blank-report-argument"
+        conversation.state.events = [
+            _finalize_event_with_report("   ", {"appreciation": "approved"})
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        observation = FinalizeExecutor(conversation_id=conversation.id)(
+            conversation.state.events[0].action, conversation
+        )
+
+        assert observation.is_error
+        assert observation.text == NO_REPORT_TEXT
 
     def test_a_report_written_before_finalize_is_accepted(self) -> None:
         from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
