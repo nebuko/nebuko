@@ -60,9 +60,13 @@ class IncompleteReason(str, Enum):  # @stub-protected
 
 
 class HoldKind(str, Enum):  # @stub-protected
-    """Which human the ``HOLD`` verdict is waiting on."""
+    """Which human the ``HOLD`` verdict is waiting on.
 
-    AWAITING_APPROVAL = "awaiting_approval"
+    A hold asks a *human* for information, so ``awaiting_input`` is the only
+    kind (issue #1033). An approval gate is engine-owned run state
+    (``GateLock``), never an agent-visible outcome.
+    """
+
     AWAITING_INPUT = "awaiting_input"
 
 
@@ -87,11 +91,13 @@ class TurnOutcome(BaseModel):
         incomplete_reason: Why the turn did not complete; mandatory iff
             ``status == incomplete``.
         hold_kind: Which human a ``HOLD`` appreciation awaits; mandatory iff
-            ``appreciation == hold``.
-        required_agent: Optional hand-off target for a callee return
-            (formalizes the function-call callback, issues #765/#876).
+            ``appreciation == hold``, and always ``awaiting_input``.
         round: dev<->review cycle counter; replaces the free-text "round N".
         note: Human-facing explanation only — never routed on.
+
+    An explicit hand-off target is *not* an outcome field (issue #1033): the
+    ``finalize`` tool's ``agent_call`` is recorded as a ``FunctionCall``, the
+    single imperative channel.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -100,9 +106,26 @@ class TurnOutcome(BaseModel):
     appreciation: Optional[Appreciation] = None
     incomplete_reason: Optional[IncompleteReason] = None
     hold_kind: Optional[HoldKind] = None
-    required_agent: Optional[str] = None
     round: int = 0
     note: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _tolerate_legacy_fields(cls, data: Any) -> Any:
+        """Read pre-#1033 records without failing (read-only compatibility).
+
+        Persisted journals may still carry ``required_agent`` and the removed
+        ``awaiting_approval`` hold kind. Unknown keys are dropped; a legacy
+        approval hold is read as ``awaiting_input`` because the model no longer
+        has an approval kind (an approval gate is engine-owned run state).
+        """
+        if not isinstance(data, Mapping):
+            return data
+        payload = dict(data)
+        payload.pop("required_agent", None)
+        if payload.get("hold_kind") == "awaiting_approval":
+            payload["hold_kind"] = HoldKind.AWAITING_INPUT.value
+        return payload
 
     @model_validator(mode="after")
     def _validate_axes(self) -> "TurnOutcome":
@@ -147,9 +170,12 @@ class TurnOutcome(BaseModel):
 
         Args:
             payload: Agent-supplied fields (``appreciation``, ``hold_kind``,
-                ``required_agent``, ``round``, ``note``). When the key is
-                present with a value it must be a valid appreciation; an absent
-                key or an explicit ``None`` means "no verdict".
+                ``round``, ``note``). When the key is present with a value it
+                must be a valid appreciation; an absent key or an explicit
+                ``None`` means "no verdict". Engine-measured keys
+                (``status``/``incomplete_reason``) and the removed channels
+                (``required_agent``, ``awaiting_approval``) are rejected
+                (issue #1033).
             observed: The engine's ``OutcomeStatus`` for this turn.
 
         Returns:
@@ -157,12 +183,13 @@ class TurnOutcome(BaseModel):
 
         Raises:
             ValueError: The payload states an appreciation that is present but
-                is not a valid verdict (a typo or a blank string).
+                is not a valid verdict (a typo or a blank string), or names an
+                axis the agent may not supply.
         """
         observed_value = getattr(observed, "value", str(observed))
         incomplete_reason = _OUTCOME_STATUS_TO_INCOMPLETE.get(observed_value)
         note = _coerce_note(payload.get("note"))
-        required_agent = _coerce_agent(payload.get("required_agent"))
+        _reject_agent_supplied_axes(payload)
         # A payload that carries the appreciation key must carry a usable
         # verdict. Defaulting a misspelling *or a blank string* to "approved"
         # would advance a step the agent never approved (issue #964) — fail
@@ -196,7 +223,6 @@ class TurnOutcome(BaseModel):
             status=TurnStatus.COMPLETED,
             appreciation=appreciation,
             hold_kind=hold_kind if appreciation == Appreciation.HOLD else None,
-            required_agent=required_agent,
             round=_coerce_round(payload.get("round")),
             note=note,
         )
@@ -207,6 +233,33 @@ class TurnOutcome(BaseModel):
     ) -> "TurnOutcome":
         """Build an INCOMPLETE outcome for an engine-observed reason."""
         return cls(status=TurnStatus.INCOMPLETE, incomplete_reason=reason, note=note)
+
+
+#: Payload keys an agent may never supply (issue #1033): ``status`` is
+#: engine-measured, and a gate is engine-owned run state, not an agent verdict.
+_AGENT_FORBIDDEN_KEYS = ("status", "incomplete_reason", "holding_status")
+
+
+def _reject_agent_supplied_axes(payload: Mapping[str, Any]) -> None:
+    """Reject engine-measured axes and the removed hand-off channel (#1033)."""
+    for key in _AGENT_FORBIDDEN_KEYS:
+        if payload.get(key):
+            raise ValueError(
+                f"{key} is engine-measured and must not be supplied by the agent"
+            )
+    if payload.get("required_agent"):
+        raise ValueError(
+            "required_agent is no longer an outcome field: name the hand-off "
+            "target with finalize's turn_outcome.agent_call.agent_name"
+        )
+    raw_hold = payload.get("hold_kind")
+    if raw_hold not in (None, "") and str(raw_hold) not in {
+        kind.value for kind in HoldKind
+    }:
+        raise ValueError(
+            f"invalid hold_kind {raw_hold!r}: an approval gate is engine-owned; "
+            f"expected one of {[kind.value for kind in HoldKind]}"
+        )
 
 
 def _coerce_appreciation(value: Any) -> Optional[Appreciation]:
