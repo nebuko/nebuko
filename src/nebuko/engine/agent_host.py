@@ -555,12 +555,16 @@ def _finalize_turn_text(conversation: Any) -> str:
     """Report text anchored to the harvested ``finalize`` event's turn.
 
     Precedence: the anchor ``finalize`` action event's ``thought``; else the
-    nearest preceding agent message; never an event after that ``finalize``
-    call. The report rides in the turn that calls ``finalize``, so it surfaces
-    as the action event's ``thought`` (the SDK emits no standalone
+    nearest preceding *agent-authored* message; never an event after that
+    ``finalize`` call. The report rides in the turn that calls ``finalize``, so
+    it surfaces as the action event's ``thought`` (the SDK emits no standalone
     ``MessageEvent`` for a turn that also carries a tool call); the nearest
     preceding agent message is the fallback when the tool call and its text
     landed on different turns.
+
+    The fallback accepts ``source == "agent"`` messages only: the engine's own
+    finalize prompt is a ``user``-sourced ``MessageEvent`` that embeds the
+    section skeleton (issue #1020), and harvesting it posts the template.
     """
     anchor = _finalize_anchor_index(conversation)
     if anchor < 0:
@@ -572,6 +576,8 @@ def _finalize_turn_text(conversation: Any) -> str:
     events = _events(conversation)
     for index in range(anchor - 1, offset - 1, -1):
         if getattr(events[index], "tool_name", None) is not None:
+            continue
+        if getattr(events[index], "source", None) != "agent":
             continue
         message = getattr(events[index], "llm_message", None)
         if message is None:

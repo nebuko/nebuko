@@ -192,6 +192,61 @@ class TestExtractionAnomalies:
         )
 
 
+class TestPlaceholderRejection:
+    """Issue #1020: the prompt's own skeleton must never validate as a report."""
+
+    def test_section_body_that_is_the_placeholder_raises(self):
+        renderer = OutputRenderer(_contract())
+        with pytest.raises(SectionExtractionError, match="template placeholder"):
+            renderer.extract_section(_wire(implementation="…implementation…"), "implementation")
+
+    def test_title_that_is_the_placeholder_raises(self):
+        renderer = OutputRenderer(_contract())
+        with pytest.raises(SectionExtractionError, match="template placeholder"):
+            renderer.extract_section(_wire(headline="…headline…"), "headline")
+
+    def test_the_placeholder_is_rejected_even_when_unclosed(self):
+        renderer = OutputRenderer(_contract())
+        wire = "<!-- nebuko:section implementation -->\n…implementation…"
+        with pytest.raises(SectionExtractionError, match="template placeholder"):
+            renderer.extract_section(wire, "implementation")
+
+    def test_salvage_skips_a_placeholder_section(self):
+        """A placeholder body is not salvageable; the fallback chain runs instead."""
+        report = RunTerminator(_contract()).salvage(
+            _wire(headline="Real outcome", implementation="…implementation…")
+        )
+        assert set(report.sections) == {"headline"}
+        assert report.title == "Real outcome"
+
+    def test_real_content_still_passes(self):
+        renderer = OutputRenderer(_contract())
+        wire = _wire(headline="Outcome", implementation="real body")
+        assert renderer.extract_section(wire, "implementation") == "real body"
+        assert renderer.extract_section(wire, "headline") == "Outcome"
+
+    def test_an_empty_optional_section_is_not_a_placeholder(self):
+        renderer = OutputRenderer(_contract())
+        wire = "<!-- nebuko:section questions -->\n<!-- /nebuko:section -->"
+        assert renderer.extract_section(wire, "questions") == ""
+
+    def test_a_body_merely_mentioning_the_placeholder_passes(self):
+        renderer = OutputRenderer(_contract())
+        wire = _wire(implementation="replace the `…implementation…` line")
+        assert (
+            renderer.extract_section(wire, "implementation")
+            == "replace the `…implementation…` line"
+        )
+
+    def test_the_rendered_prompt_block_never_renders_a_comment(self):
+        """The reproduced defect: echoing the engine's prompt block posts the template."""
+        contract = _contract()
+        with pytest.raises(SectionExtractionError):
+            RunTerminator(contract).finalize(
+                RouteDecision(appreciation="approved"), contract.prompt_block()
+            )
+
+
 class TestPromptBlock:
     def test_prompt_block_lists_fields_and_markers(self):
         block = _contract().prompt_block()
