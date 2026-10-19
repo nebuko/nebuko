@@ -559,7 +559,7 @@ class StatsTotals:
     """
 
     runs: int = 0
-    # Sum of per-run uncached input (InputTokenSplit); rendered under "Input Tokens".
+    # Sum of per-run uncached input (InputTokenSplit); rendered under "Input / output tokens".
     input_tokens: int = 0
     output_tokens: int = 0
     cache_hit_tokens: int = 0
@@ -732,19 +732,23 @@ class ShareCell:
 
 @dataclass(frozen=True)
 class MetricRow:
-    """One transposed row: metric label, one rendered cell per agent, one Total cell."""
+    """One transposed row: metric label, the Total cell, one rendered cell per agent.
+
+    The Total leads the agent columns — it is the most valuable cell to read
+    (issue #1019 follow-up); ``render`` bolds it.
+    """
 
     label: str
+    #: The Total-column cell.
+    total: str
     #: One rendered cell per agent column, in column order.
     cells: Tuple[str, ...]
-    #: The Total-column cell; ``render`` bolds it.
-    total: str
 
     # @stub-protected
     def render(self) -> str:
-        """'| LLM time | 12.0 min (29%) | … | **41.0 min** |'."""
+        """'| LLM time | **41.0 min** | 12.0 min (29%) | … |'."""
         body = "".join(f" {cell} |" for cell in self.cells)
-        return f"| {self.label} |{body} **{self.total}** |"
+        return f"| {self.label} | **{self.total}** |{body}"
 
 
 def _summary_share(value, total):
@@ -759,6 +763,7 @@ def _build_summary_row(aggregated, totals, columns, label, cell_builder):
 
     The Total cell drops the share (it *is* the row total) and the estimate
     marker (the marker belongs to the per-agent cells, whose costs it labels).
+    It leads the agent cells in ``MetricRow.render``.
     """
     cells = tuple(cell_builder(aggregated[column]) for column in columns)
     return MetricRow(
@@ -910,8 +915,8 @@ def _detail_rows(aggregated, totals, columns):
         rows.append(
             MetricRow(
                 label="Per-tool calls",
-                cells=tuple("N/A" for _ in columns),
                 total="N/A",
+                cells=tuple("N/A" for _ in columns),
             )
         )
     return tuple(rows)
@@ -919,7 +924,7 @@ def _detail_rows(aggregated, totals, columns):
 
 @dataclass(frozen=True)
 class AgentSummaryTable:
-    """Transposed agent statistics table: metrics as rows, agents as columns + Total."""
+    """Transposed agent statistics table: metrics as rows, Total + agents as columns."""
 
     #: Agent display names in sort order (architect, context, dev, …).
     columns: Tuple[str, ...]
@@ -953,7 +958,7 @@ class AgentSummaryTable:
     # @stub-protected
     def render(self) -> List[str]:
         """Heading, headline, header, separator, rows and the conditional footnote."""
-        header = "| | " + " | ".join(self.columns) + " | **Total** |"
+        header = "| | **Total** | " + " | ".join(self.columns) + " |"
         separator = "|" + "---:|" * (len(self.columns) + 2)
         lines = [
             "## 📊 Agent Statistics Summary",
@@ -995,7 +1000,7 @@ class DetailSection:
     # @stub-protected
     def render(self) -> List[str]:
         """'<details><summary>…</summary>' + transposed mini-table + '</details>'."""
-        header = "| | " + " | ".join(self.columns) + " | **Total** |"
+        header = "| | **Total** | " + " | ".join(self.columns) + " |"
         separator = "|" + "---:|" * (len(self.columns) + 2)
         lines = ["", "<details>", f"<summary>{self.summary}</summary>", "", header, separator]
         lines.extend(row.render() for row in self.rows)

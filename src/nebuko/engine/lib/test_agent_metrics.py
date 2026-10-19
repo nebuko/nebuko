@@ -952,12 +952,14 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         result = generate_agent_summary_table(self._make_aggregated())
         result_str = "\n".join(result)
         self.assertIn("## 📊 Agent Statistics Summary", result_str)
-        self.assertIn("| | Architect | Context | Dev | **Total** |", result_str)
+        self.assertIn("| | **Total** | Architect | Context | Dev |", result_str)
 
     def test_agent_columns_in_sort_order(self):
         result = generate_agent_summary_table(self._make_aggregated())
         header = next(line for line in result if line.startswith("| | "))
-        self.assertEqual(_table_cells(header), ["", "Architect", "Context", "Dev", "**Total**"])
+        self.assertEqual(
+            _table_cells(header), ["", "**Total**", "Architect", "Context", "Dev"]
+        )
 
     def test_removed_columns_are_gone(self):
         result_str = "\n".join(generate_agent_summary_table(self._make_aggregated()))
@@ -991,21 +993,21 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         # 10000ms / 23000ms = 43%; 5000ms = 22%; 8000ms = 35%.
         self.assertEqual(
             _table_cells(row),
-            ["LLM time", "0.2 min (43%)", "0.1 min (22%)", "0.1 min (35%)", "**0.4 min**"],
+            ["LLM time", "**0.4 min**", "0.2 min (43%)", "0.1 min (22%)", "0.1 min (35%)"],
         )
 
     def test_llm_time_shares_sum_to_100(self):
         lines = generate_agent_summary_table(self._make_aggregated())
         shares = [
             int(re.search(r"\((\d+)%\)", cell).group(1))
-            for cell in _table_cells(self._row(lines, "LLM time"))[1:-1]
+            for cell in _table_cells(self._row(lines, "LLM time"))[2:]
         ]
         self.assertEqual(sum(shares), 100)
 
     def test_tool_calls_are_sums(self):
         lines = generate_agent_summary_table(self._make_aggregated())
         row = self._row(lines, "Tool calls")
-        self.assertEqual(_table_cells(row), ["Tool calls", "10", "5", "8", "**23**"])
+        self.assertEqual(_table_cells(row), ["Tool calls", "**23**", "10", "5", "8"])
 
     def test_error_rate_replaces_tool_errors(self):
         agg = self._make_aggregated()
@@ -1016,7 +1018,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         # architect 1/10, context 0/5, dev 2/8; the Total folds the same errors
         # over the summed tool calls: 3/23 -> 13%.
         self.assertEqual(
-            _table_cells(row), ["Tool error rate", "10%", "0%", "25%", "**13%**"]
+            _table_cells(row), ["Tool error rate", "**13%**", "10%", "0%", "25%"]
         )
 
     def test_totals_error_rate_uses_the_total_tool_calls(self):
@@ -1034,7 +1036,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         }
         lines = generate_agent_summary_table(agg)
         self.assertEqual(
-            _table_cells(self._row(lines, "Tool error rate")), ["Tool error rate", "25%", "**25%**"]
+            _table_cells(self._row(lines, "Tool error rate")), ["Tool error rate", "**25%**", "25%"]
         )
 
     def test_total_error_rate_can_differ_from_every_agent_rate(self):
@@ -1064,7 +1066,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         lines = generate_agent_summary_table(agg)
         cells = _table_cells(self._row(lines, "Tool error rate"))
         # 100% and 0% per agent; 1/100 -> 1% overall, unlike either agent.
-        self.assertEqual(cells, ["Tool error rate", "100%", "0%", "**1%**"])
+        self.assertEqual(cells, ["Tool error rate", "**1%**", "100%", "0%"])
 
     def test_error_rate_is_zero_without_tool_calls(self):
         agg = {
@@ -1080,14 +1082,14 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             }
         }
         lines = generate_agent_summary_table(agg)
-        self.assertEqual(_table_cells(self._row(lines, "Tool error rate"))[1], "0%")
+        self.assertEqual(_table_cells(self._row(lines, "Tool error rate"))[2], "0%")
 
     def test_totals_column_matches_the_agents(self):
         lines = generate_agent_summary_table(self._make_aggregated())
-        self.assertEqual(_table_cells(self._row(lines, "Runs"))[-1], "**4**")
+        self.assertEqual(_table_cells(self._row(lines, "Runs"))[1], "**4**")
         self.assertEqual(
             _table_cells(self._row(lines, "Input / output tokens")),
-            ["Input / output tokens", "300 / 150", "200 / 100", "400 / 200", "**900 / 450**"],
+            ["Input / output tokens", "**900 / 450**", "300 / 150", "200 / 100", "400 / 200"],
         )
 
     def test_cost_column_and_total(self):
@@ -1109,7 +1111,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertIn("| Cost |", result_str)
         self.assertEqual(
             _table_cells(self._row(lines, "Cost")),
-            ["Cost", f"{format_cost(0.1234)} (100%)", f"**{format_cost(0.1234)}**"],
+            ["Cost", f"**{format_cost(0.1234)}**", f"{format_cost(0.1234)} (100%)"],
         )
 
     def test_cost_shares_sum_to_100(self):
@@ -1128,7 +1130,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         lines = generate_agent_summary_table(agg)
         shares = [
             int(re.search(r"\((\d+)%\)", cell).group(1))
-            for cell in _table_cells(self._row(lines, "Cost"))[1:-1]
+            for cell in _table_cells(self._row(lines, "Cost"))[2:]
         ]
         self.assertEqual(sum(shares), 100)
 
@@ -1149,9 +1151,9 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         }
         lines = generate_agent_summary_table(agg)
         cells = _table_cells(self._row(lines, "Cost"))
-        self.assertTrue(cells[1].endswith("*"))
-        self.assertFalse(cells[2].endswith("*"))
-        self.assertTrue(cells[-1].endswith("**"))
+        self.assertTrue(cells[2].endswith("*"))
+        self.assertFalse(cells[3].endswith("*"))
+        self.assertTrue(cells[1].startswith("**"))
         result_str = "\n".join(lines)
         self.assertIn("estimated from the price table", result_str)
         self.assertIn("$1.0000* estimated", result_str)
@@ -1191,7 +1193,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertIn("|   ↳ file_editor |", result_str)
         # Cache hit tokens + #888 rate share one cell (2300/4000 = 57.5%).
         self.assertEqual(
-            _table_cells(self._row(lines, "Cache hit tokens"))[3], "1,920 (57.50%)"
+            _table_cells(self._row(lines, "Cache hit tokens"))[4], "1,920 (57.50%)"
         )
 
     def test_cache_cell_has_no_rate_without_signal(self):
@@ -1199,7 +1201,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         lines = generate_agent_summary_table(self._make_aggregated())
         self.assertEqual(
             _table_cells(self._row(lines, "Cache hit tokens")),
-            ["Cache hit tokens", "0", "0", "0", "**0**"],
+            ["Cache hit tokens", "**0**", "0", "0", "0"],
         )
 
     def test_review_fix_requests_leave_the_report_but_stay_in_the_bucket(self):
@@ -1228,7 +1230,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             }
         }
         lines = generate_agent_summary_table(agg)
-        self.assertEqual(_table_cells(self._row(lines, "Runs")), ["Runs", "1", "**1**"])
+        self.assertEqual(_table_cells(self._row(lines, "Runs")), ["Runs", "**1**", "1"])
         self.assertIn("Total: 1 runs ·", lines[2])
 
 
@@ -1583,12 +1585,12 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
         lines = generate_agent_summary_table(self._make_aggregated_with_per_tool())
         cells = _table_cells(self._row(lines, "  ↳ terminal"))
         # architect 15 calls / 2 errors; context ran no terminal calls.
-        self.assertEqual(cells, ["↳ terminal", "15 (2 err)", "—", "**15 (2 err)**"])
+        self.assertEqual(cells, ["↳ terminal", "**15 (2 err)**", "15 (2 err)", "—"])
 
     def test_per_tool_row_without_errors_is_a_bare_count(self):
         lines = generate_agent_summary_table(self._make_aggregated_with_per_tool())
         cells = _table_cells(self._row(lines, "  ↳ file_editor"))
-        self.assertEqual(cells[1], "8")
+        self.assertEqual(cells[2], "8")
 
     def test_agent_table_backward_compatible(self):
         """An agent without per-tool data still renders every summary row."""
@@ -1610,8 +1612,8 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
             }
         }
         result_str = "\n".join(generate_agent_summary_table(agg))
-        self.assertIn("| Per-tool calls | N/A | **N/A** |", result_str)
-        self.assertIn("| Runs | 1 | **1** |", result_str)
+        self.assertIn("| Per-tool calls | **N/A** | N/A |", result_str)
+        self.assertIn("| Runs | **1** | 1 |", result_str)
 
     def test_agent_table_columns_align(self):
         """Every rendered row keeps the same column count, header to detail block."""
@@ -1647,9 +1649,9 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
         }
         lines = generate_agent_summary_table(agg)
         header = next(line for line in lines if line.startswith("| | "))
-        self.assertEqual(_table_cells(header), ["", "Architect", "Dev", "**Total**"])
+        self.assertEqual(_table_cells(header), ["", "**Total**", "Architect", "Dev"])
         cells = _table_cells(self._row(lines, "  ↳ terminal"))
-        self.assertEqual(cells, ["↳ terminal", "4", "2", "**6**"])
+        self.assertEqual(cells, ["↳ terminal", "**6**", "4", "2"])
 
 
 class TestInputTokenSplit(unittest.TestCase):
