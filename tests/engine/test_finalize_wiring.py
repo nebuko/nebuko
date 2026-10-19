@@ -988,6 +988,60 @@ class TestFinalizeHarvestAnchor:
         assert result["deliverable"] == "no report"
         assert any("rendered no comment" in record.message for record in caplog.records)
 
+    def test_a_text_less_finalize_turn_is_retried_for_the_report(
+        self, tmp_path: Path
+    ) -> None:
+        # Repro #1038: the closing turn calls ``finalize`` with no report text;
+        # the retry turn writes the report, so the plan is posted, not the
+        # 134-char work-loop finish note.
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        plan = "## Plan\n\n1. **`a.py`** — the change"
+        conversation = _FinalizeConversation(
+            turns=[
+                [_finalize_event_without_thought({"appreciation": "approved"})],
+                [_finalize_event(plan, {"appreciation": "approved"})],
+            ]
+        )
+        host = _host_for(
+            repo_root,
+            conversation,
+            latest_answer="work-loop finish note",
+            step_output=None,
+        )
+
+        result = host.run("prompt")
+
+        assert len(conversation.prompts) == 2
+        assert "carried no report text" in conversation.prompts[1]
+        assert getattr(conversation, _FINALIZE_BODY_ATTR, None) == plan
+        assert result["deliverable"] == plan
+
+    def test_a_turn_with_no_text_twice_falls_back_loudly(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FinalizeConversation(
+            turns=[
+                [_finalize_event_without_thought({"appreciation": "approved"})],
+                [_finalize_event_without_thought({"appreciation": "approved"})],
+            ]
+        )
+        host = _host_for(
+            repo_root,
+            conversation,
+            latest_answer="work-loop finish note",
+            step_output=None,
+        )
+
+        with caplog.at_level("ERROR", logger="nebuko.engine.agent_host"):
+            result = host.run("prompt")
+
+        assert len(conversation.prompts) == 2
+        assert result["deliverable"] == "work-loop finish note"
+        assert any("returned no text twice" in r.message for r in caplog.records)
+
     def test_a_broken_turn_salvages_the_text_seen_so_far(self, tmp_path: Path) -> None:
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)

@@ -90,6 +90,14 @@ _FINALIZE_PROMPT = (
     "report prose in the tool arguments."
 )
 
+#: Prepended to the closing prompt when the previous attempt called ``finalize``
+#: with no report text (issue #1038): the report must ride in the turn's text.
+_FINALIZE_RETRY_PROMPT = (
+    "Your previous finalize turn carried no report text, so nothing could be "
+    "posted. Write the full report as the markdown text of this turn first, "
+    "then call `finalize`."
+)
+
 #: The closing turn's tool surface (issues #973, #1014): the terminal tool plus
 #: ``finish``. ``finish`` stays exposed so the model can terminate the turn; it
 #: is not a routing channel and its message is only a fallback deliverable. The
@@ -245,18 +253,31 @@ class InProcessAgentHost:
             sections=contract.prompt_block() if contract is not None else ""
         )
         if contract is None:
-            try:
-                _run_closing_turn(conversation, prompt)
-            except Exception as error:  # noqa: BLE001 - fall back, never abort
-                # The turn never ran (or broke mid-flight); the work-loop
-                # capture chain stays the deliverable (issue #1014).
-                log.warning(
-                    "[phase:agent] finalize turn failed (%s); keeping the "
-                    "captured deliverable",
-                    error,
-                )
-                return
-            text = _finalize_turn_text(conversation)
+            # A closing turn that calls ``finalize`` with no report text is
+            # retried once, naming the gap (issue #1038). Only when both turns
+            # come back empty does the work-loop finish note become the post.
+            text = ""
+            for attempt in (1, 2):
+                try:
+                    _run_closing_turn(conversation, prompt)
+                except Exception as error:  # noqa: BLE001 - fall back, never abort
+                    # The turn never ran (or broke mid-flight); the work-loop
+                    # capture chain stays the deliverable (issue #1014).
+                    log.warning(
+                        "[phase:agent] finalize turn failed (%s); keeping the "
+                        "captured deliverable",
+                        error,
+                    )
+                    return
+                text = _finalize_turn_text(conversation)
+                if text:
+                    break
+                if attempt == 1:
+                    log.warning(
+                        "[phase:agent] finalize turn returned no text; retrying "
+                        "once for the report"
+                    )
+                    prompt = f"{_FINALIZE_RETRY_PROMPT}\n\n{prompt}"
             if text:
                 setattr(conversation, _FINALIZE_BODY_ATTR, text)
                 log.info(
@@ -264,9 +285,9 @@ class InProcessAgentHost:
                     len(text),
                 )
             else:
-                log.warning(
-                    "[phase:agent] finalize turn returned no text; falling back "
-                    "to the captured deliverable (the work-loop finish note)"
+                log.error(
+                    "[phase:agent] finalize turn returned no text twice; falling "
+                    "back to the captured deliverable (the work-loop finish note)"
                 )
             return
         rendered: list[str] = []
