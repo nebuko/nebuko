@@ -888,7 +888,7 @@ class TestAggregateByAgent(unittest.TestCase):
 
 
 class TestGenerateAgentSummaryTable(unittest.TestCase):
-    """Test generate_agent_summary_table function."""
+    """Test generate_agent_summary_table function (transposed layout, issue #1019)."""
 
     def _make_aggregated(self):
         return {
@@ -939,182 +939,248 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def _row(lines, label):
+        """The rendered row whose first cell is ``label``."""
+        return next(line for line in lines if line.startswith(f"| {label} |"))
+
     def test_empty_returns_empty(self):
         result = generate_agent_summary_table({})
         self.assertEqual(result, "")
 
-    def test_table_header(self):
+    def test_table_header_is_transposed(self):
         result = generate_agent_summary_table(self._make_aggregated())
         result_str = "\n".join(result)
-        self.assertIn("| Agent | Runs |", result_str)
         self.assertIn("## 📊 Agent Statistics Summary", result_str)
+        self.assertIn("| | Architect | Context | Dev | **Total** |", result_str)
 
-    def test_agent_display_names(self):
+    def test_agent_columns_in_sort_order(self):
         result = generate_agent_summary_table(self._make_aggregated())
-        result_str = "\n".join(result)
-        self.assertIn("| Architect ", result_str)
-        self.assertIn("| Context ", result_str)
-        self.assertIn("| Dev ", result_str)
+        header = next(line for line in result if line.startswith("| | "))
+        self.assertEqual(_table_cells(header), ["", "Architect", "Context", "Dev", "**Total**"])
 
-    def test_agent_sort_order(self):
-        result = generate_agent_summary_table(self._make_aggregated())
-        result_str = "\n".join(result)
-        architect_pos = result_str.index("| Architect ")
-        context_pos = result_str.index("| Context ")
-        dev_pos = result_str.index("| Dev ")
-        self.assertLess(architect_pos, context_pos)
-        self.assertLess(context_pos, dev_pos)
+    def test_removed_columns_are_gone(self):
+        result_str = "\n".join(generate_agent_summary_table(self._make_aggregated()))
+        self.assertNotIn("Avg Max Context Window", result_str)
+        self.assertNotIn("Fix Requests", result_str)
+        self.assertNotIn("Tool Errors", result_str)
+        self.assertNotIn("Cache Hit Rate", result_str)
+        self.assertNotIn("Avg Latency (s)", result_str)
 
-    def test_totals_row(self):
-        """The removed Totals sentence is now the table's final summary row."""
-        result = generate_agent_summary_table(self._make_aggregated())
-        result_str = "\n".join(result)
-        self.assertNotIn("Totals:", result_str)
-        self.assertNotIn(" runs · ", result_str)
-        self.assertNotIn("Model Statistics Summary", result_str)
-        self.assertEqual(result[-1], "| **Totals** | 4 | 900 | 450 | — | — | — | $0.0000 | — | — | — | — | — | — | — | — | — |")
-
-    def test_totals_row_is_contiguous_and_last(self):
-        """GFM ends a table at a blank line, so the totals row sits directly beneath."""
+    def test_row_labels_are_the_issue_layout(self):
         lines = generate_agent_summary_table(self._make_aggregated())
-        self.assertTrue(lines[-1].startswith("| **Totals** "))
-        self.assertNotEqual(lines[-2], "")
+        labels = [line.split("|")[1].strip() for line in lines if line.startswith("| ")]
+        self.assertEqual(
+            labels[:7],
+            ["", "Runs", "LLM time", "Cost", "Input / output tokens",
+             "Cache hit tokens", "Tool calls"],
+        )
+        self.assertEqual(labels[7], "Tool error rate")
 
-    def test_single_run_totals_row(self):
+    def test_headline_reports_totals(self):
+        lines = generate_agent_summary_table(self._make_aggregated())
+        self.assertEqual(
+            lines[2],
+            "Total: 4 runs · 0.4 min LLM time · 23 tool calls (0% failed) · $0.0000 estimated",
+        )
+
+    def test_llm_time_is_a_sum_with_share(self):
+        """LLM runtime is summed per agent, with its share of the grand total."""
+        lines = generate_agent_summary_table(self._make_aggregated())
+        row = self._row(lines, "LLM time")
+        # 10000ms / 23000ms = 43%; 5000ms = 22%; 8000ms = 35%.
+        self.assertEqual(
+            _table_cells(row),
+            ["LLM time", "0.2 min (43%)", "0.1 min (22%)", "0.1 min (35%)", "**0.4 min**"],
+        )
+
+    def test_llm_time_shares_sum_to_100(self):
+        lines = generate_agent_summary_table(self._make_aggregated())
+        shares = [
+            int(re.search(r"\((\d+)%\)", cell).group(1))
+            for cell in _table_cells(self._row(lines, "LLM time"))[1:-1]
+        ]
+        self.assertEqual(sum(shares), 100)
+
+    def test_tool_calls_are_sums(self):
+        lines = generate_agent_summary_table(self._make_aggregated())
+        row = self._row(lines, "Tool calls")
+        self.assertEqual(_table_cells(row), ["Tool calls", "10", "5", "8", "**23**"])
+
+    def test_error_rate_replaces_tool_errors(self):
+        agg = self._make_aggregated()
+        agg["dev"]["errors_per_tool"] = {"terminal": 2}
+        agg["architect"]["errors_per_tool"] = {"file_editor": 1}
+        lines = generate_agent_summary_table(agg)
+        row = self._row(lines, "Tool error rate")
+        # architect 1/10, context 0/5, dev 2/8 -> 25%; the Total cell has no
+        # per-tool breakdown, so it renders the documented 0% floor.
+        self.assertEqual(
+            _table_cells(row), ["Tool error rate", "10%", "0%", "25%", "**0%**"]
+        )
+
+    def test_totals_error_rate_uses_the_total_tool_calls(self):
         agg = {
-            "architect": {
-                "runs": 1,
-                "total_input_tokens": 100,
-                "total_uncached_input_tokens": 100,
-                "total_output_tokens": 50,
-                "total_context_window": 8192,
-                "latency_sum": 1000.0,
-                "llm_runtime_sum": 5000.0,
-                "tool_calls_sum": 5,
-                "error_rate_sum": 0.0,
-                "review_fix_requests_sum": 0,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            }
-        }
-        result = generate_agent_summary_table(agg)
-        totals_row = result[-1]
-        # Row semantics win: the runs cell is the bare integer, never pluralized.
-        self.assertTrue(totals_row.startswith("| **Totals** | 1 |"))
-        self.assertNotIn("1 runs", totals_row)
-
-    def test_average_latency(self):
-        result = generate_agent_summary_table(self._make_aggregated())
-        # architect: 2000ms/2 = 1000ms avg = 1s (whole seconds, issue #947)
-        architect_line = [l for l in result if "Architect" in l][0]
-        self.assertEqual(_table_cells(architect_line)[9], "1")
-
-    def test_average_llm_runtime_seconds(self):
-        result = generate_agent_summary_table(self._make_aggregated())
-        # architect: 10000ms/2 = 5000ms avg = 5s
-        architect_line = [l for l in result if "Architect" in l][0]
-        self.assertEqual(_table_cells(architect_line)[10], "5")
-
-    def test_seconds_unit_labels(self):
-        """Duration columns are labelled seconds; no millisecond label survives."""
-        result = generate_agent_summary_table(self._make_aggregated())
-        result_str = "\n".join(result)
-        self.assertIn("| Avg Latency (s) |", result_str)
-        self.assertIn("| Avg LLM Runtime (s) |", result_str)
-        self.assertNotIn("(ms)", result_str)
-
-    def test_average_tool_calls(self):
-        result = generate_agent_summary_table(self._make_aggregated())
-        architect_line = [l for l in result if "Architect" in l][0]
-        self.assertIn("5.0", architect_line)
-
-    def test_tool_errors_column(self):
-        """Test that tool errors column shows correct values."""
-        result = generate_agent_summary_table(self._make_aggregated())
-        # All per-tool error dicts are empty, so all should show 0
-        for line in result:
-            if any(name in line for name in ["| Architect ", "| Context ", "| Dev "]):
-                self.assertIn("| 0 ", line)
-
-    def test_fix_requests_column_header(self):
-        """Test that Fix Requests column header is present."""
-        result = generate_agent_summary_table(self._make_aggregated())
-        result_str = "\n".join(result)
-        self.assertIn("Fix Requests", result_str)
-
-    def test_fix_requests_column_zero_by_default(self):
-        """Test that Fix Requests column shows 0 when no fix requests."""
-        result = generate_agent_summary_table(self._make_aggregated())
-        for line in result:
-            if any(name in line for name in ["| Architect ", "| Context ", "| Dev "]):
-                self.assertIn("| 0 ", line)
-
-    def test_fix_requests_column_with_values(self):
-        """Test that Fix Requests column shows correct values."""
-        agg = {
-            "architect": {
-                "runs": 2,
-                "total_input_tokens": 300,
-                "total_uncached_input_tokens": 300,
-                "total_output_tokens": 150,
-                "total_context_window": 16384,
-                "latency_sum": 2000.0,
-                "llm_runtime_sum": 10000.0,
-                "tool_calls_sum": 10,
-                "error_rate_sum": 0.0,
-                "review_fix_requests_sum": 5,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            },
             "dev": {
                 "runs": 1,
-                "total_input_tokens": 200,
-                "total_uncached_input_tokens": 200,
-                "total_output_tokens": 100,
-                "total_context_window": 8192,
-                "latency_sum": 1500.0,
-                "llm_runtime_sum": 5000.0,
-                "tool_calls_sum": 5,
-                "error_rate_sum": 0.0,
-                "review_fix_requests_sum": 0,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            },
-        }
-        result = generate_agent_summary_table(agg)
-        architect_line = [l for l in result if "Architect" in l][0]
-        dev_line = [l for l in result if "Dev" in l][0]
-        self.assertIn("| 5 ", architect_line)
-        self.assertIn("| 0 ", dev_line)
-
-    def test_backward_compatible_without_fix_requests(self):
-        """Agent table should show 0 for agents without review_fix_requests_sum."""
-        agg = {
-            "architect": {
-                "runs": 1,
-                "total_input_tokens": 100,
-                "total_uncached_input_tokens": 100,
-                "total_output_tokens": 50,
-                "total_context_window": 8192,
-                "latency_sum": 1000.0,
-                "llm_runtime_sum": 5000.0,
-                "tool_calls_sum": 5,
-                "error_rate_sum": 0.0,
-                # No review_fix_requests_sum key
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
+                "total_uncached_input_tokens": 10,
+                "total_output_tokens": 5,
+                "tool_calls_sum": 4,
+                "errors_per_tool": {"terminal": 1},
+                "tool_calls_per_tool": {"terminal": 4},
+                "llm_runtime_sum": 0.0,
+                "latency_sum": 0.0,
             }
         }
-        result = generate_agent_summary_table(agg)
-        result_str = "\n".join(result)
-        self.assertIn("| 0 ", result_str)
+        lines = generate_agent_summary_table(agg)
+        self.assertEqual(
+            _table_cells(self._row(lines, "Tool error rate")), ["Tool error rate", "25%", "**0%**"]
+        )
+
+    def test_error_rate_is_zero_without_tool_calls(self):
+        agg = {
+            "dev": {
+                "runs": 1,
+                "total_uncached_input_tokens": 10,
+                "total_output_tokens": 5,
+                "tool_calls_sum": 0,
+                "errors_per_tool": {"terminal": 2},
+                "tool_calls_per_tool": {},
+                "llm_runtime_sum": 0.0,
+                "latency_sum": 0.0,
+            }
+        }
+        lines = generate_agent_summary_table(agg)
+        self.assertEqual(_table_cells(self._row(lines, "Tool error rate"))[1], "0%")
+
+    def test_totals_column_matches_the_agents(self):
+        lines = generate_agent_summary_table(self._make_aggregated())
+        self.assertEqual(_table_cells(self._row(lines, "Runs"))[-1], "**4**")
+        self.assertEqual(
+            _table_cells(self._row(lines, "Input / output tokens")),
+            ["Input / output tokens", "300 / 150", "200 / 100", "400 / 200", "**900 / 450**"],
+        )
 
     def test_cost_column_and_total(self):
-        """Agent table should include a Cost column and sum costs in its totals row."""
+        agg = {
+            "architect": {
+                "runs": 1,
+                "total_uncached_input_tokens": 100,
+                "total_output_tokens": 50,
+                "latency_sum": 1000.0,
+                "llm_runtime_sum": 5000.0,
+                "tool_calls_sum": 5,
+                "errors_per_tool": {},
+                "tool_calls_per_tool": {},
+                "total_cost": 0.1234,
+            }
+        }
+        lines = generate_agent_summary_table(agg)
+        result_str = "\n".join(lines)
+        self.assertIn("| Cost |", result_str)
+        self.assertEqual(
+            _table_cells(self._row(lines, "Cost")),
+            ["Cost", f"{format_cost(0.1234)} (100%)", f"**{format_cost(0.1234)}**"],
+        )
+
+    def test_cost_shares_sum_to_100(self):
+        agg = {
+            "architect": {
+                "runs": 1, "total_uncached_input_tokens": 10, "total_output_tokens": 5,
+                "llm_runtime_sum": 0.0, "latency_sum": 0.0, "tool_calls_sum": 1,
+                "errors_per_tool": {}, "tool_calls_per_tool": {}, "total_cost": 0.25,
+            },
+            "dev": {
+                "runs": 1, "total_uncached_input_tokens": 10, "total_output_tokens": 5,
+                "llm_runtime_sum": 0.0, "latency_sum": 0.0, "tool_calls_sum": 1,
+                "errors_per_tool": {}, "tool_calls_per_tool": {}, "total_cost": 0.75,
+            },
+        }
+        lines = generate_agent_summary_table(agg)
+        shares = [
+            int(re.search(r"\((\d+)%\)", cell).group(1))
+            for cell in _table_cells(self._row(lines, "Cost"))[1:-1]
+        ]
+        self.assertEqual(sum(shares), 100)
+
+    def test_cost_estimate_marker_and_footnote(self):
+        agg = {
+            "architect": {
+                "runs": 1, "total_uncached_input_tokens": 10, "total_output_tokens": 5,
+                "llm_runtime_sum": 0.0, "latency_sum": 0.0, "tool_calls_sum": 1,
+                "errors_per_tool": {}, "tool_calls_per_tool": {},
+                "total_cost": 0.4, "estimated_cost_sum": 0.4,
+            },
+            "dev": {
+                "runs": 1, "total_uncached_input_tokens": 10, "total_output_tokens": 5,
+                "llm_runtime_sum": 0.0, "latency_sum": 0.0, "tool_calls_sum": 1,
+                "errors_per_tool": {}, "tool_calls_per_tool": {},
+                "total_cost": 0.6, "estimated_cost_sum": 0.0,
+            },
+        }
+        lines = generate_agent_summary_table(agg)
+        cells = _table_cells(self._row(lines, "Cost"))
+        self.assertTrue(cells[1].endswith("*"))
+        self.assertFalse(cells[2].endswith("*"))
+        self.assertTrue(cells[-1].endswith("**"))
+        result_str = "\n".join(lines)
+        self.assertIn("estimated from the price table", result_str)
+        self.assertIn("$1.0000* estimated", result_str)
+
+    def test_no_marker_or_footnote_without_estimate(self):
+        result_str = "\n".join(generate_agent_summary_table(self._make_aggregated()))
+        self.assertNotIn("estimated from the price table", result_str)
+        self.assertNotIn("* estimated", result_str)
+
+    def test_grid_is_rectangular(self):
+        """Every row carries exactly one label, one cell per agent and the Total."""
+        lines = generate_agent_summary_table(self._make_aggregated())
+        n_agents = 3
+        for line in lines:
+            if line.startswith("| "):
+                self.assertEqual(len(_table_cells(line)), 2 + n_agents, line)
+        header = next(line for line in lines if line.startswith("| | "))
+        self.assertEqual(len(_table_cells(header)), 2 + n_agents)
+
+    def test_detail_block_keeps_provider_health_and_per_tool(self):
+        agg = self._make_aggregated()
+        agg["dev"]["tool_calls_per_tool"] = {"terminal": 15, "file_editor": 8}
+        agg["dev"]["errors_per_tool"] = {"terminal": 2, "file_editor": 0}
+        agg["dev"]["cache_weighted_sum"] = 2300.0
+        agg["dev"]["cache_weight"] = 4000
+        agg["dev"]["total_cache_hit_tokens"] = 1920
+        agg["dev"]["total_reasoning_tokens"] = 10170
+        lines = generate_agent_summary_table(agg)
+        result_str = "\n".join(lines)
+        self.assertIn("<details>", result_str)
+        self.assertIn("<summary>Per-tool breakdown & provider health</summary>", result_str)
+        self.assertIn("| Avg LLM call latency (s) |", result_str)
+        self.assertIn("| Avg tokens/sec |", result_str)
+        self.assertIn("| Avg TTFT (s) |", result_str)
+        self.assertIn("| Reasoning tokens |", result_str)
+        self.assertIn("|   ↳ terminal |", result_str)
+        self.assertIn("|   ↳ file_editor |", result_str)
+        # Cache hit tokens + #888 rate share one cell (2300/4000 = 57.5%).
+        self.assertEqual(
+            _table_cells(self._row(lines, "Cache hit tokens"))[3], "1,920 (57.50%)"
+        )
+
+    def test_cache_cell_has_no_rate_without_signal(self):
+        """No cache signal renders the bare token count, never a bogus 0%."""
+        lines = generate_agent_summary_table(self._make_aggregated())
+        self.assertEqual(
+            _table_cells(self._row(lines, "Cache hit tokens")),
+            ["Cache hit tokens", "0", "0", "0", "**0**"],
+        )
+
+    def test_review_fix_requests_leave_the_report_but_stay_in_the_bucket(self):
+        agg = self._make_aggregated()
+        agg["dev"]["review_fix_requests_sum"] = 5
+        result_str = "\n".join(generate_agent_summary_table(agg))
+        self.assertNotIn("Fix Requests", result_str)
+        self.assertEqual(agg["dev"]["review_fix_requests_sum"], 5)
+
+    def test_single_run_table(self):
         agg = {
             "architect": {
                 "runs": 1,
@@ -1126,60 +1192,15 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "llm_runtime_sum": 5000.0,
                 "tool_calls_sum": 5,
                 "error_rate_sum": 0.0,
-                "total_cost": 0.1234,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            }
-        }
-        result = generate_agent_summary_table(agg)
-        result_str = "\n".join(result)
-        self.assertIn("Cost (USD)", result_str)
-        self.assertIn("$0.1234", result_str)
-        totals_row = result[-1]
-        # The totals cost cell is the shared format_cost output, not a bespoke string.
-        self.assertIn(f"| {format_cost(0.1234)} |", totals_row)
-
-    def test_cache_hit_and_reasoning_columns(self):
-        """The columns render the rate, summed cache-hit and summed reasoning (#888)."""
-        agg = {
-            "dev": {
-                "runs": 1,
-                "total_input_tokens": 4000,
-                "total_uncached_input_tokens": 2080,
-                "total_output_tokens": 200,
-                "total_context_window": 16384,
-                "latency_sum": 3000.0,
-                "llm_runtime_sum": 8000.0,
-                "tool_calls_sum": 8,
-                "error_rate_sum": 2.0,
                 "review_fix_requests_sum": 0,
-                "cache_weighted_sum": 2300.0,
-                "cache_weight": 4000,
-                "total_cache_hit_tokens": 1920,
-                "total_reasoning_tokens": 10170,
                 "tool_calls_per_tool": {},
                 "errors_per_tool": {},
                 "tokens_per_tool": {},
             }
         }
-        result = generate_agent_summary_table(agg)
-        result_str = "\n".join(result)
-        self.assertIn("Cache Hit Rate", result_str)
-        self.assertIn("Cache Hit Tokens", result_str)
-        self.assertIn("Reasoning Tokens", result_str)
-        dev_line = [line for line in result if "Dev" in line][0]
-        # 2300 / 4000 = 57.50%
-        self.assertIn("| 57.50% ", dev_line)
-        self.assertIn("| 1,920 ", dev_line)
-        self.assertIn("| 10,170 ", dev_line)
-        # Input cell is the bucket's uncached sum (4,000 − 1,920), not the raw 4,000 (#948).
-        self.assertIn("| 2,080 ", dev_line)
-
-    def test_cache_hit_shows_na_without_signal(self):
-        """A bucket with no observed input tokens renders 'n/a'."""
-        result_str = "\n".join(generate_agent_summary_table(self._make_aggregated()))
-        self.assertIn("n/a", result_str)
+        lines = generate_agent_summary_table(agg)
+        self.assertEqual(_table_cells(self._row(lines, "Runs")), ["Runs", "1", "**1**"])
+        self.assertIn("Total: 1 runs ·", lines[2])
 
 
 class TestMergePerToolDict(unittest.TestCase):
@@ -1481,7 +1502,7 @@ class TestPerToolAggregationModel(unittest.TestCase):
 
 
 class TestTableGenerationWithPerTool(unittest.TestCase):
-    """Test table generation with per-tool data."""
+    """Test table generation with per-tool data (detail block, issue #1019)."""
 
     def _make_aggregated_with_per_tool(self):
         return {
@@ -1493,7 +1514,7 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
                 "total_context_window": 16384,
                 "latency_sum": 2000.0,
                 "llm_runtime_sum": 10000.0,
-                "tool_calls_sum": 10,
+                "tool_calls_sum": 23,
                 "error_rate_sum": 0.0,
                 "review_fix_requests_sum": 0,
                 "tool_calls_per_tool": {"terminal": 15, "file_editor": 8},
@@ -1517,28 +1538,31 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
             },
         }
 
-    def test_agent_table_has_new_columns(self):
-        """Agent table should include Tool Errors and Per-Tool Calls columns."""
-        result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
-        result_str = "\n".join(result)
-        self.assertIn("Tool Errors", result_str)
-        self.assertIn("Per-Tool Calls", result_str)
+    @staticmethod
+    def _row(lines, label):
+        return next(line for line in lines if line.startswith(f"| {label} |"))
 
-    def test_agent_table_shows_tool_errors(self):
-        """Agent table should show correct tool error counts."""
-        result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
-        architect_line = [l for l in result if "Architect" in l][0]
-        # architect has 2 terminal errors + 0 file_editor errors = 2 total
-        self.assertIn("| 2 ", architect_line)
+    def test_per_tool_breakdown_lives_in_the_detail_block(self):
+        lines = generate_agent_summary_table(self._make_aggregated_with_per_tool())
+        result_str = "\n".join(lines)
+        self.assertIn("<details>", result_str)
+        self.assertIn("|   ↳ terminal |", result_str)
+        self.assertIn("|   ↳ file_editor |", result_str)
+        self.assertIn("|   ↳ bash |", result_str)
 
-    def test_agent_table_shows_per_tool_calls(self):
-        """Agent table should show formatted per-tool calls."""
-        result = generate_agent_summary_table(self._make_aggregated_with_per_tool())
-        architect_line = [l for l in result if "Architect" in l][0]
-        self.assertIn("file_editor: 8, terminal: 15", architect_line)
+    def test_per_tool_row_shows_calls_and_errors(self):
+        lines = generate_agent_summary_table(self._make_aggregated_with_per_tool())
+        cells = _table_cells(self._row(lines, "  ↳ terminal"))
+        # architect 15 calls / 2 errors; context ran no terminal calls.
+        self.assertEqual(cells, ["↳ terminal", "15 (2 err)", "—", "**15 (2 err)**"])
+
+    def test_per_tool_row_without_errors_is_a_bare_count(self):
+        lines = generate_agent_summary_table(self._make_aggregated_with_per_tool())
+        cells = _table_cells(self._row(lines, "  ↳ file_editor"))
+        self.assertEqual(cells[1], "8")
 
     def test_agent_table_backward_compatible(self):
-        """Agent table should show N/A for agents without per-tool data."""
+        """An agent without per-tool data still renders every summary row."""
         agg = {
             "architect": {
                 "runs": 1,
@@ -1556,18 +1580,17 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
                 "tokens_per_tool": {},
             }
         }
-        result = generate_agent_summary_table(agg)
-        result_str = "\n".join(result)
-        self.assertIn("N/A", result_str)
+        result_str = "\n".join(generate_agent_summary_table(agg))
+        self.assertIn("| Per-tool calls | N/A | **N/A** |", result_str)
+        self.assertIn("| Runs | 1 | **1** |", result_str)
 
     def test_agent_table_columns_align(self):
-        """Header, separator, rows and the totals row keep one column count (#829, #942)."""
+        """Every rendered row keeps the same column count, header to detail block."""
         lines = generate_agent_summary_table(self._make_aggregated_with_per_tool())
-        header_cols = lines[2].count("|")
-        self.assertEqual(lines[3].count("|"), header_cols)
-        arch_row = next(l for l in lines if l.startswith("| Architect "))
-        self.assertEqual(arch_row.count("|"), header_cols)
-        self.assertEqual(lines[-1].count("|"), header_cols)
+        n_agents = 2
+        for line in lines:
+            if line.startswith("| "):
+                self.assertEqual(len(_table_cells(line)), 2 + n_agents, line)
 
 
 class TestInputTokenSplit(unittest.TestCase):
@@ -1602,7 +1625,7 @@ class TestInputTokenSplit(unittest.TestCase):
 
 
 class TestStatsTotals(unittest.TestCase):
-    """Test the StatsTotals summary-row value object (issue #942)."""
+    """Test the StatsTotals Total-column value object (issue #1019)."""
 
     def _make_aggregated(self):
         return {
@@ -1612,6 +1635,11 @@ class TestStatsTotals(unittest.TestCase):
                 "total_uncached_input_tokens": 300,
                 "total_output_tokens": 150,
                 "total_cost": 0.1000,
+                "estimated_cost_sum": 0.1000,
+                "llm_runtime_sum": 10000.0,
+                "latency_sum": 2000.0,
+                "tool_calls_sum": 10,
+                "errors_per_tool": {"terminal": 1},
             },
             "dev": {
                 "runs": 1,
@@ -1619,6 +1647,10 @@ class TestStatsTotals(unittest.TestCase):
                 "total_uncached_input_tokens": 600,
                 "total_output_tokens": 100,
                 "total_cost": 0.0234,
+                "llm_runtime_sum": 5000.0,
+                "latency_sum": 1000.0,
+                "tool_calls_sum": 5,
+                "errors_per_tool": {"terminal": 1, "bash": 1},
             },
         }
 
@@ -1629,6 +1661,16 @@ class TestStatsTotals(unittest.TestCase):
         self.assertEqual(totals.output_tokens, 250)
         self.assertAlmostEqual(totals.cost_usd, 0.1234)
 
+    def test_from_aggregated_sums_runtime_tools_and_errors(self):
+        totals = StatsTotals.from_aggregated(self._make_aggregated())
+        self.assertEqual(totals.llm_runtime_ms, 15000.0)
+        self.assertEqual(totals.tool_calls, 15)
+        self.assertEqual(totals.tool_errors, 3)
+
+    def test_from_aggregated_tracks_the_estimated_share(self):
+        totals = StatsTotals.from_aggregated(self._make_aggregated())
+        self.assertAlmostEqual(totals.estimated_cost_usd, 0.1000)
+
     def test_from_aggregated_empty_is_zeroed(self):
         self.assertEqual(StatsTotals.from_aggregated({}), StatsTotals())
 
@@ -1637,47 +1679,50 @@ class TestStatsTotals(unittest.TestCase):
             {"architect": {"runs": 1, "total_input_tokens": 10, "total_output_tokens": 5}}
         )
         self.assertEqual(totals.cost_usd, 0.0)
+        self.assertEqual(totals.tool_errors, 0)
 
-    def test_render_row_shape(self):
-        row = StatsTotals.from_aggregated(self._make_aggregated()).render_row()
-        self.assertEqual(
-            row,
-            "| **Totals** | 3 | 900 | 250 | — | — | — | $0.1234 | — | — | — "
-            "| — | — | — | — | — | — |",
-        )
-        self.assertTrue(row.endswith(" |"))
-        self.assertEqual(row.count("|"), 18)
-
-    def test_render_row_uses_shared_cell_formatters(self):
-        """Totals cells call the same formatters as data rows (parity by construction)."""
+    def test_as_bucket_exposes_the_aggregation_shape(self):
         totals = StatsTotals.from_aggregated(self._make_aggregated())
-        row = totals.render_row()
-        self.assertIn(f"| {format_number(totals.input_tokens)} ", row)
-        self.assertIn(f"| {format_number(totals.output_tokens)} ", row)
-        self.assertIn(f"| {format_cost(totals.cost_usd)} ", row)
+        bucket = totals.as_bucket()
+        self.assertEqual(bucket["runs"], 3)
+        self.assertEqual(bucket["total_uncached_input_tokens"], 900)
+        self.assertEqual(bucket["total_output_tokens"], 250)
+        self.assertEqual(bucket["tool_calls_sum"], 15)
+        self.assertEqual(bucket["tool_errors_sum"], 3)
+        self.assertAlmostEqual(bucket["total_cost"], 0.1234)
+        self.assertAlmostEqual(bucket["estimated_cost_sum"], 0.1000)
 
-    def test_render_row_matches_agent_table_layout(self):
-        """The row keeps the agent table's 17-cell layout and ends the table."""
-        aggregated = {
-            "architect": {
-                "runs": 2,
-                "total_input_tokens": 300,
-                "total_uncached_input_tokens": 300,
-                "total_output_tokens": 150,
-                "total_context_window": 16384,
-                "latency_sum": 2000.0,
-                "llm_runtime_sum": 10000.0,
-                "tool_calls_sum": 10,
-                "error_rate_sum": 0.0,
-                "review_fix_requests_sum": 0,
-                "total_cost": 0.1000,
-                "tool_calls_per_tool": {},
-                "errors_per_tool": {},
-                "tokens_per_tool": {},
-            }
-        }
+    def test_render_headline_shape(self):
+        totals = StatsTotals.from_aggregated(self._make_aggregated())
+        self.assertEqual(
+            totals.render_headline(),
+            "Total: 3 runs · 0.2 min LLM time · 15 tool calls (20% failed) · $0.1234* estimated",
+        )
+
+    def test_render_headline_omits_the_failure_share_without_tool_calls(self):
+        totals = StatsTotals(runs=1, llm_runtime_ms=60000.0)
+        self.assertEqual(
+            totals.render_headline(),
+            "Total: 1 runs · 1.0 min LLM time · 0 tool calls · $0.0000 estimated",
+        )
+
+    def test_render_headline_has_no_marker_without_estimate(self):
+        totals = StatsTotals(runs=1, cost_usd=0.5)
+        self.assertNotIn("*", totals.render_headline())
+
+    def test_totals_column_matches_agent_table_column_count(self):
+        """Every table row (agents and Total) keeps the same cell count (#1019)."""
+        aggregated = self._make_aggregated()
         lines = generate_agent_summary_table(aggregated)
-        self.assertEqual(lines[-1], StatsTotals.from_aggregated(aggregated).render_row())
+        totals = StatsTotals.from_aggregated(aggregated)
+        n_agents = len(aggregated)
+        header = next(line for line in lines if line.startswith("| | "))
+        self.assertEqual(len(_table_cells(header)), 2 + n_agents)
+        for line in lines:
+            if line.startswith("| "):
+                self.assertEqual(len(_table_cells(line)), 2 + n_agents, line)
+        # The Total column is built from the same bucket shape as the agent cells.
+        self.assertEqual(totals.as_bucket()["runs"], sum(a["runs"] for a in aggregated.values()))
 
 
 class TestSecondsCell(unittest.TestCase):

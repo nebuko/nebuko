@@ -19,7 +19,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 # Import the Metrics schema
 sys.path.insert(0, os.path.dirname(__file__))
@@ -377,6 +377,7 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         "total_uncached_input_tokens": 0,
         "total_output_tokens": 0,
         "total_cost": 0.0,
+        "estimated_cost_sum": 0.0,
         "total_context_window": 0,
         "latency_sum": 0.0,
         "llm_runtime_sum": 0.0,
@@ -455,6 +456,8 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         ).uncached_input_tokens
         agg["total_output_tokens"] += output_tokens
         agg["total_cost"] += cost
+        if resolver is not None and resolver.is_estimated(m):
+            agg["estimated_cost_sum"] += cost
         agg["total_context_window"] += context_window
         agg["latency_sum"] += latency
         agg["llm_runtime_sum"] += runtime
@@ -494,6 +497,31 @@ def format_cost(value):
     return f"${value:,.4f}"
 
 
+#: Appended to a cost cell priced from the price table rather than the provider.
+ESTIMATE_MARKER = "*"
+#: Rendered under the table whenever at least one cost cell carries the marker.
+ESTIMATE_FOOTNOTE = "\\* estimated from the price table; the provider reports no cost."
+#: The title of the collapsible block holding diagnostic (non-summary) metrics.
+DETAIL_SUMMARY = "Per-tool breakdown & provider health"
+
+
+def _format_minutes(ms_value):
+    """Milliseconds as minutes with one decimal: '0.0 min', '41.0 min'."""
+    return f"{ms_value / 60000.0:.1f} min"
+
+
+def _format_error_rate(errors, tool_calls):
+    """Errors as a share of tool calls: '3%'. Zero calls render '0%'."""
+    if not tool_calls:
+        return "0%"
+    return f"{errors / tool_calls * 100:.0f}%"
+
+
+def _format_share(share):
+    """A [0, 1] fraction of a row total as '29%'."""
+    return f"{share * 100:.0f}%"
+
+
 @dataclass(frozen=True)
 class InputTokenSplit:
     """One usage record's input tokens split into new (uncached) and cache-read parts.
@@ -524,15 +552,32 @@ class InputTokenSplit:
 class StatsTotals:
     """Grand totals over every bucket of an aggregated metrics mapping.
 
-    Renders as the bold summary row of the agent statistics table,
-    replacing the removed ``**Totals:**`` sentence (issue #942).
+    Supplies the ``Total`` column of the transposed agent statistics table
+    (issue #1019), replacing the removed 17-cell ``render_row`` summary
+    (issue #942). ``as_bucket`` exposes the totals in the aggregation-bucket
+    shape so the Total column reuses the per-agent cell formatters verbatim.
     """
 
     runs: int = 0
     # Sum of per-run uncached input (InputTokenSplit); rendered under "Input Tokens".
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_hit_tokens: int = 0
+    # #888 weighted-mean machinery: rate = cache_weighted_sum / cache_weight.
+    cache_weighted_sum: float = 0.0
+    cache_weight: float = 0.0
+    reasoning_tokens: int = 0
     cost_usd: float = 0.0
+    # Price-table-priced share of cost_usd; drives the "*" estimate marker.
+    estimated_cost_usd: float = 0.0
+    llm_runtime_ms: float = 0.0
+    tool_calls: int = 0
+    tool_errors: int = 0
+    latency_sum: float = 0.0
+    tps_sum: float = 0.0
+    tps_count: int = 0
+    ttft_sum: float = 0.0
+    ttft_count: int = 0
 
     # @stub-protected
     @classmethod
@@ -543,47 +588,102 @@ class StatsTotals:
 
         Input tokens fold each bucket's per-run uncached sum
         (``total_uncached_input_tokens``), never a post-hoc subtraction of the
-        raw column totals (issue #948).
+        raw column totals (issue #948). Tool errors fold each bucket's
+        per-tool error counts.
         """
         runs = 0
         input_tokens = 0
         output_tokens = 0
+        cache_hit_tokens = 0
+        cache_weighted_sum = 0.0
+        cache_weight = 0.0
+        reasoning_tokens = 0
         cost_usd = 0.0
+        estimated_cost_usd = 0.0
+        llm_runtime_ms = 0.0
+        tool_calls = 0
+        tool_errors = 0
+        latency_sum = 0.0
+        tps_sum = 0.0
+        tps_count = 0
+        ttft_sum = 0.0
+        ttft_count = 0
         for agg in aggregated.values():
             runs += agg.get("runs", 0)
             input_tokens += agg.get("total_uncached_input_tokens", 0)
             output_tokens += agg.get("total_output_tokens", 0)
+            cache_hit_tokens += agg.get("total_cache_hit_tokens", 0)
+            cache_weighted_sum += agg.get("cache_weighted_sum", 0.0)
+            cache_weight += agg.get("cache_weight", 0)
+            reasoning_tokens += agg.get("total_reasoning_tokens", 0)
             cost_usd += agg.get("total_cost", 0.0)
+            estimated_cost_usd += agg.get("estimated_cost_sum", 0.0)
+            llm_runtime_ms += agg.get("llm_runtime_sum", 0.0)
+            tool_calls += agg.get("tool_calls_sum", 0)
+            tool_errors += sum((agg.get("errors_per_tool") or {}).values())
+            latency_sum += agg.get("latency_sum", 0.0)
+            tps_sum += agg.get("tps_sum", 0.0)
+            tps_count += agg.get("tps_count", 0)
+            ttft_sum += agg.get("ttft_sum", 0.0)
+            ttft_count += agg.get("ttft_count", 0)
         return cls(
             runs=runs,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_hit_tokens=cache_hit_tokens,
+            cache_weighted_sum=cache_weighted_sum,
+            cache_weight=cache_weight,
+            reasoning_tokens=reasoning_tokens,
             cost_usd=cost_usd,
+            estimated_cost_usd=estimated_cost_usd,
+            llm_runtime_ms=llm_runtime_ms,
+            tool_calls=tool_calls,
+            tool_errors=tool_errors,
+            latency_sum=latency_sum,
+            tps_sum=tps_sum,
+            tps_count=tps_count,
+            ttft_sum=ttft_sum,
+            ttft_count=ttft_count,
         )
 
     # @stub-protected
-    def render_row(self) -> str:
-        """One 17-cell markdown row matching the agent table's fixed column layout."""
-        empty = "—"
-        return (
-            f"| **Totals** "
-            f"| {self.runs} "
-            f"| {format_number(self.input_tokens)} "
-            f"| {format_number(self.output_tokens)} "
-            f"| {empty} "
-            f"| {empty} "
-            f"| {empty} "
-            f"| {format_cost(self.cost_usd)} "
-            f"| {empty} "
-            f"| {empty} "
-            f"| {empty} "
-            f"| {empty} "
-            f"| {empty} "
-            f"| {empty} "
-            f"| {empty} "
-            f"| {empty} "
-            f"| {empty} |"
-        )
+    def as_bucket(self) -> Dict[str, Any]:
+        """Bucket-keyed view of the totals, for reuse of the per-agent formatters."""
+        return {
+            "runs": self.runs,
+            "total_uncached_input_tokens": self.input_tokens,
+            "total_output_tokens": self.output_tokens,
+            "total_cache_hit_tokens": self.cache_hit_tokens,
+            "cache_weighted_sum": self.cache_weighted_sum,
+            "cache_weight": self.cache_weight,
+            "total_reasoning_tokens": self.reasoning_tokens,
+            "total_cost": self.cost_usd,
+            "estimated_cost_sum": self.estimated_cost_usd,
+            "llm_runtime_sum": self.llm_runtime_ms,
+            "tool_calls_sum": self.tool_calls,
+            "tool_errors_sum": self.tool_errors,
+            "latency_sum": self.latency_sum,
+            "tps_sum": self.tps_sum,
+            "tps_count": self.tps_count,
+            "ttft_sum": self.ttft_sum,
+            "ttft_count": self.ttft_count,
+        }
+
+    # @stub-protected
+    def render_headline(self) -> str:
+        """One-line summary above the table, e.g.
+        ``Total: 7 runs · 41.0 min LLM time · 78 tool calls (3% failed) · $1.2340* estimated``.
+        """
+        minutes = _format_minutes(self.llm_runtime_ms)
+        parts = [f"Total: {self.runs} runs", f"{minutes} LLM time"]
+        if self.tool_calls:
+            failed = f" ({_format_error_rate(self.tool_errors, self.tool_calls)} failed)"
+            parts.append(f"{format_number(self.tool_calls)} tool calls{failed}")
+        else:
+            parts.append(f"{format_number(self.tool_calls)} tool calls")
+        cost = f"{format_cost(self.cost_usd)}{ESTIMATE_MARKER if self.estimated_cost_usd else ''}"
+        parts.append(f"{cost} estimated")
+        return " · ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -609,69 +709,323 @@ class SecondsCell:
         return f"{self.ms_value / 1000.0:.0f}"
 
 
+@dataclass(frozen=True)
+class ShareCell:
+    """One table cell: an absolute value, optionally with its share of the row total."""
+
+    value_text: str
+    #: Fraction of the row total (0..1); ``None`` omits the "(NN%)" suffix.
+    share: Optional[float] = None
+    #: True when the amount includes price-table-estimated money → marker "*".
+    estimated: bool = False
+
+    # @stub-protected
+    def render(self) -> str:
+        """'$0.4000 (33%)*' | '12.0 min (29%)' | '14'."""
+        text = self.value_text
+        if self.share is not None:
+            text = f"{text} ({_format_share(self.share)})"
+        if self.estimated:
+            text = f"{text}{ESTIMATE_MARKER}"
+        return text
+
+
+@dataclass(frozen=True)
+class MetricRow:
+    """One transposed row: metric label, one rendered cell per agent, one Total cell."""
+
+    label: str
+    #: One rendered cell per agent column, in column order.
+    cells: Tuple[str, ...]
+    #: The Total-column cell; ``render`` bolds it.
+    total: str
+
+    # @stub-protected
+    def render(self) -> str:
+        """'| LLM time | 12.0 min (29%) | … | **41.0 min** |'."""
+        body = "".join(f" {cell} |" for cell in self.cells)
+        return f"| {self.label} |{body} **{self.total}** |"
+
+
+def _summary_share(value, total):
+    """``value / total`` as a 0..1 fraction, or ``None`` when there is no total."""
+    if not total:
+        return None
+    return value / total
+
+
+def _build_summary_row(aggregated, totals, columns, label, cell_builder):
+    """One summary row: ``cell_builder(bucket)`` per agent plus the totals bucket.
+
+    The Total cell drops the share (it *is* the row total) and the estimate
+    marker (the marker belongs to the per-agent cells, whose costs it labels).
+    """
+    cells = tuple(cell_builder(aggregated[column]) for column in columns)
+    return MetricRow(
+        label=label,
+        cells=cells,
+        total=_strip_share_and_marker(cell_builder(totals.as_bucket())),
+    )
+
+
+def _strip_share_and_marker(cell_text):
+    """Drop a trailing '(NN%)' and '*' from a Total-column cell."""
+    return re.sub(r" \(\d+%\)\*?$", "", cell_text.rstrip("*"))
+
+
+def _summary_rows(aggregated, totals, columns):
+    """The seven summary rows, in the order fixed by the issue's layout."""
+
+    def runs(b):
+        return str(b.get("runs", 0))
+
+    def llm_time(b):
+        return ShareCell(
+            value_text=_format_minutes(b.get("llm_runtime_sum", 0.0)),
+            share=_summary_share(b.get("llm_runtime_sum", 0.0), totals.llm_runtime_ms),
+        ).render()
+
+    def cost(b):
+        return ShareCell(
+            value_text=format_cost(b.get("total_cost", 0.0)),
+            share=_summary_share(b.get("total_cost", 0.0), totals.cost_usd),
+            estimated=bool(b.get("estimated_cost_sum", 0.0)),
+        ).render()
+
+    def tokens(b):
+        return (
+            f"{format_number(b.get('total_uncached_input_tokens', 0))} / "
+            f"{format_number(b.get('total_output_tokens', 0))}"
+        )
+
+    def cache(b):
+        rate, cache_hit_tokens, _ = _bucket_cache_and_reasoning(b)
+        if rate == "n/a":
+            return cache_hit_tokens
+        return f"{cache_hit_tokens} ({rate.rstrip('%')}%)"
+
+    def tool_calls(b):
+        return format_number(b.get("tool_calls_sum", 0))
+
+    def error_rate(b):
+        return _format_error_rate(
+            sum((b.get("errors_per_tool") or {}).values()),
+            b.get("tool_calls_sum", 0),
+        )
+
+    return (
+        _build_summary_row(aggregated, totals, columns, "Runs", runs),
+        _build_summary_row(aggregated, totals, columns, "LLM time", llm_time),
+        _build_summary_row(aggregated, totals, columns, "Cost", cost),
+        _build_summary_row(
+            aggregated, totals, columns, "Input / output tokens", tokens
+        ),
+        _build_summary_row(aggregated, totals, columns, "Cache hit tokens", cache),
+        _build_summary_row(aggregated, totals, columns, "Tool calls", tool_calls),
+        _build_summary_row(
+            aggregated, totals, columns, "Tool error rate", error_rate
+        ),
+    )
+
+
+def _detail_rows(aggregated, totals, columns):
+    """Diagnostic rows kept out of the summary table (provider health, per-tool)."""
+    rows = []
+
+    def average_ms(key):
+        def cell(b):
+            return SecondsCell.from_average(b.get(key, 0.0), b.get("runs", 0)).render()
+
+        return cell
+
+    def provider_metric(key, count_key, decimals):
+        def cell(b):
+            return _format_provider_metric(b.get(key, 0.0), b.get(count_key, 0), decimals)
+
+        return cell
+
+    rows.append(
+        _build_summary_row(
+            aggregated, totals, columns, "Avg LLM call latency (s)", average_ms("latency_sum")
+        )
+    )
+    rows.append(
+        _build_summary_row(
+            aggregated, totals, columns, "Avg tokens/sec", provider_metric("tps_sum", "tps_count", 1)
+        )
+    )
+    rows.append(
+        _build_summary_row(
+            aggregated, totals, columns, "Avg TTFT (s)", provider_metric("ttft_sum", "ttft_count", 2)
+        )
+    )
+    rows.append(
+        _build_summary_row(
+            aggregated,
+            totals,
+            columns,
+            "Reasoning tokens",
+            lambda b: format_number(b.get("total_reasoning_tokens", 0)),
+        )
+    )
+
+    def per_tool_cell(tool):
+        def cell(b):
+            calls = (b.get("tool_calls_per_tool") or {}).get(tool, 0)
+            errors = (b.get("errors_per_tool") or {}).get(tool, 0)
+            if not calls:
+                return "—"
+            if errors:
+                return f"{format_number(calls)} ({format_number(errors)} err)"
+            return format_number(calls)
+
+        return cell
+
+    tool_names = sorted(
+        {tool for agg in aggregated.values() for tool in (agg.get("tool_calls_per_tool") or {})}
+    )
+    for tool in tool_names:
+        calls = sum(
+            (agg.get("tool_calls_per_tool") or {}).get(tool, 0)
+            for agg in aggregated.values()
+        )
+        errors = sum(
+            (agg.get("errors_per_tool") or {}).get(tool, 0)
+            for agg in aggregated.values()
+        )
+        if errors:
+            total = f"{format_number(calls)} ({format_number(errors)} err)"
+        else:
+            total = format_number(calls)
+        rows.append(
+            MetricRow(
+                label=f"  ↳ {tool}",
+                cells=tuple(per_tool_cell(tool)(agg) for agg in aggregated.values()),
+                total=total,
+            )
+        )
+    if not tool_names:
+        rows.append(
+            MetricRow(
+                label="Per-tool calls",
+                cells=tuple("N/A" for _ in columns),
+                total="N/A",
+            )
+        )
+    return tuple(rows)
+
+
+@dataclass(frozen=True)
+class AgentSummaryTable:
+    """Transposed agent statistics table: metrics as rows, agents as columns + Total."""
+
+    #: Agent display names in sort order (architect, context, dev, …).
+    columns: Tuple[str, ...]
+    headline: str
+    #: The seven summary rows.
+    rows: Tuple[MetricRow, ...]
+    #: "" when no cost cell is estimated.
+    footnote: str = ""
+
+    # @stub-protected
+    @classmethod
+    def from_aggregated(
+        cls, aggregated: Mapping[str, Mapping[str, Any]], totals: "StatsTotals"
+    ) -> "AgentSummaryTable":
+        """Build headline, rows and footnote; shares are computed against totals."""
+        columns = tuple(
+            get_agent_display_name(agent)
+            for agent in sorted(aggregated.keys(), key=_agent_sort_key)
+        )
+        rows = _summary_rows(aggregated, totals, tuple(aggregated.keys()))
+        starred = any(ESTIMATE_MARKER in row.total for row in rows) or any(
+            ESTIMATE_MARKER in cell for row in rows for cell in row.cells
+        )
+        return cls(
+            columns=columns,
+            headline=totals.render_headline(),
+            rows=rows,
+            footnote=ESTIMATE_FOOTNOTE if starred else "",
+        )
+
+    # @stub-protected
+    def render(self) -> List[str]:
+        """Heading, headline, header, separator, rows and the conditional footnote."""
+        header = "| | " + " | ".join(self.columns) + " | **Total** |"
+        separator = "|" + "---:|" * (len(self.columns) + 2)
+        lines = [
+            "## 📊 Agent Statistics Summary",
+            "",
+            self.headline,
+            "",
+            header,
+            separator,
+        ]
+        lines.extend(row.render() for row in self.rows)
+        if self.footnote:
+            lines.append("")
+            lines.append(f"> _{self.footnote}_")
+        return lines
+
+
+@dataclass(frozen=True)
+class DetailSection:
+    """Collapsible ``<details>`` block of extra metric rows under the summary table."""
+
+    summary: str
+    columns: Tuple[str, ...]
+    rows: Tuple[MetricRow, ...]
+
+    # @stub-protected
+    @classmethod
+    def from_aggregated(
+        cls, aggregated: Mapping[str, Mapping[str, Any]], totals: "StatsTotals"
+    ) -> "DetailSection":
+        """Per-tool rows (calls, `calls (N err)` when errors exist) and provider health."""
+        columns = tuple(
+            get_agent_display_name(agent)
+            for agent in sorted(aggregated.keys(), key=_agent_sort_key)
+        )
+        return cls(
+            summary=DETAIL_SUMMARY,
+            columns=columns,
+            rows=_detail_rows(aggregated, totals, tuple(aggregated.keys())),
+        )
+
+    # @stub-protected
+    def render(self) -> List[str]:
+        """'<details><summary>…</summary>' + transposed mini-table + '</details>'."""
+        header = "| | " + " | ".join(self.columns) + " | **Total** |"
+        separator = "|" + "---:|" * (len(self.columns) + 2)
+        lines = ["", "<details>", f"<summary>{self.summary}</summary>", "", header, separator]
+        lines.extend(row.render() for row in self.rows)
+        lines.extend(["", "</details>"])
+        return lines
+
+
+#: Stable sort order for known agents; unknown roles sort last, alphabetically.
+AGENT_SORT_ORDER = {"architect": 0, "context": 1, "dev": 2}
+
+
+def _agent_sort_key(agent_role):
+    """Sort key placing the known agents first, then unknown roles by name."""
+    return (AGENT_SORT_ORDER.get(agent_role, 99), agent_role)
+
+
 def generate_agent_summary_table(aggregated):
-    """Generate a markdown table from per-agent aggregated metrics."""
+    """Render the issue-close agent statistics section.
+
+    Returns the whole section as markdown lines: headline, the transposed
+    table (metrics as rows, agents as columns plus a ``Total`` column), the
+    conditional ``*`` estimate footnote, and a collapsible detail block
+    (issue #1019).
+    """
     if not aggregated:
         return ""
 
-    lines = []
-    lines.append("## 📊 Agent Statistics Summary")
-    lines.append("")
-    lines.append("| Agent | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Cache Hit Tokens | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (s) | Avg LLM Runtime (s) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |")
-    lines.append("|-------|------|-------------|---------------|----------------|------------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|")
-
-    # Define a stable sort order for known agents
-    agent_order = {"architect": 0, "context": 1, "dev": 2}
-
-    for agent in sorted(aggregated.keys(), key=lambda a: agent_order.get(a, 99)):
-        agg = aggregated[agent]
-        runs = agg["runs"]
-        input_tokens = agg.get("total_uncached_input_tokens", 0)
-        output_tokens = agg["total_output_tokens"]
-        cost = agg.get("total_cost", 0.0)
-        avg_context_window = agg["total_context_window"] // runs if runs else 0
-        avg_latency = SecondsCell.from_average(agg["latency_sum"], runs)
-        avg_llm_runtime = SecondsCell.from_average(agg["llm_runtime_sum"], runs)
-        avg_tool_calls = agg["tool_calls_sum"] / runs if runs else 0
-        avg_tps = _format_provider_metric(
-            agg.get("tps_sum", 0.0), agg.get("tps_count", 0), 1
-        )
-        avg_ttft = _format_provider_metric(
-            agg.get("ttft_sum", 0.0), agg.get("ttft_count", 0), 2
-        )
-
-        # Calculate total tool errors across all runs
-        total_errors = sum(agg["errors_per_tool"].values()) if agg["errors_per_tool"] else 0
-
-        # Get total fix requests across all runs
-        fix_requests = agg.get("review_fix_requests_sum", 0)
-
-        cache_rate, cache_hit_tokens, reasoning_tokens = _bucket_cache_and_reasoning(agg)
-
-        display_name = get_agent_display_name(agent)
-
-        lines.append(
-            f"| {display_name} "
-            f"| {runs} "
-            f"| {format_number(input_tokens)} "
-            f"| {format_number(output_tokens)} "
-            f"| {cache_rate} "
-            f"| {cache_hit_tokens} "
-            f"| {reasoning_tokens} "
-            f"| {format_cost(cost)} "
-            f"| {format_number(avg_context_window)} "
-            f"| {avg_latency.render()} "
-            f"| {avg_llm_runtime.render()} "
-            f"| {avg_tps} "
-            f"| {avg_ttft} "
-            f"| {avg_tool_calls:.1f} "
-            f"| {total_errors} "
-            f"| {fix_requests} "
-            f"| {_format_tool_dict(agg['tool_calls_per_tool'])} |"
-        )
-
-    lines.append(StatsTotals.from_aggregated(aggregated).render_row())
-
+    totals = StatsTotals.from_aggregated(aggregated)
+    lines = AgentSummaryTable.from_aggregated(aggregated, totals).render()
+    lines.extend(DetailSection.from_aggregated(aggregated, totals).render())
     return lines
 
 
