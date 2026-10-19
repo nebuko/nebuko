@@ -245,7 +245,17 @@ class InProcessAgentHost:
             sections=contract.prompt_block() if contract is not None else ""
         )
         if contract is None:
-            _run_closing_turn(conversation, prompt)
+            try:
+                _run_closing_turn(conversation, prompt)
+            except Exception as error:  # noqa: BLE001 - fall back, never abort
+                # The turn never ran (or broke mid-flight); the work-loop
+                # capture chain stays the deliverable (issue #1014).
+                log.warning(
+                    "[phase:agent] finalize turn failed (%s); keeping the "
+                    "captured deliverable",
+                    error,
+                )
+                return
             text = _finalize_turn_text(conversation)
             if text:
                 setattr(conversation, _FINALIZE_BODY_ATTR, text)
@@ -353,12 +363,55 @@ def _turn_outcome_payload(conversation: Any, state: Any) -> dict[str, Any] | Non
     into the run state, so the outcome build_output resolved there is the
     single source. status is engine-measured and is derived by
     :meth:`TurnOutcome.from_agent_payload`'s ``observed`` argument, never handed
-    to the agent."""
+    to the agent.
+
+    ``build_output`` runs after this turn and is what projects the tool
+    executor's recorded outcome into the state file; when that projection is
+    missing (a build step that returned early, an in-process caller that
+    bypasses it) the turn's own recorded outcome is read straight from the
+    run-scoped registry instead of dropping the verdict.
+    """
     if getattr(conversation, _FINALIZE_BODY_ATTR, None) is None and not _has_finalize(
         conversation
     ):
         return None
-    return _state_turn_outcome_fields(state)
+    return _state_turn_outcome_fields(state) or _recorded_turn_outcome_fields(
+        conversation
+    )
+
+
+def _recorded_turn_outcome_fields(conversation: Any) -> dict[str, Any] | None:
+    """The turn outcome the finalize executor recorded for this run, as fields."""
+    conv_id = getattr(conversation, "id", None)
+    if conv_id is None:
+        return None
+    ensure_import_path()
+    from agent_script.features.dispatch_next_tool.dispatch_next_tool import (  # noqa: PLC0415
+        get_recorded_run_prefs,
+        get_recorded_turn_outcome,
+    )
+
+    outcome = get_recorded_turn_outcome(conv_id)
+    if outcome is None:
+        return None
+    prefs = get_recorded_run_prefs(conv_id)
+    fields = _outcome_fields(outcome, prefs) or {}
+    handoff = _recorded_agent_call_fields(conv_id)
+    if handoff is not None:
+        fields["agent_call"] = handoff
+    return fields or None
+
+
+def _recorded_agent_call_fields(conv_id: Any) -> dict[str, Any] | None:
+    """The typed hand-off the finalize executor recorded, as payload fields."""
+    from agent_script.features.call_agent_tool.call_agent_tool import (  # noqa: PLC0415
+        get_recorded_function_call,
+    )
+
+    handoff = get_recorded_function_call(conv_id)
+    if handoff is None:
+        return None
+    return {"agent_name": handoff.agent_name, "task": handoff.task}
 
 
 def _has_finalize(conversation: Any) -> bool:
@@ -371,7 +424,11 @@ def _state_turn_outcome_fields(state: Any) -> dict[str, Any] | None:
     outcome = getattr(state, "turn_outcome", None)
     if outcome is None:
         return None
-    prefs = getattr(state, "prefs", None)
+    return _outcome_fields(outcome, getattr(state, "prefs", None))
+
+
+def _outcome_fields(outcome: Any, prefs: Any) -> dict[str, Any] | None:
+    """The payload-field view of a ``TurnOutcome`` (and its run prefs)."""
     fields: dict[str, Any] = {
         "status": outcome.status.value if outcome.status else "",
         "appreciation": outcome.appreciation.value if outcome.appreciation else "",
@@ -382,6 +439,11 @@ def _state_turn_outcome_fields(state: Any) -> dict[str, Any] | None:
     if outcome.incomplete_reason:
         fields["incomplete_reason"] = outcome.incomplete_reason.value
     return _drop_blanks(fields) or None
+
+
+def _drop_blanks(fields: Mapping[str, Any]) -> dict[str, Any]:
+    """Drop empty payload fields so the outcome carries only stated facts."""
+    return {key: value for key, value in fields.items() if value}
 
 
 @contextlib.contextmanager

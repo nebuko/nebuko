@@ -91,17 +91,21 @@ def _finalize_report_event(report: str, **outcome: Any) -> object:
     """A real ``finalize`` action: the turn text is the report, the args the outcome.
 
     Ellipsis-free by construction: this is the one terminal channel every step
-    ends through (issue #1033), so the closing turn carries both artifacts.
+    ends through (issue #1033), so the closing turn carries both artifacts. The
+    SDK splits the ``response_schema`` fields out of the action arguments and
+    hands them over as the action's structured output, which is mirrored here.
     """
     from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
+    action = FinalizeAction()
+    action._structured_output = {"turn_outcome": outcome}
     return ActionEvent(
         source="agent",
         tool_name="finalize",
         thought=[TextContent(text=report)],
-        action=FinalizeAction(turn_outcome=outcome),
+        action=action,
         tool_call_id="tc-report-finalize",
         tool_call=MessageToolCall(
             id="tc-report-finalize",
@@ -111,6 +115,27 @@ def _finalize_report_event(report: str, **outcome: Any) -> object:
         ),
         llm_response_id="r2",
     )
+
+
+def _run_recorded_finalize_actions(events: list[Any]) -> None:
+    """Run the real ``finalize`` executor over the scripted actions (issue #1033).
+
+    The SDK executes the tool after the turn; the scripted conversation replays
+    the turn without the SDK, so the executor is invoked here to record the
+    typed outcome in the run-scoped registry exactly as a live run would.
+    """
+    from nebuko.engine.paths import ensure_import_path
+
+    ensure_import_path()
+    from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+
+    executor = FinalizeExecutor(conversation_id="conv-test")
+    for event in events:
+        if getattr(event, "tool_name", None) != "finalize":
+            continue
+        action = getattr(event, "action", None)
+        if action is not None:
+            executor(action, None)
 
 
 class _FakeAgent:
@@ -138,6 +163,7 @@ class _FakeConversation:
         tools: dict[str, Any] | None = None,
         fail_send: bool = False,
     ) -> None:
+        self.id = "conv-test"
         self.state = SimpleNamespace(events=list(events))
         self.agent = _FakeAgent(tools or {})
         self._report_events = list(report_events or [])
@@ -153,6 +179,7 @@ class _FakeConversation:
     def run(self) -> None:
         self.tools_seen_during_run = dict(self.agent._tools)
         self.state.events.extend(self._report_events)
+        _run_recorded_finalize_actions(self._report_events)
 
     def interrupt(self) -> None:  # pragma: no cover - the timeout path
         pass
@@ -203,7 +230,10 @@ def _host(
         Path("workflow_state.json").write_text(json.dumps(state), encoding="utf-8")
 
     def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
-        return SimpleNamespace(state=SimpleNamespace(events=events))
+        # The engine-elicited closing turn calls ``send_message``/``run`` on the
+        # conversation, so the work-loop stand-in must expose the SDK surface
+        # (a bare ``state.events`` namespace no longer suffices, issue #1033).
+        return _FakeConversation(events=events)
 
     pipeline = SimpleNamespace(
         build_output=_build_output,
@@ -243,20 +273,23 @@ def test_captures_the_deliverable_from_the_end_tool_boundary(tmp_path: Path) -> 
     assert result["state"].agent == "dev"
 
 
-def test_recovers_a_deliverable_sharing_the_end_tool_turn(tmp_path: Path) -> None:
-    """#555/#738: the deliverable shares the ``dispatch_next`` turn, so it is not
-    a ``MessageEvent``; the legacy ``latest_answer.md`` holds the finish note."""
+def test_a_non_terminal_tool_turn_is_never_the_deliverable(tmp_path: Path) -> None:
+    """#1033: only the closing turn's text is the report; a work-loop tool turn
+    that merely carried prose (an intermediate tool call) is not captured."""
     repo_root = tmp_path / "checkout"
     _write_entry_point(repo_root)
     host = _host(
         repo_root,
-        events=[_end_tool_turn("dispatch_next", "Full proposal"), _end_tool_turn("finish", "note")],
+        events=[
+            _end_tool_turn("terminal", "Full proposal"),
+            _end_tool_turn("finish", "note"),
+        ],
         latest_answer="note",
     )
 
     result = host.run("prompt")
 
-    assert result["deliverable"] == "Full proposal"
+    assert result["deliverable"] == "note"
     assert result["answer"] == "note"
 
 
@@ -298,7 +331,7 @@ def test_run_binds_the_explicit_repo_root_workspace(tmp_path: Path) -> None:
     def _capture_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
         seen["workspace"] = workspace
         seen["cwd"] = os.getcwd()
-        return SimpleNamespace(state=SimpleNamespace(events=[]))
+        return _FakeConversation(events=[])
 
     host = _host(repo_root, events=[], latest_answer="", run_agent=_capture_run_agent)
 
@@ -437,9 +470,15 @@ class TestEngineElicitedClosingTurn:
 
         result = host.run("prompt")
 
-        outcome = TurnOutcome.from_agent_payload(
-            result["turn_outcome"], observed=_SUCCESS
-        )
+        # The host's payload carries the engine-measured status; the agent's
+        # own payload never does, so strip it before the agent-facing decode.
+        agent_payload = {
+            key: value
+            for key, value in result["turn_outcome"].items()
+            if key not in ("status", "incomplete_reason", "agent_call")
+        }
+        outcome = TurnOutcome.from_agent_payload(agent_payload, observed=_SUCCESS)
+        assert result["turn_outcome"]["status"] == "completed"
         assert outcome.status is TurnStatus.COMPLETED
         assert outcome.appreciation is Appreciation.HOLD
         assert outcome.hold_kind.value == "awaiting_input"

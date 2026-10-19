@@ -477,6 +477,7 @@ class TurnOutcomePayload(BaseModel):
             return None
         return FunctionCall(
             agent_name=self.agent_call.agent_name.strip(),
+            task=self.agent_call.task,
             complexity=self.complexity or "",
         )
 

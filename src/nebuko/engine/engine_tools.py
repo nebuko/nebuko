@@ -223,12 +223,23 @@ def _named_field(message: str) -> str:
 
 
 def _as_mapping(value: object) -> Optional[dict[str, Any]]:
-    """A mapping view of a pydantic model (or another duck-typed outcome)."""
+    """A mapping view of a pydantic model (or another duck-typed outcome).
+
+    A plain object with the right attributes (a scripted test double, a
+    not-yet-migrated worker's namespace) exposes the same fields through
+    ``vars``; unset attributes are dropped so the read mirrors
+    ``model_dump(exclude_none=True)``.
+    """
     if isinstance(value, BaseModel):
         try:
             return value.model_dump(exclude_none=True)
         except Exception:  # noqa: BLE001 - an unreadable action must not crash
             return None
+    if isinstance(value, Mapping):
+        return dict(value)
+    namespace = getattr(value, "__dict__", None)
+    if isinstance(namespace, Mapping) and not callable(value):
+        return {key: item for key, item in namespace.items() if item is not None}
     return None
 
 

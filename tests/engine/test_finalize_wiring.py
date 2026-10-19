@@ -143,12 +143,33 @@ class TestFinalizeToolRegistration:
             {"appreciation": "approved", "status": "completed"},
             {"appreciation": "approved", "required_agent": "review"},
             {"appreciation": "hold", "hold_kind": "awaiting_approval"},
+        ],
+    )
+    def test_engine_owned_axes_are_rejected_at_the_schema(
+        self, payload: dict
+    ) -> None:
+        """``status``, ``required_agent`` and ``awaiting_approval`` cannot enter.
+
+        The SDK validates a typed ``response_schema`` before the executor runs,
+        so the rejection surfaces as the SDK's validation error (which the agent
+        loop turns into a tool error, ``agent.py``). The point under test is that
+        the axis never reaches the outcome — not which layer says so.
+        """
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+
+        tool = FinalizeTool.create(conversation_id="c-reject")[0]
+        with pytest.raises(ValueError):
+            tool.action_from_arguments({"turn_outcome": payload})
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
             {"appreciation": "approved", "agent_call": {"agent_name": "  "}},
             {"appreciation": "approved", "complexity": "urgent"},
         ],
     )
     def test_unusable_agent_input_never_records_an_outcome(self, payload: dict) -> None:
-        """``status``, ``required_agent`` and ``awaiting_approval`` are not agent input."""
+        """A runtime rule violation is returned to the agent, never recorded."""
         from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
             get_recorded_turn_outcome,
         )
@@ -369,6 +390,32 @@ def _agent_message_event(text: str) -> object:
     )
 
 
+#: The conversation id the scripted conversation reports, so the finalize
+#: executor's run-scoped registry entry and the harness read the same key.
+_FAKE_CONVERSATION_ID = "conv-finalize-wiring"
+
+
+def _run_recorded_finalize_actions(events: list[Any]) -> None:
+    """Run the real ``finalize`` executor over the scripted actions (issue #1033).
+
+    The SDK executes the tool after the turn; the scripted conversation replays
+    the turn without the SDK, so the executor is invoked here to record the
+    typed outcome in the run-scoped registry exactly as a live run would.
+    """
+    from nebuko.engine.paths import ensure_import_path
+
+    ensure_import_path()
+    from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+
+    executor = FinalizeExecutor(conversation_id=_FAKE_CONVERSATION_ID)
+    for event in events:
+        if getattr(event, "tool_name", None) != "finalize":
+            continue
+        action = getattr(event, "action", None)
+        if action is not None:
+            executor(action, None)
+
+
 def _engine_prompt_event(text: str) -> object:
     """The engine's own turn prompt as the SDK emits it (issue #1020).
 
@@ -408,6 +455,7 @@ class _FinalizeConversation:
         turns: list[list[Any]],
         tools: dict[str, Any] | None = None,
     ) -> None:
+        self.id = _FAKE_CONVERSATION_ID
         self.state = SimpleNamespace(events=[])
         self.agent = _FakeAgent(tools or {})
         self._turns = list(turns)
@@ -420,7 +468,9 @@ class _FinalizeConversation:
     def run(self) -> None:
         self.tools_seen.append(set(self.agent._tools))
         if self._turns:
-            self.state.events.extend(self._turns.pop(0))
+            events = self._turns.pop(0)
+            self.state.events.extend(events)
+            _run_recorded_finalize_actions(events)
 
     def interrupt(self) -> None:  # pragma: no cover - the timeout path
         pass
