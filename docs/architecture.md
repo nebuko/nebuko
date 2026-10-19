@@ -148,16 +148,18 @@ for every agent (no per-agent code paths):
    `status`/`branch`/`complexity`/`reason`). `EngineToolRegistry.harvest` reads
    those typed fields structurally — no prose/regex heuristics, no per-role
    configuration.
-2. **Report turn** (`agent_host.py`) — when the work loop ends (any exit
+2. **Closing turn** (`agent_host.py`) — when the work loop ends (any exit
    reason) the engine takes the hand and issues one elicitation turn whose
-   answer channel is the control plane (`_call_finish` / `_call_dispatch`). The
-   harvested `finish.message` is the deliverable; the typed `dispatch_next`
-   fields are the routing decision. This is what makes the posted answer
-   independent of where the agent placed its prose (the #822 truncation bug).
+   answer channel is the `finalize` tool. The call's `report` argument is the
+   deliverable; its typed `turn_outcome` is the routing decision. The report is
+   read from the `finalize` call itself, never from an event after it (the
+   call's observation carries the same `tool_name`). This is what makes the
+   posted answer independent of where the agent placed its prose (issues #822,
+   #1038).
 3. **Capture layer** (`build_output.py` + `answer_capture.py`) — the harness
    freezes the deliverable at the first end-tool boundary
    (`AnswerCapture.freeze_report_payload`, source `report_finish`). Deterministic
-   fallback chain when the report turn cannot run: standalone text answer →
+   fallback chain when the closing turn cannot run: standalone text answer →
    work-loop `finish.message` → the boundary turn's thought, each one visibly
    `source`-marked in the snapshot. `extract_latest_answer()` keeps its
    stub-protected signature and reads the same typed payload first.
@@ -165,7 +167,7 @@ for every agent (no per-agent code paths):
 
    | Input | Posted body |
    |---|---|
-   | `latest_answer.md` / captured deliverable non-empty | The report turn's typed `finish.message` (the deliverable) |
+   | `latest_answer.md` / captured deliverable non-empty | The closing turn's typed `finalize.report` (the deliverable) |
    | missing/empty | The finish message → byte-identical legacy behavior |
 
    Invariants enforced regardless of agent:
@@ -189,7 +191,7 @@ for every agent (no per-agent code paths):
    its copy of the trigger payload is escaped, so one logical answer fires
    exactly one run (issue #994).
 
-**Shared contract** — the rule "the report turn's `finish.message` is the
+**Shared contract** — the rule "the closing `finalize` call's `report` is the
 deliverable; the work-loop finish message is an optional note" lives in a single
 skill file, [`skills/posting-contract.md`](../defaults/skills/posting-contract.md),
 attached to every agent via the `skills:` list in `agent-config.yaml` — no

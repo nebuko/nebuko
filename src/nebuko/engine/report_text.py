@@ -13,6 +13,7 @@ ignored.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 #: Conversation attribute holding the event index where the closing turn starts
@@ -38,6 +39,28 @@ def content_text(content: object) -> str:
     return "".join(parts)
 
 
+def _report_argument(event: object) -> str:
+    """The ``report`` argument of a ``finalize`` call, or ``""``.
+
+    A call that passes validation carries it on the typed action. A call the SDK
+    rejected (a missing or invalid ``turn_outcome``) is recorded with
+    ``action=None`` and only the raw tool-call arguments, which still hold the
+    report the agent wrote - so it is read from there rather than lost.
+    """
+    report = getattr(getattr(event, "action", None), "report", None)
+    if isinstance(report, str):
+        return report.strip()
+    raw = getattr(getattr(event, "tool_call", None), "arguments", None)
+    if not isinstance(raw, str):
+        return ""
+    try:
+        arguments = json.loads(raw)
+    except ValueError:
+        return ""
+    report = arguments.get("report") if isinstance(arguments, dict) else None
+    return report.strip() if isinstance(report, str) else ""
+
+
 def finalize_anchor_index(conversation: Any) -> int:
     """Index of the harvested ``finalize`` event, or ``-1`` when there is none.
 
@@ -50,16 +73,30 @@ def finalize_anchor_index(conversation: Any) -> int:
     offset = getattr(conversation, REPORT_OFFSET_ATTR, 0) or 0
     events = events_of(conversation)
     for index in range(len(events) - 1, offset - 1, -1):
-        if getattr(events[index], "tool_name", None) == "finalize":
+        if is_finalize_call(events[index]):
             return index
     return -1
+
+
+def is_finalize_call(event: object) -> bool:
+    """Whether ``event`` is a ``finalize`` call, not the observation answering it.
+
+    The SDK emits the call's observation right after it, and the observation
+    carries the same ``tool_name``. Matching on the name alone lands on the
+    observation, which has no report, so the report the call carried is never
+    read (issue #1038). Only a call carries the raw ``tool_call``.
+    """
+    return (
+        getattr(event, "tool_name", None) == "finalize"
+        and getattr(event, "tool_call", None) is not None
+    )
 
 
 def closing_turn_report_text(conversation: Any) -> str:
     """Report text anchored to the harvested ``finalize`` event's turn.
 
-    Precedence: the anchor ``finalize`` action's typed ``report`` argument (the
-    canonical channel, issue #1038); else the action event's ``thought`` (a
+    Precedence: the anchor ``finalize`` call's ``report`` argument (the canonical
+    channel, issue #1038), including from a call the SDK rejected; else the action event's ``thought`` (a
     model that wrote the report as turn text; the SDK emits no standalone
     ``MessageEvent`` for a turn that also carries a tool call); else the nearest
     preceding *agent-authored* message when the tool call and its text landed on
@@ -73,9 +110,9 @@ def closing_turn_report_text(conversation: Any) -> str:
     if anchor < 0:
         return ""
     events = events_of(conversation)
-    argument = getattr(getattr(events[anchor], "action", None), "report", None)
-    if isinstance(argument, str) and argument.strip():
-        return argument.strip()
+    argument = _report_argument(events[anchor])
+    if argument:
+        return argument
     text = content_text(getattr(events[anchor], "thought", None)).strip()
     if text:
         return text
@@ -86,7 +123,7 @@ def closing_turn_report_text(conversation: Any) -> str:
     offset = getattr(conversation, REPORT_OFFSET_ATTR, 0) or 0
     start = offset
     for index in range(anchor - 1, offset - 1, -1):
-        if getattr(events[index], "tool_name", None) == "finalize" or (
+        if is_finalize_call(events[index]) or (
             getattr(events[index], "source", None) == "user"
         ):
             start = index + 1
