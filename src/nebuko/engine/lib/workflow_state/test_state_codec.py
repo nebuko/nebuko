@@ -107,7 +107,6 @@ def _state_with_per_entry_outcomes() -> WorkflowState:
                 turn_outcome=TurnOutcome(
                     status="completed",
                     appreciation="approved",
-                    required_agent="context",
                     note="need context",
                 ),
             ),
@@ -118,7 +117,7 @@ def _state_with_per_entry_outcomes() -> WorkflowState:
                 turn_outcome=TurnOutcome(
                     status="completed",
                     appreciation="approved",
-                    required_agent="architect",
+                    note="handed back",
                 ),
             ),
         ],
@@ -139,9 +138,9 @@ class TestCodecRoundTripPreservesPerEntryOutcomes(unittest.TestCase):
         restored = codec.decode(codec.encode(_state_with_per_entry_outcomes(), compact=True))
 
         self.assertEqual(restored.history[0].turn_outcome.status, "completed")
-        self.assertEqual(restored.history[0].turn_outcome.required_agent, "context")
+        self.assertEqual(restored.history[0].turn_outcome.note, "need context")
         self.assertEqual(restored.history[1].turn_outcome.appreciation, "approved")
-        self.assertEqual(restored.history[1].turn_outcome.required_agent, "architect")
+        self.assertEqual(restored.history[1].turn_outcome.note, "handed back")
 
     def test_disk_handoff_preserves_the_outcome_per_entry(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -151,7 +150,7 @@ class TestCodecRoundTripPreservesPerEntryOutcomes(unittest.TestCase):
             result = codec.load_prev()
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.state.history[1].turn_outcome.required_agent, "architect")
+        self.assertEqual(result.state.history[1].turn_outcome.note, "handed back")
 
 
 def _gate_decision(status: str, step: str = "plan") -> GateDecision:

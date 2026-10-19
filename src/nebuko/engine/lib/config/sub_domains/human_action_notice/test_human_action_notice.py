@@ -33,6 +33,7 @@ def _classify(
     target="olivier-norture",
     step="plan",
     workflow="default",
+    gate_pending=False,
 ):
     return HumanActionNotice.classify(
         turn_outcome,
@@ -42,16 +43,17 @@ def _classify(
         step=step,
         workflow=workflow,
         unresolved=unresolved,
+        gate_pending=gate_pending,
     )
 
 
 class TestClassifyMatrix:
     """Which finished runs owe a human a notification."""
 
-    def test_approval_hold_is_an_approval_request(self):
-        notice = _classify(
-            _outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_APPROVAL)
-        )
+    def test_a_pending_gate_is_an_approval_request(self):
+        """The engine-owned gate, not the agent's verdict, blocks the advance
+        (issue #1033): an approved run on an armed gate still pings."""
+        notice = _classify(_outcome(Appreciation.APPROVED), gate_pending=True)
         assert notice is not None
         assert notice.kind == "awaiting_approval"
 
@@ -90,7 +92,7 @@ class TestClassifyMatrix:
 
     def test_an_unresolvable_target_never_pings(self):
         assert (
-            _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_APPROVAL), target="")
+            _classify(_outcome(Appreciation.APPROVED), target="", gate_pending=True)
             is None
         )
 
@@ -111,17 +113,17 @@ class TestRender:
     """The rendered body is the single canonical human ping."""
 
     def test_render_is_headed_by_the_bot_and_human_action_markers(self):
-        lines = _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_APPROVAL, note="human_gate:plan")).render().splitlines()
+        lines = _classify(_outcome(Appreciation.APPROVED, note="human_gate:plan"), gate_pending=True).render().splitlines()
         assert lines[0] == "<!-- bot-workflow-terminal -->"
         assert lines[1] == "<!-- bot-human-action -->"
 
     def test_render_pings_the_target_exactly_once(self):
-        body = _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_APPROVAL, note="human_gate:plan")).render()
+        body = _classify(_outcome(Appreciation.APPROVED, note="human_gate:plan"), gate_pending=True).render()
         assert body.count("@olivier-norture") == 1
         assert "@olivier-norture workflow **default**" in body
 
     def test_approval_body_names_the_step_and_the_resume_command(self):
-        body = _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_APPROVAL, note="human_gate:plan"), step="plan").render()
+        body = _classify(_outcome(Appreciation.APPROVED, note="human_gate:plan"), step="plan", gate_pending=True).render()
         assert "waiting for your approval" in body
         assert "step `plan`" in body
         assert "/nebuko resume" in body
@@ -136,7 +138,7 @@ class TestRender:
         assert "has finished at step `review`" in body
 
     def test_reason_is_appended_when_present(self):
-        body = _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_APPROVAL, note="human_gate:plan")).render()
+        body = _classify(_outcome(Appreciation.APPROVED, note="human_gate:plan"), gate_pending=True).render()
         assert "_human_gate:plan_" in body
 
     def test_no_reason_line_when_absent(self):
@@ -162,7 +164,7 @@ class TestValueObject:
     """The notice is a frozen payload, like AgentStartNotice."""
 
     def test_is_immutable(self):
-        notice = _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_APPROVAL, note="human_gate:plan"))
+        notice = _classify(_outcome(Appreciation.APPROVED, note="human_gate:plan"), gate_pending=True)
         try:
             notice.kind = "workflow_complete"
         except Exception as exc:  # pydantic raises ValidationError on frozen models
@@ -171,5 +173,5 @@ class TestValueObject:
             raise AssertionError("HumanActionNotice should be immutable")
 
     def test_round_trips_through_model_dump(self):
-        notice = _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_APPROVAL, note="human_gate:plan"))
+        notice = _classify(_outcome(Appreciation.APPROVED, note="human_gate:plan"), gate_pending=True)
         assert HumanActionNotice.model_validate(notice.model_dump()) == notice
