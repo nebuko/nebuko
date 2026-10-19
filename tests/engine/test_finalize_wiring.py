@@ -632,6 +632,32 @@ class TestFinalizeTurn:
         assert result["answer"] == "raw turn text"
         assert result["turn_outcome"]["appreciation"] == "approved"
 
+    def test_declared_sections_are_extracted_from_the_report_argument(
+        self, tmp_path: Path
+    ) -> None:
+        # An ``output:`` step puts its section markers inside ``report``; the
+        # rendered comment is identical to the turn-text channel's.
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FinalizeConversation(
+            turns=[
+                [_finalize_event_with_report(_answer(), {"appreciation": "approved"})]
+            ]
+        )
+        host = _host_for(
+            repo_root,
+            conversation,
+            latest_answer="raw turn text",
+            step_output=STEP_OUTPUT_JSON,
+        )
+
+        result = host.run("prompt")
+
+        assert len(conversation.prompts) == 1
+        assert result["deliverable"].startswith("# Wired the format")
+        assert "## Changes" in result["deliverable"]
+        assert result["turn_outcome"]["appreciation"] == "approved"
+
     def test_restricts_the_tool_surface_to_the_terminal_gate(
         self, tmp_path: Path
     ) -> None:
