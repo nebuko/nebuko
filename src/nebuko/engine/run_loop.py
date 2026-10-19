@@ -845,6 +845,29 @@ class Engine:
                         state=None,
                         phases=tuple(phases),
                     )
+                if skip.kind is SkipKind.GATE_NOOP:
+                    # An ``approve|reject gate`` command with nothing it may
+                    # decide (issue #1012) is inert: the workflow is untouched,
+                    # so the run is a no-op that exits 0 and posts the reason —
+                    # the message the human needs is the whole point of the
+                    # command, and a red CI run for a legitimate "nothing to
+                    # approve" would be wrong.
+                    log.info("[phase:guards] skipping agent — %s", reason)
+                    posted = (
+                        None
+                        if _is_bot_trigger(trigger)
+                        else self._post_gate_noop_notice(reason)
+                    )
+                    return RunOutcome(
+                        exit_code=skip.exit_code,
+                        turn_outcome=TurnOutcome.for_incomplete(
+                            IncompleteReason.NO_OUTCOME, note=reason
+                        ),
+                        prompt=None,
+                        posted_body=posted,
+                        state=None,
+                        phases=tuple(phases),
+                    )
                 if skip.is_benign and not (soft_kill_halt or command_error):
                     # A workflow that has no next agent (or reached its terminal
                     # step) is a deliberate no-op, not a failure: record the
@@ -1159,6 +1182,25 @@ class Engine:
             log.info("[phase:publish] staged undelivered comment as %s", COMMENT_BODY_ARTIFACT)
         except Exception as exc:  # noqa: BLE001 - staging is best-effort
             log.warning("[phase:publish] could not stage undelivered comment: %s", exc)
+
+    # @stub-protected
+    def _post_gate_noop_notice(self, reason: str) -> str:
+        """Reply with the reason a gate command had nothing to decide (#1012).
+
+        The ``/nebuko approve gate`` / ``reject gate`` command is inert when no
+        gate is held: the human still needs to read *why* nothing happened, and
+        the reason would otherwise live only in the CI log. Unlike
+        :meth:`_post_terminal_notice` this is a plain marker-led reply — no
+        ``@author`` ping, since no action is owed. Best-effort: a failed post
+        must not mask the (successful) no-op outcome.
+        """
+        marker = _load_bridge_module("prepare_comment").BOT_MARKER
+        notice = _neutralize_agent_triggers(f"{marker}\nskipping agent — {reason}")
+        try:
+            self.adapter.post(notice)
+        except Exception as exc:  # noqa: BLE001 - the notice is best-effort
+            log.warning("[phase:guards] gate no-op notice failed: %s", exc)
+        return notice
 
     # @stub-protected
     def _post_terminal_notice(self, reason: str) -> str:

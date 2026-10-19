@@ -1330,6 +1330,77 @@ class TestArmedGateHoldExit:
         assert outcome.exit_code == ExitCode.TERMINAL
 
 
+class TestGateNoopExit:
+    """Issue #1012: a gate command with nothing to decide is an inert no-op.
+
+    ``/nebuko approve gate`` on a workflow that is not held at a ``human_gate``
+    step (or that has no state / an unauthorized author / a replayed decision)
+    returned a ``SKIP_AGENT`` verdict with no ``SKIP_KIND``, defaulted to
+    ``CONFIG_ERROR`` and exited 20 — failing CI for a command that simply
+    changed nothing. It now exits 0 and posts the skip reason.
+    """
+
+    def test_a_gate_noop_exits_zero_and_posts_the_reason(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SKIP_KIND": "gate_noop",
+                "REASON": "gate: workflow is not held at a human_gate step",
+            },
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.exit_code != ExitCode.TERMINAL
+        assert outcome.posted_body is not None
+        assert (
+            "skipping agent — gate: workflow is not held at a human_gate step"
+            in outcome.posted_body
+        )
+        # Truly inert: no state mutation, so the workflow is left untouched.
+        assert outcome.state is None
+
+    def test_a_bot_authored_trigger_gets_no_notice(self, tmp_path, monkeypatch):
+        """The engine's own comments must not re-enter the notice path."""
+        engine = _engine(
+            tmp_path, _trigger(body=f"{BOT_AGENT_MARKER}\n@@dev continue")
+        )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SKIP_KIND": "gate_noop",
+                "REASON": "gate: workflow is not held at a human_gate step",
+            },
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body is None
+
+    def test_an_unclassified_skip_still_terminates(self, tmp_path, monkeypatch):
+        """Fail-closed guard: no ``SKIP_KIND`` keeps the exit-20 behaviour."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "true", "REASON": "boom"})
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+
+
 class TestStepSkipKindIsOnlyForAStop:
     """Issue #996: a run that *advanced* owes no skip kind.
 

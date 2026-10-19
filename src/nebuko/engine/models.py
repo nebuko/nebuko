@@ -119,6 +119,11 @@ class SkipKind(Enum):
     # Without this kind the resolver's gate skip defaulted to CONFIG_ERROR and
     # exited 20 instead of the hold exit 10.
     HUMAN_GATE_HOLD = "human_gate_hold"
+    # Benign — an ``approve|reject gate`` command found nothing it may decide
+    # (issue #1012): the command changed nothing, so the run is an inert no-op
+    # that exits 0 and posts the skip reason. Without this kind the rejection
+    # defaulted to CONFIG_ERROR and exited 20.
+    GATE_NOOP = "gate_noop"
 
 
 # @stub-protected
@@ -144,6 +149,7 @@ class SkipOutcome:
             SkipKind.NO_NEXT_AGENT,
             SkipKind.TERMINAL,
             SkipKind.HUMAN_GATE_HOLD,
+            SkipKind.GATE_NOOP,
         )
 
     # @stub-protected

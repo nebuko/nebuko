@@ -122,6 +122,8 @@ class TestResolveGateDecisionPath(unittest.TestCase):
                 None, _cmd("/nebuko approve gate"), HUMAN, tmpdir
             )
         self.assertEqual(cfg.get("SKIP_AGENT"), "true")
+        # The benign kind (issue #1012) keeps the guards phase at exit 0.
+        self.assertEqual(cfg.get("SKIP_KIND"), "gate_noop")
 
     def test_unauthorized_author_is_inert(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -130,6 +132,7 @@ class TestResolveGateDecisionPath(unittest.TestCase):
                 _held_state(), _cmd("/nebuko approve gate"), UNAUTHORIZED, tmpdir
             )
         self.assertEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg.get("SKIP_KIND"), "gate_noop")
         self.assertIn("not authorized", cfg.get("REASON", ""))
 
     def test_bot_author_is_inert(self):
@@ -139,6 +142,7 @@ class TestResolveGateDecisionPath(unittest.TestCase):
                 _held_state(), _cmd("/nebuko approve gate"), BOT, tmpdir
             )
         self.assertEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg.get("SKIP_KIND"), "gate_noop")
 
     def test_not_held_is_inert(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -148,6 +152,10 @@ class TestResolveGateDecisionPath(unittest.TestCase):
                 state, _cmd("/nebuko approve gate"), HUMAN, tmpdir
             )
         self.assertEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg.get("SKIP_KIND"), "gate_noop")
+        self.assertEqual(
+            cfg.get("REASON"), "gate: workflow is not held at a human_gate step"
+        )
 
     def test_approve_routes_to_on_result_approved(self):
         with tempfile.TemporaryDirectory() as tmpdir:
