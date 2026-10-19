@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -30,8 +30,10 @@ from nebuko.engine.engine_tools import (
 )
 from nebuko.engine.finalize import (
     OutputContract,
+    OutputRenderer,
     RouteDecision,
     RunTerminator,
+    SectionExtractionError,
     step_output_contract,
 )
 
@@ -305,6 +307,28 @@ def _agent_message_event(text: str) -> object:
     )
 
 
+def _engine_prompt_event(text: str) -> object:
+    """The engine's own turn prompt as the SDK emits it (issue #1020).
+
+    ``send_message`` becomes a ``user``-sourced ``MessageEvent`` in the
+    conversation's event stream, so the engine's finalize prompt — which embeds
+    ``OutputContract.prompt_block()`` — is a harvest candidate unless the reader
+    filters message source.
+    """
+    from openhands.sdk.event import MessageEvent
+    from openhands.sdk.llm.message import Message, TextContent
+
+    return MessageEvent(
+        source="user",
+        llm_message=Message(role="user", content=[TextContent(text=text)]),
+    )
+
+
+def _finalize_event_without_thought(route: dict[str, Any] | None = None) -> object:
+    """A ``finalize`` call whose turn carried no report text of its own."""
+    return _finalize_event("", route)
+
+
 class _FakeAgent:
     def __init__(self, tools: dict[str, Any]) -> None:
         import threading
@@ -347,9 +371,12 @@ def _host_for(
     latest_answer: str,
     step_output: str | None,
     state_turn_outcome: dict[str, Any] | None = None,
+    classify_event: Callable[[object], bool] | None = None,
 ) -> InProcessAgentHost:
     def _run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
         return conversation
+
+    events = getattr(conversation, "state", SimpleNamespace(events=[])).events
 
     def _build_output(conversation, metrics, args, prev_state=None):
         Path("latest_answer.md").write_text(latest_answer, encoding="utf-8")
@@ -363,6 +390,27 @@ def _host_for(
         if state_turn_outcome is not None:
             state["turn_outcome"] = state_turn_outcome
         Path("workflow_state.json").write_text(json.dumps(state), encoding="utf-8")
+        # The real ``build_output`` rewrites ``latest_answer.md`` from the
+        # conversation's events; a scripted conversation carries no run outcome,
+        # so the events are replayed through the same scanner here (issue #1020).
+        if classify_event is not None:
+            import sys
+
+            lib = (
+                repo_root / "src" / "nebuko" / "engine" / "lib"
+            )
+            sys.path.insert(0, str(lib))
+            try:
+                from agent_script.features.build_output import build_output
+
+                build_output._get_run_outcome = lambda *_: SimpleNamespace(
+                    status=None, dispatch_recall_event_offset=None
+                )
+                build_output.extract_latest_answer(
+                    list(events), classify_event=classify_event
+                )
+            finally:
+                sys.path.remove(str(lib))
 
     pipeline = SimpleNamespace(
         build_output=_build_output,
@@ -548,6 +596,178 @@ class TestFinalizeTurn:
         assert route.appreciation == "hold"
         assert route.hold_kind == "awaiting_input"
         assert route.note == "need input"
+
+
+class TestFinalizeTemplatePlaceholder:
+    """Regression tests for issue #1020: the engine's template was posted verbatim.
+
+    The runtime event shape that reproduces it: a ``user``-sourced prompt
+    ``MessageEvent`` (``send_message``) followed by a ``finalize`` turn whose text
+    *is* that prompt — the engine's recall turn replays the finalize prompt onto
+    the control turn, so the prompt was harvested as the agent's report, its
+    ``# …headline…`` skeleton bodies validated, and the rendered template was
+    posted as the comment.
+    """
+
+    def _host(
+        self,
+        tmp_path: Path,
+        conversation: object,
+        *,
+        latest_answer: str = "the real work-loop answer",
+    ) -> InProcessAgentHost:
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        return _host_for(
+            repo_root,
+            conversation,
+            latest_answer=latest_answer,
+            step_output=STEP_OUTPUT_JSON,
+            classify_event=None,
+        )
+
+    def _prompt(self, contract: OutputContract) -> str:
+        from nebuko.engine.agent_host import _FINALIZE_PROMPT
+
+        return _FINALIZE_PROMPT.format(sections=contract.prompt_block())
+
+    def test_the_engine_prompt_is_never_harvested_as_the_report(
+        self, tmp_path: Path
+    ) -> None:
+        """Pre-fix the harvest returned the engine prompt: the template posted.
+
+        Reproduced by the runtime event shape: the control turn replayed the
+        engine's own finalize prompt as its text, and no agent-authored message
+        stands on the turn.
+        """
+        from nebuko.engine.agent_host import _finalize_turn_text
+
+        contract = _contract()
+        prompt = self._prompt(contract)
+        conversation = _FinalizeConversation(turns=[[_engine_prompt_event(prompt)]])
+        conversation.state.events.extend(
+            [_finalize_event_without_thought({"appreciation": "approved"})]
+        )
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        harvested = _finalize_turn_text(conversation)
+
+        assert harvested == ""
+
+        result = self._host(tmp_path, conversation).run("prompt")
+
+        assert result["deliverable"] == "the real work-loop answer"
+        assert "…headline…" not in result["deliverable"]
+
+    def test_a_prompt_echoing_finalize_turn_salvages_to_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """An echoing finalize turn yields no section; the fallback chain runs.
+
+        The turn carries the harness's prompt echo as its text, so no section
+        survives extraction or salvage — the run degrades to ``latest_answer.md``
+        instead of posting the template.
+        """
+        from nebuko.engine.agent_host import (
+            _REPORT_OFFSET_ATTR,
+            _salvage_finalize_body,
+        )
+
+        contract = _contract()
+        prompt = self._prompt(contract)
+        conversation = _FinalizeConversation(turns=[[]])
+        conversation.state.events = [
+            _agent_message_event(_answer("A true headline")),
+            _finalize_event(prompt, {"appreciation": "approved"}),
+            _engine_prompt_event(prompt),
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 1)
+
+        body = _salvage_finalize_body(
+            FinalizeToolHandler(RunTerminator(contract)), contract, conversation
+        )
+
+        assert body == ""
+        assert "…headline…" not in body
+
+        result = self._host(tmp_path, conversation).run("prompt")
+
+        # The rendered template is never the posted body. With no section
+        # surviving, the run degrades to the captured deliverable — the real
+        # agent-authored answer (``capture.deliverable`` prefers the harvested
+        # turn text over the raw ``latest_answer.md``), never the placeholder.
+        assert result["deliverable"] == _answer("A true headline").strip()
+        assert "…headline…" not in result["deliverable"]
+        assert "…changes…" not in result["deliverable"]
+
+    def test_each_prompt_body_is_rejected_by_placeholder_validation(self) -> None:
+        """The template's bodies are placeholders, so an echo can never validate."""
+        contract = _contract()
+        renderer = OutputRenderer(contract)
+        prompt = self._prompt(contract)
+        assert "…headline…" in prompt and "…changes…" in prompt
+
+        for name in ("headline", "changes"):
+            with pytest.raises(SectionExtractionError, match="template placeholder"):
+                renderer.extract_section(prompt, name)
+
+    def test_an_echoing_prompt_never_renders_a_posted_comment(self) -> None:
+        """The reproduced defect: the prompt block rendered the 302-char template."""
+        from nebuko.engine.agent_host import _FINALIZE_PROMPT
+
+        contract = _contract()
+        prompt = _FINALIZE_PROMPT.format(sections=contract.prompt_block())
+        terminator = RunTerminator(
+            contract, post=lambda body: None, apply_route=lambda route: None
+        )
+
+        with pytest.raises((SectionExtractionError, FinalizeToolError)):
+            terminator.finalize(RouteDecision(appreciation="approved"), prompt)
+
+    def test_the_engine_prompt_never_reaches_the_harvest_anchor(self) -> None:
+        """Every declared field of the prompt is a placeholder, none a body."""
+        from nebuko.engine.agent_host import _FINALIZE_PROMPT
+
+        contract = _contract()
+        prompt = _FINALIZE_PROMPT.format(sections=contract.prompt_block())
+        renderer = OutputRenderer(contract)
+
+        gathered: dict[str, Optional[str]] = {}
+        for field in contract.fields:
+            try:
+                gathered[field.name] = renderer.extract_section(prompt, field.name)
+            except SectionExtractionError:
+                gathered[field.name] = None
+
+        assert all(body is None for body in gathered.values())
+        assert renderer.render({}) == ""
+
+    def test_a_genuine_report_still_wins_over_the_fallback(
+        self, tmp_path: Path
+    ) -> None:
+        """A real turn text is unaffected by the harvest filter."""
+        from nebuko.engine.agent_host import _FINALIZE_BODY_ATTR, _finalize_turn_text
+
+        contract = _contract()
+        prompt = self._prompt(contract)
+        conversation = _FinalizeConversation(
+            turns=[
+                [
+                    _engine_prompt_event(prompt),
+                    _agent_message_event(_answer("A true headline")),
+                    _finalize_event_without_thought({"appreciation": "approved"}),
+                ]
+            ]
+        )
+
+        result = self._host(tmp_path, conversation).run("prompt")
+
+        expected = OutputRenderer(contract).render(
+            {"headline": "A true headline", "changes": "- a.py"}
+        )
+        assert getattr(conversation, _FINALIZE_BODY_ATTR, None) == expected
+        assert result["deliverable"] == expected
+        assert _finalize_turn_text(conversation).startswith("# A true headline")
 
 
 class TestFinalizeHarvestAnchor:

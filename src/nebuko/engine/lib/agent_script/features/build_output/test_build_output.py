@@ -10,6 +10,7 @@ from unittest import mock
 from build_output import (
     LATEST_ANSWER_FILE,
     _is_human_gate_hold,
+    _is_recall_pass_turn,
     _parse_gate_released_env,
     _recall_aware_events,
     _resolve_pin,
@@ -21,6 +22,7 @@ from build_output import (
     is_malformed_final_message,
     load_prev_state_or_recover,
 )
+from agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
 from workflow_state import (
     Appreciation,
     GateLock,
@@ -1226,6 +1228,91 @@ class TestTerminalTurnAnswer(unittest.TestCase):
             llm_response_id="r-x",
         )
         self.assertEqual(_terminal_turn_answer(event, "finish"), "")
+
+
+def _finalize_action_event(text: str, tool_name: str | None = "finalize") -> "object":
+    """Build the finalize-turn ActionEvent the SDK emits (issue #1020).
+
+    The action carries no declared field (the report rides in the turn text), so
+    the generic SDK action model dumps it as ``{}`` and the turn is recognizable
+    only by its tool name — the same shape the engine harvests at runtime.
+    """
+    from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
+    from openhands.sdk.event import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall, TextContent
+
+    tool_call = MessageToolCall(
+        id="tc-finalize",
+        name=tool_name or "finalize",
+        arguments="{}",
+        origin="completion",
+    )
+    return ActionEvent(
+        source="agent",
+        tool_name=tool_name,
+        thought=[TextContent(text=text)],
+        action=FinalizeAction(),
+        tool_call_id="tc-finalize",
+        tool_call=tool_call,
+        llm_response_id="r-finalize",
+    )
+
+
+class TestEngineOwnedTerminalTurns(unittest.TestCase):
+    """Issue #1020: engine-owned turns never supply the posted answer."""
+
+    def test_the_recall_prompt_echo_is_not_captured(self):
+        events = [
+            _msg_event("the real work-loop answer"),
+            _finish_action_event(DISPATCH_RECALL_PROMPT),
+        ]
+        self.assertEqual(
+            extract_latest_answer(events, classify_event=_is_recall_pass_turn),
+            "the real work-loop answer",
+        )
+
+    def test_an_agent_answer_on_the_recall_turn_still_wins(self):
+        events = [
+            _msg_event("the real work-loop answer"),
+            _finish_action_event("supplied the missing verdict"),
+        ]
+        self.assertEqual(
+            extract_latest_answer(events, classify_event=_is_recall_pass_turn),
+            "supplied the missing verdict",
+        )
+
+    def test_the_guard_is_pinned_to_the_injected_prompt(self):
+        """An agent turn quoted around the prompt is still an answer."""
+        events = [_finish_action_event(f"{DISPATCH_RECALL_PROMPT}\nverdict: approved")]
+        self.assertEqual(
+            extract_latest_answer(events, classify_event=_is_recall_pass_turn),
+            f"{DISPATCH_RECALL_PROMPT}\nverdict: approved",
+        )
+
+    def test_unclassified_control_turns_keep_latest_wins(self):
+        events = [
+            _finish_action_event("the real work-loop answer"),
+            _finish_action_event("a later real answer"),
+        ]
+        self.assertEqual(
+            extract_latest_answer(events, classify_event=_is_recall_pass_turn),
+            "a later real answer",
+        )
+
+    def test_the_engine_finalize_turn_is_never_captured(self):
+        """Its text is the engine prompt, which embeds the section skeleton."""
+        events = [
+            _msg_event("the real work-loop answer"),
+            _finalize_action_event("Write your report as section bodies…"),
+        ]
+        self.assertEqual(extract_latest_answer(events), "the real work-loop answer")
+
+    def test_the_legacy_finish_and_dispatch_turns_are_unaffected(self):
+        events = [
+            _dispatch_action_event("dispatch report"),
+            _finish_action_event("finish report"),
+        ]
+        self.assertEqual(extract_latest_answer(events), "finish report")
 
 
 class TestExtractStandaloneAnswer(unittest.TestCase):

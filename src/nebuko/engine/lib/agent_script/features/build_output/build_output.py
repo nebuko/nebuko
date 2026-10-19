@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -59,6 +60,7 @@ from agent_script.features.extract_recovery_trace.extract_recovery_trace import 
     extract_recovery_trace,
     recovery_trace_to_markdown,
 )
+from agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
 from agent_script.features.run_agent.run_failure import RunFailure, RunFailureKind
 from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 from agent_script.features.ensure_pr.ensure_pr import (
@@ -97,6 +99,10 @@ LATEST_ANSWER_FILE = "latest_answer.md"
 # their full deliverable on the same turn as these control-plane calls.
 FINISH_TOOL_NAME = FinishTool.name
 DISPATCH_NEXT_TOOL_NAME = "dispatch_next"
+# The engine-elicited finalize turn of a declared-output step (issue #973).
+# Unlike ``finish`` / ``dispatch_next`` its turn text is not a deliverable, so
+# the recall-turn guard must not fall back to it (issue #1020).
+FINALIZE_TOOL_NAME = "finalize"
 
 
 # Tag patterns whose imbalance indicates a truncated tool-call block.
@@ -741,11 +747,38 @@ def _terminal_turn_answer(event, tool_name: str) -> str:
     """
     if not isinstance(event, ActionEvent) or event.tool_name != tool_name:
         return ""
+    if _is_engine_finalize_turn(event):
+        # The finalize turn's text is the engine's own prompt (it embeds the
+        # section skeleton), never a deliverable (issue #1020).
+        return ""
     if tool_name == FINISH_TOOL_NAME:
         typed = _typed_finish_message(event)
         if typed:
             return typed
     return "".join(content_to_str(event.thought)).strip()
+
+
+def _is_engine_finalize_turn(event) -> bool:
+    """Whether a terminal turn is the engine's ``finalize`` turn (issue #1020).
+
+    A step that declares an ``output:`` shape (issue #973) is driven by one
+    engine-elicited finalize turn: the engine prompts it, hides every tool but
+    the terminal gate, and takes the report from the turn's text. The prompt
+    embeds the section skeleton, so when the model answers with no text of its
+    own — or when an engine prompt from an earlier turn is replayed into a recall
+    turn — the only text left on that turn is the engine's own prompt. The event
+    shape (a bare ``ActionEvent`` with a non-empty ``thought``) is otherwise
+    indistinguishable from the ``finish`` / ``dispatch_next`` shapes whose turn
+    text *is* the deliverable, so the engine prompt would be harvested as the
+    answer and the posted comment would be the template.
+
+    The finalize action declares no field, so the turn is recognized by its tool
+    name or by the ``workflow`` attribute the action serializer carries — both
+    survive the extensionless ``Action`` model's ``extra="allow"``.
+    """
+    if getattr(event, "tool_name", None) == FINALIZE_TOOL_NAME:
+        return True
+    return isinstance(getattr(getattr(event, "action", None), "workflow", None), str)
 
 
 def _typed_finish_message(event) -> str:
@@ -767,7 +800,9 @@ def _typed_finish_message(event) -> str:
     return (payload.fields.get("message") or "").strip()
 
 
-def extract_latest_answer(events: list) -> str:
+def extract_latest_answer(
+    events: list, *, classify_event: Callable[[object], bool] | None = None
+) -> str:
     # @stub-protected: signature defined by architect — do not modify
     """Extract the agent's latest full text answer from conversation events.
 
@@ -794,6 +829,12 @@ def extract_latest_answer(events: list) -> str:
 
     Args:
         events: Conversation event list (``conversation.state.events``).
+        classify_event: Optional run-scoped classifier for a *recall* turn
+            (issues #558/#1020). The callable is ``event -> bool``: when it
+            returns ``True`` for a control turn, that turn's text is the
+            engine-injected recall prompt rather than an agent answer, so it must
+            not replace the work-loop answer. Injected by the caller so this leaf
+            module never imports the recall machinery.
 
     Returns:
         The latest agent text answer, or ``""`` if none.
@@ -816,6 +857,10 @@ def extract_latest_answer(events: list) -> str:
                 _terminal_turn_answer(event, FINISH_TOOL_NAME)
                 or _terminal_turn_answer(event, DISPATCH_NEXT_TOOL_NAME)
             )
+            if text and classify_event is not None and classify_event(event):
+                # This control turn is the engine's recall pass: its text is the
+                # engine prompt, not the agent's answer (issues #558/#1020).
+                continue
         if text:
             latest = text
     return latest
@@ -838,6 +883,23 @@ def extract_standalone_answer(events: list) -> str:
         if text:
             latest = text
     return latest
+
+
+def _is_recall_pass_turn(event) -> bool:
+    """Whether a control turn's text is an engine-injected recall prompt (#1020).
+
+    :func:`_recall_aware_events` uses the recorded pre-recall offset, but that
+    offset is only meaningful once the recall actually fired (and is absent
+    entirely when it did not). This is the event-level test for the same
+    property: the injected prompt is replayed into the conversation as the
+    turn's text, so a control turn whose text *is* the recall prompt carries no
+    agent answer.
+    """
+    thought = getattr(event, "thought", None)
+    if thought is None:
+        return False
+    text = "".join(content_to_str(thought)).strip()
+    return bool(text) and text == DISPATCH_RECALL_PROMPT.strip()
 
 
 def _recall_aware_events(events: list, run_outcome) -> list:
@@ -1093,7 +1155,9 @@ def build_output(
     # (issue #636) so the persisted answer contains clean text.
     run_outcome = _get_run_outcome(conversation)
     recall_events = _recall_aware_events(conversation.state.events, run_outcome)
-    latest_answer = extract_latest_answer(recall_events)
+    latest_answer = extract_latest_answer(
+        recall_events, classify_event=_is_recall_pass_turn
+    )
     # The ``SCAFFOLD_BRANCH`` prose marker is written on a standalone text turn
     # (the scaffold-plan skill's channel), which the deliverable above may no
     # longer represent once the finish terminator's typed message takes

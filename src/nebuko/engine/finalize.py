@@ -89,6 +89,23 @@ def _reject_marker_injection(name: str, body: str) -> None:
         )
 
 
+def _reject_placeholder(name: str, body: str) -> None:
+    # @stub-protected: signature defined by architect — do not modify
+    """Reject a body that is still the prompt's placeholder (issue #1020).
+
+    The engine's own prompt block (``OutputContract.prompt_block``) shows
+    ``…{name}…`` as the body to replace. When that prompt is harvested as the
+    turn text — the model answered with no text, or an engine prompt event was
+    mistaken for the agent's turn — extraction finds the skeleton, every field
+    validates and the posted comment is the template itself. Locate the
+    placeholder, never echo it back.
+    """
+    if body.strip() == f"…{name}…":
+        raise SectionExtractionError(
+            f"section '{name}': body is still the template placeholder"
+        )
+
+
 def step_output_contract(raw: Any) -> Optional["OutputContract"]:
     """Compile the resolver's ``STEP_OUTPUT`` JSON into an :class:`OutputContract`.
 
@@ -278,8 +295,11 @@ class OutputRenderer:
                 "marker or end of comment",
                 field.name,
             )
-            return comment[start:end].strip("\n")
-        return comment[start : close.start()].strip("\n")
+            body = comment[start:end].strip("\n")
+        else:
+            body = comment[start : close.start()].strip("\n")
+        _reject_placeholder(field.name, body)
+        return body
 
     def _extract_title(self, comment: str, field: OutputField) -> Optional[str]:
         """Read a ``title: true`` field from the comment's ``#`` lead-in line."""
@@ -290,7 +310,9 @@ class OutputRenderer:
                     f"title field '{field.name}': the '# ' lead-in is missing"
                 )
             return None
-        return match.group(1).strip()
+        title = match.group(1).strip()
+        _reject_placeholder(field.name, title)
+        return title
 
 
 class AgentReport(BaseModel):
