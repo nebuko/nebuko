@@ -1068,6 +1068,25 @@ class TestFinalizeHarvestAnchor:
         assert observation.text == NO_REPORT_TEXT
         assert _recorded_turn_outcome_fields(conversation) is None
 
+    def test_outside_the_closing_turn_an_outcome_only_finalize_is_accepted(self) -> None:
+        # The dispatch recall pass asks for the outcome alone ("do not restate
+        # your answer"); only the engine's closing turn owes a report.
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.id = "conv-recall-outcome-only"
+        conversation.state.events = [
+            _finalize_event_without_thought({"appreciation": "approved"})
+        ]
+        action = conversation.state.events[0].action
+
+        observation = FinalizeExecutor(conversation_id=conversation.id)(
+            action, conversation
+        )
+
+        assert not observation.is_error
+        assert _recorded_turn_outcome_fields(conversation) is not None
+
     def test_a_report_written_before_finalize_is_accepted(self) -> None:
         from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
 

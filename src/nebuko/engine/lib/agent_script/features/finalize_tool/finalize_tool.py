@@ -37,7 +37,10 @@ from nebuko.engine.finalize import (
     TurnOutcomePayload,
     turn_outcome_from_action,
 )
-from nebuko.engine.report_text import closing_turn_report_text
+from nebuko.engine.report_text import (
+    REPORT_OFFSET_ATTR,
+    closing_turn_report_text,
+)
 from workflow_state import RunPrefs, TurnOutcome
 
 if TYPE_CHECKING:
@@ -152,11 +155,18 @@ class FinalizeExecutor(ToolExecutor):
                 ),
                 is_error=True,
             )
-        # The report is the turn's markdown text, not an argument. A call made
-        # with no report text in its turn is refused here, while the agent can
-        # still act on it: an accepted call would record the outcome, and the
-        # agent would then acknowledge "posted" with nothing to post (#1038).
-        if conversation is not None and not closing_turn_report_text(conversation):
+        # In the engine's closing turn the report is the turn's markdown text,
+        # not an argument. A call made with no report text is refused here,
+        # while the agent can still act on it: an accepted call would record
+        # the outcome, and the agent would then acknowledge "posted" with
+        # nothing to post (#1038). Only the closing turn is gated (the host arms
+        # it by recording the turn's start): the work loop and the dispatch
+        # recall pass ask for the outcome alone, with no report to write.
+        if (
+            conversation is not None
+            and getattr(conversation, REPORT_OFFSET_ATTR, None) is not None
+            and not closing_turn_report_text(conversation)
+        ):
             return FinalizeObservation.from_text(text=NO_REPORT_TEXT, is_error=True)
         record_turn_outcome(
             self._conversation_id,

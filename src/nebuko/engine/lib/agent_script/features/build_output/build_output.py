@@ -832,12 +832,6 @@ def extract_latest_answer(
                 continue
             text = "".join(content_to_str(event.llm_message.content)).strip()
         else:
-            if event.tool_name == FINALIZE_TOOL_NAME:
-                # The closing turn ends here: the report is harvested from its
-                # own turn text (issue #1033), and the messages after its
-                # ``finalize`` call are acknowledgements such as "Report posted
-                # above", never the answer (issue #1038).
-                break
             text = (
                 _terminal_turn_answer(event, FINISH_TOOL_NAME)
                 or _terminal_turn_answer(event, DISPATCH_NEXT_TOOL_NAME)
@@ -910,6 +904,21 @@ def _recall_aware_events(events: list, run_outcome) -> list:
         f"Recall-aware capture: excluding {len(events) - offset} "
         f"post-recall events (offset={offset})"
     )
+    return events[:offset]
+
+
+def _work_loop_events(events: list, conversation) -> list:
+    """Exclude the engine's closing finalize turn from answer selection (#1038).
+
+    The host records where the closing turn starts on the conversation. Its
+    report is harvested from that turn by the host, and the agent's replies to
+    it ("Report posted above") are acknowledgements: left in, the latest-wins
+    scan would post them in place of the work-loop answer. Without a closing
+    turn the full list is returned unchanged.
+    """
+    offset = getattr(conversation, "nebuko_report_event_offset", None)
+    if not isinstance(offset, int):
+        return events
     return events[:offset]
 
 
@@ -1126,7 +1135,8 @@ def build_output(
     run_outcome = _get_run_outcome(conversation)
     recall_events = _recall_aware_events(conversation.state.events, run_outcome)
     latest_answer = extract_latest_answer(
-        recall_events, classify_event=_is_recall_pass_turn
+        _work_loop_events(recall_events, conversation),
+        classify_event=_is_recall_pass_turn,
     )
     # The ``SCAFFOLD_BRANCH`` prose marker is written on a standalone text turn
     # (the scaffold-plan skill's channel), which the deliverable above may no
