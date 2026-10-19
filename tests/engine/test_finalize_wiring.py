@@ -475,6 +475,35 @@ def _finalize_event_without_thought(route: dict[str, Any] | None = None) -> obje
     return _finalize_event("", route)
 
 
+def _with_observations(events: list[Any]) -> list[Any]:
+    """Follow each ``finalize`` call with its ``ObservationEvent``, as the SDK does.
+
+    The SDK emits the observation right after the action, and it carries the same
+    ``tool_name``: a harvest that matches on the name alone lands on it instead
+    of on the call (issue #1038).
+    """
+    from agent_script.features.finalize_tool.finalize_tool import FinalizeObservation
+    from openhands.sdk.event import ObservationEvent
+
+    stream: list[Any] = []
+    for event in events:
+        stream.append(event)
+        if getattr(event, "tool_name", None) != "finalize" or not hasattr(
+            event, "tool_call"
+        ):
+            continue
+        stream.append(
+            ObservationEvent(
+                source="environment",
+                tool_name="finalize",
+                tool_call_id=event.tool_call_id,
+                observation=FinalizeObservation.from_text(text="Turn outcome recorded."),
+                action_id=event.id,
+            )
+        )
+    return stream
+
+
 class _FakeAgent:
     def __init__(self, tools: dict[str, Any]) -> None:
         import threading
@@ -507,7 +536,7 @@ class _FinalizeConversation:
     def run(self) -> None:
         self.tools_seen.append(set(self.agent._tools))
         if self._turns:
-            events = self._turns.pop(0)
+            events = _with_observations(self._turns.pop(0))
             self.state.events.extend(events)
             _run_recorded_finalize_actions(events, self)
 
@@ -1175,6 +1204,38 @@ class TestFinalizeHarvestAnchor:
 
         assert len(conversation.prompts) == 1
         assert result["deliverable"] == plan
+
+    def test_the_observation_answering_the_call_is_never_the_anchor(self) -> None:
+        # Repro #1038 (CI run 39317188689): the SDK emits the call's observation
+        # with the same ``tool_name``; anchoring on it read no report from a call
+        # that carried one, three times in a row.
+        from nebuko.engine.report_text import (
+            closing_turn_report_text,
+            finalize_anchor_index,
+        )
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = _with_observations(
+            [
+                _finalize_event_with_report("## Plan\n\nthe change", {"appreciation": "approved"}),
+                _agent_message_event("Report posted above."),
+            ]
+        )
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        assert finalize_anchor_index(conversation) == 0
+        assert closing_turn_report_text(conversation) == "## Plan\n\nthe change"
+
+    def test_a_report_in_the_turn_text_survives_the_observation(self) -> None:
+        from nebuko.engine.report_text import closing_turn_report_text
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = _with_observations(
+            [_finalize_event("## Plan\n\nthe change", {"appreciation": "approved"})]
+        )
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        assert closing_turn_report_text(conversation) == "## Plan\n\nthe change"
 
     def test_the_report_argument_wins_over_the_turn_text(self) -> None:
         from nebuko.engine.report_text import closing_turn_report_text

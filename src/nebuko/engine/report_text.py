@@ -73,9 +73,23 @@ def finalize_anchor_index(conversation: Any) -> int:
     offset = getattr(conversation, REPORT_OFFSET_ATTR, 0) or 0
     events = events_of(conversation)
     for index in range(len(events) - 1, offset - 1, -1):
-        if getattr(events[index], "tool_name", None) == "finalize":
+        if is_finalize_call(events[index]):
             return index
     return -1
+
+
+def is_finalize_call(event: object) -> bool:
+    """Whether ``event`` is a ``finalize`` call, not the observation answering it.
+
+    The SDK emits the call's observation right after it, and the observation
+    carries the same ``tool_name``. Matching on the name alone lands on the
+    observation, which has no report, so the report the call carried is never
+    read (issue #1038). Only a call carries the raw ``tool_call``.
+    """
+    return (
+        getattr(event, "tool_name", None) == "finalize"
+        and getattr(event, "tool_call", None) is not None
+    )
 
 
 def closing_turn_report_text(conversation: Any) -> str:
@@ -109,7 +123,7 @@ def closing_turn_report_text(conversation: Any) -> str:
     offset = getattr(conversation, REPORT_OFFSET_ATTR, 0) or 0
     start = offset
     for index in range(anchor - 1, offset - 1, -1):
-        if getattr(events[index], "tool_name", None) == "finalize" or (
+        if is_finalize_call(events[index]) or (
             getattr(events[index], "source", None) == "user"
         ):
             start = index + 1
