@@ -692,10 +692,13 @@ class TestFinalizeTemplatePlaceholder:
 
         result = self._host(tmp_path, conversation).run("prompt")
 
-        # The rendered template is never the posted body; the harness double's
-        # hand-written ``latest_answer.md`` is the only remaining candidate.
-        assert result["deliverable"] == "the real work-loop answer"
+        # The rendered template is never the posted body. With no section
+        # surviving, the run degrades to the captured deliverable — the real
+        # agent-authored answer (``capture.deliverable`` prefers the harvested
+        # turn text over the raw ``latest_answer.md``), never the placeholder.
+        assert result["deliverable"] == _answer("A true headline").strip()
         assert "…headline…" not in result["deliverable"]
+        assert "…changes…" not in result["deliverable"]
 
     def test_each_prompt_body_is_rejected_by_placeholder_validation(self) -> None:
         """The template's bodies are placeholders, so an echo can never validate."""
