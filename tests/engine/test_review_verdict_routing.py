@@ -118,7 +118,10 @@ class TestCapturedRound2Replay:
 
         assert result["SKIP_AGENT"] == "true"
         assert "SKIP_KIND" not in result
-        assert "resolved no successor" in result["REASON"]
+        # #978: a verdictless turn is a notification, so the reason names the
+        # missing outcome instead of a missing successor — still an unresolved
+        # skip the engine pings a human about, never a terminal finish.
+        assert "no verdict" in result["REASON"]
 
     def test_the_rejected_verdict_restarts_dev_at_implement(self, prompt_base: str):
         """With the verdict the instructions now prescribe, ``dev`` restarts."""

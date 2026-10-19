@@ -49,10 +49,11 @@ from workflow_state import Appreciation, IncompleteReason, TurnOutcome
 def _is_resumable_outcome(outcome: Optional[TurnOutcome]) -> bool:
     """True when ``/nebuko resume`` may re-run the parked step (issue #964).
 
-    Both a ``hold`` verdict (human gate or awaiting input) and an interruption
-    halt — a soft time-kill (issue #704) or an exhausted agent checkpoint
-    (issue #965) — are resumable: the explicit human resume re-runs the
-    interrupted step.
+    Every halted shape is resumable: a ``hold`` verdict (human gate or awaiting
+    input) and an incomplete halt — a soft time-kill (issue #704), an
+    interruption (issue #978), an exhausted agent checkpoint (issue #965) or a
+    crashed run (issue #978, whose notification names ``/nebuko resume`` as the
+    recovery command). The explicit human resume re-runs the parked step.
     """
     if outcome is None:
         return False
@@ -60,7 +61,9 @@ def _is_resumable_outcome(outcome: Optional[TurnOutcome]) -> bool:
         return True
     return outcome.incomplete_reason in (
         IncompleteReason.SOFT_TIMEOUT,
+        IncompleteReason.INTERRUPTED,
         IncompleteReason.AGENT_CHECKPOINT,
+        IncompleteReason.FAILURE,
     )
 
 
@@ -416,8 +419,22 @@ def resolve_config(
     elif prev_state and turn_outcome:
         # Auto-dispatch: workflow state with a turn outcome — route on it.
         config = _resolve_outcome_path(prev_state, workflows_dir, local_workflows_dir=local_workflows_dir)
-    elif prev_state and prev_state.workflow:
+    elif prev_state and prev_state.workflow and not is_bot:
+        # Legacy state (no turn outcome) from a *human* trigger: continue the
+        # workflow forward edge (issue #420 resolution-only resume).
         config = _resolve_workflow_next_step(prev_state, turn_outcome, workflows_dir, local_workflows_dir=local_workflows_dir)
+    elif prev_state and prev_state.workflow:
+        # Notification (issue #978): a bot trigger whose parsed body carries
+        # workflow state but no dispatch information — no turn outcome, no
+        # pending hand-off (both handled above), no workflow command — is a
+        # plain message. The engine performs no action on it: no route, no
+        # successor step, no re-trigger. Before this guard the state alone was
+        # enough to follow the forward edge, which is how a crashed run's
+        # notification advanced `implement -> review`.
+        config = {
+            "SKIP_AGENT": "true",
+            "REASON": "Notification: no dispatch information",
+        }
     elif not is_bot:
         config = _resolve_human_path(
             trigger_body, repo, issue_number, workflows_dir,

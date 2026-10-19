@@ -1150,16 +1150,17 @@ def build_output(
             # summary so downstream doesn't treat this as a crashed run.
             final_message = _build_timeout_summary(pr_result)
 
-    # ── Failure handling (issue #668) ─────────────────────────────
+    # ── Failure handling (issue #668, #978) ───────────────────────
     # A run that crashed with no output would otherwise reach the opaque
     # "__NO_FINAL_MESSAGE__" sentinel. Sanity: never override a real answer.
+    # A crashed run *is* a failure even when it left partial prose behind: the
+    # prose is not a deliverable, so the notification summary replaces it
+    # rather than the other way round (issue #978).
     is_failure = (
-        run_outcome is not None
-        and run_outcome.status is OutcomeStatus.FAILURE
-        and not final_message
+        run_outcome is not None and run_outcome.status is OutcomeStatus.FAILURE
     )
     if is_failure:
-        logger.info("Failure detected — synthesizing failure summary")
+        logger.info("Failure detected — synthesizing failure notification")
         final_message = _build_failure_summary(run_outcome)
 
     # ── Review fix request counting ──────────────────────────────
@@ -1195,6 +1196,17 @@ def build_output(
 
     # ── Extract the turn outcome + function_call from agent output ─────
     turn_outcome, prefs, function_call = _resolve_outcome(conversation)
+
+    # Failure is engine-measured (issue #978): a crashed run stated nothing, so
+    # the no-action default above (INCOMPLETE/NO_OUTCOME) must not stand in for
+    # it — that reason keeps the workflow forward edge. Override here, before
+    # the self-hand-off neutralization below, so the recorded outcome is the
+    # measured FAILURE. The failure comment is then a notification: it carries
+    # no dispatch information and the router performs no action on it.
+    if is_failure:
+        turn_outcome = TurnOutcome.for_incomplete(IncompleteReason.FAILURE)
+        prefs = RunPrefs()
+        function_call = None
 
     # Self function_call neutralization (issue #618, defect 2a) + PO escalation
     # pin (issue #876 review): both decisions live in the pure helper so they

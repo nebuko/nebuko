@@ -178,13 +178,16 @@ def _resolve_resume_path(
     outcome = prev_state.turn_outcome
     prefs = prev_state.prefs
 
-    # Both a human-gate ``hold`` and a soft-kill / agent-checkpoint exhaustion
-    # halt (issues #704, #965) are resumable: an explicit human resume re-runs
-    # the interrupted step.
+    # Every halted shape is resumable: a human-gate ``hold``, a soft-kill /
+    # agent-checkpoint / interruption exhaustion halt (issues #704, #965, #978)
+    # and a crashed run (issue #978) — the failure notification names
+    # ``/nebuko resume`` as the recovery command, so it must re-run the step.
     if outcome is None or outcome.status != TurnStatus.COMPLETED:
         if outcome is None or outcome.incomplete_reason not in (
             IncompleteReason.SOFT_TIMEOUT,
+            IncompleteReason.INTERRUPTED,
             IncompleteReason.AGENT_CHECKPOINT,
+            IncompleteReason.FAILURE,
         ):
             return {
                 "SKIP_AGENT": "true",
@@ -889,6 +892,53 @@ def _hold_skip_result(outcome: TurnOutcome, prev_state: "WorkflowState") -> dict
     }
 
 
+def _failed_run_result(
+    prev_state: "WorkflowState",
+    outcome: Optional[TurnOutcome],
+) -> dict:
+    """Park a crashed step: its comment is a notification, never a dispatch.
+
+    A ``FAILURE`` turn produced nothing to route on, so the engine performs no
+    action (issue #978). Unlike :func:`_awaiting_input_result` — whose
+    "resolved no successor" wording describes a *routing* gap — the reason here
+    names the recovery path, because the failure notification tells the human to
+    run ``/nebuko resume`` and that command must stay meaningful.
+    """
+    note = (outcome.note if outcome is not None else "") or ""
+    detail = f" ({note})" if note else ""
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": (
+            f"Awaiting input: step '{prev_state.step}' in workflow "
+            f"'{prev_state.workflow}' failed{detail} — resume with "
+            f"/nebuko resume"
+        ),
+    }
+
+
+def _no_outcome_result(
+    prev_state: "WorkflowState",
+    outcome: Optional[TurnOutcome],
+) -> dict:
+    """Park a run that stated no verdict: it produced no decision to route.
+
+    The no-action default (issue #864) records INCOMPLETE/NO_OUTCOME when an
+    agent ends its turn without a verdict. Following the workflow forward edge
+    on that absence advances a step nothing was decided for — the same defect
+    as a crashed run's notification (issue #978) — so the engine performs no
+    action and waits for a human.
+    """
+    note = (outcome.note if outcome is not None else "") or ""
+    detail = f" ({note})" if note else ""
+    return {
+        "SKIP_AGENT": "true",
+        "REASON": (
+            f"No outcome: step '{prev_state.step}' in workflow "
+            f"'{prev_state.workflow}' recorded no verdict{detail}"
+        ),
+    }
+
+
 def _awaiting_input_result(
     prev_state: "WorkflowState",
     outcome: Optional[TurnOutcome],
@@ -1050,9 +1100,13 @@ def _resolve_outcome_path(
     # place while its per-step budget remains, and halts for a human once it is
     # spent. An agent checkpoint (a ``handoff`` fold, issue #965) is routed
     # through the same path: the agent chose to stop, so the step re-runs under
-    # the same per-step budget rather than advancing.
+    # the same per-step budget rather than advancing. An *interruption* (issue
+    # #978, amended #964 policy) is the same shape: the engine killed the turn,
+    # nothing was decided, so it retries in place under the same budget instead
+    # of either advancing or burning a fresh run on a notification.
     if outcome is not None and outcome.incomplete_reason in (
         IncompleteReason.SOFT_TIMEOUT,
+        IncompleteReason.INTERRUPTED,
         IncompleteReason.AGENT_CHECKPOINT,
     ):
         soft_kill_config = resolve_soft_kill_route(
@@ -1060,6 +1114,17 @@ def _resolve_outcome_path(
         )
         if soft_kill_config is not None:
             return soft_kill_config
+
+    # Stop-status guard (issue #978): a crashed turn is a *notification*, not a
+    # dispatch — the engine must perform no action on it, never follow the
+    # forward edge. Hoisted above the forward-edge and callback resolution
+    # because those would otherwise advance (`implement -> review`) and silently
+    # discard the stop (precedence rule 2 of docs/handoff-and-callback.md §3).
+    # ``INTERRUPTED`` is *not* a stop: the amended #964 policy routes it through
+    # the soft-kill retry path above (retry-in-place, halt once the budget is
+    # spent), so it stays with ``SOFT_TIMEOUT``/``AGENT_CHECKPOINT``.
+    if outcome is not None and outcome.incomplete_reason == IncompleteReason.FAILURE:
+        return _failed_run_result(prev_state, outcome)
 
     # Human-gate hold precedence (issues #887, #964, #1003): a recorded gate
     # hold must block auto-advance even when the workflow forward edge
@@ -1160,6 +1225,16 @@ def _resolve_outcome_path(
             return wf_result.skip_result()
         if outcome is not None and outcome.appreciation == Appreciation.HOLD:
             return _hold_skip_result(outcome, prev_state)
+        if (
+            outcome is not None
+            and outcome.status == TurnStatus.INCOMPLETE
+            and outcome.incomplete_reason == IncompleteReason.NO_OUTCOME
+        ):
+            # No verdict was stated (issue #978): the run produced no decision,
+            # so following the linear edge would advance a step nothing was
+            # decided for. The forward-edge lookup above has already applied
+            # the workflow topology to ``config``; discard it and park.
+            return _no_outcome_result(prev_state, outcome)
         if config["task"]:
             return config
         if config.get("run_script"):
@@ -1230,20 +1305,21 @@ def resolve_soft_kill_route(
 ) -> Optional[dict]:  # @stub-protected
     """Decide the retry-vs-halt route for an interrupted step (issue #704).
 
-    A soft time-kill (or an agent checkpoint, issue #965) must not let the
-    workflow advance: the interrupted step is re-run in place while the
-    per-step counter is within ``max_soft_retries``, and the run halts for a
-    human once the retries are exhausted. ``_resolve_outcome_path`` calls this
-    before its normal workflow-next resolution and returns the result as-is
-    when it is not ``None``.
+    A soft time-kill (or an agent checkpoint, issue #965; or an engine
+    *interruption*, issue #978) must not let the workflow advance: the
+    interrupted step is re-run in place while the per-step counter is within
+    ``max_soft_retries``, and the run halts for a human once the retries are
+    exhausted. ``_resolve_outcome_path`` calls this before its normal
+    workflow-next resolution and returns the result as-is when it is not
+    ``None``.
 
     Args:
         prev_state: WorkflowState from the trigger body; its flat
             ``workflow``/``step`` name the step to re-run and ``soft_retry``
             carries the retry count already consumed for that step.
         outcome: The state's turn outcome; only an INCOMPLETE outcome whose
-            reason is ``soft_timeout`` or ``agent_checkpoint`` triggers
-            soft-kill handling.
+            reason is ``soft_timeout``, ``interrupted`` or ``agent_checkpoint``
+            triggers soft-kill handling.
         max_soft_retries: ``MAX_SOFT_RETRIES`` workflow parameter — the number
             of retries allowed per step before halting for a human. Values
             ``< 0`` are treated as ``0`` (halt immediately).
@@ -1276,6 +1352,7 @@ def resolve_soft_kill_route(
     """
     if outcome.incomplete_reason not in (
         IncompleteReason.SOFT_TIMEOUT,
+        IncompleteReason.INTERRUPTED,
         IncompleteReason.AGENT_CHECKPOINT,
     ):
         return None

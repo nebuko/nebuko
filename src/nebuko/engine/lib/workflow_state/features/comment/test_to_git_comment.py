@@ -169,9 +169,15 @@ class TestWrapScriptComment(unittest.TestCase):
         body = "*run_tests command succeeded*"
         wrapped = wrap_script_comment("run_tests", state, body)
 
-        self.assertTrue(wrapped.startswith("<!-- bot-workflow-terminal -->\n"))
+        # Marker and token share line 1 (issue #978), so the publish seam's
+        # ``ensure_bot_marker`` leaves the body alone and the gate's
+        # ``startsWith`` anchor stays reachable.
+        self.assertTrue(
+            wrapped.startswith(
+                "<!-- bot-workflow-terminal --><!-- workflow-continue -->\n"
+            )
+        )
         self.assertIn("<!-- bot-command-run_tests -->", wrapped)
-        self.assertIn("<!-- workflow-continue -->", wrapped)
         self.assertIn("WORKFLOW_STATE_START", wrapped)
         self.assertTrue(wrapped.endswith(body))
         # The bot-command tag is not an agent marker, so it never inflates the

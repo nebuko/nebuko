@@ -190,7 +190,9 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
         History entries must round-trip to exactly the body handed to
         :meth:`post`; consumers read the ``<!-- bot-agent-* -->`` markers the
-        bodies themselves carry, not the injected terminal marker.
+        bodies themselves carry, not the injected terminal marker. A live
+        answer already opens with the marker on its own line 1 (issue #978), so
+        ``post`` injects nothing and there is nothing to strip.
         """
         ensure_import_path()
         from github_client import BOT_MARKER
