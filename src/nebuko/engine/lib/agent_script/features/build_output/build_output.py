@@ -20,7 +20,6 @@ from config import (
     CommentSizePolicy,
     is_self_function_call,
     load_workflow,
-    load_workflow_with_dirs,
     parse_position_env,
     resolve_workflow_reference,
 )
@@ -399,26 +398,34 @@ def _load_gated_step_def(
     False — the gate must never crash the run, and a broken YAML should
     fall back to legacy auto-advance rather than fail the whole post-step.
 
-    Resolution is per file, not per directory (issue #987): a repo-local
-    ``.nebuko/workflows/`` must not hide the shipped ``defaults/workflows/``,
-    so name references go through the layered ``load_workflow_with_dirs``.
+    Resolution goes through the same :class:`WorkflowLoadContext` as
+    ``resolve_route`` (issue #1034): plain names resolve by file stem over the
+    layered directories (per file, issue #987) and fall back to a declared-name
+    scan, because the recorded ``WORKFLOW_NAME`` is the workflow's declared
+    ``name:`` and need not match its file stem.
     """
     if not workflow_name or not workflow_step:
         return False
     try:
         import default_paths
+        from resolve_workflow import WorkflowLoadContext
 
         shipped_dir, local_dir = default_paths.workflow_dirs()
+        ctx = WorkflowLoadContext(shipped_dir, local_dir)
         if workflow_name.lower().endswith((".yaml", ".yml")) and not workflow_name.startswith(
             "workflows/"
         ):
             ref = resolve_workflow_reference(workflow_name, shipped_dir)
+            wf_def = load_workflow(str(ref))
         else:
             name = workflow_name.removeprefix("workflows/")
             for suffix in (".yaml", ".yml"):
                 name = name.removesuffix(suffix)
-            ref = load_workflow_with_dirs(name, shipped_dir, local_dir or "")
-        wf_def = load_workflow(str(ref))
+            wf_def = ctx.load(name) or ctx.load_by_name(name)
+            if wf_def is None:
+                raise FileNotFoundError(
+                    f"Workflow '{name}' not found by file stem or declared name"
+                )
     except Exception as e:
         logger.warning(f"Human gate check: could not load workflow '{workflow_name}': {e}")
         return False
