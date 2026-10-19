@@ -681,8 +681,8 @@ class StatsTotals:
             parts.append(f"{format_number(self.tool_calls)} tool calls{failed}")
         else:
             parts.append(f"{format_number(self.tool_calls)} tool calls")
-        cost = f"{format_cost(self.cost_usd)}{ESTIMATE_MARKER if self.estimated_cost_usd else ''}"
-        parts.append(f"{cost} estimated")
+        suffix = f"{ESTIMATE_MARKER} estimated" if self.estimated_cost_usd else ""
+        parts.append(f"{format_cost(self.cost_usd)}{suffix}")
         return " · ".join(parts)
 
 
@@ -770,7 +770,7 @@ def _build_summary_row(aggregated, totals, columns, label, cell_builder):
 
 def _strip_share_and_marker(cell_text):
     """Drop a trailing '(NN%)' and '*' from a Total-column cell."""
-    return re.sub(r" \(\d+%\)\*?$", "", cell_text.rstrip("*"))
+    return re.sub(r" \(\d+%\)$", "", cell_text.rstrip("*"))
 
 
 def _summary_rows(aggregated, totals, columns):
@@ -808,10 +808,12 @@ def _summary_rows(aggregated, totals, columns):
         return format_number(b.get("tool_calls_sum", 0))
 
     def error_rate(b):
-        return _format_error_rate(
-            sum((b.get("errors_per_tool") or {}).values()),
-            b.get("tool_calls_sum", 0),
-        )
+        # Per-agent buckets carry the per-tool breakdown; the totals bucket only
+        # exposes the folded count under "tool_errors_sum".
+        errors = b.get("tool_errors_sum")
+        if errors is None:
+            errors = sum((b.get("errors_per_tool") or {}).values())
+        return _format_error_rate(errors, b.get("tool_calls_sum", 0))
 
     return (
         _build_summary_row(aggregated, totals, columns, "Runs", runs),
@@ -900,7 +902,7 @@ def _detail_rows(aggregated, totals, columns):
         rows.append(
             MetricRow(
                 label=f"  ↳ {tool}",
-                cells=tuple(per_tool_cell(tool)(agg) for agg in aggregated.values()),
+                cells=tuple(per_tool_cell(tool)(aggregated[column]) for column in columns),
                 total=total,
             )
         )
@@ -933,12 +935,12 @@ class AgentSummaryTable:
         cls, aggregated: Mapping[str, Mapping[str, Any]], totals: "StatsTotals"
     ) -> "AgentSummaryTable":
         """Build headline, rows and footnote; shares are computed against totals."""
-        columns = tuple(
-            get_agent_display_name(agent)
-            for agent in sorted(aggregated.keys(), key=_agent_sort_key)
-        )
-        rows = _summary_rows(aggregated, totals, tuple(aggregated.keys()))
-        starred = any(ESTIMATE_MARKER in row.total for row in rows) or any(
+        # Cell order must follow the sorted header order, not the caller's
+        # (insertion-ordered) mapping.
+        column_keys = tuple(sorted(aggregated.keys(), key=_agent_sort_key))
+        columns = tuple(get_agent_display_name(agent) for agent in column_keys)
+        rows = _summary_rows(aggregated, totals, column_keys)
+        starred = any(
             ESTIMATE_MARKER in cell for row in rows for cell in row.cells
         )
         return cls(
@@ -982,14 +984,12 @@ class DetailSection:
         cls, aggregated: Mapping[str, Mapping[str, Any]], totals: "StatsTotals"
     ) -> "DetailSection":
         """Per-tool rows (calls, `calls (N err)` when errors exist) and provider health."""
-        columns = tuple(
-            get_agent_display_name(agent)
-            for agent in sorted(aggregated.keys(), key=_agent_sort_key)
-        )
+        column_keys = tuple(sorted(aggregated.keys(), key=_agent_sort_key))
+        columns = tuple(get_agent_display_name(agent) for agent in column_keys)
         return cls(
             summary=DETAIL_SUMMARY,
             columns=columns,
-            rows=_detail_rows(aggregated, totals, tuple(aggregated.keys())),
+            rows=_detail_rows(aggregated, totals, column_keys),
         )
 
     # @stub-protected

@@ -981,7 +981,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         lines = generate_agent_summary_table(self._make_aggregated())
         self.assertEqual(
             lines[2],
-            "Total: 4 runs · 0.4 min LLM time · 23 tool calls (0% failed) · $0.0000 estimated",
+            "Total: 4 runs · 0.4 min LLM time · 23 tool calls (0% failed) · $0.0000",
         )
 
     def test_llm_time_is_a_sum_with_share(self):
@@ -1013,10 +1013,10 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         agg["architect"]["errors_per_tool"] = {"file_editor": 1}
         lines = generate_agent_summary_table(agg)
         row = self._row(lines, "Tool error rate")
-        # architect 1/10, context 0/5, dev 2/8 -> 25%; the Total cell has no
-        # per-tool breakdown, so it renders the documented 0% floor.
+        # architect 1/10, context 0/5, dev 2/8; the Total folds the same errors
+        # over the summed tool calls: 3/23 -> 13%.
         self.assertEqual(
-            _table_cells(row), ["Tool error rate", "10%", "0%", "25%", "**0%**"]
+            _table_cells(row), ["Tool error rate", "10%", "0%", "25%", "**13%**"]
         )
 
     def test_totals_error_rate_uses_the_total_tool_calls(self):
@@ -1034,8 +1034,37 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         }
         lines = generate_agent_summary_table(agg)
         self.assertEqual(
-            _table_cells(self._row(lines, "Tool error rate")), ["Tool error rate", "25%", "**0%**"]
+            _table_cells(self._row(lines, "Tool error rate")), ["Tool error rate", "25%", "**25%**"]
         )
+
+    def test_total_error_rate_can_differ_from_every_agent_rate(self):
+        """The Total folds errors over summed calls; it is not a per-agent rate."""
+        agg = {
+            "architect": {
+                "runs": 1,
+                "total_uncached_input_tokens": 10,
+                "total_output_tokens": 5,
+                "tool_calls_sum": 1,
+                "errors_per_tool": {"terminal": 1},
+                "tool_calls_per_tool": {"terminal": 1},
+                "llm_runtime_sum": 0.0,
+                "latency_sum": 0.0,
+            },
+            "dev": {
+                "runs": 1,
+                "total_uncached_input_tokens": 10,
+                "total_output_tokens": 5,
+                "tool_calls_sum": 99,
+                "errors_per_tool": {"terminal": 0},
+                "tool_calls_per_tool": {"terminal": 99},
+                "llm_runtime_sum": 0.0,
+                "latency_sum": 0.0,
+            },
+        }
+        lines = generate_agent_summary_table(agg)
+        cells = _table_cells(self._row(lines, "Tool error rate"))
+        # 100% and 0% per agent; 1/100 -> 1% overall, unlike either agent.
+        self.assertEqual(cells, ["Tool error rate", "100%", "0%", "**1%**"])
 
     def test_error_rate_is_zero_without_tool_calls(self):
         agg = {
@@ -1592,6 +1621,36 @@ class TestTableGenerationWithPerTool(unittest.TestCase):
             if line.startswith("| "):
                 self.assertEqual(len(_table_cells(line)), 2 + n_agents, line)
 
+    def test_per_tool_cells_follow_column_order_not_insertion_order(self):
+        """Buckets inserted dev-first must not swap the per-tool cells (#1019)."""
+        agg = {
+            "dev": {
+                "runs": 1,
+                "total_uncached_input_tokens": 10,
+                "total_output_tokens": 5,
+                "tool_calls_sum": 2,
+                "tool_calls_per_tool": {"terminal": 2},
+                "errors_per_tool": {"terminal": 0},
+                "llm_runtime_sum": 0.0,
+                "latency_sum": 0.0,
+            },
+            "architect": {
+                "runs": 1,
+                "total_uncached_input_tokens": 10,
+                "total_output_tokens": 5,
+                "tool_calls_sum": 4,
+                "tool_calls_per_tool": {"terminal": 4},
+                "errors_per_tool": {"terminal": 0},
+                "llm_runtime_sum": 0.0,
+                "latency_sum": 0.0,
+            },
+        }
+        lines = generate_agent_summary_table(agg)
+        header = next(line for line in lines if line.startswith("| | "))
+        self.assertEqual(_table_cells(header), ["", "Architect", "Dev", "**Total**"])
+        cells = _table_cells(self._row(lines, "  ↳ terminal"))
+        self.assertEqual(cells, ["↳ terminal", "4", "2", "**6**"])
+
 
 class TestInputTokenSplit(unittest.TestCase):
     """Test the inclusive/exclusive input-token derivation (issue #948)."""
@@ -1703,12 +1762,17 @@ class TestStatsTotals(unittest.TestCase):
         totals = StatsTotals(runs=1, llm_runtime_ms=60000.0)
         self.assertEqual(
             totals.render_headline(),
-            "Total: 1 runs · 1.0 min LLM time · 0 tool calls · $0.0000 estimated",
+            "Total: 1 runs · 1.0 min LLM time · 0 tool calls · $0.0000",
         )
 
     def test_render_headline_has_no_marker_without_estimate(self):
         totals = StatsTotals(runs=1, cost_usd=0.5)
+        self.assertEqual(
+            totals.render_headline(),
+            "Total: 1 runs · 0.0 min LLM time · 0 tool calls · $0.5000",
+        )
         self.assertNotIn("*", totals.render_headline())
+        self.assertNotIn("estimated", totals.render_headline())
 
     def test_totals_column_matches_agent_table_column_count(self):
         """Every table row (agents and Total) keeps the same cell count (#1019)."""
