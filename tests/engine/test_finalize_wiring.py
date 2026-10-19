@@ -451,6 +451,25 @@ def _finalize_event_with_report(report: str, route: dict[str, Any] | None = None
     return _finalize_event("", route, report=report)
 
 
+def _rejected_finalize_event(arguments: dict[str, Any] | str) -> object:
+    """A ``finalize`` call the SDK rejected: no action, only the raw arguments."""
+    from openhands.sdk.event import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall
+
+    raw = arguments if isinstance(arguments, str) else json.dumps(arguments)
+    return ActionEvent(
+        source="agent",
+        tool_name="finalize",
+        thought=[],
+        action=None,
+        tool_call_id="tc-rejected",
+        tool_call=MessageToolCall(
+            id="tc-rejected", name="finalize", arguments=raw, origin="completion"
+        ),
+        llm_response_id="r-rejected",
+    )
+
+
 def _finalize_event_without_thought(route: dict[str, Any] | None = None) -> object:
     """A ``finalize`` call whose turn carried no report text of its own."""
     return _finalize_event("", route)
@@ -1115,6 +1134,47 @@ class TestFinalizeHarvestAnchor:
         setattr(conversation, _REPORT_OFFSET_ATTR, 0)
 
         assert closing_turn_report_text(conversation) == "## Plan\n\nthe change"
+
+    def test_a_rejected_call_still_yields_its_report(self) -> None:
+        # The call omitted the required ``turn_outcome``, so the SDK recorded it
+        # with ``action=None``; the report it carried must not be lost.
+        from nebuko.engine.report_text import closing_turn_report_text
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = [
+            _rejected_finalize_event({"report": "## Plan\n\nthe change"})
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        assert closing_turn_report_text(conversation) == "## Plan\n\nthe change"
+
+    @pytest.mark.parametrize("raw", ['{"report": "cut off', "[]", '{"report": 3}'])
+    def test_unusable_raw_arguments_yield_no_report(self, raw: str) -> None:
+        from nebuko.engine.report_text import closing_turn_report_text
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = [_rejected_finalize_event(raw)]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        assert closing_turn_report_text(conversation) == ""
+
+    def test_a_rejected_call_with_a_report_is_posted_without_a_retry(
+        self, tmp_path: Path
+    ) -> None:
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        plan = "## Plan\n\n1. **`a.py`** - the change"
+        conversation = _FinalizeConversation(
+            turns=[[_rejected_finalize_event({"report": plan})]]
+        )
+        host = _host_for(
+            repo_root, conversation, latest_answer="work-loop finish note", step_output=None
+        )
+
+        result = host.run("prompt")
+
+        assert len(conversation.prompts) == 1
+        assert result["deliverable"] == plan
 
     def test_the_report_argument_wins_over_the_turn_text(self) -> None:
         from nebuko.engine.report_text import closing_turn_report_text
