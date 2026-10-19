@@ -260,8 +260,9 @@ def _field_text(value: object) -> str:
 # The control plane, frozen for every agent in the engine (issue #830).
 # ``finalize`` is the *only* terminal tool (issue #1033): it carries the typed
 # ``turn_outcome`` (the verdict plus the optional ``agent_call`` hand-off) and
-# the report rides in the turn text. ``finish`` remains the SDK end signal; its
-# ``message`` is a fallback deliverable, never a routing channel.
+# the report is its ``report`` argument (issue #1038). ``finish`` remains the
+# SDK end signal; its ``message`` is a fallback deliverable, never a routing
+# channel.
 DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
     tools={
         "finish": EngineToolSpec(
@@ -269,8 +270,8 @@ DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
             payload_kind="final_message",
             payload_fields=("message",),
         ),
-        # Terminal tool of every step, ``output:`` or not: the report rides in
-        # the turn text, so the tool's only argument is the typed turn outcome.
+        # Terminal tool of every step, ``output:`` or not: the typed turn outcome
+        # is the payload; the report is the action's own ``report`` argument.
         "finalize": EngineToolSpec(
             name="finalize",
             payload_kind="finalize",

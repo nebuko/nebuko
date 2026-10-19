@@ -52,6 +52,12 @@ from nebuko.engine.finalize import (
     step_output_contract,
 )
 from nebuko.engine.paths import ensure_import_path
+from nebuko.engine.report_text import (
+    REPORT_OFFSET_ATTR as _REPORT_OFFSET_ATTR,
+    closing_turn_report_text as _finalize_turn_text,
+    events_of,
+    finalize_anchor_index as _finalize_anchor_index,
+)
 
 __all__ = ["InProcessAgentHost"]
 
@@ -59,43 +65,42 @@ log = logging.getLogger(__name__)
 
 _MISSING = object()
 
-#: Conversation attributes the closing turn stows its results on (issues
+#: Conversation attribute the closing turn stows its results on (issues
 #: #830, #1033), mirroring how ``run_agent`` stows ``run_outcome`` for
 #: ``build_output``.
-_REPORT_OFFSET_ATTR = "nebuko_report_event_offset"
 #: The rendered comment of a step that declares an ``output:`` shape (issue
 #: #973). The finalize turn replaces the report turn for such a step, so the
 #: deliverable is the engine-rendered comment, not a ``finish.message``.
 _FINALIZE_BODY_ATTR = "nebuko_finalize_body"
 
 #: Engine-elicited closing turn (issues #973, #1033). Every step ends through
-#: the one terminal tool: the report is the turn's markdown text and the
-#: ``finalize`` tool carries the typed ``turn_outcome``. An ``output:``
+#: the one terminal tool: the ``finalize`` call carries the report (its
+#: ``report`` argument) and the typed ``turn_outcome``. An ``output:``
 #: declaration only decides how the report is extracted and rendered.
 _FINALIZE_PROMPT = (
     "Engine finalize turn - the work phase is over; do not call any work tool "
-    "(no terminal, file_editor, think, ...). Write your COMPLETE, "
-    "self-contained report as the markdown text of this turn - the full "
-    "deliverable that must be posted on the issue (never a one-line note) - "
-    "then call the `finalize` tool with your turn outcome.\n\n"
+    "(no terminal, file_editor, think, ...). Call the `finalize` tool once. Put "
+    "your COMPLETE, self-contained report in its `report` argument - the full "
+    "deliverable that must be posted on the issue (never a one-line note) - and "
+    "your turn outcome in `turn_outcome`.\n\n"
     "{sections}\n"
-    "Call `finalize` with `turn_outcome.appreciation` ('approved' when the "
+    "Set `turn_outcome.appreciation` ('approved' when the "
     "work meets this step's goal, 'rejected' when it does not, 'hold' only "
     "when you are blocked and need information from a human), plus "
     "`turn_outcome.hold_kind` = 'awaiting_input' with a hold, "
     "`turn_outcome.agent_call` = {{agent_name, task}} when you are imperatively "
     "naming the exact agent to run next, and "
     "`turn_outcome.round`/`note`/`complexity`/`pin` when they apply. "
-    "Where the workflow goes next is engine topology, never your choice. Put no "
-    "report prose in the tool arguments."
+    "Where the workflow goes next is engine topology, never your choice. "
+    "Nothing is posted if `report` is empty."
 )
 
 #: Prepended to the closing prompt when the previous attempt called ``finalize``
-#: with no report text (issue #1038): the report must ride in the turn's text.
+#: with no report (issue #1038): the report is the call's ``report`` argument.
 _FINALIZE_RETRY_PROMPT = (
-    "Your previous finalize turn carried no report text, so nothing could be "
-    "posted. Write the full report as the markdown text of this turn first, "
-    "then call `finalize`."
+    "Your previous finalize call carried no report, so nothing could be "
+    "posted. Call `finalize` again with the full report in its `report` "
+    "argument."
 )
 
 #: The closing turn's tool surface (issues #973, #1014): the terminal tool plus
@@ -505,60 +510,6 @@ def _tools_only(conversation: Any, allowed: frozenset[str]) -> Iterator[None]:
         _install(resolved)
 
 
-def _finalize_anchor_index(conversation: Any) -> int:
-    """Index of the harvested ``finalize`` event, or ``-1`` when there is none.
-
-    Both the report text and the route read from this single anchor: the last
-    ``finalize`` action event at or after ``_REPORT_OFFSET_ATTR``. Events after
-    the ``finalize`` call (a trailing status message, a repeated call) can never
-    move the anchor, so the posted body and the recorded route always come from
-    the same turn (issue #1014).
-    """
-    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
-    events = _events(conversation)
-    for index in range(len(events) - 1, offset - 1, -1):
-        if getattr(events[index], "tool_name", None) == "finalize":
-            return index
-    return -1
-
-
-def _finalize_turn_text(conversation: Any) -> str:
-    """Report text anchored to the harvested ``finalize`` event's turn.
-
-    Precedence: the anchor ``finalize`` action event's ``thought``; else the
-    nearest preceding *agent-authored* message; never an event after that
-    ``finalize`` call. The report rides in the turn that calls ``finalize``, so
-    it surfaces as the action event's ``thought`` (the SDK emits no standalone
-    ``MessageEvent`` for a turn that also carries a tool call); the nearest
-    preceding agent message is the fallback when the tool call and its text
-    landed on different turns.
-
-    The fallback accepts ``source == "agent"`` messages only: the engine's own
-    finalize prompt is a ``user``-sourced ``MessageEvent`` that embeds the
-    section skeleton (issue #1020), and harvesting it posts the template.
-    """
-    anchor = _finalize_anchor_index(conversation)
-    if anchor < 0:
-        return ""
-    text = _content_text(getattr(_events(conversation)[anchor], "thought", None)).strip()
-    if text:
-        return text
-    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
-    events = _events(conversation)
-    for index in range(anchor - 1, offset - 1, -1):
-        if getattr(events[index], "tool_name", None) is not None:
-            continue
-        if getattr(events[index], "source", None) != "agent":
-            continue
-        message = getattr(events[index], "llm_message", None)
-        if message is None:
-            continue
-        text = _content_text(getattr(message, "content", None)).strip()
-        if text:
-            return text
-    return ""
-
-
 def _finalize_route(conversation: Any) -> RouteDecision | None:
     """The typed route of the finalize turn's last ``finalize`` call (#1033).
 
@@ -572,7 +523,7 @@ def _finalize_route(conversation: Any) -> RouteDecision | None:
     if anchor < 0:
         return None
     outcome = turn_outcome_from_action(
-        getattr(_events(conversation)[anchor], "action", None)
+        getattr(events_of(conversation)[anchor], "action", None)
     )
     if outcome is None:
         return None
@@ -584,19 +535,6 @@ def _finalize_route(conversation: Any) -> RouteDecision | None:
         complexity=outcome.complexity,
         pin=outcome.pin,
     )
-
-
-def _content_text(content: object) -> str:
-    """Join an SDK message content value into plain text (mirrors the capture)."""
-    if isinstance(content, str):
-        return content
-    if not content:
-        return ""
-    parts: list[str] = []
-    for item in content:  # type: ignore[union-attr]
-        text = getattr(item, "text", None)
-        parts.append(text if isinstance(text, str) else str(item))
-    return "".join(parts)
 
 
 def _run_closing_turn(conversation: Any, prompt: str) -> None:
@@ -633,11 +571,7 @@ def _send_and_run(conversation: Any, prompt: str) -> None:
 
 
 def _event_count(conversation: Any) -> int:
-    return len(_events(conversation))
-
-
-def _events(conversation: Any) -> list:
-    return list(getattr(getattr(conversation, "state", None), "events", None) or [])
+    return len(events_of(conversation))
 
 
 def _run_pipeline(

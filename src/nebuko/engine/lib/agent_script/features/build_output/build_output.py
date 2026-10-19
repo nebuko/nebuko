@@ -907,6 +907,21 @@ def _recall_aware_events(events: list, run_outcome) -> list:
     return events[:offset]
 
 
+def _work_loop_events(events: list, conversation) -> list:
+    """Exclude the engine's closing finalize turn from answer selection (#1038).
+
+    The host records where the closing turn starts on the conversation. Its
+    report is harvested from that turn by the host, and the agent's replies to
+    it ("Report posted above") are acknowledgements: left in, the latest-wins
+    scan would post them in place of the work-loop answer. Without a closing
+    turn the full list is returned unchanged.
+    """
+    offset = getattr(conversation, "nebuko_report_event_offset", None)
+    if not isinstance(offset, int):
+        return events
+    return events[:offset]
+
+
 def _write_latest_answer_file(text: str) -> None:
     """Persist the latest-answer artifact consumed by prepare_comment.py.
 
@@ -1120,7 +1135,8 @@ def build_output(
     run_outcome = _get_run_outcome(conversation)
     recall_events = _recall_aware_events(conversation.state.events, run_outcome)
     latest_answer = extract_latest_answer(
-        recall_events, classify_event=_is_recall_pass_turn
+        _work_loop_events(recall_events, conversation),
+        classify_event=_is_recall_pass_turn,
     )
     # The ``SCAFFOLD_BRANCH`` prose marker is written on a standalone text turn
     # (the scaffold-plan skill's channel), which the deliverable above may no

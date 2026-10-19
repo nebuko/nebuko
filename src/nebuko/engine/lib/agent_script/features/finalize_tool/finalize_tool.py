@@ -23,6 +23,7 @@ from openhands.sdk.tool.tool import (
     ToolDefinition,
     ToolExecutor,
 )
+from pydantic import Field
 from rich.text import Text
 
 from agent_script.features.call_agent_tool.call_agent_tool import (
@@ -37,6 +38,10 @@ from nebuko.engine.finalize import (
     TurnOutcomePayload,
     turn_outcome_from_action,
 )
+from nebuko.engine.report_text import (
+    REPORT_OFFSET_ATTR,
+    closing_turn_report_text,
+)
 from workflow_state import RunPrefs, TurnOutcome
 
 if TYPE_CHECKING:
@@ -45,14 +50,32 @@ if TYPE_CHECKING:
 
 FINALIZE_TOOL_NAME = "finalize"
 
+#: Refusal for a finalize call whose turn carries no report text (issue #1038).
+NO_REPORT_TEXT = (
+    "finalize rejected: no report. The report is the `report` argument of "
+    "finalize, and nothing is posted without it. Call finalize again with the "
+    "full markdown report in `report`. A 'report posted' note is not a report."
+)
+
 
 class FinalizeAction(Action):
     """Action for the terminal ``finalize`` tool.
 
-    The report rides in the turn text, so the action declares no field of its
-    own: the ``turn_outcome`` arrives through the tool's ``response_schema``
-    and lands in ``action.structured_output``.
+    ``report`` is the step's deliverable, read structurally by the engine (issue
+    #1038). It is optional in the schema because only the engine's closing turn
+    owes one - the work loop and the dispatch recall pass end with the outcome
+    alone - and the executor enforces it there. The ``turn_outcome`` arrives
+    through the tool's ``response_schema`` and lands in ``action.structured_output``.
     """
+
+    report: str = Field(
+        default="",
+        description=(
+            "The COMPLETE, self-contained markdown report that is posted on the "
+            "issue (never a one-line note). Required in the engine's closing "
+            "turn."
+        ),
+    )
 
 
 class FinalizeObservation(Observation):
@@ -65,12 +88,11 @@ class FinalizeObservation(Observation):
 
 FINALIZE_DESCRIPTION = f"""End this step: record your turn outcome for the workflow.
 
-The report itself is the markdown text of this turn. Write the report first
-(when the prompt shows section markers, put the section bodies between the
-exact markers), then call this tool with your turn outcome. Do not put the
-report in the tool arguments.
-
 Parameters:
+- report: the COMPLETE, self-contained markdown report that is posted on the
+  issue (never a one-line note). REQUIRED in the engine's closing turn. When
+  the prompt shows section markers, put the section bodies between the exact
+  markers inside this report.
 - turn_outcome.appreciation: REQUIRED. Your verdict on this turn —
   'approved' (the work meets the step's goal), 'rejected' (it does not), or
   'hold' (you are blocked and need information from a human).
@@ -143,6 +165,19 @@ class FinalizeExecutor(ToolExecutor):
                 ),
                 is_error=True,
             )
+        # In the engine's closing turn the report is the turn's markdown text,
+        # not an argument. A call made with no report text is refused here,
+        # while the agent can still act on it: an accepted call would record
+        # the outcome, and the agent would then acknowledge "posted" with
+        # nothing to post (#1038). Only the closing turn is gated (the host arms
+        # it by recording the turn's start): the work loop and the dispatch
+        # recall pass ask for the outcome alone, with no report to write.
+        if (
+            conversation is not None
+            and getattr(conversation, REPORT_OFFSET_ATTR, None) is not None
+            and not closing_turn_report_text(conversation)
+        ):
+            return FinalizeObservation.from_text(text=NO_REPORT_TEXT, is_error=True)
         record_turn_outcome(
             self._conversation_id,
             outcome_to_turn_outcome(outcome),

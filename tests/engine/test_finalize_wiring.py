@@ -81,6 +81,17 @@ class TestFinalizeToolRegistration:
         assert isinstance(schema, dict)
         assert list(schema["properties"]) == ["turn_outcome"]
 
+    def test_finalize_tool_takes_the_report_as_an_argument(self) -> None:
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+
+        tool = FinalizeTool.create(conversation_id="c-report")[0]
+        action = tool.action_from_arguments(
+            {"report": "## Plan\n\nthe change", "turn_outcome": {"appreciation": "approved"}}
+        )
+
+        assert action.report == "## Plan\n\nthe change"
+        assert action.structured_output["turn_outcome"]["appreciation"] == "approved"
+
     def test_finalize_action_records_the_typed_turn_outcome(self) -> None:
         from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
             get_recorded_turn_outcome,
@@ -357,13 +368,15 @@ def _write_entry_point(repo_root: Path) -> None:
     script.write_text("# imported, never executed\n", encoding="utf-8")
 
 
-def _finalize_event(text: str, route: dict[str, Any] | None = None) -> object:
+def _finalize_event(
+    text: str, route: dict[str, Any] | None = None, report: str = ""
+) -> object:
     """A real ``finalize`` action event carrying the turn's report text."""
     from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
-    action = FinalizeAction()
+    action = FinalizeAction(report=report)
     if route is not None:
         action._structured_output = {"turn_outcome": route}
     return ActionEvent(
@@ -395,7 +408,7 @@ def _agent_message_event(text: str) -> object:
 _FAKE_CONVERSATION_ID = "conv-finalize-wiring"
 
 
-def _run_recorded_finalize_actions(events: list[Any]) -> None:
+def _run_recorded_finalize_actions(events: list[Any], conversation: Any) -> None:
     """Run the real ``finalize`` executor over the scripted actions (issue #1033).
 
     The SDK executes the tool after the turn; the scripted conversation replays
@@ -413,7 +426,7 @@ def _run_recorded_finalize_actions(events: list[Any]) -> None:
             continue
         action = getattr(event, "action", None)
         if action is not None:
-            executor(action, None)
+            executor(action, conversation)
 
 
 def _engine_prompt_event(text: str) -> object:
@@ -431,6 +444,11 @@ def _engine_prompt_event(text: str) -> object:
         source="user",
         llm_message=Message(role="user", content=[TextContent(text=text)]),
     )
+
+
+def _finalize_event_with_report(report: str, route: dict[str, Any] | None = None) -> object:
+    """A ``finalize`` call whose ``report`` argument carries the deliverable."""
+    return _finalize_event("", route, report=report)
 
 
 def _finalize_event_without_thought(route: dict[str, Any] | None = None) -> object:
@@ -464,13 +482,15 @@ class _FinalizeConversation:
 
     def send_message(self, prompt: str) -> None:
         self.prompts.append(prompt)
+        # The SDK records the prompt as a user ``MessageEvent`` (the turn start).
+        self.state.events.append(_engine_prompt_event(prompt))
 
     def run(self) -> None:
         self.tools_seen.append(set(self.agent._tools))
         if self._turns:
             events = self._turns.pop(0)
             self.state.events.extend(events)
-            _run_recorded_finalize_actions(events)
+            _run_recorded_finalize_actions(events, self)
 
     def interrupt(self) -> None:  # pragma: no cover - the timeout path
         pass
@@ -1013,7 +1033,7 @@ class TestFinalizeHarvestAnchor:
         result = host.run("prompt")
 
         assert len(conversation.prompts) == 2
-        assert "carried no report text" in conversation.prompts[1]
+        assert "carried no report" in conversation.prompts[1]
         assert getattr(conversation, _FINALIZE_BODY_ATTR, None) == plan
         assert result["deliverable"] == plan
 
@@ -1041,6 +1061,162 @@ class TestFinalizeHarvestAnchor:
         assert len(conversation.prompts) == 2
         assert result["deliverable"] == "work-loop finish note"
         assert any("returned no text twice" in r.message for r in caplog.records)
+
+    def test_a_text_less_finalize_is_refused_and_records_nothing(self) -> None:
+        # Repro #1038: an accepted text-less call recorded the outcome, and the
+        # agent then acknowledged "Report posted above" with nothing to post.
+        from agent_script.features.finalize_tool.finalize_tool import (
+            NO_REPORT_TEXT,
+            FinalizeExecutor,
+        )
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.id = "conv-refused-no-report-text"
+        conversation.state.events = [
+            _finalize_event_without_thought({"appreciation": "approved"})
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+        action = conversation.state.events[0].action
+
+        observation = FinalizeExecutor(conversation_id=conversation.id)(
+            action, conversation
+        )
+
+        assert observation.is_error
+        assert observation.text == NO_REPORT_TEXT
+        assert _recorded_turn_outcome_fields(conversation) is None
+
+    def test_outside_the_closing_turn_an_outcome_only_finalize_is_accepted(self) -> None:
+        # The dispatch recall pass asks for the outcome alone ("do not restate
+        # your answer"); only the engine's closing turn owes a report.
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.id = "conv-recall-outcome-only"
+        conversation.state.events = [
+            _finalize_event_without_thought({"appreciation": "approved"})
+        ]
+        action = conversation.state.events[0].action
+
+        observation = FinalizeExecutor(conversation_id=conversation.id)(
+            action, conversation
+        )
+
+        assert not observation.is_error
+        assert _recorded_turn_outcome_fields(conversation) is not None
+
+    def test_the_report_argument_is_the_report(self) -> None:
+        from nebuko.engine.report_text import closing_turn_report_text
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = [
+            _finalize_event_with_report("## Plan\n\nthe change", {"appreciation": "approved"})
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        assert closing_turn_report_text(conversation) == "## Plan\n\nthe change"
+
+    def test_the_report_argument_wins_over_the_turn_text(self) -> None:
+        from nebuko.engine.report_text import closing_turn_report_text
+
+        event = _finalize_event(
+            "lead-in text", {"appreciation": "approved"}, report="the report"
+        )
+        conversation = _FinalizeConversation(turns=[])
+        conversation.state.events = [event]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        assert closing_turn_report_text(conversation) == "the report"
+
+    def test_a_finalize_call_with_a_report_argument_is_posted_without_a_retry(
+        self, tmp_path: Path
+    ) -> None:
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        plan = "## Plan\n\n1. **`a.py`** - the change"
+        conversation = _FinalizeConversation(
+            turns=[[_finalize_event_with_report(plan, {"appreciation": "approved"})]]
+        )
+        host = _host_for(
+            repo_root, conversation, latest_answer="work-loop finish note", step_output=None
+        )
+
+        result = host.run("prompt")
+
+        assert len(conversation.prompts) == 1
+        assert "`report` argument" in conversation.prompts[0]
+        assert result["deliverable"] == plan
+
+    def test_a_blank_report_argument_is_refused_in_the_closing_turn(self) -> None:
+        from agent_script.features.finalize_tool.finalize_tool import (
+            NO_REPORT_TEXT,
+            FinalizeExecutor,
+        )
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.id = "conv-blank-report-argument"
+        conversation.state.events = [
+            _finalize_event_with_report("   ", {"appreciation": "approved"})
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+
+        observation = FinalizeExecutor(conversation_id=conversation.id)(
+            conversation.state.events[0].action, conversation
+        )
+
+        assert observation.is_error
+        assert observation.text == NO_REPORT_TEXT
+
+    def test_a_report_written_before_finalize_is_accepted(self) -> None:
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.id = "conv-accepted-with-report-text"
+        conversation.state.events = [
+            _agent_message_event(_answer()),
+            _finalize_event_without_thought({"appreciation": "approved"}),
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 0)
+        action = conversation.state.events[-1].action
+
+        observation = FinalizeExecutor(conversation_id=conversation.id)(
+            action, conversation
+        )
+
+        assert not observation.is_error
+        assert _recorded_turn_outcome_fields(conversation) is not None
+
+    def test_an_ack_after_a_refused_finalize_never_becomes_the_report(
+        self, tmp_path: Path
+    ) -> None:
+        # Repro #1038: the agent acks the refusal instead of writing a report.
+        # Neither attempt has report text, so the loud fallback stands; the ack
+        # is never the posted deliverable.
+        repo_root = tmp_path / "checkout"
+        _write_entry_point(repo_root)
+        conversation = _FinalizeConversation(
+            turns=[
+                [
+                    _finalize_event_without_thought({"appreciation": "approved"}),
+                    _agent_message_event("Report posted above."),
+                ],
+                [
+                    _finalize_event_without_thought({"appreciation": "approved"}),
+                    _agent_message_event("Report posted above again."),
+                ],
+            ]
+        )
+        host = _host_for(
+            repo_root,
+            conversation,
+            latest_answer="work-loop finish note",
+            step_output=None,
+        )
+
+        result = host.run("prompt")
+
+        assert getattr(conversation, _FINALIZE_BODY_ATTR, None) is None
+        assert "Report posted above" not in result["deliverable"]
 
     def test_a_broken_turn_salvages_the_text_seen_so_far(self, tmp_path: Path) -> None:
         repo_root = tmp_path / "checkout"

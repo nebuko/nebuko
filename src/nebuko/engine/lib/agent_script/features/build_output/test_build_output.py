@@ -1320,6 +1320,35 @@ class TestEngineOwnedTerminalTurns(unittest.TestCase):
         ]
         self.assertEqual(extract_latest_answer(events), "the real work-loop answer")
 
+    def test_the_closing_turn_never_supplies_the_work_loop_answer(self):
+        """Repro #1038: the agent acknowledges the closing finalize call.
+
+        The ack ("Report posted above...") follows the closing turn; it must not
+        replace the work-loop answer the fallback chain would otherwise post.
+        """
+        from types import SimpleNamespace
+
+        from agent_script.features.build_output.build_output import _work_loop_events
+
+        events = [
+            _msg_event("the real work-loop answer"),
+            _finalize_action_event(""),
+            _msg_event("Report posted above and turn outcome recorded."),
+        ]
+        closing = SimpleNamespace(nebuko_report_event_offset=1)
+        self.assertEqual(
+            extract_latest_answer(_work_loop_events(events, closing)),
+            "the real work-loop answer",
+        )
+
+    def test_without_a_closing_turn_the_events_are_unchanged(self):
+        from types import SimpleNamespace
+
+        from agent_script.features.build_output.build_output import _work_loop_events
+
+        events = [_msg_event("answer")]
+        self.assertEqual(_work_loop_events(events, SimpleNamespace()), events)
+
     def test_the_legacy_finish_and_dispatch_turns_are_unaffected(self):
         events = [
             _dispatch_action_event("dispatch report"),
