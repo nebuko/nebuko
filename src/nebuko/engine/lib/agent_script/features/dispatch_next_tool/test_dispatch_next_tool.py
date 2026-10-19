@@ -78,9 +78,14 @@ class TestTurnOutcomeActionValidators(unittest.TestCase):
             TurnOutcomeAction(appreciation="hold", hold_kind="bogus")
 
     def test_known_hold_kinds_are_accepted(self):
-        for kind in ("awaiting_approval", "awaiting_input"):
-            act = TurnOutcomeAction(appreciation="hold", hold_kind=kind)
-            self.assertEqual(action_to_payload(act)["hold_kind"], kind)
+        # ``awaiting_approval`` was removed in issue #1033: approval gates are
+        # engine-owned and only ``awaiting_input`` (ask the human) is a hold.
+        act = TurnOutcomeAction(appreciation="hold", hold_kind="awaiting_input")
+        self.assertEqual(action_to_payload(act)["hold_kind"], "awaiting_input")
+
+    def test_awaiting_approval_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            TurnOutcomeAction(appreciation="hold", hold_kind="awaiting_approval")
 
     def test_hold_kind_may_be_omitted(self):
         act = TurnOutcomeAction(appreciation="approved")
@@ -150,7 +155,7 @@ class TestDispatchNextTool(unittest.TestCase):
         tool = DispatchNextTool.create(conversation_id="run-3")[0]
         tool.executor(TurnOutcomeAction(appreciation="approved"))
         tool.executor(
-            TurnOutcomeAction(appreciation="hold", hold_kind="awaiting_approval")
+            TurnOutcomeAction(appreciation="hold", hold_kind="awaiting_input")
         )
         outcome = get_recorded_turn_outcome("run-3")
         self.assertIsNotNone(outcome)
@@ -202,14 +207,14 @@ class TestDispatchNextTool(unittest.TestCase):
         )
         tools = resolve_tool(Tool(name="DispatchNextTool"), state)
         tools[0].executor(
-            TurnOutcomeAction(appreciation="approved", required_agent="context")
+            TurnOutcomeAction(appreciation="approved", note="delivered")
         )
 
         # Read side keys under str(conversation.id) == str(state.id).
         retrieved = get_recorded_turn_outcome(str(state.id))
         self.assertIsNotNone(retrieved)
         self.assertEqual(retrieved.appreciation.value, "approved")
-        self.assertEqual(retrieved.required_agent, "context")
+        self.assertEqual(retrieved.note, "delivered")
         clear_run(str(state.id))
 
 

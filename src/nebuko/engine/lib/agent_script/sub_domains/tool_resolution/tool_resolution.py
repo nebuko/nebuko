@@ -238,6 +238,9 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
         elif tool_name == "finalize":
             _ensure_finalize_tool_registered()
             sdk_tools.append(Tool(name=_FINALIZE_TOOL_NAME))
+            # ``finalize`` is the terminal tool of every step (issue #1033), so
+            # its presence is what enables the bounded missing-outcome recall.
+            dispatch_tool_enabled = True
         elif tool_name == "report_scaffold_branch":
             _ensure_scaffold_branch_tool_registered()
             sdk_tools.append(Tool(name=_SCAFFOLD_BRANCH_TOOL_NAME))

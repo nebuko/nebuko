@@ -18,7 +18,6 @@ __all__ = [
     "FinalizeTool",
     "outcome_to_prefs",
     "outcome_to_turn_outcome",
-    "route_from_action",
     "route_to_prefs",
     "route_to_turn_outcome",
 ]

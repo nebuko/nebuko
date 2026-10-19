@@ -48,7 +48,7 @@ class TestToolResolution:
 
     def test_combined_with_control_plane_tools(self):
         resolved = resolve_toolset(
-            ["think", "finish", "dispatch_next", "complexity_review"], "architect"
+            ["think", "finish", "finalize", "complexity_review"], "architect"
         )
         names = [t.name for t in resolved.sdk_tools]
         assert "ComplexityReviewTool" in names
