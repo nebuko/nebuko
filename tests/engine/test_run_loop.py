@@ -1098,6 +1098,23 @@ class TestRoutePhase:
         assert outcome.incomplete_reason is IncompleteReason.NO_OUTCOME
         assert outcome.route_key is None
 
+    def test_the_recorded_completed_outcome_round_trips_without_rejection(self, tmp_path):
+        """Issue #1033: the engine's own recorded outcome names ``status``.
+
+        ``agent_host`` hands the recorded outcome back as ``turn_outcome`` with
+        ``status`` filled in; that is engine truth, not an agent claim, so it
+        must route as COMPLETED instead of tripping the agent-axis guard.
+        """
+        engine = _engine(tmp_path)
+
+        outcome = engine.route(
+            {"turn_outcome": {"status": "completed", "appreciation": "approved"}},
+            observed=OutcomeStatus.SUCCESS,
+        )
+
+        assert outcome.status is TurnStatus.COMPLETED
+        assert outcome.appreciation is Appreciation.APPROVED
+
     def test_an_interrupted_turn_never_routes_on_a_verdict(self, tmp_path):
         """A truncated turn is engine-observed INCOMPLETE even with a verdict."""
         engine = _engine(tmp_path)

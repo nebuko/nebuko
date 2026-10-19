@@ -104,6 +104,9 @@ _STEP_HEADER = "## Current step prompt"
 # The engine owns the value: it is the trigger's issue number, stamped once per
 # run so the session stays stable across engine turns.
 _LLM_SESSION_ID_ENV = "LLM_SESSION_ID"
+# Outcome fields the engine measures (issue #1033): the recorded outcome the
+# engine hands back carries them, but an agent may never supply them.
+_ENGINE_MEASURED_OUTCOME_KEYS = frozenset({"status", "incomplete_reason"})
 
 # A resolver skip whose reason reports a failed ``/nebuko`` (or legacy
 # ``/workflow``) resolution — a missing/invalid workflow file or an unknown
@@ -2296,7 +2299,16 @@ class Engine:
             from agent_script.features.run_agent.run_outcome import OutcomeStatus
 
             observed = OutcomeStatus.SUCCESS
-        return TurnOutcome.from_agent_payload(payload, observed=observed)
+        # The payload may be the engine's own recorded outcome (agent_host
+        # hands back its ``status`` field), not an agent claim. ``observed``
+        # is the sole source of ``status``, so drop the engine-measured keys
+        # before the agent-payload validator sees them (issue #1033).
+        agent_payload = {
+            key: value
+            for key, value in payload.items()
+            if key not in _ENGINE_MEASURED_OUTCOME_KEYS
+        }
+        return TurnOutcome.from_agent_payload(agent_payload, observed=observed)
 
     # ── internals ────────────────────────────────────────────────────
 
