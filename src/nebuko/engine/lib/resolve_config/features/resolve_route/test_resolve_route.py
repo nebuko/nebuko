@@ -642,14 +642,14 @@ class TestHumanGateHoldPrecedence:
         }
 
     def test_gate_hold_outranks_a_resolvable_successor(self, tmp_path):
-        # plan -> implement resolves, but the human_gate hold must still win.
+        # plan -> implement resolves, but the armed gate must still win. The
+        # agent itself says 'approved' (issue #1033): the gate is run state.
         result = self._resolve(
             tmp_path,
-            self._state(
-                status="completed",
-                appreciation="hold",
-                hold_kind="awaiting_approval",
-            ),
+            {
+                **self._state(status="completed", appreciation="approved"),
+                "gate": {"step": "plan", "status": "armed"},
+            },
         )
         assert result["SKIP_AGENT"] == "true"
         assert "human_gate:plan" in result["REASON"]
@@ -683,20 +683,20 @@ class TestHumanGateHoldPrecedence:
         assert "Awaiting input" in result["REASON"]
         assert result.get("TASK") != "dev"
 
-    def test_gate_hold_outranks_a_persisted_function_call(self, tmp_path):
-        # Issue #887 round 2: a held gate whose state also carries a
-        # function_call must not let the hand-off branch route to the callee.
-        state = self._state(
-            status="completed",
-            appreciation="hold",
-            hold_kind="awaiting_approval",
-        )
+    def test_gate_blocks_the_advance_but_never_the_handoff(self, tmp_path):
+        # Issue #1003: the gate blocks the workflow *advance*, not a
+        # delegation — a hand-off from an armed gate is a consultation and the
+        # step position stays put.
+        state = {
+            **self._state(status="completed", appreciation="approved"),
+            "gate": {"step": "plan", "status": "armed"},
+        }
         state["function_call"] = {"agent_name": "dev"}
         result = self._resolve(tmp_path, state)
-        assert result["SKIP_AGENT"] == "true"
-        assert "human_gate:plan" in result["REASON"]
-        assert result.get("TASK") != "dev"
-        assert result.get("WORKFLOW_STEP") != "implement"
+        assert result.get("SKIP_AGENT") != "true"
+        assert result.get("TASK") == "dev"
+        # The callee runs at its own workflow step; the gate re-arms on return.
+        assert result.get("WORKFLOW_STEP") == "implement"
 
 
 _CALLBACK_WF_YAML = (
@@ -745,17 +745,18 @@ class TestCallbackReturnTarget:
         state, wf_dir = self._state(tmp_path, "context")
         assert _callback_return_target(state, None, wf_dir) is None
 
-    def test_explicit_target_outranks_callback(self, tmp_path):
+    def test_approved_verdict_fires_the_callback(self, tmp_path):
+        """Issue #1033: ``approved``/``rejected`` both return to the caller."""
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target
         from workflow_state import Appreciation, TurnOutcome, TurnStatus
 
         state, wf_dir = self._state(tmp_path, "architect")
-        outcome = TurnOutcome(
-            status=TurnStatus.COMPLETED,
-            appreciation=Appreciation.APPROVED,
-            required_agent="dev",
-        )
-        assert _callback_return_target(state, outcome, wf_dir) is None
+        for verdict in (Appreciation.APPROVED, Appreciation.REJECTED):
+            outcome = TurnOutcome(status=TurnStatus.COMPLETED, appreciation=verdict)
+            assert _callback_return_target(state, outcome, wf_dir) == (
+                "architect",
+                "answer",
+            )
 
     def test_hold_outranks_callback(self, tmp_path):
         from resolve_config.features.resolve_route.resolve_route import _callback_return_target

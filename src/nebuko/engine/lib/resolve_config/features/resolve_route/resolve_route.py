@@ -182,6 +182,20 @@ def _resolve_resume_path(
     # agent-checkpoint / interruption exhaustion halt (issues #704, #965, #978)
     # and a crashed run (issue #978) — the failure notification names
     # ``/nebuko resume`` as the recovery command, so it must re-run the step.
+    # A human_gate hold is released ONLY by the dedicated gate command
+    # (issues #648, #1033): /nebuko resume is a non-release path here, so it
+    # stays held and points the human at the correct command. That guard runs
+    # *before* the verdict check: the gate is engine-owned run state, so the
+    # agent's own ``approved`` verdict no longer marks the step as held.
+    if _gate_pending(prev_state):
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": (
+                f"resume: step '{prev_state.step}' is held by a human gate — "
+                "use `/nebuko approve gate` or `/nebuko reject gate` to release it"
+            ),
+        }
+
     if outcome is None or outcome.status != TurnStatus.COMPLETED:
         if outcome is None or outcome.incomplete_reason not in (
             IncompleteReason.SOFT_TIMEOUT,
@@ -202,20 +216,6 @@ def _resolve_resume_path(
             "REASON": (
                 "resume: step is not on hold "
                 f"(appreciation='{outcome.appreciation.value if outcome.appreciation else 'none'}')"
-            ),
-        }
-
-    # A human_gate hold is released ONLY by the dedicated gate command
-    # (issue #648): /nebuko resume is a non-release path here, so it stays
-    # held and points the human at the correct command. This keeps a gated
-    # step's transition an engine-owned state mutation driven by a typed,
-    # identity-verified decision rather than a resume re-invocation.
-    if _gate_pending(prev_state):
-        return {
-            "SKIP_AGENT": "true",
-            "REASON": (
-                f"resume: step '{prev_state.step}' is held by a human gate — "
-                "use `/nebuko approve gate` or `/nebuko reject gate` to release it"
             ),
         }
 
@@ -1766,25 +1766,31 @@ def _resolve_function_call_path(
         f"workflow='{wf_name}', step='{wf_step}', callback='{callback}')",
         file=sys.stderr,
     )
-    return {
+    # Run preferences survive the hand-off (issue #1033): the imperative call
+    # used to route through the outcome path, which layered ``prefs`` onto the
+    # config; the callee must keep the caller's tier/model overrides. An
+    # explicit ``complexity`` on the call still wins.
+    base = _route_config_from_prefs(prev_state, getattr(prev_state, "prefs", None)) if prev_state is not None else {}
+    config = {
         "task": task,
         "config_workflow": wf_name,
         "config_step": wf_step,
         "config_callback": callback,
-        "config_complexity": complexity,
+        "config_complexity": complexity or base.get("config_complexity", ""),
         "config_reasoning": "none",
-        "config_temperature": "",
+        "config_temperature": base.get("config_temperature", ""),
         "config_round": "",
-        "config_model": "",
-        "config_skills": "",
-        "config_top_p": "",
-        "config_top_k": "",
-        "config_repetition_penalty": "",
-        "config_debug": "",
+        "config_model": base.get("config_model", ""),
+        "config_skills": base.get("config_skills", ""),
+        "config_top_p": base.get("config_top_p", ""),
+        "config_top_k": base.get("config_top_k", ""),
+        "config_repetition_penalty": base.get("config_repetition_penalty", ""),
+        "config_debug": base.get("config_debug", ""),
         "config_branch": "",
-        "config_parent_workflow": "",
-        "config_parent_workflow_step": "",
+        "config_parent_workflow": base.get("config_parent_workflow", ""),
+        "config_parent_workflow_step": base.get("config_parent_workflow_step", ""),
     }
+    return config
 
 
 def _resolve_machine_trigger_path(
