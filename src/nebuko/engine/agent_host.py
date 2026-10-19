@@ -52,6 +52,12 @@ from nebuko.engine.finalize import (
     step_output_contract,
 )
 from nebuko.engine.paths import ensure_import_path
+from nebuko.engine.report_text import (
+    REPORT_OFFSET_ATTR as _REPORT_OFFSET_ATTR,
+    closing_turn_report_text as _finalize_turn_text,
+    events_of,
+    finalize_anchor_index as _finalize_anchor_index,
+)
 
 __all__ = ["InProcessAgentHost"]
 
@@ -59,10 +65,9 @@ log = logging.getLogger(__name__)
 
 _MISSING = object()
 
-#: Conversation attributes the closing turn stows its results on (issues
+#: Conversation attribute the closing turn stows its results on (issues
 #: #830, #1033), mirroring how ``run_agent`` stows ``run_outcome`` for
 #: ``build_output``.
-_REPORT_OFFSET_ATTR = "nebuko_report_event_offset"
 #: The rendered comment of a step that declares an ``output:`` shape (issue
 #: #973). The finalize turn replaces the report turn for such a step, so the
 #: deliverable is the engine-rendered comment, not a ``finish.message``.
@@ -505,60 +510,6 @@ def _tools_only(conversation: Any, allowed: frozenset[str]) -> Iterator[None]:
         _install(resolved)
 
 
-def _finalize_anchor_index(conversation: Any) -> int:
-    """Index of the harvested ``finalize`` event, or ``-1`` when there is none.
-
-    Both the report text and the route read from this single anchor: the last
-    ``finalize`` action event at or after ``_REPORT_OFFSET_ATTR``. Events after
-    the ``finalize`` call (a trailing status message, a repeated call) can never
-    move the anchor, so the posted body and the recorded route always come from
-    the same turn (issue #1014).
-    """
-    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
-    events = _events(conversation)
-    for index in range(len(events) - 1, offset - 1, -1):
-        if getattr(events[index], "tool_name", None) == "finalize":
-            return index
-    return -1
-
-
-def _finalize_turn_text(conversation: Any) -> str:
-    """Report text anchored to the harvested ``finalize`` event's turn.
-
-    Precedence: the anchor ``finalize`` action event's ``thought``; else the
-    nearest preceding *agent-authored* message; never an event after that
-    ``finalize`` call. The report rides in the turn that calls ``finalize``, so
-    it surfaces as the action event's ``thought`` (the SDK emits no standalone
-    ``MessageEvent`` for a turn that also carries a tool call); the nearest
-    preceding agent message is the fallback when the tool call and its text
-    landed on different turns.
-
-    The fallback accepts ``source == "agent"`` messages only: the engine's own
-    finalize prompt is a ``user``-sourced ``MessageEvent`` that embeds the
-    section skeleton (issue #1020), and harvesting it posts the template.
-    """
-    anchor = _finalize_anchor_index(conversation)
-    if anchor < 0:
-        return ""
-    text = _content_text(getattr(_events(conversation)[anchor], "thought", None)).strip()
-    if text:
-        return text
-    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
-    events = _events(conversation)
-    for index in range(anchor - 1, offset - 1, -1):
-        if getattr(events[index], "tool_name", None) is not None:
-            continue
-        if getattr(events[index], "source", None) != "agent":
-            continue
-        message = getattr(events[index], "llm_message", None)
-        if message is None:
-            continue
-        text = _content_text(getattr(message, "content", None)).strip()
-        if text:
-            return text
-    return ""
-
-
 def _finalize_route(conversation: Any) -> RouteDecision | None:
     """The typed route of the finalize turn's last ``finalize`` call (#1033).
 
@@ -572,7 +523,7 @@ def _finalize_route(conversation: Any) -> RouteDecision | None:
     if anchor < 0:
         return None
     outcome = turn_outcome_from_action(
-        getattr(_events(conversation)[anchor], "action", None)
+        getattr(events_of(conversation)[anchor], "action", None)
     )
     if outcome is None:
         return None
@@ -584,19 +535,6 @@ def _finalize_route(conversation: Any) -> RouteDecision | None:
         complexity=outcome.complexity,
         pin=outcome.pin,
     )
-
-
-def _content_text(content: object) -> str:
-    """Join an SDK message content value into plain text (mirrors the capture)."""
-    if isinstance(content, str):
-        return content
-    if not content:
-        return ""
-    parts: list[str] = []
-    for item in content:  # type: ignore[union-attr]
-        text = getattr(item, "text", None)
-        parts.append(text if isinstance(text, str) else str(item))
-    return "".join(parts)
 
 
 def _run_closing_turn(conversation: Any, prompt: str) -> None:
@@ -633,11 +571,7 @@ def _send_and_run(conversation: Any, prompt: str) -> None:
 
 
 def _event_count(conversation: Any) -> int:
-    return len(_events(conversation))
-
-
-def _events(conversation: Any) -> list:
-    return list(getattr(getattr(conversation, "state", None), "events", None) or [])
+    return len(events_of(conversation))
 
 
 def _run_pipeline(

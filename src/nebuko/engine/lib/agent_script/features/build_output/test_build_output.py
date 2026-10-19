@@ -1320,6 +1320,19 @@ class TestEngineOwnedTerminalTurns(unittest.TestCase):
         ]
         self.assertEqual(extract_latest_answer(events), "the real work-loop answer")
 
+    def test_a_message_after_the_finalize_call_is_never_the_answer(self):
+        """Repro #1038: the agent acknowledges the refused or recorded finalize.
+
+        The ack ("Report posted above...") follows the closing turn; it must not
+        replace the work-loop answer the fallback chain would otherwise post.
+        """
+        events = [
+            _msg_event("the real work-loop answer"),
+            _finalize_action_event(""),
+            _msg_event("Report posted above and turn outcome recorded."),
+        ]
+        self.assertEqual(extract_latest_answer(events), "the real work-loop answer")
+
     def test_the_legacy_finish_and_dispatch_turns_are_unaffected(self):
         events = [
             _dispatch_action_event("dispatch report"),

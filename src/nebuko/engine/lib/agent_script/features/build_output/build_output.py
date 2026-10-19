@@ -832,6 +832,12 @@ def extract_latest_answer(
                 continue
             text = "".join(content_to_str(event.llm_message.content)).strip()
         else:
+            if event.tool_name == FINALIZE_TOOL_NAME:
+                # The closing turn ends here: the report is harvested from its
+                # own turn text (issue #1033), and the messages after its
+                # ``finalize`` call are acknowledgements such as "Report posted
+                # above", never the answer (issue #1038).
+                break
             text = (
                 _terminal_turn_answer(event, FINISH_TOOL_NAME)
                 or _terminal_turn_answer(event, DISPATCH_NEXT_TOOL_NAME)

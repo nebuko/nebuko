@@ -117,7 +117,7 @@ def _finalize_report_event(report: str, **outcome: Any) -> object:
     )
 
 
-def _run_recorded_finalize_actions(events: list[Any]) -> None:
+def _run_recorded_finalize_actions(events: list[Any], conversation: Any) -> None:
     """Run the real ``finalize`` executor over the scripted actions (issue #1033).
 
     The SDK executes the tool after the turn; the scripted conversation replays
@@ -135,7 +135,7 @@ def _run_recorded_finalize_actions(events: list[Any]) -> None:
             continue
         action = getattr(event, "action", None)
         if action is not None:
-            executor(action, None)
+            executor(action, conversation)
 
 
 class _FakeAgent:
@@ -179,7 +179,7 @@ class _FakeConversation:
     def run(self) -> None:
         self.tools_seen_during_run = dict(self.agent._tools)
         self.state.events.extend(self._report_events)
-        _run_recorded_finalize_actions(self._report_events)
+        _run_recorded_finalize_actions(self._report_events, self)
 
     def interrupt(self) -> None:  # pragma: no cover - the timeout path
         pass
