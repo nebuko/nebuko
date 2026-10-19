@@ -123,6 +123,53 @@ class TestEffectiveCost:
         assert m.cost == 0.0
 
 
+class TestIsEstimated:
+    """The report's cost-provenance flag (issue #1019) mirrors effective_cost."""
+
+    def test_table_priced_entry_is_an_estimate(self):
+        m = Metrics(
+            model_name="openai/deepseek/deepseek-v4.1-flash",
+            input_tokens=1_000_000,
+            output_tokens=500_000,
+            cost=0.0,
+        )
+        assert _resolver().is_estimated(m) is True
+
+    def test_reported_cost_is_not_an_estimate(self):
+        m = Metrics(model_name="openai/deepseek/deepseek-v4.1-flash", cost=1.25)
+        assert _resolver().is_estimated(m) is False
+
+    def test_placeholder_identity_is_not_an_estimate(self):
+        m = Metrics(model_name="default", input_tokens=1_000_000)
+        assert _resolver().is_estimated(m) is False
+
+    def test_unknown_model_is_not_an_estimate(self):
+        m = Metrics(model_name="openai/does-not-exist", input_tokens=100)
+        assert _resolver().is_estimated(m) is False
+
+    def test_missing_table_is_not_an_estimate(self):
+        m = Metrics(model_name="openai/deepseek/deepseek-v4.1-flash", input_tokens=1_000_000)
+        assert ReportCostResolver(table=None).is_estimated(m) is False
+
+    def test_accepts_a_legacy_mapping(self):
+        metric = {
+            "model_name": "openai/deepseek/deepseek-v4.1-flash",
+            "input_tokens": 1_000_000,
+            "cost": 0.0,
+        }
+        assert _resolver().is_estimated(metric) is True
+
+    def test_never_contradicts_effective_cost(self):
+        """A starred cell always carries price-table money, and vice versa."""
+        priced = Metrics(
+            model_name="openai/deepseek/deepseek-v4.1-flash", input_tokens=1_000_000
+        )
+        reported = Metrics(model_name="openai/deepseek/deepseek-v4.1-flash", cost=1.0)
+        resolver = _resolver()
+        assert resolver.effective_cost(priced) > 0 and resolver.is_estimated(priced)
+        assert resolver.effective_cost(reported) > 0 and not resolver.is_estimated(reported)
+
+
 class TestBuild:
     def test_build_loads_the_table_through_the_injected_fetcher(self, tmp_path, monkeypatch):
         import json

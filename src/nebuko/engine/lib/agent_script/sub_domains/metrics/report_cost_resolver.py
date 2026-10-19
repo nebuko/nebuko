@@ -95,6 +95,23 @@ class ReportCostResolver:  # @stub-protected
             rates=rates,
         ).total()
 
+    def is_estimated(self, metric: "Metrics | Mapping[str, Any]") -> bool:  # @stub-protected
+        """True when ``effective_cost`` came from the price table, not the provider.
+
+        Mirrors ``effective_cost``'s branches exactly so the report's estimate
+        marker never lies: a reported cost, an unresolved identity or a missing
+        rate is *not* an estimate, and priced tokens are (issue #1019).
+        """
+        reported = _field(metric, "cost", 0.0) or 0.0
+        if reported > 0:
+            return False
+
+        model_path = self.model_key(metric)
+        if model_path == PLACEHOLDER_MODEL:
+            return False
+
+        return self._rates(model_path) is not None
+
     def _rates(self, model_path: str) -> Optional[CostRates]:
         """Per-token rates for ``model_path`` from the default table, or ``None``."""
         if self.table is None:

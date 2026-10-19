@@ -1,15 +1,33 @@
 <!-- bot-workflow-terminal -->
 ## 📊 Agent Statistics Summary
 
-`Input Tokens` reports new (uncached) input — raw prompt tokens minus cache reads — so it is comparable with other harnesses; cache reads stay in `Cache Hit Tokens` (issue #948). In this sample every `Cache Hit Tokens` cell is 0, so the uncached figures equal the raw ones.
+Total: 4 runs · 26.4 min LLM time · 182 tool calls (2% failed) · $0.0000
 
-| Agent | Runs | Input Tokens | Output Tokens | Cache Hit Rate | Cache Hit Tokens | Reasoning Tokens | Cost (USD) | Avg Max Context Window | Avg Latency (s) | Avg LLM Runtime (s) | Avg Tokens/sec | Avg TTFT (s) | Avg Tool Calls | Tool Errors | Fix Requests | Per-Tool Calls |
-|-------|------|-------------|---------------|----------------|------------------|------------------|-----------|-------------------|------------------|----------------------|----------------|--------------|----------------|-------------|--------------|----------------|
-| Architect | 2 | 133,611 | 11,752 | n/a | 0 | 0 | $0.0000 | 0 | 29 | 108 | 87.4 | 2.17 | 3.5 | 0 | 0 | dispatch_next: 4, finish: 3 |
-| Context | 1 | 5,408,715 | 76,762 | n/a | 0 | 0 | $0.0000 | 0 | 9 | 688 | 158.6 | 1.79 | 105.0 | 2 | 0 | dispatch_next: 1, file_editor: 4, finish: 1, terminal: 99 |
-| Dev | 1 | 2,837,110 | 53,849 | n/a | 0 | 0 | $0.0000 | 0 | 13 | 683 | 105.8 | 1.36 | 70.0 | 1 | 0 | dispatch_next: 1, finish: 1, terminal: 68 |
-| Review | 1 | 1,626,119 | 16,203 | n/a | 0 | 0 | $0.0000 | 0 | 7 | 330 | 86.3 | 1.92 | 46.0 | 0 | 0 | dispatch_next: 2, finish: 1, terminal: 37, think: 6 |
-| **Totals** | 5 | 10,005,555 | 158,566 | — | — | — | $0.0000 | — | — | — | — | — | — | — | — | — |
+| | **Total** | Architect | Context | Dev |
+|---:|---:|---:|---:|---:|
+| Runs | **4** | 2 | 1 | 1 |
+| LLM time | **26.4 min** | 3.6 min (14%) | 11.5 min (43%) | 11.4 min (43%) |
+| Cost | **$0.0000** | $0.0000 | $0.0000 | $0.0000 |
+| Input / output tokens | **8,379,436 / 142,363** | 133,611 / 11,752 | 5,408,715 / 76,762 | 2,837,110 / 53,849 |
+| Cache hit tokens | **0** | 0 | 0 | 0 |
+| Tool calls | **182** | 7 | 105 | 70 |
+| Tool error rate | **2%** | 0% | 2% | 1% |
+
+<details>
+<summary>Per-tool breakdown & provider health</summary>
+
+| | **Total** | Architect | Context | Dev |
+|---:|---:|---:|---:|---:|
+| Avg LLM call latency (s) | **20** | 29 | 9 | 13 |
+| Avg tokens/sec | **109.8** | 87.4 | 158.6 | 105.8 |
+| Avg TTFT (s) | **1.87** | 2.17 | 1.79 | 1.36 |
+| Reasoning tokens | **0** | 0 | 0 | 0 |
+|   ↳ dispatch_next | **6** | 4 | 1 | 1 |
+|   ↳ file_editor | **4** | — | 4 | — |
+|   ↳ finish | **5** | 3 | 1 | 1 |
+|   ↳ terminal | **167** | — | 99 | 68 |
+
+</details>
 
 ## 🧑‍💻 Human metrics
 
