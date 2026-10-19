@@ -16,7 +16,7 @@ from build_output import (
     _resolve_pin,
     _terminal_turn_answer,
     _write_latest_answer_file,
-    apply_human_gate_intercept,
+    apply_gate_lock,
     extract_latest_answer,
     extract_standalone_answer,
     is_malformed_final_message,
@@ -116,7 +116,7 @@ class TestAgentPrefsReachTheResolution(unittest.TestCase):
         tool.executor(
             tool.action_from_arguments(
                 {
-                    "route": {
+                    "turn_outcome": {
                         "appreciation": "approved",
                         "complexity": "low",
                         "pin": True,
@@ -209,17 +209,17 @@ def _completed(appreciation="approved", **kwargs) -> TurnOutcome:
 
 
 def _gate_hold(expected_step: str) -> TurnOutcome:
-    """The intercept's hold: released only by a gate command (issue #506)."""
+    """A legacy gate hold, as persisted before #1033 (read-compat only)."""
     return TurnOutcome(
         status=TurnStatus.COMPLETED,
         appreciation=Appreciation.HOLD,
-        hold_kind=HoldKind.AWAITING_APPROVAL,
+        hold_kind=HoldKind.AWAITING_INPUT,
         note=f"human_gate:{expected_step}",
     )
 
 
 class TestHumanGateIntercept(unittest.TestCase):
-    """Test apply_human_gate_intercept() - issue #506 human gate boundary."""
+    """Test apply_gate_lock() - issues #506/#1033 human gate boundary."""
 
     def _write_workflow(self, tmpdir, name, steps_yaml):
         path = os.path.join(tmpdir, f"{name}.yaml")
@@ -231,8 +231,8 @@ class TestHumanGateIntercept(unittest.TestCase):
             )
         return path
 
-    def test_gate_step_advance_non_resume_becomes_hold(self):
-        """A completing turn on a human_gate step (not a resume) holds."""
+    def test_gate_step_advance_non_resume_arms_the_lock(self):
+        """A completing turn on a human_gate step arms the lock, verdict intact."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -240,12 +240,15 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir}
+            outcome = _completed()
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(_completed(), "wf", "implement")
-        self.assertEqual(result, _gate_hold("implement"))
+                result, gate = apply_gate_lock(outcome, "wf", "implement")
+        self.assertEqual(result, outcome)
+        self.assertEqual(gate.step, "implement")
+        self.assertTrue(gate.armed())
 
-    def test_gate_step_advance_resume_held(self):
-        """Issue #648: even a /nebuko-resume-triggered run is held (no bypass)."""
+    def test_gate_step_advance_resume_still_arms_the_lock(self):
+        """Issue #648: even a /nebuko-resume-triggered run arms the lock."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -253,9 +256,11 @@ class TestHumanGateIntercept(unittest.TestCase):
                 "  - name: implement\n    agent: dev\n    human_gate: true\n    next: review\n",
             )
             env = {"WORKFLOWS_DIR": tmpdir, "HUMAN_RESUME_INPUT": "/nebuko resume"}
+            outcome = _completed()
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(_completed(), "wf", "implement")
-        self.assertEqual(result, _gate_hold("implement"))
+                result, gate = apply_gate_lock(outcome, "wf", "implement")
+        self.assertEqual(result, outcome)
+        self.assertTrue(gate.armed())
 
     def test_non_gate_step_advance_unchanged(self):
         """A step without human_gate keeps the agent's verdict."""
@@ -268,8 +273,9 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             outcome = _completed()
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(outcome, "wf", "plan")
+                result, gate = apply_gate_lock(outcome, "wf", "plan")
         self.assertEqual(result, outcome)
+        self.assertIsNone(gate)
 
     def test_gate_step_soft_kill_non_resume_keeps_retrying(self):
         """An INCOMPLETE turn is never intercepted: the gate only discards a
@@ -286,7 +292,7 @@ class TestHumanGateIntercept(unittest.TestCase):
                 incomplete_reason="soft_timeout",
             )
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(soft_kill, "wf", "implement")
+                result, _ = apply_gate_lock(soft_kill, "wf", "implement")
         self.assertEqual(result, soft_kill)
 
     def test_gate_step_soft_kill_resume_keeps_retrying(self):
@@ -303,11 +309,11 @@ class TestHumanGateIntercept(unittest.TestCase):
                 incomplete_reason="soft_timeout",
             )
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(soft_kill, "wf", "implement")
+                result, _ = apply_gate_lock(soft_kill, "wf", "implement")
         self.assertEqual(result, soft_kill)
 
-    def test_gate_step_verdict_bearing_becomes_hold_with_no_verdict(self):
-        """A verdict-bearing turn on a gated step holds; the verdict is dropped."""
+    def test_gate_step_verdict_is_never_rewritten(self):
+        """Issue #1033: the agent's verdict survives; only the lock blocks."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -316,11 +322,12 @@ class TestHumanGateIntercept(unittest.TestCase):
             )
             env = {"WORKFLOWS_DIR": tmpdir}
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(
+                result, gate = apply_gate_lock(
                     _completed("rejected", round=3), "wf", "implement"
                 )
-        self.assertEqual(result, _gate_hold("implement"))
-        self.assertIsNot(result.appreciation, Appreciation.REJECTED)
+        self.assertIs(result.appreciation, Appreciation.REJECTED)
+        self.assertNotEqual(result, _gate_hold("implement"))
+        self.assertTrue(gate.armed())
 
     def test_non_gate_step_verdict_preserved(self):
         """A verdict on a non-gated step is left untouched."""
@@ -333,7 +340,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             outcome = _completed("rejected", round=2)
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(outcome, "wf", "plan")
+                result, _ = apply_gate_lock(outcome, "wf", "plan")
         self.assertEqual(result, outcome)
         self.assertIs(result.appreciation, Appreciation.REJECTED)
 
@@ -351,11 +358,11 @@ class TestHumanGateIntercept(unittest.TestCase):
                 incomplete_reason="interrupted",
             )
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(incomplete, "wf", "implement")
+                result, _ = apply_gate_lock(incomplete, "wf", "implement")
         self.assertEqual(result, incomplete)
 
-    def test_missing_outcome_on_gate_step_becomes_hold(self):
-        """No outcome resolves to advance downstream; gate intercepts it as hold."""
+    def test_missing_outcome_on_gate_step_still_arms_the_lock(self):
+        """No outcome: nothing to rewrite, but the gated step is still locked."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_workflow(
                 tmpdir,
@@ -364,14 +371,16 @@ class TestHumanGateIntercept(unittest.TestCase):
             )
             env = {"WORKFLOWS_DIR": tmpdir}
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(None, "wf", "implement")
-        self.assertEqual(result, _gate_hold("implement"))
+                result, gate = apply_gate_lock(None, "wf", "implement")
+        self.assertIsNone(result)
+        self.assertTrue(gate.armed())
 
     def test_missing_workflow_name_never_crashes(self):
         """Missing workflow name degrades to no-op (no crash, outcome unchanged)."""
         outcome = _completed()
-        result, _ = apply_human_gate_intercept(outcome, "", "implement")
+        result, gate = apply_gate_lock(outcome, "", "implement")
         self.assertEqual(result, outcome)
+        self.assertIsNone(gate)
 
     def test_missing_workflow_file_degrades_to_no_op(self):
         """A missing/invalid workflow file must not crash and leaves it intact."""
@@ -379,7 +388,7 @@ class TestHumanGateIntercept(unittest.TestCase):
             env = {"WORKFLOWS_DIR": tmpdir}
             outcome = _completed()
             with mock.patch.dict(os.environ, env, clear=False):
-                result, _ = apply_human_gate_intercept(outcome, "does-not-exist", "implement")
+                result, _ = apply_gate_lock(outcome, "does-not-exist", "implement")
         self.assertEqual(result, outcome)
 
 
@@ -409,7 +418,7 @@ class TestGateLockArming(unittest.TestCase):
                 "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
             )
             with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
-                _, gate = apply_human_gate_intercept(_completed(), "wf", "plan")
+                _, gate = apply_gate_lock(_completed(), "wf", "plan")
         self.assertIsNotNone(gate)
         self.assertEqual(gate.step, "plan")
         self.assertTrue(gate.armed())
@@ -424,7 +433,7 @@ class TestGateLockArming(unittest.TestCase):
                 "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
             )
             with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
-                _, gate = apply_human_gate_intercept(
+                _, gate = apply_gate_lock(
                     _completed(), "wf", "plan", gate=prior
                 )
         self.assertEqual(gate, prior)
@@ -438,7 +447,7 @@ class TestGateLockArming(unittest.TestCase):
                 "  - name: plan\n    agent: architect\n    human_gate: true\n    next: implement\n",
             )
             with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
-                _, gate = apply_human_gate_intercept(
+                _, gate = apply_gate_lock(
                     _completed(), "wf", "plan", gate=released
                 )
         self.assertTrue(gate.armed())
@@ -451,7 +460,7 @@ class TestGateLockArming(unittest.TestCase):
                 "  - name: plan\n    agent: architect\n    next: implement\n",
             )
             with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
-                _, gate = apply_human_gate_intercept(_completed(), "wf", "plan")
+                _, gate = apply_gate_lock(_completed(), "wf", "plan")
         self.assertIsNone(gate)
 
     def test_release_env_marks_the_lock_released(self):
@@ -481,7 +490,7 @@ class TestGateLockArming(unittest.TestCase):
                 "GATE_RELEASED": "true",
             }
             with mock.patch.dict(os.environ, env, clear=False):
-                _, gate = apply_human_gate_intercept(
+                _, gate = apply_gate_lock(
                     _completed(), "wf", "plan", gate=prior
                 )
                 # The call site's release step (``build_output.main``).
@@ -504,7 +513,7 @@ class TestGateLockArming(unittest.TestCase):
                 {"WORKFLOWS_DIR": tmpdir, "GATE_RELEASED": "true"},
                 clear=False,
             ):
-                _, gate = apply_human_gate_intercept(_completed(), "wf", "plan")
+                _, gate = apply_gate_lock(_completed(), "wf", "plan")
         self.assertTrue(gate.armed())
 
     def test_consult_env_spends_one_round_on_the_persisted_lock(self):
@@ -729,7 +738,6 @@ class TestIsHumanGateHold(unittest.TestCase):
                 finally:
                     os.chdir(cwd)
 
-        self.assertTrue(_is_human_gate_hold(captured["turn_outcome"]))
         self.assertEqual(captured["resolution"].next_step, "")
 
     def test_gate_intercept_at_call_site_preserves_function_call_and_arms_gate(self):
@@ -798,7 +806,7 @@ class TestIsHumanGateHold(unittest.TestCase):
                 finally:
                     os.chdir(cwd)
 
-        self.assertTrue(_is_human_gate_hold(captured["turn_outcome"]))
+        self.assertIs(captured["turn_outcome"].appreciation, Appreciation.APPROVED)
         # The hand-off survives the intercept (issue #1003) …
         self.assertIsNotNone(captured["function_call"])
         self.assertEqual(captured["function_call"].agent_name, "dev")
@@ -845,8 +853,10 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
         )
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("WORKFLOWS_DIR", None)
-            result, _ = apply_human_gate_intercept(_completed(), "default", "plan")
-        self.assertEqual(result, _gate_hold("plan"))
+            result, gate = apply_gate_lock(_completed(), "default", "plan")
+        self.assertIs(result.appreciation, Appreciation.APPROVED)
+        self.assertEqual(gate.step, "plan")
+        self.assertTrue(gate.armed())
 
     def test_local_workflow_does_not_hide_a_pinned_shipped_dir(self):
         """A local override dir must not hide the WORKFLOWS_DIR layer either."""
@@ -862,8 +872,9 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
             "  - name: only\n    agent: dev\n    next: null\n",
         )
         with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": shipped}, clear=False):
-            result, _ = apply_human_gate_intercept(_completed(), "gated", "implement")
-        self.assertEqual(result, _gate_hold("implement"))
+            result, gate = apply_gate_lock(_completed(), "gated", "implement")
+        self.assertIs(result.appreciation, Appreciation.APPROVED)
+        self.assertEqual(gate.step, "implement")
 
     def test_local_override_still_wins_over_the_shipped_file(self):
         """Issue #529 precedence is preserved: the local file is the one read."""
@@ -883,7 +894,7 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
             {"WORKFLOWS_DIR": os.path.join(self._repo, "shipped")},
             clear=False,
         ):
-            result, _ = apply_human_gate_intercept(outcome, "gated", "implement")
+            result, _ = apply_gate_lock(outcome, "gated", "implement")
         self.assertEqual(result, outcome)
 
 
@@ -908,23 +919,25 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
 
     def test_real_yaml_gated_step_intercepts_advance(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
-            result, _ = apply_human_gate_intercept(
+            result, gate = apply_gate_lock(
                 _completed(), "spec-driven-impl", "stub_approval"
             )
-        self.assertEqual(result, _gate_hold("stub_approval"))
+        self.assertIs(result.appreciation, Appreciation.APPROVED)
+        self.assertEqual(gate.step, "stub_approval")
+        self.assertTrue(gate.armed())
 
     def test_real_yaml_gated_step_resume_held(self):
         """Issue #648: no resume bypass - the real gated step always holds."""
         with mock.patch.dict(os.environ, self.env, clear=False):
-            result, _ = apply_human_gate_intercept(
+            result, gate = apply_gate_lock(
                 _completed(), "spec-driven-impl", "stub_approval"
             )
-        self.assertTrue(_is_human_gate_hold(result))
+        self.assertTrue(gate.armed())
 
     def test_real_yaml_non_gated_step_unchanged(self):
         outcome = _completed()
         with mock.patch.dict(os.environ, self.env, clear=False):
-            result, _ = apply_human_gate_intercept(
+            result, _ = apply_gate_lock(
                 outcome, "spec-driven-impl", "implement"
             )
         self.assertEqual(result, outcome)
@@ -1457,7 +1470,7 @@ class TestExtractLatestAnswerRecallOffset(unittest.TestCase):
              ), \
              mock.patch.object(bo, "clear_run"), \
              mock.patch.object(
-                 bo, "apply_human_gate_intercept",
+                 bo, "apply_gate_lock",
                  side_effect=lambda outcome, **kw: (outcome, None),
              ), \
              mock.patch.object(bo, "build_state", return_value=NS(run_id=1)), \

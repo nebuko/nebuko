@@ -45,9 +45,9 @@ class TurnOutcomeAction(Action):
     hold_kind: Optional[str] = Field(
         default=None,
         description=(
-            "Only with appreciation='hold': 'awaiting_approval' (a human must "
-            "approve before the workflow continues) or 'awaiting_input' (you "
-            "need information from the human)."
+            "Only with appreciation='hold': 'awaiting_input' (you "
+            "need information from the human). Approval gates are "
+            "engine-owned run state, never a hold kind (issue #1033)."
         ),
     )
     required_agent: Optional[str] = Field(
@@ -124,7 +124,7 @@ DISPATCH_NEXT_DESCRIPTION = """Record the factual outcome of this turn. You MUST
 
 Parameters:
 - appreciation: REQUIRED. Your verdict on this turn — 'approved' (the work meets the step's goal), 'rejected' (it does not), or 'hold' (you cannot decide; a human must).
-- hold_kind: only with appreciation='hold' — 'awaiting_approval' or 'awaiting_input'.
+- hold_kind: only with appreciation='hold' — 'awaiting_input'. This asks a human for information; approval gates are engine-owned run state (issue #1033).
 - required_agent: optional agent name that must run at the routed step; it never selects the step.
 - round: optional review/iteration round number this turn belongs to.
 - note: one-sentence justification.

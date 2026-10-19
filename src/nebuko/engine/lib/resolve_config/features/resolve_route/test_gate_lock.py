@@ -108,9 +108,7 @@ def _gated_state(
         turn_outcome=outcome
         or TurnOutcome(
             status=TurnStatus.COMPLETED,
-            appreciation=Appreciation.HOLD,
-            hold_kind=HoldKind.AWAITING_APPROVAL,
-            note=f"human_gate:{step}",
+            appreciation=Appreciation.APPROVED,
         ),
         position=[StepRef(workflow="default", step=step)],
         gate=gate if gate is not None else GateLock(step=step),
@@ -237,11 +235,15 @@ class TestGateConsultRouting(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_workflow(tmpdir)
             decision = _resolve_handoff_decision(state, tmpdir)
-        self.assertNotEqual(decision.reason_code, "gate_hold")
+        # The gate never hides the callee: the hand-off still names 'context'
+        # (issue #1003) and only its routing kind marks it as a consultation.
         self.assertEqual(decision.target_agent, "context")
+        self.assertEqual(decision.reason_code, "gate_hold")
 
-    def test_hold_without_an_armed_gate_still_wins_over_the_handoff(self):
-        """Regression guard: an unarmed gate hold keeps its #887 precedence."""
+    def test_released_gate_routes_the_handoff_as_a_forward_handoff(self):
+        """A released gate leaves run state unarmed, so the call is a normal
+        hand-off rather than a consultation (issue #1033: the gate, not the
+        agent's verdict, is what holds routing)."""
         state = _gated_state(
             gate=GateLock(step="plan", status=GateStatus.RELEASED),
             function_call=_consult_call("context"),
@@ -249,7 +251,8 @@ class TestGateConsultRouting(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_workflow(tmpdir)
             decision = _resolve_handoff_decision(state, tmpdir)
-        self.assertEqual(decision.reason_code, "gate_hold")
+        self.assertEqual(decision.target_agent, "context")
+        self.assertNotEqual(decision.reason_code, "gate_hold")
 
     def test_no_handoff_on_an_armed_gate_is_a_benign_hold(self):
         state = _gated_state()

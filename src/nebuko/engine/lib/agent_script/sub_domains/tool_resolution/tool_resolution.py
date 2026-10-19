@@ -38,8 +38,6 @@ _BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
 #: ``resolve_tool`` looks the emitted ``Tool`` spec up in that registry.
 _TERMINAL_BATCH_TOOL_NAME = "terminal_batch"
 
-_DISPATCH_TOOL_NAME = "DispatchNextTool"
-_CALL_AGENT_TOOL_NAME = "CallAgentTool"
 _FINALIZE_TOOL_NAME = "FinalizeTool"
 _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
 _COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
@@ -112,48 +110,6 @@ def _ensure_terminal_batch_tool_registered() -> None:
 
     register_tool(TerminalBatchTool.name, TerminalBatchTool)
     _terminal_batch_tool_registered = True
-
-
-# Module-level guard: register_tool logs a warning on re-registration, so in
-# long-lived processes (or repeated test runs) we register only once.
-_dispatch_tool_registered = False
-
-
-def _ensure_dispatch_tool_registered() -> None:
-    """Register the ``dispatch_next`` ToolDefinition with the SDK registry.
-
-    Idempotent — safe to call on every agent run.
-    """
-    global _dispatch_tool_registered
-    if _dispatch_tool_registered:
-        return
-    from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
-        DispatchNextTool,
-    )
-
-    register_tool(_DISPATCH_TOOL_NAME, DispatchNextTool)
-    _dispatch_tool_registered = True
-
-
-# Module-level guard: register_tool logs a warning on re-registration, so in
-# long-lived processes (or repeated test runs) we register only once.
-_call_agent_tool_registered = False
-
-
-def _ensure_call_agent_tool_registered() -> None:
-    """Register the ``call_agent`` ToolDefinition with the SDK registry.
-
-    Idempotent — safe to call on every agent run.
-    """
-    global _call_agent_tool_registered
-    if _call_agent_tool_registered:
-        return
-    from agent_script.features.call_agent_tool.call_agent_tool import (
-        CallAgentTool,
-    )
-
-    register_tool(_CALL_AGENT_TOOL_NAME, CallAgentTool)
-    _call_agent_tool_registered = True
 
 
 # Module-level guard: register_tool logs a warning on re-registration, so in
@@ -268,16 +224,23 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
         elif tool_name == "terminal_batch":
             _ensure_terminal_batch_tool_registered()
             sdk_tools.append(Tool(name=_TERMINAL_BATCH_TOOL_NAME))
-        elif tool_name == "dispatch_next":
-            _ensure_dispatch_tool_registered()
-            sdk_tools.append(Tool(name=_DISPATCH_TOOL_NAME))
-            dispatch_tool_enabled = True
-        elif tool_name == "call_agent":
-            _ensure_call_agent_tool_registered()
-            sdk_tools.append(Tool(name=_CALL_AGENT_TOOL_NAME))
+        elif tool_name in ("dispatch_next", "call_agent"):
+            # Both tools were removed in issue #1033: every step ends through
+            # ``finalize``, whose ``turn_outcome`` carries the verdict and whose
+            # ``turn_outcome.agent_call`` carries the hand-off. Fail loudly so a
+            # stale config is migrated rather than silently losing its route.
+            raise ValueError(
+                f"tool '{tool_name}' was removed: agent '{role_name}' must list "
+                "'finalize' instead (the verdict travels in "
+                "turn_outcome.appreciation and the hand-off in "
+                "turn_outcome.agent_call)"
+            )
         elif tool_name == "finalize":
             _ensure_finalize_tool_registered()
             sdk_tools.append(Tool(name=_FINALIZE_TOOL_NAME))
+            # ``finalize`` is the terminal tool of every step (issue #1033), so
+            # its presence is what enables the bounded missing-outcome recall.
+            dispatch_tool_enabled = True
         elif tool_name == "report_scaffold_branch":
             _ensure_scaffold_branch_tool_registered()
             sdk_tools.append(Tool(name=_SCAFFOLD_BRANCH_TOOL_NAME))

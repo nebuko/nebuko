@@ -372,8 +372,9 @@ def _build_result(
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
         "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
         "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
-        # Callback return address (issue #765): the caller agent this run must
-        # fall back to when it finishes with no decision of its own.
+        # Callback return address (issues #765, #1033): engine-owned run state.
+        # The resolver stores the caller here so ``build_output`` can persist it
+        # and route the callee's verdict back; the agent never sees or sets it.
         "CONFIG_CALLBACK": config.get("config_callback", ""),
         # v2 mount-chain position (issue #618): attached below by
         # ``_attach_position`` (entry-path emission is kept verbatim; all

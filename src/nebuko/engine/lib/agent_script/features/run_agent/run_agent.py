@@ -182,8 +182,9 @@ def _build_agent_context(
     when there is nothing to inject (unknown role, unreadable roster and no
     skills) so the agent still boots.
     """
-    caller = os.environ.get("CONFIG_CALLBACK", "").strip() or None
-    context = compose_system_context(role_name, caller)
+    # The callback is engine-owned run state (issue #1033): the callee never
+    # sees its return address, so no caller is passed into the system context.
+    context = compose_system_context(role_name)
     if not context and not skills:
         return None
     return AgentContext(
@@ -291,10 +292,10 @@ def run_agent(
     # ── Tool resolution ──────────────────────────────────────────
     default_tool_list = ["terminal", "file_editor", "task_tracker", "think", "finish"]
     agent_tools = agent_cfg.tools if agent_cfg is not None else default_tool_list
-    # A step that declares an ``output:`` shape (issue #973) ends through the
-    # terminal ``finalize`` gate; the tool must be resolvable even though the
-    # role's static tool list predates it.
-    if os.environ.get("STEP_OUTPUT") and "finalize" not in agent_tools:
+    # Every step ends through the terminal ``finalize`` tool (issue #1033), so
+    # it must be resolvable even though the role's static tool list predates it.
+    # An ``output:`` declaration only decides how the report is rendered.
+    if "finalize" not in agent_tools:
         agent_tools = [*agent_tools, "finalize"]
 
     resolved = resolve_toolset(agent_tools, role_name)
@@ -419,14 +420,13 @@ def run_agent(
 
     # ── Bounded dispatch recall (issue #524) ────────────────────
     # The exact failure mode this fixes: the agent finished its turn but
-    # never made a next-step decision (no dispatch_next call, no sentinel).
-    # Since that is now programmatically detectable, ask the model for the
-    # cognitive decision — a short focused turn, max MAX_DISPATCH_RECALLS.
+    # never made a next-step decision (no finalize turn outcome). Since that
+    # is programmatically detectable, ask the model for the cognitive
+    # decision — a short focused turn, max MAX_DISPATCH_RECALLS.
     dispatch_recall_count = 0
     if dispatch_tool_enabled and outcome is not OutcomeStatus.FAILURE:
-        # Shared with build_output._resolve_dispatch so the two can't drift:
-        # a parseable legacy sentinel counts as a decision (dual-mode window),
-        # not just a recorded dispatch_next call.
+        # Shared with build_output._resolve_outcome so the two can't drift: a
+        # recorded finalize outcome (or a typed hand-off) counts as a decision.
         def _has_dispatch() -> bool:
             return has_dispatch_decision(
                 conversation,
@@ -435,7 +435,7 @@ def run_agent(
 
         def _run_recall_pass(n: int) -> bool:
             logger.warning(
-                f"Run ended without a dispatch_next call — recall "
+                f"Run ended without a finalize turn outcome — recall "
                 f"{n}/{MAX_DISPATCH_RECALLS}"
             )
             watchdog, _ = _run_supervised(

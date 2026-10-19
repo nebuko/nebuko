@@ -182,6 +182,20 @@ def _resolve_resume_path(
     # agent-checkpoint / interruption exhaustion halt (issues #704, #965, #978)
     # and a crashed run (issue #978) — the failure notification names
     # ``/nebuko resume`` as the recovery command, so it must re-run the step.
+    # A human_gate hold is released ONLY by the dedicated gate command
+    # (issues #648, #1033): /nebuko resume is a non-release path here, so it
+    # stays held and points the human at the correct command. That guard runs
+    # *before* the verdict check: the gate is engine-owned run state, so the
+    # agent's own ``approved`` verdict no longer marks the step as held.
+    if _gate_pending(prev_state):
+        return {
+            "SKIP_AGENT": "true",
+            "REASON": (
+                f"resume: step '{prev_state.step}' is held by a human gate — "
+                "use `/nebuko approve gate` or `/nebuko reject gate` to release it"
+            ),
+        }
+
     if outcome is None or outcome.status != TurnStatus.COMPLETED:
         if outcome is None or outcome.incomplete_reason not in (
             IncompleteReason.SOFT_TIMEOUT,
@@ -202,20 +216,6 @@ def _resolve_resume_path(
             "REASON": (
                 "resume: step is not on hold "
                 f"(appreciation='{outcome.appreciation.value if outcome.appreciation else 'none'}')"
-            ),
-        }
-
-    # A human_gate hold is released ONLY by the dedicated gate command
-    # (issue #648): /nebuko resume is a non-release path here, so it stays
-    # held and points the human at the correct command. This keeps a gated
-    # step's transition an engine-owned state mutation driven by a typed,
-    # identity-verified decision rather than a resume re-invocation.
-    if _is_human_gate_hold(outcome):
-        return {
-            "SKIP_AGENT": "true",
-            "REASON": (
-                f"resume: step '{prev_state.step}' is held by a human gate — "
-                "use `/nebuko approve gate` or `/nebuko reject gate` to release it"
             ),
         }
 
@@ -342,19 +342,15 @@ def _trigger_comment_id() -> Optional[int]:
         return None
 
 
-def _is_human_gate_hold(outcome: Optional[TurnOutcome]) -> bool:
-    """True when the turn outcome parks the step on its ``human_gate``.
+def _gate_pending(prev_state: Optional["WorkflowState"]) -> bool:
+    """True while an engine-owned approval gate blocks the workflow (issue #1033).
 
-    A hold is a *step-config fact* (issue #964): the workflow step declares
-    ``human_gate: true``, so the outcome carries an ``awaiting_approval`` hold
-    and the step stays parked until an identity-verified gate command releases
-    it. The legacy ``human_gate:<step>`` reason string (and its holds) are gone.
+    A gate is *run state*, never a turn outcome: entering a gated step arms a
+    root :class:`GateLock`, which only an identity-verified
+    ``/nebuko approve gate`` releases. The agent's own verdict is left intact
+    (``approved`` means the work is done — it just cannot advance the step).
     """
-    return bool(
-        outcome is not None
-        and outcome.appreciation == Appreciation.HOLD
-        and outcome.hold_kind == HoldKind.AWAITING_APPROVAL
-    )
+    return _armed_gate(prev_state) is not None
 
 
 def _human_gate_hold_result(step: str, note: str = "") -> dict:
@@ -521,7 +517,7 @@ def _gate_hold_rejection_reason(
     """
     if prev_state is None:
         return "gate: no prior workflow state found"
-    if not _is_human_gate_hold(prev_state.turn_outcome):
+    if not _gate_pending(prev_state):
         return "gate: workflow is not held at a human_gate step"
     if not author.may_decide_gate():
         return (
@@ -704,8 +700,8 @@ def _callback_return_target(
 
     Returns ``(agent, step)`` when the callback should route the run, else
     ``None``. The callback is an *advance-only* fallback: an explicit
-    ``required_agent`` hand-off or a deliberate ``hold`` always wins, which is
-    the precedence documented in ``docs/handoff-and-callback.md``.
+    ``turn_outcome.agent_call`` hand-off or a deliberate ``hold`` always wins,
+    which is the precedence documented in ``docs/handoff-and-callback.md``.
     """
     if prev_state is None:
         return None
@@ -720,9 +716,8 @@ def _callback_return_target(
         # A deliberate stop is never redirected to the callback: it routes on
         # its own verdict (issue #964).
         return None
-    if outcome is not None and outcome.required_agent:
-        # The callee named its own explicit destination: it outranks callback.
-        return None
+    # The callee's own hand-off (``agent_call``) is routed upstream as a
+    # ``function_call`` and therefore already outranks this fallback.
     wf_name = (getattr(prev_state, "workflow", "") or "").strip()
     if not wf_name:
         return (callback, "")
@@ -883,9 +878,11 @@ def _terminal_skip_result(
 
 
 def _hold_skip_result(outcome: TurnOutcome, prev_state: "WorkflowState") -> dict:
-    """The skip for a ``hold`` verdict the engine cannot park (issue #964)."""
-    if outcome.hold_kind == HoldKind.AWAITING_APPROVAL:
-        return _human_gate_hold_result(prev_state.step or "")
+    """The skip for a ``hold`` verdict the engine cannot park (issue #964).
+
+    Since #1033 ``hold`` means one thing only — the agent is blocked and needs
+    information from a human — so the step parks awaiting that answer.
+    """
     return {
         "SKIP_AGENT": "true",
         "REASON": f"Awaiting input: {outcome.note or 'no note'}",
@@ -1076,11 +1073,11 @@ def _resolve_outcome_path(
 
     * ``INCOMPLETE / SOFT_TIMEOUT | AGENT_CHECKPOINT`` — the interrupted step is
       retried in place while its per-step budget remains (soft-kill route).
-    * ``COMPLETED / HOLD`` (or a step declared ``human_gate: true``) — park the
-      step: human-gate hold, or an awaiting-input skip.
+    * a pending approval gate (engine-owned run state, issue #1033) — park the
+      step until a human releases the gate.
+    * ``COMPLETED / HOLD`` — park the step awaiting the human's input.
     * ``COMPLETED / APPROVED | REJECTED`` — the verdict is the route key and
-      selects the workflow's ``on_result`` edge; ``required_agent`` overrides
-      the agent at the routed step.
+      selects the workflow's ``on_result`` edge.
     * ``INCOMPLETE / FAILURE | INTERRUPTED | NO_OUTCOME`` — no route key: follow
       the linear/default workflow edge.
 
@@ -1126,52 +1123,14 @@ def _resolve_outcome_path(
     if outcome is not None and outcome.incomplete_reason == IncompleteReason.FAILURE:
         return _failed_run_result(prev_state, outcome)
 
-    # Human-gate hold precedence (issues #887, #964, #1003): a recorded gate
-    # hold must block auto-advance even when the workflow forward edge
-    # resolves. Checked before workflow-next resolution, which would otherwise
-    # follow ``plan -> implement`` and silently ignore the gate. A pending
-    # agent-to-agent hand-off is routed first: the gate blocks the workflow
-    # *advance*, never a delegation (issue #1003).
-    if _is_human_gate_hold(outcome):
-        gate = _armed_gate(prev_state)
-        if gate is not None:
-            consult = _resolve_gate_consult(
-                prev_state, gate, workflows_dir, local_workflows_dir
-            )
-            if consult is not None:
-                return consult
-            return _human_gate_hold_result(
-                prev_state.step or "", _consult_exhausted_note(prev_state)
-            )
-        return _human_gate_hold_result(prev_state.step or "")
-
-    # An agent that completed a gate step without a verdict of its own leaves
-    # the gate armed: park the step for the human rather than advancing past it.
-    if (
-        outcome is not None
-        and outcome.status == TurnStatus.COMPLETED
-        and outcome.appreciation is None
-        and _step_declares_human_gate(prev_state, workflows_dir, local_workflows_dir)
-    ):
-        gate = _armed_gate(prev_state)
-        if gate is not None:
-            consult = _resolve_gate_consult(
-                prev_state, gate, workflows_dir, local_workflows_dir
-            )
-            if consult is not None:
-                return consult
-            return _human_gate_hold_result(
-                prev_state.step or "", _consult_exhausted_note(prev_state)
-            )
-        return _human_gate_hold_result(prev_state.step or "")
-
-    # Armed-gate guard, outcome-independent (issue #1003): the two branches
-    # above key off a recorded outcome shape, so a state edge that carries an
-    # armed lock but no turn_outcome (or a completing verdict) could otherwise
-    # fall through and advance past the gate. The lock is root metadata, so it
-    # must block the advance whatever the outcome says.
-    armed = _armed_gate(prev_state)
-    if armed is not None:
+    # Human-gate precedence (issues #887, #1003, #1033): a pending engine-owned
+    # gate must block auto-advance even when the workflow forward edge resolves
+    # (``plan -> implement``). Checked before workflow-next resolution. A
+    # pending agent-to-agent hand-off is routed first: the gate blocks the
+    # workflow *advance*, never a delegation (issue #1003).
+    if _gate_pending(prev_state):
+        armed = _armed_gate(prev_state)
+        assert armed is not None  # _gate_pending == _armed_gate is not None
         consult = _resolve_gate_consult(
             prev_state, armed, workflows_dir, local_workflows_dir
         )
@@ -1183,11 +1142,11 @@ def _resolve_outcome_path(
 
     config = _route_config_from_prefs(prev_state, prefs)
 
-    # Callback return (issue #765): when this run is a callee reached through a
-    # caller's function_call, a completion with no target of its own returns to
-    # the caller rather than continuing the workflow. Precedence: explicit
-    # function_call (resolved upstream) > explicit required_agent > gate hold >
-    # callback > workflow forward edge.
+    # Callback return (issue #1033): when this run is a callee reached through
+    # a caller's agent_call, an ``approved``/``rejected`` verdict returns to the
+    # caller with the callee's report; a ``hold`` is a deliberate stop. A
+    # callee's own hand-off is consumed upstream as a ``function_call``, so it
+    # outranks this fallback.
     callback_target = _callback_return_target(
         prev_state, outcome, workflows_dir, local_workflows_dir
     )
@@ -1261,7 +1220,7 @@ def _resolve_outcome_path(
             if _step_declares_human_gate(prev_state, workflows_dir, local_workflows_dir):
                 return _human_gate_hold_result(prev_state.step or "")
         return _awaiting_input_result(prev_state, outcome)
-    config["task"] = (outcome.required_agent if outcome else None) or prev_state.agent or ""
+    config["task"] = prev_state.agent or ""
     return config
 
 
@@ -1442,6 +1401,15 @@ class HandoffDecision:
         return {"task": self.target_agent, "step": self.target_step}
 
 
+def _gate_consult_step(prev_state: "WorkflowState") -> str:
+    """The workflow step a gated consultation should run under (issue #1003).
+
+    A hand-off made from a pending gate leaves the gate armed at the unchanged
+    position, so the callee's step is the current one.
+    """
+    return (getattr(prev_state, "step", "") or "").strip()
+
+
 # @stub-protected: signature defined by architect — do not modify
 def _resolve_callee_step(wf_name: str, current_step: str, callee: str, workflows_dir: str, local_workflows_dir: Optional[str] = None, exclude_step: Optional[str] = None) -> str:
     """Resolve the workflow step that ``callee`` should run (issue #507).
@@ -1573,12 +1541,11 @@ def _resolve_handoff_decision(
 
     Applies the two routing invariants in precedence order:
 
-    1. **Gate precedence (security boundary).** A human gate outranks the
-       agent-originated hand-off, with ``reason_code='gate_hold'`` so no call
-       can route around it. Two shapes qualify: the *current* step is already
-       parked on an unreleased ``human_gate`` hold (issue #887 round 2 — its
-       own hold must not be handed off past), or the workflow successor of the
-       current step is ``human_gate: true`` (issue #733).
+    1. **Gate precedence (security boundary).** A pending human gate outranks
+       the agent-originated hand-off *as an advance* — the gate blocks the
+       workflow step transition, never a delegation. A hand-off made from an
+       armed gate is therefore routed as a consultation (``issue #1003``) and
+       the gate stays armed at the unchanged position.
     2. **Forward-only hand-off (correctness).** Otherwise the callee's step
        is resolved only from the forward suffix of the workflow (via
        :func:`_resolve_callee_step`); a consumed step is never re-entered.
@@ -1590,16 +1557,11 @@ def _resolve_handoff_decision(
     """
     function_call = getattr(prev_state, "function_call", None)
     callee = (getattr(function_call, "agent_name", "") or "").strip()
-    if _is_human_gate_hold(getattr(prev_state, "turn_outcome", None)):
+    if _gate_pending(prev_state):
         # An armed root gate (issue #1003) makes the hand-off a *consultation*:
         # the gate blocks the workflow advance, never a delegation, so the
         # callee is routed and the gate stays armed at the unchanged position.
-        # Without an armed gate the current step's own hold outranks the
-        # hand-off: routing continues on the outcome path, which applies the
-        # same guard and returns the hold (empty target — the gate releases to
-        # a step, not to the callee).
-        if _armed_gate(prev_state) is None:
-            return HandoffDecision("", "", "gate_hold")
+        return HandoffDecision(callee, _gate_consult_step(prev_state), "gate_hold")
     wf_name = (getattr(prev_state, "workflow", "") or "") if prev_state is not None else ""
     if not wf_name:
         return HandoffDecision(callee, "", "function_call")
@@ -1804,25 +1766,31 @@ def _resolve_function_call_path(
         f"workflow='{wf_name}', step='{wf_step}', callback='{callback}')",
         file=sys.stderr,
     )
-    return {
+    # Run preferences survive the hand-off (issue #1033): the imperative call
+    # used to route through the outcome path, which layered ``prefs`` onto the
+    # config; the callee must keep the caller's tier/model overrides. An
+    # explicit ``complexity`` on the call still wins.
+    base = _route_config_from_prefs(prev_state, getattr(prev_state, "prefs", None)) if prev_state is not None else {}
+    config = {
         "task": task,
         "config_workflow": wf_name,
         "config_step": wf_step,
         "config_callback": callback,
-        "config_complexity": complexity,
+        "config_complexity": complexity or base.get("config_complexity", ""),
         "config_reasoning": "none",
-        "config_temperature": "",
+        "config_temperature": base.get("config_temperature", ""),
         "config_round": "",
-        "config_model": "",
-        "config_skills": "",
-        "config_top_p": "",
-        "config_top_k": "",
-        "config_repetition_penalty": "",
-        "config_debug": "",
+        "config_model": base.get("config_model", ""),
+        "config_skills": base.get("config_skills", ""),
+        "config_top_p": base.get("config_top_p", ""),
+        "config_top_k": base.get("config_top_k", ""),
+        "config_repetition_penalty": base.get("config_repetition_penalty", ""),
+        "config_debug": base.get("config_debug", ""),
         "config_branch": "",
-        "config_parent_workflow": "",
-        "config_parent_workflow_step": "",
+        "config_parent_workflow": base.get("config_parent_workflow", ""),
+        "config_parent_workflow_step": base.get("config_parent_workflow_step", ""),
     }
+    return config
 
 
 def _resolve_machine_trigger_path(
@@ -2263,23 +2231,22 @@ def _resolve_bot_fallback_path(
             "REASON": "Bot comment without a recorded turn outcome",
         }
 
-    # Human-gate hold precedence (issue #887): the state-only bot path never
+    # Human-gate precedence (issues #887, #1033): the state-only bot path never
     # reads the workflow forward edge, but the same guard keeps the behavior
     # uniform with `_resolve_outcome_path` and names the release commands.
     # A pending agent-to-agent hand-off is routed first (issue #1003).
-    if _is_human_gate_hold(outcome):
-        gate = _armed_gate(prev_state)
-        if gate is not None:
-            consult = _resolve_gate_consult(
-                prev_state, gate, workflows_dir, local_workflows_dir
-            )
-            if consult is not None:
-                return consult
-            return _human_gate_hold_result(
-                getattr(prev_state, "step", "") or "",
-                _consult_exhausted_note(prev_state),
-            )
-        return _human_gate_hold_result(getattr(prev_state, "step", "") or "")
+    if _gate_pending(prev_state):
+        armed = _armed_gate(prev_state)
+        assert armed is not None  # _gate_pending == _armed_gate is not None
+        consult = _resolve_gate_consult(
+            prev_state, armed, workflows_dir, local_workflows_dir
+        )
+        if consult is not None:
+            return consult
+        return _human_gate_hold_result(
+            getattr(prev_state, "step", "") or "",
+            _consult_exhausted_note(prev_state),
+        )
 
     if prev_state is None:
         return {
@@ -2288,13 +2255,15 @@ def _resolve_bot_fallback_path(
         }
 
     config = _route_config_from_prefs(prev_state, prev_state.prefs)
-    agent_hint = (outcome.required_agent or "").strip()
+    # An explicit hand-off (``agent_call``) is consumed upstream as a
+    # ``function_call``; the verdict alone routes here (issue #1033).
+    agent_hint = ""
 
     if outcome.appreciation == Appreciation.HOLD:
         return _hold_skip_result(outcome, prev_state)
 
-    if outcome.appreciation is not None or agent_hint:
-        # A verdict (or an explicit hand-off target) routes the run.
+    if outcome.appreciation is not None:
+        # A verdict routes the run.
         config["task"] = agent_hint
         if not config["task"]:
             wf_result = resolve_next_from_workflow(

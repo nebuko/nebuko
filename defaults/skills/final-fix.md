@@ -15,7 +15,7 @@ You are in final-fix mode for a branch-mounted dynamic plan workflow (issue #462
    - Verify with the appropriate test suite where one exists.
 3. **Commit** with message: `fix: address final review feedback`
 4. **Push** to the existing PR branch (use the existing PR detection logic from your git workflow rules).
-5. **Dispatch**: call the `dispatch_next` tool with `appreciation="approved"` (do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders it from typed state, issue #876).
+5. **Dispatch**: call the `finalize` tool with `appreciation="approved"` (do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders it from typed state, issue #876).
 
 ## What You MUST NOT Do
 

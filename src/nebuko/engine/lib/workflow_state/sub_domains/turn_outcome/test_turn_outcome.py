@@ -60,7 +60,7 @@ class TestValidators:
         hold = TurnOutcome(
             status=TurnStatus.COMPLETED,
             appreciation=Appreciation.HOLD,
-            hold_kind=HoldKind.AWAITING_APPROVAL,
+            hold_kind=HoldKind.AWAITING_INPUT,
         )
         assert hold.route_key == "hold"
         incomplete = TurnOutcome.for_incomplete(IncompleteReason.SOFT_TIMEOUT)

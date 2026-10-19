@@ -51,7 +51,7 @@ class TestPerformDispatchRecalls(unittest.TestCase):
         count = perform_dispatch_recalls(conv, lambda: has[0], run_pass)
         self.assertEqual(count, 1)
         self.assertEqual(len(conv.sent_messages), 1)
-        self.assertIn("dispatch_next", conv.sent_messages[0])
+        self.assertIn("finalize", conv.sent_messages[0])
         self.assertIs(conv.sent_messages[0], DISPATCH_RECALL_PROMPT)
 
     def test_exhausted_recalls_hit_the_hard_cap(self):

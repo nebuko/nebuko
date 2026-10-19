@@ -259,19 +259,24 @@ class TestPromptBlock:
 
 
 class TestFinalizeSchemaBuilder:
-    def test_schema_top_level_is_route_only(self):
+    def test_schema_top_level_is_turn_outcome_only(self):
+        """Issue #1033: the report rides in the turn text, not a tool argument."""
         schema = FinalizeSchemaBuilder().as_response_schema()
-        assert set(schema["properties"]) == {"route"}
-        assert schema["required"] == ["route"]
+        assert set(schema["properties"]) == {"turn_outcome"}
+        assert schema["required"] == ["turn_outcome"]
 
-    def test_route_content_rides_via_defs(self):
+    def test_turn_outcome_content_rides_via_defs(self):
         schema = FinalizeSchemaBuilder().as_response_schema()
-        assert schema["properties"]["route"] == {"$ref": "#/$defs/RouteDecision"}
-        assert "RouteDecision" in schema["$defs"]
+        assert schema["properties"]["turn_outcome"] == {
+            "$ref": "#/$defs/StrictFinalizePayload"
+        }
+        assert "StrictFinalizePayload" in schema["$defs"]
 
-    def test_build_accepts_a_route(self):
-        action = FinalizeSchemaBuilder().build()(route={"appreciation": "approved"})
-        assert action.route.appreciation == "approved"
+    def test_build_accepts_a_turn_outcome(self):
+        action = FinalizeSchemaBuilder().build()(
+            turn_outcome={"appreciation": "approved"}
+        )
+        assert action.turn_outcome.appreciation == "approved"
 
 
 class TestRunTerminator:

@@ -97,8 +97,8 @@ class TestReviewInstructionsPrescribeTheVerdictKey:
     def test_the_plan_review_skill_signals_the_verdict_the_same_way(self):
         text = PLAN_REVIEW_SKILL.read_text()
 
-        assert 'appreciation="rejected"' in text
-        assert 'appreciation="approved"' in text
+        assert "appreciation:'rejected'" in text
+        assert "appreciation:'approved'" in text
 
 
 class TestCapturedRound2Replay:

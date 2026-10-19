@@ -1776,7 +1776,14 @@ class Engine:
             step=str(self._get(resolved, "WORKFLOW_STEP") or ""),
             workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
             unresolved=unresolved,
+            gate_pending=self._gate_pending(state),
         )
+
+    @staticmethod
+    def _gate_pending(state: WorkflowState | None) -> bool:
+        """True while an engine-owned gate blocks the advance (issue #1033)."""
+        gate = getattr(state, "gate", None) if state is not None else None
+        return bool(gate is not None and gate.armed())
 
     def _step_skip_kind(
         self, resolved: Any, route_key: str | None = None

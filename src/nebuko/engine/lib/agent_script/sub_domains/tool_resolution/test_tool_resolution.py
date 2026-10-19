@@ -14,6 +14,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+import pytest
 
 from openhands.sdk.tool import Tool
 from openhands.sdk.tool.registry import list_registered_tools, resolve_tool
@@ -112,17 +113,19 @@ class TestResolveToolset:
         assert resolved.sdk_tools == ()
         assert resolved.builtin_tools == ("ThinkTool", "FinishTool")
 
-    def test_dispatch_next_enables_dispatch(self):
-        resolved = resolve_toolset(["dispatch_next"], "review")
-        assert _names(resolved.sdk_tools) == ("DispatchNextTool",)
+    def test_finalize_enables_dispatch(self):
+        """Every step ends through ``finalize`` (issue #1033): the single
+        terminal tool that carries both the verdict and any hand-off."""
+        resolved = resolve_toolset(["finalize"], "review")
+        assert _names(resolved.sdk_tools) == ("FinalizeTool",)
         assert resolved.dispatch_tool_enabled is True
 
-    def test_call_agent_registers(self):
-        resolved = resolve_toolset(["call_agent"], "architect")
-        assert _names(resolved.sdk_tools) == ("CallAgentTool",)
-        assert "CallAgentTool" in list_registered_tools()
-        # A hand-off-only tool must not be mistaken for a dispatch tool.
-        assert resolved.dispatch_tool_enabled is False
+    def test_the_removed_tools_are_a_migration_error(self):
+        """``dispatch_next`` / ``call_agent`` are no longer agents' tools: a
+        config still listing one fails loudly, pointing at ``finalize``."""
+        for name in ("dispatch_next", "call_agent"):
+            with pytest.raises(ValueError, match="was removed"):
+                resolve_toolset([name], "architect")
 
     def test_report_scaffold_branch_registers(self):
         resolved = resolve_toolset(["report_scaffold_branch"], "dev")
@@ -153,7 +156,7 @@ class TestResolveToolset:
 
     def test_engine_tools_resolve_via_sdk(self):
         resolved = resolve_toolset(
-            ["dispatch_next", "report_scaffold_branch"], "dev"
+            ["finalize", "report_scaffold_branch"], "dev"
         )
         registered = list_registered_tools()
         for name in _names(resolved.sdk_tools):
@@ -168,10 +171,10 @@ class TestResolveToolset:
 
     def test_has_covers_every_emitted_name(self):
         resolved = resolve_toolset(
-            ["terminal", "think", "dispatch_next", "report_scaffold_branch"],
+            ["terminal", "think", "finalize", "report_scaffold_branch"],
             "dev",
         )
-        for name in ("terminal", "ThinkTool", "DispatchNextTool",
+        for name in ("terminal", "ThinkTool", "FinalizeTool",
                      "ScaffoldBranchReportTool"):
             assert resolved.has(name)
         assert not resolved.has("finish")

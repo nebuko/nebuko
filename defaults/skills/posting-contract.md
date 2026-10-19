@@ -5,7 +5,7 @@ description: "Where the deliverable goes: the report turn's `finish` message, no
 # Posting Contract — What Gets Posted to the Issue
 
 Applies to **every agent**. The engine owns the answer channel: the control
-plane (`finish` / `dispatch_next`) is a *typed schema*, not a prose convention.
+plane (`finish` / `finalize`) is a *typed schema*, not a prose convention.
 When your work loop ends, the engine opens one **report turn** and asks you for
 the deliverable in the `finish` tool's `message` argument — that field is what
 gets posted on the GitHub issue. Where you happened to write your prose during
@@ -35,7 +35,7 @@ published a one-line lead-in).
    is spent winding down. In a wind-down run that `finish.message` **is** the
    deliverable and the engine harvests and posts it (issues #822/#830).
 
-3. **`dispatch_next` fields are routing metadata.**
+3. **`finalize` turn_outcome fields are routing metadata.**
    `appreciation` / `hold_kind` / `complexity` / `pin` carry the turn's verdict
    and the next-step knobs. Never put the deliverable in `note` — it is one
    sentence of justification. The engine reads these fields directly.
@@ -50,7 +50,7 @@ published a one-line lead-in).
 5. **Ending a turn requires an explicit dispatch decision.**
    Never end a run without one — doing so triggers an engine recall pass whose
    short status note can clobber a fallback answer (issue #558). Signal the
-   decision with the `dispatch_next` tool when you already know it; the engine
+   decision with the `finalize` tool when you already know it; the engine
    also elicits the routing decision at run end. A decision-less end triggers a
    bounded recall, never a lost answer. Which decision
    is correct depends on the step:
@@ -61,7 +61,7 @@ published a one-line lead-in).
      it would pause *before* the gate and force a second, non-gate resume (the
      double-approval bug).
    - **On a non-gated step awaiting a human**, an explicit
-     `dispatch_next(appreciation='hold', hold_kind='awaiting_input')` is correct
+     `finalize(turn_outcome={appreciation:'hold', hold_kind:'awaiting_input'})` is correct
      (proposal, clarification, or feedback request).
 
 6. **Collapse verbose detail behind `<details>`.**
@@ -74,7 +74,7 @@ published a one-line lead-in).
 
 7. **The engine owns the hand-off record.**
    Do **not** write an `AGENT_RUN_CONFIG` sentinel (or any other prose marker)
-   to signal routing: the engine reads your typed `dispatch_next` / `call_agent`
+   to signal routing: the engine reads your typed `finalize` turn outcome
    call and renders the durable workflow-state section itself. A sentinel in
    your prose is ignored (issue #964).
 
@@ -87,9 +87,9 @@ published a one-line lead-in).
 
 - Treating the work-loop `finish` message as the place for the report — it is
   ignored; the report turn is the answer channel.
-- Squeezing the deliverable into the `dispatch_next` `note` field — the
+- Squeezing the deliverable into the `turn_outcome.note` field — the
   arguments are routing metadata.
 - Ending the session with chatter ("I'll now finish…") after the real answer —
   on the fallback path that chatter becomes the posted comment.
-- Ending a proposal or clarification turn without calling `dispatch_next`
+- Ending a proposal or clarification turn without calling `finalize`
   (engine recall fires and its short status note can clobber a fallback answer).

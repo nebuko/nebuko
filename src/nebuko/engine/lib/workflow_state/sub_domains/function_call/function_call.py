@@ -36,6 +36,10 @@ class FunctionCall(BaseModel):
 
     function: str = Field(default="call_agent")
     agent_name: str = ""
+    # The work delegated to the callee; it is the callee's whole user prompt
+    # (plus the standard system context). Empty means the callee inherits no
+    # instruction from the caller (issue #1033).
+    task: Optional[str] = None
     # "" = the caller declared no tier; the resolver applies the called step's
     # declared tier, else "medium" (issue #787).
     complexity: str = ""

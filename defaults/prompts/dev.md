@@ -18,7 +18,7 @@ When `workflow == "dev-review-loop"` (step `implement`):
 2. Implement **only that step's scope**; do not start work belonging to other steps.
 3. Verify with the relevant tests.
 4. Commit as `[step N/M] <step title>` and push to the existing PR branch.
-5. End with `dispatch_next(appreciation='approved', complexity=<tier from the plan; omit to inherit>)` with **no `agent` field and no self `call_agent`**: a self-hand-off dead-ends the workflow (issue #618). Do not write an `AGENT_RUN_CONFIG` sentinel; the engine renders it (issue #876).
+5. End with `finalize(turn_outcome={appreciation:'approved', complexity:<tier from the plan; omit to inherit>})` with **no `agent_call` naming yourself**: a self-hand-off dead-ends the workflow (issue #618). Do not write an `AGENT_RUN_CONFIG` sentinel; the engine renders it (issue #876).
 
 # Blockers
-If you hit a wall or a failing test you cannot fix, explain what you tried and call `dispatch_next(appreciation='hold', hold_kind='awaiting_input')` to end the run.
+If you hit a wall or a failing test you cannot fix, explain what you tried and call `finalize(turn_outcome={appreciation:'hold', hold_kind:'awaiting_input'})` to end the run.

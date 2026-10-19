@@ -6,8 +6,10 @@ An agent run ends with exactly two artifacts:
    delimited by canonical ``<!-- nebuko:section <name> -->`` pairs. Plain text
    carries no JSON escaping and no termination risk, and a truncated turn still
    leaves every completed section salvageable.
-2. **the routing decision** — one small ``finalize(route)`` tool call whose
-   ``response_schema`` is the route only.
+2. **the routing decision** — one small ``finalize(turn_outcome)`` tool call
+   whose ``response_schema`` is the turn outcome only (issue #1033). Every
+   step ends this way; an ``output:`` declaration only decides how the report
+   is extracted and rendered.
 
 The engine owns the markdown wrappers (``#`` title, ``##`` heading,
 ``<details>``) and the marker layer, so
@@ -28,7 +30,7 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from nebuko.engine.paths import ensure_import_path
 
@@ -40,6 +42,13 @@ from config.sub_domains.workflow_step.output_field import (  # noqa: E402
     NAME_PATTERN,
     OutputField,
     StepOutput,
+)
+from workflow_state import (  # noqa: E402 - runtime-path module
+    Appreciation,
+    FunctionCall,
+    HoldKind,
+    TurnOutcome,
+    TurnStatus,
 )
 
 log = logging.getLogger("nebuko.engine.finalize")
@@ -55,8 +64,11 @@ __all__ = [
     "SECTION_CLOSE",
     "SECTION_OPEN",
     "SectionExtractionError",
+    "StrictFinalizePayload",
+    "TurnOutcomePayload",
     "route_from_action",
     "step_output_contract",
+    "turn_outcome_from_action",
 ]
 
 #: Canonical section markers. The open marker names the field; the close marker
@@ -142,6 +154,30 @@ def route_from_action(action: object) -> Optional["RouteDecision"]:
         return RouteDecision.model_validate(route)
     except Exception as exc:  # noqa: BLE001 - a bad route must not crash the run
         log.warning("finalize route failed RouteDecision validation: %s", exc)
+        return None
+
+
+def turn_outcome_from_action(action: object) -> Optional["TurnOutcomePayload"]:
+    """Read the agent-supplied ``turn_outcome`` out of a ``finalize`` action.
+
+    The action declares a single ``turn_outcome`` field (the report rides in
+    the turn text). A malformed payload returns ``None`` so the tool executor
+    can report it back to the agent instead of poisoning the run's routing.
+    """
+    raw = getattr(action, "structured_output", None)
+    if not isinstance(raw, dict) or "turn_outcome" not in raw:
+        raw = getattr(action, "turn_outcome", None)
+        if isinstance(raw, BaseModel):
+            return TurnOutcomePayload.model_validate(raw.model_dump())
+        if not isinstance(raw, dict):
+            return None
+        value = raw
+    else:
+        value = raw["turn_outcome"]
+    try:
+        return TurnOutcomePayload.model_validate(value)
+    except Exception as exc:  # noqa: BLE001 - a bad verdict must not crash the run
+        log.warning("finalize turn_outcome failed validation: %s", exc)
         return None
 
 
@@ -328,6 +364,10 @@ class RouteDecision(BaseModel):
     The factual turn-outcome vocabulary (issue #964): the agent reports what
     happened and the engine derives the route from the workflow topology, so
     there is no navigation intent (``advance``/``loop``) here.
+
+    Worker-side (lenient) reading of ``route`` — the agent-facing schema is
+    :class:`TurnOutcomePayload` (issue #1033); this model only tolerates what a
+    not-yet-migrated worker still emits.
     """
 
     appreciation: Literal["approved", "rejected", "hold"] = "hold"
@@ -341,20 +381,134 @@ class RouteDecision(BaseModel):
     pin: bool = False
 
 
-class FinalizeSchemaBuilder:
-    """Builds the route-only ``finalize`` tool schema (issue #973).
+class AgentCall(BaseModel):
+    """The imperative agent-to-agent hand-off carried by ``finalize``.
 
-    The report rides in the turn's text, so the tool's top-level arguments are
-    exactly ``route`` — a tiny, fixed shape that cannot be truncated by a long
-    markdown payload.
+    This is the only way an agent names an exact hand-off target (issue
+    #1033): ``dispatch_next``'s ``required_agent`` and the standalone
+    ``call_agent`` tool are gone. The return address is engine-derived, so a
+    ``callback`` can never be set — or read — by an agent.
     """
 
-    def __init__(self, base: type[RouteDecision] = RouteDecision) -> None:
+    model_config = ConfigDict(extra="forbid")
+
+    agent_name: str
+    task: Optional[str] = None
+
+
+#: The single valid hold kind: a hold asks a *human* for input. An approval
+#: gate is engine-owned run state, never an agent verdict.
+AWAITING_INPUT = "awaiting_input"
+
+_COMPLEXITY_TIERS = ("low", "medium", "high")
+
+
+class TurnOutcomePayload(BaseModel):
+    """The typed ``turn_outcome`` argument of the terminal ``finalize`` call.
+
+    Fields stay optional in the schema; the conditional rules are enforced at
+    runtime by :meth:`validate_runtime`, whose message is returned to the agent
+    as a tool error (the plan's runtime-validation decision, issue #1033).
+
+    The engine-measured axes (``status``, ``incomplete_reason``) and the
+    removed channels (``required_agent``, ``awaiting_approval``) are rejected
+    by ``extra="forbid"``: the agent can supply neither.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    appreciation: Literal["approved", "rejected", "hold"]
+    hold_kind: Optional[Literal["awaiting_input"]] = None
+    note: Optional[str] = None
+    round: Optional[int] = None
+    complexity: Optional[str] = None
+    pin: bool = False
+    agent_call: Optional[AgentCall] = None
+
+    def validate_runtime(self) -> None:
+        """Enforce the conditional rules; raise ``ValueError`` for the agent.
+
+        Raises:
+            ValueError: With an agent-facing message naming the offending field
+                (``hold_kind`` iff ``hold``, a known complexity tier, a
+                non-negative ``round``, a non-blank ``agent_call.agent_name``).
+        """
+        if self.appreciation == "hold" and self.hold_kind is None:
+            raise ValueError(
+                "hold_kind is required when appreciation='hold': use "
+                f"'{AWAITING_INPUT}' (an approval gate is engine-owned and is "
+                "never requested by the agent)"
+            )
+        if self.appreciation != "hold" and self.hold_kind is not None:
+            raise ValueError(
+                f"hold_kind is only valid when appreciation='hold' (got "
+                f"appreciation='{self.appreciation}')"
+            )
+        if self.complexity is not None and self.complexity not in _COMPLEXITY_TIERS:
+            raise ValueError(
+                f"invalid complexity {self.complexity!r}: expected one of "
+                f"{list(_COMPLEXITY_TIERS)}"
+            )
+        if self.round is not None and self.round < 0:
+            raise ValueError(f"round must be >= 0 (got {self.round})")
+        if self.agent_call is not None and not self.agent_call.agent_name.strip():
+            raise ValueError("agent_call.agent_name is required and must not be blank")
+
+    def to_turn_outcome(self, *, status: TurnStatus = TurnStatus.COMPLETED) -> TurnOutcome:
+        """Map onto the factual ``TurnOutcome`` model.
+
+        ``status`` is engine-measured and never agent-supplied; the terminal
+        call only exists on a completed turn, so it defaults to COMPLETED.
+        """
+        return TurnOutcome(
+            status=status,
+            appreciation=Appreciation(self.appreciation),
+            hold_kind=HoldKind(self.hold_kind) if self.hold_kind else None,
+            round=self.round or 0,
+            note=self.note or "",
+        )
+
+    def to_function_call(self) -> Optional[FunctionCall]:
+        """The typed hand-off this outcome requests, or ``None``.
+
+        A hold never hands off: the callee is recalled, not delegated to.
+        """
+        if self.agent_call is None or self.appreciation == "hold":
+            return None
+        return FunctionCall(
+            agent_name=self.agent_call.agent_name.strip(),
+            task=self.agent_call.task,
+            complexity=self.complexity or "",
+        )
+
+
+class StrictFinalizePayload(TurnOutcomePayload):
+    """The SDK ``response_schema`` payload of the ``finalize`` tool.
+
+    Same fields and runtime rules as :class:`TurnOutcomePayload`, with
+    ``appreciation`` promoted to required in the *schema* so a missing verdict
+    is rejected before the executor runs.
+    """
+
+    appreciation: Literal["approved", "rejected", "hold"] = Field(
+        ..., description="Your verdict on this turn's work."
+    )
+
+
+class FinalizeSchemaBuilder:
+    """Builds the ``turn_outcome``-only ``finalize`` tool schema (issue #1033).
+
+    The report rides in the turn's text, so the tool's top-level arguments are
+    exactly ``turn_outcome`` — a tiny, fixed shape that cannot be truncated by
+    a long markdown payload.
+    """
+
+    def __init__(self, base: type[TurnOutcomePayload] = StrictFinalizePayload) -> None:
         self.base = base
 
     def build(self) -> type[BaseModel]:
-        """The finalize action model: one required ``route`` field."""
-        return create_model("FinalizeAction", route=(self.base, ...))
+        """The finalize action model: one required ``turn_outcome`` field."""
+        return create_model("FinalizeAction", turn_outcome=(self.base, ...))
 
     def as_response_schema(self) -> dict[str, Any]:
         """The JSON schema handed to the SDK as ``response_schema``."""

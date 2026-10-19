@@ -12,4 +12,4 @@ For an approved plan of **2+ sequential steps sharing a single PR**, emit a `<pl
 {"issue": N, "steps": [{"title": "...", "instructions": "...", "complexity": "medium", "model": null}, ...]}
 </planWorkflow>
 ```
-One entry per step, in execution order. `instructions` must be detailed and self-contained (@@dev scaffolds skill files from this text alone). `complexity` is `low`/`medium`/`high`; `model` is `null` unless a specific model is required. Then call `dispatch_next(appreciation="approved")` — the engine resolves the next step from the workflow definition.
+One entry per step, in execution order. `instructions` must be detailed and self-contained (@@dev scaffolds skill files from this text alone). `complexity` is `low`/`medium`/`high`; `model` is `null` unless a specific model is required. Then call `finalize(turn_outcome={appreciation:'approved'})` — the engine resolves the next step from the workflow definition.

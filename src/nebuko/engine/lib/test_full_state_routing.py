@@ -488,12 +488,14 @@ class TestHumanGateHoldPrecedence:
         assert "human_gate" in result.get("REASON", "")
         assert result.get("TASK", "") != "dev"
 
-    def test_gate_hold_with_persisted_function_call_stays_held(
+    def test_gate_blocks_the_advance_but_lets_the_handoff_route(
         self, default_workflows_dir: Path, prompt_base: str,
     ):
-        """Issue #887 round 2: a held gate that also persisted a function_call
-        must still SKIP — the hand-off branch must not route straight to `dev`."""
+        """Issue #1003/#1033: the gate blocks the workflow *advance*, never a
+        delegation — a hand-off from an armed gate consults the callee and the
+        gated step stays put, so the run never sneaks past to ``implement``."""
         state = _load_fixture(ISSUE885_GATE_HOLD)
+        state["gate"] = {"step": "plan", "status": "armed"}
         state["function_call"] = {"function": "call_agent", "agent_name": "dev"}
         case = GateHoldCase(
             name=ISSUE885_GATE_HOLD + "_with_function_call",
@@ -503,10 +505,11 @@ class TestHumanGateHoldPrecedence:
         result = resolve_config(
             case.trigger_body(), prompt_base, str(default_workflows_dir), is_bot=True,
         )
-        assert result["SKIP_AGENT"] == "true"
-        assert "human_gate" in result.get("REASON", "")
-        assert result.get("TASK", "") != "dev"
-        assert result.get("WORKFLOW_STEP", "") != "implement"
+        assert result["SKIP_AGENT"] != "true"
+        assert result.get("TASK") == "dev"
+        # The callee runs at its own step; the gated step itself is not
+        # advanced past (the gate stays armed for the next human action).
+        assert result.get("WORKFLOW_NAME") == "default"
 
     def test_plain_hold_parks_without_a_gate_reason(
         self, default_workflows_dir: Path, prompt_base: str,

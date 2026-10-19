@@ -4,7 +4,8 @@ from .finalize_tool import (
     FinalizeAction,
     FinalizeObservation,
     FinalizeTool,
-    route_from_action,
+    outcome_to_prefs,
+    outcome_to_turn_outcome,
     route_to_prefs,
     route_to_turn_outcome,
 )
@@ -15,7 +16,8 @@ __all__ = [
     "FinalizeAction",
     "FinalizeObservation",
     "FinalizeTool",
-    "route_from_action",
+    "outcome_to_prefs",
+    "outcome_to_turn_outcome",
     "route_to_prefs",
     "route_to_turn_outcome",
 ]

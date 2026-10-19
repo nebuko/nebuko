@@ -1,15 +1,15 @@
-"""Engine tools — declarative control-plane classification and typed harvest (issue #830).
+"""Engine tools - declarative control-plane classification and typed harvest (issue #830).
 
 The agent tool surface has two planes:
 
-* **work tools** (``terminal``, ``file_editor``, ``think``, ...) — the agent's
+* **work tools** (``terminal``, ``file_editor``, ``think``, ...) - the agent's
   operational capability. Their payloads are never harvested by the engine.
-* **engine tools** (``finish``, ``dispatch_next``) — the control plane. The
+* **engine tools** (``finish``, ``dispatch_next``) - the control plane. The
   engine reads their *typed* arguments: ``finish.message`` is the final
   message and ``dispatch_next``'s fields carry the workflow routing decision.
 
 Classifying the control plane is an **engine-internal invariant** applied to
-every agent, not user configuration: the engine↔agent boundary is a schema, so
+every agent, not user configuration: the engineтЖФagent boundary is a schema, so
 the answer can never depend on where an agent happened to place its prose
 (the #822 truncation bug). :data:`DEFAULT_ENGINE_TOOLS` is the single frozen
 instance; :meth:`EngineToolRegistry.harvest` performs the structural typed-field
@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Mapping, Optional
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
-    from nebuko.engine.finalize import AgentReport, RouteDecision, RunTerminator
+    from nebuko.engine.finalize import AgentReport, RunTerminator
 
 __all__ = [
     "DEFAULT_ENGINE_TOOLS",
@@ -37,16 +37,15 @@ __all__ = [
     "WorkLoopPresence",
 ]
 
-# ``final_message`` — the tool's argument is the agent's final message (finish);
-# ``routing`` — the tool's arguments carry the workflow routing decision;
-# ``handoff`` — the tool's arguments carry an imperative agent-to-agent
-# hand-off (call_agent), surfaced under a ``function_call`` key;
-# ``finalize`` — the terminal gate of a step that declares an ``output:``
-# shape: the report rides in the turn text and the tool carries the route only.
+# ``final_message`` - the tool's argument is the agent's final message (finish);
+# ``routing`` / ``handoff`` - payload shapes of the removed ``dispatch_next`` /
+# ``call_agent`` tools (read-only legacy compatibility, #1033);
+# ``finalize`` - the terminal tool of every step: the report rides in the turn
+# text and the tool carries the typed ``turn_outcome`` only.
 PayloadKind = Literal["final_message", "routing", "handoff", "finalize"]
 
 # Work-loop role of an engine tool: ``terminator`` ends the run (finish);
-# ``hidden`` is a control signal the work loop keeps running past (dispatch_next).
+# ``hidden`` is a control signal the work loop keeps running past.
 WorkLoopPresence = Literal["terminator", "hidden"]
 
 
@@ -97,7 +96,7 @@ class EngineToolRegistry(BaseModel):
         Returns ``None`` for a non-engine tool or a missing action, so callers
         fall back deterministically rather than reading arbitrary attributes.
         """
-        spec = self.tools.get(tool_name)
+        spec = self.tools.get(tool_name) or _LEGACY_TOOL_SPECS.get(tool_name)
         if spec is None or action is None:
             return None
         fields = {
@@ -108,12 +107,46 @@ class EngineToolRegistry(BaseModel):
             tool_name=tool_name, payload_kind=spec.payload_kind, fields=fields
         )
 
+    def finalize_payload(self, action: object) -> Mapping[str, Any]:
+        # @stub-protected: signature defined by architect — do not modify
+        """The agent's ``turn_outcome`` from a ``finalize`` action (issue #1033).
+
+        The typed ``turn_outcome`` is the canonical slot. A worker that has not
+        been migrated yet still sends the flat ``route`` action; its vocabulary
+        is the same, so it is read as a fallback rather than dropped.
+        """
+        if action is None:
+            return {}
+        sources = [getattr(action, "structured_output", None)]
+        state = getattr(action, "__dict__", None)
+        if isinstance(state, Mapping):
+            sources.append(state)
+        for source in sources:
+            if not isinstance(source, Mapping):
+                continue
+            for key in ("turn_outcome", "route", "appreciation"):
+                # ``turn_outcome`` first (the canonical typed argument), then
+                # the pre-#1033 flat ``route``/top-level shapes a not-yet
+                # migrated worker may still send.
+                if key == "appreciation":
+                    if key in source:
+                        return dict(source)
+                    break
+                nested = source.get(key)
+                if isinstance(nested, Mapping):
+                    return dict(nested)
+                if nested is not None and not isinstance(nested, Mapping):
+                    dumped = _as_mapping(nested)
+                    if dumped is not None:
+                        return dumped
+        return {}
+
     def work_loop_presence(self, tool_name: str) -> WorkLoopPresence:
         # @stub-protected: signature defined by architect — do not modify
         """The tool's role in the work loop: ``terminator`` or ``hidden``.
 
         ``finish`` is the explicit completion signal (its payload is ignored in
-        the work loop); ``finalize`` is the terminal gate of an output step;
+        the work loop); ``finalize`` is the terminal tool of every step;
         ``dispatch_next`` and any unknown tool are ``hidden``.
         """
         spec = self.tools.get(tool_name)
@@ -144,7 +177,7 @@ class FinalizeToolError(Exception):
 class FinalizeToolHandler:
     """Adapts :class:`RunTerminator` to the engine tool layer (issue #973).
 
-    ``handle`` delegates to the terminator's extract → validate → render → post
+    ``handle`` delegates to the terminator's extract тЖТ validate тЖТ render тЖТ post
     gate; the first :class:`SectionExtractionError` / :class:`MarkerInjectionError`
     becomes one retryable :class:`FinalizeToolError` naming the field, and a
     second failure propagates (fail loudly). ``salvage`` harvests the completed
@@ -156,12 +189,12 @@ class FinalizeToolHandler:
         self.retried = False
 
     def response_schema(self) -> dict[str, Any]:
-        """The route-only JSON schema the SDK exposes as ``response_schema``."""
+        """The turn-outcome JSON schema the SDK exposes as ``response_schema``."""
         from nebuko.engine.finalize import FinalizeSchemaBuilder
 
         return FinalizeSchemaBuilder().as_response_schema()
 
-    def handle(self, route: "RouteDecision", turn_text: str) -> "AgentReport":
+    def handle(self, route: object, turn_text: str) -> "AgentReport":
         """Gate the terminal emission; retry once, then fail loudly."""
         from nebuko.engine.finalize import (
             MarkerInjectionError,
@@ -189,6 +222,27 @@ def _named_field(message: str) -> str:
     return match.group(1) if match else ""
 
 
+def _as_mapping(value: object) -> Optional[dict[str, Any]]:
+    """A mapping view of a pydantic model (or another duck-typed outcome).
+
+    A plain object with the right attributes (a scripted test double, a
+    not-yet-migrated worker's namespace) exposes the same fields through
+    ``vars``; unset attributes are dropped so the read mirrors
+    ``model_dump(exclude_none=True)``.
+    """
+    if isinstance(value, BaseModel):
+        try:
+            return value.model_dump(exclude_none=True)
+        except Exception:  # noqa: BLE001 - an unreadable action must not crash
+            return None
+    if isinstance(value, Mapping):
+        return dict(value)
+    namespace = getattr(value, "__dict__", None)
+    if isinstance(namespace, Mapping) and not callable(value):
+        return {key: item for key, item in namespace.items() if item is not None}
+    return None
+
+
 def _field_text(value: object) -> str:
     """Coerce a typed action field to its stripped string form (``""`` if unset).
 
@@ -204,10 +258,10 @@ def _field_text(value: object) -> str:
 
 
 # The control plane, frozen for every agent in the engine (issue #830).
-# ``finish.message`` is the canonical final message; ``dispatch_next``'s typed
-# fields are the routing decision. The work loop's ``finish`` is only the
-# explicit end signal — the engine-elicited report turn is what fills the
-# ``message`` deterministically.
+# ``finalize`` is the *only* terminal tool (issue #1033): it carries the typed
+# ``turn_outcome`` (the verdict plus the optional ``agent_call`` hand-off) and
+# the report rides in the turn text. ``finish`` remains the SDK end signal; its
+# ``message`` is a fallback deliverable, never a routing channel.
 DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
     tools={
         "finish": EngineToolSpec(
@@ -215,37 +269,36 @@ DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
             payload_kind="final_message",
             payload_fields=("message",),
         ),
-        "dispatch_next": EngineToolSpec(
-            name="dispatch_next",
-            payload_kind="routing",
-            # The factual turn outcome: the agent's verdict plus the optional
-            # cross-agent override (issue #964). Dropping a field here silently
-            # reverts the hand-off to the workflow's default next step (#830).
-            payload_fields=(
-                "appreciation",
-                "hold_kind",
-                "required_agent",
-                "round",
-                "note",
-                "complexity",
-                "pin",
-            ),
-        ),
-        # Typed replacement for the sentinel-carried ``function_call``
-        # hand-off (issue #876). Its harvested fields are surfaced under a
-        # ``function_call`` key; the turn outcome itself carries the verdict.
-        "call_agent": EngineToolSpec(
-            name="call_agent",
-            payload_kind="handoff",
-            payload_fields=("function", "agent_name", "callback", "task", "complexity"),
-        ),
-        # Terminal gate of a step that declares an ``output:`` shape (issue
-        # #973): the report rides in the turn text as section bodies, so the
-        # tool's only argument is the typed route.
+        # Terminal tool of every step, ``output:`` or not: the report rides in
+        # the turn text, so the tool's only argument is the typed turn outcome.
         "finalize": EngineToolSpec(
             name="finalize",
             payload_kind="finalize",
-            payload_fields=("route",),
+            payload_fields=("turn_outcome",),
         ),
     }
 )
+
+#: Payload shapes of the tools removed in #1033. They are not registered (no
+#: agent is offered them); the specs only keep a pre-migration run's recorded
+#: action readable.
+_LEGACY_TOOL_SPECS: Final[Mapping[str, EngineToolSpec]] = {
+    "dispatch_next": EngineToolSpec(
+        name="dispatch_next",
+        payload_kind="routing",
+        payload_fields=(
+            "appreciation",
+            "hold_kind",
+            "required_agent",
+            "round",
+            "note",
+            "complexity",
+            "pin",
+        ),
+    ),
+    "call_agent": EngineToolSpec(
+        name="call_agent",
+        payload_kind="handoff",
+        payload_fields=("function", "agent_name", "callback", "task", "complexity"),
+    ),
+}

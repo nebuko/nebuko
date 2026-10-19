@@ -80,16 +80,16 @@ class TestResolveOutcome(unittest.TestCase):
         self.assertEqual(resolved, recorded)
         self.assertIsNone(function_call)
 
-    def test_recorded_outcome_target_derives_the_hand_off(self):
-        """An explicit ``required_agent`` becomes the typed function call."""
-        recorded = TurnOutcome(
-            status="completed", appreciation="approved", required_agent="context"
-        )
+    def test_a_recorded_outcome_carries_no_target_of_its_own(self):
+        """The verdict names no target (issue #1033): the hand-off is a
+        separate ``function_call``, and an outcome without one keeps the
+        workflow-relative route."""
+        recorded = TurnOutcome(status="completed", appreciation="approved")
         resolved, _, function_call = self._resolve(
             _FakeConv("conv-target"), outcome=recorded
         )
         self.assertEqual(resolved, recorded)
-        self.assertEqual(function_call.agent_name, "context")
+        self.assertIsNone(function_call)
 
     def test_prefs_complexity_rides_the_derived_hand_off_separately(self):
         """The declared tier is a non-routing run preference (issue #787): it
@@ -100,12 +100,14 @@ class TestResolveOutcome(unittest.TestCase):
         resolution) is covered by ``TestAgentPrefsReachTheResolution`` in
         ``test_build_output``.
         """
-        recorded = TurnOutcome(
-            status="completed", appreciation="approved", required_agent="context"
+        recorded = TurnOutcome(status="completed", appreciation="approved")
+        call = FunctionCall(
+            function="call_agent", agent_name="context", complexity="high"
         )
         _, prefs, function_call = self._resolve(
             _FakeConv("conv-fc-complexity"),
             outcome=recorded,
+            function_call=call,
             prefs=RunPrefs(complexity="high"),
         )
         self.assertEqual(function_call.agent_name, "context")
@@ -142,9 +144,9 @@ class TestResolveOutcome(unittest.TestCase):
 
     def test_a_stale_patch_sentinel_echo_is_never_applied(self):
         """The deleted JSON-patch helper cannot be reached from prose (#964)."""
-        resolved, _, _ = self._resolve(_FakeConv("conv-patch"))
+        resolved, _, function_call = self._resolve(_FakeConv("conv-patch"))
         self.assertEqual(resolved.status.value, "incomplete")
-        self.assertIsNone(resolved.required_agent)
+        self.assertIsNone(function_call)
 
     def test_recorded_outcome_without_a_target_keeps_function_call_none(self):
         """A workflow-relative outcome (no explicit target) must not
@@ -287,7 +289,8 @@ class TestTypedCallAgentResolution(unittest.TestCase):
         )
         outcome, _, function_call = self._resolve(_FakeConv("conv-typed-only"), None, call)
         self.assertIs(outcome.appreciation, Appreciation.APPROVED)
-        self.assertEqual(outcome.required_agent, "context")
+        # The hand-off is recorded as the imperative channel alone; the
+        # verdict carries no target of its own (issue #1033).
         self.assertEqual(function_call.agent_name, "context")
 
     def test_typed_call_agent_carries_its_declared_tier(self):
@@ -304,7 +307,7 @@ class TestTypedCallAgentResolution(unittest.TestCase):
         outcome, _, function_call = self._resolve(
             _FakeConv("conv-typed-beats-sentinel"), None, call
         )
-        self.assertEqual(outcome.required_agent, "context")
+        self.assertIs(outcome.appreciation, Appreciation.APPROVED)
         self.assertEqual(function_call.agent_name, "context")
 
     def test_recorded_outcome_and_typed_call_agent_coexist(self):
@@ -319,58 +322,48 @@ class TestTypedCallAgentResolution(unittest.TestCase):
 
 
 class TestSelfHandoffNeutralization(unittest.TestCase):
-    """Self hand-off neutralization also clears the promoted routing target.
+    """Self hand-off neutralization (issue #876 review, #618 defect 2a).
 
-    Issue #876 review (#618 defect 2a): the typed ``call_agent`` branch promotes
-    ``agent_name`` into the outcome's ``required_agent``, so dropping only the
-    ``function_call`` on a self-target left the routing target alive and let
-    ``agent_host._routing_payload`` re-derive an agent that re-routes to the
-    running agent. The neutralizer must clear both.
+    A ``function_call`` targeting the running agent must not outrank the plain
+    outcome / workflow-next routing, so the neutralizer drops it (issue
+    #1033: the hand-off is the single routing channel and has no second copy
+    on the outcome).
     """
 
-    def test_self_handoff_drops_function_call_and_required_agent(self):
+    def test_self_handoff_drops_the_function_call(self):
         call = FunctionCall(function="call_agent", agent_name="dev")
-        outcome = TurnOutcome(
-            status="completed", appreciation="approved", required_agent="dev"
-        )
+        outcome = TurnOutcome(status="completed", appreciation="approved")
         outcome, prefs, function_call = _neutralize_self_and_pin(
             outcome, RunPrefs(), call, "dev"
         )
         self.assertIsNone(function_call)
-        self.assertIsNone(outcome.required_agent)
         # The plain verdict survives so the router falls through to workflow-next.
         self.assertIs(outcome.appreciation, Appreciation.APPROVED)
 
     def test_self_handoff_preserves_a_different_agent_target(self):
-        """A promoted target naming a *different* agent is not a self hand-off."""
+        """A hand-off naming a *different* agent is not a self hand-off."""
         call = FunctionCall(function="call_agent", agent_name="context")
-        outcome = TurnOutcome(
-            status="completed", appreciation="approved", required_agent="context"
-        )
+        outcome = TurnOutcome(status="completed", appreciation="approved")
         outcome, _, function_call = _neutralize_self_and_pin(
             outcome, RunPrefs(), call, "dev"
         )
         self.assertEqual(function_call.agent_name, "context")
-        self.assertEqual(outcome.required_agent, "context")
 
-    def test_self_handoff_leaves_an_unrelated_target_untouched(self):
-        """A stale/unrelated target is left alone (the function_call is the
-        routing authority)."""
-        call = FunctionCall(function="call_agent", agent_name="dev")
-        outcome = TurnOutcome(
-            status="completed", appreciation="approved", required_agent="review"
+    def test_a_self_handoff_is_dropped_whatever_its_complexity(self):
+        """The hand-off is the only routing authority on the call: a self
+        target is dropped outright (issue #1033)."""
+        call = FunctionCall(
+            function="call_agent", agent_name="dev", complexity="high"
         )
+        outcome = TurnOutcome(status="completed", appreciation="approved")
         outcome, _, function_call = _neutralize_self_and_pin(
             outcome, RunPrefs(), call, "dev"
         )
         self.assertIsNone(function_call)
-        self.assertEqual(outcome.required_agent, "review")
 
     def test_non_self_handoff_is_untouched(self):
         call = FunctionCall(function="call_agent", agent_name="review")
-        outcome = TurnOutcome(
-            status="completed", appreciation="approved", required_agent="review"
-        )
+        outcome = TurnOutcome(status="completed", appreciation="approved")
         prefs = RunPrefs()
         new_outcome, new_prefs, function_call = _neutralize_self_and_pin(
             outcome, prefs, call, "dev"
@@ -389,9 +382,7 @@ class TestPoEscalationPin(unittest.TestCase):
 
     def test_po_handoff_forces_pin(self):
         call = FunctionCall(function="call_agent", agent_name="architect")
-        outcome = TurnOutcome(
-            status="completed", appreciation="approved", required_agent="architect"
-        )
+        outcome = TurnOutcome(status="completed", appreciation="approved")
         _, prefs, function_call = _neutralize_self_and_pin(
             outcome, RunPrefs(), call, "po"
         )
@@ -400,17 +391,13 @@ class TestPoEscalationPin(unittest.TestCase):
 
     def test_non_po_handoff_does_not_force_pin(self):
         call = FunctionCall(function="call_agent", agent_name="context")
-        outcome = TurnOutcome(
-            status="completed", appreciation="approved", required_agent="context"
-        )
+        outcome = TurnOutcome(status="completed", appreciation="approved")
         _, prefs, _ = _neutralize_self_and_pin(outcome, RunPrefs(), call, "architect")
         self.assertFalse(prefs.pin)
 
     def test_po_without_a_handoff_does_not_force_pin(self):
         """Only the imperative hand-off path pins; a plain verdict is untouched."""
-        outcome = TurnOutcome(
-            status="completed", appreciation="approved", required_agent="dev"
-        )
+        outcome = TurnOutcome(status="completed", appreciation="approved")
         _, prefs, _ = _neutralize_self_and_pin(outcome, RunPrefs(), None, "po")
         self.assertFalse(prefs.pin)
 

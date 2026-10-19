@@ -33,7 +33,8 @@ from resolve_config.sub_domains.workflow_command.workflow_command import (  # no
 from workflow_state import (  # noqa: E402
     Appreciation,
     GateDecision,
-    HoldKind,
+    GateLock,
+    GateStatus,
     IncompleteReason,
     TurnOutcome,
     TurnStatus,
@@ -79,13 +80,14 @@ BOT = AuthorIdentity(
 def _held_state(
     *,
     step: str = "stub_approval",
-    hold_kind: HoldKind = HoldKind.AWAITING_APPROVAL,
+    gate: GateLock | None = None,
     gate_history=None,
 ) -> WorkflowState:
-    """A state parked on its ``human_gate`` (issue #964).
+    """A state parked on its ``human_gate`` (issues #964, #1033).
 
-    A gate hold is a step-config fact: the step declares ``human_gate: true``
-    and the turn outcome records an ``awaiting_approval`` hold.
+    A gate hold is engine-owned run state: the step declares
+    ``human_gate: true`` and the root :class:`GateLock` is armed. The agent's
+    own verdict is ``approved`` — the lock, not the agent, blocks the advance.
     """
     return WorkflowState(
         workflow="default",
@@ -93,11 +95,11 @@ def _held_state(
         agent="architect",
         turn_outcome=TurnOutcome(
             status=TurnStatus.COMPLETED,
-            appreciation=Appreciation.HOLD,
-            hold_kind=hold_kind,
+            appreciation=Appreciation.APPROVED,
         ),
         position=[StepRef(workflow="default", step=step)],
         gate_history=list(gate_history or []),
+        gate=gate if gate is not None else GateLock(step=step),
     )
 
 
@@ -147,7 +149,7 @@ class TestResolveGateDecisionPath(unittest.TestCase):
     def test_not_held_is_inert(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_workflow(tmpdir)
-            state = _held_state(hold_kind=HoldKind.AWAITING_INPUT)
+            state = _held_state(gate=GateLock(step="stub_approval", status=GateStatus.RELEASED))
             cfg = _resolve_gate_decision_path(
                 state, _cmd("/nebuko approve gate"), HUMAN, tmpdir
             )

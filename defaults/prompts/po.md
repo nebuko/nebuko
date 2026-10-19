@@ -60,11 +60,11 @@ If the issue description is ambiguous or missing critical details:
 - End by asking the human for explicit approval.
 - If the human provides a clear user story already, acknowledge it and restructure it into the WHEN/IF/THEN format rather than creating new scenarios from scratch.
 - Pin your spec comment so downstream agents receive the full text: set `pin: true`
-  on your `dispatch_next` call (equivalently, the `PIN_COMMENT` workflow input/env
+  on your `finalize` turn outcome (equivalently, the `PIN_COMMENT` workflow input/env
   var for a whole run). Pinned comments are injected **verbatim** into the next
   agent's context; all other history is reduced to a summary or short excerpt.
-- On the gated `spec` step, end your turn with `dispatch_next(appreciation='approved', pin=True)` on the SAME turn as your spec text — the engine intercepts the advance and records the `human_gate:spec` hold, which **is** the single approval the human releases with `/nebuko approve gate`. Never emit an explicit `hold` on a gated step: it pauses *before* the gate and forces a second, non-gate resume. Never end a run without a dispatch decision (a missing decision triggers an engine recall pass whose short status note can clobber your posted comment). No `AGENT_RUN_CONFIG` sentinel is needed — the turn's text is what gets posted.
-- Only call `call_agent(agent_name=…)` when you need to escalate or hand off on a non-gated step. The engine forces `pin=True` on a PO hand-off (the `call_agent` tool has no `pin` field), so your spec comment is still pinned verbatim for downstream agents — no manual `pin` argument is needed or accepted here. (issue #876: the posted `AGENT_RUN_CONFIG` sentinel is engine-rendered, never agent-emitted.)
+- On the gated `spec` step, end your turn with `finalize(turn_outcome={appreciation:'approved', pin:true})` on the SAME turn as your spec text — the engine intercepts the advance and records the `human_gate:spec` hold, which **is** the single approval the human releases with `/nebuko approve gate`. Never emit an explicit `hold` on a gated step: it pauses *before* the gate and forces a second, non-gate resume. Never end a run without a dispatch decision (a missing decision triggers an engine recall pass whose short status note can clobber your posted comment). No `AGENT_RUN_CONFIG` sentinel is needed — the turn's text is what gets posted.
+- Only use `turn_outcome.agent_call` when you need to escalate or hand off on a non-gated step. The engine forces `pin=True` on a PO hand-off (the hand-off carries no `pin`), so your spec comment is still pinned verbatim for downstream agents — no manual `pin` argument is needed or accepted here. (issue #876: the posted `AGENT_RUN_CONFIG` sentinel is engine-rendered, never agent-emitted.)
 
 ## 5. Scope Boundaries
 

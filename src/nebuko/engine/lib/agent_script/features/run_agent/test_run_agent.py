@@ -128,8 +128,14 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertIsInstance(convo.run_outcome, RunOutcome)
         self.assertIs(convo.run_outcome.status, OutcomeStatus.SUCCESS)
         self.assertFalse(convo.run_outcome.soft_timeout_fired)
-        # Wind-down prompt must NOT be sent on success.
-        self.assertEqual(convo.send_message.call_count, 1)
+        # The work pass sends the prompt once; the fake conversation records
+        # no finalize verdict, so the bounded recall fires (2 turns, issue
+        # #1033 moved the terminal tool to ``finalize``).
+        recalls = convo.run_outcome.dispatch_recall_count
+        self.assertEqual(convo.send_message.call_count, 1 + recalls)
+        # The wind-down prompt must NOT be sent on success.
+        for call in convo.send_message.call_args_list:
+            self.assertNotIn("SOFT TIMEOUT", call.args[0])
 
     @patch("agent_script.features.run_agent.run_agent.Conversation")
     @patch("agent_script.features.run_agent.run_agent.Agent")
@@ -198,13 +204,15 @@ class TestRunAgentIntegration(unittest.TestCase):
         )
         self.assertTrue(main_convo.run_outcome.soft_timeout_fired)
         self.assertTrue(main_convo.run_outcome.wind_down_completed)
-        # Two messages sent: original prompt + wind-down prompt.
-        self.assertEqual(main_convo.send_message.call_count, 2)
+        # Messages sent: original prompt + wind-down prompt, plus one turn per
+        # bounded recall pass (the fake conversation records no verdict).
+        recalls = main_convo.run_outcome.dispatch_recall_count
+        self.assertEqual(main_convo.send_message.call_count, 2 + recalls)
         self.assertIn(
             "SOFT TIMEOUT", main_convo.send_message.call_args_list[1].args[0]
         )
-        # Exactly two supervised passes — no recursion.
-        self.assertEqual(calls["n"], 2)
+        # No recursion: main + wind-down passes, plus one per recall pass.
+        self.assertEqual(calls["n"], 2 + recalls)
 
     @patch("agent_script.features.run_agent.run_agent.Conversation")
     @patch("agent_script.features.run_agent.run_agent.Agent")
@@ -316,7 +324,7 @@ class TestRunAgentIntegration(unittest.TestCase):
             result = run_agent(
                 llm_config={},
                 prompt="do the thing",
-                agent_cfg=SimpleNamespace(tools=["finish", "dispatch_next"]),
+                agent_cfg=SimpleNamespace(tools=["finish", "finalize"]),
             )
         self.assertIs(result, convo)
         self.assertEqual(convo.run_outcome.dispatch_recall_count, 1)
@@ -356,7 +364,7 @@ class TestRunAgentIntegration(unittest.TestCase):
             result = run_agent(
                 llm_config={},
                 prompt="do the thing",
-                agent_cfg=SimpleNamespace(tools=["finish", "dispatch_next"]),
+                agent_cfg=SimpleNamespace(tools=["finish", "finalize"]),
             )
         self.assertIs(result, convo)
         self.assertEqual(convo.run_outcome.dispatch_recall_count, 0)

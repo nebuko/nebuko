@@ -112,11 +112,13 @@ class TestResolveConfig:
 
     def test_json_based_dev_resolution(self):
         prompt_base, workflows_dir = self._setup_dirs()
-        # A state carrying a turn outcome routes on it (issue #964).
+        # An agent-to-agent hand-off is an imperative ``function_call``
+        # (issue #1033): the verdict no longer names the target.
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
             '{"version": 6, "turn_outcome": {"status": "completed", '
-            '"appreciation": "approved", "required_agent": "dev"}, '
+            '"appreciation": "approved"}, '
+            '"function_call": {"function": "call_agent", "agent_name": "dev"}, '
             '"prefs": {"complexity": "high"}}\n'
             "<!-- WORKFLOW_STATE_END -->"
         )
@@ -179,7 +181,8 @@ class TestResolveConfig:
         body = (
             "<!-- WORKFLOW_STATE_START -->\n"
             '{"version": 6, "turn_outcome": {"status": "completed", '
-            '"appreciation": "approved", "required_agent": "dev"}, '
+            '"appreciation": "approved"}, '
+            '"function_call": {"function": "call_agent", "agent_name": "dev"}, '
             '"prefs": {"complexity": "low", "temperature": 0.5, '
             '"model": "custom-model", "top_p": 0.9, "top_k": 50, '
             '"repetition_penalty": 1.2}}\n'
@@ -1626,7 +1629,7 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
         self.assertIn("Terminal step 'review'", result["REASON"])
 
     def test_fallback_to_agent_hint_when_no_workflow_state(self):
-        """When no workflow state exists, fall back to the outcome's required agent."""
+        """When no workflow state exists, fall back to the hand-off target."""
         prompt_base, workflows_dir = self._setup_dirs()
         import json as _json
         body = (
@@ -1635,8 +1638,8 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
                 "version": 6,
                 "turn_outcome": {
                     "status": "completed", "appreciation": "approved",
-                    "required_agent": "dev",
                 },
+                "function_call": {"function": "call_agent", "agent_name": "dev"},
                 "prefs": {"complexity": "high"},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
@@ -1656,8 +1659,8 @@ class TestWorkflowDrivenResolution(unittest.TestCase):
                 "version": 6,
                 "turn_outcome": {
                     "status": "completed", "appreciation": "approved",
-                    "required_agent": "dev",
                 },
+                "function_call": {"function": "call_agent", "agent_name": "dev"},
                 "prefs": {"complexity": "low", "temperature": 0.5},
             })
             + "\n<!-- WORKFLOW_STATE_END -->"
