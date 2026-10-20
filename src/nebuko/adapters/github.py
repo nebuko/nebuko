@@ -210,15 +210,26 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     def _trigger_identity(self) -> tuple[int, str]:
         """``(user_id, login)`` of the run's initiator, for human trust (#872).
 
-        Fails closed (``(0, "")``, so nobody is trusted) when the host cannot
-        resolve it; the ledger's reconciliation stays authoritative.
+        The login falls back to the workflow's recorded starter, then the
+        trigger author, exactly as the engine's thread ledger resolves it: a
+        chained run is triggered by a bot comment, but its human on the hook is
+        still the trusted commenter. Fails closed (``(0, "")``, so nobody is
+        trusted) when nothing resolves.
         """
         raw = os.environ.get("TRIGGER_AUTHOR_ID") or ""
         try:
             user_id = int(raw)
         except (TypeError, ValueError):
             user_id = 0
-        login = (os.environ.get("TRIGGER_AUTHOR_LOGIN") or "").strip()
+        login = ""
+        state = self.load_state()
+        if state is not None:
+            login = str(getattr(state, "started_by", "") or "").strip()
+        if not login:
+            login = (os.environ.get("TRIGGER_AUTHOR_LOGIN") or "").strip()
+        if not login:
+            trigger = self.read_trigger()
+            login = str(getattr(trigger, "author", "") or "").strip()
         return user_id, login
 
     def _thread_snapshot(self) -> Any:

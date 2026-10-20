@@ -114,11 +114,16 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
             # No issue payload in the journal: the trigger's snapshot is the
             # issue body the entry rule needs (D11 / default-last).
             issue = {"body": self._trigger.issue_body, "id": None}
+        state = self.load_state()
+        login = str(getattr(state, "started_by", "") or "").strip()
+        if not login:
+            trigger = self.read_trigger()
+            login = str(getattr(trigger, "author", "") or "").strip()
         return entries_from_raw_thread(
             issue,
             comments,
-            state=self.load_state(),
-            trigger_login=getattr(self.read_trigger(), "author", "") or "",
+            state=state,
+            trigger_login=login,
         )
 
     def post(self, body: str) -> str:

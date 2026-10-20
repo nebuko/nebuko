@@ -4071,6 +4071,12 @@ class TestBuildPromptPreviousSessionHandoff:
         assert "## Previous session handoff" not in prompt
 
 
+def _state_block(state) -> str:
+    """One posted answer's inline workflow-state block."""
+    from workflow_state import STATE_MARKER_START
+
+    return f"{STATE_MARKER_START}\n{state.model_dump_json()}\n<!-- WORKFLOW_STATE_END -->"
+
 class TestTwoStepWorkflowPrompt:
     """The runtime path contract end to end (review round 2, Critical 1).
 
@@ -4119,6 +4125,44 @@ class TestTwoStepWorkflowPrompt:
             )
         ]
 
+    def _host_entries(self, states: dict[str, object]) -> list[ContextEntry]:
+        """The same thread through the host's own builder (``entries_from_raw_thread``).
+
+        Each comment is an engine-posted, ``bot-agent-*``-marked answer: the
+        agent answer carries the workflow-state block its step posted (so the
+        builder — not the fixture — assigns the step), and a separate start
+        notice carries only the marker, which the builder must bucket as
+        ``RUN_META`` rather than model context.
+        """
+        from nebuko.engine.context_entries import entries_from_raw_thread
+
+        engine = {"login": "nebuko-bot", "type": "Bot"}
+        issue_text = "ISSUE TEXT: fix the prompt"
+        issue = {"id": 1, "body": issue_text}
+        comments: list[dict] = [
+            {
+                "id": 1,
+                "body": issue_text,
+                "user": {"login": "olivier-norture", "type": "User"},
+            }
+        ]
+        posted_state = None
+        for offset, (step, state) in enumerate(states.items(), start=1):
+            # ``*(Part 1/N)*``: the engine posts every split answer with a part
+            # header, including a one-part one.
+            body = f"<!-- bot-agent-{step} -->\n\n*(Part 1/1)*\nSTEP {step.upper()} OUTPUT BODY"
+            if state is not None:
+                body += "\n\n" + _state_block(self._with_outcome(state))
+                posted_state = self._with_outcome(state)
+            comments.append({"id": 10 + offset, "body": body, "user": engine})
+            notice = AgentStartNotice(
+                agent=step, role=step, run_url="https://example.test/run"
+            ).render()
+            comments.append({"id": 20 + offset, "body": notice, "user": engine})
+        return entries_from_raw_thread(
+            issue, comments, engine_login="nebuko-bot", state=posted_state
+        )
+
     @staticmethod
     def _with_outcome(state):
         """A completed step, as its agent child records it."""
@@ -4127,7 +4171,11 @@ class TestTwoStepWorkflowPrompt:
         history = list(state.history)
         for index, node in enumerate(history):
             outcome = node.turn_outcome.model_copy(
-                update={"status": TurnStatus.COMPLETED, "appreciation": "approved"}
+                update={
+                    "status": TurnStatus.COMPLETED,
+                    "appreciation": "approved",
+                    "incomplete_reason": None,
+                }
             )
             history[index] = node.model_copy(update={"turn_outcome": outcome})
         return state.model_copy(update={"history": history})
@@ -4138,6 +4186,16 @@ class TestTwoStepWorkflowPrompt:
         state = build_state(state, workflow="default", step="implement", agent="dev")
         engine._seeded_prev_state["state"] = self._with_outcome(state)
         engine._context_state["entries"] = self._entries()
+        return engine
+
+    def _host_engine_after_plan_and_implement(self, tmp_path):
+        """Same transition, but the thread goes through the host's entry builder."""
+        engine = _engine(tmp_path)
+        plan = build_state(None, workflow="default", step="plan", agent="architect")
+        state = build_state(plan, workflow="default", step="implement", agent="dev")
+        entries = self._host_entries({"plan": plan, "implement": state})
+        engine._seeded_prev_state["state"] = self._with_outcome(state)
+        engine._context_state["entries"] = entries
         return engine
 
     def _engine_after_round_one(self, tmp_path):
@@ -4182,6 +4240,38 @@ class TestTwoStepWorkflowPrompt:
         assert "ROUND ONE REVIEW BODY" in prompt
         assert prompt.count("ROUND ONE REVIEW BODY") == 1
         assert "IMPLEMENT OUTPUT BODY" not in prompt
+
+    def test_the_review_prompt_from_the_host_thread_is_the_previous_output(
+        self, tmp_path
+    ):
+        """#885 through the host's own entry builder, not a hand-written fixture.
+
+        The typed thread is built from the raw comments the adapter reads, so a
+        classification or identity bug in the builder cannot hide behind the
+        fixture: the review prompt carries the implement output once and none of
+        the plan output, start notices or workflow-state blocks.
+        """
+        engine = self._host_engine_after_plan_and_implement(tmp_path)
+        resolved = self._resolved(tmp_path, "review")
+        engine._run_resolved["resolved"] = resolved
+
+        prompt = engine.build_prompt(resolved, [], step_scope=None)
+
+        selection = engine._context_selection()
+        assert selection.mode == InjectionMode.IMPLICIT_PREVIOUS
+        assert [entry.kind for entry in selection.entries] == [
+            ContextKind.AGENT_OUTPUT
+        ]
+        assert [entry.step for entry in selection.entries] == ["implement"]
+        assert prompt.count("STEP IMPLEMENT OUTPUT BODY") == 1
+        assert "STEP PLAN OUTPUT BODY" not in prompt
+        assert "agent started" not in prompt
+        # Exactly the #885 shape: system + role + the plan and implement
+        # outputs + the issue body, and no engine bookkeeping.
+        for step in ("plan", "implement"):
+            assert prompt.count(f"STEP {step.upper()} OUTPUT BODY") <= 1
+        assert prompt.count("ISSUE TEXT: fix the prompt") == 1
+        assert "runner-error" not in prompt
 
     def test_the_entry_step_receives_the_issue_body_through_the_host_window(
         self, tmp_path

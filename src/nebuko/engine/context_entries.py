@@ -156,23 +156,33 @@ def _author_of(body: str) -> str:
 
 
 def _answer_groups(
-    comments: Sequence[Mapping[str, Any]], state: Any, engine_login: str = ""
+    comments: Sequence[Mapping[str, Any]],
+    state: Any,
+    engine_login: str = "",
+    engine_actor_id: int = 0,
 ) -> dict[str, list[str]]:
     """Map an answer's state-bearing comment id to its part ids (issue #913).
 
     ``*(Part i/N)*`` comments are continuation fragments of one answer. The
     owning step's ``history`` entry records every part id (issue #504), so the
     path is the source of truth for "which comments are one answer". A thread
-    whose state recorded none (no persisted state, legacy blob) falls back to
-    adjacency: the contiguous fragments posted by the engine account itself,
-    which are the only rows it can have appended to one of its answers. The
-    marker only tells a fragment apart from an ordinary comment.
+    whose state recorded none (no persisted state, legacy blob), or whose
+    ``history`` lists no ``comment_ids`` at all, falls back to adjacency: the
+    contiguous fragments the ledger classifies as agent answers, posted by the
+    engine account itself, which are the only rows it can have appended to one
+    of its answers. An engine-start notice (``RUN_META``) is never a fragment,
+    and the marker only tells a fragment apart from an ordinary comment.
     """
     from nebuko.engine.paths import ensure_import_path
 
     ensure_import_path()
     from workflow_state.features.get_last_state.get_last_state import _is_part_comment
 
+    bot_options = {
+        "engine_login": engine_login,
+        "engine_actor_id": engine_actor_id,
+        "engine_actor_login": engine_login,
+    }
     known: dict[str, list[str]] = {}
     part_order: dict[str, int] = {}
     if state is not None:
@@ -182,6 +192,7 @@ def _answer_groups(
                 continue
             known[ids[0]] = ids
             part_order.update({cid: index for index, cid in enumerate(ids)})
+    recorded = bool(known)
     groups: dict[str, list[str]] = {}
     owner: str | None = None
     owner_author: str | None = None
@@ -191,21 +202,26 @@ def _answer_groups(
             continue
         cid = str(cid)
         author = _comment_author(comment)
-        if _is_part_comment(comment) and not _is_first_part(comment.get("body") or ""):
+        body = str(comment.get("body") or "")
+        if _is_part_comment(comment) and not _is_first_part(body):
             owner_parts = known.get(owner, ()) if owner is not None else ()
             if cid in owner_parts:
                 # Already placed by ``history`` order; the digest's order is not
                 # the answer order.
                 continue
-            linked = owner is not None and (
-                cid in owner_parts
-                or (
-                    owner not in known
+            if recorded:
+                # The history is authoritative even when it lists no parts:
+                # adjacency must not re-split the answer on a stale digest.
+                linked = False
+            else:
+                linked = (
+                    owner is not None
                     and author == owner_author
                     and bool(engine_login)
                     and author == engine_login
+                    and _kind_of(body, author_is_bot=author_is_bot(comment, **bot_options))
+                    == "agent-output"
                 )
-            )
             if linked:
                 groups[owner].append(cid)
             else:
@@ -225,6 +241,41 @@ def _answer_groups(
         else ids
         for owner, ids in groups.items()
     }
+
+
+def _answer_claims(groups: Mapping[str, list[str]], cid: str) -> str | None:
+    """The answer group ``cid`` belongs to, or ``None`` when it owns its own.
+
+    A continuation row may be listed under its answer's first comment even
+    when the two are not adjacent (``_unclaimed_answers`` attaches fragments to
+    the nearest prefix answer), so membership is looked up across the groups.
+    """
+    for owner, parts in groups.items():
+        if cid == owner:
+            return owner
+        if cid in parts:
+            return owner
+    return None
+
+
+def _is_part_row(comment: Mapping[str, Any]) -> bool:
+    """True for a state-less continuation fragment that continues an answer.
+
+    A ``*(Part i/N)*`` row past part 1 is a continuation regardless of what it
+    says: the engine posts one of these for *every* answer, engine bookkeeping
+    included (its content is then classified as ``RUN_META``). A row without
+    the part header continues only when the ledger reads it as an agent answer
+    (it carries the bot marker) — a start notice does not.
+    """
+    from nebuko.engine.paths import ensure_import_path
+
+    ensure_import_path()
+    from workflow_state.features.get_last_state.get_last_state import _is_part_comment
+
+    body = str(comment.get("body") or "")
+    if _is_part_comment(comment) and not _is_first_part(body):
+        return True
+    return False
 
 
 def _is_first_part(body: str) -> bool:
@@ -344,7 +395,7 @@ def entries_from_raw_thread(  # @stub-protected
         "engine_actor_id": engine_actor_id,
         "engine_actor_login": engine_login,
     }
-    groups = _answer_groups(comments, state, engine_login)
+    groups = _answer_groups(comments, state, engine_login, engine_actor_id)
     if state is None:
         # No persisted state (e.g. the next run's view of a thread whose answers
         # carried it inline): the newest state-bearing comment still records the
@@ -352,7 +403,7 @@ def entries_from_raw_thread(  # @stub-protected
         for comment in reversed(list(comments)):
             candidate = _state_of(str(comment.get("body") or ""))
             if candidate is not None:
-                groups = _answer_groups(comments, candidate, engine_login)
+                groups = _answer_groups(comments, candidate, engine_login, engine_actor_id)
                 break
     groups = _unclaimed_answers(groups, comments, engine_login, bot_options)
     entries: list[ContextEntry] = []
@@ -374,24 +425,34 @@ def entries_from_raw_thread(  # @stub-protected
     for comment in comments:
         cid = comment.get("id")
         cid = str(cid) if cid is not None else ""
-        if cid and cid in seen_parts:
+        group_owner = _answer_claims(groups, cid) if cid else None
+        if cid and (cid in seen_parts or (group_owner and group_owner != cid)):
             continue
         sequence += 1
         body = str(comment.get("body") or "")
         is_bot = author_is_bot(comment, **bot_options)
         kind = _kind_of(body, author_is_bot=is_bot)
+        entry_state = _state_of(body)
+        if (
+            kind not in ("run-meta", "workflow-state")
+            and cid
+            and group_owner
+            and group_owner != cid
+            and entry_state is not None
+        ):
+            # A continuation row that already carries a workflow-state block is
+            # the answer itself (the split answered from the sub-workflow whose
+            # state block is its own); the group's owner names the previous
+            # block only. Keep the row as an entry, not as a rendered part.
+            group_owner = None
         if kind in ("run-meta", "workflow-state"):
             # Bookkeeping splits like any other answer, but it owns no parts and
             # is never selectable (D2): keep its identity out of the answer
             # sequence.
             parts: list[str] = []
-        elif cid in groups:
-            parts = list(groups[cid])
-        elif (
-            _is_part_comment(comment)
-            and not _is_first_part(body)
-            and kind != "run-meta"
-        ):
+        elif group_owner:
+            parts = list(groups[group_owner])
+        elif _is_part_row(comment):
             # A continuation fragment that no recorded answer claims but the
             # ledger already classifies as an agent answer (it carries the bot
             # marker): it belongs to the nearest preceding answer. Marking it
@@ -407,7 +468,6 @@ def entries_from_raw_thread(  # @stub-protected
         seen_parts.update(part for part in parts if part and part != cid)
         step: str | None = None
         round_number: int | None = None
-        entry_state = _state_of(body)
         if entry_state is None:
             # A state-less answer inherits the identity of the previous
             # state-carrying comment: the engine attributes it to the advancing
