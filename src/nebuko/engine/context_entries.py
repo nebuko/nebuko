@@ -48,8 +48,13 @@ class ThreadEntryRepository:
         comments: Sequence[Mapping[str, Any]],
         *,
         state: Any = None,
+        engine_login: str = "",
     ) -> "ThreadEntryRepository":
-        return cls(entries_from_raw_thread(issue, comments, state=state))
+        return cls(
+            entries_from_raw_thread(
+                issue, comments, state=state, engine_login=engine_login
+            )
+        )
 
     def list_entries(self) -> list[ContextEntry]:  # @stub-protected
         """Every entry, ordered by thread sequence (oldest first)."""
@@ -94,7 +99,12 @@ def _state_of(body: str) -> Any:
         try:
             from workflow_state.workflow_state import WorkflowState
 
-            return WorkflowState.model_validate(json.loads(match.group(1).strip()))
+            # The block is collapsed in the rendered comment, so the JSON may be
+            # cut short; history (with the answer's part ids, issue #504)
+            # still parses from a truncated tail.
+            return WorkflowState.model_validate(
+                json.loads(match.group(1).strip(), strict=False)
+            )
         except Exception:  # noqa: BLE001 - fall back to the canonical extractor
             pass
     return extract_state_from_body(body)
@@ -161,10 +171,14 @@ def _answer_groups(
     from workflow_state.features.get_last_state.get_last_state import _is_part_comment
 
     known: dict[str, list[str]] = {}
-    for entry in getattr(state, "history", None) or []:
-        ids = [str(cid) for cid in (getattr(entry, "comment_ids", None) or [])]
-        if ids:
+    part_order: dict[str, int] = {}
+    if state is not None:
+        for entry in getattr(state, "history", None) or []:
+            ids = [str(cid) for cid in (getattr(entry, "comment_ids", None) or [])]
+            if not ids:
+                continue
             known[ids[0]] = ids
+            part_order.update({cid: index for index, cid in enumerate(ids)})
     groups: dict[str, list[str]] = {}
     owner: str | None = None
     owner_author: str | None = None
@@ -175,8 +189,13 @@ def _answer_groups(
         cid = str(cid)
         author = _comment_author(comment)
         if _is_part_comment(comment) and not _is_first_part(comment.get("body") or ""):
+            owner_parts = known.get(owner, ()) if owner is not None else ()
+            if cid in owner_parts:
+                # Already placed by ``history`` order; the digest's order is not
+                # the answer order.
+                continue
             linked = owner is not None and (
-                cid in known.get(owner, ())
+                cid in owner_parts
                 or (
                     owner not in known
                     and author == owner_author
@@ -195,7 +214,14 @@ def _answer_groups(
         owner = cid
         owner_author = author
         groups[cid] = list(known.get(cid, [cid]))
-    return groups
+    # A recorded answer is posted in ``history`` order, which is not necessarily
+    # the order the API returns the comments in (issue #913).
+    return {
+        owner: sorted(ids, key=lambda cid: part_order.get(cid, len(part_order)))
+        if owner in known
+        else ids
+        for owner, ids in groups.items()
+    }
 
 
 def _is_first_part(body: str) -> bool:
@@ -232,6 +258,16 @@ def entries_from_raw_thread(  # @stub-protected
     state-bearing first comment instead of N unrelated rows.
     """
     groups = _answer_groups(comments, state, engine_login)
+    if state is None:
+        # No persisted state (e.g. the next run's view of a thread whose answers
+        # carried it inline): the newest state-bearing comment still records the
+        # part ids of its own answer. Engine bookkeeping is grouped next.
+        for comment in reversed(list(comments)):
+            candidate = _state_of(str(comment.get("body") or ""))
+            if candidate is not None:
+                groups = _answer_groups(comments, candidate, engine_login)
+                break
+    groups = _unclaimed_answers(groups, comments, engine_login)
     entries: list[ContextEntry] = []
     sequence = 0
     carried_step: str | None = None
@@ -261,7 +297,30 @@ def entries_from_raw_thread(  # @stub-protected
             bool(engine_login) and login == engine_login
         )
         kind = _kind_of(body, author_is_bot=author_is_bot)
-        parts = list(groups.get(cid, [cid])) if cid else []
+        if kind in ("run-meta", "workflow-state"):
+            # Bookkeeping splits like any other answer, but it owns no parts and
+            # is never selectable (D2): keep its identity out of the answer
+            # sequence.
+            parts: list[str] = []
+        elif cid in groups:
+            parts = list(groups[cid])
+        elif (
+            _is_part_comment(comment)
+            and not _is_first_part(body)
+            and kind != "run-meta"
+        ):
+            # A continuation fragment that no recorded answer claims but the
+            # ledger already classifies as an agent answer (it carries the bot
+            # marker): it belongs to the nearest preceding answer. Marking it
+            # as a run-meta (engine-start notice) opts it out.
+            owner = next(reversed(groups)) if groups else None
+            if owner is None:
+                parts = [cid]
+            else:
+                groups[owner].append(cid)
+                parts = [cid]
+        else:
+            parts = [cid] if cid else []
         seen_parts.update(part for part in parts if part and part != cid)
         step: str | None = None
         round_number: int | None = None
@@ -288,3 +347,52 @@ def entries_from_raw_thread(  # @stub-protected
             )
         )
     return entries
+
+
+def _unclaimed_answers(
+    groups: dict[str, list[str]],
+    comments: Sequence[Mapping[str, Any]],
+    engine_login: str,
+) -> dict[str, list[str]]:
+    """Attach continuation rows that no recorded answer claims.
+
+    A thread whose state recorded no part ids (a host that strips the state
+    block, a legacy snapshot) still splits an answer across N comments. A
+    bot-marked ``*(Part i/N)*`` row the ledger classifies as an agent answer
+    belongs to the nearest preceding answer; an engine-start notice classified
+    as ``RUN_META`` owns itself and never extends another answer, and
+    bookkeeping kinds stay ungrouped (D2).
+    """
+    from nebuko.engine.paths import ensure_import_path
+
+    ensure_import_path()
+    from workflow_state.features.get_last_state.get_last_state import _is_part_comment
+
+    merged = {owner: list(parts) for owner, parts in groups.items()}
+    # Only a real multi-part answer claims rows: ``_answer_groups`` lists every
+    # row as its own group, which must not read as "already claimed".
+    claimed = any(len(parts) > 1 for parts in groups.values())
+    owner: str | None = None
+    for comment in comments:
+        cid = comment.get("id")
+        if cid is None:
+            continue
+        cid = str(cid)
+        body = str(comment.get("body") or "")
+        user = comment.get("user")
+        user = user if isinstance(user, Mapping) else {}
+        author_is_bot = str(user.get("type") or "").lower() == "bot" or (
+            bool(engine_login) and str(user.get("login") or "") == engine_login
+        )
+        if (
+            owner is not None
+            and not claimed
+            and _is_part_comment(comment)
+            and not _is_first_part(body)
+            and _kind_of(body, author_is_bot=author_is_bot) == "agent-output"
+        ):
+            merged[owner].append(cid)
+            continue
+        owner = cid
+    return merged
+

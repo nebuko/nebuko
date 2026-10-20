@@ -262,7 +262,7 @@ class TestEntries:
         # A stray engine notice is its own entry, never merged into the answer.
         notice = {
             "id": 3,
-            "body": "<!-- bot-agent-dev -->\n**agent started**\n\nView workflow run logs",
+            "body": "<!-- bot-agent-dev -->\n**dev agent started** — View workflow run logs",
             "user": BOT,
         }
         entries = entries_from_raw_thread(
@@ -277,7 +277,7 @@ class TestEntries:
             ContextKind.HUMAN_COMMENT,
             ContextKind.RUN_META,
         ]
-        assert [entry.sequence for entry in entries] == [0, 1, 2, 3]
+        assert [entry.sequence for entry in entries] == [0, 2, 3, 4]
 
     def test_a_state_less_answer_grouped_when_it_has_part_rows(self):
         comments = [
@@ -323,9 +323,7 @@ class TestEntries:
             _comment(2, "<!-- bot-agent-dev -->\n" + PART.format(i=2, n=2) + "second", BOT),
             _comment(
                 3,
-                "<!-- bot-agent-dev -->\n"
-                + PART.format(i=2, n=2)
-                + "**agent started**\nView workflow run logs",
+                "<!-- bot-agent-dev -->\n**dev agent started** — View workflow run logs",
                 BOT,
             ),
         ]
