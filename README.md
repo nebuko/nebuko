@@ -299,6 +299,26 @@ Nebuko is public at this stage to **find bugs**.
 
 Ideas for workflows, agents and skills are just as welcome.
 
+## Documentation artifact
+
+Every push to `main` that touches `docs/` or `logo/final/` runs
+[`publish-docs.yaml`](.github/workflows/publish-docs.yaml), which packages both
+trees as a flat `docs-<sha>.tar.gz` (`docs/...` and `logo/final/...` paths are
+preserved). The website fetches it pinned to a revision instead of cloning this
+repository.
+
+- **Workflow artifact:** named `docs-<full-sha>`, kept 30 days.
+- **Release asset:** published tags get the same tarball attached to the
+  release (`docs-<sha>.tar.gz`); releases are durable, artifacts are not.
+- **Which ref to pin:** the latest release tag once a version exists; until
+  then the SHA of the `main` commit you want.
+
+To get one manually:
+
+```bash
+gh run download --repo nebuko/nebuko --name "docs-$(git rev-parse origin/main)"
+```
+
 ## Acknowledgements
 
 Layer 1 is the [OpenHands Software Agent SDK][OpenHands SDK] (MIT), with
