@@ -111,16 +111,20 @@ providers:
 > time (the local estimate written into state). State is never rewritten —
 > rerunning the job recomputes.
 >
-> When any cost is estimated, the summary shows three extra rows right under
-> `Cost` — `Input price ($/1M)`, `Output price ($/1M)` and
-> `Cache hit price ($/1M)` — with the exact per-1M USD prices the estimate used
-> for each agent, so the number can be audited and tuned (issue #1048). They
-> are the **report-time table prices** (config prices are not persisted into
-> metrics) for the estimated agents only; an agent whose cost was
-> provider-reported shows `—`, and an agent that used several priced models
-> lists each distinct value. A table entry without a cache-read price bills
-> cache hits at the input rate, so the `Cache hit price ($/1M)` row shows that
-> input price rather than `—`.
+> When any cost is estimated, a folded `Price details used for the estimation`
+> block under the summary table lists `Input price ($/1M)`,
+> `Output price ($/1M)` and `Cache hit price ($/1M)` — the exact per-1M USD
+> prices the estimate used, so the number can be audited and tuned
+> (issue #1048). The `*` marker's note is that block's caption. Its **rows**
+> are the model names the estimates were priced with, not the agent roles:
+> the price is configured per model, and roles sharing a model share a row.
+> Its columns are the price tiers `Input price ($/1M)`,
+> `Output price ($/1M)` and `Cache hit price ($/1M)`, so a model's three
+> rates read straight across one line. Only models with an estimated run are
+> listed. The values are the
+> **report-time table prices** (config prices are not persisted into metrics).
+> A table entry without a cache-read price bills cache hits at the input rate,
+> so the `Cache hit price ($/1M)` column shows that input price rather than `—`.
 
 Sampling parameters and their typical ranges:
 

@@ -331,10 +331,12 @@ fetched raw with a browser or an authenticated `curl` — no zip, no unzip step.
 (agents as columns, a `Total` column, metrics as rows) plus a collapsible
 per-tool/provider-health block. Costs the provider did not report are
 estimated from the default price service and marked `*`; when any such
-estimate exists, `Input price ($/1M)`, `Output price ($/1M)` and
-`Cache hit price ($/1M)` rows right under `Cost` show the per-agent prices
-that produced it (issue #1048). A table entry without a cache-read price
-bills cache hits at the input rate, and the row shows that input price.
+estimate exists, a folded `Price details used for the estimation` block under
+the table lists one **row per model** with the `Input price ($/1M)`,
+`Output price ($/1M)` and `Cache hit price ($/1M)` columns — the prices that
+produced the estimate, captioned by the `*` note (issue #1048). A table entry
+without a cache-read price bills cache hits at the input rate, and the
+`Cache hit price ($/1M)` column shows that input price.
 
 ---
 

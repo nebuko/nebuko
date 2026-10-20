@@ -403,6 +403,9 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         "input_prices": set(),
         "output_prices": set(),
         "cache_read_prices": set(),
+        # Per-1M prices keyed by the recorded model identity; the price block
+        # is keyed by model so the user sees which model's price they tune.
+        "prices_by_model": {},
     })
 
     for m in all_metrics:
@@ -466,6 +469,7 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
             price = resolver.model_price(m)
             if price is not None:
                 _accumulate_prices(agg, price)
+                agg["prices_by_model"][resolver.model_key(m)] = price
         agg["total_context_window"] += context_window
         agg["latency_sum"] += latency
         agg["llm_runtime_sum"] += runtime
@@ -539,6 +543,8 @@ ESTIMATE_FOOTNOTE = (
 )
 #: The title of the collapsible block holding diagnostic (non-summary) metrics.
 DETAIL_SUMMARY = "Per-tool breakdown & provider health"
+#: The title of the collapsible block holding the prices behind an estimate.
+PRICE_SECTION_SUMMARY = "Price details used for the estimation"
 
 
 def _format_minutes(ms_value):
@@ -776,7 +782,8 @@ class PriceCell:
 
     ``prices`` is empty when the agent has no price-table-estimated run; the
     cell then renders :data:`NO_PRICE_CELL` instead of implying a price
-    (issue #1048).
+    (issue #1048). Values are sorted and paired with their model names by
+    :func:`_columns_for_prices`.
     """
 
     prices: Tuple[float, ...] = ()
@@ -787,6 +794,24 @@ class PriceCell:
         if not self.prices:
             return NO_PRICE_CELL
         return " / ".join(format_price(value) for value in sorted(self.prices))
+
+
+@dataclass(frozen=True)
+class ModelPriceRow:
+    """One pricing row: a model identity and the per-1M prices it was estimated with.
+
+    The estimation is controlled per model, so the model names each row and the
+    price tiers are the columns (issue #1048).
+    """
+
+    label: str
+    #: One rendered cell per price column, aligned with the header's columns.
+    cells: Tuple[str, ...]
+
+    # @stub-protected
+    def render(self) -> str:
+        """'| openai/model-a | $0.3000 | $1.2000 | $0.0060 |'."""
+        return "| " + self.label + " |" + "".join(f" {cell} |" for cell in self.cells)
 
 
 @dataclass(frozen=True)
@@ -884,8 +909,6 @@ def _summary_rows(aggregated, totals, columns):
         _build_summary_row(aggregated, totals, columns, "LLM time", llm_time),
         _build_summary_row(aggregated, totals, columns, "Cost", cost),
     ]
-    if totals.estimated_cost_usd:
-        rows.extend(_price_rows(aggregated, columns))
     rows.extend(
         (
             _build_summary_row(
@@ -901,29 +924,53 @@ def _summary_rows(aggregated, totals, columns):
     return tuple(rows)
 
 
-#: (aggregation key, row label) of the pricing rows, in display order.
-PRICE_ROWS = (
-    ("input_prices", "Input price ($/1M)"),
-    ("output_prices", "Output price ($/1M)"),
-    ("cache_read_prices", "Cache hit price ($/1M)"),
+#: (``ModelPrice`` attribute, column label) of the pricing columns, in display order.
+PRICE_COLUMNS = (
+    ("input_price", "Input price ($/1M)"),
+    ("output_price", "Output price ($/1M)"),
+    ("cache_read_price", "Cache hit price ($/1M)"),
 )
 
 
-def _price_rows(aggregated, columns):
-    """One row per estimation tier: the per-1M USD price each agent was billed at.
+def _price_models(aggregated):
+    """The priced models, sorted for a stable row order.
 
-    Sits right under ``Cost`` so the estimate can be audited without leaving the
-    table (issue #1048). The Total column is always ``—``: prices are per model,
-    not additive across agents.
+    Unions the buckets of all agents: each row is a model, not a role, because
+    the price a user tunes is configured per model (issue #1048).
     """
-    rows = []
-    for key, label in PRICE_ROWS:
-        cells = tuple(
-            PriceCell(prices=tuple(aggregated[column].get(key) or ())).render()
-            for column in columns
+    priced = {
+        model: price
+        for bucket in aggregated.values()
+        for model, price in (bucket.get("prices_by_model") or {}).items()
+    }
+    return tuple((model, priced[model]) for model in sorted(priced))
+
+
+def _price_cell(price, key):
+    """Per-1M USD price of one tier, or :data:`NO_PRICE_CELL` when unset."""
+    # The cache-hit column shows the effective rate, as the estimate bills it.
+    if key == "cache_read_price":
+        value = price.effective_cache_read_price()
+    else:
+        value = getattr(price, key)
+    prices = () if value is None else (float(value),)
+    return PriceCell(prices=prices).render()
+
+
+def _price_rows(aggregated):
+    """One row per priced model, one cell per estimation tier.
+
+    Lives in the folded pricing block rather than the summary table so the
+    estimate can still be audited (issue #1048). A model is listed only when
+    some agent was estimated with it.
+    """
+    return tuple(
+        ModelPriceRow(
+            label=model,
+            cells=tuple(_price_cell(price, key) for key, _ in PRICE_COLUMNS),
         )
-        rows.append(MetricRow(label=label, total=NO_PRICE_CELL, cells=cells))
-    return rows
+        for model, price in _price_models(aggregated)
+    )
 
 
 def _detail_rows(aggregated, totals, columns):
@@ -1022,7 +1069,7 @@ class AgentSummaryTable:
     headline: str
     #: The seven summary rows.
     rows: Tuple[MetricRow, ...]
-    #: "" when no cost cell is estimated.
+    #: The ``*`` footnote, when at least one cost cell is starred.
     footnote: str = ""
 
     # @stub-protected
@@ -1030,25 +1077,22 @@ class AgentSummaryTable:
     def from_aggregated(
         cls, aggregated: Mapping[str, Mapping[str, Any]], totals: "StatsTotals"
     ) -> "AgentSummaryTable":
-        """Build headline, rows and footnote; shares are computed against totals."""
+        """Build headline and rows; shares are computed against totals."""
         # Cell order must follow the sorted header order, not the caller's
         # (insertion-ordered) mapping.
         column_keys = tuple(sorted(aggregated.keys(), key=_agent_sort_key))
         columns = tuple(get_agent_display_name(agent) for agent in column_keys)
         rows = _summary_rows(aggregated, totals, column_keys)
-        starred = any(
-            ESTIMATE_MARKER in cell for row in rows for cell in row.cells
-        )
         return cls(
             columns=columns,
             headline=totals.render_headline(),
             rows=rows,
-            footnote=ESTIMATE_FOOTNOTE if starred else "",
+            footnote=ESTIMATE_FOOTNOTE if _has_estimate(rows) else "",
         )
 
     # @stub-protected
     def render(self) -> List[str]:
-        """Heading, headline, header, separator, rows and the conditional footnote."""
+        """Heading, headline and the summary table."""
         header = "| | **Total** | " + " | ".join(self.columns) + " |"
         separator = "|" + "---:|" * (len(self.columns) + 2)
         lines = [
@@ -1060,9 +1104,54 @@ class AgentSummaryTable:
             separator,
         ]
         lines.extend(row.render() for row in self.rows)
-        if self.footnote:
-            lines.append("")
-            lines.append(f"> _{self.footnote}_")
+        return lines
+
+
+def _has_estimate(rows) -> bool:
+    """Whether any rendered cell carries :data:`ESTIMATE_MARKER`."""
+    return any(ESTIMATE_MARKER in cell for row in rows for cell in row.cells)
+
+
+@dataclass(frozen=True)
+class PriceSection:
+    """Folded ``<details>`` block of the per-1M prices behind an estimated cost.
+
+    The footnote is the block's caption, so the ``*`` marker points at the
+    prices it explains (issue #1048). Renders nothing when no cost is estimated.
+    Each row is a model the estimates were priced with and the columns are the
+    price tiers: the per-1M price is a model setting, so the model name is what
+    a user needs to control the estimation (issue #1048).
+    """
+
+    columns: Tuple[str, ...] = tuple(label for _, label in PRICE_COLUMNS)
+    rows: Tuple[ModelPriceRow, ...] = ()
+    footnote: str = ESTIMATE_FOOTNOTE
+
+    # @stub-protected
+    @classmethod
+    def from_aggregated(
+        cls, aggregated: Mapping[str, Mapping[str, Any]], totals: "StatsTotals"
+    ) -> "PriceSection":
+        """Price rows per priced model; omitted when no cost cell is starred."""
+        column_keys = tuple(sorted(aggregated.keys(), key=_agent_sort_key))
+        summary_rows = _summary_rows(aggregated, totals, column_keys)
+        rows = _price_rows(aggregated) if _has_estimate(summary_rows) else ()
+        return cls(rows=rows)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.rows
+
+    # @stub-protected
+    def render(self) -> List[str]:
+        """'<details><summary>…</summary>' + price table + footnote + '</details>'."""
+        if self.is_empty:
+            return []
+        header = "| Model | " + " | ".join(self.columns) + " |"
+        separator = "|---|" + "---:|" * len(self.columns)
+        lines = ["", "<details>", f"<summary>{PRICE_SECTION_SUMMARY}</summary>", "", header, separator]
+        lines.extend(row.render() for row in self.rows)
+        lines.extend(["", f"> _{self.footnote}_", "", "</details>"])
         return lines
 
 
@@ -1113,14 +1202,15 @@ def generate_agent_summary_table(aggregated):
 
     Returns the whole section as markdown lines: headline, the transposed
     table (metrics as rows, agents as columns plus a ``Total`` column), the
-    conditional ``*`` estimate footnote, and a collapsible detail block
-    (issue #1019).
+    conditional folded price block (issue #1048) and a collapsible detail
+    block (issue #1019).
     """
     if not aggregated:
         return ""
 
     totals = StatsTotals.from_aggregated(aggregated)
     lines = AgentSummaryTable.from_aggregated(aggregated, totals).render()
+    lines.extend(PriceSection.from_aggregated(aggregated, totals).render())
     lines.extend(DetailSection.from_aggregated(aggregated, totals).render())
     return lines
 
