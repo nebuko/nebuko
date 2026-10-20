@@ -813,6 +813,9 @@ class Engine:
         publish_failed = False
         self._publish_state.clear()
         self._hook_state.clear()
+        # The typed thread and its selection describe *this* run's thread: a
+        # reused engine over a new run must not serve the previous snapshots.
+        self._context_state.clear()
         # Snapshot the caller workspace before any phase can chdir into a child
         # temp workdir, so a relative AGENT_CONFIG_PATH stays caller-anchored.
         self._caller_root()
@@ -2643,8 +2646,28 @@ class Engine:
         """
         context = self._context_selection()
         if context is not None and not self._legacy_window_only():
-            return _render_context_entries(context.entries, self.render_limit)
+            return _render_context_entries(
+                context.entries, self.render_limit, self._context_bodies()
+            )
         return _render_history(history)
+
+    def _context_bodies(self) -> dict[str, str]:
+        """Every thread comment body by id, read once (issue #913 parts)."""
+        if "bodies" not in self._context_state:
+            bodies: dict[str, str] = {}
+            loader = getattr(self.adapter, "load_raw_thread", None)
+            if loader is not None:
+                try:
+                    _, comments = loader()
+                    bodies = {
+                        str(comment["id"]): str(comment.get("body") or "")
+                        for comment in comments
+                        if comment.get("id") is not None
+                    }
+                except Exception as exc:  # noqa: BLE001 - parts are best-effort
+                    log.warning("[phase:prompt] could not read thread bodies: %s", exc)
+            self._context_state["bodies"] = bodies
+        return self._context_state["bodies"]
 
     def _legacy_window_only(self) -> bool:
         """The thread holds nothing but the issue body, so there is nothing to select.
@@ -2965,24 +2988,34 @@ def _render_gate_decision(raw: Any) -> str:
 
 
 def _render_context_entries(
-    entries: Sequence[Any], limit: int | None
+    entries: Sequence[Any], limit: int | None, bodies: Mapping[str, str] | None = None
 ) -> str:
     """Render the selected entries as ``## Recent thread`` (#889).
 
     Selection already dropped the engine bookkeeping (D2) and untrusted human
     comments (prompt-injection guard, issue #872); the renderer only orders the
     blocks. A positive ``limit`` keeps the last N of them, ``None`` renders all.
+
+    A split answer is one entry (issue #913): its first comment is rendered as
+    the body and ``bodies`` supplies the continuation rows, in thread order.
+    Without ``bodies`` the first comment renders alone, as before.
     """
     selected = [entry for entry in entries if getattr(entry, "trusted", True)]
     if limit is not None and limit > 0:
         selected = selected[-limit:]
     blocks: list[str] = []
     for entry in selected:
-        body = str(getattr(entry, "body", "") or "")
-        if not body.strip():
-            continue
         heading = _context_entry_heading(entry)
-        blocks.append(f"### {heading}\n\n{_agent_facing_body(body)}")
+        body = str(getattr(entry, "body", "") or "")
+        rows = [body]
+        parts = tuple(getattr(entry, "parts", None) or ())
+        if len(parts) > 1 and bodies:
+            rows.extend(bodies.get(part, "") for part in parts[1:])
+        rendered = [_agent_facing_body(row) for row in rows if str(row).strip()]
+        if rendered:
+            blocks.append(
+                "\n\n".join(f"### {heading}\n\n{text}" for text in rendered)
+            )
     return "\n\n".join(blocks) if blocks else "_(no prior thread)_"
 
 

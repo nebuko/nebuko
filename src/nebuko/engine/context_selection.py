@@ -88,6 +88,11 @@ class ContextEntry:
     source_comment_id: str | None = None
     #: Human entries the ledger did not trust: never rendered in the trusted flow.
     trusted: bool = True
+    #: Comment rows of one logical answer in thread order, when the answer was
+    #: posted as several comments (issue #913). ``None`` for a single comment:
+    #: its own ``sequence`` identifies it. Selection is per answer, so a split
+    #: answer is injected once and rendered from all of its parts.
+    parts: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -167,28 +172,25 @@ def _output_of(
     entries: Sequence[ContextEntry],
     carried: frozenset[str],
 ) -> ContextEntry | None:
-    """The latest output posted for ``step`` at the round the path executed it."""
+    """The latest output posted for ``step`` on its last executed round."""
     if step in carried:
         # A state-less (script) step merges into the thread entry of the step it
         # advances to, which is the entry the following step's output points at.
         return _last_agent_output(entries)
-    round_number = 1
+    round_number = 0
     for node in path:
         if node.step == step:
-            round_number = node.round
+            round_number = max(round_number, node.round or 1)
     candidates = [
         entry
         for entry in entries
-        if entry.kind == ContextKind.AGENT_OUTPUT
-        and entry.step == step
-        and entry.round == round_number
+        if entry.kind == ContextKind.AGENT_OUTPUT and entry.step == step
     ]
-    if not candidates:
-        candidates = [
-            entry
-            for entry in entries
-            if entry.kind == ContextKind.AGENT_OUTPUT and entry.step == step
-        ]
+    current_round = [
+        entry for entry in candidates if entry.round == (round_number or 1)
+    ]
+    if current_round:
+        return current_round[-1]
     return candidates[-1] if candidates else None
 
 

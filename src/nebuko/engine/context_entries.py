@@ -11,7 +11,14 @@ stays the source of truth for entry order, and every artifact is tagged with
 * ``step`` / ``round`` — the workflow identity of an agent answer, read from the
   workflow-state block it carries (a state-less answer inherits the identity of
   the previous state-carrying comment, since the engine attributes it to the
-  advancing step).
+  advancing step);
+* ``locator`` — the comment id of the answer's state-bearing first part when the
+  answer is one of several comments (issue #913). The part ids are recorded on
+  the advancing step's ``workflow_state.history`` entry (``comment_ids``, issue
+  #504), the path's source of truth, so the split does not change an entry's id;
+* ``parts`` — the rows of one logical agent answer. A split answer is posted as
+  N comments; only part 1 carries the header and state, so selection sees one
+  entry for the answer and renders every part.
 
 Engine bookkeeping (``RUN_META`` / ``WORKFLOW_STATE``) is kept in the list so
 the builder can prove it is excluded; it is never selectable.
@@ -36,9 +43,13 @@ class ThreadEntryRepository:
 
     @classmethod
     def from_raw_thread(
-        cls, issue: Mapping[str, Any] | None, comments: Sequence[Mapping[str, Any]]
+        cls,
+        issue: Mapping[str, Any] | None,
+        comments: Sequence[Mapping[str, Any]],
+        *,
+        state: Any = None,
     ) -> "ThreadEntryRepository":
-        return cls(entries_from_raw_thread(issue, comments))
+        return cls(entries_from_raw_thread(issue, comments, state=state))
 
     def list_entries(self) -> list[ContextEntry]:  # @stub-protected
         """Every entry, ordered by thread sequence (oldest first)."""
@@ -131,22 +142,101 @@ def _author_of(body: str) -> str:
     return match.group(1) if match else ""
 
 
+def _answer_groups(
+    comments: Sequence[Mapping[str, Any]], state: Any, engine_login: str = ""
+) -> dict[str, list[str]]:
+    """Map an answer's state-bearing comment id to its part ids (issue #913).
+
+    ``*(Part i/N)*`` comments are continuation fragments of one answer. The
+    owning step's ``history`` entry records every part id (issue #504), so the
+    path is the source of truth for "which comments are one answer". A thread
+    whose state recorded none (no persisted state, legacy blob) falls back to
+    adjacency: the contiguous fragments posted by the engine account itself,
+    which are the only rows it can have appended to one of its answers. The
+    marker only tells a fragment apart from an ordinary comment.
+    """
+    from nebuko.engine.paths import ensure_import_path
+
+    ensure_import_path()
+    from workflow_state.features.get_last_state.get_last_state import _is_part_comment
+
+    known: dict[str, list[str]] = {}
+    for entry in getattr(state, "history", None) or []:
+        ids = [str(cid) for cid in (getattr(entry, "comment_ids", None) or [])]
+        if ids:
+            known[ids[0]] = ids
+    groups: dict[str, list[str]] = {}
+    owner: str | None = None
+    owner_author: str | None = None
+    for comment in comments:
+        cid = comment.get("id")
+        if cid is None:
+            continue
+        cid = str(cid)
+        author = _comment_author(comment)
+        if _is_part_comment(comment) and not _is_first_part(comment.get("body") or ""):
+            linked = owner is not None and (
+                cid in known.get(owner, ())
+                or (
+                    owner not in known
+                    and author == owner_author
+                    and bool(engine_login)
+                    and author == engine_login
+                )
+            )
+            if linked:
+                groups[owner].append(cid)
+            else:
+                # An owner-less fragment (an engine-start notice posted from
+                # inside the agent child, or a lone orphan) is its own entry: it
+                # must never inherit, or extend, another answer.
+                groups[cid] = [cid]
+            continue
+        owner = cid
+        owner_author = author
+        groups[cid] = list(known.get(cid, [cid]))
+    return groups
+
+
+def _is_first_part(body: str) -> bool:
+    """True for a ``*(Part 1/N)*`` header: the answer's first, state-bearing row.
+
+    ``_is_part_comment`` only requires a part header, so it also matches part 1;
+    that row opens an answer, it never continues one.
+    """
+    match = re.search(r"^\s*\*\(Part (\d+)/\d+\)\*\s*$", body, re.MULTILINE)
+    return match is not None and match.group(1) == "1"
+
+
+def _comment_author(comment: Mapping[str, Any]) -> str:
+    user = comment.get("user")
+    user = user if isinstance(user, Mapping) else {}
+    return str(user.get("login") or "")
+
+
 def entries_from_raw_thread(  # @stub-protected
     issue: Mapping[str, Any] | None,
     comments: Sequence[Mapping[str, Any]],
     *,
     engine_login: str = "",
+    state: Any = None,
 ) -> list[ContextEntry]:
     """Build the typed entries for one thread (pure except for the classifier).
 
     ``engine_login`` names the account the engine posts as; a comment authored
     by it (or by a bot account) may carry agent/engine markers. Every other
     comment is human, so a human quoting a bot marker stays human (issue #872).
+
+    ``state`` is the previous workflow state: its ``history`` records each
+    answer's part ids, so a split answer becomes one entry (``parts``) naming its
+    state-bearing first comment instead of N unrelated rows.
     """
+    groups = _answer_groups(comments, state, engine_login)
     entries: list[ContextEntry] = []
     sequence = 0
     carried_step: str | None = None
     carried_round: int | None = None
+    seen_parts: set[str] = set()
     if issue is not None:
         entries.append(
             ContextEntry(
@@ -158,6 +248,10 @@ def entries_from_raw_thread(  # @stub-protected
         )
         sequence += 1
     for comment in comments:
+        cid = comment.get("id")
+        cid = str(cid) if cid is not None else ""
+        if cid and cid in seen_parts:
+            continue
         sequence += 1
         body = str(comment.get("body") or "")
         user = comment.get("user")
@@ -167,12 +261,15 @@ def entries_from_raw_thread(  # @stub-protected
             bool(engine_login) and login == engine_login
         )
         kind = _kind_of(body, author_is_bot=author_is_bot)
+        parts = list(groups.get(cid, [cid])) if cid else []
+        seen_parts.update(part for part in parts if part and part != cid)
         step: str | None = None
         round_number: int | None = None
-        state = _state_of(body)
-        if state is None:
-            # A state-less answer (the fixture never stages a hand-off state)
-            # inherits the identity of the previous state-carrying comment.
+        entry_state = _state_of(body)
+        if entry_state is None:
+            # A state-less answer inherits the identity of the previous
+            # state-carrying comment: the engine attributes it to the advancing
+            # step.
             step, round_number = carried_step, carried_round
         else:
             step, round_number = _output_identity(body)
@@ -185,8 +282,9 @@ def entries_from_raw_thread(  # @stub-protected
                 body=body,
                 step=step,
                 round=round_number,
-                source_comment_id=str(comment.get("id") or "") or None,
+                source_comment_id=cid or None,
                 trusted=True,
+                parts=None if len(parts) < 2 else tuple(parts),
             )
         )
     return entries

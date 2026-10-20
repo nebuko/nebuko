@@ -186,12 +186,13 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         """Typed, forward-ordered thread entries for context selection (#889).
 
         Empty when the host cannot supply a full thread: the engine then
-        degrades to its bounded comment window and warns (D9).
+        degrades to its bounded comment window and warns (D9). The persisted
+        state's ``history`` groups a split answer's parts (issue #913).
         """
         from nebuko.engine.context_entries import entries_from_raw_thread
 
         issue, comments = self.load_raw_thread()
-        return entries_from_raw_thread(issue, comments)
+        return entries_from_raw_thread(issue, comments, state=self.load_state())
 
     def _thread_snapshot(self) -> Any:
         """Return the cached per-run snapshot, fetching the thread at most once."""

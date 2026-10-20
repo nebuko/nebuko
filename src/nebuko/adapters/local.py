@@ -102,7 +102,8 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         """Typed, forward-ordered thread entries for context selection (#889).
 
         Empty when the host cannot supply a full thread: the engine then
-        degrades to its bounded comment window and warns (D9).
+        degrades to its bounded comment window and warns (D9). The persisted
+        state's ``history`` groups a split answer's parts (issue #913).
         """
         from nebuko.engine.context_entries import entries_from_raw_thread
 
@@ -111,7 +112,7 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
             # No issue payload in the journal: the trigger's snapshot is the
             # issue body the entry rule needs (D11 / default-last).
             issue = {"body": self._trigger.issue_body, "id": None}
-        return entries_from_raw_thread(issue, comments)
+        return entries_from_raw_thread(issue, comments, state=self.load_state())
 
     def post(self, body: str) -> str:
         self._run_dir.mkdir(parents=True, exist_ok=True)
