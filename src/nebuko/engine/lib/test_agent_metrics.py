@@ -84,6 +84,9 @@ class _StubPriceResolver:
 
     _PRICES = {"openai/model-a": (0.3, 1.2, 0.006), "openai/model-b": (0.5, 2.0, 0.01)}
 
+    def model_key(self, metric):
+        return metric.model_name
+
     def is_estimated(self, metric):
         return metric.model_name in self._PRICES and not metric.cost
 
@@ -1161,6 +1164,11 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 "llm_runtime_sum": 0.0, "latency_sum": 0.0, "tool_calls_sum": 1,
                 "errors_per_tool": {}, "tool_calls_per_tool": {},
                 "total_cost": 0.4, "estimated_cost_sum": 0.4,
+                "prices_by_model": {
+                    "openai/model-a": ModelPrice(
+                        input_price=0.3, output_price=1.2, cache_read_price=0.006
+                    )
+                },
             },
             "dev": {
                 "runs": 1, "total_uncached_input_tokens": 10, "total_output_tokens": 5,
@@ -1193,22 +1201,15 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertIn("Prices shown in USD per 1M tokens", result_str)
 
     def _estimate_lines(self):
-        agg = {
-            "architect": {
-                "runs": 1, "total_uncached_input_tokens": 10, "total_output_tokens": 5,
-                "llm_runtime_sum": 0.0, "latency_sum": 0.0, "tool_calls_sum": 1,
-                "errors_per_tool": {}, "tool_calls_per_tool": {},
-                "total_cost": 0.4, "estimated_cost_sum": 0.4,
-                "input_prices": {0.3}, "output_prices": {1.2},
-                "cache_read_prices": {0.006},
-            },
-            "dev": {
-                "runs": 1, "total_uncached_input_tokens": 10, "total_output_tokens": 5,
-                "llm_runtime_sum": 0.0, "latency_sum": 0.0, "tool_calls_sum": 1,
-                "errors_per_tool": {}, "tool_calls_per_tool": {},
-                "total_cost": 0.6, "estimated_cost_sum": 0.0,
-            },
-        }
+        # Architect estimated on model-a, dev reported a cost: only model-a's
+        # price is listed, and its column is the model name, not the role.
+        agg = aggregate_by_agent(
+            [
+                Metrics(agent_role="architect", model_name="openai/model-a", cost=0.0),
+                Metrics(agent_role="dev", model_name="openai/model-b", cost=1.0),
+            ],
+            resolver=_StubPriceResolver(),
+        )
         lines = generate_agent_summary_table(agg)
         return lines, "\n".join(lines)
 
@@ -1243,24 +1244,48 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertGreater(footnote_index, summary_index)
         self.assertLess(footnote_index, price_end)
         self.assertIn("</details>", result_str)
-        # Estimated agent shows the per-1M prices; reported-cost agent shows "—".
+        # The block is keyed by model, not by the role that used it.
+        self.assertIn("| | openai/model-a |", "\n".join(lines[summary_index:price_end]))
         self.assertEqual(
             _table_cells(self._row(lines, "Input price ($/1M)")),
-            ["Input price ($/1M)", "**\u2014**", "$0.3000", "\u2014"],
+            ["Input price ($/1M)", "$0.3000"],
         )
         self.assertEqual(
-            _table_cells(self._row(lines, "Output price ($/1M)"))[2], "$1.2000"
+            _table_cells(self._row(lines, "Output price ($/1M)")),
+            ["Output price ($/1M)", "$1.2000"],
         )
         self.assertEqual(
-            _table_cells(self._row(lines, "Cache hit price ($/1M)"))[2], "$0.0060"
+            _table_cells(self._row(lines, "Cache hit price ($/1M)")),
+            ["Cache hit price ($/1M)", "$0.0060"],
         )
 
     def test_price_cells_carry_no_estimate_marker(self):
         lines, _ = self._estimate_lines()
         for label in ("Input price ($/1M)", "Output price ($/1M)", "Cache hit price ($/1M)"):
             self.assertFalse(
-                any(cell.endswith("*") for cell in _table_cells(self._row(lines, label))[2:])
+                any(cell.endswith("*") for cell in _table_cells(self._row(lines, label))[1:])
             )
+
+    def test_roles_sharing_a_model_share_one_price_column(self):
+        """Two roles on the same model collapse into one model column."""
+        agg = aggregate_by_agent(
+            [
+                Metrics(agent_role="architect", model_name="openai/model-a", cost=0.0),
+                Metrics(agent_role="dev", model_name="openai/model-a", cost=0.0),
+            ],
+            resolver=_StubPriceResolver(),
+        )
+        lines = generate_agent_summary_table(agg)
+        self.assertEqual(
+            _table_cells(self._row(lines, "Input price ($/1M)")),
+            ["Input price ($/1M)", "$0.3000"],
+        )
+        # The summary table still lists the roles; only the price block is model-keyed.
+        price_start = next(i for i, line in enumerate(lines) if line.startswith("<summary>"))
+        price_block = "\n".join(lines[price_start:lines.index("</details>", price_start)])
+        self.assertIn("openai/model-a", price_block)
+        self.assertNotIn("Architect", price_block)
+        self.assertNotIn("Dev", price_block)
 
     def test_multi_model_agent_lists_each_distinct_price(self):
         agg = aggregate_by_agent(
@@ -1290,7 +1315,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         lines = generate_agent_summary_table(agg)
         self.assertEqual(
             _table_cells(self._row(lines, "Input price ($/1M)")),
-            ["Input price ($/1M)", "**\u2014**", "$0.3000 / $0.5000"],
+            ["Input price ($/1M)", "$0.3000", "$0.5000"],
         )
 
     def test_cache_hit_row_shows_input_price_when_cache_price_is_absent(self):
@@ -1315,7 +1340,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         lines = generate_agent_summary_table(agg)
         self.assertEqual(
             _table_cells(self._row(lines, "Cache hit price ($/1M)")),
-            ["Cache hit price ($/1M)", "**\u2014**", "$2.0000"],
+            ["Cache hit price ($/1M)", "$2.0000"],
         )
 
     def test_aggregate_ignores_prices_of_reported_cost_runs(self):
