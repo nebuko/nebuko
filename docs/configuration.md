@@ -110,6 +110,15 @@ providers:
 > fill uses the table only; configured `*_price` precedence applies at run
 > time (the local estimate written into state). State is never rewritten —
 > rerunning the job recomputes.
+>
+> When any cost is estimated, the summary shows three extra rows right under
+> `Cost` — `Input price ($/1M)`, `Output price ($/1M)` and
+> `Cache hit price ($/1M)` — with the exact per-1M USD prices the estimate used
+> for each agent, so the number can be audited and tuned (issue #1048). They
+> are the **report-time table prices** (config prices are not persisted into
+> metrics) for the estimated agents only; an agent whose cost was
+> provider-reported shows `—`, and an agent that used several priced models
+> lists each distinct value.
 
 Sampling parameters and their typical ranges:
 

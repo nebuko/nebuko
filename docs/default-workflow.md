@@ -327,7 +327,13 @@ fetched raw with a browser or an authenticated `curl` — no zip, no unzip step.
 3. Run `agent_metrics.py` which scans all comments on the issue, extracts workflow states, and computes aggregate metrics.
 
 **Input:** Issue number, comment history.  
-**Output:** Summary comment posted on the issue.
+**Output:** Summary comment posted on the issue — a transposed metrics table
+(agents as columns, a `Total` column, metrics as rows) plus a collapsible
+per-tool/provider-health block. Costs the provider did not report are
+estimated from the default price service and marked `*`; when any such
+estimate exists, `Input price ($/1M)`, `Output price ($/1M)` and
+`Cache hit price ($/1M)` rows right under `Cost` show the per-agent prices
+that produced it (issue #1048).
 
 ---
 

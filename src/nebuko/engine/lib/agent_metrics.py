@@ -398,6 +398,11 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         "total_cache_hit_tokens": 0,
         "cache_weighted_sum": 0.0,
         "cache_weight": 0,
+        # Per-1M USD prices of the estimated runs only (issue #1048); sets so a
+        # multi-model agent lists each distinct price once.
+        "input_prices": set(),
+        "output_prices": set(),
+        "cache_read_prices": set(),
     })
 
     for m in all_metrics:
@@ -458,6 +463,9 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         agg["total_cost"] += cost
         if resolver is not None and resolver.is_estimated(m):
             agg["estimated_cost_sum"] += cost
+            price = resolver.model_price(m)
+            if price is not None:
+                _accumulate_prices(agg, price)
         agg["total_context_window"] += context_window
         agg["latency_sum"] += latency
         agg["llm_runtime_sum"] += runtime
@@ -497,10 +505,36 @@ def format_cost(value):
     return f"${value:,.4f}"
 
 
+def format_price(value):
+    """Format a USD-per-1M-tokens model price (mirrors ``format_cost``)."""
+    return f"${value:,.4f}"
+
+
+def _accumulate_prices(agg, price):
+    """Record a resolved ``ModelPrice``'s three estimation tiers on a bucket.
+
+    Only the tiers the report-time math consumes are kept: cache-write tokens
+    are never priced at report time, so the all-in-one input default for
+    ``cache_write_price`` would be noise.
+    """
+    for key, value in (
+        ("input_prices", price.input_price),
+        ("output_prices", price.output_price),
+        ("cache_read_prices", price.cache_read_price),
+    ):
+        if value is not None:
+            agg[key].add(float(value))
+
+
 #: Appended to a cost cell priced from the price table rather than the provider.
 ESTIMATE_MARKER = "*"
+#: Cell of the pricing rows for an agent whose cost was not estimated.
+NO_PRICE_CELL = "—"
 #: Rendered under the table whenever at least one cost cell carries the marker.
-ESTIMATE_FOOTNOTE = "\\* estimated from the price table; the provider reports no cost."
+ESTIMATE_FOOTNOTE = (
+    "\\* estimated from the price table; the provider reports no cost. "
+    "Prices shown in USD per 1M tokens."
+)
 #: The title of the collapsible block holding diagnostic (non-summary) metrics.
 DETAIL_SUMMARY = "Per-tool breakdown & provider health"
 
@@ -667,6 +701,10 @@ class StatsTotals:
             "tps_count": self.tps_count,
             "ttft_sum": self.ttft_sum,
             "ttft_count": self.ttft_count,
+            # The price rows are per-agent only: the Total cell is always "—".
+            "input_prices": set(),
+            "output_prices": set(),
+            "cache_read_prices": set(),
         }
 
     # @stub-protected
@@ -731,6 +769,25 @@ class ShareCell:
 
 
 @dataclass(frozen=True)
+class PriceCell:
+    """Agent-level cell of the pricing rows: the per-1M USD price(s) the estimate used.
+
+    ``prices`` is empty when the agent has no price-table-estimated run; the
+    cell then renders :data:`NO_PRICE_CELL` instead of implying a price
+    (issue #1048).
+    """
+
+    prices: Tuple[float, ...] = ()
+
+    # @stub-protected
+    def render(self) -> str:
+        """'$0.3000' | '$0.3000 / $0.5000' (sorted) | '—'."""
+        if not self.prices:
+            return NO_PRICE_CELL
+        return " / ".join(format_price(value) for value in sorted(self.prices))
+
+
+@dataclass(frozen=True)
 class MetricRow:
     """One transposed row: metric label, the Total cell, one rendered cell per agent.
 
@@ -779,7 +836,7 @@ def _strip_share_and_marker(cell_text):
 
 
 def _summary_rows(aggregated, totals, columns):
-    """The seven summary rows, in the order fixed by the issue's layout."""
+    """The seven summary rows, plus the pricing rows when a cost is estimated."""
 
     def runs(b):
         return str(b.get("runs", 0))
@@ -820,19 +877,51 @@ def _summary_rows(aggregated, totals, columns):
             errors = sum((b.get("errors_per_tool") or {}).values())
         return _format_error_rate(errors, b.get("tool_calls_sum", 0))
 
-    return (
+    rows = [
         _build_summary_row(aggregated, totals, columns, "Runs", runs),
         _build_summary_row(aggregated, totals, columns, "LLM time", llm_time),
         _build_summary_row(aggregated, totals, columns, "Cost", cost),
-        _build_summary_row(
-            aggregated, totals, columns, "Input / output tokens", tokens
-        ),
-        _build_summary_row(aggregated, totals, columns, "Cache hit tokens", cache),
-        _build_summary_row(aggregated, totals, columns, "Tool calls", tool_calls),
-        _build_summary_row(
-            aggregated, totals, columns, "Tool error rate", error_rate
-        ),
+    ]
+    if totals.estimated_cost_usd:
+        rows.extend(_price_rows(aggregated, columns))
+    rows.extend(
+        (
+            _build_summary_row(
+                aggregated, totals, columns, "Input / output tokens", tokens
+            ),
+            _build_summary_row(aggregated, totals, columns, "Cache hit tokens", cache),
+            _build_summary_row(aggregated, totals, columns, "Tool calls", tool_calls),
+            _build_summary_row(
+                aggregated, totals, columns, "Tool error rate", error_rate
+            ),
+        )
     )
+    return tuple(rows)
+
+
+#: (aggregation key, row label) of the pricing rows, in display order.
+PRICE_ROWS = (
+    ("input_prices", "Input price ($/1M)"),
+    ("output_prices", "Output price ($/1M)"),
+    ("cache_read_prices", "Cache hit price ($/1M)"),
+)
+
+
+def _price_rows(aggregated, columns):
+    """One row per estimation tier: the per-1M USD price each agent was billed at.
+
+    Sits right under ``Cost`` so the estimate can be audited without leaving the
+    table (issue #1048). The Total column is always ``—``: prices are per model,
+    not additive across agents.
+    """
+    rows = []
+    for key, label in PRICE_ROWS:
+        cells = tuple(
+            PriceCell(prices=tuple(aggregated[column].get(key) or ())).render()
+            for column in columns
+        )
+        rows.append(MetricRow(label=label, total=NO_PRICE_CELL, cells=cells))
+    return rows
 
 
 def _detail_rows(aggregated, totals, columns):

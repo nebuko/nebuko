@@ -78,6 +78,26 @@ def _table_cells(row):
     return [cell.strip() for cell in row.strip().strip("|").split("|")]
 
 
+
+class _StubPriceResolver:
+    """Report-cost resolver stand-in: ``model-a`` is estimated, others reported."""
+
+    _PRICES = {"openai/model-a": (0.3, 1.2, 0.006), "openai/model-b": (0.5, 2.0, 0.01)}
+
+    def is_estimated(self, metric):
+        return metric.model_name in self._PRICES and not metric.cost
+
+    def model_price(self, metric):
+        tier = self._PRICES.get(metric.model_name)
+        if tier is None or metric.cost:
+            return None
+        return ModelPrice(
+            input_price=tier[0], output_price=tier[1], cache_read_price=tier[2]
+        )
+
+    def effective_cost(self, metric):
+        return metric.cost or 0.1
+
 class TestExtractMetricsFromComment(unittest.TestCase):
     """extract_metrics_from_comment reads per-step metrics from the state."""
 
@@ -1162,6 +1182,106 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         result_str = "\n".join(generate_agent_summary_table(self._make_aggregated()))
         self.assertNotIn("estimated from the price table", result_str)
         self.assertNotIn("* estimated", result_str)
+
+    def test_no_price_rows_without_estimate(self):
+        result_str = "\n".join(generate_agent_summary_table(self._make_aggregated()))
+        self.assertNotIn("price ($/1M)", result_str)
+
+    def test_footnote_states_the_price_unit(self):
+        _, result_str = self._estimate_lines()
+        self.assertIn("Prices shown in USD per 1M tokens", result_str)
+
+    def _estimate_lines(self):
+        agg = {
+            "architect": {
+                "runs": 1, "total_uncached_input_tokens": 10, "total_output_tokens": 5,
+                "llm_runtime_sum": 0.0, "latency_sum": 0.0, "tool_calls_sum": 1,
+                "errors_per_tool": {}, "tool_calls_per_tool": {},
+                "total_cost": 0.4, "estimated_cost_sum": 0.4,
+                "input_prices": {0.3}, "output_prices": {1.2},
+                "cache_read_prices": {0.006},
+            },
+            "dev": {
+                "runs": 1, "total_uncached_input_tokens": 10, "total_output_tokens": 5,
+                "llm_runtime_sum": 0.0, "latency_sum": 0.0, "tool_calls_sum": 1,
+                "errors_per_tool": {}, "tool_calls_per_tool": {},
+                "total_cost": 0.6, "estimated_cost_sum": 0.0,
+            },
+        }
+        lines = generate_agent_summary_table(agg)
+        return lines, "\n".join(lines)
+
+    def test_price_rows_follow_cost_and_mirror_the_estimate(self):
+        lines, _ = self._estimate_lines()
+        labels = [line.split("|")[1].strip() for line in lines if line.startswith("| ")]
+        cost_index = labels.index("Cost")
+        self.assertEqual(
+            labels[cost_index + 1 : cost_index + 4],
+            ["Input price ($/1M)", "Output price ($/1M)", "Cache hit price ($/1M)"],
+        )
+        # Estimated agent shows the per-1M prices; reported-cost agent shows "—".
+        self.assertEqual(
+            _table_cells(self._row(lines, "Input price ($/1M)")),
+            ["Input price ($/1M)", "**\u2014**", "$0.3000", "\u2014"],
+        )
+        self.assertEqual(
+            _table_cells(self._row(lines, "Output price ($/1M)"))[2], "$1.2000"
+        )
+        self.assertEqual(
+            _table_cells(self._row(lines, "Cache hit price ($/1M)"))[2], "$0.0060"
+        )
+
+    def test_price_cells_carry_no_estimate_marker(self):
+        lines, _ = self._estimate_lines()
+        for label in ("Input price ($/1M)", "Output price ($/1M)", "Cache hit price ($/1M)"):
+            self.assertFalse(
+                any(cell.endswith("*") for cell in _table_cells(self._row(lines, label))[2:])
+            )
+
+    def test_multi_model_agent_lists_each_distinct_price(self):
+        agg = aggregate_by_agent(
+            [
+                Metrics(
+                    agent_role="dev",
+                    model_name="openai/model-a",
+                    input_tokens=1_000_000,
+                    cost=0.0,
+                ),
+                Metrics(
+                    agent_role="dev",
+                    model_name="openai/model-b",
+                    input_tokens=1_000_000,
+                    cost=0.0,
+                ),
+                # Duplicate price of model-a must not repeat in the cell.
+                Metrics(
+                    agent_role="dev",
+                    model_name="openai/model-a",
+                    input_tokens=2_000_000,
+                    cost=0.0,
+                ),
+            ],
+            resolver=_StubPriceResolver(),
+        )
+        lines = generate_agent_summary_table(agg)
+        self.assertEqual(
+            _table_cells(self._row(lines, "Input price ($/1M)")),
+            ["Input price ($/1M)", "**\u2014**", "$0.3000 / $0.5000"],
+        )
+
+    def test_aggregate_ignores_prices_of_reported_cost_runs(self):
+        agg = aggregate_by_agent(
+            [
+                Metrics(
+                    agent_role="dev",
+                    model_name="openai/model-a",
+                    input_tokens=1_000_000,
+                    cost=1.0,
+                )
+            ],
+            resolver=_StubPriceResolver(),
+        )
+        self.assertEqual(agg["dev"]["input_prices"], set())
 
     def test_grid_is_rectangular(self):
         """Every row carries exactly one label, one cell per agent and the Total."""
