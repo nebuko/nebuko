@@ -897,6 +897,93 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
             result, _ = apply_gate_lock(outcome, "gated", "implement")
         self.assertEqual(result, outcome)
 
+    def test_declared_name_only_in_local_dir_arms_the_gate(self):
+        """Repro of #1034: WORKFLOW_NAME is the declared name, not the file stem.
+
+        The run executes ``.nebuko/workflows/default-with-output.yaml`` (declared
+        ``name: default-with-output``), which has no stem match anywhere, so a
+        stem-only lookup warned "could not load workflow" and the gate never armed.
+        """
+        shipped = os.path.join(self._repo, "shipped")
+        self._write_workflow(
+            shipped,
+            "default",
+            "  - name: plan\n    agent: architect\n    next: null\n",
+        )
+        os.makedirs(os.path.join(self._repo, ".nebuko", "workflows"), exist_ok=True)
+        with open(
+            os.path.join(self._repo, ".nebuko", "workflows", "default-with-output.yaml"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(
+                "name: default-with-output\n"
+                'description: "test workflow"\n'
+                "steps:\n"
+                "  - name: plan\n"
+                "    agent: architect\n"
+                "    human_gate: true\n"
+                "    next: null\n"
+            )
+        with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": shipped}, clear=False):
+            with self.assertNoLogs(
+                "build_output", level="WARNING"
+            ):
+                result, gate = apply_gate_lock(
+                    _completed(), "default-with-output", "plan"
+                )
+        self.assertIs(result.appreciation, Appreciation.APPROVED)
+        self.assertEqual(gate.step, "plan")
+        self.assertTrue(gate.armed())
+
+    def test_declared_name_differing_from_filename_arms_the_gate(self):
+        """A local file whose stem differs from its declared name still resolves."""
+        self._write_workflow(
+            os.path.join(self._repo, "shipped"),
+            "default",
+            "  - name: plan\n    agent: architect\n    next: null\n",
+        )
+        os.makedirs(os.path.join(self._repo, ".nebuko", "workflows"), exist_ok=True)
+        with open(
+            os.path.join(self._repo, ".nebuko", "workflows", "custom.yaml"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(
+                "name: default-with-output\n"
+                'description: "test workflow"\n'
+                "steps:\n"
+                "  - name: plan\n"
+                "    agent: architect\n"
+                "    human_gate: true\n"
+                "    next: null\n"
+            )
+        with mock.patch.dict(
+            os.environ, {"WORKFLOWS_DIR": os.path.join(self._repo, "shipped")}, clear=False
+        ):
+            result, gate = apply_gate_lock(_completed(), "default-with-output", "plan")
+        self.assertIs(result.appreciation, Appreciation.APPROVED)
+        self.assertTrue(gate.armed())
+
+    def test_unknown_workflow_stays_fail_soft(self):
+        """No stem and no declared name: warn and degrade to auto-advance."""
+        self._write_workflow(
+            os.path.join(self._repo, "shipped"),
+            "default",
+            "  - name: plan\n    agent: architect\n    next: null\n",
+        )
+        outcome = _completed()
+        with mock.patch.dict(
+            os.environ, {"WORKFLOWS_DIR": os.path.join(self._repo, "shipped")}, clear=False
+        ):
+            with self.assertLogs(
+                "build_output", level="WARNING"
+            ) as logs:
+                result, gate = apply_gate_lock(outcome, "does-not-exist", "plan")
+        self.assertEqual(result, outcome)
+        self.assertIsNone(gate)
+        self.assertIn("could not load workflow 'does-not-exist'", logs.output[0])
+
 
 class TestHumanGateRealWorkflowYaml(unittest.TestCase):
     """Regression against the real workflows/spec-driven-impl.yaml (issue #506).
