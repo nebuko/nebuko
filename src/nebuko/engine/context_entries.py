@@ -6,12 +6,15 @@ payload into the forward-ordered, typed :class:`ContextEntry` list that
 stays the source of truth for entry order, and every artifact is tagged with
 
 * ``kind`` — from the ledger classifier (:mod:`classify_comment`), with an
-  untrusted human comment folded into ``HUMAN_COMMENT`` so it can still reach
-  the prompt through the unverified appendix;
+  untrusted human comment folded into ``HUMAN_COMMENT`` so it still reaches
+  the prompt, truncated, through the unverified appendix;
 * ``step`` / ``round`` — the workflow identity of an agent answer, read from the
   workflow-state block it carries (a state-less answer inherits the identity of
   the previous state-carrying comment, since the engine attributes it to the
   advancing step);
+* ``trusted`` — the ledger's trust verdict for a human row (allowlisted
+  association of the run's initiator). Engine rows are always trusted; an
+  untrusted human row is never rendered in full (issue #872);
 * ``locator`` — the comment id of the answer's state-bearing first part when the
   answer is one of several comments (issue #913). The part ids are recorded on
   the advancing step's ``workflow_state.history`` entry (``comment_ids``, issue
@@ -32,7 +35,7 @@ from typing import Any, Mapping, Sequence
 
 from .context_selection import ContextEntry
 
-__all__ = ["ThreadEntryRepository", "entries_from_raw_thread"]
+__all__ = ["ThreadEntryRepository", "author_is_bot", "entries_from_raw_thread"]
 
 
 class ThreadEntryRepository:
@@ -236,8 +239,82 @@ def _is_first_part(body: str) -> bool:
 
 def _comment_author(comment: Mapping[str, Any]) -> str:
     user = comment.get("user")
-    user = user if isinstance(user, Mapping) else {}
+    if not isinstance(user, Mapping) or not user:
+        # A local journal row names its author directly.
+        return str(comment.get("author") or "")
     return str(user.get("login") or "")
+
+
+def _comment_user_id(comment: Mapping[str, Any]) -> int:
+    user = comment.get("user")
+    user = user if isinstance(user, Mapping) else {}
+    try:
+        return int(user.get("id") or comment.get("user_id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def author_is_bot(
+    comment: Mapping[str, Any],
+    *,
+    engine_login: str = "",
+    engine_actor_id: int = 0,
+    engine_actor_login: str = "",
+) -> bool:
+    """True when the comment's author is bot-generated (issue #872).
+
+    Delegates to the ledger's own rule (:func:`reconcile_thread._author_is_bot`),
+    so context selection and reconciliation agree on what an agent answer is: a
+    genuine bot account, or a *top-level* bot marker anchored to the engine's
+    posting account. In the documented deployment every comment is posted by the
+    PAT owner as ``type == "User"``, so a ``user.type`` check alone would classify
+    every agent answer as human and the prompt would lose its step context.
+
+    ``engine_login`` is shorthand for ``engine_actor_login`` (the account the
+    engine posts as).
+    """
+    from nebuko.engine.paths import ensure_import_path
+
+    ensure_import_path()
+    from workflow_state.features.reconcile_thread.reconcile_thread import (
+        _author_is_bot,
+    )
+
+    return _author_is_bot(
+        comment, engine_actor_id, engine_actor_login or engine_login
+    )
+
+
+def _author_is_trusted(
+    comment: Mapping[str, Any],
+    *,
+    trigger_user_id: int = 0,
+    trigger_login: str = "",
+    allowlist: tuple[str, ...] = (),
+) -> bool:
+    """The ledger's trust verdict for a human comment (issue #872).
+
+    Reuses :func:`reconcile_thread._is_trusted`: only allowlisted human feedback
+    from the run's initiator reaches the prompt in full; anyone else is
+    quarantined to the unverified appendix and fails closed when the run's
+    trigger identity is unknown.
+    """
+    from nebuko.engine.paths import ensure_import_path
+
+    ensure_import_path()
+    from workflow_state.features.reconcile_thread.reconcile_thread import (
+        DEFAULT_TRUST_ALLOWLIST,
+        _is_trusted,
+    )
+
+    return _is_trusted(
+        str(comment.get("author_association") or ""),
+        _comment_user_id(comment),
+        _comment_author(comment),
+        trigger_user_id,
+        trigger_login,
+        allowlist or DEFAULT_TRUST_ALLOWLIST,
+    )
 
 
 def entries_from_raw_thread(  # @stub-protected
@@ -245,18 +322,28 @@ def entries_from_raw_thread(  # @stub-protected
     comments: Sequence[Mapping[str, Any]],
     *,
     engine_login: str = "",
+    engine_actor_id: int = 0,
+    trigger_user_id: int = 0,
+    trigger_login: str = "",
     state: Any = None,
 ) -> list[ContextEntry]:
     """Build the typed entries for one thread (pure except for the classifier).
 
-    ``engine_login`` names the account the engine posts as; a comment authored
-    by it (or by a bot account) may carry agent/engine markers. Every other
-    comment is human, so a human quoting a bot marker stays human (issue #872).
+    ``engine_login`` / ``engine_actor_id`` identify the account the engine posts
+    as; a comment authored by it (or by a bot account) may carry agent/engine
+    markers. Every other comment is human, so a human quoting a bot marker stays
+    human (issue #872). ``trigger_user_id`` / ``trigger_login`` are the run's
+    initiator: only their allowlisted comments are ``trusted``.
 
     ``state`` is the previous workflow state: its ``history`` records each
     answer's part ids, so a split answer becomes one entry (``parts``) naming its
     state-bearing first comment instead of N unrelated rows.
     """
+    bot_options = {
+        "engine_login": engine_login,
+        "engine_actor_id": engine_actor_id,
+        "engine_actor_login": engine_login,
+    }
     groups = _answer_groups(comments, state, engine_login)
     if state is None:
         # No persisted state (e.g. the next run's view of a thread whose answers
@@ -267,7 +354,7 @@ def entries_from_raw_thread(  # @stub-protected
             if candidate is not None:
                 groups = _answer_groups(comments, candidate, engine_login)
                 break
-    groups = _unclaimed_answers(groups, comments, engine_login)
+    groups = _unclaimed_answers(groups, comments, engine_login, bot_options)
     entries: list[ContextEntry] = []
     sequence = 0
     carried_step: str | None = None
@@ -280,6 +367,7 @@ def entries_from_raw_thread(  # @stub-protected
                 sequence=sequence,
                 body=str(issue.get("body") or ""),
                 source_comment_id=str(issue.get("id") or "") or None,
+                author=_comment_author(issue),
             )
         )
         sequence += 1
@@ -290,13 +378,8 @@ def entries_from_raw_thread(  # @stub-protected
             continue
         sequence += 1
         body = str(comment.get("body") or "")
-        user = comment.get("user")
-        user = user if isinstance(user, Mapping) else {}
-        login = str(user.get("login") or "")
-        author_is_bot = str(user.get("type") or "").lower() == "bot" or (
-            bool(engine_login) and login == engine_login
-        )
-        kind = _kind_of(body, author_is_bot=author_is_bot)
+        is_bot = author_is_bot(comment, **bot_options)
+        kind = _kind_of(body, author_is_bot=is_bot)
         if kind in ("run-meta", "workflow-state"):
             # Bookkeeping splits like any other answer, but it owns no parts and
             # is never selectable (D2): keep its identity out of the answer
@@ -342,7 +425,15 @@ def entries_from_raw_thread(  # @stub-protected
                 step=step,
                 round=round_number,
                 source_comment_id=cid or None,
-                trusted=True,
+                author=_comment_author(comment),
+                # Engine/agent rows are the engine's own; only a human row can
+                # be untrusted (issue #872).
+                trusted=is_bot
+                or _author_is_trusted(
+                    comment,
+                    trigger_user_id=trigger_user_id,
+                    trigger_login=trigger_login,
+                ),
                 parts=None if len(parts) < 2 else tuple(parts),
             )
         )
@@ -353,6 +444,7 @@ def _unclaimed_answers(
     groups: dict[str, list[str]],
     comments: Sequence[Mapping[str, Any]],
     engine_login: str,
+    bot_options: Mapping[str, Any] | None = None,
 ) -> dict[str, list[str]]:
     """Attach continuation rows that no recorded answer claims.
 
@@ -368,6 +460,7 @@ def _unclaimed_answers(
     ensure_import_path()
     from workflow_state.features.get_last_state.get_last_state import _is_part_comment
 
+    options = dict(bot_options or {"engine_login": engine_login})
     merged = {owner: list(parts) for owner, parts in groups.items()}
     # Only a real multi-part answer claims rows: ``_answer_groups`` lists every
     # row as its own group, which must not read as "already claimed".
@@ -379,17 +472,13 @@ def _unclaimed_answers(
             continue
         cid = str(cid)
         body = str(comment.get("body") or "")
-        user = comment.get("user")
-        user = user if isinstance(user, Mapping) else {}
-        author_is_bot = str(user.get("type") or "").lower() == "bot" or (
-            bool(engine_login) and str(user.get("login") or "") == engine_login
-        )
         if (
             owner is not None
             and not claimed
             and _is_part_comment(comment)
             and not _is_first_part(body)
-            and _kind_of(body, author_is_bot=author_is_bot) == "agent-output"
+            and _kind_of(body, author_is_bot=author_is_bot(comment, **options))
+            == "agent-output"
         ):
             merged[owner].append(cid)
             continue

@@ -103,7 +103,9 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
         Empty when the host cannot supply a full thread: the engine then
         degrades to its bounded comment window and warns (D9). The persisted
-        state's ``history`` groups a split answer's parts (issue #913).
+        state's ``history`` groups a split answer's parts (issue #913). Every
+        journal row is the local engine bot's own post, but a human trigger is
+        still the only trusted commenter (issue #872).
         """
         from nebuko.engine.context_entries import entries_from_raw_thread
 
@@ -112,7 +114,12 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
             # No issue payload in the journal: the trigger's snapshot is the
             # issue body the entry rule needs (D11 / default-last).
             issue = {"body": self._trigger.issue_body, "id": None}
-        return entries_from_raw_thread(issue, comments, state=self.load_state())
+        return entries_from_raw_thread(
+            issue,
+            comments,
+            state=self.load_state(),
+            trigger_login=getattr(self.read_trigger(), "author", "") or "",
+        )
 
     def post(self, body: str) -> str:
         self._run_dir.mkdir(parents=True, exist_ok=True)

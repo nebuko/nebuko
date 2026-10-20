@@ -1556,15 +1556,22 @@ class Engine:
 
     # @stub-protected
     def _workflow_path(self) -> list[WorkflowPathEntry] | None:
-        """The executed ``(step, round)`` path from ``workflow_state.history``.
+        """The already-executed ``(step, round)`` path from ``workflow_state.history``.
 
         ``None`` outside a workflow (a bare ``@@`` ping), where the default-last
-        rule applies. A re-run of a step is its later occurrence in the history.
+        rule applies. The history was written by the earlier runs: the step this
+        run is about to execute is *not* in it yet (the agent child appends it
+        after the prompt is built), so the last node is the previous step — which
+        is exactly what ``default_inputs`` needs (D5/D11). A re-run of a step is
+        its later occurrence in the history. ``[]`` means "inside a workflow, no
+        step has run yet": the entry step, which receives the issue body.
         """
         state = self._previous_state()
         history = list(getattr(state, "history", None) or [])
         if not history:
-            return None
+            # No history *and* no workflow identity: outside a workflow. A
+            # workflow whose first step is starting keeps the empty path.
+            return [] if self._previous_workflow() else None
         path: list[WorkflowPathEntry] = []
         rounds: dict[str, int] = {}
         for node in history:
@@ -1575,10 +1582,13 @@ class Engine:
             path.append(WorkflowPathEntry(step=step, round=rounds[step]))
         return path
 
+    def _previous_workflow(self) -> str:
+        """The workflow the previous state belongs to, if it recorded one."""
+        state = self._previous_state()
+        return str(getattr(state, "workflow", "") or "") if state else ""
+
     # @stub-protected
-    def _step_context_spec(
-        self, resolved: Any, history: Sequence[CommentEntry]
-    ) -> StepContextSpec | None:
+    def _step_context_spec(self, resolved: Any) -> StepContextSpec | None:
         """The step's ``inputs``/``conditional`` contract, defaults applied.
 
         ``inputs`` is the step's declared wiring; an unwired step inside a
@@ -1599,7 +1609,7 @@ class Engine:
             inputs = default_inputs(path, step_name)
         if inputs is None:
             return None
-        conditional = self._conditional_context_inputs(declared)
+        conditional = self._conditional_inputs(resolved, declared, path)
         return StepContextSpec(
             step=step_name,
             inputs=inputs,
@@ -1676,21 +1686,40 @@ class Engine:
                 inputs.append(ContextInput(ContextKind.AGENT_OUTPUT, root))
         return inputs
 
-    @staticmethod
-    def _conditional_context_inputs(step: Any) -> tuple[ContextInput, ...]:
-        """The conditional-branch outputs a step contributes (#889 / D6).
+    def _conditional_inputs(
+        self, resolved: Any, step: Any, path: Sequence[WorkflowPathEntry] | None
+    ) -> tuple[ContextInput, ...]:
+        """The loop-branch output this execution answers, if any (#889 / D6).
 
-        An edge that loops back (``conditions`` naming an earlier step) carries
-        that branch's declared target output, once, in declaration order.
+        ``CONDITIONAL`` fires only when this step is reached *through* a
+        conditional loop edge: the step last executed declares a branch target
+        that is the step about to run, and that target has already run (so this
+        is its next round). The input is then that loop partner's latest output
+        -- the review a second dev round answers, exactly once. Reaching the
+        step through the forward edge keeps ``IMPLICIT_PREVIOUS`` (D5/D10): a
+        workflow's *forward* successor is not the step's input.
         """
-        targets: dict[str, None] = {}
-        for condition in getattr(step, "conditions", None) or []:
-            target = getattr(condition, "next", None)
-            if isinstance(target, str) and target:
-                targets.setdefault(target, None)
-        if not targets:
+        step_name = str(self._get(resolved, "WORKFLOW_STEP") or "")
+        if not path or not step_name or step is None:
             return ()
-        return tuple(ContextInput(ContextKind.AGENT_OUTPUT, target) for target in targets)
+        executed = {node.step for node in path if node.step != step_name}
+        if step_name not in executed:
+            return ()
+        previous = next(
+            (node.step for node in reversed(path) if node.step != step_name), ""
+        )
+        if not previous:
+            return ()
+        partner = self._declared_step(
+            self._get(resolved, "WORKFLOW_NAME"), previous
+        )
+        loops_to_current = any(
+            getattr(condition, "next", None) == step_name
+            for condition in getattr(partner, "conditions", None) or ()
+        )
+        if not loops_to_current:
+            return ()
+        return (ContextInput(ContextKind.AGENT_OUTPUT, previous),)
 
     # @stub-protected
     def _select_step_context(
@@ -1705,7 +1734,7 @@ class Engine:
         entries = self._context_entries()
         if entries is None:
             return None
-        spec = self._step_context_spec(resolved, history)
+        spec = self._step_context_spec(resolved)
         path = self._workflow_path()
         if spec is None:
             spec = StepContextSpec(step="", inputs=None)
@@ -2623,9 +2652,17 @@ class Engine:
         parts: list[str] = []
         if isinstance(trigger, Trigger):
             parts.append(f"**Author:** {trigger.author}")
-            if trigger.issue_body and trigger.type != "issue":
-                parts.append(f"**Issue body:**\n{trigger.issue_body}")
-            parts.append(_agent_facing_body(trigger.body))
+            # An issue-trigger run's request reaches the prompt once (issue
+            # #590, D11): its body *is* the user request, so it is never also
+            # an agent-facing "recent thread" entry.
+            if trigger.type == "issue":
+                body = _agent_facing_body(trigger.body or self._issue_body_entry())
+            else:
+                if trigger.issue_body:
+                    parts.append(f"**Issue body:**\n{trigger.issue_body}")
+                body = _agent_facing_body(trigger.body)
+            if body:
+                parts.append(body)
         task = self._get(resolved, "TASK")
         if task:
             parts.append(f"**Task:** {task}")
@@ -2634,6 +2671,13 @@ class Engine:
             parts.append(gate_section)
         parts.append("## Recent thread\n\n" + self._render_recent_thread(history))
         return "\n\n".join(part for part in parts if part)
+
+    def _issue_body_entry(self) -> str:
+        """The typed issue-body entry's text, or ``""`` when the host has none."""
+        for entry in reversed(self._context_entries() or ()):
+            if entry.kind == ContextKind.ISSUE_BODY:
+                return entry.body
+        return ""
 
     def _render_recent_thread(self, history: Sequence[CommentEntry]) -> str:
         """Render ``## Recent thread`` from the single context selection (#889).
@@ -2646,10 +2690,30 @@ class Engine:
         """
         context = self._context_selection()
         if context is not None and not self._legacy_window_only():
+            entries = context.entries
+            if self._request_carries_issue_body():
+                entries = [
+                    entry for entry in entries if entry.kind != ContextKind.ISSUE_BODY
+                ]
             return _render_context_entries(
-                context.entries, self.render_limit, self._context_bodies()
+                entries,
+                self.render_limit,
+                self._context_bodies(),
+                self._context_entries() or (),
             )
         return _render_history(history)
+
+    def _request_carries_issue_body(self) -> bool:
+        """The user-request block already shows the issue body (D11, #590).
+
+        An issue trigger renders the body as its request; a follow-up trigger
+        (#590) renders that comment as the request and the body separately.
+        Rendering the typed entry too would show it twice.
+        """
+        trigger = self._get(self._handoff_config(), _TRIGGER_KEY)
+        if not isinstance(trigger, Trigger):
+            return False
+        return bool(trigger.issue_body or trigger.body) or trigger.type == "issue"
 
     def _context_bodies(self) -> dict[str, str]:
         """Every thread comment body by id, read once (issue #913 parts)."""
@@ -2988,13 +3052,18 @@ def _render_gate_decision(raw: Any) -> str:
 
 
 def _render_context_entries(
-    entries: Sequence[Any], limit: int | None, bodies: Mapping[str, str] | None = None
+    entries: Sequence[Any],
+    limit: int | None,
+    bodies: Mapping[str, str] | None = None,
+    thread: Sequence[Any] = (),
 ) -> str:
     """Render the selected entries as ``## Recent thread`` (#889).
 
-    Selection already dropped the engine bookkeeping (D2) and untrusted human
-    comments (prompt-injection guard, issue #872); the renderer only orders the
-    blocks. A positive ``limit`` keeps the last N of them, ``None`` renders all.
+    Selection already dropped the engine bookkeeping (D2); the renderer only
+    orders the blocks. A positive ``limit`` keeps the last N of them, ``None``
+    renders all. ``thread`` is the whole typed thread: the untrusted human rows
+    selection left out are appended as one-line, clearly-unverified summaries
+    (prompt-injection guard, issue #872).
 
     A split answer is one entry (issue #913): its first comment is rendered as
     the body and ``bodies`` supplies the continuation rows, in thread order.
@@ -3016,7 +3085,17 @@ def _render_context_entries(
             blocks.append(
                 "\n\n".join(f"### {heading}\n\n{text}" for text in rendered)
             )
-    return "\n\n".join(blocks) if blocks else "_(no prior thread)_"
+    return (
+        ("\n\n".join(blocks) if blocks else "_(no prior thread)_")
+        + _render_context_appendix(thread)
+    )
+
+
+def _render_context_appendix(thread: Sequence[Any]) -> str:
+    """Untrusted human rows selection left out, as one-line summaries (#872)."""
+    from nebuko.engine.context_selection import render_unverified_appendix
+
+    return render_unverified_appendix(thread)
 
 
 def _context_entry_heading(entry: Any) -> str:

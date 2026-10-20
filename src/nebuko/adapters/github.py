@@ -185,14 +185,41 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     def load_context_entries(self) -> "list[ContextEntry]":
         """Typed, forward-ordered thread entries for context selection (#889).
 
-        Empty when the host cannot supply a full thread: the engine then
-        degrades to its bounded comment window and warns (D9). The persisted
-        state's ``history`` groups a split answer's parts (issue #913).
+        The engine's posting account anchors bot-ness, as it does for the
+        thread ledger (issue #872 review): in this deployment the PAT owner posts
+        every comment as ``type == "User"``, so a ``user.type`` check alone would
+        classify every agent answer as human and lose the step context. The
+        run's initiator anchors human trust; the persisted state's ``history``
+        groups a split answer's parts (issue #913).
         """
         from nebuko.engine.context_entries import entries_from_raw_thread
 
         issue, comments = self.load_raw_thread()
-        return entries_from_raw_thread(issue, comments, state=self.load_state())
+        engine_actor_id, engine_login = self.engine_actor()
+        trigger_user_id, trigger_login = self._trigger_identity()
+        return entries_from_raw_thread(
+            issue,
+            comments,
+            engine_login=engine_login,
+            engine_actor_id=engine_actor_id,
+            trigger_user_id=trigger_user_id,
+            trigger_login=trigger_login,
+            state=self.load_state(),
+        )
+
+    def _trigger_identity(self) -> tuple[int, str]:
+        """``(user_id, login)`` of the run's initiator, for human trust (#872).
+
+        Fails closed (``(0, "")``, so nobody is trusted) when the host cannot
+        resolve it; the ledger's reconciliation stays authoritative.
+        """
+        raw = os.environ.get("TRIGGER_AUTHOR_ID") or ""
+        try:
+            user_id = int(raw)
+        except (TypeError, ValueError):
+            user_id = 0
+        login = (os.environ.get("TRIGGER_AUTHOR_LOGIN") or "").strip()
+        return user_id, login
 
     def _thread_snapshot(self) -> Any:
         """Return the cached per-run snapshot, fetching the thread at most once."""

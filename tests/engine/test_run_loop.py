@@ -15,6 +15,11 @@ from pathlib import Path
 
 import pytest
 
+from nebuko.engine.context_selection import (
+    ContextEntry,
+    ContextKind,
+    InjectionMode,
+)
 from nebuko.adapters.local import LocalAdapter
 from config import AgentStartNotice, HumanActionNotice, brand
 from nebuko.engine.models import CommentEntry, ExitCode, RunOutcome, Trigger
@@ -4064,3 +4069,156 @@ class TestBuildPromptPreviousSessionHandoff:
         prompt = engine.build_prompt(self._resolved(tmp_path), [])
 
         assert "## Previous session handoff" not in prompt
+
+
+class TestTwoStepWorkflowPrompt:
+    """The runtime path contract end to end (review round 2, Critical 1).
+
+    A prompt is built from the *previous* run's ``workflow_state.history``: the
+    running step is appended only afterwards, by the agent child. The fixtures
+    build those states with the real ``build_state``, so a defaulted step input
+    names the step that actually ran before it. The review prompt is the #885
+    report: system + role + plan + implement + issue body, no repeated outputs,
+    no ``RUN_META`` logs, no ``WORKFLOW_STATE``.
+    """
+
+    @staticmethod
+    def _resolved(tmp_path, step: str) -> dict:
+        role = tmp_path / "role.md"
+        role.write_text("ROLE PROMPT", encoding="utf-8")
+        step_prompt = tmp_path / f"{step}.md"
+        step_prompt.write_text(f"STEP {step.upper()} PROMPT", encoding="utf-8")
+        return {
+            "PROMPT_LOCATION": str(role),
+            "STEP_PROMPT_FILE": str(step_prompt),
+            "WORKFLOW_NAME": "default",
+            "WORKFLOW_STEP": step,
+        }
+
+    @staticmethod
+    def _entries() -> list[ContextEntry]:
+        return [
+            ContextEntry(
+                kind=kind,
+                sequence=sequence,
+                body=body,
+                step=step,
+                round=round_number,
+                author="olivier-norture",
+            )
+            for sequence, (kind, body, step, round_number) in enumerate(
+                [
+                    ("issue-body", "ISSUE TEXT: fix the prompt", None, None),
+                    ("run-meta", "PLAN AGENT STARTED LOG", "plan", 1),
+                    ("agent-output", "PLAN OUTPUT BODY", "plan", 1),
+                    ("run-meta", "IMPLEMENT AGENT STARTED LOG", "implement", 1),
+                    ("agent-output", "IMPLEMENT OUTPUT BODY", "implement", 1),
+                    ("run-meta", "REVIEW AGENT STARTED LOG", "review", 1),
+                    ("agent-output", "ROUND ONE REVIEW BODY", "review", 1),
+                ]
+            )
+        ]
+
+    @staticmethod
+    def _with_outcome(state):
+        """A completed step, as its agent child records it."""
+        from workflow_state import TurnStatus
+
+        history = list(state.history)
+        for index, node in enumerate(history):
+            outcome = node.turn_outcome.model_copy(
+                update={"status": TurnStatus.COMPLETED, "appreciation": "approved"}
+            )
+            history[index] = node.model_copy(update={"turn_outcome": outcome})
+        return state.model_copy(update={"history": history})
+
+    def _engine_after_plan_and_implement(self, tmp_path):
+        engine = _engine(tmp_path)
+        state = build_state(None, workflow="default", step="plan", agent="architect")
+        state = build_state(state, workflow="default", step="implement", agent="dev")
+        engine._seeded_prev_state["state"] = self._with_outcome(state)
+        engine._context_state["entries"] = self._entries()
+        return engine
+
+    def _engine_after_round_one(self, tmp_path):
+        """plan, implement and a rejected review: the dev step's second round."""
+        engine = self._engine_after_plan_and_implement(tmp_path)
+        state = engine._seeded_prev_state["state"]
+        state = build_state(state, workflow="dev-review-loop", step="review", agent="review")
+        engine._seeded_prev_state["state"] = self._with_outcome(state)
+        return engine
+
+    def test_the_review_prompt_is_exactly_the_previous_output_and_the_issue(self, tmp_path):
+        engine = self._engine_after_plan_and_implement(tmp_path)
+        resolved = self._resolved(tmp_path, "review")
+        engine._run_resolved["resolved"] = resolved
+
+        # The issue body reaches the prompt as the context block's user request
+        # (the thread entry carries no issue and D11 defers to that block).
+        prompt = engine.build_prompt(resolved, [], step_scope=None)
+
+        assert "ROLE PROMPT" in prompt
+        assert "STEP REVIEW PROMPT" in prompt
+        selection = engine._context_selection()
+        assert selection.mode == InjectionMode.IMPLICIT_PREVIOUS
+        assert [entry.body for entry in selection.entries] == ["IMPLEMENT OUTPUT BODY"]
+        assert "IMPLEMENT OUTPUT BODY" in prompt
+        assert prompt.count("IMPLEMENT OUTPUT BODY") == 1
+        # Never repeated, never bookkeeping (#885).
+        assert "PLAN OUTPUT BODY" not in prompt
+        assert "ROUND ONE REVIEW BODY" not in prompt
+        assert "AGENT STARTED LOG" not in prompt
+        assert "WORKFLOW_STATE" not in prompt
+
+    def test_the_second_dev_round_receives_the_review_it_answers(self, tmp_path):
+        engine = self._engine_after_round_one(tmp_path)
+        resolved = self._resolved(tmp_path, "implement")
+        engine._run_resolved["resolved"] = resolved
+
+        prompt = engine.build_prompt(resolved, [])
+
+        selected = [entry.body for entry in engine._context_selection().entries]
+        assert selected == ["ROUND ONE REVIEW BODY"]
+        assert "ROUND ONE REVIEW BODY" in prompt
+        assert prompt.count("ROUND ONE REVIEW BODY") == 1
+        assert "IMPLEMENT OUTPUT BODY" not in prompt
+
+    def test_the_entry_step_receives_the_issue_body_through_the_host_window(
+        self, tmp_path
+    ):
+        """D11 end to end: the issue body reaches the prompt exactly once.
+
+        The fixture is the host's own shape --- a raw ``(issue, comments)``
+        payload through the entry builder, the issue trigger's body included in
+        the thread --- so a duplicated render (trigger body *and* issue entry)
+        is caught here rather than at selector level.
+        """
+        from nebuko.engine.context_entries import entries_from_raw_thread
+
+        engine = _engine(tmp_path)
+        issue = {"id": 1, "body": "ISSUE TEXT: fix it", "user": {"login": "olivier"}}
+        engine._context_state["entries"] = entries_from_raw_thread(
+            issue,
+            [{"id": 2, "body": "**agent started**\n\nplan: architect", "user": {"login": "nebuko-bot", "type": "Bot"}}],
+            engine_login="nebuko-bot",
+        )
+        resolved = self._resolved(tmp_path, "plan")
+        engine._run_resolved["resolved"] = resolved
+        trigger = Trigger(
+            author="olivier",
+            body="",
+            number=889,
+            issue_body="ISSUE TEXT: fix it",
+            type="issue",
+        )
+        resolved[_TRIGGER_KEY] = trigger
+
+        prompt = engine.build_prompt(resolved, [])
+
+        assert "STEP PLAN PROMPT" in prompt
+        assert "ISSUE TEXT: fix it" in prompt
+        assert prompt.count("ISSUE TEXT: fix it") == 1
+        assert "AGENT STARTED LOG" not in prompt
+        assert "agent started" not in prompt
+        assert "OUTPUT BODY" not in prompt
+        assert "REVIEW BODY" not in prompt
