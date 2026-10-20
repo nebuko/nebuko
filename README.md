@@ -299,6 +299,21 @@ Nebuko is public at this stage to **find bugs**.
 
 Ideas for workflows, agents and skills are just as welcome.
 
+## Documentation artifact
+
+`internal-publish-docs` packages `docs/` and `logo/final/` as
+`docs-<short-sha>.tar.gz` (rooted at `docs/` and `logo/final/`) on every push to
+`main` and on every release. Each run uploads a workflow artifact named
+`docs-<full-sha>`; on releases the same tarball is attached as a release asset.
+
+Artifacts have bounded retention (30 days); release assets are durable. Pin a
+release tag once `0.1` exists, otherwise a `main` SHA:
+
+```sh
+gh run download --repo nebuko/nebuko --name "docs-<full-sha>" --dir dist
+tar -xzf dist/docs-<short-sha>.tar.gz
+```
+
 ## Acknowledgements
 
 Layer 1 is the [OpenHands Software Agent SDK][OpenHands SDK] (MIT), with
