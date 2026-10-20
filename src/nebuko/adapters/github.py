@@ -16,6 +16,7 @@ from nebuko.engine.paths import ensure_import_path
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
+    from nebuko.engine.context_selection import ContextEntry
     from nebuko.engine.models import CommentEntry, Trigger
     from workflow_state.workflow_state import WorkflowState
 
@@ -181,6 +182,56 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return self._engine_actor
 
     # @stub-protected
+    def load_context_entries(self) -> "list[ContextEntry]":
+        """Typed, forward-ordered thread entries for context selection (#889).
+
+        The engine's posting account anchors bot-ness, as it does for the
+        thread ledger (issue #872 review): in this deployment the PAT owner posts
+        every comment as ``type == "User"``, so a ``user.type`` check alone would
+        classify every agent answer as human and lose the step context. The
+        run's initiator anchors human trust; the persisted state's ``history``
+        groups a split answer's parts (issue #913).
+        """
+        from nebuko.engine.context_entries import entries_from_raw_thread
+
+        issue, comments = self.load_raw_thread()
+        engine_actor_id, engine_login = self.engine_actor()
+        trigger_user_id, trigger_login = self._trigger_identity()
+        return entries_from_raw_thread(
+            issue,
+            comments,
+            engine_login=engine_login,
+            engine_actor_id=engine_actor_id,
+            trigger_user_id=trigger_user_id,
+            trigger_login=trigger_login,
+            state=self.load_state(),
+        )
+
+    def _trigger_identity(self) -> tuple[int, str]:
+        """``(user_id, login)`` of the run's initiator, for human trust (#872).
+
+        The login falls back to the workflow's recorded starter, then the
+        trigger author, exactly as the engine's thread ledger resolves it: a
+        chained run is triggered by a bot comment, but its human on the hook is
+        still the trusted commenter. Fails closed (``(0, "")``, so nobody is
+        trusted) when nothing resolves.
+        """
+        raw = os.environ.get("TRIGGER_AUTHOR_ID") or ""
+        try:
+            user_id = int(raw)
+        except (TypeError, ValueError):
+            user_id = 0
+        login = ""
+        state = self.load_state()
+        if state is not None:
+            login = str(getattr(state, "started_by", "") or "").strip()
+        if not login:
+            login = (os.environ.get("TRIGGER_AUTHOR_LOGIN") or "").strip()
+        if not login:
+            trigger = self.read_trigger()
+            login = str(getattr(trigger, "author", "") or "").strip()
+        return user_id, login
+
     def _thread_snapshot(self) -> Any:
         """Return the cached per-run snapshot, fetching the thread at most once."""
         if self._snapshot is None:

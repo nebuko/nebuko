@@ -32,6 +32,18 @@ from nebuko.engine.hook_runner import (
     HookRunner,
     hooks_from_resolved,
 )
+from nebuko.engine.context_selection import (
+    ContextEntry,
+    ContextInput,
+    ContextKind,
+    InjectionMode,
+    SelectionResult,
+    StepContextSpec,
+    WorkflowPathEntry,
+    allowed_kinds,
+    default_inputs,
+    resolve_selection,
+)
 from nebuko.engine.input_wiring import (
     MAX_CALL_FRAMES,
     Materialization,
@@ -611,6 +623,17 @@ class Engine:
     _thread_ledger: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # This run's typed context selection (#889) plus the bounded comment window
+    # the prompt degrades to when the host has no typed thread. Engine-internal,
+    # so it is excluded from ``__init__``/equality/repr.
+    _context_state: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
+    # Per-run memo of loaded workflow definitions, by name (#889): the step's
+    # declared inputs and which steps post no output of their own.
+    _declared_step_cache: dict[str, dict[str, Any]] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
     # This step's materialized inputs (issue #872), stashed so ``_agent_env`` can
     # hand them to the agent child, which records them on the advancing step's
     # ``HistoryEntry``. A mutable container because ``Engine`` is frozen.
@@ -790,6 +813,9 @@ class Engine:
         publish_failed = False
         self._publish_state.clear()
         self._hook_state.clear()
+        # The typed thread and its selection describe *this* run's thread: a
+        # reused engine over a new run must not serve the previous snapshots.
+        self._context_state.clear()
         # Snapshot the caller workspace before any phase can chdir into a child
         # temp workdir, so a relative AGENT_CONFIG_PATH stays caller-anchored.
         self._caller_root()
@@ -1506,6 +1532,222 @@ class Engine:
             log.error("[phase:action] required step inputs failed: %s", detail)
             return results, self._input_failure_outcome(detail, phases)
         return results, None
+
+    # @stub-protected
+    def _context_entries(self) -> list[ContextEntry] | None:
+        """This run's typed thread entries, or ``None`` when unavailable (#889).
+
+        The adapter's read-only repository carries the full thread with its
+        kinds; a host without it (or a state-only fixture) degrades to ``None``
+        and the prompt falls back to the bounded comment window.
+        """
+        if "entries" in self._context_state:
+            return self._context_state["entries"]
+        loader = getattr(self.adapter, "load_context_entries", None)
+        entries: list[ContextEntry] | None = None
+        if loader is not None:
+            try:
+                entries = list(loader())
+            except Exception as exc:  # noqa: BLE001 - selection is best-effort context
+                log.warning("[phase:prompt] could not read the typed thread: %s", exc)
+                entries = None
+        self._context_state["entries"] = entries
+        return entries
+
+    # @stub-protected
+    def _workflow_path(self) -> list[WorkflowPathEntry] | None:
+        """The already-executed ``(step, round)`` path from ``workflow_state.history``.
+
+        ``None`` outside a workflow (a bare ``@@`` ping), where the default-last
+        rule applies. The history was written by the earlier runs: the step this
+        run is about to execute is *not* in it yet (the agent child appends it
+        after the prompt is built), so the last node is the previous step — which
+        is exactly what ``default_inputs`` needs (D5/D11). A re-run of a step is
+        its later occurrence in the history. ``[]`` means "inside a workflow, no
+        step has run yet": the entry step, which receives the issue body.
+        """
+        state = self._previous_state()
+        history = list(getattr(state, "history", None) or [])
+        if not history:
+            # No history *and* no workflow identity: outside a workflow. A
+            # workflow whose first step is starting keeps the empty path.
+            return [] if self._previous_workflow() else None
+        path: list[WorkflowPathEntry] = []
+        rounds: dict[str, int] = {}
+        for node in history:
+            step = str(getattr(node, "step", "") or "")
+            if not step:
+                continue
+            rounds[step] = rounds.get(step, 0) + 1
+            path.append(WorkflowPathEntry(step=step, round=rounds[step]))
+        return path
+
+    def _previous_workflow(self) -> str:
+        """The workflow the previous state belongs to, if it recorded one."""
+        state = self._previous_state()
+        return str(getattr(state, "workflow", "") or "") if state else ""
+
+    # @stub-protected
+    def _step_context_spec(self, resolved: Any) -> StepContextSpec | None:
+        """The step's ``inputs``/``conditional`` contract, defaults applied.
+
+        ``inputs`` is the step's declared wiring; an unwired step inside a
+        workflow defaults to ``[previous step]`` (or ``[issue_body]`` for the
+        entry step, D5/D11). Outside a workflow there is no contract (``None``)
+        — the *declarative* ``inputs:`` contract (exec/str/input. refs) is not
+        a selection request.
+        """
+        path = self._workflow_path()
+        step_name = str(self._get(resolved, "WORKFLOW_STEP") or "")
+        if not step_name:
+            return None
+        declared = self._declared_step(self._get(resolved, "WORKFLOW_NAME"), step_name)
+        declared_inputs = self._declared_context_inputs(declared)
+        if declared_inputs:
+            inputs: tuple[ContextInput, ...] | None = tuple(declared_inputs)
+        else:
+            inputs = default_inputs(path, step_name)
+        if inputs is None:
+            return None
+        conditional = self._conditional_inputs(resolved, declared, path)
+        return StepContextSpec(
+            step=step_name,
+            inputs=inputs,
+            carried_steps=frozenset(self._outputless_steps()),
+            conditional=conditional,
+        )
+
+    def _declared_step(self, workflow_name: Any, step_name: str = "") -> Any:
+        """The workflow definition's steps by name (memoized), or ``{}``."""
+        name = str(workflow_name or "")
+        if not name:
+            return None
+        cached = self._declared_step_cache.get(name)
+        if cached is None:
+            cached = {}
+            ensure_import_path()
+            from config import load_workflow, load_workflow_with_dirs
+
+            workflows_dir, local_workflows_dir = self._workflow_dirs()
+            try:
+                path = load_workflow_with_dirs(
+                    name, workflows_dir, local_workflows_dir or ""
+                )
+                definition = load_workflow(str(path))
+                cached = {step.name: step for step in definition.steps}
+            except Exception as exc:  # noqa: BLE001 - a missing definition is not fatal
+                log.warning("[phase:prompt] workflow %s unavailable: %s", name, exc)
+            self._declared_step_cache[name] = cached
+        return cached.get(step_name)
+
+    def _outputless_steps(self) -> set[str]:
+        """Steps whose run posts no own state, so their output is carried (#889).
+
+        A script step merges into the thread entry it advances to; a workflow
+        call step merges into every state the callee's steps posted. Neither
+        posts a comment of its own, so the *previous step's* output for a step
+        right after them is the latest agent output.
+        """
+        previous = self._previous_state()
+        name = str(getattr(previous, "workflow", "") or "") if previous else ""
+        if not name:
+            return set()
+        steps = self._declared_step_cache.get(name)
+        if steps is None:
+            self._declared_step(name)
+            steps = self._declared_step_cache.get(name) or {}
+        return {
+            step_name
+            for step_name, step in steps.items()
+            if getattr(step, "script", None) is not None
+            or getattr(step, "workflow", None) is not None
+            or getattr(step, "repo", None) is not None
+        }
+
+    @staticmethod
+    def _declared_context_inputs(step: Any) -> list[ContextInput]:
+        """Declared ``inputs:`` that name thread artifacts, in declaration order.
+
+        ``ref`` bindings name a step (``<step>`` / ``<step>.<field>``) or the
+        issue body; ``exec``/``str`` bindings are produced values, not selection
+        requests, and are ignored here.
+        """
+        inputs: list[ContextInput] = []
+        for name, binding in dict(getattr(step, "inputs", None) or {}).items():
+            ref = getattr(binding, "ref", None)
+            if not ref:
+                continue
+            root = str(ref).split(".", 1)[0]
+            if root == ContextKind.ISSUE_BODY or root == "issue_body":
+                inputs.append(ContextInput(ContextKind.ISSUE_BODY))
+            elif root.startswith("input."):
+                continue
+            else:
+                inputs.append(ContextInput(ContextKind.AGENT_OUTPUT, root))
+        return inputs
+
+    def _conditional_inputs(
+        self, resolved: Any, step: Any, path: Sequence[WorkflowPathEntry] | None
+    ) -> tuple[ContextInput, ...]:
+        """The loop-branch output this execution answers, if any (#889 / D6).
+
+        ``CONDITIONAL`` fires only when this step is reached *through* a
+        conditional loop edge: the step last executed declares a branch target
+        that is the step about to run, and that target has already run (so this
+        is its next round). The input is then that loop partner's latest output
+        -- the review a second dev round answers, exactly once. Reaching the
+        step through the forward edge keeps ``IMPLICIT_PREVIOUS`` (D5/D10): a
+        workflow's *forward* successor is not the step's input.
+        """
+        step_name = str(self._get(resolved, "WORKFLOW_STEP") or "")
+        if not path or not step_name or step is None:
+            return ()
+        executed = {node.step for node in path if node.step != step_name}
+        if step_name not in executed:
+            return ()
+        previous = next(
+            (node.step for node in reversed(path) if node.step != step_name), ""
+        )
+        if not previous:
+            return ()
+        partner = self._declared_step(
+            self._get(resolved, "WORKFLOW_NAME"), previous
+        )
+        loops_to_current = any(
+            getattr(condition, "next", None) == step_name
+            for condition in getattr(partner, "conditions", None) or ()
+        )
+        if not loops_to_current:
+            return ()
+        return (ContextInput(ContextKind.AGENT_OUTPUT, previous),)
+
+    # @stub-protected
+    def _select_step_context(
+        self, resolved: Any, history: Sequence[CommentEntry]
+    ) -> SelectionResult | None:
+        """Select this step's prompt context; ``None`` keeps the legacy window.
+
+        One selector (#889): the typed entries are narrowed by the step contract,
+        never re-scraped. A gap (a selected output missing from the thread) is
+        reported once and the step proceeds with the rest (D9).
+        """
+        entries = self._context_entries()
+        if entries is None:
+            return None
+        spec = self._step_context_spec(resolved)
+        path = self._workflow_path()
+        if spec is None:
+            spec = StepContextSpec(step="", inputs=None)
+        selection = resolve_selection(path, spec, entries)
+        if selection.missing:
+            log.warning(
+                "[phase:prompt] step %s is missing context: %s",
+                spec.step,
+                ", ".join(
+                    f"{wanted.kind}:{wanted.step or '-'}" for wanted in selection.missing
+                ),
+            )
+        return selection
 
     def _step_output_scope(
         self, history: Sequence[CommentEntry]
@@ -2410,9 +2652,17 @@ class Engine:
         parts: list[str] = []
         if isinstance(trigger, Trigger):
             parts.append(f"**Author:** {trigger.author}")
-            if trigger.issue_body and trigger.type != "issue":
-                parts.append(f"**Issue body:**\n{trigger.issue_body}")
-            parts.append(_agent_facing_body(trigger.body))
+            # An issue-trigger run's request reaches the prompt once (issue
+            # #590, D11): its body *is* the user request, so it is never also
+            # an agent-facing "recent thread" entry.
+            if trigger.type == "issue":
+                body = _agent_facing_body(trigger.body or self._issue_body_entry())
+            else:
+                if trigger.issue_body:
+                    parts.append(f"**Issue body:**\n{trigger.issue_body}")
+                body = _agent_facing_body(trigger.body)
+            if body:
+                parts.append(body)
         task = self._get(resolved, "TASK")
         if task:
             parts.append(f"**Task:** {task}")
@@ -2422,21 +2672,98 @@ class Engine:
         parts.append("## Recent thread\n\n" + self._render_recent_thread(history))
         return "\n\n".join(part for part in parts if part)
 
-    def _render_recent_thread(self, history: Sequence[CommentEntry]) -> str:
-        """Render ``## Recent thread`` from the ledger, or the legacy window.
+    def _issue_body_entry(self) -> str:
+        """The typed issue-body entry's text, or ``""`` when the host has none."""
+        for entry in reversed(self._context_entries() or ()):
+            if entry.kind == ContextKind.ISSUE_BODY:
+                return entry.body
+        return ""
 
-        The workflow-state thread ledger is the source of truth (issue #872);
-        when the adapter cannot supply a full thread (or the ledger is empty,
-        e.g. a pre-migration state), fall back to the legacy recency window so
-        behaviour is never worse than before.
+    def _render_recent_thread(self, history: Sequence[CommentEntry]) -> str:
+        """Render ``## Recent thread`` from the single context selection (#889).
+
+        The typed thread entries are narrowed by the step's contract (declared
+        inputs, the implicit previous step, or the default-last rule); nothing
+        else may append to the prompt — the old reverse-history render is the
+        #885 duplicate/injected-log bug. The bounded comment window remains only
+        for a host that cannot supply a typed thread.
         """
-        ledger = self._thread_ledger_data()
-        if ledger is None:
-            return _render_history(history)
-        records, bodies = ledger
-        if not records:
-            return _render_history(history)
-        return _render_thread_records(records, bodies, self.render_limit)
+        context = self._context_selection()
+        if context is not None and not self._legacy_window_only():
+            entries = context.entries
+            if self._request_carries_issue_body():
+                entries = [
+                    entry for entry in entries if entry.kind != ContextKind.ISSUE_BODY
+                ]
+            return _render_context_entries(
+                entries,
+                self.render_limit,
+                self._context_bodies(),
+                self._context_entries() or (),
+            )
+        return _render_history(history)
+
+    def _request_carries_issue_body(self) -> bool:
+        """The user-request block already shows the issue body (D11, #590).
+
+        An issue trigger renders the body as its request; a follow-up trigger
+        (#590) renders that comment as the request and the body separately.
+        Rendering the typed entry too would show it twice.
+        """
+        trigger = self._get(self._handoff_config(), _TRIGGER_KEY)
+        if not isinstance(trigger, Trigger):
+            return False
+        return bool(trigger.issue_body or trigger.body) or trigger.type == "issue"
+
+    def _context_bodies(self) -> dict[str, str]:
+        """Every thread comment body by id, read once (issue #913 parts)."""
+        if "bodies" not in self._context_state:
+            bodies: dict[str, str] = {}
+            loader = getattr(self.adapter, "load_raw_thread", None)
+            if loader is not None:
+                try:
+                    _, comments = loader()
+                    bodies = {
+                        str(comment["id"]): str(comment.get("body") or "")
+                        for comment in comments
+                        if comment.get("id") is not None
+                    }
+                except Exception as exc:  # noqa: BLE001 - parts are best-effort
+                    log.warning("[phase:prompt] could not read thread bodies: %s", exc)
+            self._context_state["bodies"] = bodies
+        return self._context_state["bodies"]
+
+    def _legacy_window_only(self) -> bool:
+        """The thread holds nothing but the issue body, so there is nothing to select.
+
+        An issue-trigger run's thread is just the issue body, which the context
+        block already renders as the user request; the host's recency window
+        (if any) is then the whole thread.
+        """
+        entries = self._context_entries() or []
+        return not any(entry.kind != ContextKind.ISSUE_BODY for entry in entries)
+
+    def _context_selection(self) -> SelectionResult | None:
+        """Select this step's context once per run; ``None`` when unavailable."""
+        if "selection" not in self._context_state:
+            state = self._run_resolved
+            resolved = state.get(_RUN_RESOLVED_KEY) or self._handoff_config()
+            history = self._context_history()
+            self._context_state["selection"] = (
+                self._select_step_context(resolved, history) if resolved else None
+            )
+        return self._context_state["selection"]
+
+    def _context_history(self) -> Sequence[CommentEntry]:
+        """The bounded comment window, read once (the legacy fallback's input)."""
+        if "history" not in self._context_state:
+            try:
+                self._context_state["history"] = self.adapter.load_history(
+                    limit=self.history_limit
+                )
+            except Exception:  # noqa: BLE001 - the legacy window is best-effort
+                self._context_state["history"] = []
+        return self._context_state["history"]
 
     def _thread_ledger_data(self) -> tuple[list[Any], dict[str, str]] | None:
         """Lazily build and memoize this run's reconciled thread ledger."""
@@ -2610,6 +2937,15 @@ class Engine:
         return None
 
     def _previous_state(self) -> WorkflowState | None:
+        """The persisted state; the pre-agent hand-off fills in before it (#889).
+
+        Context selection must run against the *full* history: a mid-run read
+        happens after ``stage_prev_state`` snapshotted the state, and the
+        adapter's state may already have been consumed by the agent child.
+        """
+        seeded = self._seeded_prev_state.get("state")
+        if seeded is not None:
+            return seeded
         try:
             return self.adapter.load_state()
         except Exception:  # noqa: BLE001 - a missing/corrupt state is not fatal
@@ -2713,6 +3049,69 @@ def _render_gate_decision(raw: Any) -> str:
     if payload.get("comment_id"):
         lines.append(f"**Comment:** #{payload['comment_id']}")
     return "\n\n".join(lines)
+
+
+def _render_context_entries(
+    entries: Sequence[Any],
+    limit: int | None,
+    bodies: Mapping[str, str] | None = None,
+    thread: Sequence[Any] = (),
+) -> str:
+    """Render the selected entries as ``## Recent thread`` (#889).
+
+    Selection already dropped the engine bookkeeping (D2); the renderer only
+    orders the blocks. A positive ``limit`` keeps the last N of them, ``None``
+    renders all. ``thread`` is the whole typed thread: the untrusted human rows
+    selection left out are appended as one-line, clearly-unverified summaries
+    (prompt-injection guard, issue #872).
+
+    A split answer is one entry (issue #913): its first comment is rendered as
+    the body and ``bodies`` supplies the continuation rows, in thread order.
+    Without ``bodies`` the first comment renders alone, as before.
+    """
+    selected = [entry for entry in entries if getattr(entry, "trusted", True)]
+    if limit is not None and limit > 0:
+        selected = selected[-limit:]
+    blocks: list[str] = []
+    for entry in selected:
+        heading = _context_entry_heading(entry)
+        body = str(getattr(entry, "body", "") or "")
+        rows = [body]
+        parts = tuple(getattr(entry, "parts", None) or ())
+        if len(parts) > 1 and bodies:
+            rows.extend(bodies.get(part, "") for part in parts[1:])
+        rendered = [_agent_facing_body(row) for row in rows if str(row).strip()]
+        if rendered:
+            blocks.append(
+                "\n\n".join(f"### {heading}\n\n{text}" for text in rendered)
+            )
+    return (
+        ("\n\n".join(blocks) if blocks else "_(no prior thread)_")
+        + _render_context_appendix(thread)
+    )
+
+
+def _render_context_appendix(thread: Sequence[Any]) -> str:
+    """Untrusted human rows selection left out, as one-line summaries (#872)."""
+    from nebuko.engine.context_selection import render_unverified_appendix
+
+    return render_unverified_appendix(thread)
+
+
+def _context_entry_heading(entry: Any) -> str:
+    """A short ``author — step`` heading for one selected entry."""
+    kind = str(getattr(entry, "kind", ""))
+    if kind == ContextKind.ISSUE_BODY:
+        return "issue body"
+    if kind == ContextKind.AGENT_OUTPUT:
+        step = getattr(entry, "step", None)
+        round_number = getattr(entry, "round", None)
+        if not step:
+            return "agent output"
+        if not round_number or round_number <= 1:
+            return f"agent output — {step}"
+        return f"agent output — {step} (round {round_number})"
+    return "human comment"
 
 
 def _render_history(history: Sequence[CommentEntry]) -> str:

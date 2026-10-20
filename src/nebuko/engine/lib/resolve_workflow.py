@@ -1155,6 +1155,10 @@ def build_step_inputs(workflow: WorkflowDefinition, step: WorkflowStep) -> str:
     later (:func:`attach_call_frames`) once the run's final position is known.
     Empty string when the step declares no inputs, so un-wired steps keep
     their existing resolver output verbatim.
+
+    A workflow's entry step needs nothing declared: it receives the issue body
+    by the context rule's default (``[issue_body]``, issue #889 / D11), and
+    every later step defaults to the previous step's output.
     """
     if not step.inputs:
         return ""
