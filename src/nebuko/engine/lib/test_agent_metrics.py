@@ -1186,6 +1186,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
     def test_no_price_rows_without_estimate(self):
         result_str = "\n".join(generate_agent_summary_table(self._make_aggregated()))
         self.assertNotIn("price ($/1M)", result_str)
+        self.assertNotIn("Price details used for the estimation", result_str)
 
     def test_footnote_states_the_price_unit(self):
         _, result_str = self._estimate_lines()
@@ -1211,14 +1212,37 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         lines = generate_agent_summary_table(agg)
         return lines, "\n".join(lines)
 
-    def test_price_rows_follow_cost_and_mirror_the_estimate(self):
-        lines, _ = self._estimate_lines()
-        labels = [line.split("|")[1].strip() for line in lines if line.startswith("| ")]
-        cost_index = labels.index("Cost")
+    def test_price_rows_live_in_a_folded_block_after_the_summary_table(self):
+        lines, result_str = self._estimate_lines()
+        # First folded block is the pricing one; the second is the detail block.
+        summary_index = next(i for i, line in enumerate(lines) if line.startswith("<summary>"))
+        price_end = lines.index("</details>", summary_index)
         self.assertEqual(
-            labels[cost_index + 1 : cost_index + 4],
+            lines[summary_index],
+            "<summary>Price details used for the estimation</summary>",
+        )
+        labels = [
+            line.split("|")[1].strip()
+            for line in lines[:summary_index]
+            if line.startswith("| ")
+        ]
+        self.assertNotIn("price ($/1M)", " ".join(labels))
+        price_labels = [
+            line.split("|")[1].strip()
+            for line in lines[summary_index:price_end]
+            if line.startswith("| ") and line.split("|")[1].strip()
+        ]
+        self.assertEqual(
+            price_labels,
             ["Input price ($/1M)", "Output price ($/1M)", "Cache hit price ($/1M)"],
         )
+        # The footnote is the block's caption, not a loose line under the table.
+        footnote_index = next(
+            i for i, line in enumerate(lines) if "estimated from the price table" in line
+        )
+        self.assertGreater(footnote_index, summary_index)
+        self.assertLess(footnote_index, price_end)
+        self.assertIn("</details>", result_str)
         # Estimated agent shows the per-1M prices; reported-cost agent shows "—".
         self.assertEqual(
             _table_cells(self._row(lines, "Input price ($/1M)")),
