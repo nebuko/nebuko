@@ -59,6 +59,14 @@ class ModelPrice(BaseModel):
     cache_read_price: Optional[float] = None
     cache_write_price: Optional[float] = None
 
+    def effective_cache_read_price(self) -> Optional[float]:
+        """The cache-read price cost math charges, unset falling back to input.
+
+        Mirrors ``CostRates.from_prices`` so a displayed tier price is exactly
+        the rate the estimate used (issue #1048).
+        """
+        return _pick(self.cache_read_price, self.input_price)
+
     # @stub-protected: signature defined by architect — do not modify
     def merged_over(self, override: Optional["ModelPrice"]) -> "ModelPrice":
         """Return this price bundle with ``override``'s set fields taking precedence.

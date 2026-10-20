@@ -26,7 +26,7 @@ from pricing.features.load_price_table.load_price_table import load_price_table
 from pricing.features.resolve_model_rates.resolve_model_rates import (
     resolve_model_rates,
 )
-from pricing.sub_domains.price_table.price_table import PriceTable
+from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
 
 #: The SDK's placeholder for an unidentified model (see ``metrics_collector``).
 PLACEHOLDER_MODEL = "default"
@@ -74,25 +74,39 @@ class ReportCostResolver:  # @stub-protected
             return name
         return PLACEHOLDER_MODEL
 
+    def model_price(  # @stub-protected
+        self, metric: "Metrics | Mapping[str, Any]"
+    ) -> Optional[ModelPrice]:
+        """The per-1M price the estimate used for ``metric``, or ``None``.
+
+        ``None`` when the provider reported the cost, when the model identity is
+        the placeholder, or when the table has no complete price — i.e. exactly
+        the cases where ``effective_cost`` did not price tokens (issue #1048).
+        """
+        if (_field(metric, "cost", 0.0) or 0.0) > 0:
+            return None
+
+        model_path = self.model_key(metric)
+        if model_path == PLACEHOLDER_MODEL or self.table is None:
+            return None
+
+        return resolve_model_rates(_ModelRef(model_path=model_path), self.table)
+
     def effective_cost(self, metric: "Metrics | Mapping[str, Any]") -> float:  # @stub-protected
         """The entry's USD cost for reporting; never mutates ``metric``."""
         reported = _field(metric, "cost", 0.0) or 0.0
         if reported > 0:
             return float(reported)
 
-        model_path = self.model_key(metric)
-        if model_path == PLACEHOLDER_MODEL:
-            return 0.0
-
-        rates = self._rates(model_path)
-        if rates is None:
+        price = self.model_price(metric)
+        if price is None:
             return 0.0
 
         return SessionCost(
             input_tokens=int(_field(metric, "input_tokens", 0) or 0),
             output_tokens=int(_field(metric, "output_tokens", 0) or 0),
             cache_read_tokens=int(_field(metric, "cache_hit_tokens", 0) or 0),
-            rates=rates,
+            rates=self._rates(price),
         ).total()
 
     def is_estimated(self, metric: "Metrics | Mapping[str, Any]") -> bool:  # @stub-protected
@@ -102,23 +116,10 @@ class ReportCostResolver:  # @stub-protected
         marker never lies: a reported cost, an unresolved identity or a missing
         rate is *not* an estimate, and priced tokens are (issue #1019).
         """
-        reported = _field(metric, "cost", 0.0) or 0.0
-        if reported > 0:
-            return False
+        return self.model_price(metric) is not None
 
-        model_path = self.model_key(metric)
-        if model_path == PLACEHOLDER_MODEL:
-            return False
-
-        return self._rates(model_path) is not None
-
-    def _rates(self, model_path: str) -> Optional[CostRates]:
-        """Per-token rates for ``model_path`` from the default table, or ``None``."""
-        if self.table is None:
-            return None
-        price = resolve_model_rates(_ModelRef(model_path=model_path), self.table)
-        if price is None:
-            return None
+    def _rates(self, price: ModelPrice) -> Optional[CostRates]:
+        """Per-token rates for a resolved per-1M ``price``, or ``None``."""
         return CostRates.from_prices(
             price.input_price,
             price.output_price,

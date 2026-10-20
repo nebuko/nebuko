@@ -170,6 +170,83 @@ class TestIsEstimated:
         assert resolver.effective_cost(reported) > 0 and not resolver.is_estimated(reported)
 
 
+class TestModelPrice:
+    """The per-1M price the report renders next to an estimated cost (issue #1048)."""
+
+    def test_estimated_entry_exposes_the_table_price(self):
+        m = Metrics(
+            model_name="openai/deepseek/deepseek-v4.1-flash",
+            input_tokens=1_000_000,
+            output_tokens=500_000,
+            cost=0.0,
+        )
+        price = _resolver().model_price(m)
+        assert price is not None
+        assert price.input_price == pytest.approx(0.3)
+        assert price.output_price == pytest.approx(1.2)
+        assert price.cache_read_price == pytest.approx(0.006)
+
+    def test_displayed_price_reproduces_the_effective_cost(self):
+        m = Metrics(
+            model_name="openai/deepseek/deepseek-v4.1-flash",
+            input_tokens=1_000_000,
+            output_tokens=500_000,
+            cache_hit_tokens=200_000,
+            cost=0.0,
+        )
+        price = _resolver().model_price(m)
+        assert price is not None
+        expected = (
+            800_000 * price.input_price
+            + 200_000 * price.cache_read_price
+            + 500_000 * price.output_price
+        ) / 1_000_000
+        assert _resolver().effective_cost(m) == pytest.approx(expected)
+
+    def test_reported_cost_has_no_price(self):
+        m = Metrics(model_name="openai/deepseek/deepseek-v4.1-flash", cost=1.25)
+        assert _resolver().model_price(m) is None
+
+    def test_placeholder_identity_has_no_price(self):
+        m = Metrics(model_name="default", input_tokens=1_000_000)
+        assert _resolver().model_price(m) is None
+
+    def test_unknown_model_has_no_price(self):
+        m = Metrics(model_name="openai/does-not-exist", input_tokens=100)
+        assert _resolver().model_price(m) is None
+
+    def test_missing_table_has_no_price(self):
+        m = Metrics(model_name="openai/deepseek/deepseek-v4.1-flash", input_tokens=1_000_000)
+        assert ReportCostResolver(table=None).model_price(m) is None
+
+    def test_accepts_a_legacy_mapping(self):
+        metric = {"model_name": "openai/deepseek/deepseek-v4.1-flash", "cost": 0.0}
+        price = _resolver().model_price(metric)
+        assert price is not None and price.input_price == pytest.approx(0.3)
+
+    def test_effective_cache_read_price_falls_back_to_input(self):
+        """An entry without a cache-read price bills cache hits at the input rate."""
+        table = PriceTable(
+            source="openrouter",
+            fetched_at=1.0,
+            entries={
+                "vendor/no-cache-model": ModelPrice(input_price=2.0, output_price=8.0)
+            },
+        )
+        m = Metrics(
+            model_name="vendor/no-cache-model",
+            input_tokens=500_000,
+            cache_hit_tokens=500_000,
+            cost=0.0,
+        )
+        resolver = _resolver(table)
+        price = resolver.model_price(m)
+        assert price is not None
+        assert price.effective_cache_read_price() == pytest.approx(2.0)
+        # 500k cache-hit tokens at $2.00/1M; no regular input tokens.
+        assert resolver.effective_cost(m) == pytest.approx(1.0)
+
+
 class TestBuild:
     def test_build_loads_the_table_through_the_injected_fetcher(self, tmp_path, monkeypatch):
         import json
