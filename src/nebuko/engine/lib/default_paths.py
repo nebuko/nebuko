@@ -64,15 +64,21 @@ def workflow_dirs() -> tuple[str, str | None]:
     layers, most-specific first — the same pair ``RunLoop._workflow_dirs``
     builds from :class:`nebuko.engine.paths.NebukoPaths`.
 
+    ``WORKFLOWS_DIR`` and ``LOCAL_WORKFLOWS_DIR`` pin both layers: the engine
+    exports the exact pair it hands the resolver (issue #889), so callers such
+    as the human-gate check resolve against the run's roots instead of the
+    current working directory. Both values are used verbatim.
+
     Returns:
         ``(shipped, local)``: the shipped directory (pinned by
-        ``WORKFLOWS_DIR`` when set) and the repo-local override directory, or
-        ``None`` when it is absent or identical to the shipped one.
+        ``WORKFLOWS_DIR`` when set) and the repo-local override directory
+        (pinned by ``LOCAL_WORKFLOWS_DIR`` when set), or ``None`` when it is
+        absent or identical to the shipped one.
     """
     shipped = os.environ.get("WORKFLOWS_DIR") or str(
         checkout_root() / "defaults" / "workflows"
     )
-    local = user_dir() / "workflows"
+    local = Path(os.environ.get("LOCAL_WORKFLOWS_DIR") or user_dir() / "workflows")
     if local.is_dir() and local.resolve() != Path(shipped).resolve():
         return shipped, str(local)
     return shipped, None

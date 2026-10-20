@@ -191,6 +191,23 @@ def _skills_dir() -> str:
     return os.path.abspath(default_paths.config_dir("skills", "SKILLS_DIR"))
 
 
+def _workflow_dirs_env(
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> dict[str, str]:
+    """Export the resolver's workflow search roots to the step environment.
+
+    ``build_output``'s human-gate check resolves ``WORKFLOW_NAME`` through
+    ``default_paths.workflow_dirs()``; shipping the same pair here keeps it on
+    the run's roots rather than the child's ``cwd`` (issue #889). The local
+    layer is always emitted — empty when unset — so the transport is explicit.
+    """
+    return {
+        "WORKFLOWS_DIR": workflows_dir,
+        "LOCAL_WORKFLOWS_DIR": local_workflows_dir or "",
+    }
+
+
 def _build_result(
     config: dict,
     prompt_base: str,
@@ -231,6 +248,7 @@ def _build_result(
             "WORKFLOW_STEP": config.get("config_step", ""),
             "PARENT_WORKFLOW": config.get("config_parent_workflow", ""),
             "PARENT_WORKFLOW_STEP": config.get("config_parent_workflow_step", ""),
+            **_workflow_dirs_env(workflows_dir, local_workflows_dir),
         }
         # Centralized v2 position emission (issue #618): the script path
         # returns before routing, so attach the chain here from the flat
@@ -372,6 +390,11 @@ def _build_result(
         "WORKFLOW_NEXT": wf_result.get("WORKFLOW_NEXT", ""),
         "PARENT_WORKFLOW": wf_result.get("PARENT_WORKFLOW", ""),
         "PARENT_WORKFLOW_STEP": wf_result.get("PARENT_WORKFLOW_STEP", ""),
+        # Workflow search roots (issue #889): the exact pair this resolution
+        # used, so a later process (``build_output``'s human-gate check) loads
+        # the same workflow from the same directories instead of re-deriving
+        # them from its own ``cwd``.
+        **_workflow_dirs_env(workflows_dir, local_workflows_dir),
         # Callback return address (issues #765, #1033): engine-owned run state.
         # The resolver stores the caller here so ``build_output`` can persist it
         # and route the callee's verdict back; the agent never sees or sets it.

@@ -403,6 +403,11 @@ def _load_gated_step_def(
     layered directories (per file, issue #987) and fall back to a declared-name
     scan, because the recorded ``WORKFLOW_NAME`` is the workflow's declared
     ``name:`` and need not match its file stem.
+
+    The search roots come from :func:`default_paths.workflow_dirs`, which
+    honours ``WORKFLOWS_DIR`` / ``LOCAL_WORKFLOWS_DIR``. The resolver exports
+    both for every step (issue #889), so the gate loads the workflow from the
+    same directories the run resolved it in — not from this process's ``cwd``.
     """
     if not workflow_name or not workflow_step:
         return False

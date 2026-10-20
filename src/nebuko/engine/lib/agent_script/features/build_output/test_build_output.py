@@ -984,6 +984,64 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
         self.assertIsNone(gate)
         self.assertIn("could not load workflow 'does-not-exist'", logs.output[0])
 
+    def test_env_pinned_local_dir_arms_the_gate_from_any_cwd(self):
+        """Repro of #889: the gate check must not re-derive roots from ``cwd``.
+
+        The child process runs outside the repo, so ``user_dir()`` points at an
+        unrelated directory and ``.nebuko/workflows/`` is invisible. The
+        resolver exports ``WORKFLOWS_DIR`` / ``LOCAL_WORKFLOWS_DIR``; pinned to
+        those, the gate loads the same ``default-with-output`` the run used.
+        """
+        repo = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, repo, True)
+        shipped = os.path.join(repo, "defaults", "workflows")
+        local = os.path.join(repo, ".nebuko", "workflows")
+        self._write_workflow(
+            shipped, "default", "  - name: plan\n    agent: architect\n    next: null\n",
+        )
+        self._write_workflow(
+            local,
+            "default-with-output",
+            "  - name: plan\n    agent: architect\n    human_gate: true\n    next: null\n",
+        )
+        # The child's cwd: a temp dir with no ``.nebuko`` at all.
+        os.chdir(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, os.getcwd(), True)
+        env = {
+            "WORKFLOWS_DIR": shipped,
+            "LOCAL_WORKFLOWS_DIR": local,
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertNoLogs("build_output", level="WARNING"):
+                result, gate = apply_gate_lock(
+                    _completed(), "default-with-output", "plan"
+                )
+        self.assertIs(result.appreciation, Appreciation.APPROVED)
+        self.assertEqual(gate.step, "plan")
+        self.assertTrue(gate.armed())
+
+    def test_workflow_dirs_prefers_the_local_env_override(self):
+        """``LOCAL_WORKFLOWS_DIR`` pins the local layer; empty falls back to cwd."""
+        import default_paths
+
+        shipped = os.path.join(self._repo, "shipped")
+        local = os.path.join(self._repo, "elsewhere", "workflows")
+        os.makedirs(local)
+        with mock.patch.dict(
+            os.environ,
+            {"WORKFLOWS_DIR": shipped, "LOCAL_WORKFLOWS_DIR": local},
+            clear=False,
+        ):
+            self.assertEqual(
+                default_paths.workflow_dirs(), (shipped, local)
+            )
+        with mock.patch.dict(
+            os.environ, {"WORKFLOWS_DIR": shipped, "LOCAL_WORKFLOWS_DIR": ""},
+            clear=False,
+        ):
+            # The cwd (``self._repo``) carries no ``.nebuko/workflows``.
+            self.assertEqual(default_paths.workflow_dirs(), (shipped, None))
+
 
 class TestHumanGateRealWorkflowYaml(unittest.TestCase):
     """Regression against the real workflows/spec-driven-impl.yaml (issue #506).

@@ -356,6 +356,46 @@ class TestDefaultWithOutputWorkflow:
             "assumptions",
         ]
 
+    def test_the_resolver_exports_the_dirs_the_gate_check_searches(self) -> None:
+        """Issue #889: the gate check must load from the resolver's own roots.
+
+        ``build_output`` resolves ``WORKFLOW_NAME`` through
+        ``default_paths.workflow_dirs()``; both layers are exported on the step
+        so that check no longer falls back to the child's ``cwd``.
+        """
+        from nebuko.engine.paths import ensure_import_path
+
+        ensure_import_path()
+        from resolve_config import resolve_config
+
+        shipped = str(REPO_ROOT / "defaults" / "workflows")
+        local = str(REPO_ROOT / ".nebuko" / "workflows")
+        resolved = resolve_config(
+            "/nebuko run workflow --name default-with-output",
+            "prompts",
+            shipped,
+            is_bot=False,
+            local_workflows_dir=local,
+        )
+
+        assert resolved["WORKFLOWS_DIR"] == shipped
+        assert resolved["LOCAL_WORKFLOWS_DIR"] == local
+
+    def test_an_absent_local_dir_is_exported_as_empty(self) -> None:
+        from nebuko.engine.paths import ensure_import_path
+
+        ensure_import_path()
+        from resolve_config import resolve_config
+
+        resolved = resolve_config(
+            "/nebuko run workflow --name default",
+            "prompts",
+            str(REPO_ROOT / "defaults" / "workflows"),
+            is_bot=False,
+        )
+
+        assert resolved["LOCAL_WORKFLOWS_DIR"] == ""
+
 
 # ── host-side finalize turn ────────────────────────────────────────────────
 
