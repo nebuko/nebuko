@@ -798,20 +798,19 @@ class PriceCell:
 
 @dataclass(frozen=True)
 class ModelPriceRow:
-    """One pricing row keyed by the model a price was resolved for.
+    """One pricing row: a model identity and the per-1M prices it was estimated with.
 
-    The estimation is controlled per model, so the price block names the model
-    rather than the agent role that used it (issue #1048): two roles on the
-    same model collapse into one column, and a multi-model role spans two.
+    The estimation is controlled per model, so the model names each row and the
+    price tiers are the columns (issue #1048).
     """
 
     label: str
-    #: One rendered cell per model column, aligned with the header's columns.
+    #: One rendered cell per price column, aligned with the header's columns.
     cells: Tuple[str, ...]
 
     # @stub-protected
     def render(self) -> str:
-        """'| Input price ($/1M) | $0.3000 | $0.5000 |'."""
+        """'| openai/model-a | $0.3000 | $1.2000 | $0.0060 |'."""
         return "| " + self.label + " |" + "".join(f" {cell} |" for cell in self.cells)
 
 
@@ -925,8 +924,8 @@ def _summary_rows(aggregated, totals, columns):
     return tuple(rows)
 
 
-#: (``ModelPrice`` attribute, row label) of the pricing rows, in display order.
-PRICE_ROWS = (
+#: (``ModelPrice`` attribute, column label) of the pricing columns, in display order.
+PRICE_COLUMNS = (
     ("input_price", "Input price ($/1M)"),
     ("output_price", "Output price ($/1M)"),
     ("cache_read_price", "Cache hit price ($/1M)"),
@@ -934,52 +933,44 @@ PRICE_ROWS = (
 
 
 def _price_models(aggregated):
-    """Every model an estimate was priced with, sorted for a stable header.
+    """The priced models, sorted for a stable row order.
 
-    Unions the buckets of all agents: the block's columns are models, not
-    roles, because the price a user tunes is configured per model (issue #1048).
-    """
-    return tuple(
-        sorted(
-            {
-                model
-                for bucket in aggregated.values()
-                for model in (bucket.get("prices_by_model") or {})
-            }
-        )
-    )
-
-
-def _price_rows(aggregated, models):
-    """One row per estimation tier: the per-1M USD price of each model.
-
-    Lives in the folded pricing block rather than the summary table so the
-    estimate can still be audited (issue #1048). A model is listed only when
-    some agent was estimated with it; the block has no Total column because
-    prices are per model, not additive.
+    Unions the buckets of all agents: each row is a model, not a role, because
+    the price a user tunes is configured per model (issue #1048).
     """
     priced = {
         model: price
         for bucket in aggregated.values()
         for model, price in (bucket.get("prices_by_model") or {}).items()
     }
-    rows = []
-    for key, label in PRICE_ROWS:
-        cells = []
-        for model in models:
-            price = priced.get(model)
-            value = None
-            if price is not None:
-                # The cache-hit row shows the effective rate, as the estimate bills it.
-                value = (
-                    price.effective_cache_read_price()
-                    if key == "cache_read_price"
-                    else getattr(price, key)
-                )
-            prices = () if value is None else (float(value),)
-            cells.append(PriceCell(prices=prices).render())
-        rows.append(ModelPriceRow(label=label, cells=tuple(cells)))
-    return rows
+    return tuple((model, priced[model]) for model in sorted(priced))
+
+
+def _price_cell(price, key):
+    """Per-1M USD price of one tier, or :data:`NO_PRICE_CELL` when unset."""
+    # The cache-hit column shows the effective rate, as the estimate bills it.
+    if key == "cache_read_price":
+        value = price.effective_cache_read_price()
+    else:
+        value = getattr(price, key)
+    prices = () if value is None else (float(value),)
+    return PriceCell(prices=prices).render()
+
+
+def _price_rows(aggregated):
+    """One row per priced model, one cell per estimation tier.
+
+    Lives in the folded pricing block rather than the summary table so the
+    estimate can still be audited (issue #1048). A model is listed only when
+    some agent was estimated with it.
+    """
+    return tuple(
+        ModelPriceRow(
+            label=model,
+            cells=tuple(_price_cell(price, key) for key, _ in PRICE_COLUMNS),
+        )
+        for model, price in _price_models(aggregated)
+    )
 
 
 def _detail_rows(aggregated, totals, columns):
@@ -1127,13 +1118,13 @@ class PriceSection:
 
     The footnote is the block's caption, so the ``*`` marker points at the
     prices it explains (issue #1048). Renders nothing when no cost is estimated.
-    Columns are the model identities the estimates were priced with, not the
-    agent roles: the per-1M price is a model setting, so the model name is what
-    a user needs to control the estimation.
+    Each row is a model the estimates were priced with and the columns are the
+    price tiers: the per-1M price is a model setting, so the model name is what
+    a user needs to control the estimation (issue #1048).
     """
 
-    columns: Tuple[str, ...]
-    rows: Tuple[ModelPriceRow, ...]
+    columns: Tuple[str, ...] = tuple(label for _, label in PRICE_COLUMNS)
+    rows: Tuple[ModelPriceRow, ...] = ()
     footnote: str = ESTIMATE_FOOTNOTE
 
     # @stub-protected
@@ -1144,9 +1135,8 @@ class PriceSection:
         """Price rows per priced model; omitted when no cost cell is starred."""
         column_keys = tuple(sorted(aggregated.keys(), key=_agent_sort_key))
         summary_rows = _summary_rows(aggregated, totals, column_keys)
-        models = _price_models(aggregated) if _has_estimate(summary_rows) else ()
-        rows = _price_rows(aggregated, models) if models else ()
-        return cls(columns=models, rows=tuple(rows))
+        rows = _price_rows(aggregated) if _has_estimate(summary_rows) else ()
+        return cls(rows=rows)
 
     @property
     def is_empty(self) -> bool:
@@ -1157,8 +1147,8 @@ class PriceSection:
         """'<details><summary>…</summary>' + price table + footnote + '</details>'."""
         if self.is_empty:
             return []
-        header = "| | " + " | ".join(self.columns) + " |"
-        separator = "|---:" * (len(self.columns) + 1) + "|"
+        header = "| Model | " + " | ".join(self.columns) + " |"
+        separator = "|---|" + "---:|" * len(self.columns)
         lines = ["", "<details>", f"<summary>{PRICE_SECTION_SUMMARY}</summary>", "", header, separator]
         lines.extend(row.render() for row in self.rows)
         lines.extend(["", f"> _{self.footnote}_", "", "</details>"])

@@ -1228,14 +1228,20 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             if line.startswith("| ")
         ]
         self.assertNotIn("price ($/1M)", " ".join(labels))
-        price_labels = [
-            line.split("|")[1].strip()
-            for line in lines[summary_index:price_end]
-            if line.startswith("| ") and line.split("|")[1].strip()
+        price_block = lines[summary_index:price_end]
+        table_rows = [
+            _table_cells(line)
+            for line in price_block
+            if line.startswith("| ")
         ]
+        # Price tiers in the columns, model names on the rows.
         self.assertEqual(
-            price_labels,
-            ["Input price ($/1M)", "Output price ($/1M)", "Cache hit price ($/1M)"],
+            table_rows[0],
+            ["Model", "Input price ($/1M)", "Output price ($/1M)", "Cache hit price ($/1M)"],
+        )
+        self.assertEqual(
+            table_rows[1],
+            ["openai/model-a", "$0.3000", "$1.2000", "$0.0060"],
         )
         # The footnote is the block's caption, not a loose line under the table.
         footnote_index = next(
@@ -1244,30 +1250,15 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertGreater(footnote_index, summary_index)
         self.assertLess(footnote_index, price_end)
         self.assertIn("</details>", result_str)
-        # The block is keyed by model, not by the role that used it.
-        self.assertIn("| | openai/model-a |", "\n".join(lines[summary_index:price_end]))
-        self.assertEqual(
-            _table_cells(self._row(lines, "Input price ($/1M)")),
-            ["Input price ($/1M)", "$0.3000"],
-        )
-        self.assertEqual(
-            _table_cells(self._row(lines, "Output price ($/1M)")),
-            ["Output price ($/1M)", "$1.2000"],
-        )
-        self.assertEqual(
-            _table_cells(self._row(lines, "Cache hit price ($/1M)")),
-            ["Cache hit price ($/1M)", "$0.0060"],
-        )
 
     def test_price_cells_carry_no_estimate_marker(self):
         lines, _ = self._estimate_lines()
-        for label in ("Input price ($/1M)", "Output price ($/1M)", "Cache hit price ($/1M)"):
-            self.assertFalse(
-                any(cell.endswith("*") for cell in _table_cells(self._row(lines, label))[1:])
-            )
+        row = _table_cells(self._row(lines, "openai/model-a"))
+        self.assertTrue(row)
+        self.assertFalse(any(cell.endswith("*") for cell in row[1:]))
 
-    def test_roles_sharing_a_model_share_one_price_column(self):
-        """Two roles on the same model collapse into one model column."""
+    def test_roles_sharing_a_model_share_one_price_row(self):
+        """Two roles on the same model collapse into one model row."""
         agg = aggregate_by_agent(
             [
                 Metrics(agent_role="architect", model_name="openai/model-a", cost=0.0),
@@ -1277,8 +1268,8 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         )
         lines = generate_agent_summary_table(agg)
         self.assertEqual(
-            _table_cells(self._row(lines, "Input price ($/1M)")),
-            ["Input price ($/1M)", "$0.3000"],
+            _table_cells(self._row(lines, "openai/model-a")),
+            ["openai/model-a", "$0.3000", "$1.2000", "$0.0060"],
         )
         # The summary table still lists the roles; only the price block is model-keyed.
         price_start = next(i for i, line in enumerate(lines) if line.startswith("<summary>"))
@@ -1287,7 +1278,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         self.assertNotIn("Architect", price_block)
         self.assertNotIn("Dev", price_block)
 
-    def test_multi_model_agent_lists_each_distinct_price(self):
+    def test_multi_model_agent_lists_one_price_row_per_model(self):
         agg = aggregate_by_agent(
             [
                 Metrics(
@@ -1302,7 +1293,7 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                     input_tokens=1_000_000,
                     cost=0.0,
                 ),
-                # Duplicate price of model-a must not repeat in the cell.
+                # Duplicate price of model-a must not add a second row.
                 Metrics(
                     agent_role="dev",
                     model_name="openai/model-a",
@@ -1314,12 +1305,16 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         )
         lines = generate_agent_summary_table(agg)
         self.assertEqual(
-            _table_cells(self._row(lines, "Input price ($/1M)")),
-            ["Input price ($/1M)", "$0.3000", "$0.5000"],
+            _table_cells(self._row(lines, "openai/model-a")),
+            ["openai/model-a", "$0.3000", "$1.2000", "$0.0060"],
+        )
+        self.assertEqual(
+            _table_cells(self._row(lines, "openai/model-b")),
+            ["openai/model-b", "$0.5000", "$2.0000", "$0.0100"],
         )
 
-    def test_cache_hit_row_shows_input_price_when_cache_price_is_absent(self):
-        """The estimate bills cache hits at the input rate, so the row must too."""
+    def test_cache_hit_column_shows_input_price_when_cache_price_is_absent(self):
+        """The estimate bills cache hits at the input rate, so the column must too."""
         table = PriceTable(
             source="openrouter",
             fetched_at=1.0,
@@ -1339,8 +1334,8 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
         )
         lines = generate_agent_summary_table(agg)
         self.assertEqual(
-            _table_cells(self._row(lines, "Cache hit price ($/1M)")),
-            ["Cache hit price ($/1M)", "$2.0000"],
+            _table_cells(self._row(lines, "vendor/no-cache-model")),
+            ["vendor/no-cache-model", "$2.0000", "$8.0000", "$2.0000"],
         )
 
     def test_aggregate_ignores_prices_of_reported_cost_runs(self):
