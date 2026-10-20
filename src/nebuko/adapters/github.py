@@ -16,6 +16,7 @@ from nebuko.engine.paths import ensure_import_path
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
+    from nebuko.engine.context_selection import ContextEntry
     from nebuko.engine.models import CommentEntry, Trigger
     from workflow_state.workflow_state import WorkflowState
 
@@ -181,6 +182,17 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return self._engine_actor
 
     # @stub-protected
+    def load_context_entries(self) -> "list[ContextEntry]":
+        """Typed, forward-ordered thread entries for context selection (#889).
+
+        Empty when the host cannot supply a full thread: the engine then
+        degrades to its bounded comment window and warns (D9).
+        """
+        from nebuko.engine.context_entries import entries_from_raw_thread
+
+        issue, comments = self.load_raw_thread()
+        return entries_from_raw_thread(issue, comments)
+
     def _thread_snapshot(self) -> Any:
         """Return the cached per-run snapshot, fetching the thread at most once."""
         if self._snapshot is None:

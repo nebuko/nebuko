@@ -19,6 +19,7 @@ from nebuko.engine.paths import ensure_import_path
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
+    from nebuko.engine.context_selection import ContextEntry
     from nebuko.engine.models import CommentEntry, Trigger
     from workflow_state.workflow_state import WorkflowState
 
@@ -70,9 +71,11 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
     # @stub-protected
     def load_raw_thread(self) -> tuple[Any, list[dict[str, Any]]]:
-        """Synthetic ``(issue, comments)`` for the thread ledger (issue #872).
+        """Read-only ``(issue, comments)`` payloads for context selection (#889).
 
-        The local journal carries no GitHub ids, so a stable 1-based positional
+        Same contract as :meth:`GitHubAdapter.load_raw_thread`: the issue object
+        (``None`` locally) and the full, oldest-first comment list. The local
+        journal carries no GitHub ids, so a stable 1-based positional
         id stands in (the journal is append-only, so existing ids never shift).
         There is no issue object locally, so the ledger is comment-only.
 
@@ -95,6 +98,21 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return None, comments
 
     # @stub-protected
+    def load_context_entries(self) -> "list[ContextEntry]":
+        """Typed, forward-ordered thread entries for context selection (#889).
+
+        Empty when the host cannot supply a full thread: the engine then
+        degrades to its bounded comment window and warns (D9).
+        """
+        from nebuko.engine.context_entries import entries_from_raw_thread
+
+        issue, comments = self.load_raw_thread()
+        if issue is None and self._trigger is not None and self._trigger.issue_body:
+            # No issue payload in the journal: the trigger's snapshot is the
+            # issue body the entry rule needs (D11 / default-last).
+            issue = {"body": self._trigger.issue_body, "id": None}
+        return entries_from_raw_thread(issue, comments)
+
     def post(self, body: str) -> str:
         self._run_dir.mkdir(parents=True, exist_ok=True)
         stored = self._ensure_terminal_marker(body)
