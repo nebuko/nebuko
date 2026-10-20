@@ -159,6 +159,18 @@ class TestModelPriceMergedOver:
         assert merged == base
         assert merged is not base
 
+
+class TestModelPriceEffectiveCacheRead:
+    """The cache-read rate cost math charges (issue #1048)."""
+
+    def test_reported_cache_read_price_wins(self):
+        price = ModelPrice(input_price=2.0, cache_read_price=0.2)
+        assert price.effective_cache_read_price() == 0.2
+
+    def test_unset_cache_read_price_falls_back_to_input(self):
+        price = ModelPrice(input_price=2.0, output_price=8.0)
+        assert price.effective_cache_read_price() == 2.0
+
     def test_all_none_override_keeps_base(self):
         base = ModelPrice(input_price=1.0, output_price=2.0)
         merged = base.merged_over(ModelPrice())

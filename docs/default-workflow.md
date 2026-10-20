@@ -333,7 +333,8 @@ per-tool/provider-health block. Costs the provider did not report are
 estimated from the default price service and marked `*`; when any such
 estimate exists, `Input price ($/1M)`, `Output price ($/1M)` and
 `Cache hit price ($/1M)` rows right under `Cost` show the per-agent prices
-that produced it (issue #1048).
+that produced it (issue #1048). A table entry without a cache-read price
+bills cache hits at the input rate, and the row shows that input price.
 
 ---
 

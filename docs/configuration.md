@@ -118,7 +118,9 @@ providers:
 > are the **report-time table prices** (config prices are not persisted into
 > metrics) for the estimated agents only; an agent whose cost was
 > provider-reported shows `—`, and an agent that used several priced models
-> lists each distinct value.
+> lists each distinct value. A table entry without a cache-read price bills
+> cache hits at the input rate, so the `Cache hit price ($/1M)` row shows that
+> input price rather than `—`.
 
 Sampling parameters and their typical ranges:
 

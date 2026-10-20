@@ -515,12 +515,14 @@ def _accumulate_prices(agg, price):
 
     Only the tiers the report-time math consumes are kept: cache-write tokens
     are never priced at report time, so the all-in-one input default for
-    ``cache_write_price`` would be noise.
+    ``cache_write_price`` would be noise. The cache-read tier uses the price's
+    effective rate (input fallback), like the cost math does — a table entry
+    without a reported cache-read price still bills cache hits.
     """
     for key, value in (
         ("input_prices", price.input_price),
         ("output_prices", price.output_price),
-        ("cache_read_prices", price.cache_read_price),
+        ("cache_read_prices", price.effective_cache_read_price()),
     ):
         if value is not None:
             agg[key].add(float(value))

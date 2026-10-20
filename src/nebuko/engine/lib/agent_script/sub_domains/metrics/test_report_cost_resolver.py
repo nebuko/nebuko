@@ -224,6 +224,28 @@ class TestModelPrice:
         price = _resolver().model_price(metric)
         assert price is not None and price.input_price == pytest.approx(0.3)
 
+    def test_effective_cache_read_price_falls_back_to_input(self):
+        """An entry without a cache-read price bills cache hits at the input rate."""
+        table = PriceTable(
+            source="openrouter",
+            fetched_at=1.0,
+            entries={
+                "vendor/no-cache-model": ModelPrice(input_price=2.0, output_price=8.0)
+            },
+        )
+        m = Metrics(
+            model_name="vendor/no-cache-model",
+            input_tokens=500_000,
+            cache_hit_tokens=500_000,
+            cost=0.0,
+        )
+        resolver = _resolver(table)
+        price = resolver.model_price(m)
+        assert price is not None
+        assert price.effective_cache_read_price() == pytest.approx(2.0)
+        # 500k cache-hit tokens at $2.00/1M; no regular input tokens.
+        assert resolver.effective_cost(m) == pytest.approx(1.0)
+
 
 class TestBuild:
     def test_build_loads_the_table_through_the_injected_fetcher(self, tmp_path, monkeypatch):

@@ -1269,6 +1269,31 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
             ["Input price ($/1M)", "**\u2014**", "$0.3000 / $0.5000"],
         )
 
+    def test_cache_hit_row_shows_input_price_when_cache_price_is_absent(self):
+        """The estimate bills cache hits at the input rate, so the row must too."""
+        table = PriceTable(
+            source="openrouter",
+            fetched_at=1.0,
+            entries={"vendor/no-cache-model": ModelPrice(input_price=2.0, output_price=8.0)},
+        )
+        agg = aggregate_by_agent(
+            [
+                Metrics(
+                    agent_role="dev",
+                    model_name="vendor/no-cache-model",
+                    input_tokens=500_000,
+                    cache_hit_tokens=500_000,
+                    cost=0.0,
+                )
+            ],
+            resolver=ReportCostResolver(table=table),
+        )
+        lines = generate_agent_summary_table(agg)
+        self.assertEqual(
+            _table_cells(self._row(lines, "Cache hit price ($/1M)")),
+            ["Cache hit price ($/1M)", "**\u2014**", "$2.0000"],
+        )
+
     def test_aggregate_ignores_prices_of_reported_cost_runs(self):
         agg = aggregate_by_agent(
             [
