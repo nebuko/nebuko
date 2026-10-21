@@ -7,7 +7,7 @@ embedded in each comment's ``workflow_state`` snapshot (issue #792), aggregates
 by model name and agent role, and posts a summary table.
 
 Environment Variables:
-    GITHUB_TOKEN: GitHub API token (required)
+    GITHUB_TOKEN: GitHub API token (or GH_TOKEN, which takes precedence)
     GITHUB_REPOSITORY: Repository in format owner/repo (required)
     ISSUE_NUMBER: Issue number to analyze (required)
 """
@@ -1321,13 +1321,18 @@ def build_human_metrics_section(comments, all_metrics, issue_body, issue_closed_
     return HumanMetricsRenderer(config).render(metrics)
 
 
+def _resolve_token() -> str | None:
+    """Prefer the workflow-resolved token (OIDC broker / PAT / GITHUB_TOKEN)."""
+    return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+
+
 def main():
-    token = os.environ.get("GITHUB_TOKEN")
+    token = _resolve_token()
     repo = os.environ.get("GITHUB_REPOSITORY")
     issue_number = os.environ.get("ISSUE_NUMBER")
 
     if not token or not repo or not issue_number:
-        print("Error: GITHUB_TOKEN, GITHUB_REPOSITORY, and ISSUE_NUMBER env vars are required.")
+        print("Error: GH_TOKEN (or GITHUB_TOKEN), GITHUB_REPOSITORY, and ISSUE_NUMBER env vars are required.")
         sys.exit(1)
 
     print(f"Fetching comments for {repo} issue #{issue_number}...")

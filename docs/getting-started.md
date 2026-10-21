@@ -19,7 +19,7 @@ read [architecture.md](./architecture.md) and
 
    | Secret | Required | Purpose |
    |--------|----------|---------|
-   | `GH_PAT` | yes | Fine-grained GitHub PAT (Contents, Pull requests, Issues: read and write) — used for git push, issue/PR API calls, and posting comments. |
+   | `GH_PAT` | no | Fallback fine-grained GitHub PAT (Contents, Pull requests, Issues: read and write). Not needed when the App is installed: the workflow mints its token from the OIDC broker. |
    | `OPENROUTER_API_KEY` | one of | LLM provider token (OpenRouter). |
    | `LOCAL_VLLM_API_TOKEN` | one of | Local vLLM provider token. |
    | `COMMANDCODE_API_KEY` | one of | CommandCode subscription ([subscription-plans.md](./subscription-plans.md)). |

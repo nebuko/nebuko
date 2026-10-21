@@ -144,7 +144,7 @@ def main():
     )
     parser.add_argument(
         "--gh-token",
-        default=os.environ.get("GITHUB_TOKEN", ""),
+        default=os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", ""),
         help="GitHub token",
     )
     parser.add_argument(

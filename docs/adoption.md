@@ -158,6 +158,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  id-token: write
 
 jobs:
   agent:
@@ -202,7 +203,7 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 
 | Secret | Required | Purpose |
 |--------|----------|---------|
-| `GH_PAT` | **yes** | Fine-grained PAT for git push, issue/PR API calls, and comments. |
+| `GH_PAT` | no | Fallback fine-grained PAT for git push, issue/PR API calls, and comments. With the App installed (and `id-token: write` granted) the token is minted by the OIDC broker; override the broker with the `NEBUKO_BROKER_URL` repository variable. |
 | `OPENROUTER_API_KEY` | optional | Provider key (the `api_token_env` referenced by `defaults/agents/agent-config-openrouter.yaml`). |
 | `COMMANDCODE_API_KEY` | optional | CommandCode subscription provider. |
 | `OPENCODE_GO_API_KEY` | optional | OpenCode Go provider. |

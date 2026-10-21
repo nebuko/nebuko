@@ -117,3 +117,20 @@ class TestReportTimePricingImportability:
             env=env,
         )
         assert result.returncode == 0, result.stderr
+
+
+def test_resolve_token_prefers_the_workflow_token(monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "agent_metrics_under_test", ENGINE_LIB / "agent_metrics.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    monkeypatch.setenv("GH_TOKEN", "broker-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "job-token")
+    assert module._resolve_token() == "broker-token"
+
+    monkeypatch.delenv("GH_TOKEN")
+    assert module._resolve_token() == "job-token"

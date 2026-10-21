@@ -121,8 +121,8 @@ on:
         description: 'Brave Search API key (optional — only needed for the Brave Search MCP web-search tool)'
         required: false
       GH_PAT:
-        description: 'GitHub Personal Access Token for API access'
-        required: true
+        description: 'Optional fallback GitHub token, used only when the OIDC token broker fails or is not configured'
+        required: false
       EXTRA_SECRET_1_VALUE:
         description: 'Value for the env var named by the EXTRA_SECRET_1_NAME input (issue #834)'
         required: false
@@ -155,6 +155,7 @@ permissions:
     contents: write
     pull-requests: write
     issues: write
+    id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'issues' && format('-issue-{0}', github.event.issue.number) || format('-run-{0}', github.run_id) }}
@@ -226,7 +227,44 @@ jobs:
               run:
                 git config --global --unset-all http.https://github.com/.extraheader || true
                 git config --global --unset-all credential.helper || true
-                
+
+            - name: Acquire GitHub token (OIDC broker)
+              id: gh_token
+              env:
+                BROKER_URL: ${{ vars.NEBUKO_BROKER_URL || 'https://token-broker.nebuko.dev' }}
+                ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+                ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+                FALLBACK_PAT: ${{ secrets.GH_PAT }}
+                FALLBACK_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                # Never fail the job: every failure path falls back to a static token.
+                TOKEN=""
+                SOURCE=""
+                if [ -n "$ID_TOKEN_REQUEST_URL" ] && [ -n "$ID_TOKEN_REQUEST_TOKEN" ]; then
+                  OIDC_JWT=$(curl -sS --max-time 15 \
+                    -H "Authorization: bearer $ID_TOKEN_REQUEST_TOKEN" \
+                    "$ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
+                  if [ -n "$OIDC_JWT" ]; then
+                    TOKEN=$(curl -sS --max-time 15 -X POST \
+                      -H "Authorization: Bearer $OIDC_JWT" \
+                      -H "Accept: application/json" \
+                      "$BROKER_URL" | jq -r '.token // empty')
+                    [ -n "$TOKEN" ] && SOURCE="broker"
+                  fi
+                fi
+                if [ -z "$TOKEN" ] && [ -n "$FALLBACK_PAT" ]; then
+                  TOKEN="$FALLBACK_PAT"
+                  SOURCE="pat"
+                fi
+                if [ -z "$TOKEN" ]; then
+                  TOKEN="$FALLBACK_GITHUB_TOKEN"
+                  SOURCE="github-token"
+                fi
+                echo "::add-mask::$TOKEN"
+                echo "GH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+                echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
+                echo "::notice::GitHub token resolved via $SOURCE"
+
             - name: Checkout repository
               uses: actions/checkout@v5
               with:
@@ -240,7 +278,6 @@ jobs:
                 repository: ${{ job.workflow_repository }}
                 ref: ${{ job.workflow_sha }}
                 path: .nebuko-engine
-                token: ${{ secrets.GH_PAT }}
                 persist-credentials: false
 
             - name: Locate nebuko engine
@@ -269,8 +306,6 @@ jobs:
                   git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $ENCODED"
                   uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
                   uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
-              env:
-                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: "Materialize extra secret slots as env vars"
               env:
@@ -299,7 +334,7 @@ jobs:
               env:
                 ENGINE_ADAPTER: github
                 GFA_SOURCE: github
-                GH_TOKEN: ${{ secrets.GH_PAT }}
+                GH_TOKEN: ${{ env.GH_TOKEN }}
                 GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                 AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
                 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -345,6 +380,43 @@ jobs:
                 git config --global --unset-all http.https://github.com/.extraheader || true
                 git config --global --unset-all credential.helper || true
 
+            - name: Acquire GitHub token (OIDC broker)
+              id: gh_token
+              env:
+                BROKER_URL: ${{ vars.NEBUKO_BROKER_URL || 'https://token-broker.nebuko.dev' }}
+                ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+                ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+                FALLBACK_PAT: ${{ secrets.GH_PAT }}
+                FALLBACK_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                # Never fail the job: every failure path falls back to a static token.
+                TOKEN=""
+                SOURCE=""
+                if [ -n "$ID_TOKEN_REQUEST_URL" ] && [ -n "$ID_TOKEN_REQUEST_TOKEN" ]; then
+                  OIDC_JWT=$(curl -sS --max-time 15 \
+                    -H "Authorization: bearer $ID_TOKEN_REQUEST_TOKEN" \
+                    "$ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
+                  if [ -n "$OIDC_JWT" ]; then
+                    TOKEN=$(curl -sS --max-time 15 -X POST \
+                      -H "Authorization: Bearer $OIDC_JWT" \
+                      -H "Accept: application/json" \
+                      "$BROKER_URL" | jq -r '.token // empty')
+                    [ -n "$TOKEN" ] && SOURCE="broker"
+                  fi
+                fi
+                if [ -z "$TOKEN" ] && [ -n "$FALLBACK_PAT" ]; then
+                  TOKEN="$FALLBACK_PAT"
+                  SOURCE="pat"
+                fi
+                if [ -z "$TOKEN" ]; then
+                  TOKEN="$FALLBACK_GITHUB_TOKEN"
+                  SOURCE="github-token"
+                fi
+                echo "::add-mask::$TOKEN"
+                echo "GH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+                echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
+                echo "::notice::GitHub token resolved via $SOURCE"
+
             - name: Checkout repository
               uses: actions/checkout@v5
               with:
@@ -364,7 +436,6 @@ jobs:
                 repository: ${{ job.workflow_repository }}
                 ref: ${{ job.workflow_sha }}
                 path: .nebuko-cache
-                token: ${{ secrets.GH_PAT }}
                 persist-credentials: false
 
             - name: Setup Python
@@ -388,7 +459,7 @@ jobs:
 
             - name: Aggregate agent metrics
               env:
-                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+                  GITHUB_TOKEN: ${{ env.GH_TOKEN }}
                   GITHUB_REPOSITORY: ${{ github.repository }}
                   ISSUE_NUMBER: ${{ github.event.issue.number }}
               run: |
