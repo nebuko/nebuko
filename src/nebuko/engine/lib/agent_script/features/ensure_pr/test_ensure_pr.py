@@ -34,8 +34,13 @@ def _porcelain_z(text: str) -> str:
     """Render human porcelain as ``git status --porcelain -z`` does.
 
     ``-z`` drops the space between the XY columns and the path and uses NUL
-    terminators, so ``" M a.py"`` becomes ``" M" + "a.py" + "\\0"``.
+    terminators, so ``" M a.py"`` becomes ``" M" + "a.py" + ``\\0``. Text that
+    already is in the raw form (it contains a NUL — e.g. a rename block built
+    by :func:`_porcelain_z_renames`) is passed through untouched, because the
+    ``line[:2] + line[3:]`` rewrite below would eat the first character.
     """
+    if "\0" in text:
+        return text
     return "".join(line[:2] + line[3:] + "\0" for line in text.splitlines())
 
 
@@ -404,7 +409,18 @@ class TestEnsurePr(unittest.TestCase):
 # ── Workflow-patch publication (issue #1080) ───────────────────────────────
 
 _WORKFLOW = ".github/workflows/internal-tests.yaml"
+_WORKFLOW_ORIGIN = ".github/workflows/old-checks.yaml"
 _CODE = "src/nebuko/engine/lib/thing.py"
+
+
+def _porcelain_z_renames(*specs: tuple[str, str, str]) -> str:
+    """Render rename/copy entries as ``git status --porcelain -z`` does.
+
+    ``specs`` are ``(code, new_path, origin_path)``; the raw form is two
+    NUL-separated fields — ``R  new\\0old\\0`` — with no `` -> `` anywhere.
+    The origin field carries no status prefix of its own.
+    """
+    return "".join(f"{code} {new}\0{origin}\0" for code, new, origin in specs)
 
 
 def _patch_git(
@@ -684,6 +700,48 @@ class TestWorkflowPatchPublication(unittest.TestCase):
         self.assertFalse(any(c[:1] == ["clean"] for c in git.calls))
         self.assertFalse(any(c[:1] == ["restore"] for c in git.calls))
 
+    def test_workflow_only_rename_is_delivered_as_a_patch_without_a_push(self):
+        """A workflow-only rename must not stage nothing and fail the commit."""
+        git = _patch_git(
+            status=_porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN))
+        )
+        gh = _GhRecorder()
+        result = self._run(git, gh, env={"TARGET_NUMBER": "1080"})
+
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(set(result.patch_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
+        self.assertIn("issuecomment-1", result.patch_comment_url)
+        self.assertEqual(result.pr_url, "")
+        self.assertEqual([c for c in git.calls if c and c[0] == "push"], [])
+        # Neither endpoint may be pushed or committed as plain work. The
+        # ``--intent-to-add`` registration inside ``build_patch`` is exempt: it
+        # only teaches git about untracked paths for the diff, never commits.
+        for args in git.calls:
+            if args and args[0] in {"commit", "push"}:
+                self.assertNotIn(_WORKFLOW, args, args)
+                self.assertNotIn(_WORKFLOW_ORIGIN, args, args)
+
+    def test_workflow_rename_mixed_with_code_pushes_only_the_code(self):
+        git = _patch_git(
+            status=_porcelain_z(f" M {_CODE}")
+            + _porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN))
+        )
+        gh = _GhRecorder()
+        result = self._run(git, gh, env={"TARGET_NUMBER": "1080"})
+
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(set(result.patch_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
+        self.assertEqual(result.pr_url, "https://github.com/acme/repo/pull/9")
+        adds = [
+            c
+            for c in git.calls
+            if c and c[0] == "add" and c[1:2] != ["--intent-to-add"]
+        ]
+        self.assertIn(["add", "--", _CODE], adds)
+        for add in adds:
+            self.assertNotIn(_WORKFLOW, add, add)
+            self.assertNotIn(_WORKFLOW_ORIGIN, add, add)
+
     def test_dry_run_does_not_touch_workflow_files(self):
         git = _patch_git()
         gh = _GhRecorder()
@@ -703,6 +761,43 @@ class TestWorkflowPatchPublication(unittest.TestCase):
 
 class TestCheckPublicationWorkflowPaths(unittest.TestCase):
     """The guard classifies workflow dirtiness as patch-only, not dirty_tree."""
+
+    def test_workflow_rename_reports_both_endpoints_as_workflow_paths(self):
+        """A rename is two ``-z`` fields; the origin must not be a phantom."""
+        state = self._check(
+            _publication_git(
+                status=_porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN)),
+                upstream_count="0",
+            )
+        )
+        self.assertEqual(state.reasons, ("workflow_patch",))
+        self.assertEqual(set(state.workflow_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
+        self.assertEqual(state.dirty_paths, state.workflow_paths)
+        # The origin path must never come out with its leading character eaten.
+        self.assertNotIn("ithub/workflows/old-checks.yaml", state.dirty_paths)
+
+    def test_workflow_rename_mixed_with_plain_work(self):
+        state = self._check(
+            _publication_git(
+                status=_porcelain_z(f" M {_CODE}")
+                + _porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN)),
+                upstream_count="0",
+            )
+        )
+        self.assertIn("dirty_tree", state.reasons)
+        self.assertIn("workflow_patch", state.reasons)
+        self.assertEqual(set(state.workflow_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
+        self.assertIn(_CODE, state.dirty_paths)
+
+    def test_plain_rename_leaves_the_workflow_split_empty(self):
+        state = self._check(
+            _publication_git(
+                status=_porcelain_z_renames(("R ", _CODE, "src/thing.py")),
+                upstream_count="0",
+            )
+        )
+        self.assertEqual(state.workflow_paths, ())
+        self.assertEqual(set(state.dirty_paths), {_CODE, "src/thing.py"})
 
     def _check(self, git, pr="https://github.com/acme/repo/pull/7"):
         with patch(

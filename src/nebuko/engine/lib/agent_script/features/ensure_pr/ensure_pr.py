@@ -191,18 +191,31 @@ def _status_entries() -> tuple[tuple[str, str], ...]:
     # with ``.`` — i.e. ``.github/workflows/*``, the very paths this flow
     # must classify (issue #1080).
     raw = _run_git(["status", "--porcelain", "-z"])
-    for entry in raw.split("\0"):
+    fields = raw.split("\0")
+    index = 0
+    while index < len(fields):
+        entry = fields[index]
+        index += 1
         if len(entry) < 3:
             continue
         code, path = entry[:2], entry[2:]
         # Some git versions keep the historic space after the code in the
         # ``-z`` form; trim it so the path can be handed straight back to git.
         path = path.lstrip(" ") if path.startswith(" ") else path
-        # Rename entries are followed by their origin path as a separate
-        # NUL-terminated field, which the caller does not need.
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
         entries.append((path, code))
+        if code[0] in ("R", "C"):
+            # A rename/copy is two NUL-separated fields — ``R  new\0old\0`` —
+            # with no `` -> `` in the raw form. The origin is its own field and
+            # carries **no** status prefix, so it is taken whole; reading it as
+            # a status entry would eat its first character and classify the
+            # workflow the rename came *from* as plain work (issue #1080).
+            if index >= len(fields):
+                continue
+            origin_path = fields[index]
+            index += 1
+            if not origin_path:
+                continue
+            entries.append((origin_path, code))
     return tuple(entries)
 
 
@@ -634,7 +647,7 @@ def _render_patch(workflow_paths: Sequence[str], patch_base: str, base_name: str
     if not diff.strip():
         # Delivery alias: identical content on both sides, nothing to apply.
         return None
-    return render_patch_comment(
+    return diff, render_patch_comment(
         diff=diff, workflow_paths=workflow_paths, base_name=base_name
     )
 
@@ -652,19 +665,15 @@ def _deliver_workflow_patch(
     workflow files are discarded (issue #1080 — silent loss is the one outcome
     that is not allowed).
     """
-    comment = _render_patch(workflow_paths, patch_base, base_name)
-    if comment is None:
+    rendered = _render_patch(workflow_paths, patch_base, base_name)
+    if rendered is None:
         return _PatchDelivery()
+    diff, comment = rendered
     comment_url = _post_patch_comment(
         comment.body, pr_url="", transport=transport
     )
-    artifact = stage_patch_artifact(
-        build_patch(
-            base_ref=patch_base, workflow_paths=workflow_paths, run_git=_run_git
-        )
-    )
+    artifact = stage_patch_artifact(diff)
     return _PatchDelivery(comment_url=comment_url, artifact=artifact)
-
 
 
 def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
@@ -773,8 +782,9 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
             pr_url
         ):
             try:
+                rendered = _render_patch(split.workflow_paths, patch_base, base)
                 comment_url = _post_patch_comment(
-                    _render_patch(split.workflow_paths, patch_base, base).body,
+                    rendered[1].body if rendered else "",
                     pr_url=pr_url,
                     transport=transport,
                 )
