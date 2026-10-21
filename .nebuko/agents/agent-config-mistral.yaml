@@ -62,8 +62,8 @@ agents:
     reasoning_effort: "none"
     prompt_file: "defaults/prompts/dev.md"
     skills:
-      - inject: ["posting-contract"]
-      - discover: ["git-pr-workflow", "complexity"]
+      - inject: ["posting-contract", "git-pr-workflow"]
+      - discover: ["complexity"]
     tools: ["terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
 
   context:
