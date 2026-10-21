@@ -23,6 +23,10 @@ import sys
 from typing import TYPE_CHECKING
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from agent_script.features.ensure_pr.workflow_patch import (
+    APPLY_COMMAND,
+    PATCH_FILENAME,
+)
 from validate_output import strip_agent_run_config
 from workflow_state.features.comment.to_git_comment import (
     collapse_sections,
@@ -147,6 +151,13 @@ def _posted_recall_count(state: WorkflowState | None) -> int:
 _RESCUE_LINES = {
     "recalled_ok": "the agent published it after an engine recall",
     "fallback_pr": "the engine opened a checkpoint PR via `ensure_pr`",
+    # A .github/workflows/* delta can never be pushed with the agent token, so
+    # the engine delivers it as a patch a human applies — a delivery path, not
+    # a failure (issue #1080).
+    "fallback_patch": (
+        "the engine delivered the `.github/workflows/*` change as a patch — "
+        "a human must apply it"
+    ),
     "fallback_failed": "**the automatic PR fallback failed**",
 }
 
@@ -167,12 +178,24 @@ def _publication_guard_note(state: WorkflowState | None) -> str:
         "> ⚠️ **Publication guard:** the step finished approved with unpublished "
         f"work — {_RESCUE_LINES[result]}."
     )
+    detail = (context.get("publication_guard_detail") or "").strip()
     if result == "fallback_pr":
-        detail = (context.get("publication_guard_detail") or "").strip()
         if detail:
             line += f" PR: {detail}"
+        patch = (context.get("publication_patch") or "").strip()
+        if patch:
+            line += (
+                f"\n> Workflow patch: {patch} — a human must apply it. Save it as "
+                f"`{PATCH_FILENAME}` and run `{APPLY_COMMAND}`."
+            )
+    elif result == "fallback_patch":
+        if detail:
+            line += f" Patch: {detail}"
+        line += (
+            f"\n> Apply it on a clean checkout: save the patch as "
+            f"`{PATCH_FILENAME}` and run `{APPLY_COMMAND}`."
+        )
     elif result == "fallback_failed":
-        detail = (context.get("publication_guard_detail") or "").strip()
         if detail:
             line += f" Error: {detail}"
     return line + "\n\n"

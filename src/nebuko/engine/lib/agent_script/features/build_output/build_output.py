@@ -1220,6 +1220,12 @@ def build_output(
             context_updates["publication_guard_detail"] = getattr(
                 run_outcome, "publication_detail", ""
             )
+            # Where a delivered .github/workflows patch lives (comment URL or
+            # artifact name) — the answer points the reviewer at it (#1080).
+            publication_patch = getattr(run_outcome, "publication_patch", "")
+            if publication_patch:
+                context_updates["publication_patch"] = publication_patch
+
     if is_graceful_timeout:
         logger.info("Graceful timeout detected — running deterministic PR fallback")
         pr_result = ensure_pr()

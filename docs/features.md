@@ -212,9 +212,27 @@ next run resumes from a fresh session (see ADR-0002, issue #639).
 Guarantees the "checkpoint the work in a PR" requirement even if the wind-down
 run is uncooperative — a pure git/gh subprocess sequence, no LLM involved:
 
-1. Commit uncommitted working-tree changes (if any).
-2. Push the current branch to `origin`.
-3. Open a PR if none exists for the branch (idempotent).
+1. Split the delta by path — `.github/workflows/*` is **patch-only**.
+2. Commit the non-workflow working-tree changes (if any).
+3. Push the current branch to `origin`.
+4. Open a PR if none exists for the branch (idempotent).
+5. Deliver the workflow delta as a patch a human applies.
+
+Step 1/5 exists because the agent's token has no `workflow` scope, so GitHub
+rejects any push carrying `.github/workflows/*`; before #1080 that rejection
+failed the whole fallback and the work died with the runner. The split is a
+**pre-check**, not reject-text parsing: because the pushed delta is guaranteed
+free of workflow paths, the push cannot be refused for scope — so a mixed diff
+produces a PR with the code and a patch for the workflows, and a workflow-only
+diff produces a patch and no push at all. The patch is a comment (on the PR,
+or on the originating issue when there is no PR) holding a fenced `diff` block
+plus the one-line `git apply workflow-patch.diff` command; over the repo's 60k
+comment policy the diff is staged as the `workflow-patch.diff` run artifact and
+linked instead (`src/nebuko/engine/lib/agent_script/features/ensure_pr/workflow_patch.py`).
+Unpushed commits that already carry workflow files are rebuilt from the merge
+base (`reset --mixed` + re-commit, pushed with `--force-with-lease`) so the
+pushed history stays clean too. The workflow files are discarded only *after*
+delivery succeeded.
 
 ### Recovery trace extraction
 

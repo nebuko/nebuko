@@ -36,8 +36,10 @@ from agent_script.features.run_agent.dispatch_recall import (
 )
 from agent_script.features.run_agent.publication_guard import (
     MAX_PUBLICATION_RECALLS,
+    NON_RECALLABLE_REASONS,
     PUBLICATION_RECALL_PASS_BUDGET_S,
     perform_publication_recalls,
+    recallable_reasons,
 )
 from agent_script.features.run_agent.run_failure import RunFailure, classify_failure
 from agent_script.features.run_agent.run_outcome import (
@@ -524,8 +526,13 @@ def _guard_publication(
     """Check publication, recall the agent, then fall back to ``ensure_pr``.
 
     Returns the ``run_outcome`` updated with the guard result
-    (``clean`` / ``recalled_ok`` / ``fallback_pr`` / ``fallback_failed``).
-    A skip (no remote, detached HEAD) records nothing.
+    (``clean`` / ``recalled_ok`` / ``fallback_pr`` / ``fallback_patch`` /
+    ``fallback_failed``). A skip (no remote, detached HEAD) records nothing.
+
+    Recalls are skipped entirely when only non-recallable reasons remain
+    (``workflow_patch``): a ``.github/workflows/*`` delta can never be pushed
+    with the agent token, so a recall would burn a model turn for nothing and
+    ``ensure_pr`` delivers it as a patch instead (issue #1080).
     """
     state = check_publication()
     if state.skip_reason:
@@ -537,7 +544,8 @@ def _guard_publication(
     missing = ", ".join(state.reasons)
     recall_count = 0
     pre_recall_offset: int | None = None
-    if _can_publish(resolved):
+    if _can_publish(resolved) and recallable_reasons(state.reasons):
+
         # Pin the pre-recall boundary before the first recall turn so the
         # capture layer can exclude engine-injected turns (issue #558). Kept
         # even when no turn ends up being sent: an offset past the end is
@@ -589,7 +597,8 @@ def _guard_publication(
         f"missing={missing}, recalls={recall_count}) — running ensure_pr"
     )
     pr = ensure_pr()
-    if pr.error or not pr.pr_url:
+    patch_location = pr.patch_comment_url or pr.patch_artifact
+    if pr.error or (not pr.pr_url and not patch_location):
         detail = pr.message or "ensure_pr produced no PR"
         logger.error(f"Publication guard fallback failed: {detail}")
         return dataclasses.replace(
@@ -599,11 +608,27 @@ def _guard_publication(
             publication_recall_count=recall_count,
             publication_recall_event_offset=pre_recall_offset,
         )
+    if not pr.pr_url:
+        # Workflow-only change: there is no branch delta to push, so the PR
+        # would be empty. The delivered patch *is* the publication — a human
+        # applies it (issue #1080).
+        logger.info(f"Publication guard fallback delivered a workflow patch: "
+                    f"{patch_location}")
+        return dataclasses.replace(
+            run_outcome,
+            publication_guard="fallback_patch",
+            publication_detail=patch_location,
+            publication_patch=patch_location,
+            publication_recall_count=recall_count,
+            publication_recall_event_offset=pre_recall_offset,
+        )
     logger.info(f"Publication guard fallback opened PR: {pr.pr_url}")
     return dataclasses.replace(
         run_outcome,
         publication_guard="fallback_pr",
         publication_detail=pr.pr_url,
+        publication_patch=patch_location,
         publication_recall_count=recall_count,
         publication_recall_event_offset=pre_recall_offset,
     )
+

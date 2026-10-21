@@ -4,8 +4,10 @@ All git/gh interactions are mocked at the subprocess boundary — no network
 or real git mutations in unit tests.
 """
 
+import contextlib
 import os
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +24,24 @@ from agent_script.features.ensure_pr.ensure_pr import (
     check_publication,
     ensure_pr,
 )
+from agent_script.features.ensure_pr.workflow_patch import (
+    PATCH_FILENAME,
+    WORKFLOW_DIR,
+)
+
+
+def _porcelain_z(text: str) -> str:
+    """Render human porcelain as ``git status --porcelain -z`` does.
+
+    ``-z`` drops the space between the XY columns and the path and uses NUL
+    terminators, so ``" M a.py"`` becomes ``" M" + "a.py" + ``\\0``. Text that
+    already is in the raw form (it contains a NUL — e.g. a rename block built
+    by :func:`_porcelain_z_renames`) is passed through untouched, because the
+    ``line[:2] + line[3:]`` rewrite below would eat the first character.
+    """
+    if "\0" in text:
+        return text
+    return "".join(line[:2] + line[3:] + "\0" for line in text.splitlines())
 
 
 def _default_git_response(args, **kwargs):
@@ -34,7 +54,7 @@ def _default_git_response(args, **kwargs):
     if joined.startswith("rev-parse --abbrev-ref HEAD"):
         return "feature/issue-489-graceful"
     if joined.startswith("status --porcelain"):
-        return " M some_file.py\n?? new_file.py"
+        return _porcelain_z(" M some_file.py\n?? new_file.py")
     if joined.startswith("rev-parse") and "@{upstream}" in joined:
         return ""  # no upstream yet → push needs --set-upstream
     if joined.startswith("rev-parse"):
@@ -291,9 +311,16 @@ class TestEnsurePr(unittest.TestCase):
         self.assertEqual(result.message, "[dry run] would open PR")
         git_calls = [str(c) for c in git_mock.call_args_list]
         self.assertFalse(any("push" in c for c in git_calls))
-        self.assertFalse(any("commit" in c for c in git_calls))
-        # gh must not be invoked either.
-        self.assertEqual(gh_mock.call_count, 0)
+        # "commit" appears in the dry-run *log line* only; inspect the argv.
+        self.assertFalse(
+            any("commit" in c.args[0] for c in git_mock.call_args_list if c.args)
+        )
+        self.assertFalse(any("git add" in c for c in git_calls))
+        # gh may only *read* (the default-branch lookup); no mutative call.
+        mutative = [
+            c for c in gh_mock.call_args_list if c.kwargs.get("mutative")
+        ]
+        self.assertEqual(mutative, [])
 
     def test_error_is_captured_not_raised(self):
         git_p, gh_p = self._mock_runners(git_exc=RuntimeError("git exploded"))
@@ -379,11 +406,467 @@ class TestEnsurePr(unittest.TestCase):
             result.skipped = False
 
 
-def _publication_git(status="", upstream_count=None, base_count="0", branch="feature/x"):
+# ── Workflow-patch publication (issue #1080) ───────────────────────────────
+
+_WORKFLOW = ".github/workflows/internal-tests.yaml"
+_WORKFLOW_ORIGIN = ".github/workflows/old-checks.yaml"
+_CODE = "src/nebuko/engine/lib/thing.py"
+
+
+def _porcelain_z_renames(*specs: tuple[str, str, str]) -> str:
+    """Render rename/copy entries as ``git status --porcelain -z`` does.
+
+    ``specs`` are ``(code, new_path, origin_path)``; the raw form is two
+    NUL-separated fields — ``R  new\\0old\\0`` — with no `` -> `` anywhere.
+    The origin field carries no status prefix of its own.
+    """
+    return "".join(f"{code} {new}\0{origin}\0" for code, new, origin in specs)
+
+
+def _patch_git(
+    *,
+    status=f" M {_CODE}\n M {_WORKFLOW}\n",
+    committed="",
+    base_ref="origin/main",
+    patch="diff --git a/x b/x\n",
+    on_push=None,
+    after_rebuild=None,
+):
+    """Git fake for the path-split publication flow.
+
+    ``status`` is ``git status --porcelain``, ``committed`` the paths touched by
+    unpushed commits (both endpoints of a name-only diff), ``patch`` what
+    ``git diff --binary`` returns, ``after_rebuild`` what ``git status``
+    reports once ``_prepare_publish`` has reset the publish commit. Every argv
+    is recorded in ``calls``.
+    """
+    calls: list[list[str]] = []
+    state = {"base": None}
+
+    def run_git(args, **kwargs):
+        calls.append(list(args))
+        joined = " ".join(args)
+        if joined.startswith("remote get-url"):
+            return "acme/repo"
+        if joined == "remote":
+            return "origin"
+        if joined.startswith("rev-parse --abbrev-ref HEAD"):
+            return "feature/issue-1080"
+        if "commit" in args:
+            return ""
+        if joined.startswith("rev-parse --verify"):
+            return "1" if args[-1].split("^{")[0] == base_ref else ""
+        if joined.startswith("status --porcelain"):
+            # After a ``reset --mixed`` the working tree holds what the rebuild
+            # left behind — explicitly supplied by ``after_rebuild``.
+            if state["base"]:
+                return _porcelain_z(after_rebuild or "")
+            return _porcelain_z(status)
+        if joined.startswith("diff --name-only"):
+            return committed
+        if joined.startswith("rev-list --count @{u}..HEAD"):
+            return "0"
+        if joined.startswith("rev-list --count"):
+            return "1" if committed else "0"
+        if joined.startswith("rev-list --max-parents=0"):
+            return "deadbeef"
+        if joined.startswith("merge-base"):
+            return "base000"
+        if joined.startswith("diff --binary"):
+            return patch
+        if joined.startswith("log --format=%H"):
+            return "sha1"
+        if joined.startswith("add"):
+            return ""
+        if joined.startswith("commit"):
+            return ""
+        if joined.startswith("restore"):
+            return ""
+        if joined.startswith("clean"):
+            return ""
+        if args[0] == "push":
+            if on_push is not None:
+                return on_push(list(args))
+            return ""
+        if joined.startswith("reset"):
+            # ``--mixed`` keeps the work in the working tree while restoring
+            # the index to the reset target; the fake switches to
+            # ``after_rebuild`` (what the rebuild leaves behind).
+            state["base"] = args[-1]
+            return ""
+        if joined.startswith("rev-parse --short"):
+            return "abc1234"
+        if joined.startswith("rev-parse"):
+            return "sha1"
+        raise AssertionError(f"unexpected git call: {joined}")
+
+    run_git.calls = calls
+    return run_git
+
+
+class _GhRecorder:
+    """Route gh api/PR calls; records every argv."""
+
+    def __init__(self, pr_lookup="", pr_create="https://github.com/acme/repo/pull/9"):
+        self.pr_lookup = pr_lookup
+        self.pr_create = pr_create
+        self.recorded: list[tuple[list[str], bool]] = []
+
+    def factory(self, *a, **k):
+        return self
+
+    def call(self, args, *, mutative=False, cwd=None, timeout=None):
+        self.recorded.append((list(args), mutative))
+
+        class _Result:
+            ok = True
+            status = 200
+            detail = ""
+
+            def __init__(self, payload):
+                self.payload = payload
+
+        if args[:2] == ["pr", "list"]:
+            return _Result(self.pr_lookup)
+        if args[:2] == ["pr", "create"]:
+            return _Result(self.pr_create)
+        if args[:1] == ["api"]:
+            joined = " ".join(args)
+            if "/comments" in joined:
+                return _Result("https://github.com/acme/repo/issues/1080#issuecomment-1")
+            return _Result('"main"')
+        return _Result("")
+
+
+def _patch_ensure_pr(git, gh, env=None, artifact_dir=None):
+    """Context manager running ``ensure_pr`` against the patch-flow fakes."""
+    patchers = [
+        patch("agent_script.features.ensure_pr.ensure_pr._run_git", git),
+        patch("agent_script.features.ensure_pr.ensure_pr.GitHubTransport", gh.factory),
+    ]
+    if artifact_dir is not None:
+        patchers.append(
+            patch(
+                "agent_script.features.ensure_pr.workflow_patch.PATCH_ARTIFACT_DIR",
+                artifact_dir,
+            )
+        )
+
+    stack = contextlib.ExitStack()
+    for p in patchers:
+        stack.enter_context(p)
+    stack.enter_context(patch.dict("os.environ", env or {}, clear=False))
+    return stack
+
+
+class TestWorkflowPatchPublication(unittest.TestCase):
+    """A workflow delta is delivered as a patch, never pushed (#1080)."""
+
+    def _run(self, git, gh, env=None, artifact_dir=None):
+        with _patch_ensure_pr(git, gh, env, artifact_dir):
+            return ensure_pr()
+
+    def test_mixed_diff_opens_the_pr_and_comments_the_patch(self):
+        git = _patch_git()
+        gh = _GhRecorder()
+        result = self._run(git, gh, env={"TARGET_NUMBER": "1080"})
+
+        self.assertFalse(result.error)
+        self.assertEqual(result.pr_url, "https://github.com/acme/repo/pull/9")
+        self.assertEqual(result.patch_paths, (_WORKFLOW,))
+        self.assertIn("issuecomment-1", result.patch_comment_url)
+        # The code was committed without the workflow path: staging names the
+        # path explicitly (never ``add -A``/``add .``), so a tree carrying both
+        # cannot smuggle the workflow file into the commit.
+        adds = [c for c in git.calls if c and c[0] == "add"]
+        self.assertIn(["add", "--", _CODE], adds)
+        # No staging invocation ever names a workflow path, and nothing stages
+        # the whole tree (`add -A` / `add .`) which would.
+        for add in adds:
+            if add[1:2] == ["--"]:
+                self.assertNotIn(_WORKFLOW, add, add)
+            self.assertNotIn("-A", add)
+            self.assertFalse(add[1:2] == ["."], add)
+        # The workflow file was reverted and the tree left clean.
+        self.assertTrue(any(c[:1] == ["restore"] and _WORKFLOW in c for c in git.calls))
+        self.assertTrue(any(c[:1] == ["clean"] and _WORKFLOW in c for c in git.calls))
+        # The patch comment was posted mutatively.
+        self.assertTrue(
+            any("/comments" in " ".join(args) and mutative for args, mutative in gh.recorded)
+        )
+
+    def test_no_git_push_or_commit_call_ever_carries_a_workflow_path(self):
+        """The token boundary must hold for every mutating invocation."""
+        git = _patch_git()
+        gh = _GhRecorder()
+        result = self._run(git, gh, env={"TARGET_NUMBER": "1080"})
+
+        def workflow_path_in(args):
+            return any(str(a).startswith(WORKFLOW_DIR) for a in args)
+
+        for args in git.calls:
+            if args and args[0] in {"commit", "push"}:
+                self.assertFalse(workflow_path_in(args), args)
+            if args[:2] == ["add", "-A"]:
+                self.fail("git add -A would stage workflow files")
+        # Even the subprocess argv strings shown to a reviewer are clean.
+        pushes = [c for c in git.calls if c and c[0] == "push"]
+        self.assertTrue(pushes)
+        for push in pushes:
+            self.assertNotIn(_WORKFLOW, " ".join(push))
+        self.assertEqual(result.patch_paths, (_WORKFLOW,))
+
+    def test_workflow_only_diff_posts_on_the_issue_without_a_pr(self):
+        git = _patch_git(status=f" M {_WORKFLOW}\n")
+        gh = _GhRecorder()
+        result = self._run(git, gh, env={"TARGET_NUMBER": "1080"})
+
+        self.assertFalse(result.error)
+        self.assertEqual(result.pr_url, "")
+        self.assertIn("issuecomment-1", result.patch_comment_url)
+        self.assertEqual(result.patch_paths, (_WORKFLOW,))
+        self.assertEqual(result.message, "workflow patch delivered")
+        # No push and no PR for an all-workflow delta. The empty checkpoint
+        # commit is harmless: with no plain delta it is never pushed.
+        self.assertEqual([c for c in git.calls if c and c[0] == "push"], [])
+        # No PR *write* for an all-workflow delta (the read-only lookup stays).
+        self.assertFalse(
+            any(args[:2] == ["pr", "create"] for args, _ in gh.recorded)
+        )
+        # …and the tree is left clean for the guard's dirty-tree check.
+        self.assertTrue(any(c[:1] == ["clean"] and _WORKFLOW in c for c in git.calls))
+
+    def test_contaminated_unpushed_commit_is_rebuilt_without_the_workflow_file(self):
+        # The agent committed code and a workflow file, staged them, then its
+        # push was rejected. ``git diff`` (no HEAD) reports the staged paths;
+        # the workflow file is *not* in ``git status`` (it is committed), which
+        # is exactly the case that used to slip into the rebuilt commit.
+        git = _patch_git(
+            status="",
+            committed=f"{_CODE}\n{_WORKFLOW}\n",
+            after_rebuild=f" M {_CODE}\n",
+        )
+        gh = _GhRecorder()
+        result = self._run(git, gh, env={"TARGET_NUMBER": "1080"})
+
+        self.assertFalse(result.error)
+        self.assertEqual(
+            [c for c in git.calls if c and c[0] == "reset"],
+            [["reset", "--mixed", "base000"]],
+        )
+        # The index is scrubbed of the workflow path before anything is
+        # committed (a staged workflow file would ride along otherwise).
+        self.assertIn(
+            ["restore", "--staged", "--", _WORKFLOW], git.calls
+        )
+        commits = [c for c in git.calls if "commit" in c]
+        self.assertEqual(len(commits), 1)
+        self.assertNotIn(_WORKFLOW, commits[0])
+        pushes = [c for c in git.calls if c and c[0] == "push"]
+        self.assertTrue(pushes)
+        self.assertIn("--force-with-lease", pushes[0])
+
+    def test_oversized_patch_is_staged_as_an_artifact(self):
+        big = "diff --git a/x b/x\n" + "+" + "x" * 65_000
+        git = _patch_git(status=f" M {_WORKFLOW}\n", patch=big)
+        gh = _GhRecorder()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._run(
+                git, gh, env={"TARGET_NUMBER": "1080"}, artifact_dir=tmp
+            )
+            staged = os.path.join(tmp, PATCH_FILENAME)
+            self.assertTrue(os.path.exists(staged), os.listdir(tmp))
+        self.assertFalse(result.error)
+        self.assertEqual(result.patch_artifact, PATCH_FILENAME)
+        # The comment links the artifact instead of inlining 65k of diff.
+        bodies = [
+            " ".join(args) for args, mutative in gh.recorded if mutative
+        ]
+        self.assertTrue(bodies)
+        self.assertIn(PATCH_FILENAME, "\n".join(bodies))
+        self.assertNotIn("x" * 1000, "\n".join(bodies))
+
+    def test_patch_delivery_failure_keeps_the_tree_dirty(self):
+        """Never discard workflow changes we failed to deliver."""
+        git = _patch_git(status=f" M {_WORKFLOW}\n")
+        gh = _GhRecorder()
+
+        def boom(*a, **k):
+            raise RuntimeError("github down")
+
+        gh.call = boom
+        result = self._run(git, gh, env={"TARGET_NUMBER": "1080"})
+        self.assertTrue(result.error)
+        self.assertFalse(any(c[:1] == ["clean"] for c in git.calls))
+        self.assertFalse(any(c[:1] == ["restore"] for c in git.calls))
+
+    def test_workflow_only_rename_is_delivered_as_a_patch_without_a_push(self):
+        """A workflow-only rename must not stage nothing and fail the commit."""
+        git = _patch_git(
+            status=_porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN))
+        )
+        gh = _GhRecorder()
+        result = self._run(git, gh, env={"TARGET_NUMBER": "1080"})
+
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(set(result.patch_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
+        self.assertIn("issuecomment-1", result.patch_comment_url)
+        self.assertEqual(result.pr_url, "")
+        self.assertEqual([c for c in git.calls if c and c[0] == "push"], [])
+        # Neither endpoint may be pushed or committed as plain work. The
+        # ``--intent-to-add`` registration inside ``build_patch`` is exempt: it
+        # only teaches git about untracked paths for the diff, never commits.
+        for args in git.calls:
+            if args and args[0] in {"commit", "push"}:
+                self.assertNotIn(_WORKFLOW, args, args)
+                self.assertNotIn(_WORKFLOW_ORIGIN, args, args)
+
+    def test_workflow_rename_mixed_with_code_pushes_only_the_code(self):
+        git = _patch_git(
+            status=_porcelain_z(f" M {_CODE}")
+            + _porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN))
+        )
+        gh = _GhRecorder()
+        result = self._run(git, gh, env={"TARGET_NUMBER": "1080"})
+
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(set(result.patch_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
+        self.assertEqual(result.pr_url, "https://github.com/acme/repo/pull/9")
+        adds = [
+            c
+            for c in git.calls
+            if c and c[0] == "add" and c[1:2] != ["--intent-to-add"]
+        ]
+        self.assertIn(["add", "--", _CODE], adds)
+        for add in adds:
+            self.assertNotIn(_WORKFLOW, add, add)
+            self.assertNotIn(_WORKFLOW_ORIGIN, add, add)
+
+    def test_dry_run_does_not_touch_workflow_files(self):
+        git = _patch_git()
+        gh = _GhRecorder()
+        with _patch_ensure_pr(git, gh, env={"TARGET_NUMBER": "1080"}):
+            result = ensure_pr(dry_run=True)
+        self.assertFalse(result.error)
+        # The plan is reported, nothing is done.
+        self.assertEqual(result.patch_paths, (_WORKFLOW,))
+        mutating = [
+            c
+            for c in git.calls
+            if c and c[0] in {"commit", "push", "reset", "restore", "clean"}
+        ]
+        self.assertEqual(mutating, [])
+        self.assertFalse(any(mutative for _, mutative in gh.recorded))
+
+
+class TestCheckPublicationWorkflowPaths(unittest.TestCase):
+    """The guard classifies workflow dirtiness as patch-only, not dirty_tree."""
+
+    def test_workflow_rename_reports_both_endpoints_as_workflow_paths(self):
+        """A rename is two ``-z`` fields; the origin must not be a phantom."""
+        state = self._check(
+            _publication_git(
+                status=_porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN)),
+                upstream_count="0",
+            )
+        )
+        self.assertEqual(state.reasons, ("workflow_patch",))
+        self.assertEqual(set(state.workflow_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
+        self.assertEqual(state.dirty_paths, state.workflow_paths)
+        # The origin path must never come out with its leading character eaten.
+        self.assertNotIn("ithub/workflows/old-checks.yaml", state.dirty_paths)
+
+    def test_workflow_rename_mixed_with_plain_work(self):
+        state = self._check(
+            _publication_git(
+                status=_porcelain_z(f" M {_CODE}")
+                + _porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN)),
+                upstream_count="0",
+            )
+        )
+        self.assertIn("dirty_tree", state.reasons)
+        self.assertIn("workflow_patch", state.reasons)
+        self.assertEqual(set(state.workflow_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
+        self.assertIn(_CODE, state.dirty_paths)
+
+    def test_plain_rename_leaves_the_workflow_split_empty(self):
+        state = self._check(
+            _publication_git(
+                status=_porcelain_z_renames(("R ", _CODE, "src/thing.py")),
+                upstream_count="0",
+            )
+        )
+        self.assertEqual(state.workflow_paths, ())
+        self.assertEqual(set(state.dirty_paths), {_CODE, "src/thing.py"})
+
+    def _check(self, git, pr="https://github.com/acme/repo/pull/7"):
+        with patch(
+            "agent_script.features.ensure_pr.ensure_pr._run_git", git
+        ), patch(
+            "agent_script.features.ensure_pr.ensure_pr._find_pr_for_branch",
+            return_value=pr,
+        ):
+            return check_publication()
+
+    def test_dirty_workflow_file_is_a_workflow_patch_not_dirty_tree(self):
+        state = self._check(
+            _publication_git(status=f" M {_WORKFLOW}", upstream_count="0")
+        )
+        self.assertEqual(state.reasons, ("workflow_patch",))
+        self.assertEqual(state.workflow_paths, (_WORKFLOW,))
+        # Unchanged semantics: all non-engine dirty paths (issue #1080).
+        self.assertEqual(state.dirty_paths, (_WORKFLOW,))
+        self.assertFalse(state.published)
+
+    def test_dirty_workflow_file_does_not_hide_dirty_code(self):
+        state = self._check(
+            _publication_git(
+                status=f" M {_CODE}\n M {_WORKFLOW}", upstream_count="0"
+            )
+        )
+        self.assertIn("dirty_tree", state.reasons)
+        self.assertIn("workflow_patch", state.reasons)
+        self.assertEqual(state.dirty_paths, (_CODE, _WORKFLOW))
+        self.assertEqual(state.workflow_paths, (_WORKFLOW,))
+
+    def test_workflow_paths_in_unpushed_commits_are_patch_only(self):
+        state = self._check(
+            _publication_git(upstream_count="1", committed_paths=_WORKFLOW)
+        )
+        self.assertEqual(state.reasons, ("workflow_patch",))
+        self.assertEqual(state.workflow_paths, (_WORKFLOW,))
+        self.assertFalse(state.published)
+
+    def test_mixed_unpushed_commits_keep_unpushed_commits(self):
+        state = self._check(
+            _publication_git(
+                upstream_count="1", committed_paths=f"{_CODE}\n{_WORKFLOW}"
+            )
+        )
+        self.assertIn("unpushed_commits", state.reasons)
+        self.assertIn("workflow_patch", state.reasons)
+        self.assertEqual(state.workflow_paths, (_WORKFLOW,))
+
+
+#: Paths reported as changed by unpushed commits in the check-publication
+#: fakes — plain work by default, so ``unpushed_commits`` fires.
+_PLAIN_COMMIT_PATHS = "src/nebuko/engine/lib/thing.py"
+
+
+def _publication_git(
+    status="",
+    upstream_count=None,
+    base_count="0",
+    branch="feature/x",
+    committed_paths=_PLAIN_COMMIT_PATHS,
+):
     """Simulate git for ``check_publication`` scenarios.
 
     ``upstream_count`` is None for a branch with no upstream (git errors);
     the base-branch comparison then answers with ``base_count``.
+    ``committed_paths`` is what the unpushed commits touched (``git diff
+    --name-only``) — a ``.github/workflows/`` path makes the delta
+    patch-only.
     """
 
     def run(args, **kwargs):
@@ -393,7 +876,9 @@ def _publication_git(status="", upstream_count=None, base_count="0", branch="fea
         if joined.startswith("rev-parse --abbrev-ref HEAD"):
             return branch
         if joined.startswith("status --porcelain"):
-            return status
+            return _porcelain_z(status)
+        if joined.startswith("diff --name-only"):
+            return committed_paths
         if joined.startswith("rev-list --count @{u}..HEAD"):
             if upstream_count is None:
                 raise RuntimeError("no upstream configured")
@@ -513,6 +998,129 @@ class TestCheckPublication(unittest.TestCase):
     def test_state_is_immutable(self):
         with self.assertRaises(Exception):
             PublicationState(published=True).published = False
+
+
+class TestRealGitTokenBoundary(unittest.TestCase):
+    """End-to-end against real git: the pushed tree never holds a workflow file.
+
+    Acceptance criterion 7 — "a test pins that the agent token is never used to
+    push .github/workflows/*" — is only meaningful if it runs real ``git``, so
+    this drives the actual subprocess argv through a temp repository whose
+    ``origin`` is a bare repo we can inspect after the push.
+    """
+
+    def _git(self, *args, cwd):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+        ).stdout
+
+    def test_the_pushed_commit_has_no_workflow_path(self):
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        workflow = ".github/workflows/internal-tests.yaml"
+        code = "src/thing.py"
+
+        with tempfile.TemporaryDirectory() as root:
+            remote = os.path.join(root, "origin.git")
+            work = os.path.join(root, "work")
+            os.makedirs(work)
+            self._git("init", "-q", "--bare", "-b", "main", remote, cwd=root)
+            self._git("init", "-q", "-b", "main", work, cwd=root)
+            for key, value in (("user.name", "t"), ("user.email", "t@e.com")):
+                self._git("config", key, value, cwd=work)
+            self._git("remote", "add", "origin", remote, cwd=work)
+            os.makedirs(os.path.join(work, ".github", "workflows"))
+            os.makedirs(os.path.join(work, "src"))
+            for path, body in (
+                (workflow, "on: [push]\n"),
+                (code, "x = 1\n"),
+            ):
+                with open(os.path.join(work, path), "w", encoding="utf-8") as fh:
+                    fh.write(body)
+            self._git("add", "-A", cwd=work)
+            self._git("commit", "-qm", "base", cwd=work)
+            self._git("push", "-q", "-u", "origin", "main", cwd=work)
+
+            # Agent work: a plain file *and* a workflow file, both left dirty.
+            with open(os.path.join(work, code), "w", encoding="utf-8") as fh:
+                fh.write("x = 2\n")
+            with open(os.path.join(work, workflow), "w", encoding="utf-8") as fh:
+                fh.write("on: [push, pull_request]\n")
+
+            posted: list[str] = []
+            class _Transport:
+                def call(self, args, *, mutative=False, cwd=None, timeout=None):
+                    joined = " ".join(args)
+
+                    class _R:
+                        ok = True
+                        status = 200
+                        detail = ""
+                        payload = ""
+
+                    if "default_branch" in joined:
+                        _R.payload = "main"
+                    elif args[:2] == ["pr", "list"]:
+                        _R.payload = ""
+                    elif args[:2] == ["pr", "create"]:
+                        _R.payload = "https://github.com/acme/repo/pull/9"
+                    elif "/comments" in joined:
+                        _R.payload = "https://github.com/acme/repo/issues/1080#c1"
+                        posted.append(joined)
+                    return _R()
+
+            real_git = mod._run_git
+
+            def git_here(args, **kwargs):
+                # Run every git command in the temp repo.
+                return real_git(args, cwd=work, **kwargs)
+
+            with patch.object(mod, "_run_git", git_here), patch.object(
+                mod, "GitHubTransport", lambda *a, **k: _Transport()
+            ), patch.dict(
+                os.environ,
+                {
+                    "TARGET_NUMBER": "1080",
+                    "GITHUB_REPOSITORY": "acme/repo",
+                },
+                clear=False,
+            ):
+                result = mod.ensure_pr()
+
+
+            self.assertFalse(result.error, result.message)
+            self.assertTrue(result.patch_paths)
+
+            # The remote really received the code and really did not receive
+            # the workflow file — checked against git, not a mock argv. The
+            # *pushed commit* is what the token carried: the base commit's
+            # workflow file is irrelevant here.
+            import subprocess as _sp
+
+            pushed_paths = _sp.run(
+                [
+                    "git",
+                    "-C",
+                    remote,
+                    "show",
+                    "--name-only",
+                    "--format=",
+                    "main",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.split()
+            self.assertIn(code, pushed_paths)
+            self.assertNotIn(workflow, pushed_paths)
+
+            # The patch was posted and applies to a clean checkout.
+            self.assertTrue(posted)
+            self.assertIn("workflow-patch.diff", " ".join(posted))
+            self.assertFalse(
+                self._git("status", "--porcelain", cwd=work).strip(),
+                "ensure_pr must leave the tree clean",
+            )
 
 
 if __name__ == "__main__":
