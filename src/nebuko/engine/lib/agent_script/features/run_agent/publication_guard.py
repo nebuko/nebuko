@@ -1,0 +1,104 @@
+"""Publication guard — bounded recall when approved work was never published.
+
+An approved write step can end with its edits neither committed, pushed nor
+opened as a PR (run 39622244543: the model edited a file with no shell tool
+available). ``ensure_pr`` only covers the graceful-timeout path and the
+dispatch recall only looks for a missing verdict, so nothing noticed.
+
+This module owns the agent-facing half of the fix: the recall prompt and its
+bounded loop, mirroring ``dispatch_recall`` so both recalls share the same
+cost properties (a model turn each, capped, never escaping the termination
+path). The deterministic ``ensure_pr`` fallback stays in ``run_agent``.
+"""
+
+from collections.abc import Sequence
+
+from openhands.sdk import get_logger
+
+logger = get_logger(__name__)
+
+# Hard cap on recall turns. Each one costs a model turn, and an agent that
+# ignores the first nudge is unlikely to obey the tenth.
+MAX_PUBLICATION_RECALLS = 2
+
+# Watchdog budget for a single recall pass (seconds). Committing and pushing
+# is fast; anything slower is treated as a hang and hands over to ensure_pr.
+PUBLICATION_RECALL_PASS_BUDGET_S = 600.0
+
+_REASON_TEXT = {
+    "dirty_tree": "your working tree has uncommitted changes",
+    "unpushed_commits": "your branch has commits that are not pushed",
+    "missing_pr": "no pull request is open for your branch",
+}
+
+
+def publication_recall_prompt(reasons: Sequence[str]) -> str:
+    """The recall message asking the agent to publish its approved work."""
+    missing = [_REASON_TEXT.get(reason, reason) for reason in reasons]
+    listed = "\n".join(f"- {item}" for item in missing) or "- the work is not published"
+    return f"""\
+⚠️   UNPUBLISHED WORK
+
+You finalised this step as approved, but the work is not published yet:
+{listed}
+
+Do NOT start any new task and do NOT redo the work.
+
+1. Commit your changes (stage only the files you changed — never generated
+   files, caches, or secrets).
+2. Push the branch.
+3. Open a pull request, following the `git-pr-workflow` skill exactly as you
+   normally would.
+
+You keep control of the branch name, the commit message and the PR body.
+
+Then call the `finalize` tool again with the same verdict and finish.
+
+If you cannot publish the work (no git or shell tool available), say so
+briefly and finalize: the engine will checkpoint the branch with a generic
+pull request so the work is not lost.
+"""
+
+
+def perform_publication_recalls(
+    conversation,
+    unpublished_reasons,
+    run_pass,
+) -> int:
+    """Run the bounded publication-recall loop.
+
+    Dependencies are injected so the loop stays testable without an event
+    loop or a real LLM:
+
+    Args:
+        conversation: Anything with ``send_message(prompt)`` (SDK
+            Conversation or a test double).
+        unpublished_reasons: Zero-arg callable returning the reasons the work
+            is still unpublished, or an empty sequence once it is published.
+            Re-checked every iteration so a compliant agent stops the loop.
+        run_pass: ``n -> bool`` — executes one recall turn and returns True
+            if it completed within its budget.
+
+    Returns:
+        Number of recall turns actually performed
+        (0..MAX_PUBLICATION_RECALLS).
+    """
+    count = 0
+    while count < MAX_PUBLICATION_RECALLS:
+        reasons = tuple(unpublished_reasons() or ())
+        if not reasons:
+            break
+        count += 1
+        try:
+            conversation.send_message(publication_recall_prompt(reasons))
+        except Exception as exc:  # noqa: BLE001 - must not escape the termination path
+            # A dead/closed conversation cannot answer the recall — log and
+            # stop instead of losing the run outcome to the exception.
+            logger.warning(
+                f"Publication recall {count}: send_message failed — stopping "
+                f"recalls (count={count}): {exc}"
+            )
+            break
+        if not run_pass(count):
+            break
+    return count

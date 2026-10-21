@@ -23,12 +23,21 @@ from agent_script.sub_domains.token_budget.condenser import (
 )
 from agent_script.sub_domains.tool_resolution.tool_resolution import resolve_toolset
 
-from agent_script.features.dispatch_check import has_dispatch_decision
+from agent_script.features.dispatch_check import (
+    has_dispatch_decision,
+    recorded_is_approved,
+)
+from agent_script.features.ensure_pr.ensure_pr import check_publication, ensure_pr
 from agent_script.features.handoff_tool.handoff_tool import take_fold
 from agent_script.features.run_agent.dispatch_recall import (
     MAX_DISPATCH_RECALLS,
     RECALL_PASS_BUDGET_S,
     perform_dispatch_recalls,
+)
+from agent_script.features.run_agent.publication_guard import (
+    MAX_PUBLICATION_RECALLS,
+    PUBLICATION_RECALL_PASS_BUDGET_S,
+    perform_publication_recalls,
 )
 from agent_script.features.run_agent.run_failure import RunFailure, classify_failure
 from agent_script.features.run_agent.run_outcome import (
@@ -244,6 +253,16 @@ def _perform_wind_down(
             "Wind-down budget also exhausted — relying on deterministic PR fallback"
         )
     return completed
+
+
+def _can_publish(resolved) -> bool:
+    """Whether the agent holds a shell tool, i.e. can commit and push itself.
+
+    A recall is a model turn; spending it on an agent that has no way to run
+    ``git`` only wastes turns. That is exactly the incident this guard covers
+    (a config that dropped the shell tool), so go straight to ``ensure_pr``.
+    """
+    return resolved.has("terminal") or resolved.has("terminal_batch")
 
 
 def _discard_token(_chunk: object) -> None:
@@ -464,6 +483,28 @@ def run_agent(
             dispatch_recall_event_offset=pre_recall_offset,
         )
 
+    # ── Publication guard ───────────────────────────────────────
+    # An approved *write* step must not end with its work sitting only in the
+    # checkout: no commit, no push, no PR (run 39622244543 — the model edited a
+    # file with no shell tool available, and nothing noticed). Check the
+    # publication state, recall the agent (bounded) so it keeps control of the
+    # branch name/commit message/PR body, then fall back to the deterministic
+    # ensure_pr so a PR always exists.
+    #
+    # Gate on the *requested* tools, not the resolved set: resolve_toolset
+    # silently drops tools, and gating on the resolved set would skip exactly
+    # the broken config this guard exists for. Non-write roles (architect, po,
+    # review), non-approved verdicts and every non-SUCCESS status are never
+    # checked — their dirty tree is not an error.
+    if (
+        "file_editor" in agent_tools
+        and outcome is OutcomeStatus.SUCCESS
+        and recorded_is_approved(conversation)
+    ):
+        run_outcome = _guard_publication(
+            conversation, run_outcome, resolved, llm_config.get("model", "")
+        )
+
     # Attach to the conversation so build_output can consume it without a
     # signature change.
     conversation.run_outcome = run_outcome  # type: ignore[attr-defined]
@@ -475,3 +516,94 @@ def run_agent(
     )
 
     return conversation
+
+
+def _guard_publication(
+    conversation, run_outcome: RunOutcome, resolved, model: str = ""
+) -> RunOutcome:
+    """Check publication, recall the agent, then fall back to ``ensure_pr``.
+
+    Returns the ``run_outcome`` updated with the guard result
+    (``clean`` / ``recalled_ok`` / ``fallback_pr`` / ``fallback_failed``).
+    A skip (no remote, detached HEAD) records nothing.
+    """
+    state = check_publication()
+    if state.skip_reason:
+        logger.info(f"Publication guard skipped: {state.skip_reason}")
+        return run_outcome
+    if state.published:
+        return dataclasses.replace(run_outcome, publication_guard="clean")
+
+    missing = ", ".join(state.reasons)
+    recall_count = 0
+    pre_recall_offset: int | None = None
+    if _can_publish(resolved):
+        # Pin the pre-recall boundary before the first recall turn so the
+        # capture layer can exclude engine-injected turns (issue #558). Kept
+        # even when no turn ends up being sent: an offset past the end is
+        # equivalent to excluding nothing.
+        pre_recall_offset = len(conversation.state.events)
+
+        def _unpublished_reasons() -> tuple[str, ...]:
+            # A verdict flip mid-recall does not stop the guard: the work still
+            # needs a checkpoint, and losing it is worse than finishing it.
+            return check_publication().reasons
+
+        def _run_publication_pass(n: int) -> bool:
+            logger.warning(
+                f"Approved write step left unpublished work ({missing}) — "
+                f"recall {n}/{MAX_PUBLICATION_RECALLS}"
+            )
+            watchdog, _ = _run_supervised(
+                conversation,
+                PUBLICATION_RECALL_PASS_BUDGET_S,
+                f"Publication recall {n}",
+            )
+            if watchdog.fired:
+                logger.warning(
+                    f"Publication recall {n} exhausted its budget — giving up"
+                )
+            return not watchdog.fired
+
+        recall_count = perform_publication_recalls(
+            conversation, _unpublished_reasons, _run_publication_pass
+        )
+        state = check_publication()
+        if state.published:
+            logger.info(
+                f"Publication guard: work published after {recall_count} recall(s)"
+            )
+            return dataclasses.replace(
+                run_outcome,
+                publication_guard="recalled_ok",
+                publication_detail=missing,
+                publication_recall_count=recall_count,
+                publication_recall_event_offset=pre_recall_offset,
+            )
+
+    missing = ", ".join(state.reasons) or missing
+    logger.warning(
+        "Publication guard fallback: approved write step still unpublished "
+        f"(role={os.environ.get('ROLE_NAME', 'unknown')}, "
+        f"model={model or os.environ.get('MODEL_NAME', 'unknown')}, "
+        f"missing={missing}, recalls={recall_count}) — running ensure_pr"
+    )
+    pr = ensure_pr()
+    if pr.error or not pr.pr_url:
+        detail = pr.message or "ensure_pr produced no PR"
+        logger.error(f"Publication guard fallback failed: {detail}")
+        return dataclasses.replace(
+            run_outcome,
+            publication_guard="fallback_failed",
+            publication_detail=detail,
+            publication_recall_count=recall_count,
+            publication_recall_event_offset=pre_recall_offset,
+        )
+    logger.info(f"Publication guard fallback opened PR: {pr.pr_url}")
+    return dataclasses.replace(
+        run_outcome,
+        publication_guard="fallback_pr",
+        publication_detail=pr.pr_url,
+        publication_recall_count=recall_count,
+        publication_recall_event_offset=pre_recall_offset,
+    )

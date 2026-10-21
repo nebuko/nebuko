@@ -142,6 +142,42 @@ def _posted_recall_count(state: WorkflowState | None) -> int:
     return metrics.dispatch_recall_count if metrics is not None else 0
 
 
+#: Guard results that mean the engine had to intervene for a step to be
+#: published; ``clean`` is the normal path and never renders.
+_RESCUE_LINES = {
+    "recalled_ok": "the agent published it after an engine recall",
+    "fallback_pr": "the engine opened a checkpoint PR via `ensure_pr`",
+    "fallback_failed": "**the automatic PR fallback failed**",
+}
+
+
+def _publication_guard_note(state: WorkflowState | None) -> str:
+    """One-line notice when the publication guard had to rescue a step.
+
+    The machine-readable result lives in the state's ``current_context`` and in
+    the run metrics; this surfaces it next to the answer so a step that needed
+    rescuing is visible instead of buried in the collapsed JSON — in particular
+    a ``fallback_failed`` (work may be lost) must never be swallowed.
+    """
+    context = (state.current_context or {}) if state is not None else {}
+    result = (context.get("publication_guard") or "").strip()
+    if result not in _RESCUE_LINES:
+        return ""
+    line = (
+        "> ⚠️ **Publication guard:** the step finished approved with unpublished "
+        f"work — {_RESCUE_LINES[result]}."
+    )
+    if result == "fallback_pr":
+        detail = (context.get("publication_guard_detail") or "").strip()
+        if detail:
+            line += f" PR: {detail}"
+    elif result == "fallback_failed":
+        detail = (context.get("publication_guard_detail") or "").strip()
+        if detail:
+            line += f" Error: {detail}"
+    return line + "\n\n"
+
+
 # ── Core cleaning functions ───────────────────────────────────────
 
 
@@ -465,6 +501,7 @@ def format_answer_header(role_name: str | None, state: WorkflowState | None) -> 
         f"{header_line}\n"
         f"<!-- bot-agent-{role} -->\n"
         f"{section}"
+        f"{_publication_guard_note(state)}"
         f"\n*{_display_name_for(role)} answer*\n\n"
     )
 

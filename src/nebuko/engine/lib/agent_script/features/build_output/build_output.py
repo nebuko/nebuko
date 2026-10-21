@@ -905,11 +905,7 @@ def _recall_aware_events(events: list, run_outcome) -> list:
     Turn-outcome resolution intentionally does NOT use this: the recall turn is
     exactly where the missing verdict is supplied.
     """
-    offset = (
-        run_outcome.dispatch_recall_event_offset
-        if run_outcome is not None
-        else None
-    )
+    offset = _first_recall_offset(run_outcome)
     if offset is None:
         return events
     logger.info(
@@ -932,6 +928,26 @@ def _work_loop_events(events: list, conversation) -> list:
     if not isinstance(offset, int):
         return events
     return events[:offset]
+
+
+def _first_recall_offset(run_outcome) -> int | None:
+    """Earliest engine-injected recall boundary on the run outcome (#558).
+
+    Both bounded recalls (dispatch and publication) inject turns whose text is
+    an engine prompt, never an agent answer, so the earliest recorded offset is
+    the boundary every answer must sit before.
+    """
+    if run_outcome is None:
+        return None
+    offsets = [
+        getattr(run_outcome, name, None)
+        for name in (
+            "dispatch_recall_event_offset",
+            "publication_recall_event_offset",
+        )
+    ]
+    present = [o for o in offsets if isinstance(o, int)]
+    return min(present) if present else None
 
 
 def _write_latest_answer_file(text: str) -> None:
@@ -1198,6 +1214,12 @@ def build_output(
     context_updates: dict[str, str] = {}
     if run_outcome is not None:
         context_updates["last_run_status"] = run_outcome.status.value
+        publication_guard = getattr(run_outcome, "publication_guard", "")
+        if publication_guard:
+            context_updates["publication_guard"] = publication_guard
+            context_updates["publication_guard_detail"] = getattr(
+                run_outcome, "publication_detail", ""
+            )
     if is_graceful_timeout:
         logger.info("Graceful timeout detected — running deterministic PR fallback")
         pr_result = ensure_pr()
