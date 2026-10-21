@@ -16,6 +16,8 @@
 
         sharedPkgs = with pkgs; [
           git
+          gh
+          vim
           python313
           uv
           stdenv.cc.cc.lib
