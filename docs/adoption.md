@@ -50,7 +50,8 @@ Adding Nebuko to a repository gives you:
 4. **An agent config** at `.nebuko/agents/agent-config.yaml` in your
    repository — **mandatory for now** (section 3, step 1).
 5. **A provider API key** — one of `OPENROUTER_API_KEY`,
-   `COMMANDCODE_API_KEY`, `OPENCODE_GO_API_KEY` or `LOCAL_VLLM_API_TOKEN`,
+   `COMMANDCODE_API_KEY`, `OPENCODE_GO_API_KEY`, `MISTRAL_API_KEY` or
+   `LOCAL_VLLM_API_TOKEN`,
    matching the `api_token_env` of the provider in your agent config
    (section 5).
 
@@ -127,6 +128,7 @@ inherited from whatever Nebuko ships. Either write one (section 5,
 | [`agent-config-openrouter.yaml`](../defaults/agents/agent-config-openrouter.yaml) | OpenRouter | `OPENROUTER_API_KEY` |
 | [`agent-config-commandcode.yaml`](../defaults/agents/agent-config-commandcode.yaml) | CommandCode | `COMMANDCODE_API_KEY` |
 | [`agent-config-opencode.yaml`](../defaults/agents/agent-config-opencode.yaml) | OpenCode Go | `OPENCODE_GO_API_KEY` |
+| [`agent-config-mistral.yaml`](../defaults/agents/agent-config-mistral.yaml) | Mistral | `MISTRAL_API_KEY` |
 
 ```bash
 mkdir -p .nebuko/agents
@@ -204,6 +206,7 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 | `OPENROUTER_API_KEY` | optional | Provider key (the `api_token_env` referenced by `defaults/agents/agent-config-openrouter.yaml`). |
 | `COMMANDCODE_API_KEY` | optional | CommandCode subscription provider. |
 | `OPENCODE_GO_API_KEY` | optional | OpenCode Go provider. |
+| `MISTRAL_API_KEY` | optional | Mistral provider. |
 | `LOCAL_VLLM_API_TOKEN` | optional | Local vLLM provider. |
 | `BRAVE_API_KEY` | optional | Brave Search MCP token (the named alias of the slot pattern in section 3.1). |
 | `EXTRA_SECRET_1_VALUE` … `EXTRA_SECRET_9_VALUE` | optional | Values materialized into the env vars named by the `EXTRA_SECRET_n_NAME` inputs (section 3.1). |

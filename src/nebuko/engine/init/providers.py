@@ -31,10 +31,18 @@ class OpenCodeProfile(ProviderProfile):
     secret_names = ("OPENCODE_GO_API_KEY",)
 
 
+class MistralProfile(ProviderProfile):
+    name = "mistral"
+    description = "Mistral"
+    template_path = "defaults/agents/agent-config-mistral.yaml"
+    secret_names = ("MISTRAL_API_KEY",)
+
+
 PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
     OpenRouterProfile(),
     CommandCodeProfile(),
     OpenCodeProfile(),
+    MistralProfile(),
 )
 
 DEFAULT_PROVIDER_NAME = PROVIDER_PROFILES[0].name

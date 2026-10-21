@@ -33,6 +33,7 @@ def test_default_provider_is_openrouter():
         ("openrouter", "OPENROUTER_API_KEY"),
         ("commandcode", "COMMANDCODE_API_KEY"),
         ("opencode", "OPENCODE_GO_API_KEY"),
+        ("mistral", "MISTRAL_API_KEY"),
     ],
 )
 def test_provider_secret_names(name, secret):
