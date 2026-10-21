@@ -159,8 +159,8 @@ generates. Details: [adoption.md §3](docs/adoption.md#3-the-entrypoint-copy-pas
 
 3. **Add secrets** under *Settings → Secrets and variables → Actions*:
    - the provider key named by your config's `api_token_env`:
-     `OPENROUTER_API_KEY`, `COMMANDCODE_API_KEY`, `OPENCODE_GO_API_KEY` or
-     `LOCAL_VLLM_API_TOKEN` (see [providers](#providers));
+     `OPENROUTER_API_KEY`, `COMMANDCODE_API_KEY`, `OPENCODE_GO_API_KEY`,
+     `MISTRAL_API_KEY` or `LOCAL_VLLM_API_TOKEN` (see [providers](#providers));
    - `GH_PAT`: a fine-grained PAT with **Contents**, **Pull requests** and
      **Issues** read/write;
    - optional MCP tokens (e.g. `BRAVE_API_KEY`) through the generic
