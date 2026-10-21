@@ -85,6 +85,12 @@ LLM provider and the runner labels, then:
 4. asks for each secret value with hidden input and stores it with
    `gh secret set` at the level you chose (`--org <name>` skips the prompt).
 
+Secrets already stored at the chosen level (`GH_PAT`, or the provider key) are
+not touched: `init` reports `OPENROUTER_API_KEY already setup in acme [ skipping,
+use --force to update value ]` and does not ask for their values. This is what
+makes it safe to run `init` for a second repository against organization-level
+secrets. Pass `--force` to rewrite them.
+
 It uses **your own `gh` authentication**: nothing goes through a Nebuko server
 and no GitHub App is involved. `init` needs the GitHub CLI (`gh`) on your
 `PATH` — it stops with an install hint before doing anything else when it is
@@ -100,8 +106,9 @@ Release assets: `nebuko-linux-amd64`, `nebuko-macos-arm64`, `nebuko-macos-amd64`
 Flags for scripted installs: `--repo`, `--org`, `--provider`, `--runs-on`,
 `--pin-ref`, `--template-dir`, `--non-interactive` (secret values from
 `NEBUKO_SECRET_<NAME>`), `--force`. Re-running `init` on an initialized
-repository asks before overwriting, and refuses in `--non-interactive` mode
-unless `--force` is given.
+repository asks before overwriting the generated files, and refuses in
+`--non-interactive` mode unless `--force` is given; secrets that already exist
+at the chosen level are skipped (with a note) unless `--force` is given.
 
 The manual steps below remain the fallback — and the reference for exactly what
 `init` generates.

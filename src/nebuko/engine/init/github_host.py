@@ -210,6 +210,19 @@ class GitHubHost(SetupHost):
     # ── secrets ──────────────────────────────────────────────────────────────
 
     # @stub-protected
+    def existing_secrets(self, target: SetupTarget) -> frozenset[str]:
+        # A listing failure must surface: "unknown" is never "nothing exists",
+        # or an existing secret would be silently overwritten.
+        args = ["gh", "secret", "list"]
+        if target.org:
+            args += ["--org", target.org]
+        else:
+            args += ["--repo", target.slug]
+        args += ["--json", "name", "--jq", ".[].name"]
+        out = self._run(args, check=True).stdout
+        return frozenset(line.strip() for line in out.splitlines() if line.strip())
+
+    # @stub-protected
     def set_secret(self, target: SetupTarget, name: str, value: str) -> None:
         args = ["gh", "secret", "set", name]
         if target.org:

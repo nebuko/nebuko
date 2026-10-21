@@ -130,6 +130,8 @@ def run_init(
 
     scope = answers.target.org or answers.target.slug
     for name in secret_names(answers.provider):
+        if name in answers.skipped and not answers.force:
+            continue  # Already stored: the skip note was printed when it was probed.
         value = answers.secrets.get(name)
         if not value:
             print(f"Secret {name} not set (no value provided).")

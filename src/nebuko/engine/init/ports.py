@@ -55,6 +55,8 @@ class InitAnswers:
     pin_ref: str
     secrets: Mapping[str, str] = field(default_factory=dict, repr=False)
     force: bool = False
+    # Names already present at the target scope: never asked for, never rewritten.
+    skipped: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,10 @@ class SetupHost(ABC):
     # @stub-protected
     @abstractmethod
     def existing_paths(self, target: SetupTarget, paths: Sequence[str]) -> set[str]: ...
+
+    # @stub-protected
+    @abstractmethod
+    def existing_secrets(self, target: SetupTarget) -> frozenset[str]: ...
 
     # @stub-protected
     @abstractmethod

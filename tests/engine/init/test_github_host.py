@@ -10,9 +10,11 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
+
 from nebuko.engine.init import github_host
 from nebuko.engine.init.github_host import GitHubHost
-from nebuko.engine.init.ports import GeneratedFiles, SetupTarget
+from nebuko.engine.init.ports import GeneratedFiles, SetupError, SetupTarget
 
 TARGET = SetupTarget(host="github.com", owner="acme", repo="widgets")
 ORG_TARGET = SetupTarget(host="github.com", owner="acme", repo="widgets", org="acme")
@@ -201,6 +203,46 @@ def test_set_secret_targets_the_org_when_asked():
     runner = FakeRunner([("secret set", _completed())])
     GitHubHost(runner=runner).set_secret(ORG_TARGET, "GH_PAT", "pat")
     assert runner.argv("secret set") == ["gh", "secret", "set", "GH_PAT", "--org", "acme"]
+
+
+def test_existing_secrets_lists_the_repo_secret_names():
+    runner = FakeRunner([("secret list", _completed("GH_PAT\nOPENROUTER_API_KEY\n"))])
+    found = GitHubHost(runner=runner).existing_secrets(TARGET)
+    assert found == frozenset({"GH_PAT", "OPENROUTER_API_KEY"})
+    assert runner.argv("secret list") == [
+        "gh",
+        "secret",
+        "list",
+        "--repo",
+        "acme/widgets",
+        "--json",
+        "name",
+        "--jq",
+        ".[].name",
+    ]
+
+
+def test_existing_secrets_targets_the_org_when_asked():
+    runner = FakeRunner([("secret list", _completed(""))])
+    found = GitHubHost(runner=runner).existing_secrets(ORG_TARGET)
+    assert found == frozenset()
+    assert runner.argv("secret list") == [
+        "gh",
+        "secret",
+        "list",
+        "--org",
+        "acme",
+        "--json",
+        "name",
+        "--jq",
+        ".[].name",
+    ]
+
+
+def test_existing_secrets_raises_when_the_listing_fails():
+    runner = FakeRunner([("secret list", _completed(returncode=1, stderr="HTTP 403"))])
+    with pytest.raises(SetupError):
+        GitHubHost(runner=runner).existing_secrets(TARGET)
 
 
 # ── repository state ─────────────────────────────────────────────────────────
