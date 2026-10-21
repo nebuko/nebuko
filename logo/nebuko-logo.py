@@ -159,8 +159,10 @@ def mark_fit(uid, mode, target, simple=False):
     g = f'<g transform="translate(32 32) scale({f(sc)}) translate({f(-cx)} {f(-cy)})">{inner}</g>'
     return g, (32 - (x1 - x0) / 2 * sc, 32 - (y1 - y0) / 2 * sc, 32 + (x1 - x0) / 2 * sc, 32 + (y1 - y0) / 2 * sc)
 
-def tile(uid, target=46, simple=False, rx=14):
+def tile(uid, target=46, simple=False, rx=14, transparent=False):
     g, _ = mark_fit(uid + "m", "dark", target, simple)
+    if transparent:
+        return svg(g)
     bg = (f'<defs><radialGradient id="{uid}b" cx=".5" cy=".5" r=".75"><stop offset="0" stop-color="#1B2650"/><stop offset="1" stop-color="{BG}"/></radialGradient></defs>'
           f'<rect width="64" height="64" rx="{rx}" fill="url(#{uid}b)"/>')
     return svg(bg + g)
@@ -194,6 +196,7 @@ files = {
   "mark-black": svg(mark_fit("d", "flat:#000000", 60)[0]),
   "tile": tile("t"),
   "favicon": tile("fv", 50, simple=True),
+  "favicon-light": tile("fv-light", 50, simple=True, transparent=True),
   "logo-horizontal-dark": horizontal("e", "dark"), "logo-horizontal-light": horizontal("g", "light"),
   "logo-horizontal-white": horizontal("h", "white"), "logo-horizontal-black": horizontal("i", "black"),
 }
@@ -201,6 +204,7 @@ for n, v in files.items(): open(OUT + n + ".svg", "w").write(v)
 png = lambda n, w, to=None: cairosvg.svg2png(bytestring=files[n].encode(), write_to=OUT + (to or n) + ".png", output_width=w)
 png("mark-dark", 2048); png("mark-light", 2048); png("tile", 1024); png("logo-horizontal-dark", 4096); png("logo-horizontal-light", 4096)
 for sz in (64, 48, 32, 16): png("favicon", sz, f"favicon-{sz}")
+for sz in (64, 48, 32, 16): png("favicon-light", sz, f"favicon-light-{sz}")
 ims = [Image.open(io.BytesIO(cairosvg.svg2png(bytestring=files["favicon"].encode(), output_width=sz))).convert("RGBA") for sz in (16, 32, 48)]
 blobs = []
 for im in ims:
@@ -209,4 +213,13 @@ hdr = struct.pack("<HHH", 0, 1, 3); off = 6 + 16 * 3; ent = b""
 for sz, bl in zip((16, 32, 48), blobs):
     ent += struct.pack("<BBBBHHII", sz, sz, 0, 0, 1, 32, len(bl), off); off += len(bl)
 open(OUT + "favicon.ico", "wb").write(hdr + ent + b"".join(blobs))
+# Generate favicon-light.ico with RGBA format for all sizes
+ims_light = [Image.open(io.BytesIO(cairosvg.svg2png(bytestring=files["favicon-light"].encode(), output_width=sz))).convert("RGBA") for sz in (16, 32, 48)]
+blobs_light = []
+for im in ims_light:
+    b = io.BytesIO(); im.save(b, "PNG"); blobs_light.append(b.getvalue())
+hdr_light = struct.pack("<HHH", 0, 1, 3); off_light = 6 + 16 * 3; ent_light = b""
+for sz, bl in zip((16, 32, 48), blobs_light):
+    ent_light += struct.pack("<BBBBHHII", sz, sz, 0, 0, 1, 32, len(bl), off_light); off_light += len(bl)
+open(OUT + "favicon-light.ico", "wb").write(hdr_light + ent_light + b"".join(blobs_light))
 print("ok")
