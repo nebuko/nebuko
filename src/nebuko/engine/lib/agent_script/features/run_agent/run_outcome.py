@@ -51,9 +51,13 @@ class RunOutcome:
             build_output can render a helpful terminal comment (issue #668).
         publication_guard: Result of the publication guard on an approved
             write step: "" (not checked), "clean", "recalled_ok",
-            "fallback_pr" or "fallback_failed".
+            "fallback_pr", "fallback_patch" (workflow-only work delivered as a
+            patch, issue #1080) or "fallback_failed".
         publication_detail: What was missing (the ``check_publication``
             reasons), the fallback PR URL, or the fallback error message.
+        publication_patch: Where the delivered ``.github/workflows/*`` patch
+            lives — the comment URL, or the staged artifact name when the
+            patch was too large to inline (issue #1080).
         publication_recall_count: Number of publication-recall turns
             injected because the approved work was never published.
         publication_recall_event_offset: Event index captured just before the
@@ -70,6 +74,8 @@ class RunOutcome:
     failure: RunFailure | None = None  # @stub-protected
     publication_guard: str = ""
     publication_detail: str = ""
+    # @stub-protected: signature defined by architect — do not modify
+    publication_patch: str = ""
     publication_recall_count: int = 0
     publication_recall_event_offset: int | None = None
 

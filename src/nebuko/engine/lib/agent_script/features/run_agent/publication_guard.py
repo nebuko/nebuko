@@ -29,13 +29,31 @@ _REASON_TEXT = {
     "dirty_tree": "your working tree has uncommitted changes",
     "unpushed_commits": "your branch has commits that are not pushed",
     "missing_pr": "no pull request is open for your branch",
+    "workflow_patch": (
+        "your changes under .github/workflows/ cannot be pushed with the agent "
+        "token (it has no `workflow` scope)"
+    ),
 }
+
+#: Reasons a recall turn cannot fix. ``workflow_patch`` means the only
+#: unpublished work is under ``.github/workflows/``, which the agent token may
+#: never push (issue #1080) — recalling the agent would burn turns on a push
+#: that is rejected no matter what. Those go straight to ``ensure_pr``, which
+#: delivers the delta as a patch for a human to apply.
+# @stub-protected: signature defined by architect — do not modify
+NON_RECALLABLE_REASONS = frozenset({"workflow_patch"})
+
+
+def recallable_reasons(reasons: Sequence[str]) -> tuple[str, ...]:
+    """The subset of ``reasons`` a recall turn could actually fix."""
+    return tuple(r for r in reasons if r not in NON_RECALLABLE_REASONS)
 
 
 def publication_recall_prompt(reasons: Sequence[str]) -> str:
     """The recall message asking the agent to publish its approved work."""
     missing = [_REASON_TEXT.get(reason, reason) for reason in reasons]
     listed = "\n".join(f"- {item}" for item in missing) or "- the work is not published"
+
     return f"""\
 ⚠️   UNPUBLISHED WORK
 
@@ -87,6 +105,15 @@ def perform_publication_recalls(
     while count < MAX_PUBLICATION_RECALLS:
         reasons = tuple(unpublished_reasons() or ())
         if not reasons:
+            break
+        if not recallable_reasons(reasons):
+            # Only work the agent cannot push is left (``workflow_patch``):
+            # a recall would spend a model turn on a push GitHub always
+            # rejects. Hand over to ensure_pr's patch delivery instead.
+            logger.info(
+                "Publication recall: only non-recallable reasons left "
+                f"({', '.join(reasons)}) — skipping recalls"
+            )
             break
         count += 1
         try:
