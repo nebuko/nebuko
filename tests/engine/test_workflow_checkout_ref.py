@@ -75,3 +75,61 @@ class TestWorkflowRefEnv:
             if s.get("name") == "Run orchestration engine"
         )
         assert engine["env"]["NEBUKO_WORKFLOW_REF"] == "${{ job.workflow_ref }}"
+
+
+class TestOidcBrokerToken:
+    """The workflow resolves its GitHub token from the OIDC broker (issue #1023).
+
+    ``GH_PAT`` is now only a fallback: the broker token has to reach every
+    consumer (engine, ``git push`` extraheader, metrics job).
+    """
+
+    MINT_STEP = "Acquire GitHub token (OIDC broker)"
+
+    def test_workflow_requests_an_oidc_token(self):
+        assert _workflow()["permissions"]["id-token"] == "write"
+
+    def test_gh_pat_is_an_optional_secret(self):
+        secret = _workflow()[True]["workflow_call"]["secrets"]["GH_PAT"]
+        assert secret["required"] is False
+
+    def test_each_job_mints_before_it_needs_the_token(self):
+        # $GITHUB_ENV does not cross jobs, so both jobs mint their own token.
+        for job in ("run-task", "agent-metrics"):
+            names = [s.get("name") for s in _steps(job)]
+            assert self.MINT_STEP in names
+            assert names.index(self.MINT_STEP) < names.index("Checkout repository")
+
+    def test_broker_url_defaults_to_a_repo_variable(self):
+        mint = _checkout_step("run-task", self.MINT_STEP)
+        assert "vars.NEBUKO_BROKER_URL" in mint["env"]["BROKER_URL"]
+        assert "|| 'https://" in mint["env"]["BROKER_URL"]
+
+    def test_mint_step_never_fails_and_exports_gh_token(self):
+        mint = _checkout_step("run-task", self.MINT_STEP)
+        assert "continue-on-error" not in mint
+        assert "GH_TOKEN=$TOKEN" in mint["run"]
+        assert "GITHUB_ENV" in mint["run"]
+        assert "::add-mask::" in mint["run"]
+
+    def test_fallback_chain_prefers_pat_over_github_token(self):
+        run = _checkout_step("run-task", self.MINT_STEP)["run"]
+        assert run.index("FALLBACK_PAT") < run.index("FALLBACK_GITHUB_TOKEN")
+
+    def test_cross_repo_checkouts_of_public_engine_carry_no_token(self):
+        for job, name in (
+            ("run-task", "Checkout nebuko engine (cross-repo caller)"),
+            ("agent-metrics", "Checkout nebuko repo (reusable workflow mode)"),
+        ):
+            assert "token" not in _checkout_step(job, name)["with"]
+
+    def test_engine_and_metrics_use_the_resolved_token(self):
+        engine = next(s for s in _steps("run-task") if s.get("name") == "Run orchestration engine")
+        assert engine["env"]["GH_TOKEN"] == "${{ env.GH_TOKEN }}"
+        metrics = next(s for s in _steps("agent-metrics") if s.get("name") == "Aggregate agent metrics")
+        assert metrics["env"]["GITHUB_TOKEN"] == "${{ env.GH_TOKEN }}"
+
+    def test_git_push_extraheader_uses_the_resolved_token(self):
+        step = next(s for s in _steps("run-task") if s.get("name") == "Install OpenHands dependencies")
+        assert "secrets." not in step.get("env", {}).get("GH_TOKEN", "")
+        assert "${GH_TOKEN}" in step["run"]
