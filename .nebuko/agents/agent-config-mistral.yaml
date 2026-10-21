@@ -1,0 +1,86 @@
+# ── Providers: API endpoints + auth ──
+# Mistral's API is OpenAI-compatible; the model identifier is the bare model
+# name it publishes (https://docs.mistral.ai/inference/pricing).
+providers:
+  mistral:
+    api_url: "https://api.mistral.ai/v1"
+    api_token_env: "MISTRAL_API_KEY"
+
+# ── LLMs: model paths referencing providers ──
+llms:
+  mistral-small-4:
+    model_path: "openai/mistral-small-4"
+    provider: "${providers.mistral}"
+    reasoning_effort: "none"
+  mistral-large-3:
+    model_path: "openai/mistral-large-3"
+    provider: "${providers.mistral}"
+  mistral-large-4:
+    model_path: "openai/mistral-large-4"
+    provider: "${providers.mistral}"
+  glm-5_3:
+    model_path: "openai/glm-5.3"
+    provider: "${providers.mistral}"
+
+# ── Agents: role → model + prompt + skills + tools ──
+# Tools: terminal, file_editor, task_tracker (SDK tools)
+#        think, finish (built-in defaults)
+agents:
+  architect:
+    model: "${llms.mistral-large-3}"
+    role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
+    temperature: 0.4
+    prompt_file: "defaults/prompts/architect.md"
+    skills:
+      - inject: ["call-agent", "posting-contract", "planning"]
+      - discover: ["complexity"]
+    tools: ["think", "finish", "finalize", "complexity_review"]
+    complexity_overrides:
+      low:
+        model: "${llms.mistral-small-4}"
+        reasoning: "medium"
+      high:
+        model: "${llms.mistral-large-4}"
+        temperature: 0.6
+        reasoning: "high"
+
+  dev:
+    model: "${llms.mistral-small-4}"
+    role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
+    temperature: 0.1
+    reasoning_effort: "none"
+    prompt_file: "defaults/prompts/dev.md"
+    skills:
+      - inject: ["posting-contract"]
+      - discover: ["git-pr-workflow", "complexity"]
+    tools: ["terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
+
+  context:
+    model: "${llms.mistral-small-4}"
+    role: "Read-only context collector — gathers and compiles codebase facts for other agents."
+    temperature: 0.1
+    reasoning_effort: "none"
+    prompt_file: "defaults/prompts/context.md"
+    skills:
+      - inject: ["call-agent", "posting-contract", "context-research"]
+      - discover: ["complexity"]
+    tools: ["terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "complexity_review"]
+
+  review:
+    model: "${llms.glm-5_3}"
+    role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
+    temperature: 0.4
+    prompt_file: "defaults/prompts/review.md"
+    skills:
+      - inject: ["posting-contract", "plan-review"]
+      - discover: ["retrospective", "complexity"]
+    tools: ["terminal_batch", "think", "finish", "finalize", "complexity_review"]
+
+  po:
+    model: "${llms.mistral-small-4}"
+    role: "Product owner — triages and refines issues into actionable specs; never modifies code."
+    prompt_file: "defaults/prompts/po.md"
+    skills:
+      - inject: ["call-agent", "posting-contract", "issue-refinement"]
+      - discover: ["complexity"]
+    tools: ["think", "finish", "finalize", "complexity_review"]
