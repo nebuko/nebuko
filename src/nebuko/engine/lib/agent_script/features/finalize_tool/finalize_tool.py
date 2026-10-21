@@ -186,6 +186,14 @@ class FinalizeExecutor(ToolExecutor):
         handoff = outcome.to_function_call()
         if handoff is not None:
             record_function_call(self._conversation_id, handoff)
+        
+        # Set execution status to FINISHED after accepting a valid finalize call
+        # This makes finalize the single terminal tool that ends the run
+        if conversation is not None:
+            from openhands.sdk.conversation.state import ConversationState
+            if isinstance(conversation, ConversationState):
+                conversation.execution_status = "FINISHED"
+        
         return FinalizeObservation.from_text(
             text=(
                 f"Turn outcome recorded: appreciation={outcome.appreciation}, "
@@ -195,7 +203,7 @@ class FinalizeExecutor(ToolExecutor):
                     if handoff is not None
                     else ""
                 )
-                + "."
+                + ". The step is complete: do not call any more tools."
             )
         )
 

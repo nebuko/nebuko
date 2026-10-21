@@ -11,7 +11,6 @@ from openhands.sdk import get_logger
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.sdk.event import ActionEvent, MessageEvent
 from openhands.sdk.llm.message import content_to_str
-from openhands.sdk.tool.builtins.finish import FinishTool
 from pydantic import ValidationError
 
 from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS
@@ -96,7 +95,6 @@ LATEST_ANSWER_FILE = "latest_answer.md"
 # Tool names whose turns carry the agent's text in ``ActionEvent.thought``
 # instead of a standalone ``MessageEvent`` (issue #553/#555). Agents place
 # their full deliverable on the same turn as these control-plane calls.
-FINISH_TOOL_NAME = FinishTool.name
 DISPATCH_NEXT_TOOL_NAME = "dispatch_next"
 # Every step now ends through the engine-elicited finalize turn (issue #1033),
 # whose text is the report; the engine prompt that quotes the section skeleton
@@ -722,14 +720,8 @@ def _terminal_turn_answer(event, tool_name: str) -> str:
     stores the text in ``ActionEvent.thought`` and emits no standalone
     ``MessageEvent``. Where the deliverable lives differs by tool:
 
-      * ``finish`` — the typed ``message`` argument is the deliverable (issue
-        #822/#830: the wind-down contract and the engine-elicited report turn
-        put the full report there, while the turn text is a one-line lead-in).
-        The turn text is only a fallback for a finish call whose action or
-        message is absent/empty (the #553 shape, and ``get_agent_final_response``'s
-        own guard).
-      * a step without an ``output:`` shape ends through the same ``finalize``
-        turn, whose turn text *is* the deliverable. A legacy ``dispatch_next``
+      * ``finalize`` — the engine-elicited finalize turn's text is the deliverable.
+      * A legacy ``dispatch_next``
         turn's arguments were one-sentence routing metadata, so its turn text
         stood in for the deliverable (the #555 shape).
 
@@ -742,10 +734,6 @@ def _terminal_turn_answer(event, tool_name: str) -> str:
         # The finalize turn's text is the engine's own prompt (it embeds the
         # section skeleton), never a deliverable (issue #1020).
         return ""
-    if tool_name == FINISH_TOOL_NAME:
-        typed = _typed_finish_message(event)
-        if typed:
-            return typed
     return "".join(content_to_str(event.thought)).strip()
 
 
@@ -772,23 +760,7 @@ def _is_engine_finalize_turn(event) -> bool:
     return isinstance(getattr(getattr(event, "action", None), "workflow", None), str)
 
 
-def _typed_finish_message(event) -> str:
-    """The typed ``finish.message`` of a terminal turn, or ``""`` (issue #830).
 
-    The control plane is classified declaratively by
-    :data:`~nebuko.engine.engine_tools.DEFAULT_ENGINE_TOOLS`: ``finish``'s
-    ``message`` argument is the canonical final message (the engine-elicited
-    report turn fills it). Reading the typed payload structurally — instead of
-    guessing from prose placement — is what makes the posted answer
-    deterministic (the #822 truncation bug was a report left in
-    ``finish.message`` while the extractor read the one-line turn text).
-    """
-    if not isinstance(event, ActionEvent) or event.tool_name != FINISH_TOOL_NAME:
-        return ""
-    payload = DEFAULT_ENGINE_TOOLS.harvest(event.tool_name, getattr(event, "action", None))
-    if payload is None or payload.payload_kind != "final_message":
-        return ""
-    return (payload.fields.get("message") or "").strip()
 
 
 def extract_latest_answer(
@@ -803,20 +775,12 @@ def extract_latest_answer(
         ``MessageEvent`` with non-empty content, or the answer of the agent's
         control-plane turns. When the full answer and one of
         those tool calls share a turn, the SDK emits no standalone
-        ``MessageEvent`` for it — previously such answers were lost and
-        posting fell back to the short finish message.
-      * **``finish`` turns answer with their typed ``finish.message``
-        (issues #822/#830).** The wind-down contract and the engine-elicited
-        report turn put the full deliverable in that argument while the turn
-        text is a one-line lead-in; reading the argument is what stops the
-        posted answer being truncated. The turn text is used only when the
-        action or its message is absent/empty.
+        ``MessageEvent`` for it — previously such answers were lost.
       * **control turns answer with their turn text** — a routing argument is
         metadata and must never be posted as the answer.
       * All other tool actions are ignored — their accompanying text is
         mid-run commentary, not a deliverable.
-      * Return ``""`` when no agent text answer exists; callers then fall
-        back to the finish message (byte-identical legacy behavior).
+      * Return ``""`` when no agent text answer exists.
 
     Args:
         events: Conversation event list (``conversation.state.events``).
@@ -844,10 +808,7 @@ def extract_latest_answer(
                 continue
             text = "".join(content_to_str(event.llm_message.content)).strip()
         else:
-            text = (
-                _terminal_turn_answer(event, FINISH_TOOL_NAME)
-                or _terminal_turn_answer(event, DISPATCH_NEXT_TOOL_NAME)
-            )
+            text = _terminal_turn_answer(event, DISPATCH_NEXT_TOOL_NAME)
             if text and classify_event is not None and classify_event(event):
                 # This control turn is the engine's recall pass: its text is the
                 # engine prompt, not the agent's answer (issues #558/#1020).
@@ -1149,7 +1110,7 @@ def build_output(
 
     # ── Latest-answer capture (issue #522) ────────────────────────
     # The full deliverable is the agent's last answer: a standalone message,
-    # or — for a ``finish`` terminator — its typed ``finish.message`` (only the
+    # or — for a terminator —
     # fallback source after #1033; the closing turn's text is the report).
     # Recall-aware capture (issue #558): events after the recorded
     # pre-recall offset belong to the engine-injected recall turns and are
@@ -1168,8 +1129,7 @@ def build_output(
     )
     # The ``SCAFFOLD_BRANCH`` prose marker is written on a standalone text turn
     # (the scaffold-plan skill's channel), which the deliverable above may no
-    # longer represent once the finish terminator's typed message takes
-    # precedence — keep that turn as its own source so the marker fallback
+    # longer represent — keep that turn as its own source so the marker fallback
     # stays intact (issue #636).
     standalone_answer = extract_standalone_answer(recall_events)
     # Prose marker source for the SCAFFOLD_BRANCH search/strip below: the
@@ -1178,9 +1138,7 @@ def build_output(
 
     # ── Scaffold branch marker (issue #604; dual-source since #636) ─
     # The marker contract targets the agent's latest answer, but the
-    # finish message is checked first to preserve #604 behavior. A
-    # malformed marker in one source never blocks a valid marker in
-    # the other. Extracted before build_state so the value can be
+    # marker in one source never blocks a valid marker in the other. Extracted before build_state so the value can be
     # persisted this run.
     # (None when pre-extracted by the caller; otherwise extracted here.)
     if scaffold_branch is None:
@@ -1230,7 +1188,7 @@ def build_output(
         logger.info("Graceful timeout detected — running deterministic PR fallback")
         pr_result = ensure_pr()
         if not final_message:
-            # The wind-down did not finish its work — synthesize a clear
+            # The wind-down did not end its work — synthesize a clear
             # summary so downstream doesn't treat this as a crashed run.
             final_message = _build_timeout_summary(pr_result)
 
@@ -1267,7 +1225,7 @@ def build_output(
     parent_workflow = os.environ.get("PARENT_WORKFLOW", "") or None
     parent_workflow_step = os.environ.get("PARENT_WORKFLOW_STEP", "") or None
     # Callback return address (issue #765): set by the resolver when this run
-    # was reached through a caller's function_call, so a callee that finishes
+    # was reached through a caller's function_call, so a callee that ends
     # with no decision of its own routes back to the caller.
     callback = os.environ.get("CONFIG_CALLBACK", "").strip() or None
     position = _parse_position_env()

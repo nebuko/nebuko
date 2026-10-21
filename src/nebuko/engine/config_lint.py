@@ -70,7 +70,6 @@ KNOWN_TOOLS: frozenset[str] = frozenset(
         "file_editor",
         "task_tracker",
         "think",
-        "finish",
         "finalize",
         "report_scaffold_branch",
         "complexity_review",
