@@ -14,7 +14,23 @@ steps:
       Analysis turn: a human issue or request just arrived.
       - Decide what context @@context must collect (files, docs, facts).
       - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
-      - Delegate with `finalize(turn_outcome={appreciation:'approved', complexity:…})` on the same turn as your message. Do not plan yet.
+      - Delegate to @@context in the SAME turn, and end with the typed hand-off:
+        finalize(
+          report="…this step's report…",
+          turn_outcome={
+            "appreciation": "approved",
+            "complexity": "low",            # optional: omit to inherit the step's
+            "agent_call": {"agent_name": "context", "task": "…exact files/facts to collect…"},
+          },
+        )
+        Without turn_outcome.agent_call the hand-off is lost: the engine routes typed calls only.
+      - Do not plan yet. The engine's closing turn asks only for this step's report (the context request): the delegate has not run yet, so there is nothing to plan from.
+      - A rejected tool call is a call-shape error, not the delegate's answer — fix the call and retry it.
+    # The full Planning skill is injected on the role prompt's agent config; on
+    # this analysis step it is demoted to a catalog entry so the plan template
+    # cannot be mistaken for this step's artifact (issue #1054).
+    skill:
+      - discover: ["planning"]
     next: context
 
   - name: context
