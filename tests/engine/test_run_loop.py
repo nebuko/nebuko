@@ -473,6 +473,8 @@ class TestCommandErrorNotice:
         assert "/nebuko run workflow --name <workflow>" in outcome.posted_body
         # No continue token: an error notice must not re-trigger the chain.
         assert "<!-- workflow-continue -->" not in outcome.posted_body
+        # Issue #1057: a mistyped command explains itself, it does not fail CI.
+        assert outcome.process_exit_code() == 0
 
     def test_unknown_slash_command_posts_notice(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path, _trigger(body="/foo bar", number=804))
@@ -931,7 +933,11 @@ class TestBenignNoNextAgentExit:
         assert outcome.posted_body is None
 
     def test_a_config_error_skip_still_exits_terminal(self, tmp_path, monkeypatch):
-        """Regression guard: a real config failure keeps the terminal exit (20)."""
+        """Regression guard: a real config failure keeps the terminal outcome (20).
+
+        Its host process status is green (issue #1057), but the reason is now
+        announced on the thread instead of dying in the CI log.
+        """
         engine = _engine(tmp_path)
         _stub_resolved(
             monkeypatch,
@@ -946,7 +952,26 @@ class TestBenignNoNextAgentExit:
         outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.TERMINAL
-        assert outcome.posted_body is None
+        assert outcome.process_exit_code() == 0
+        assert outcome.posted_body is not None
+        assert "nope.yaml" in outcome.posted_body
+
+    def test_a_non_command_config_failure_posts_its_reason(self, tmp_path, monkeypatch):
+        """Issue #1057: e.g. a bad ``force-step`` name used to end with no message."""
+        engine = _engine(tmp_path, _trigger(body="/nebuko force-step nope", number=1057))
+        reason = "force-step: workflow 'nope' not found"
+        _stub_resolved(
+            monkeypatch,
+            {"SKIP_AGENT": "true", "REASON": reason, "SKIP_KIND": "config_error"},
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.TERMINAL
+        assert outcome.posted_body is not None
+        assert "@olivier-norture" in outcome.posted_body
+        assert "force-step: workflow 'nope' not found" in outcome.posted_body
 
     def test_an_unclassified_skip_keeps_the_terminal_contract(self, tmp_path, monkeypatch):
         """Fail-safe: a reason without a kind must never be softened to exit 0."""
@@ -1322,8 +1347,45 @@ class TestArmedGateHoldExit:
         assert outcome.exit_code == ExitCode.HOLD
         assert outcome.exit_code != ExitCode.TERMINAL
 
-    def test_the_gate_hold_never_posts_a_notice_or_journals_a_terminal(self, tmp_path, monkeypatch):
+    def test_the_gate_hold_posts_the_reason_and_next_commands(self, tmp_path, monkeypatch):
+        """Issue #1057: the hold reason reaches the thread, not only the CI log."""
         engine = _engine(tmp_path)
+        reason = (
+            "human_gate:plan held — use /nebuko approve gate or /nebuko reject gate"
+        )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SKIP_KIND": "human_gate_hold",
+                "REASON": reason,
+            },
+        )
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
+        )
+
+        outcome = engine.run()
+
+        assert outcome.posted_body is not None
+        assert "@olivier-norture" in outcome.posted_body
+        assert "human_gate:plan held" in outcome.posted_body
+        assert "/nebuko approve gate" in outcome.posted_body
+        assert "/nebuko reject gate" in outcome.posted_body
+        # The hold is announced, not journalled as a workflow end: the only
+        # journal entry is the engine's own notice, never a terminal state.
+        journal = tmp_path / "runs" / "run-1" / "journal.md"
+        text = journal.read_text(encoding="utf-8") if journal.exists() else ""
+        assert "<!-- bot-human-action -->" not in text
+        assert "Workflow State" not in text
+        assert text.count("bot-workflow-terminal") == 1
+
+    def test_a_bot_triggered_gate_hold_stays_silent(self, tmp_path, monkeypatch):
+        """Loop safety: an engine-posted notice must never re-enter the chain."""
+        engine = _engine(
+            tmp_path,
+            _trigger(body="<!-- bot-workflow-terminal -->\n/nebuko resume", number=1003),
+        )
         _stub_resolved(
             monkeypatch,
             {
@@ -1336,12 +1398,10 @@ class TestArmedGateHoldExit:
             Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran")
         )
 
-        engine.run()
+        outcome = engine.run()
 
-        journal = tmp_path / "runs" / "run-1" / "journal.md"
-        text = journal.read_text(encoding="utf-8") if journal.exists() else ""
-        assert "<!-- bot-human-action -->" not in text
-        assert "bot-workflow-terminal" not in text
+        assert outcome.exit_code == ExitCode.HOLD
+        assert outcome.posted_body is None
 
     def test_the_gate_lock_and_position_are_left_untouched(self, tmp_path, monkeypatch):
         """The hold must not rewrite state: the human's gate command resumes it."""
@@ -3007,6 +3067,27 @@ class TestHistoryWindowInjection:
 
         engine = run.call_args[0][0]
         assert engine.history_limit == 2
+
+    @pytest.mark.parametrize(
+        ("exit_code", "process_code"),
+        [(ExitCode.ADVANCE, 0), (ExitCode.HOLD, 0), (ExitCode.TERMINAL, 0), (ExitCode.ERROR, 1)],
+    )
+    def test_main_returns_the_derived_process_status(
+        self, tmp_path, monkeypatch, mocker, exit_code, process_code
+    ):
+        """Issue #1057: a hold / terminal stop leaves the CI job green."""
+        import nebuko.engine.run_loop as run_loop
+
+        mocker.patch.object(
+            run_loop.Engine,
+            "run",
+            autospec=True,
+            return_value=mocker.Mock(exit_code=exit_code, **{"process_exit_code.return_value": process_code}),
+        )
+
+        code = run_loop.main(["--adapter", "local", "--run-dir", str(tmp_path)])
+
+        assert code == process_code
 
     def test_run_loads_the_thread_with_the_bounded_window(self, tmp_path, monkeypatch, mocker):
         engine = _engine(tmp_path)

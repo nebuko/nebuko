@@ -86,7 +86,14 @@ class CommentEntry:
 @dataclass(frozen=True)
 # @stub-protected
 class ExitCode(IntEnum):
-    """Process exit codes distinguishing the three terminal outcomes."""
+    """Run-outcome codes; the host process status is derived (issue #1057).
+
+    These distinguish *what* the run did, not whether the host job failed:
+    only :attr:`ERROR` maps to a non-zero process status (see
+    :meth:`RunOutcome.process_exit_code`). A hold or a terminal skip is a
+    deliberate stop that announces itself on the thread, so it must not fail
+    the CI job.
+    """
 
     ADVANCE = 0  # next step proceeds
     ERROR = 1  # uncaught failure / contract violation
@@ -105,6 +112,17 @@ class RunOutcome:
     posted_body: str | None
     state: WorkflowState | None
     phases: tuple[str, ...]  # ordered "[phase:*]" markers actually emitted
+
+    # @stub-protected
+    def process_exit_code(self) -> int:
+        """The host process status: ``1`` only when the engine itself broke.
+
+        ``HOLD`` / ``TERMINAL`` are deliberate stops that post their reason on
+        the thread (issue #1057); exiting non-zero for them marked the CI job
+        red and notified the maintainer for something a human must read, not
+        fix in the log.
+        """
+        return 1 if self.exit_code is ExitCode.ERROR else 0
 
 
 # @stub-protected
@@ -133,8 +151,9 @@ class SkipOutcome:
 
     Single source of truth for *why* the guards phase skipped the agent and the
     exit code that follows: a benign verdict (``NO_NEXT_AGENT`` / ``TERMINAL`` /
-    ``HUMAN_GATE_HOLD``) is a deliberate no-op and must not fail the host run,
-    while a ``CONFIG_ERROR`` keeps the existing terminal failure exit. Resolver
+    ``HUMAN_GATE_HOLD``) is a deliberate no-op, while a ``CONFIG_ERROR`` keeps
+    the terminal code that tells machine callers the run failed. Neither fails
+    the host process (``RunOutcome.process_exit_code``, issue #1057). Resolver
     verdicts may omit the kind — an unclassified reason defaults to
     ``CONFIG_ERROR`` so behaviour is never softened by accident.
     """
@@ -156,9 +175,9 @@ class SkipOutcome:
     @property
     def exit_code(self) -> ExitCode:
         if self.kind is SkipKind.HUMAN_GATE_HOLD:
-            # An armed gate is a deliberate stop, not a workflow end: exit
-            # ``HOLD`` (10) so the host run stays green and the human is the
-            # only one who can resume it (issue #1003).
+            # An armed gate is a deliberate stop, not a workflow end: report
+            # ``HOLD`` (10) and let the engine announce the reason on the
+            # thread — the human is the only one who can resume it (#1003).
             return ExitCode.HOLD
         return ExitCode.ADVANCE if self.is_benign else ExitCode.TERMINAL
 

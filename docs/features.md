@@ -31,6 +31,15 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 | `/nebuko update circuit-breaker --value <n>` | Human-only, per-issue circuit-breaker override (issue #839). Persists `limit = <n>` in the issue's `workflow_state`; the guard then uses `state override → CIRCUIT_BREAKER_THRESHOLD env → 25`. Raising the value above the current agent-call count **un-trips** the issue; lowering it tightens a runaway issue. Terminal, agent-free: it consumes no call budget. Bots are ignored. |
 | `DEBUG=true` | Enables verbose debug logging for the run. |
 
+**Human-actionable stops stay green and explain themselves (issue #1057).** A
+run that stops for a human — an armed `human_gate` hold, a malformed/unknown
+command, a missing workflow or an invalid `force-step` name — posts the reason
+(and the next command to run) as a `@author` notice on the thread and exits the
+host process **0**. Only `ExitCode.ERROR` (an uncaught engine failure) fails the
+CI job; `RunOutcome.exit_code` still carries the run-outcome code
+(`HOLD` 10 / `TERMINAL` 20) for machine callers. See
+[ADR-0015](./adr/0015-human-actionable-stops-do-not-fail-ci.md).
+
 **Multiline `--feedback`:** the command line is the grammar line, but a terminal
 `--feedback` flag spans the remainder of the comment body verbatim, newlines
 preserved (issue #919). So a bare `--feedback` with the payload on following
