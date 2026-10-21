@@ -12,9 +12,6 @@ llms:
     model_path: "mistral/mistral-small-2603"
     provider: "${providers.mistral}"
     reasoning_effort: "none"
-  mistral-large-3:
-    model_path: "mistral/mistral-large-2512"
-    provider: "${providers.mistral}"
   mistral-large-4:
     model_path: "mistral/mistral-large-4"
     provider: "${providers.mistral}"
@@ -27,7 +24,7 @@ llms:
 #        think, finish (built-in defaults)
 agents:
   architect:
-    model: "${llms.mistral-large-3}"
+    model: "${llms.mistral-large-4}"
     role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
     temperature: 0.4
     prompt_file: "defaults/prompts/architect.md"
@@ -38,11 +35,11 @@ agents:
     complexity_overrides:
       low:
         model: "${llms.mistral-small-4}"
-        reasoning: "medium"
+        reasoning_effort: "medium"
       high:
         model: "${llms.mistral-large-4}"
         temperature: 0.6
-        reasoning: "high"
+        reasoning_effort: "high"
 
   dev:
     model: "${llms.mistral-small-4}"
@@ -53,7 +50,7 @@ agents:
     skills:
       - inject: ["posting-contract"]
       - discover: ["git-pr-workflow", "complexity"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
+    tools: ["terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
 
   context:
     model: "${llms.mistral-small-4}"
@@ -64,17 +61,18 @@ agents:
     skills:
       - inject: ["call-agent", "posting-contract", "context-research"]
       - discover: ["complexity"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "complexity_review"]
+    tools: ["terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "complexity_review"]
 
   review:
     model: "${llms.glm-5_3}"
     role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
     temperature: 0.4
+    reasoning_effort: "none"
     prompt_file: "defaults/prompts/review.md"
     skills:
       - inject: ["posting-contract", "plan-review"]
       - discover: ["retrospective", "complexity"]
-    tools: ["terminal", "terminal_batch", "think", "finish", "finalize", "complexity_review"]
+    tools: ["terminal_batch", "think", "finish", "finalize", "complexity_review"]
 
   po:
     model: "${llms.mistral-small-4}"
