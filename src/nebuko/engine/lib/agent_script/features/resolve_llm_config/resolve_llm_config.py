@@ -1,7 +1,7 @@
 """Resolve LLM config feature — agent-config file parsing and override handling."""
 
 import os
-from typing import Literal
+from typing import Any, Literal
 
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
@@ -465,17 +465,25 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     if effective_ref and effective_ref.max_output_tokens is not None:
         llm_config["max_output_tokens"] = effective_ref.max_output_tokens
 
-    # ── Provider HTTP decoration (client identity + issue session) ──
+    # ── Provider request decoration (identity headers + cache-key body) ──
     # The engine stamps ``LLM_SESSION_ID`` from the trigger's issue number; the
-    # provider's declared header *name* decides whether it is sent. Config never
-    # carries the value. Factory order is significant: the session runtime is
-    # last, so the engine value wins on a key collision.
+    # provider's declared header/param *names* decide whether it is sent. Config
+    # never carries the value. Factory order is significant: the per-issue
+    # runtimes are last, so the engine value wins on a key collision.
     if provider is not None:
         headers: dict[str, str] = {}
+        body: dict[str, Any] = {}
         for runtime in build_provider_runtime(provider, os.environ):
             headers.update(runtime.extra_headers())
+            body.update(runtime.extra_body())
         if headers:
             llm_config["extra_headers"] = headers
+        if body:
+            # ``litellm_extra_body`` merges raw into the JSON body, bypassing
+            # litellm's per-route param whitelist.
+            merged_body = dict(litellm_extra_body)
+            merged_body.update(body)
+            llm_config["litellm_extra_body"] = merged_body
 
         # Provider opted out of the message-level ``name`` field (issue #881):
         # gate the pre-call stripper on the provider, never globally, so

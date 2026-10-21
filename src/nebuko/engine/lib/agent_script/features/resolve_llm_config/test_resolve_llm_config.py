@@ -22,6 +22,11 @@ from resolve_llm_config import (
 )
 import resolve_llm_config as _rlc
 
+from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
+    build_provider_runtime,
+)
+from config import ProviderConfig
+
 
 class TestResolveApiUrl(unittest.TestCase):
     """Pure I/O tests for resolve_api_url()."""
@@ -860,6 +865,126 @@ agents:
         from openhands.sdk import LLM
 
         self.assertIn("extra_headers", LLM.model_fields)
+
+
+class TestProviderCacheKeyDecoration(unittest.TestCase):
+    """The provider's cache-key body param lands in ``litellm_extra_body``.
+
+    Mistral's ``prompt_cache_key`` is a JSON body field, not a header: it rides
+    ``litellm_extra_body`` so litellm's per-route param whitelist cannot drop it.
+    The engine-stamped issue id is the value; the engine value wins a collision
+    with any static body entry.
+    """
+
+    CONFIG_TEMPLATE = """\
+providers:
+  mistral:
+    api_url: "https://api.mistral.ai/v1"
+    api_token_env: "MISTRAL_API_KEY"
+@IDENTITY@
+llms:
+  small-model:
+    model_path: "mistral/mistral-small-2603"
+    provider: "${providers.mistral}"
+agents:
+  dev:
+    model: "${llms.small-model}"
+    temperature: 0.1
+    prompt_file: "dev.md"
+"""
+
+    _ENV_KEYS = (
+        "AGENT_CONFIG_PATH",
+        "ROLE_NAME",
+        "CONFIG_MODEL",
+        "CONFIG_TEMPERATURE",
+        "MISTRAL_API_KEY",
+        "LLM_SESSION_ID",
+    )
+
+    def setUp(self):
+        self._saved = {k: os.environ.get(k) for k in self._ENV_KEYS}
+        for k in self._ENV_KEYS:
+            os.environ.pop(k, None)
+        self._tmpdir = tempfile.mkdtemp()
+        self._config_path = os.path.join(self._tmpdir, "agent-config.yaml")
+        os.environ["ROLE_NAME"] = "dev"
+        os.environ["AGENT_CONFIG_PATH"] = self._config_path
+        os.environ["MISTRAL_API_KEY"] = "secret"
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _resolve(self, identity: str):
+        with open(self._config_path, "w") as f:
+            f.write(self.CONFIG_TEMPLATE.replace("@IDENTITY@", identity))
+        cfg, _, _ = resolve_llm_config(None, "prompt")
+        return cfg
+
+    _DECLARED = '    cache_key_param: "prompt_cache_key"\n'
+
+    def test_merges_the_engine_id_into_the_request_body(self):
+        os.environ["LLM_SESSION_ID"] = "1068"
+        cfg = self._resolve(self._DECLARED)
+        self.assertEqual(cfg["litellm_extra_body"]["prompt_cache_key"], "1068")
+
+    def test_no_session_id_sends_no_cache_key(self):
+        cfg = self._resolve(self._DECLARED)
+        self.assertNotIn("prompt_cache_key", cfg.get("litellm_extra_body", {}))
+
+    def test_provider_without_a_declared_param_sends_nothing(self):
+        os.environ["LLM_SESSION_ID"] = "1068"
+        cfg = self._resolve("")
+        self.assertNotIn("prompt_cache_key", cfg.get("litellm_extra_body", {}))
+
+    def test_preserves_static_body_params(self):
+        from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
+            IssueCacheKeyRuntime,
+            StaticProviderRuntime,
+        )
+
+        provider = ProviderConfig(
+            api_url="https://api.mistral.ai/v1",
+            api_token_env="MISTRAL_API_KEY",
+            cache_key_param="prompt_cache_key",
+        )
+        static_body = {"chat_template_kwargs": {"enable_thinking": True}}
+        merged = dict(static_body)
+        for runtime in (StaticProviderRuntime(provider), IssueCacheKeyRuntime(
+            "prompt_cache_key", "1068"
+        )):
+            merged.update(runtime.extra_body())
+        self.assertEqual(
+            merged,
+            {
+                "chat_template_kwargs": {"enable_thinking": True},
+                "prompt_cache_key": "1068",
+            },
+        )
+
+    def test_engine_value_wins_a_static_body_collision(self):
+        """The per-issue runtime is last, so its body entry overwrites a static one."""
+        os.environ["LLM_SESSION_ID"] = "1068"
+        provider = ProviderConfig(
+            api_url="https://api.mistral.ai/v1",
+            api_token_env="MISTRAL_API_KEY",
+            cache_key_param="prompt_cache_key",
+        )
+        body: dict = {"prompt_cache_key": "static"}
+        for runtime in build_provider_runtime(provider, os.environ):
+            body.update(runtime.extra_body())
+        self.assertEqual(body["prompt_cache_key"], "1068")
+
+    def test_litellm_extra_body_is_a_valid_sdk_llm_field(self):
+        """Guard against a typo breaking ``LLM(**llm_config)`` at runtime."""
+        from openhands.sdk import LLM
+
+        self.assertIn("litellm_extra_body", LLM.model_fields)
 
 
 class TestMessageNameDrop(unittest.TestCase):
