@@ -9,17 +9,17 @@ providers:
 # ── LLMs: model paths referencing providers ──
 llms:
   mistral-small-4:
-    model_path: "openai/mistral-small-4"
+    model_path: "mistral/mistral-small-2603"
     provider: "${providers.mistral}"
     reasoning_effort: "none"
   mistral-large-3:
-    model_path: "openai/mistral-large-3"
+    model_path: "mistral/mistral-large-2512"
     provider: "${providers.mistral}"
   mistral-large-4:
-    model_path: "openai/mistral-large-4"
+    model_path: "mistral/mistral-large-4"
     provider: "${providers.mistral}"
   glm-5_3:
-    model_path: "openai/glm-5.3"
+    model_path: "mistral/zai-glm-5-3"
     provider: "${providers.mistral}"
 
 # ── Agents: role → model + prompt + skills + tools ──
