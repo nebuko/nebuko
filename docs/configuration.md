@@ -63,6 +63,7 @@ against the caller's own workspace rather than the imported engine checkout.
 |-------|------|----------|-------------|
 | `api_url` | string | yes | Chat-completions endpoint URL, or the name of an environment variable holding that URL (e.g. `LOCAL_VLLM_API_URL`), resolved at config-load time — mirrors `api_token_env`. |
 | `api_token_env` | string | yes | Name of the environment variable holding the API token. |
+| `cache_key_param` | string | no | Name of the JSON request-body field that carries the prompt-cache key (e.g. `prompt_cache_key` for Mistral). Config declares only the *name*; the value is the engine-stamped issue id (`LLM_SESSION_ID`) at runtime and is sent via `litellm_extra_body` — never as an HTTP header. Omit to send nothing. |
 
 ```yaml
 providers:

@@ -64,3 +64,30 @@ class TestProviderConfigIdentityShape:
                 api_token_env="T",
                 extra_headers={bad_name: "v"},
             )
+
+
+class TestProviderConfigCacheKeyParam:
+    """The body-param *name* for the engine-stamped cache key — names only."""
+
+    def test_is_optional_and_defaults_to_none(self):
+        config = ProviderConfig(api_url="https://example.com", api_token_env="T")
+        assert config.cache_key_param is None
+
+    def test_accepts_a_body_param_name(self):
+        config = ProviderConfig(
+            api_url="https://example.com",
+            api_token_env="T",
+            cache_key_param="prompt_cache_key",
+        )
+        assert config.cache_key_param == "prompt_cache_key"
+
+    @pytest.mark.parametrize(
+        "bad_name", ["", "prompt-cache-key", "1prompt", "prompt cache", "a:b", "x\ty"]
+    )
+    def test_rejects_a_malformed_param_name(self, bad_name):
+        with pytest.raises(ValidationError):
+            ProviderConfig(
+                api_url="https://example.com",
+                api_token_env="T",
+                cache_key_param=bad_name,
+            )

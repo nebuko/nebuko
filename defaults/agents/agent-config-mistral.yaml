@@ -5,6 +5,9 @@ providers:
   mistral:
     api_url: "https://api.mistral.ai/v1"
     api_token_env: "MISTRAL_API_KEY"
+    # Mistral prompt caching: the cache key is a JSON body field whose value is
+    # the engine-stamped issue id (LLM_SESSION_ID) at runtime (issue #1068).
+    cache_key_param: "prompt_cache_key"
 
 # ── LLMs: model paths referencing providers ──
 llms:
