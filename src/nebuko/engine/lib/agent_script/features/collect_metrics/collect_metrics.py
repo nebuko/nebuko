@@ -60,5 +60,9 @@ def collect_and_save_metrics(
     run_outcome = getattr(conversation, "run_outcome", None)
     if run_outcome is not None and hasattr(run_outcome, "dispatch_recall_count"):
         metrics.dispatch_recall_count = int(run_outcome.dispatch_recall_count or 0)
+    if run_outcome is not None:
+        metrics.publication_guard = (
+            getattr(run_outcome, "publication_guard", "") or None
+        )
     save_metrics_json(metrics)
     return metrics

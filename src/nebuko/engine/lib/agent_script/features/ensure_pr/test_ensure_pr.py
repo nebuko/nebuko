@@ -10,13 +10,16 @@ import unittest
 from unittest.mock import patch
 
 from agent_script.features.ensure_pr.ensure_pr import (
+    ENGINE_OWNED_PATHS,
     EnsurePrResult,
+    PublicationState,
     _default_base,
     _find_pr_for_branch,
     _issue_number_from_env,
     _repo_root,
     _run_gh,
     _run_git,
+    check_publication,
     ensure_pr,
 )
 
@@ -374,6 +377,142 @@ class TestEnsurePr(unittest.TestCase):
         result = EnsurePrResult(skipped=True)
         with self.assertRaises(Exception):
             result.skipped = False
+
+
+def _publication_git(status="", upstream_count=None, base_count="0", branch="feature/x"):
+    """Simulate git for ``check_publication`` scenarios.
+
+    ``upstream_count`` is None for a branch with no upstream (git errors);
+    the base-branch comparison then answers with ``base_count``.
+    """
+
+    def run(args, **kwargs):
+        joined = " ".join(args)
+        if joined == "remote":
+            return "origin"
+        if joined.startswith("rev-parse --abbrev-ref HEAD"):
+            return branch
+        if joined.startswith("status --porcelain"):
+            return status
+        if joined.startswith("rev-list --count @{u}..HEAD"):
+            if upstream_count is None:
+                raise RuntimeError("no upstream configured")
+            return upstream_count
+        if joined.startswith("rev-list --count"):
+            return base_count
+        raise AssertionError(f"unexpected git call: {joined}")
+
+    return run
+
+
+class TestCheckPublication(unittest.TestCase):
+    """The publication check behind the approved-write guard."""
+
+    #: Sentinel for "the PR lookup raises".
+    _RAISES = object()
+
+    def _check(self, git, pr="https://github.com/acme/repo/pull/7"):
+        """Run the check; ``pr`` is the PR-lookup result (None = no PR)."""
+        with patch(
+            "agent_script.features.ensure_pr.ensure_pr._run_git", side_effect=git
+        ), patch(
+            "agent_script.features.ensure_pr.ensure_pr._find_pr_for_branch",
+            **(
+                {"side_effect": RuntimeError("gh pr list failed")}
+                if pr is self._RAISES
+                else {"return_value": pr}
+            ),
+        ), patch(
+            "agent_script.features.ensure_pr.ensure_pr._default_base",
+            return_value="main",
+        ):
+            return check_publication()
+
+    def test_clean_tree_and_pushed_branch_with_pr_is_published(self):
+        state = self._check(_publication_git(upstream_count="0"))
+        self.assertTrue(state.published)
+        self.assertEqual(state.reasons, ())
+        self.assertEqual(state.skip_reason, "")
+
+    def test_dirty_tree_counts_as_unpublished(self):
+        state = self._check(
+            _publication_git(status=" M logo/nebuko-logo.py", upstream_count="0")
+        )
+        self.assertFalse(state.published)
+        self.assertEqual(state.reasons, ("dirty_tree",))
+        self.assertEqual(state.dirty_paths, ("logo/nebuko-logo.py",))
+
+    def test_engine_owned_handoff_path_never_counts_as_dirty(self):
+        self.assertIn(".nebuko/handoff.md", ENGINE_OWNED_PATHS)
+        state = self._check(
+            _publication_git(status="?? .nebuko/handoff.md", upstream_count="0")
+        )
+        self.assertTrue(state.published)
+        self.assertEqual(state.dirty_paths, ())
+
+    def test_untracked_work_is_dirty(self):
+        # A file the agent created is exactly "uncommitted work"; git already
+        # hides gitignored files from --porcelain.
+        state = self._check(
+            _publication_git(status="?? new_module.py", upstream_count="0")
+        )
+        self.assertEqual(state.dirty_paths, ("new_module.py",))
+
+    def test_unpushed_commits_count_as_unpublished(self):
+        state = self._check(_publication_git(upstream_count="2"))
+        self.assertFalse(state.published)
+        self.assertIn("unpushed_commits", state.reasons)
+        self.assertNotIn("missing_pr", state.reasons)
+
+    def test_branch_never_pushed_counts_via_the_base_comparison(self):
+        state = self._check(
+            _publication_git(upstream_count=None, base_count="3"), pr=""
+        )
+        self.assertIn("unpushed_commits", state.reasons)
+
+    def test_never_pushed_branch_with_nothing_on_it_is_clean(self):
+        # Nothing ahead of the base and no PR: an empty WIP PR would be noise,
+        # so this is deliberately not "missing_pr".
+        state = self._check(
+            _publication_git(upstream_count=None, base_count="0"), pr=""
+        )
+        self.assertTrue(state.published)
+
+    def test_branch_work_without_a_pr_is_unpublished(self):
+        state = self._check(_publication_git(upstream_count="1"), pr="")
+        self.assertFalse(state.published)
+        self.assertEqual(state.reasons, ("unpushed_commits", "missing_pr"))
+
+    def test_no_remote_skips(self):
+        def git(args, **kwargs):
+            if " ".join(args) == "remote":
+                return ""
+            raise AssertionError("must not probe further without a remote")
+
+        state = self._check(git)
+        self.assertTrue(state.published)
+        self.assertEqual(state.skip_reason, "no git remote")
+
+    def test_detached_head_skips(self):
+        state = self._check(_publication_git(branch="HEAD"))
+        self.assertTrue(state.published)
+        self.assertEqual(state.skip_reason, "detached HEAD")
+
+    def test_pr_lookup_failure_degrades_to_a_skip(self):
+        state = self._check(_publication_git(upstream_count="1"), pr=self._RAISES)
+        self.assertEqual(state.skip_reason, "pr lookup failed")
+
+    def test_never_raises(self):
+        def git(args, **kwargs):
+            raise RuntimeError("git exploded")
+
+        state = self._check(git)
+        self.assertTrue(state.published)
+        self.assertTrue(state.skip_reason)
+
+    def test_state_is_immutable(self):
+        with self.assertRaises(Exception):
+            PublicationState(published=True).published = False
 
 
 if __name__ == "__main__":

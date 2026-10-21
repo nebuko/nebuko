@@ -27,6 +27,12 @@ logger = get_logger(__name__)
 
 DEFAULT_TIMEOUT = 120
 
+#: Working-tree paths the engine itself writes into the checkout. They are not
+#: agent output, so they never make the tree "dirty" for publication purposes.
+#: Kept as a literal (not imported) because ``handoff_store`` imports this
+#: module — it mirrors ``handoff_store.HANDOFF_RELATIVE_PATH``.
+ENGINE_OWNED_PATHS = frozenset({".nebuko/handoff.md"})
+
 
 def _repo_root() -> Optional[str]:
     """Checkout the git/gh commands must run in, or ``None`` for the process cwd.
@@ -166,6 +172,128 @@ def _find_pr_for_branch(
     )
     url = out.strip().strip('"')
     return url or None
+
+
+@dataclass(frozen=True)
+class PublicationState:
+    """Immutable result of :func:`check_publication`.
+
+    Fields:
+        published: True when the branch has no unpublished work left.
+        reasons: Why the work counts as unpublished — a subset of
+            ``{"dirty_tree", "unpushed_commits", "missing_pr"}``.
+        dirty_paths: The working-tree paths that made ``dirty_tree`` fire
+            (engine-owned and gitignored paths are already excluded).
+        skip_reason: Set when the check could not run at all
+            (``"no git remote"`` / ``"detached HEAD"``); ``published`` is True
+            in that case and nothing is changed.
+    """
+
+    published: bool
+    reasons: tuple[str, ...] = ()  # @stub-protected
+    dirty_paths: tuple[str, ...] = ()
+    skip_reason: str = ""
+
+
+def _dirty_paths() -> tuple[str, ...]:
+    """Working-tree paths git reports, minus the engine-owned ones."""
+    out = _run_git(["status", "--porcelain"])
+    paths = []
+    for line in out.splitlines():
+        path = line[3:].strip()
+        # Renames render as "old -> new"; the new path is what matters.
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip()
+        path = path.strip('"')
+        if not path or path in ENGINE_OWNED_PATHS:
+            continue
+        paths.append(path)
+    return tuple(paths)
+
+
+def _branch_holds_unpublished_commits(branch: str, remote: str) -> bool:
+    """Whether HEAD has commits the remote does not have.
+
+    With an upstream this is exactly ``@{u}..HEAD``. A branch that was never
+    pushed has no upstream, so the comparison falls back to the repository's
+    base branch — otherwise every fresh branch would look "unpushed" even
+    when it holds nothing.
+    """
+    try:
+        ahead = _run_git(["rev-list", "--count", "@{u}..HEAD"])
+        return int(ahead or 0) > 0
+    except RuntimeError:
+        pass
+    base = _default_base()
+    try:
+        ahead = _run_git(["rev-list", "--count", f"{remote}/{base}..HEAD"])
+    except RuntimeError:
+        # No remote-tracking ref for the base — compare against the local one.
+        try:
+            ahead = _run_git(["rev-list", "--count", f"{base}..HEAD"])
+        except RuntimeError:
+            ahead = "0"
+    return int(ahead or 0) > 0
+
+
+def check_publication() -> PublicationState:
+    # @stub-protected: signature defined by architect — do not modify
+    """Detect work that was never committed, pushed or opened as a PR.
+
+    The publication guard (see ``run_agent.publication_guard``) calls this
+    after an approved write step: the engine must not let a step end with the
+    work sitting only in the checkout.
+
+    Unpublished means any of:
+      * the working tree holds changes (gitignored paths are invisible to
+        ``git status``; engine-owned paths are excluded explicitly),
+      * the current branch has commits the remote does not have,
+      * the branch holds such commits but no open PR exists for it. (A branch
+        with nothing on it is not "missing a PR" — opening an empty WIP PR
+        would be noise.)
+
+    Never raises, mirroring :func:`ensure_pr`: any failure is logged and
+    reported as a skip so the caller degrades gracefully.
+    """
+    try:
+        remote = _default_remote()
+        if remote is None:
+            logger.info("check_publication: no git remote configured — skipping")
+            return PublicationState(published=True, skip_reason="no git remote")
+
+        branch = _current_branch()
+        if branch in ("HEAD", ""):
+            logger.info("check_publication: detached HEAD — skipping")
+            return PublicationState(published=True, skip_reason="detached HEAD")
+
+        dirty = _dirty_paths()
+        reasons: list[str] = []
+        if dirty:
+            reasons.append("dirty_tree")
+
+        has_branch_work = _branch_holds_unpublished_commits(branch, remote)
+        if has_branch_work:
+            reasons.append("unpushed_commits")
+            try:
+                pr_url = _find_pr_for_branch(branch)
+            except (RuntimeError, TimeoutExpired) as exc:
+                # A failing PR lookup must not become a publication failure —
+                # ensure_pr would fail the same way; surface it as a skip.
+                logger.warning(f"check_publication: PR lookup failed: {exc}")
+                return PublicationState(
+                    published=True, skip_reason="pr lookup failed"
+                )
+            if not pr_url:
+                reasons.append("missing_pr")
+
+        return PublicationState(
+            published=not reasons,
+            reasons=tuple(reasons),
+            dirty_paths=dirty,
+        )
+    except Exception as exc:  # noqa: BLE001 - must never break the run
+        logger.warning(f"check_publication failed: {exc}")
+        return PublicationState(published=True, skip_reason=f"error: {exc}")
 
 
 def _open_pr(

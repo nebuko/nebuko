@@ -55,6 +55,28 @@ def has_dispatch_decision(conversation, final_message: Optional[str]) -> bool:
     return False
 
 
+def recorded_is_approved(conversation) -> bool:
+    """True when the run's recorded verdict is ``approved``.
+
+    The publication guard must only rescue steps the agent *completed*: a
+    rejected or hold verdict ends the step on purpose, and its dirty tree is
+    not an error. Uses the same sources as :func:`has_dispatch_decision`
+    (``build_output._resolve_outcome``'s priority), so the guard cannot drift
+    from the verdict the engine actually routes on.
+
+    A typed hand-off recorded without a turn outcome counts as approved —
+    ``build_output`` resolves that partial write to an APPROVED completion.
+    """
+    conv_id = getattr(conversation, "id", None)
+    if conv_id is None:
+        return False
+    outcome = get_recorded_turn_outcome(conv_id)
+    if outcome is not None:
+        appreciation = getattr(outcome, "appreciation", None)
+        return getattr(appreciation, "value", appreciation) == "approved"
+    return get_recorded_function_call(conv_id) is not None
+
+
 def agent_to_function_call(agent: str) -> dict:
     """Build the function-call spec for an explicit agent target.
 

@@ -172,5 +172,73 @@ class TestBuildOutputGracefulTimeout(unittest.TestCase):
         )
 
 
+class TestPublicationGuardSurfacing(unittest.TestCase):
+    """The publication-guard result reaches the state and the answer header."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._cwd = os.getcwd()
+        os.chdir(self._tmp.name)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def _build(self, publication_guard, detail=""):
+        conv = _make_conversation(
+            run_outcome=RunOutcome(
+                status=OutcomeStatus.SUCCESS,
+                publication_guard=publication_guard,
+                publication_detail=detail,
+            )
+        )
+        with patch("build_output.ensure_pr") as ep:
+            result = build_output(
+                conv, Metrics(agent_role="dev"), None, prev_state=None
+            )
+        ep.assert_not_called()
+        return result
+
+    def test_rescue_is_recorded_in_the_state(self):
+        result = self._build(
+            "fallback_pr", "https://github.com/acme/repo/pull/9"
+        )
+        context = result["workflow_state"].current_context
+        self.assertEqual(context["publication_guard"], "fallback_pr")
+        self.assertEqual(
+            context["publication_guard_detail"],
+            "https://github.com/acme/repo/pull/9",
+        )
+
+    def test_clean_run_records_the_state_without_a_warning(self):
+        result = self._build("clean")
+        context = result["workflow_state"].current_context
+        self.assertEqual(context["publication_guard"], "clean")
+        self.assertEqual(context["publication_guard_detail"], "")
+
+    def test_fallback_failure_is_surfaced_on_the_comment(self):
+        from prepare_comment import format_answer_header
+
+        result = self._build("fallback_failed", "remote rejected the push")
+        header = format_answer_header("dev", result["workflow_state"])
+        self.assertIn("Publication guard", header)
+        self.assertIn("fallback failed", header)
+        self.assertIn("remote rejected the push", header)
+
+    def test_recalled_ok_gets_a_soft_notice(self):
+        from prepare_comment import format_answer_header
+
+        result = self._build("recalled_ok")
+        header = format_answer_header("dev", result["workflow_state"])
+        self.assertIn("after an engine recall", header)
+
+    def test_clean_run_renders_no_notice(self):
+        from prepare_comment import format_answer_header
+
+        result = self._build("clean")
+        header = format_answer_header("dev", result["workflow_state"])
+        self.assertNotIn("Publication guard", header)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -49,6 +49,17 @@ class RunOutcome:
         failure: The modelled cause of a FAILURE run (None otherwise).
             Carries the user-facing summary and the resume command so
             build_output can render a helpful terminal comment (issue #668).
+        publication_guard: Result of the publication guard on an approved
+            write step: "" (not checked), "clean", "recalled_ok",
+            "fallback_pr" or "fallback_failed".
+        publication_detail: What was missing (the ``check_publication``
+            reasons), the fallback PR URL, or the fallback error message.
+        publication_recall_count: Number of publication-recall turns
+            injected because the approved work was never published.
+        publication_recall_event_offset: Event index captured just before the
+            first publication-recall pass (None when no recall occurred) —
+            the same engine-injected boundary as
+            ``dispatch_recall_event_offset`` (issue #558).
     """
 
     status: OutcomeStatus
@@ -57,6 +68,10 @@ class RunOutcome:
     dispatch_recall_count: int = 0
     dispatch_recall_event_offset: int | None = None
     failure: RunFailure | None = None  # @stub-protected
+    publication_guard: str = ""
+    publication_detail: str = ""
+    publication_recall_count: int = 0
+    publication_recall_event_offset: int | None = None
 
 
 def classify_run(status_value: str, soft_timeout_fired: bool) -> OutcomeStatus:
