@@ -14,7 +14,7 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Collection, Sequence
 
 from nebuko.engine.init.ports import (
     InitAnswers,
@@ -44,6 +44,7 @@ DEFAULT_RUNS_ON = "ubuntu-latest"
 SECRET_ENV_PREFIX = "NEBUKO_SECRET_"
 SECRET_SCOPE_REPOSITORY = "repository"
 SECRET_SCOPE_ORGANIZATION = "organization"
+SECRET_EXISTS_MESSAGE = "{name} already setup in {scope} [ skipping, use --force to update value ]"
 WORDMARK = """
 ███╗   ██╗███████╗██████╗ ██╗   ██╗██╗  ██╗ ██████╗
 ████╗  ██║██╔════╝██╔══██╗██║   ██║██║ ██╔╝██╔═══██╗
@@ -155,14 +156,19 @@ def _run(args: argparse.Namespace) -> int:
         print(preflight_message(report), file=sys.stderr)
         return EXIT_USAGE
     target = _resolve_secret_scope(args, prompter, target)
+    # One read-only probe, reused for both the PAT and the provider key.
+    existing = frozenset() if args.force else context.host.existing_secrets(target)
+    skipped = _report_existing(context.host, target, existing, ("GH_PAT",))
     provider = _resolve_provider(args, prompter)
+    skipped |= _report_existing(context.host, target, existing, provider.secret_names)
     answers = InitAnswers(
         target=target,
         provider=provider,
         runs_on=_resolve_runs_on(args, prompter),
         pin_ref=args.pin_ref or context.refs.latest(),
-        secrets=_collect_secrets(args, prompter, context.host, target, provider),
+        secrets=_collect_secrets(args, prompter, context.host, target, provider, skipped),
         force=args.force,
+        skipped=skipped,
     )
     outcome = run_init(answers, context.source, context.host, prompter)
     if outcome.code == EXIT_OK:
@@ -200,6 +206,25 @@ def _resolve_secret_scope(
     return replace(target, org=prompter.ask_text("Organization", target.owner))
 
 
+def _report_existing(
+    host: SetupHost,
+    target: SetupTarget,
+    existing: frozenset[str],
+    names: Sequence[str],
+) -> frozenset[str]:
+    """Print the skip note for the ``names`` already stored at the target scope."""
+    scope = target.org or target.slug
+    skipped = set()
+    for name in names:
+        if name not in existing:
+            continue
+        if name == "GH_PAT" and host.app_installed(target):
+            continue
+        print(SECRET_EXISTS_MESSAGE.format(name=name, scope=scope))
+        skipped.add(name)
+    return frozenset(skipped)
+
+
 def _resolve_provider(args: argparse.Namespace, prompter: InitPrompter) -> ProviderProfile:
     if args.provider:
         return provider_by_name(args.provider)
@@ -223,6 +248,7 @@ def _collect_secrets(
     host: SetupHost,
     target: SetupTarget,
     provider: ProviderProfile,
+    skip: Collection[str] = (),
 ) -> dict[str, str]:
     """Ask for (or read from the environment) the values to store as secrets."""
     names = list(secret_names(provider))
@@ -230,6 +256,8 @@ def _collect_secrets(
         names.remove("GH_PAT")
     secrets: dict[str, str] = {}
     for name in names:
+        if name in skip:
+            continue
         if args.non_interactive:
             value = os.environ.get(f"{SECRET_ENV_PREFIX}{name}", "")
             if not value:
@@ -285,6 +313,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="overwrite existing configuration without asking",
+        help="overwrite existing files and secrets without asking",
     )
     return parser

@@ -8,11 +8,12 @@ property that no secret value ever reaches the output or the pull request.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from nebuko.engine.init import cli
-from nebuko.engine.init.ports import PreflightReport, SetupHost
+from nebuko.engine.init.ports import PreflightReport, SetupError, SetupHost
 from nebuko.engine.init.refs import StaticRefResolver
 from nebuko.engine.init.setup import SetupContext
 from nebuko.engine.init.sources import FileTemplateSource
@@ -24,11 +25,20 @@ PR_URL = "https://github.com/acme/widgets/pull/7"
 
 
 class FakeHost(SetupHost):
-    def __init__(self, report=None, existing=(), app_installed=False, gh_available=True):
+    def __init__(
+        self,
+        report=None,
+        existing=(),
+        app_installed=False,
+        gh_available=True,
+        existing_secrets=(),
+    ):
         self.report = report or PreflightReport(ok=True, missing_scopes=(), remediation="")
         self.existing = set(existing)
         self.app = app_installed
         self.gh = gh_available
+        self.present_secrets = frozenset(existing_secrets)
+        self.secret_probes: list = []
         self.prs: list[dict] = []
         self.secrets: dict[str, str] = {}
 
@@ -43,6 +53,10 @@ class FakeHost(SetupHost):
 
     def existing_paths(self, target, paths):
         return {path for path in paths if path in self.existing}
+
+    def existing_secrets(self, target):
+        self.secret_probes.append(target)
+        return self.present_secrets
 
     def open_pr(self, target, branch, title, body, files):
         self.prs.append(
@@ -170,6 +184,7 @@ def test_success_prints_the_next_steps(monkeypatch, capsys):
     assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 0
 
     out = capsys.readouterr().out
+    print("CAPTURED", repr(out))
     assert "Next steps" in out
     assert f"1. Review and merge the pull request: {PR_URL}" in out
     assert 'comment "@@dev Hello Nebuko!" on an issue in acme/widgets.' in out
@@ -184,6 +199,7 @@ def test_the_wordmark_is_printed_first(monkeypatch, capsys):
     assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 0
 
     out = capsys.readouterr().out
+    print("CAPTURED", repr(out))
     assert out.startswith(cli.WORDMARK)
     assert "███╗   ██╗" in out
 
@@ -334,6 +350,106 @@ def test_interactive_run_asks_before_overwriting(monkeypatch, capsys):
     assert cli.main([]) == 0
     assert prompter.confirmations
     assert len(host.prs) == 1
+
+
+# ── secrets already stored ───────────────────────────────────────────────────
+
+
+def test_existing_org_secrets_are_skipped_and_reported(monkeypatch, capsys):
+    host = FakeHost(existing_secrets=("GH_PAT", "OPENROUTER_API_KEY"))
+    _wire(monkeypatch, host)
+
+    code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive"])
+
+    out = capsys.readouterr().out
+    print("CAPTURED", repr(out))
+    assert code == 0
+    assert host.secrets == {}
+    assert "GH_PAT already setup in acme [ skipping, use --force to update value ]" in out
+    assert (
+        "OPENROUTER_API_KEY already setup in acme [ skipping, use --force to update value ]" in out
+    )
+    assert "not set (no value provided)" not in out
+    assert len(host.secret_probes) == 1
+
+
+def test_existing_secrets_are_reported_right_after_the_scope_selection(monkeypatch, mocker):
+    host = FakeHost(existing_secrets=("GH_PAT", "OPENROUTER_API_KEY"))
+    prompter = FakePrompter(
+        texts=["acme/widgets", "acme-org", "ubuntu-latest"], choices=["organization"]
+    )
+    _wire(monkeypatch, host, prompter)
+    printed: list[str] = []
+    mocker.patch.object(cli, "print", side_effect=lambda text: printed.append(text))
+    original_provider = cli._resolve_provider
+
+    def record_provider(*args, **kwargs):
+        printed.append("<provider prompt>")
+        return original_provider(*args, **kwargs)
+
+    mocker.patch.object(cli, "_resolve_provider", side_effect=record_provider)
+
+    assert cli.main([]) == 0
+
+    assert printed.index(
+        "GH_PAT already setup in acme-org [ skipping, use --force to update value ]"
+    ) < printed.index("<provider prompt>")
+    assert (
+        "OPENROUTER_API_KEY already setup in acme-org [ skipping, use --force to update value ]"
+        in printed
+    )
+    assert prompter.secret_values == []  # no value is asked for a skipped secret
+
+
+def test_force_rewrites_existing_secrets(monkeypatch):
+    host = FakeHost(existing_secrets=("GH_PAT", "OPENROUTER_API_KEY"))
+    _wire(monkeypatch, host)
+    _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
+
+    code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive", "--force"])
+
+    assert code == 0
+    assert host.secrets == {"OPENROUTER_API_KEY": "key-123", "GH_PAT": "pat-456"}
+    assert host.secret_probes == []  # --force makes the probe pointless
+
+
+def test_non_interactive_does_not_require_the_skipped_secret_env(monkeypatch, capsys):
+    host = FakeHost(existing_secrets=("GH_PAT",))
+    _wire(monkeypatch, host)
+    _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123")
+
+    code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive"])
+
+    assert code == 0
+    assert host.secrets == {"OPENROUTER_API_KEY": "key-123"}
+    assert "GH_PAT already setup in acme" in capsys.readouterr().out
+
+
+def test_repository_level_existing_secrets_are_skipped_too(monkeypatch, capsys):
+    host = FakeHost(existing_secrets=("OPENROUTER_API_KEY",))
+    _wire(monkeypatch, host)
+    _set_secrets(monkeypatch, GH_PAT="pat-456")
+
+    code = cli.main(["--repo", "acme/widgets", "--non-interactive"])
+
+    assert code == 0
+    assert host.secrets == {"GH_PAT": "pat-456"}
+    out = capsys.readouterr().out
+    print("CAPTURED", repr(out))
+    assert "OPENROUTER_API_KEY already setup in acme/widgets" in out
+
+
+def test_a_failing_secret_listing_fails_the_run(monkeypatch, capsys):
+    host = FakeHost()
+    host.existing_secrets = Mock(side_effect=SetupError("gh secret list failed: boom"))
+    _wire(monkeypatch, host)
+    _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
+
+    code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive"])
+
+    assert code == 1
+    assert "boom" in capsys.readouterr().err
+    assert host.prs == [] and host.secrets == {}
 
 
 # ── interactive mode ─────────────────────────────────────────────────────────

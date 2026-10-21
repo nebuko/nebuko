@@ -101,7 +101,9 @@ want to try is a YAML diff, not a new stack:
 **One command (recommended).** Install the `nebuko` binary from the release and
 let it do steps 1–3 for you: it asks for the repository, the provider and the
 runner labels, opens a pull request with the config and the workflow, then stores
-the secrets with your own `gh` authentication.
+the secrets with your own `gh` authentication. Secrets that already exist at the
+chosen level (repository or organization) are left untouched unless you pass
+`--force`, so a second repository can reuse organization-level secrets.
 
 ```bash
 gh release download -R nebuko/nebuko -p 'nebuko-linux-amd64' -O ~/.local/bin/nebuko
