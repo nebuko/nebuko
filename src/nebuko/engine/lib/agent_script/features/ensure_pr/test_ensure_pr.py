@@ -875,6 +875,8 @@ def _publication_git(
             return "origin"
         if joined.startswith("rev-parse --abbrev-ref HEAD"):
             return branch
+        if joined.startswith("rev-parse --verify"):
+            return "sha1"
         if joined.startswith("status --porcelain"):
             return _porcelain_z(status)
         if joined.startswith("diff --name-only"):
@@ -1121,6 +1123,199 @@ class TestRealGitTokenBoundary(unittest.TestCase):
                 self._git("status", "--porcelain", cwd=work).strip(),
                 "ensure_pr must leave the tree clean",
             )
+
+
+class TestRealGitMissingLocalBase(unittest.TestCase):
+    """#1058/#1084: a checkout with no local base branch must not look clean.
+
+    The guard compared against the base *name* (``main``). When only
+    ``origin/main`` exists that diff fails, and the failure used to be read as
+    "nothing unpushed" — so committed workflow paths were pushed with the
+    token that GitHub rejects, which is exactly how #1058 lost its push.
+    """
+
+    def _git(self, *args, cwd):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+        ).stdout
+
+    def _repo_without_local_main(self, root):
+        """Bare origin + work clone on a feature branch with committed work."""
+        remote = os.path.join(root, "origin.git")
+        work = os.path.join(root, "work")
+        os.makedirs(work)
+        self._git("init", "-q", "--bare", "-b", "main", remote, cwd=root)
+        self._git("clone", "-q", remote, work, cwd=root)
+        for key, value in (("user.name", "t"), ("user.email", "t@e.com")):
+            self._git("config", key, value, cwd=work)
+        os.makedirs(os.path.join(work, ".github", "workflows"))
+        os.makedirs(os.path.join(work, "src"))
+        for path, body in (
+            (self.WORKFLOW, "on: [push]\n"),
+            (self.CODE, "x = 1\n"),
+        ):
+            with open(os.path.join(work, path), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        self._git("add", "-A", cwd=work)
+        self._git("commit", "-qm", "base", cwd=work)
+        self._git("push", "-q", "origin", "main", cwd=work)
+
+        # Only origin/main survives: the repro's `fatal: ambiguous argument
+        # 'main'` needs no local main in the checkout.
+        self._git("checkout", "-q", "-b", "feature/issue-1058", cwd=work)
+        self._git("branch", "-D", "main", cwd=work)
+        with self.assertRaises(subprocess.CalledProcessError):
+            self._git("rev-parse", "--verify", "main^{commit}", cwd=work)
+
+        # The agent *committed* its work before its own push — no upstream.
+        with open(os.path.join(work, self.WORKFLOW), "w", encoding="utf-8") as fh:
+            fh.write("on: [push, pull_request]\n")
+        with open(os.path.join(work, self.CODE), "w", encoding="utf-8") as fh:
+            fh.write("x = 2\n")
+        self._git("add", "-A", cwd=work)
+        self._git("commit", "-qm", "agent work", cwd=work)
+        return remote, work
+
+    WORKFLOW = ".github/workflows/internal-tests.yaml"
+    CODE = "src/thing.py"
+
+    def _transport(self, posted):
+        class _Transport:
+            def call(self, args, *, mutative=False, cwd=None, timeout=None):
+                class _R:
+                    ok = True
+                    status = 200
+                    detail = ""
+                    payload = ""
+
+                joined = " ".join(args)
+                if "default_branch" in joined:
+                    # The name is unresolvable in this checkout on purpose.
+                    _R.payload = "main"
+                elif args[:2] == ["pr", "list"]:
+                    _R.payload = ""
+                elif args[:2] == ["pr", "create"]:
+                    _R.payload = "https://github.com/acme/repo/pull/9"
+                elif "/comments" in joined:
+                    _R.payload = "https://github.com/acme/repo/issues/1058#c1"
+                    posted.append(joined)
+                return _R()
+
+        return _Transport()
+
+    def test_guard_and_ensure_pr_keep_the_workflow_path_out_of_the_push(self):
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        with tempfile.TemporaryDirectory() as root:
+            remote, work = self._repo_without_local_main(root)
+            real_git = mod._run_git
+
+            def git_here(args, **kwargs):
+                return real_git(args, cwd=work, **kwargs)
+
+            posted: list[str] = []
+            with patch.object(mod, "_run_git", git_here), patch.object(
+                mod, "GitHubTransport", lambda *a, **k: self._transport(posted)
+            ), patch.dict(
+                os.environ,
+                {"TARGET_NUMBER": "1058", "GITHUB_REPOSITORY": "acme/repo"},
+                clear=False,
+            ):
+                state = mod.check_publication()
+
+                # The guard's job: the committed workflow path is patch-only,
+                # never silently "clean".
+                self.assertFalse(state.published, state.skip_reason)
+                self.assertIn("workflow_patch", state.reasons)
+                self.assertEqual(state.workflow_paths, (self.WORKFLOW,))
+                self.assertEqual(state.dirty_paths, ())
+
+                result = mod.ensure_pr()
+                self.assertFalse(result.error, result.message)
+
+            self.assertTrue(result.patch_paths)
+            self.assertTrue(posted)
+            pushed = subprocess.run(
+                ["git", "-C", remote, "show", "--name-only", "--format=",
+                 "feature/issue-1058"],
+                capture_output=True, text=True, check=True,
+            ).stdout.split()
+            self.assertIn(self.CODE, pushed)
+            self.assertNotIn(self.WORKFLOW, pushed)
+
+
+class TestRealGitBaseRefResolution(unittest.TestCase):
+    """Unit-level contract of the shared base-ref resolver and the guard."""
+
+    def test_resolve_base_ref_prefers_the_remote_tracking_ref(self):
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        calls: list[str] = []
+
+        def git(args, **kwargs):
+            calls.append(" ".join(args))
+            return "sha"
+
+        with patch.object(mod, "_run_git", git):
+            self.assertEqual(mod._resolve_base_ref("main", "origin"), "origin/main")
+        self.assertEqual(calls, ["rev-parse --verify origin/main^{commit}"])
+
+    def test_resolve_base_ref_falls_back_then_raises(self):
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        seen: list[str] = []
+
+        def git(args, **kwargs):
+            ref = args[-1]
+            seen.append(ref)
+            if "HEAD" not in ref:
+                raise RuntimeError(f"unknown ref {ref}")
+            return "sha"
+
+        with patch.object(mod, "_run_git", git):
+            self.assertEqual(mod._resolve_base_ref("main", "origin"), "origin/HEAD")
+        self.assertEqual(
+            seen,
+            ["origin/main^{commit}", "main^{commit}", "origin/HEAD^{commit}"],
+        )
+
+        def nothing(args, **kwargs):
+            raise RuntimeError("unknown ref")
+
+        with patch.object(mod, "_run_git", nothing):
+            with self.assertRaises(RuntimeError):
+                mod._resolve_base_ref("main", "origin")
+
+    def test_unpushed_commit_paths_raises_when_the_diff_fails(self):
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        def git(args, **kwargs):
+            raise RuntimeError("fatal: ambiguous argument 'main'")
+
+        with patch.object(mod, "_run_git", git):
+            with self.assertRaises(RuntimeError):
+                mod._unpushed_commit_paths("main", "feature/x")
+
+    def test_check_publication_is_unpublished_when_inspection_fails(self):
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        def git(args, **kwargs):
+            joined = " ".join(args)
+            if joined == "remote":
+                return "origin"
+            if joined.startswith("rev-parse --abbrev-ref HEAD"):
+                return "feature/x"
+            if joined.startswith("status --porcelain"):
+                return ""
+            raise RuntimeError("fatal: ambiguous argument 'main'")
+
+        with patch.object(mod, "_run_git", git), patch.object(
+            mod, "_default_base", return_value="main"
+        ):
+            state = mod.check_publication()
+        self.assertFalse(state.published)
+        self.assertEqual(state.skip_reason, "")
+        self.assertIn("unpushed_commits", state.reasons)
 
 
 if __name__ == "__main__":

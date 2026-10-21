@@ -267,18 +267,39 @@ def _changed_paths(compare_ref: str) -> tuple[str, ...]:
     return tuple(line.strip() for line in out.splitlines() if line.strip())
 
 
+def _resolve_base_ref(base: str, remote: str) -> str:
+    """Pick the ref ``base`` names in *this* checkout.
+
+    The name returned by :func:`_default_base` (``"main"``) is not guaranteed
+    to exist locally: a checkout may only carry the remote-tracking ref. A
+    diff against an unknown ref fails, so resolve once and share the answer.
+    The remote HEAD ref is the last resort, which makes the comparison
+    independent of the base *name*.
+    """
+    for candidate in (f"{remote}/{base}", base, f"{remote}/HEAD"):
+        try:
+            _run_git(["rev-parse", "--verify", f"{candidate}^{{commit}}"])
+        except RuntimeError:
+            continue
+        return candidate
+    raise RuntimeError(f"cannot resolve base {base!r} to a git ref (tried "
+                       f"{remote}/{base}, {base}, {remote}/HEAD)")
+
+
 def _unpushed_commit_paths(compare_ref: str, branch: str) -> tuple[str, ...]:
-    """Paths touched by commits the remote does not have yet."""
+    """Paths touched by commits the remote does not have yet.
+
+    ``compare_ref`` must already be a resolvable ref (see
+    :func:`_resolve_base_ref`). Raises when neither comparison can run — an
+    uninspectable delta is not "nothing unpushed" (issue #1084), and reading
+    it as such let a workflow path slip into the push that GitHub rejects.
+    """
     try:
         out = _run_git(["diff", "--name-only", f"{branch}@{{u}}..HEAD"])
     except RuntimeError:
-        try:
-            out = _run_git([
+        out = _run_git([
             "diff", "--name-only", "--relative", "--no-renames", compare_ref, "HEAD"
         ])
-        except RuntimeError as exc:
-            logger.warning(f"ensure_pr: cannot inspect unpushed commits: {exc}")
-            return ()
     return tuple(line.strip() for line in out.splitlines() if line.strip())
 
 
@@ -410,22 +431,17 @@ def _branch_holds_unpublished_commits(branch: str, remote: str) -> bool:
     With an upstream this is exactly ``@{u}..HEAD``. A branch that was never
     pushed has no upstream, so the comparison falls back to the repository's
     base branch — otherwise every fresh branch would look "unpushed" even
-    when it holds nothing.
+    when it holds nothing. The base is resolved to a real ref first, and a
+    comparison that still fails raises rather than reading as "nothing
+    unpushed" (issue #1084).
     """
     try:
         ahead = _run_git(["rev-list", "--count", "@{u}..HEAD"])
         return int(ahead or 0) > 0
     except RuntimeError:
         pass
-    base = _default_base()
-    try:
-        ahead = _run_git(["rev-list", "--count", f"{remote}/{base}..HEAD"])
-    except RuntimeError:
-        # No remote-tracking ref for the base — compare against the local one.
-        try:
-            ahead = _run_git(["rev-list", "--count", f"{base}..HEAD"])
-        except RuntimeError:
-            ahead = "0"
+    base_ref = _resolve_base_ref(_default_base(), remote)
+    ahead = _run_git(["rev-list", "--count", f"{base_ref}..HEAD"])
     return int(ahead or 0) > 0
 
 
@@ -471,26 +487,40 @@ def check_publication() -> PublicationState:
             reasons.append("dirty_tree")
 
         workflow_committed: tuple[str, ...] = ()
-        has_branch_work = _branch_holds_unpublished_commits(branch, remote)
-        if has_branch_work:
-            # Workflow files that only live in unpushed commits are
-            # patch-only too — the push carrying them would be rejected.
-            committed = _unpushed_commit_paths(_default_base(), branch)
-            workflow_committed, plain_committed = split_paths(committed)
-            if plain_committed:
-                reasons.append("unpushed_commits")
-            if plain_committed or workflow_committed:
-                try:
-                    pr_url = _find_pr_for_branch(branch)
-                except (RuntimeError, TimeoutExpired) as exc:
-                    # A failing PR lookup must not become a publication failure —
-                    # ensure_pr would fail the same way; surface it as a skip.
-                    logger.warning(f"check_publication: PR lookup failed: {exc}")
-                    return PublicationState(
-                        published=True, skip_reason="pr lookup failed"
-                    )
-                if plain_committed and not pr_url:
-                    reasons.append("missing_pr")
+        try:
+            has_branch_work = _branch_holds_unpublished_commits(branch, remote)
+            if has_branch_work:
+                # Workflow files that only live in unpushed commits are
+                # patch-only too — the push carrying them would be rejected.
+                base_ref = _resolve_base_ref(_default_base(), remote)
+                committed = _unpushed_commit_paths(base_ref, branch)
+                workflow_committed, plain_committed = split_paths(committed)
+                if plain_committed:
+                    reasons.append("unpushed_commits")
+                if plain_committed or workflow_committed:
+                    try:
+                        pr_url = _find_pr_for_branch(branch)
+                    except (RuntimeError, TimeoutExpired) as exc:
+                        # A failing PR lookup must not become a publication
+                        # failure — ensure_pr would fail the same way; surface
+                        # it as a skip.
+                        logger.warning(f"check_publication: PR lookup failed: {exc}")
+                        return PublicationState(
+                            published=True, skip_reason="pr lookup failed"
+                        )
+                    if plain_committed and not pr_url:
+                        reasons.append("missing_pr")
+        except RuntimeError as exc:
+            # The git state cannot be inspected (e.g. no resolvable base ref).
+            # Reading that as "nothing unpushed" is what let a workflow path
+            # reach the rejected push in #1058 — report unpublished instead.
+            logger.warning(f"check_publication: cannot inspect unpushed work: {exc}")
+            return PublicationState(
+                published=False,
+                reasons=("unpushed_commits",),
+                dirty_paths=dirty,
+                workflow_paths=workflow_dirty,
+            )
 
         workflow_paths = tuple(
             dict.fromkeys((*workflow_dirty, *workflow_committed))
@@ -691,24 +721,16 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
         logger.info("ensure_pr: detached HEAD — skipping")
         return EnsurePrResult(skipped=True, message="detached HEAD")
 
-    # ``patch_base`` is the diff anchor (must be a local ref: ``git diff``
-    # will not take ``origin/main`` when only the local one resolves);
-    # ``compare_ref`` is the branch-comparison anchor.
+    # ``patch_base`` is the diff anchor (must be a resolvable ref: a checkout
+    # may only carry ``origin/main``); ``compare_ref`` is the
+    # branch-comparison anchor.
     base = _default_base(transport=transport)
-    patch_base = base
-    for candidate in (f"{remote}/{base}", base):
-        try:
-            _run_git(["rev-parse", "--verify", f"{candidate}^{{commit}}"])
-        except RuntimeError:
-            continue
-        patch_base = candidate
-        break
-    compare_ref = patch_base
+    patch_base = _resolve_base_ref(base, remote)
     try:
         compare_ref = _run_git(["rev-parse", "--abbrev-ref", "@{u}"]).strip() or patch_base
     except RuntimeError:
         compare_ref = patch_base
-    publish_base = f"{remote}/{base}"
+    publish_base = patch_base
 
     split = _prepare_publish(compare_ref, branch, publish_base)
 

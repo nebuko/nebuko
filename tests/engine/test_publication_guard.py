@@ -87,6 +87,8 @@ def _git(status="", upstream="0", base="0", branch="feature/x"):
             return "origin"
         if joined.startswith("rev-parse --abbrev-ref HEAD"):
             return branch
+        if joined.startswith("rev-parse --verify"):
+            return "sha1"
         if joined.startswith("status --porcelain"):
             return status
         if joined.startswith("rev-list --count @{u}..HEAD"):
