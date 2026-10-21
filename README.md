@@ -234,6 +234,7 @@ sampling that cascades per-invocation > per-agent > per-LLM. A per-step
 |----------|---------|---------|----------|
 | **OpenRouter** | [`agent-config-openrouter.yaml`](defaults/agents/agent-config-openrouter.yaml) | Pay-as-you-go; 25+ free models | Model variety, zero-commitment trial |
 | **CommandCode** | [`agent-config-commandcode.yaml`](defaults/agents/agent-config-commandcode.yaml) | ~$10/mo GOAT plan ($10 → $70 of credits); API access needs **GOAT or higher** | Cheapest subscription-driven runs |
+| **Mistral** | [`agent-config-mistral.yaml`](defaults/agents/agent-config-mistral.yaml) | Pay-as-you-go per [published pricing](https://docs.mistral.ai/inference/pricing) | Small, fast European-hosted models with built-in reasoning |
 
 Copy a profile to `.nebuko/agents/agent-config.yaml` and point
 `agent_config_path` at it (Quickstart step 1). See
