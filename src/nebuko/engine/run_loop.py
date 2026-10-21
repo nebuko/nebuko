@@ -854,23 +854,31 @@ class Engine:
                 # silently swallow the ping or soften the exit (issue #853).
                 soft_kill_halt = _is_true(self._get(resolved, "SOFT_RETRY_EXHAUSTED"))
                 command_error = _is_true(verdict.get("COMMAND_ERROR"))
+                # Whether the resolver *classified* the skip: an unclassified
+                # one is a fail-safe config error, not a known config failure.
+                has_kind = bool(str(verdict.get("SKIP_KIND") or "").strip())
                 if skip.kind is SkipKind.HUMAN_GATE_HOLD:
                     # An armed root gate (issue #1003) is a deliberate stop,
-                    # not a workflow end and not a failure: no terminal notice,
-                    # no terminal_reason journal — the previous state (gate and
-                    # position) is preserved verbatim so the human's gate
-                    # command resumes exactly where the workflow parked. The
-                    # run exits HOLD (10) so the host run stays green; without
-                    # this branch the verdict fell through to CONFIG_ERROR and
-                    # exited 20.
+                    # not a workflow end and not a failure: no terminal_reason
+                    # journal — the previous state (gate and position) is
+                    # preserved verbatim so the human's gate command resumes
+                    # exactly where the workflow parked. The reason names the
+                    # next command, so it is pinged onto the thread (issue
+                    # #1057) instead of dying in the CI log; bot triggers stay
+                    # silent so engine notices never re-enter the chain.
                     log.info("[phase:guards] gate held — %s", reason)
+                    posted = (
+                        None
+                        if _is_bot_trigger(trigger)
+                        else self._post_gate_hold_notice(reason)
+                    )
                     return RunOutcome(
                         exit_code=skip.exit_code,
                         turn_outcome=TurnOutcome.for_incomplete(
                             IncompleteReason.NO_OUTCOME, note=reason
                         ),
                         prompt=None,
-                        posted_body=None,
+                        posted_body=posted,
                         state=None,
                         phases=tuple(phases),
                     )
@@ -916,13 +924,26 @@ class Engine:
                 log.info("[phase:guards] skipping agent — %s", reason)
                 # A routine resolver skip stays silent as before; bot-authored
                 # bodies are excluded to keep the engine's own notices from
-                # re-entering this path.
+                # re-entering this path. Every stop a human caused explains
+                # itself on the thread (issue #1057): a malformed command
+                # (#804) and equally a config failure such as a missing
+                # workflow or an invalid ``force-step`` name, which used to end
+                # with no message at all. An *unclassified* skip keeps the old
+                # silence unless its reason reads as a failed resolution, so a
+                # stray "nothing to do" never pings the thread.
                 if soft_kill_halt:
                     posted = self._post_soft_kill_halt(reason)
-                elif command_error and not _is_bot_trigger(trigger):
-                    posted = self._post_terminal_notice(reason)
                 else:
-                    posted = None
+                    owed = (
+                        command_error
+                        or _is_resolution_failure(reason)
+                        or (has_kind and not skip.is_benign)
+                    )
+                    posted = (
+                        self._post_terminal_notice(reason)
+                        if owed and not _is_bot_trigger(trigger)
+                        else None
+                    )
                 return RunOutcome(
                     exit_code=ExitCode.TERMINAL,
                     turn_outcome=TurnOutcome.for_incomplete(
@@ -1229,6 +1250,26 @@ class Engine:
             self.adapter.post(notice)
         except Exception as exc:  # noqa: BLE001 - the notice is best-effort
             log.warning("[phase:guards] gate no-op notice failed: %s", exc)
+        return notice
+
+    # @stub-protected
+    def _post_gate_hold_notice(self, reason: str) -> str:
+        """Ping the trigger author with why an armed gate stopped the run (#1057).
+
+        The hold reason already names the next command (``use /nebuko approve
+        gate or /nebuko reject gate``); before this notice it reached the CI log
+        only, leaving a red job with no pointer back to the thread. Marker-led
+        and trigger-safe like :meth:`_post_terminal_notice`, so the notice can
+        never re-trigger the chain. Best-effort: a failed post must not mask
+        the hold.
+        """
+        marker = _load_bridge_module("prepare_comment").BOT_MARKER
+        body = f"{marker}\n@{self._trigger_author()} {reason}"
+        notice = _neutralize_agent_triggers(body)
+        try:
+            self.adapter.post(notice)
+        except Exception as exc:  # noqa: BLE001 - the notice is best-effort
+            log.warning("[phase:guards] gate hold notice failed: %s", exc)
         return notice
 
     # @stub-protected
@@ -3288,4 +3329,4 @@ def main(argv: Sequence[str] | None = None) -> int:
         history_limit=window.normalized_count(),
         render_limit=window.render_limit(),
     ).run()
-    return int(outcome.exit_code)
+    return outcome.process_exit_code()

@@ -117,6 +117,26 @@ class TestRunOutcome:
         assert outcome.exit_code == ExitCode.ADVANCE
         assert outcome.phases == ("normalize",)
 
+    def test_process_exit_code_fails_the_host_only_on_a_genuine_error(self):
+        """Issue #1057: a hold or a terminal stop is a deliberate, explained stop."""
+        for code, expected in (
+            (ExitCode.ADVANCE, 0),
+            (ExitCode.HOLD, 0),
+            (ExitCode.TERMINAL, 0),
+            (ExitCode.ERROR, 1),
+        ):
+            outcome = RunOutcome(
+                exit_code=code,
+                turn_outcome=_approved_outcome(),
+                prompt=None,
+                posted_body=None,
+                state=None,
+                phases=(),
+            )
+            assert outcome.process_exit_code() == expected
+            # The run-outcome code itself keeps its value for machine callers.
+            assert int(outcome.exit_code) == int(code)
+
 
 class _RecordingAdapter:
     """Minimal port stand-in that records delete calls."""
