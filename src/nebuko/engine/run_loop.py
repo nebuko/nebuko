@@ -26,6 +26,7 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.git_session import GitSessionGuard, GuardResult
 from nebuko.engine.hook_runner import (
     HookPhase,
     HookResult,
@@ -208,6 +209,20 @@ def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
             verdict["SKIP_KIND"] = str(kind)
         return verdict
     return None
+
+
+def _publication_guard_failure(state: WorkflowState | None) -> Optional[str]:
+    """The detail of a failed publication fallback, or ``None`` (issue #1089).
+
+    ``run_agent`` records ``publication_guard="fallback_failed"`` when a
+    credentials-less session left approved work unpublished and ``ensure_pr``
+    could not rescue it. That used to reach only the state comment, so the run
+    still exited 0; the caller maps this to ``ExitCode.ERROR``.
+    """
+    context = (state.current_context or {}) if state is not None else {}
+    if (context.get("publication_guard") or "").strip() != "fallback_failed":
+        return None
+    return (context.get("publication_guard_detail") or "").strip() or "unknown error"
 
 
 def _exit_code_for(
@@ -1001,8 +1016,16 @@ class Engine:
             failure_reason: str | None = None
             agent_result: dict[str, Any] = {}
 
+            # Git session preflight (issue #1089): prove the checkout can
+            # authenticate before a single token is spent. A credentials-less
+            # session used to run to the end and only fail on push — while
+            # ``gh`` kept succeeding — and the run still exited 0.
+            preflight = self._git_session_preflight()
+            if not preflight.ok:
+                failure_reason = f"git session preflight failed: {preflight.detail}"
+
             pre_hook = hooks.get("pre")
-            if pre_hook is not None:
+            if failure_reason is None and pre_hook is not None:
                 pre_result = self._run_hook(pre_hook, "pre")
                 if not pre_result.ok:
                     # Fail-closed: a broken precondition must not run the agent.
@@ -1076,6 +1099,20 @@ class Engine:
             self._enter(phases, "state")
             state = self.persist(agent_result)
 
+            # Git session finalize (issue #1089): the session must not end with
+            # work left in the checkout. Everything still pending is committed
+            # and pushed once, then the tree and the remote SHA are verified —
+            # a violation turns an otherwise green run red instead of being
+            # only a line in the state comment. Runs even after a failed agent
+            # phase: the leftovers still belong to the session.
+            if "agent" in phases:
+                finalize_result = self._git_session_finalize()
+                if not finalize_result.ok:
+                    note = f"git session finalize failed: {finalize_result.detail}"
+                    failure_reason = (
+                        f"{failure_reason}; {note}" if failure_reason else note
+                    )
+
             self._enter(phases, "route")
             turn_outcome = self.route(
                 agent_result, observed=self._observed_status(agent_result)
@@ -1144,6 +1181,23 @@ class Engine:
                 exit_code=ExitCode.ERROR,
                 turn_outcome=TurnOutcome.for_incomplete(
                     IncompleteReason.FAILURE, note=reason
+                ),
+                prompt=prompt,
+                posted_body=posted_body,
+                state=state,
+                phases=tuple(phases),
+            )
+
+        # A publication fallback that could not rescue approved work is a run
+        # error too (issue #1089): the work may be lost, so the run must not
+        # look green just because the state comment explains it.
+        guard_failure = _publication_guard_failure(state)
+        if guard_failure is not None:
+            return RunOutcome(
+                exit_code=ExitCode.ERROR,
+                turn_outcome=TurnOutcome.for_incomplete(
+                    IncompleteReason.FAILURE,
+                    note="publication guard fallback failed: " + guard_failure,
                 ),
                 prompt=prompt,
                 posted_body=posted_body,
@@ -2274,6 +2328,53 @@ class Engine:
         runner = HookRunner(workspace=self.repo_root, env=self._agent_env())
         result = runner.run(spec, phase)
         log.info("[phase:agent] %s", result.detail)
+        return result
+
+    def _session_env(self) -> Mapping[str, str]:
+        """Env for the git session guard; ``self.env`` when the child env fails.
+
+        ``_agent_env`` is fatal on an incomplete child identity (issue #739),
+        but the guard only reads tokens and identity overrides — it must not
+        raise, and its failure is reported through ``GuardResult`` instead.
+        """
+        try:
+            return self._agent_env()
+        except Exception as exc:  # noqa: BLE001 - the guard never raises
+            log.warning("[phase:agent] git session guard uses the raw env: %s", exc)
+            return self.env
+
+    # @stub-protected
+    def _git_session_preflight(self) -> GuardResult:
+        """Prove git auth before the agent phase (issue #1089).
+
+        Fail-closed: the caller turns a failure into ``failure_reason``, so the
+        agent and its hooks never run on a session whose work could not be
+        pushed. A benign skip (no remote, detached HEAD) leaves the caller's
+        environment untouched.
+        """
+        guard = GitSessionGuard(self.repo_root, self._session_env())
+        result = guard.preflight()
+        if result.ok:
+            log.info("[phase:agent] git preflight ok: %s", result.detail)
+        else:
+            log.error("[phase:agent] git preflight failed: %s", result.detail)
+        return result
+
+    # @stub-protected
+    def _git_session_finalize(self) -> GuardResult:
+        """Prove the session left a clean, fully pushed tree (issue #1089).
+
+        Runs after the agent phase (and so after publication), before the
+        outcome is assembled: anything still pending is committed and pushed
+        once, then the tree and the remote SHA are verified. A failure is a run
+        error — an unpublished session must not look green.
+        """
+        guard = GitSessionGuard(self.repo_root, self._session_env())
+        result = guard.finalize()
+        if result.ok:
+            log.info("[phase:agent] git finalize ok: %s", result.detail)
+        else:
+            log.error("[phase:agent] git finalize failed: %s", result.detail)
         return result
 
     def _artifacts(self) -> RunArtifactStager:

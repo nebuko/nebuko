@@ -15,6 +15,8 @@ from collections.abc import Sequence
 
 from openhands.sdk import get_logger
 
+from nebuko.engine.git_session import BENIGN_SKIPS
+
 logger = get_logger(__name__)
 
 # Hard cap on recall turns. Each one costs a model turn, and an agent that
@@ -42,6 +44,18 @@ _REASON_TEXT = {
 #: delivers the delta as a patch for a human to apply.
 # @stub-protected: signature defined by architect — do not modify
 NON_RECALLABLE_REASONS = frozenset({"workflow_patch"})
+
+
+# @stub-protected: signature defined by architect — do not modify
+def is_benign_skip(skip_reason: str) -> bool:
+    """True when ``skip_reason`` means there is nothing to publish at all.
+
+    Only ``BENIGN_SKIPS`` ("no git remote", "detached HEAD") are benign. A skip
+    the guard *could* not inspect (``pr lookup failed``, ``error: …``) is not:
+    reading it as "nothing to publish" is what let a credentials-less run end
+    green (issue #1089), so it takes the fallback path instead.
+    """
+    return skip_reason in BENIGN_SKIPS
 
 
 def recallable_reasons(reasons: Sequence[str]) -> tuple[str, ...]:

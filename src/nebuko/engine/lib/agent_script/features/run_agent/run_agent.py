@@ -38,6 +38,7 @@ from agent_script.features.run_agent.publication_guard import (
     MAX_PUBLICATION_RECALLS,
     NON_RECALLABLE_REASONS,
     PUBLICATION_RECALL_PASS_BUDGET_S,
+    is_benign_skip,
     perform_publication_recalls,
     recallable_reasons,
 )
@@ -527,7 +528,11 @@ def _guard_publication(
 
     Returns the ``run_outcome`` updated with the guard result
     (``clean`` / ``recalled_ok`` / ``fallback_pr`` / ``fallback_patch`` /
-    ``fallback_failed``). A skip (no remote, detached HEAD) records nothing.
+    ``fallback_failed``). A *benign* skip (no remote, detached HEAD) records
+    nothing; a skip the guard could not inspect (``pr lookup failed``,
+    ``error: …``) takes the fallback path instead — collapsing it into
+    "nothing to publish" is what let a credentials-less run end green
+    (issue #1089).
 
     Recalls are skipped entirely when only non-recallable reasons remain
     (``workflow_patch``): a ``.github/workflows/*`` delta can never be pushed
@@ -535,16 +540,18 @@ def _guard_publication(
     ``ensure_pr`` delivers it as a patch instead (issue #1080).
     """
     state = check_publication()
-    if state.skip_reason:
+    if state.skip_reason and is_benign_skip(state.skip_reason):
         logger.info(f"Publication guard skipped: {state.skip_reason}")
         return run_outcome
-    if state.published:
+    if state.published and not state.skip_reason:
         return dataclasses.replace(run_outcome, publication_guard="clean")
 
-    missing = ", ".join(state.reasons)
+    missing = ", ".join(state.reasons) or (state.skip_reason or "")
     recall_count = 0
     pre_recall_offset: int | None = None
-    if _can_publish(resolved) and recallable_reasons(state.reasons):
+    if not state.skip_reason and _can_publish(resolved) and recallable_reasons(
+        state.reasons
+    ):
 
         # Pin the pre-recall boundary before the first recall turn so the
         # capture layer can exclude engine-injected turns (issue #558). Kept
