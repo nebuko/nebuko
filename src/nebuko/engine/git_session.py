@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import subprocess
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,9 @@ GIT_IDENTITY_EMAIL: str = "nebuko-agent@users.noreply.github.com"
 #: taxonomy: no remote or a detached HEAD means there is nothing to publish.
 # @stub-protected
 BENIGN_SKIPS: tuple[str, ...] = ("no git remote", "detached HEAD")
+
+#: Branch cut from a detached HEAD that holds unpublished work.
+DETACHED_BRANCH_PREFIX: str = "feature/nebuko-detached-"
 
 #: Env vars carrying push credentials, in precedence order.
 _TOKEN_ENV_VARS: tuple[str, ...] = ("NEBUKO_GIT_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
@@ -116,8 +120,6 @@ class GitSessionGuard:
         remote_url = self._remote_url()
         if remote_url is None:
             return GuardResult(ok=True, skipped=True, detail="no git remote")
-        if self._current_branch() in ("", "HEAD"):
-            return GuardResult(ok=True, skipped=True, detail="detached HEAD")
 
         self._configure_identity()
 
@@ -154,7 +156,16 @@ class GitSessionGuard:
             return GuardResult(ok=True, skipped=True, detail="no git remote")
         branch = self._current_branch()
         if branch in ("", "HEAD"):
-            return GuardResult(ok=True, skipped=True, detail="detached HEAD")
+            if not self._has_unpublished_work():
+                return GuardResult(ok=True, skipped=True, detail="detached HEAD")
+            adopted = self._adopt_detached_head()
+            if not adopted:
+                return GuardResult(
+                    ok=False,
+                    detail="detached HEAD holds unpublished work and no branch "
+                    "could be created for it (see `git status`)",
+                )
+            branch = adopted
 
         self._configure_identity()
         commit_problem = self._commit_all_pending()
@@ -182,6 +193,37 @@ class GitSessionGuard:
                 + self._token_hint(),
             )
         return GuardResult(ok=True, detail=f"{branch} is clean and pushed")
+
+    # ── Detached HEAD ─────────────────────────────────────────────
+
+    def _has_unpublished_work(self) -> bool:
+        """True when a detached HEAD carries uncommitted or unpushed work.
+
+        Work is unpushed when HEAD is not reachable from any remote-tracking
+        ref. An uninspectable repo counts as unpublished: fail closed.
+        """
+        if self._pending_paths():
+            return True
+        try:
+            return bool(self._run_git(["rev-list", "-n", "1", "HEAD", "--not", "--remotes"]))
+        except (RuntimeError, OSError):
+            return True
+
+    def _adopt_detached_head(self) -> str:
+        """Put a detached HEAD on a fresh branch so it can be pushed.
+
+        A checkout of a bare SHA (issue #1089 follow-up: the agent committed on
+        a detached HEAD and nothing was ever pushed) has no branch to push to.
+        Returns the new branch name, or ``""`` when it could not be created.
+        """
+        branch = f"{DETACHED_BRANCH_PREFIX}{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+        try:
+            self._run_git(["checkout", "-b", branch])
+        except RuntimeError as exc:
+            logger.warning("git session: could not branch the detached HEAD: %s", exc)
+            return ""
+        logger.info("git session: detached HEAD with unpublished work -> %s", branch)
+        return branch
 
     # ── Identity and credentials ──────────────────────────────────
 
