@@ -2,9 +2,29 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from ..model_execution_config.model_execution_config import ModelExecutionConfig
+
 # ``agent_runtimes_per_call_ms`` grows one entry per tool call; cap the tail we
 # retain so an unbounded run cannot inflate the embedded state JSON.
 MAX_CALL_RUNTIMES = 50
+
+
+def _model_execution_config_from_dict(
+    data: Any,
+) -> Optional[ModelExecutionConfig]:
+    """Coerce the nested model execution config payload into its record.
+
+    Absent or malformed payloads from legacy snapshots yield ``None`` rather
+    than failing the whole history entry.
+    """
+    if isinstance(data, ModelExecutionConfig):
+        return data
+    if not isinstance(data, dict):
+        return None
+    try:
+        return ModelExecutionConfig(**data)
+    except Exception:
+        return None
 
 
 class StateMetrics(BaseModel):
@@ -43,6 +63,9 @@ class StateMetrics(BaseModel):
     publication_guard: Optional[str] = None
     tokens_per_second: Optional[float] = None
     time_to_first_token: Optional[float] = None
+    # Effective model execution parameters actually sent to the provider
+    # (issue #820); None for legacy snapshots and metric dicts without it.
+    model_execution_config: Optional[ModelExecutionConfig] = None  # @stub-protected
     error: Optional[str] = None
 
     @staticmethod
@@ -79,5 +102,8 @@ class StateMetrics(BaseModel):
             publication_guard=data.get("publication_guard"),
             tokens_per_second=data.get("tokens_per_second"),
             time_to_first_token=data.get("time_to_first_token"),
+            model_execution_config=_model_execution_config_from_dict(
+                data.get("model_execution_config")
+            ),
             error=data.get("error"),
         )

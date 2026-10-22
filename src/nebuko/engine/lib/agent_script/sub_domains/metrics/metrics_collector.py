@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Optional
 
 from openhands.sdk import get_logger
 from openhands.sdk.event.llm_convertible.action import ActionEvent
@@ -13,6 +14,10 @@ from metrics_schema import Metrics
 
 from pricing.features.resolve_model_rates.resolve_model_rates import (
     resolve_model_rates,
+)
+
+from workflow_state.sub_domains.model_execution_config.model_execution_config import (
+    ModelExecutionConfig,
 )
 
 from agent_script.sub_domains.metrics.cost import CostRates, SessionCost
@@ -316,7 +321,120 @@ def _reasoning_tokens(combined_metrics):
     )
 
 
-def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
+def _active_complexity_tier() -> str:
+    """The active complexity tier ("low"/"medium"/"high"), or "" when none."""
+    complexity = os.environ.get("CONFIG_COMPLEXITY", "").lower()
+    return complexity if complexity in ("low", "medium", "high") else ""
+
+
+def _sampling_from_extra_body(llm_config: dict) -> dict:
+    """Sampling parameters the resolver sent through ``litellm_extra_body``."""
+    extra_body = llm_config.get("litellm_extra_body")
+    if not isinstance(extra_body, dict):
+        return {}
+    captured = {}
+    for key, attr in (("top_p", "top_p"), ("top_k", "top_k"), ("min_p", "min_p"),
+                      ("presence_penalty", "presence_penalty"),
+                      ("repetition_penalty", "repetition_penalty")):
+        value = extra_body.get(key)
+        if value is not None:
+            captured[attr] = value
+    stop = extra_body.get("stop")
+    if stop:
+        captured["stop_sequences"] = list(stop) if isinstance(stop, (list, tuple)) else [str(stop)]
+    return captured
+
+
+def _thinking_from_extra_body(llm_config: dict) -> Optional[bool]:
+    """Effective ``thinking_enabled`` as resolved into the request body."""
+    extra_body = llm_config.get("litellm_extra_body")
+    if not isinstance(extra_body, dict):
+        return None
+    kwargs = extra_body.get("chat_template_kwargs")
+    if not isinstance(kwargs, dict):
+        return None
+    value = kwargs.get("enable_thinking")
+    return bool(value) if value is not None else None
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _build_model_execution_config(agent_cfg=None, llm_config=None) -> Optional[ModelExecutionConfig]:
+    """The model execution parameters actually applied to this run (issue #820).
+
+    Values from the resolved ``llm_config`` dict — what ``run_agent`` handed to
+    the SDK — win, because only they prove what was sent to the provider.
+    ``agent_cfg`` fills the gaps for legacy/test callers and identifies the
+    model (plus whether a complexity tier overrode it). Returns ``None`` when
+    neither source is available.
+    """
+    llm_config = llm_config if isinstance(llm_config, dict) else {}
+    if not llm_config and agent_cfg is None:
+        return None
+
+    model_ref = _effective_model_ref(agent_cfg)
+    base_ref = getattr(agent_cfg, "model_ref", None) if agent_cfg is not None else None
+    model_path = (
+        llm_config.get("model")
+        or (getattr(model_ref, "model_path", None) if model_ref is not None else "")
+        or ""
+    )
+    provider_ref = getattr(model_ref, "provider_ref", None) if model_ref is not None else None
+    provider = getattr(provider_ref, "id", "") if provider_ref is not None else ""
+
+    sampling = {
+        "top_p": getattr(agent_cfg, "top_p", None),
+        "top_k": getattr(agent_cfg, "top_k", None),
+        "min_p": getattr(agent_cfg, "min_p", None),
+        "presence_penalty": getattr(agent_cfg, "presence_penalty", None),
+        "repetition_penalty": getattr(agent_cfg, "repetition_penalty", None),
+        "stop_sequences": getattr(agent_cfg, "stop_sequences", None),
+    }
+    sampling.update(_sampling_from_extra_body(llm_config))
+
+    temperature = llm_config.get("temperature")
+    if temperature is None and agent_cfg is not None:
+        temperature = getattr(agent_cfg, "temperature", None)
+        if temperature is None and model_ref is not None:
+            temperature = getattr(model_ref, "default_temperature", None)
+
+    thinking = _thinking_from_extra_body(llm_config)
+    if thinking is None and model_ref is not None:
+        thinking = getattr(model_ref, "thinking_enabled", None)
+
+    reasoning_effort = llm_config.get("reasoning_effort")
+    if reasoning_effort is None and model_ref is not None:
+        reasoning_effort = getattr(model_ref, "reasoning_effort", None)
+
+    max_output_tokens = llm_config.get("max_output_tokens")
+    if max_output_tokens is None and model_ref is not None:
+        max_output_tokens = getattr(model_ref, "max_output_tokens", None)
+
+    overridden = (
+        base_ref is not None
+        and model_ref is not None
+        and model_ref is not base_ref
+        and getattr(model_ref, "model_path", None) != getattr(base_ref, "model_path", None)
+    )
+
+    return ModelExecutionConfig(
+        model_path=model_path,
+        provider=provider,
+        temperature=temperature,
+        top_p=sampling["top_p"],
+        top_k=sampling["top_k"],
+        min_p=sampling["min_p"],
+        presence_penalty=sampling["presence_penalty"],
+        repetition_penalty=sampling["repetition_penalty"],
+        stop_sequences=sampling["stop_sequences"],
+        thinking_enabled=thinking,
+        reasoning_effort=reasoning_effort,
+        max_output_tokens=max_output_tokens,
+        complexity_tier=_active_complexity_tier(),
+        model_source="complexity_override" if overridden else "base",
+    )
+
+
+def collect_llm_metrics(conversation, agent_cfg=None, price_table=None, llm_config=None):
     """
     Collect LLM metrics from a conversation after it has completed.
 
@@ -326,6 +444,9 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
             deterministic cost fallback (its configured prices win per field).
         price_table: Optional default :class:`PriceTable` supplying prices the
             config does not set, so subscription-provider models are costed.
+        llm_config: Optional resolved LLM config dict ``run_agent`` handed to
+            the SDK; its values win when recording the applied model execution
+            configuration (issue #820).
 
     Returns:
         Metrics: Metrics object containing all collected metrics
@@ -423,6 +544,10 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
         tokens_per_second = captured.tokens_per_second
         time_to_first_token = captured.time_to_first_token
 
+        # Effective model execution parameters actually sent to the provider
+        # (issue #820): kept on every history entry for replay and auditing.
+        model_execution_config = _build_model_execution_config(agent_cfg, llm_config)
+
         # Build Metrics object
         role_name = os.environ.get("ROLE_NAME", "unknown")
         metrics = Metrics(
@@ -452,6 +577,9 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
             wall_clock_ms=wall_clock_ms,
             tokens_per_second=tokens_per_second,
             time_to_first_token=time_to_first_token,
+            model_execution_config=model_execution_config.model_dump()
+            if model_execution_config is not None
+            else None,
         )
 
         logger.info(f"Collected LLM metrics for run {metrics.run_id}")
