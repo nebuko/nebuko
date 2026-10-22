@@ -1,0 +1,35 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Some tests assert on Rich-rendered messages; a narrow CI terminal
+      # wraps them mid-sentence and breaks substring checks.
+      COLUMNS: "250"
+      OPENHANDS_SUPPRESS_BANNER: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install dependencies (dev group + agent runtime)
+        run: uv sync --extra runtime
+      - name: Run tests
+        run: uv run --extra runtime pytest -q tests src
