@@ -1,7 +1,9 @@
 # ── Providers: Claude Code (ACP) ──
 # Every role runs through Claude Code (`backend: claude-code`), not the OpenHands
 # model loop: Claude Code brings its own tools, context management and model
-# calls, so the `tools`, `temperature` and sampling fields below are ignored.
+# calls, so the `temperature` and sampling fields below are ignored.
+# The `tools` list is now enforced: roles without terminal/file_editor get
+# restricted session modes and CLI args denying exec tools.
 # `api_url` is unused; only `api_token_env` matters. Generate the token with
 # `claude setup-token` (subscription) and expose it as CLAUDE_CODE_OAUTH_TOKEN:
 # as a repository secret, or in the environment of your self-hosted runner

@@ -68,16 +68,35 @@ The closing-turn JSON is the same `turn_outcome` the `finalize` tool takes
 
 ## Differences to know about
 
-- `tools`, `temperature`, sampling and `token_budget` are ignored: Claude Code
-  owns its tools and compacts its own context.
+- `temperature`, sampling and `token_budget` are ignored: Claude Code owns its
+  tools and compacts its own context. The `tools` field in agent config is now
+  used to enforce restrictions (see "Tool restrictions" below).
 - Nebuko-only tools (`terminal_batch`, `report_scaffold_branch`,
   `complexity_review`, handoff fold) are not available to Claude Code.
 - `discover`-mode skills need the SDK `invoke_skill` tool and are not attached;
   `inject`-mode skills still travel in the prompt.
-- The permission mode is `bypassPermissions`: Claude Code can run any command
-  in the checkout. That is why `anthropic-local-runner` refuses a **public**
-  repository unless `--allow-public` is given, and why the runner should run
-  as an unprivileged user.
 - A runner that is offline leaves the job queued; there is no automatic
   fallback to a hosted runner yet.
 - Check Anthropic's terms for using a subscription token from automation.
+
+## Tool restrictions
+
+The `tools:` list in an agent's config now enforces restrictions on Claude Code
+roles via two layers:
+
+1. **CLI-level restriction** (primary): Roles that exclude `terminal` and
+   `file_editor` get a non-`bypassPermissions` session mode and CLI args
+   denying exec tools, so Claude Code itself rejects prohibited commands.
+2. **Permission-callback enforcement** (defense-in-depth): The engine's
+   `RestrictedACPAgent` subclass overrides `request_permission()` to deny any
+   tool call outside the allowed set.
+
+**Unrestricted roles** (e.g. `dev` with full exec tools) keep the default
+`bypassPermissions` mode and run without restriction.
+
+**Restricted roles** (e.g. `architect` with no `terminal`/`file_editor`) are
+mapped to a restrictive session mode and sent CLI flags denying exec tools. That
+is why `anthropic-local-runner` refuses a **public** repository unless
+`--allow-public` is given, and why the runner should run as an unprivileged
+user: the restrictions depend on the session mode and may not apply if
+`bypassPermissions` is forced.

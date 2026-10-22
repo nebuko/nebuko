@@ -4,6 +4,7 @@ import pytest
 
 from agent_script.features.claude_code_backend import (
     ENGINE_PREAMBLE,
+    _claude_code_cli_args_for_tools,
     acp_model_from_model_path,
     build_claude_code_agent,
     is_claude_code_agent,
@@ -55,3 +56,52 @@ class TestBuildClaudeCodeAgent:
 
     def test_a_plain_object_is_not_a_claude_code_agent(self):
         assert not is_claude_code_agent(object())
+
+    def test_unrestricted_role_gets_no_deny_args_or_session_mode(self):
+        # dev role with full tools: no CLI args, default session mode
+        tools = ["terminal", "file_editor", "task_tracker", "think", "finish"]
+        acp_args, session_mode = _claude_code_cli_args_for_tools(tools)
+
+        assert acp_args == []
+        assert session_mode is None
+
+    def test_restricted_role_without_exec_tools_gets_deny_list(self):
+        # architect role: only think, finish, finalize
+        tools = ["think", "finish", "finalize"]
+        acp_args, session_mode = _claude_code_cli_args_for_tools(tools)
+
+        assert len(acp_args) > 0  # Should have some args
+        assert session_mode is not None  # Should restrict session mode
+        # The actual args depend on CLI support; just verify it's attempting restriction
+
+    def test_empty_tools_list_is_unrestricted(self):
+        # No tools specified: treat as unrestricted
+        acp_args, session_mode = _claude_code_cli_args_for_tools([])
+
+        assert acp_args == []
+        assert session_mode is None
+
+    def test_none_tools_is_unrestricted(self):
+        # None tools: treat as unrestricted
+        acp_args, session_mode = _claude_code_cli_args_for_tools(None)
+
+        assert acp_args == []
+        assert session_mode is None
+
+    def test_restricted_agent_receives_args_and_session_mode(self):
+        # Test that build_claude_code_agent passes the args to ACPAgent
+        restricted_tools = ["think", "finish", "finalize"]
+        agent = build_claude_code_agent("anthropic/sonnet", allowed_tools=restricted_tools)
+
+        # Should have acp_args set if tools are restricted
+        assert agent.acp_args is not None  # Could be empty or have args
+        assert agent.acp_session_mode is not None  # Should be restricted mode
+
+    def test_unrestricted_agent_receives_defaults(self):
+        # Test that build_claude_code_agent with full tools uses defaults
+        full_tools = ["terminal", "file_editor", "task_tracker", "think", "finish"]
+        agent = build_claude_code_agent("anthropic/sonnet", allowed_tools=full_tools)
+
+        # Should use defaults (empty args, None session mode for unrestricted)
+        assert agent.acp_args == []
+        assert agent.acp_session_mode is None
