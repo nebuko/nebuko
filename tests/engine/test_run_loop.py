@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -45,6 +46,7 @@ from nebuko.engine.run_loop import (
     _exit_code_for,
     _is_renderable,
     _one_line_preview,
+    _publication_guard_failure,
     _render_history,
     _render_thread_records,
     _render_unverified_records,
@@ -3848,6 +3850,7 @@ def _engine_at_root(tmp_path, root, trigger=None, *, name="run-1", env=None) -> 
     Hooks run in the session workspace, so the integration tests point it at a
     temp dir and place real executable scripts there.
     """
+    _init_git_checkout(root)
     adapter = LocalAdapter(tmp_path / "runs" / name, trigger=trigger or _trigger())
     base_env = {
         "CIRCUIT_BREAKER_THRESHOLD": "3",
@@ -3855,6 +3858,22 @@ def _engine_at_root(tmp_path, root, trigger=None, *, name="run-1", env=None) -> 
     }
     base_env.update(env or {})
     return Engine(adapter=adapter, repo_root=root, env=base_env)
+
+
+def _init_git_checkout(root) -> None:
+    """Turn root into a git checkout whose origin needs no credentials.
+
+    The git session preflight (issue #1089) is fail-closed, so a session
+    workspace that is not a git repository would fail every run test. A local
+    bare remote keeps the preflight green and the guard offline.
+    """
+    remote = root.parent / f"{root.name}-origin.git"
+    git = ["git", "-C", str(root)]
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+    subprocess.run([*git, "remote", "add", "origin", str(remote)], check=True, capture_output=True)
+    (root / ".gitkeep").write_text("", encoding="utf-8")
+    subprocess.run([*git, "add", ".gitkeep"], check=True, capture_output=True)
 
 
 def _write_hook_script(root, rel: str, body: str) -> None:
@@ -4096,6 +4115,187 @@ class TestStepHooks:
         text = output.read_text(encoding="utf-8")
         assert f"cwd={root}" in text
         assert "repo=olivier-norture/git-flow-ai" in text
+
+
+class TestGitSessionGuardWiring:
+    """The engine runs the git session guard around every agent phase (#1089).
+
+    Preflight is fail-closed before the agent runs; finalize makes an unpublished
+    session an ``ExitCode.ERROR``; and a failed publication fallback is a run
+    error rather than only a line in the state comment.
+    """
+
+    def _run(self, monkeypatch, root, *, preflight=None, finalize=None):
+        from nebuko.engine.git_session import GuardResult
+
+        engine = _engine_at_root(root.parent, root)
+        _stub_resolved(monkeypatch, _resolved_with_hooks())
+        calls: list[str] = []
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_preflight",
+            lambda self: calls.append("pre") or (preflight or GuardResult(ok=True)),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_finalize",
+            lambda self: calls.append("post") or (finalize or GuardResult(ok=True)),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: calls.append("agent") or _agent_result("done"),
+        )
+        return engine.run(), calls
+
+    def test_the_guard_runs_around_the_agent(self, tmp_path, monkeypatch):
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        outcome, calls = self._run(monkeypatch, root)
+
+        assert calls == ["pre", "agent", "post"]
+        assert outcome.exit_code == ExitCode.ADVANCE
+
+    def test_a_failed_preflight_fails_the_run_before_the_agent(
+        self, tmp_path, monkeypatch
+    ):
+        from nebuko.engine.git_session import GuardResult
+
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        outcome, calls = self._run(
+            monkeypatch,
+            root,
+            preflight=GuardResult(
+                ok=False, detail="cannot authenticate to origin — set NEBUKO_GIT_TOKEN"
+            ),
+        )
+
+        assert calls == ["pre", "post"]
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+        assert outcome.turn_outcome.note.startswith("git session preflight failed: ")
+        assert "NEBUKO_GIT_TOKEN" in outcome.turn_outcome.note
+
+    def test_a_failed_finalize_fails_the_run(self, tmp_path, monkeypatch):
+        from nebuko.engine.git_session import GuardResult
+
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        outcome, _ = self._run(
+            monkeypatch,
+            root,
+            finalize=GuardResult(ok=False, detail="branch x is not fully pushed"),
+        )
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+        assert "git session finalize failed: branch x is not fully pushed" in (
+            outcome.turn_outcome.note
+        )
+
+    def test_a_finalize_failure_appends_to_an_existing_failure(
+        self, tmp_path, monkeypatch
+    ):
+        from nebuko.engine.git_session import GuardResult
+
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        outcome, _ = self._run(
+            monkeypatch,
+            root,
+            preflight=GuardResult(ok=False, detail="no credentials"),
+            finalize=GuardResult(ok=False, detail="still dirty"),
+        )
+
+        assert outcome.turn_outcome.note == (
+            "git session preflight failed: no credentials; "
+            "git session finalize failed: still dirty"
+        )
+
+    def test_a_skipped_finalize_is_not_a_failure(self, tmp_path, monkeypatch):
+        from nebuko.engine.git_session import GuardResult
+
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        outcome, _ = self._run(
+            monkeypatch,
+            root,
+            finalize=GuardResult(ok=True, skipped=True, detail="detached HEAD"),
+        )
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+
+    def test_a_failed_publication_fallback_is_a_run_error(self, tmp_path, monkeypatch):
+        root = tmp_path / "repo"
+        root.mkdir()
+        engine = _engine_at_root(tmp_path, root)
+        _stub_resolved(monkeypatch, _resolved_with_hooks())
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
+
+        state = build_state(None, workflow="wf", step="implement", agent="dev")
+        state = state.model_copy(
+            update={
+                "current_context": {
+                    "publication_guard": "fallback_failed",
+                    "publication_guard_detail": "push rejected",
+                }
+            }
+        )
+
+        def persist(self, agent_result):
+            self.adapter.save_state(state)
+            return state
+
+        monkeypatch.setattr(Engine, "persist", persist)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+        assert outcome.turn_outcome.note == (
+            "publication guard fallback failed: push rejected"
+        )
+
+
+def _publication_guard_state(**context):
+    return WorkflowState.model_construct(step=None, current_context=context)
+
+
+class TestPublicationGuardFailure:
+    """``fallback_failed`` in the state is the signal the driver maps to ERROR."""
+
+    def test_a_failed_fallback_reports_its_detail(self):
+        state = _publication_guard_state(
+            publication_guard="fallback_failed",
+            publication_guard_detail="remote rejected the push",
+        )
+
+        assert _publication_guard_failure(state) == "remote rejected the push"
+
+    def test_a_failed_fallback_without_a_detail_still_reports(self):
+        state = _publication_guard_state(publication_guard="fallback_failed")
+
+        assert _publication_guard_failure(state) == "unknown error"
+
+    @pytest.mark.parametrize(
+        "context",
+        [
+            {},
+            {"publication_guard": "clean"},
+            {"publication_guard": "fallback_pr", "publication_guard_detail": "url"},
+        ],
+    )
+    def test_other_publication_results_are_not_failures(self, context):
+        assert _publication_guard_failure(_publication_guard_state(**context)) is None
+
+    def test_no_state_is_not_a_failure(self):
+        assert _publication_guard_failure(None) is None
 
 
 class TestBuildPromptPreviousSessionHandoff:

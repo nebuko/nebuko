@@ -18,6 +18,7 @@ from agent_script.features.ensure_pr.ensure_pr import (
 )
 from agent_script.features.run_agent.publication_guard import (
     MAX_PUBLICATION_RECALLS,
+    is_benign_skip,
     perform_publication_recalls,
     publication_recall_prompt,
 )
@@ -176,3 +177,18 @@ def test_check_never_raises(monkeypatch):
 
     state = _check(monkeypatch, boom)
     assert state.published and state.skip_reason
+
+
+# ── Skip taxonomy (issue #1089) ──────────────────────────────────
+
+
+def test_no_remote_and_detached_head_are_benign_skips():
+    """Only an unpublishable checkout stands the guard down."""
+    assert is_benign_skip("no git remote")
+    assert is_benign_skip("detached HEAD")
+
+
+@pytest.mark.parametrize("reason", ["pr lookup failed", "error:boom", ""])
+def test_an_inspection_failure_is_not_a_benign_skip(reason):
+    """Reading a failed inspection as benign is what let a run end green."""
+    assert not is_benign_skip(reason)

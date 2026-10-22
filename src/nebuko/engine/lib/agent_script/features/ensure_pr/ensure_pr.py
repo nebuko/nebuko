@@ -40,6 +40,8 @@ from agent_script.features.ensure_pr.workflow_patch import (
 from github_client import GitHubTransport, ensure_bot_marker
 from openhands.sdk import get_logger
 
+from nebuko.engine.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
+
 logger = get_logger(__name__)
 
 DEFAULT_TIMEOUT = 120
@@ -242,9 +244,9 @@ def _commit_pending_changes(paths: Sequence[str] | None = None) -> str:
     _run_git(
         [
             "-c",
-            "user.name=nebuko",
+            f"user.name={GIT_IDENTITY_NAME}",
             "-c",
-            "user.email=nebuko@users.noreply.github.com",
+            f"user.email={GIT_IDENTITY_EMAIL}",
             "commit",
             "-m",
             "WIP checkpoint — automatic commit from graceful agent interruption\n\n"

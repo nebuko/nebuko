@@ -20,6 +20,8 @@ from pathlib import Path
 
 from openhands.sdk import get_logger
 
+from nebuko.engine.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
+
 from agent_script.features.handoff_tool.handoff_document import HandoffDocument
 from agent_script.features.ensure_pr.ensure_pr import _run_git
 
@@ -34,12 +36,12 @@ HANDOFF_COMMIT_MESSAGE = "chore: update session handoff"
 #: Branch created for a handoff written before any dev branch exists.
 HANDOFF_BRANCH_PREFIX = "feature/nebuko-handoff-"
 
-#: Git identity for engine-authored commits (mirrors ``ensure_pr``).
+#: Git identity for engine-authored commits (see ``git_session``).
 _GIT_IDENTITY = [
     "-c",
-    "user.name=nebuko",
+    f"user.name={GIT_IDENTITY_NAME}",
     "-c",
-    "user.email=nebuko@users.noreply.github.com",
+    f"user.email={GIT_IDENTITY_EMAIL}",
 ]
 
 
@@ -248,4 +250,8 @@ class HandoffStore:
         try:
             _run_git(args, cwd=self._repo_root)
         except RuntimeError as exc:
-            logger.warning(f"handoff: push of {branch} failed: {exc}")
+            logger.error(f"handoff: push of {branch} failed: {exc}")
+            # Re-raised so the tool executor surfaces an error observation: a
+            # handoff that never reached the remote must not look persisted
+            # (issue #1089).
+            raise

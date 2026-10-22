@@ -1,7 +1,8 @@
 """Tests for the handoff tool, its document and its fold marker (issue #965)."""
 
 import unittest
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from agent_script.features.handoff_tool import (
     HANDOFF_DESCRIPTION,
@@ -211,3 +212,39 @@ class TestHandoffToolCreate(unittest.TestCase):
     def test_create_rejects_parameters(self):
         with self.assertRaises(ValueError):
             HandoffTool.create(unexpected=True)
+
+
+class TestHandoffPushFailure(unittest.TestCase):
+    """A handoff that never reached the remote must not look persisted (#1089)."""
+
+    def _store(self):
+        from agent_script.features.handoff_tool.handoff_store import HandoffStore
+
+        return HandoffStore(repo_root=Path("/tmp"))
+
+    def test_a_rejected_push_raises(self):
+        from agent_script.features.handoff_tool import handoff_store
+
+        store = self._store()
+
+        def fake_git(args, cwd=None):
+            if args[:2] == ["remote", "get-url"]:
+                return "git@github.com:acme/repo.git"
+            if args[0] == "push":
+                raise RuntimeError("push rejected")
+            return ""
+
+        with patch.object(handoff_store, "_run_git", fake_git):
+            with self.assertRaises(RuntimeError):
+                store._push("feature/x")
+
+    def test_a_missing_remote_is_a_skip_not_a_failure(self):
+        from agent_script.features.handoff_tool import handoff_store
+
+        store = self._store()
+
+        def fake_git(args, cwd=None):
+            raise RuntimeError("no such remote 'origin'")
+
+        with patch.object(handoff_store, "_run_git", fake_git):
+            store._push("feature/x")
