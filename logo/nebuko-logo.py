@@ -160,8 +160,9 @@ def mark_fit(uid, mode, target, simple=False):
     return g, (32 - (x1 - x0) / 2 * sc, 32 - (y1 - y0) / 2 * sc, 32 + (x1 - x0) / 2 * sc, 32 + (y1 - y0) / 2 * sc)
 
 def tile(uid, target=46, simple=False, rx=14, transparent=False):
-    # transparent : aucune tuile de fond (alpha) et marque en colorway noire, lisible sur fond clair
-    g, _ = mark_fit(uid + "m", "flat:#000000" if transparent else "dark", target, simple)
+    # transparent : aucune tuile de fond (alpha) ; colorway « light » (ruban dégradé, repères ambre)
+    # dont les trous sont blancs, donc invisibles sur une page claire
+    g, _ = mark_fit(uid + "m", "light" if transparent else "dark", target, simple)
     if transparent: return svg(g)
     bg = (f'<defs><radialGradient id="{uid}b" cx=".5" cy=".5" r=".75"><stop offset="0" stop-color="#1B2650"/><stop offset="1" stop-color="{BG}"/></radialGradient></defs>'
           f'<rect width="64" height="64" rx="{rx}" fill="url(#{uid}b)"/>')
