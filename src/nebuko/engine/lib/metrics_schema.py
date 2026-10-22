@@ -70,6 +70,10 @@ class Metrics:
             None when it could not be observed (issue #722).
         time_to_first_token: Derived seconds between request start and first
             token, or None when it could not be observed (issue #722).
+        model_execution_config: Effective model execution parameters actually
+            applied to the run (model after dynamic complexity selection,
+            temperature, sampling parameters, reasoning switches) as a plain
+            dict, or None when no config was available (issue #820).
         error: Optional error message if metrics collection failed.
     """
 
@@ -102,6 +106,7 @@ class Metrics:
     publication_guard: Optional[str] = None
     tokens_per_second: float | None = None
     time_to_first_token: float | None = None
+    model_execution_config: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:

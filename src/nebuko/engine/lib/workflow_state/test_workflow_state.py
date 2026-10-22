@@ -421,3 +421,51 @@ class TestWorkflowRefFromEnv(unittest.TestCase):
 
     def test_whitespace_only_maps_to_none(self):
         self.assertIsNone(workflow_ref_from_env({"NEBUKO_WORKFLOW_REF": "   "}))
+
+
+class TestStateMetricsModelExecutionConfig(unittest.TestCase):
+    """The applied model execution config survives the state mirror (#820)."""
+
+    def test_defaults_to_none(self):
+        self.assertIsNone(StateMetrics().model_execution_config)
+        self.assertIsNone(
+            StateMetrics.from_full_metrics_dict({"input_tokens": 10}).model_execution_config
+        )
+
+    def test_round_trips_from_metrics_to_dict(self):
+        from metrics_schema import Metrics
+
+        original = Metrics(
+            run_id="r1",
+            model_name="openai/glm-4.6",
+            agent_role="dev",
+            model_execution_config={
+                "model_path": "openai/glm-4.6",
+                "provider": "openrouter",
+                "temperature": 0.7,
+                "top_p": 0.8,
+                "complexity_tier": "high",
+                "model_source": "complexity_override",
+            },
+        )
+
+        metrics = StateMetrics.from_full_metrics_dict(original.to_dict())
+
+        config = metrics.model_execution_config
+        self.assertEqual(config.model_path, "openai/glm-4.6")
+        self.assertEqual(config.temperature, 0.7)
+        self.assertEqual(config.top_p, 0.8)
+        self.assertEqual(config.complexity_tier, "high")
+        self.assertEqual(config.model_source, "complexity_override")
+        # Serialized straight into the history JSON with no extra mapping.
+        self.assertEqual(
+            metrics.model_dump()["model_execution_config"]["model_path"],
+            "openai/glm-4.6",
+        )
+
+    def test_malformed_payload_is_ignored(self):
+        metrics = StateMetrics.from_full_metrics_dict(
+            {"input_tokens": 10, "model_execution_config": "not-a-dict"}
+        )
+        self.assertIsNone(metrics.model_execution_config)
+

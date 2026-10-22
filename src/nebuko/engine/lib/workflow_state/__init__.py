@@ -9,6 +9,9 @@ Package-by-feature DDD layout:
 # Domain entities
 from .sub_domains.history_entry.history_entry import HistoryEntry
 from .sub_domains.issue_info.issue_info import IssueInfo
+from .sub_domains.model_execution_config.model_execution_config import (
+    ModelExecutionConfig,
+)
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.state_metrics.state_metrics import StateMetrics
 from .sub_domains.step_resolution.step_resolution import StepResolution

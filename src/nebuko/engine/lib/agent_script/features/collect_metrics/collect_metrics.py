@@ -40,7 +40,10 @@ def save_metrics_json(metrics: Metrics) -> None:
 
 # @stub-protected: signature defined by architect — do not modify
 def collect_and_save_metrics(
-    conversation, agent_cfg=None, price_table: "PriceTable | None" = None
+    conversation,
+    agent_cfg=None,
+    price_table: "PriceTable | None" = None,
+    llm_config: dict | None = None,
 ) -> Metrics:
     """
     Collect LLM metrics from a conversation and persist them as JSON.
@@ -52,11 +55,13 @@ def collect_and_save_metrics(
         conversation: The OpenHands Conversation object
         agent_cfg: Optional AgentConfig supplying prices for the cost fallback.
         price_table: Optional default price table filling unset config prices.
+        llm_config: Optional resolved LLM config dict actually handed to the SDK,
+            recorded as the applied model execution configuration (issue #820).
 
     Returns:
         Metrics: The collected metrics object
     """
-    metrics = collect_llm_metrics(conversation, agent_cfg, price_table)
+    metrics = collect_llm_metrics(conversation, agent_cfg, price_table, llm_config)
     run_outcome = getattr(conversation, "run_outcome", None)
     if run_outcome is not None and hasattr(run_outcome, "dispatch_recall_count"):
         metrics.dispatch_recall_count = int(run_outcome.dispatch_recall_count or 0)
