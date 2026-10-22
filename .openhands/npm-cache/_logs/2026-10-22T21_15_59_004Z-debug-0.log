@@ -1,0 +1,19 @@
+0 verbose cli /usr/local/bin/node /usr/local/bin/npm
+1 info using npm@10.9.9
+2 info using node@v22.23.3
+3 silly config load:file:/usr/local/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/runner/work/claude-code-integration/claude-code-integration/.nebuko-engine/.npmrc
+5 silly config load:file:/home/runner/.npmrc
+6 silly config load:file:/usr/local/etc/npmrc
+7 verbose title npm view @agentclientprotocol/claude-agent-acp
+8 verbose argv "view" "@agentclientprotocol/claude-agent-acp"
+9 verbose logfile logs-max:10 dir:/home/runner/work/claude-code-integration/claude-code-integration/.nebuko-engine/.openhands/npm-cache/_logs/2026-10-22T21_15_59_004Z-
+10 verbose logfile /home/runner/work/claude-code-integration/claude-code-integration/.nebuko-engine/.openhands/npm-cache/_logs/2026-10-22T21_15_59_004Z-debug-0.log
+11 silly logfile done cleaning log files
+12 http cache https://registry.npmjs.org/@agentclientprotocol%2fclaude-agent-acp 19ms (cache hit)
+13 verbose cwd /home/runner/work/claude-code-integration/claude-code-integration/.nebuko-engine
+14 verbose os Linux 6.17.0-1022-azure
+15 verbose node v22.23.3
+16 verbose npm  v10.9.9
+17 verbose exit 0
+18 info ok
