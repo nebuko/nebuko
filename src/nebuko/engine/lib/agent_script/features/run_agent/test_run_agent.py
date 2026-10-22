@@ -725,3 +725,93 @@ class TestMCPServerWiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestClaudeCodeBackend(unittest.TestCase):
+    """``backend: claude-code`` swaps the SDK Agent for the ACP agent."""
+
+    def _run(self, mock_conversation_cls, agent_cfg, **patches):
+        mock_conversation_cls.return_value = _make_conversation("finished")
+        with patch(
+            "agent_script.features.run_agent.run_agent.build_claude_code_agent",
+            return_value="acp-agent",
+        ) as build:
+            run_agent(
+                llm_config={"model": "anthropic/sonnet"},
+                prompt="do the thing",
+                agent_cfg=agent_cfg,
+            )
+        return build
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_builds_the_acp_agent_and_never_the_sdk_agent(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        agent_cfg = SimpleNamespace(backend="claude-code", skills=[], tools=["terminal"])
+
+        build = self._run(mock_conversation_cls, agent_cfg)
+
+        build.assert_called_once()
+        self.assertEqual(build.call_args.args[0], "anthropic/sonnet")
+        mock_agent.assert_not_called()
+        mock_llm.assert_not_called()
+        self.assertEqual(
+            mock_conversation_cls.call_args.kwargs["agent"], "acp-agent"
+        )
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_prompt_carries_the_claude_code_preamble_and_no_recall_runs(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        convo = _make_conversation("finished")
+        mock_conversation_cls.return_value = convo
+        agent_cfg = SimpleNamespace(backend="claude-code", skills=[], tools=[])
+
+        with patch(
+            "agent_script.features.run_agent.run_agent.build_claude_code_agent",
+            return_value="acp-agent",
+        ):
+            run_agent(llm_config={}, prompt="do the thing", agent_cfg=agent_cfg)
+
+        # One work-pass prompt; the finalize-tool recall would be meaningless
+        # for Claude Code, so the engine's closing turn owns the verdict.
+        convo.send_message.assert_called_once()
+        sent = convo.send_message.call_args.args[0]
+        self.assertIn("Running inside Claude Code", sent)
+        self.assertTrue(sent.endswith("do the thing"))
+        self.assertEqual(convo.run_outcome.dispatch_recall_count, 0)
+
+    @patch("agent_script.features.run_agent.run_agent.Conversation")
+    @patch("agent_script.features.run_agent.run_agent.Agent")
+    @patch("agent_script.features.run_agent.run_agent.LLM")
+    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_default_backend_still_builds_the_sdk_agent(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        mock_conversation_cls.return_value = _make_conversation("finished")
+
+        with patch(
+            "agent_script.features.run_agent.run_agent.build_condenser",
+            return_value=None,
+        ), patch(
+            "agent_script.features.run_agent.run_agent.build_claude_code_agent"
+        ) as build:
+            run_agent(llm_config={}, prompt="do the thing")
+
+        build.assert_not_called()
+        mock_agent.assert_called_once()

@@ -161,7 +161,8 @@ generates. Details: [adoption.md §3](docs/adoption.md#3-the-entrypoint-copy-pas
 3. **Add secrets** under *Settings → Secrets and variables → Actions*:
    - the provider key named by your config's `api_token_env`:
      `OPENROUTER_API_KEY`, `COMMANDCODE_API_KEY`, `OPENCODE_GO_API_KEY`,
-     `MISTRAL_API_KEY` or `LOCAL_VLLM_API_TOKEN` (see [providers](#providers));
+     `MISTRAL_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` or `LOCAL_VLLM_API_TOKEN`
+     (see [providers](#providers) and [docs/claude-code.md](docs/claude-code.md));
    - optionally `GH_PAT`: a fallback fine-grained PAT with **Contents**,
      **Pull requests** and **Issues** read/write. With the GitHub App installed
      the token is minted by the OIDC broker and `GH_PAT` is not needed;

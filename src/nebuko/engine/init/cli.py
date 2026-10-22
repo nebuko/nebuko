@@ -24,8 +24,19 @@ from nebuko.engine.init.ports import (
     SetupTarget,
     UsageError,
 )
+from nebuko.engine.init.local_runner import (
+    TOKEN_ENV,
+    TOKEN_INSTRUCTIONS,
+    GhRunnerHost,
+    RunnerHost,
+    RunnerRequest,
+    install_runners,
+    remove_runners,
+    runner_label,
+)
 from nebuko.engine.init.providers import (
     DEFAULT_PROVIDER_NAME,
+    LOCAL_RUNNER_PROFILE,
     PROVIDER_PROFILES,
     provider_by_name,
 )
@@ -41,6 +52,7 @@ from nebuko.engine.init.setup import (
 )
 
 DEFAULT_RUNS_ON = "ubuntu-latest"
+LOCAL_RUNNER_TARGET = "anthropic-local-runner"
 SECRET_ENV_PREFIX = "NEBUKO_SECRET_"
 SECRET_SCOPE_REPOSITORY = "repository"
 SECRET_SCOPE_ORGANIZATION = "organization"
@@ -137,8 +149,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_ERRORS
 
 
-def _run(args: argparse.Namespace) -> int:
-    print(WORDMARK)
+def build_runner_host() -> RunnerHost:
+    """The real machine-facing adapter; tests replace it with a fake."""
+    return GhRunnerHost()
+
+
+def _run(
+    args: argparse.Namespace,
+    *,
+    provider: ProviderProfile | None = None,
+    runs_on: str | None = None,
+) -> int:
+    if provider is None:
+        print(WORDMARK)
     context = build_setup(
         pin_ref=args.pin_ref,
         template_dir=Path(args.template_dir) if args.template_dir else None,
@@ -149,6 +172,8 @@ def _run(args: argparse.Namespace) -> int:
         return EXIT_USAGE
     prompter: InitPrompter = NonInteractivePrompter() if args.non_interactive else InitPrompter()
     target = _resolve_target(args, prompter)
+    if args.target == LOCAL_RUNNER_TARGET and provider is None:
+        return _run_local_runner(args, prompter, target)
     report = context.host.preflight(target)
     if not report.ok:
         # Check the token before asking for any secret value: the client can
@@ -159,12 +184,12 @@ def _run(args: argparse.Namespace) -> int:
     # One read-only probe, reused for both the PAT and the provider key.
     existing = frozenset() if args.force else context.host.existing_secrets(target)
     skipped = _report_existing(context.host, target, existing, ("GH_PAT",))
-    provider = _resolve_provider(args, prompter)
+    provider = provider or _resolve_provider(args, prompter)
     skipped |= _report_existing(context.host, target, existing, provider.secret_names)
     answers = InitAnswers(
         target=target,
         provider=provider,
-        runs_on=_resolve_runs_on(args, prompter),
+        runs_on=runs_on or _resolve_runs_on(args, prompter),
         pin_ref=args.pin_ref or context.refs.latest(),
         secrets=_collect_secrets(args, prompter, context.host, target, provider, skipped),
         force=args.force,
@@ -174,6 +199,48 @@ def _run(args: argparse.Namespace) -> int:
     if outcome.code == EXIT_OK:
         print(next_steps_message(outcome.pr_url, target.slug))
     return outcome.code
+
+
+def _run_local_runner(
+    args: argparse.Namespace, prompter: InitPrompter, target: SetupTarget
+) -> int:
+    """Install the user's local runners, then generate the matching config PR."""
+    if args.org:
+        target = replace(target, org=args.org)
+    host = build_runner_host()
+    missing = host.missing_tools(("gh",))
+    if missing:
+        raise UsageError("the GitHub CLI (gh) is required to register runners")
+    request = RunnerRequest(
+        target=target,
+        login=host.gh_login(),
+        count=args.count,
+        base_dir=Path(args.runner_dir) if args.runner_dir else Path.home() / ".nebuko" / "runner",
+        install_service=not args.no_service,
+    )
+    if args.remove:
+        remove_runners(request, host)
+        return EXIT_OK
+    token = _resolve_runner_token(args, prompter)
+    install_runners(request, token, host, allow_public=args.allow_public)
+    if args.no_config:
+        print(f"Runners ready. Use `runs_on: {runner_label(request.login)}` in your Nebuko workflow.")
+        return EXIT_OK
+    args.repo = target.slug
+    return _run(args, provider=LOCAL_RUNNER_PROFILE, runs_on=runner_label(request.login))
+
+
+def _resolve_runner_token(args: argparse.Namespace, prompter: InitPrompter) -> str:
+    """The Claude Code token: from the environment, or asked with hidden input."""
+    for name in (f"{SECRET_ENV_PREFIX}{TOKEN_ENV}", TOKEN_ENV):
+        if os.environ.get(name):
+            return os.environ[name]
+    if args.non_interactive:
+        raise UsageError(
+            f"missing {SECRET_ENV_PREFIX}{TOKEN_ENV} (required in non-interactive mode)"
+        )
+    print(TOKEN_INSTRUCTIONS)
+    return prompter.ask_secret(TOKEN_ENV)
 
 
 def _resolve_target(args: argparse.Namespace, prompter: InitPrompter) -> SetupTarget:
@@ -280,6 +347,15 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="nebuko init",
         description="Prepare a repository (or organization) for Nebuko.",
     )
+    parser.add_argument(
+        "target",
+        nargs="?",
+        choices=(LOCAL_RUNNER_TARGET,),
+        help=(
+            f"{LOCAL_RUNNER_TARGET}: install self-hosted runner(s) on this machine "
+            "that run Claude Code with your own subscription"
+        ),
+    )
     parser.add_argument("--repo", help="target repository as owner/name")
     parser.add_argument(
         "--org",
@@ -309,6 +385,37 @@ def _build_parser() -> argparse.ArgumentParser:
         "--non-interactive",
         action="store_true",
         help="take every answer from flags and NEBUKO_SECRET_* environment variables",
+    )
+    parser.add_argument(
+        "--count", type=int, default=1, help="runners to install (anthropic-local-runner)"
+    )
+    parser.add_argument(
+        "--runner-dir",
+        dest="runner_dir",
+        help="where the runners are installed (default: ~/.nebuko/runner)",
+    )
+    parser.add_argument(
+        "--no-service",
+        dest="no_service",
+        action="store_true",
+        help="do not install the runners as services; start them with run.sh",
+    )
+    parser.add_argument(
+        "--allow-public",
+        dest="allow_public",
+        action="store_true",
+        help="allow runners on a public repository (anyone can run code on this machine)",
+    )
+    parser.add_argument(
+        "--no-config",
+        dest="no_config",
+        action="store_true",
+        help="install the runners only; do not open the configuration pull request",
+    )
+    parser.add_argument(
+        "--remove",
+        action="store_true",
+        help="unregister and delete the runners installed for the repository",
     )
     parser.add_argument(
         "--force",

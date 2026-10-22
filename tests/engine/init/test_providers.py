@@ -34,6 +34,7 @@ def test_default_provider_is_openrouter():
         ("commandcode", "COMMANDCODE_API_KEY"),
         ("opencode", "OPENCODE_GO_API_KEY"),
         ("mistral", "MISTRAL_API_KEY"),
+        ("claude-code", "CLAUDE_CODE_OAUTH_TOKEN"),
     ],
 )
 def test_provider_secret_names(name, secret):
@@ -47,3 +48,21 @@ def test_unknown_provider_lists_the_known_ones():
     assert "nope" in message
     for profile in PROVIDER_PROFILES:
         assert profile.name in message
+
+
+def test_claude_code_template_runs_every_role_through_claude_code():
+    import sys
+
+    lib = str(REPO_ROOT / "src" / "nebuko" / "engine" / "lib")
+    sys.path.insert(0, lib)
+    try:
+        from config import load_config
+
+        cfg = load_config(str(REPO_ROOT / provider_by_name("claude-code").template_path))
+    finally:
+        sys.path.remove(lib)
+
+    assert cfg.agents
+    for role, agent in cfg.agents.items():
+        assert agent.backend == "claude-code", role
+        assert agent.model_ref.provider_ref.api_token_env == "CLAUDE_CODE_OAUTH_TOKEN"

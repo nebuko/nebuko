@@ -23,6 +23,11 @@ from agent_script.sub_domains.token_budget.condenser import (
 )
 from agent_script.sub_domains.tool_resolution.tool_resolution import resolve_toolset
 
+from agent_script.features.claude_code_backend import (
+    BACKEND_NAME as CLAUDE_CODE_BACKEND,
+    build_claude_code_agent,
+    with_engine_preamble,
+)
 from agent_script.features.dispatch_check import (
     has_dispatch_decision,
     recorded_is_approved,
@@ -279,38 +284,11 @@ def _discard_token(_chunk: object) -> None:
     """
 
 
-def run_agent(
-    llm_config: dict,
-    prompt: str,
-    args=None,
-    agent_cfg=None,
-    workspace=None,
-) -> Conversation:
+def _build_sdk_agent(llm: LLM, role_name: str, agent_cfg):
+    """The SDK ``Agent`` for ``role_name`` plus the tool facts the run needs.
+
+    Returns ``(agent, agent_tools, resolved, dispatch_tool_enabled)``.
     """
-    Create an agent, start a conversation, send a prompt, and run the agent.
-
-    Args:
-        llm_config: Dictionary of LLM configuration parameters.
-        prompt: The prompt string to send to the agent.
-        args: Parsed argparse namespace (unused, retained for compatibility).
-        agent_cfg: Optional AgentConfig object for tool resolution.
-                   If None, default tool list is used.
-        workspace: Checkout the agent must operate on. The in-process engine host
-                   runs under a temporary cwd, so it passes the real repo root
-                   explicitly (issue #766); when omitted, ``GFA_REPO_ROOT`` is
-                   preferred over the ambient cwd.
-
-    Returns:
-        The completed Conversation object.
-    """
-    llm = LLM(**llm_config)
-
-    cwd = os.fspath(workspace) if workspace is not None else (
-        os.environ.get("GFA_REPO_ROOT") or os.getcwd()
-    )
-
-    role_name = os.environ.get("ROLE_NAME", "unknown")
-
     # ── Tool resolution ──────────────────────────────────────────
     default_tool_list = ["terminal", "file_editor", "task_tracker", "think", "finish"]
     agent_tools = agent_cfg.tools if agent_cfg is not None else default_tool_list
@@ -363,6 +341,67 @@ def run_agent(
         ),
         condenser=build_condenser(llm, resolve_token_budget_policy(agent_cfg)),
     )
+    return agent, agent_tools, resolved, dispatch_tool_enabled
+
+
+def _uses_claude_code(agent_cfg) -> bool:
+    """Whether the role runs through the Claude Code ACP backend."""
+    return getattr(agent_cfg, "backend", None) == CLAUDE_CODE_BACKEND
+
+
+def run_agent(
+    llm_config: dict,
+    prompt: str,
+    args=None,
+    agent_cfg=None,
+    workspace=None,
+) -> Conversation:
+    """
+    Create an agent, start a conversation, send a prompt, and run the agent.
+
+    Args:
+        llm_config: Dictionary of LLM configuration parameters.
+        prompt: The prompt string to send to the agent.
+        args: Parsed argparse namespace (unused, retained for compatibility).
+        agent_cfg: Optional AgentConfig object for tool resolution.
+                   If None, default tool list is used.
+        workspace: Checkout the agent must operate on. The in-process engine host
+                   runs under a temporary cwd, so it passes the real repo root
+                   explicitly (issue #766); when omitted, ``GFA_REPO_ROOT`` is
+                   preferred over the ambient cwd.
+
+    Returns:
+        The completed Conversation object.
+    """
+    cwd = os.fspath(workspace) if workspace is not None else (
+        os.environ.get("GFA_REPO_ROOT") or os.getcwd()
+    )
+
+    role_name = os.environ.get("ROLE_NAME", "unknown")
+
+    use_claude_code = _uses_claude_code(agent_cfg)
+    if use_claude_code:
+        # Claude Code owns its tools and context: no SDK toolset, no dispatch
+        # recall (the engine's closing turn collects the verdict) and no
+        # publication-guard recall (it gates on the SDK ``file_editor`` tool).
+        agent_tools: list[str] = []
+        resolved = None
+        dispatch_tool_enabled = False
+        if agent_cfg is not None and getattr(agent_cfg, "skills", None):
+            logger.info(
+                f"Claude Code backend for {role_name}: discover-mode skills need "
+                "the SDK invoke_skill tool and are not attached; inject-mode "
+                "skills still travel in the prompt"
+            )
+        agent = build_claude_code_agent(
+            llm_config.get("model"), _build_agent_context(role_name)
+        )
+        prompt = with_engine_preamble(prompt)
+    else:
+        llm = LLM(**llm_config)
+        agent, agent_tools, resolved, dispatch_tool_enabled = _build_sdk_agent(
+            llm, role_name, agent_cfg
+        )
 
     # ── Token telemetry capture (issue #829) ─────────────────────
     # The collector stamps each call's request start (via litellm.callbacks)

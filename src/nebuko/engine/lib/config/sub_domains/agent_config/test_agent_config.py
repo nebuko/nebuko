@@ -38,6 +38,26 @@ class TestAgentConfig:
         )
         assert agent.tools == ["terminal", "file_editor", "task_tracker", "think", "finish"]
 
+    def test_backend_defaults_to_openhands(self):
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        agent = AgentConfig(model=llm, prompt_file=".agents/prompts/dev.md")
+        assert agent.backend == "openhands"
+
+    def test_backend_accepts_claude_code(self):
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="claude-code/sonnet", provider=provider)
+        agent = AgentConfig(
+            model=llm, prompt_file=".agents/prompts/dev.md", backend="claude-code"
+        )
+        assert agent.backend == "claude-code"
+
+    def test_backend_rejects_unknown_values(self):
+        provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
+        llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
+        with pytest.raises(ValidationError):
+            AgentConfig(model=llm, prompt_file=".agents/prompts/dev.md", backend="nope")
+
     def test_mcp_servers_default_empty(self):
         """AgentConfig defaults mcp_servers to an empty list."""
         provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")

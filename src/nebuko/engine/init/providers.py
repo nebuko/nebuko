@@ -38,11 +38,34 @@ class MistralProfile(ProviderProfile):
     secret_names = ("MISTRAL_API_KEY",)
 
 
+class ClaudeCodeProfile(ProviderProfile):
+    name = "claude-code"
+    description = "Claude Code (subscription token or API key, runs through ACP)"
+    template_path = "defaults/agents/agent-config-claude-code.yaml"
+    secret_names = ("CLAUDE_CODE_OAUTH_TOKEN",)
+
+
+class LocalRunnerClaudeCodeProfile(ClaudeCodeProfile):
+    """Claude Code on the user's own runner: the runner holds the token.
+
+    Not offered by ``--provider``: ``nebuko init anthropic-local-runner`` selects
+    it, because the OAuth token lives in the runner's ``.env`` and must never be
+    stored as a GitHub secret.
+    """
+
+    name = "claude-code-local-runner"
+    description = "Claude Code on a self-hosted runner (token stays on the runner)"
+    secret_names = ()
+
+
+LOCAL_RUNNER_PROFILE = LocalRunnerClaudeCodeProfile()
+
 PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
     OpenRouterProfile(),
     CommandCodeProfile(),
     OpenCodeProfile(),
     MistralProfile(),
+    ClaudeCodeProfile(),
 )
 
 DEFAULT_PROVIDER_NAME = PROVIDER_PROFILES[0].name
