@@ -334,3 +334,16 @@ def test_remove_unregisters_the_runners(wired, monkeypatch):
     assert cli.main([*args, "--remove"]) == 0
 
     assert [c for c in runner_host.calls if c[0] == "unconfigure"]
+
+
+def test_a_system_without_bin_bash_gets_a_clear_error_before_any_download(monkeypatch, tmp_path):
+    from nebuko.engine.init import local_runner
+
+    host = local_runner.GhRunnerHost(cache_dir=tmp_path / "cache")
+    monkeypatch.setattr(local_runner.Path, "exists", lambda self: str(self) != "/bin/bash")
+    monkeypatch.setattr(
+        host, "_download_runner", lambda: pytest.fail("must not download first")
+    )
+
+    with pytest.raises(SetupError, match="NixOS"):
+        host.unpack_runner(tmp_path / "1")

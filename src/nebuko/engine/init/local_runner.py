@@ -50,6 +50,15 @@ Nebuko runs Claude Code with your own Claude subscription. In another terminal r
 and paste the long-lived token it prints. It is stored only in the runner's
 private .env file on this machine; it is never sent to GitHub."""
 
+NIXOS_RUNNER_HINT = (
+    "this system has no /bin/bash (NixOS?): the official Actions runner needs a "
+    "standard Linux layout (its scripts use #!/bin/bash and its .NET binaries need "
+    "system libraries). Run the runner from nixpkgs (`github-runner`, or "
+    "services.github-runners), or enable programs.nix-ld, then register it with the "
+    "label printed by `nebuko init anthropic-local-runner --no-config` and put "
+    "CLAUDE_CODE_OAUTH_TOKEN in its environment."
+)
+
 PUBLIC_REPO_REFUSAL = (
     "{slug} is a public repository. A self-hosted runner executes workflow code "
     "on this machine, and anyone can open a pull request against a public "
@@ -262,6 +271,8 @@ class GhRunnerHost(RunnerHost):
         return platform.node() or "host"
 
     def unpack_runner(self, directory: Path) -> None:
+        if not Path("/bin/bash").exists():
+            raise SetupError(NIXOS_RUNNER_HINT)
         archive = self._download_runner()
         with tarfile.open(archive) as tar:
             tar.extractall(directory, filter="data")
