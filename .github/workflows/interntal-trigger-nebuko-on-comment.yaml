@@ -14,9 +14,9 @@ permissions:
 
 jobs:
   agent:
-    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@feat/claude-code-backend
     with:
-      agent_config_path: ".nebuko/agents/agent-config-mistral.yaml"
+      agent_config_path: ".nebuko/agents/agent-config-anthropic.yaml"
     secrets:
       GH_PAT: ${{ secrets.GH_PAT }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -26,3 +26,4 @@ jobs:
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
       CHEAPERINFERENCE_API_KEY: ${{ secrets. CHEAPERINFERENCE_API_KEY }}
       MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
