@@ -59,9 +59,11 @@ def _summarize_action_input(event: ActionEvent) -> str:
         cmd = props["command"]
         return f"run: {cmd}" if isinstance(cmd, str) else str(cmd)[:200]
 
-    # File editor operations
-    if event.tool_name == "file_editor" and "command" in props:
-        cmd = props.get("command", "")
+    # File editor operations (SDK file_editor and the nebuko edit tool)
+    if event.tool_name in ("file_editor", "edit") and (
+        "command" in props or "edits" in props
+    ):
+        cmd = props.get("command", "edit")
         path = props.get("path", "")
         return f"{cmd} {path}"
 

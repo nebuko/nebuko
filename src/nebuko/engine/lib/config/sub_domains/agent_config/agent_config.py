@@ -25,7 +25,8 @@ class AgentConfig(BaseModel):
     skills: list[SkillSpec] = Field(default_factory=list)
     tools: list[str] = Field(
         default=[
-            "terminal", "file_editor", "task_tracker", "think", "finish",
+            "terminal", "read", "edit", "write", "task_tracker", "think",
+            "finish",
         ]
     )
     # Declarative MCP servers attached to this agent's conversation at launch.

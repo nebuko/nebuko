@@ -79,7 +79,8 @@ _FINALIZE_BODY_ATTR = "nebuko_finalize_body"
 #: declaration only decides how the report is extracted and rendered.
 _FINALIZE_PROMPT = (
     "Engine finalize turn - the work phase is over; do not call any work tool "
-    "(no terminal, file_editor, think, ...). Call the `finalize` tool once. Put "
+    "(no terminal, read, edit, write, think, ...). Call the `finalize` tool "
+    "once. Put "
     "your COMPLETE, self-contained report in its `report` argument - the full "
     "deliverable that must be posted on the issue (never a one-line note) - and "
     "your turn outcome in `turn_outcome`.\n\n"

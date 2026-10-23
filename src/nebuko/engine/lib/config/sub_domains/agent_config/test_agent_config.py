@@ -36,7 +36,7 @@ class TestAgentConfig:
             model=llm,
             prompt_file=".agents/prompts/architect.md",
         )
-        assert agent.tools == ["terminal", "file_editor", "task_tracker", "think", "finish"]
+        assert agent.tools == ["terminal", "read", "edit", "write", "task_tracker", "think", "finish"]
 
     def test_mcp_servers_default_empty(self):
         """AgentConfig defaults mcp_servers to an empty list."""
@@ -214,7 +214,7 @@ class TestAgentConfig:
 
         assert config.agents["architect"].tools == ["think", "finish"]
         assert config.agents["dev"].tools == [
-            "terminal", "file_editor", "task_tracker", "think", "finish",
+            "terminal", "read", "edit", "write", "task_tracker", "think", "finish",
         ]
 
         os.unlink(f.name)
