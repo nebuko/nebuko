@@ -32,7 +32,7 @@
         devShell = pkgs.mkShell {
           buildInputs = sharedPkgs;
           shellHook = ''
-            echo "Welcome to nix-container devShell"
+            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
           '';
         };
       }

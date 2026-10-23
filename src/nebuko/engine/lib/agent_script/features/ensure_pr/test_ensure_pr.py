@@ -1125,6 +1125,102 @@ class TestRealGitTokenBoundary(unittest.TestCase):
             )
 
 
+class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
+    """Acceptance spec for the post_hook git push engine feature.
+
+    WHEN a new file appears under ``.github/workflows/``
+    THEN the engine converts it into a patch
+    AND commits the patch and deletes the workflow file.
+    """
+
+    def _git(self, *args, cwd):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+        ).stdout
+
+    def test_new_workflow_file_is_patched_committed_and_deleted(self):
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        workflow = ".github/workflows/new-pipeline.yaml"
+
+        with tempfile.TemporaryDirectory() as root:
+            remote = os.path.join(root, "origin.git")
+            work = os.path.join(root, "work")
+            os.makedirs(work)
+            self._git("init", "-q", "--bare", "-b", "main", remote, cwd=root)
+            self._git("init", "-q", "-b", "main", work, cwd=root)
+            for key, value in (("user.name", "t"), ("user.email", "t@e.com")):
+                self._git("config", key, value, cwd=work)
+            self._git("remote", "add", "origin", remote, cwd=work)
+            os.makedirs(os.path.join(work, "src"))
+            with open(os.path.join(work, "src", "a.py"), "w", encoding="utf-8") as fh:
+                fh.write("a = 1\n")
+            self._git("add", "-A", cwd=work)
+            self._git("commit", "-qm", "base", cwd=work)
+            self._git("push", "-q", "-u", "origin", "main", cwd=work)
+
+            # WHEN: a brand-new (untracked) file under .github/workflows/
+            os.makedirs(os.path.join(work, ".github", "workflows"))
+            with open(os.path.join(work, workflow), "w", encoding="utf-8") as fh:
+                fh.write("on: [push]\njobs: {}\n")
+
+            class _Transport:
+                def call(self, args, *, mutative=False, cwd=None, timeout=None):
+                    joined = " ".join(args)
+
+                    class _R:
+                        ok = True
+                        status = 200
+                        detail = ""
+                        payload = ""
+
+                    if "default_branch" in joined:
+                        _R.payload = "main"
+                    elif args[:2] == ["pr", "list"]:
+                        _R.payload = ""
+                    elif args[:2] == ["pr", "create"]:
+                        _R.payload = "https://github.com/acme/repo/pull/1"
+                    elif "/comments" in joined:
+                        _R.payload = "https://github.com/acme/repo/issues/1#c1"
+                    return _R()
+
+            real_git = mod._run_git
+
+            def git_here(args, **kwargs):
+                return real_git(args, cwd=work, **kwargs)
+
+            with patch.object(mod, "_run_git", git_here), patch.object(
+                mod, "GitHubTransport", lambda *a, **k: _Transport()
+            ), patch.dict(
+                os.environ,
+                {"TARGET_NUMBER": "1", "GITHUB_REPOSITORY": "acme/repo"},
+                clear=False,
+            ):
+                result = mod.ensure_pr()
+
+            self.assertFalse(result.error, result.message)
+
+            # THEN: the workflow file is converted to a patch ...
+            self.assertIn(workflow, result.patch_paths)
+
+            # ... the workflow file is deleted from the worktree ...
+            self.assertFalse(
+                os.path.exists(os.path.join(work, workflow)),
+                "the workflow file must be deleted after the patch is built",
+            )
+
+            # ... and the patch is committed in the repository.
+            tracked = self._git(
+                "ls-files", "--", "nebuko-task-logs/workflow-patch.diff", cwd=work
+            ).strip()
+            self.assertTrue(
+                tracked,
+                "the engine must commit the workflow patch ("
+                + PATCH_FILENAME
+                + ") instead of only delivering it as a comment/artifact",
+            )
+
+
 class TestRealGitMissingLocalBase(unittest.TestCase):
     """#1058/#1084: a checkout with no local base branch must not look clean.
 
