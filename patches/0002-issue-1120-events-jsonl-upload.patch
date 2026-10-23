@@ -1,0 +1,20 @@
+diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
+index 6bded53f..9812bc6c 100644
+--- a/.github/workflows/nebuko-workflow.yaml
++++ b/.github/workflows/nebuko-workflow.yaml
+@@ -368,6 +368,15 @@ jobs:
+                 if-no-files-found: ignore
+                 retention-days: 7
+ 
++            - name: Upload events.jsonl artifact
++              uses: actions/upload-artifact@v7
++              if: always()
++              with:
++                path: ${{ runner.temp }}/nebuko-task-logs/events.jsonl
++                archive: false
++                if-no-files-found: ignore
++                retention-days: 7
++
+     agent-metrics:
+         runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+         if: |
