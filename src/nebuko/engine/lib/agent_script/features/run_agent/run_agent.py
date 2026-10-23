@@ -393,8 +393,12 @@ def run_agent(
                 "the SDK invoke_skill tool and are not attached; inject-mode "
                 "skills still travel in the prompt"
             )
+        # Pass the tool allowlist for enforcement if available
+        allowed_tools = agent_cfg.tools if agent_cfg is not None else None
         agent = build_claude_code_agent(
-            llm_config.get("model"), _build_agent_context(role_name)
+            llm_config.get("model"),
+            _build_agent_context(role_name),
+            allowed_tools=allowed_tools,
         )
         prompt = with_engine_preamble(prompt)
     else:

@@ -63,12 +63,47 @@ def is_claude_code_agent(agent: Any) -> bool:
     return type(agent).__name__ == "ACPAgent"
 
 
-def build_claude_code_agent(model_path: str | None, agent_context: Any = None) -> Any:
+def _claude_code_cli_args_for_tools(allowed_tools: list[str] | None) -> tuple[list[str], str | None]:
+    """Map role tool allowlist to Claude Code CLI args and session mode.
+
+    Returns (cli_args, session_mode). Restricted roles (no exec tools) get
+    deny-list args + restrictedConsole session mode. Unrestricted roles get
+    empty args + None session mode (default bypassPermissions).
+    """
+    if not allowed_tools:
+        # None/empty treated as unrestricted (full access)
+        return [], None
+
+    # Check if role has terminal or file_editor tools
+    has_exec_tools = "terminal" in allowed_tools or "file_editor" in allowed_tools
+
+    if has_exec_tools:
+        # Unrestricted: has exec tools, no enforcement args needed
+        return [], None
+
+    # Restricted: no exec tools, apply two-layer enforcement
+    disallowed = ["terminal", "file_editor"]
+    cli_args = [f"--disallowedTools={','.join(disallowed)}"]
+    session_mode = "restrictedConsole"
+    return cli_args, session_mode
+
+
+def build_claude_code_agent(
+    model_path: str | None,
+    agent_context: Any = None,
+    allowed_tools: list[str] | None = None,
+) -> Any:
     """Build the ``ACPAgent`` that launches Claude Code through the SDK registry.
 
     The launch command, the permission-bypass session mode and the credential
     env vars (``CLAUDE_CODE_OAUTH_TOKEN`` / ``ANTHROPIC_API_KEY``, read from the
     process environment) all come from the SDK's provider entry.
+
+    Args:
+        model_path: LLM model identifier (e.g., 'anthropic/sonnet')
+        agent_context: SDK AgentContext for skills and system message
+        allowed_tools: Tool allowlist for this role. If provided and missing exec
+                      tools (terminal/file_editor), enforcement args are added.
     """
     from openhands.sdk.agent import ACPAgent
     from openhands.sdk.settings.acp_providers import get_acp_provider
@@ -80,9 +115,17 @@ def build_claude_code_agent(model_path: str | None, agent_context: Any = None) -
         )
     acp_model = acp_model_from_model_path(model_path)
     logger.info(f"Building Claude Code ACP agent (model={acp_model or 'default'})")
+
+    # Layer 1: CLI-level enforcement via deny-list args
+    cli_args, session_mode = _claude_code_cli_args_for_tools(allowed_tools)
+    acp_command = list(provider.default_command)
+    if cli_args:
+        acp_command.extend(cli_args)
+
     return ACPAgent(
-        acp_command=list(provider.default_command),
+        acp_command=acp_command,
         acp_server=provider.key,
         acp_model=acp_model,
         agent_context=agent_context,
+        session_mode=session_mode,
     )

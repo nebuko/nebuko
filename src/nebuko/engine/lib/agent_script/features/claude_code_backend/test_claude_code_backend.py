@@ -9,6 +9,9 @@ from agent_script.features.claude_code_backend import (
     is_claude_code_agent,
     with_engine_preamble,
 )
+from agent_script.features.claude_code_backend.claude_code_backend import (
+    _claude_code_cli_args_for_tools,
+)
 
 
 @pytest.mark.parametrize(
@@ -55,3 +58,60 @@ class TestBuildClaudeCodeAgent:
 
     def test_a_plain_object_is_not_a_claude_code_agent(self):
         assert not is_claude_code_agent(object())
+
+
+class TestToolEnforcement:
+    """Tests for tool restriction enforcement on Claude Code roles."""
+
+    @pytest.mark.parametrize(
+        ("allowed_tools", "expected_args", "expected_session_mode"),
+        [
+            # Unrestricted roles (have exec tools) → no enforcement
+            (["terminal", "file_editor", "think"], [], None),
+            (["terminal", "think", "finish"], [], None),
+            (["file_editor", "task_tracker"], [], None),
+            # Restricted roles (no exec tools) → enforcement enabled
+            (["think", "finish", "finalize"], ["--disallowedTools=terminal,file_editor"], "restrictedConsole"),
+            (["terminal_batch", "think"], ["--disallowedTools=terminal,file_editor"], "restrictedConsole"),
+            # Edge cases
+            (None, [], None),  # None treated as unrestricted
+            ([], [], None),  # Empty list treated as unrestricted
+        ],
+    )
+    def test_cli_args_match_tool_allowlist(self, allowed_tools, expected_args, expected_session_mode):
+        args, session_mode = _claude_code_cli_args_for_tools(allowed_tools)
+        assert args == expected_args
+        assert session_mode == expected_session_mode
+
+    def test_unrestricted_role_with_terminal_receives_no_args(self):
+        args, session_mode = _claude_code_cli_args_for_tools(["terminal", "think"])
+        assert args == []
+        assert session_mode is None
+
+    def test_restricted_role_without_exec_tools_receives_enforcement(self):
+        args, session_mode = _claude_code_cli_args_for_tools(["think", "finish", "finalize"])
+        assert "--disallowedTools=terminal,file_editor" in args
+        assert session_mode == "restrictedConsole"
+
+    def test_agent_with_restricted_tools_gets_enforcement_args(self):
+        agent = build_claude_code_agent(
+            "anthropic/sonnet",
+            allowed_tools=["think", "finish", "finalize"],
+        )
+        assert is_claude_code_agent(agent)
+        # Check that enforcement args are in the command
+        assert any("--disallowedTools" in part for part in agent.acp_command)
+
+    def test_agent_with_unrestricted_tools_has_no_enforcement_args(self):
+        agent = build_claude_code_agent(
+            "anthropic/sonnet",
+            allowed_tools=["terminal", "file_editor", "think"],
+        )
+        assert is_claude_code_agent(agent)
+        # Check that no enforcement args are in the command
+        assert not any("--disallowedTools" in part for part in agent.acp_command)
+
+    def test_agent_with_none_allowed_tools_has_no_enforcement(self):
+        agent = build_claude_code_agent("anthropic/sonnet", allowed_tools=None)
+        assert is_claude_code_agent(agent)
+        assert not any("--disallowedTools" in part for part in agent.acp_command)
