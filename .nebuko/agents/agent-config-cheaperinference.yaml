@@ -37,7 +37,8 @@ mcp_servers:
       BRAVE_API_KEY: "BRAVE_API_KEY"
 
 # ── Agents: role → model + prompt + skills + tools ──
-# Tools: terminal, file_editor, task_tracker (SDK tools)
+# Tools: terminal, terminal_batch (batched shell, issue #982), file_editor
+#        (bounded views + view-range guidance), task_tracker (SDK tools)
 #        think, finish (built-in defaults)
 agents:
   architect:
@@ -67,7 +68,7 @@ agents:
     skills:
       - inject: ["posting-contract"]
       - discover: ["git-pr-workflow", "complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
 
   context:
     model: "${llms.deepseek-v4_1-flash}"
@@ -78,7 +79,7 @@ agents:
     skills:
       - inject: ["call-agent", "posting-contract", "context-research"]
       - discover: ["complexity"]
-    tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "finalize", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "complexity_review"]
     mcp_servers:
       - "${mcp_servers.brave-search}"
 
@@ -90,7 +91,7 @@ agents:
     skills:
       - inject: ["posting-contract", "plan-review"]
       - discover: ["retrospective", "complexity"]
-    tools: ["terminal", "think", "finish", "finalize", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "think", "finish", "finalize", "complexity_review"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"

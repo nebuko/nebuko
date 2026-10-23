@@ -30,6 +30,8 @@ from typing import Optional
 
 from agent_script.features.ensure_pr.workflow_patch import (
     APPLY_COMMAND,
+    PATCH_ARTIFACT_DIR,
+    PATCH_FILENAME,
     build_patch,
     is_workflow_path,
     render_patch_comment,
@@ -192,7 +194,10 @@ def _status_entries() -> tuple[tuple[str, str], ...]:
     # newline form silently ate the leading character of a path that begins
     # with ``.`` — i.e. ``.github/workflows/*``, the very paths this flow
     # must classify (issue #1080).
-    raw = _run_git(["status", "--porcelain", "-z"])
+    # ``-uall``: plain ``-z`` collapses every untracked file inside a new
+    # directory into the directory itself (``?? .github/``), which hid brand-new
+    # workflow files from the patch flow and let them ride into a plain commit.
+    raw = _run_git(["status", "--porcelain", "-z", "-uall"])
     fields = raw.split("\0")
     index = 0
     while index < len(fields):
@@ -621,10 +626,12 @@ def _default_base(*, transport: Optional[GitHubTransport] = None) -> str:
 
 @dataclass(frozen=True)
 class _PatchDelivery:
-    """Where the workflow patch ended up (both fields empty when undelivered)."""
+    """Where the workflow patch ended up (``comment_url``/``artifact`` empty
+    when undelivered; ``diff`` is the patch text itself)."""
 
     comment_url: str = ""
     artifact: str = ""
+    diff: str = ""
 
 
 def _post_patch_comment(
@@ -705,7 +712,34 @@ def _deliver_workflow_patch(
         comment.body, pr_url="", transport=transport
     )
     artifact = stage_patch_artifact(diff)
-    return _PatchDelivery(comment_url=comment_url, artifact=artifact)
+    return _PatchDelivery(comment_url=comment_url, artifact=artifact, diff=diff)
+
+
+def _stage_patch_commit_file(diff: str) -> str:
+    """Write the patch into the checkout and stage it for the push commit.
+
+    The patch is delivered as a comment/artifact for a human to apply, but the
+    work must also survive in the repository itself (the runner is ephemeral):
+    the diff file is committed under ``nebuko-task-logs/`` and pushed with the
+    branch. Returns the repo-relative path, or ``""`` when staging failed —
+    the comment/artifact delivery above already carries the content.
+    """
+    relative = os.path.join(PATCH_ARTIFACT_DIR, PATCH_FILENAME)
+    try:
+        root = _run_git(["rev-parse", "--show-toplevel"])
+        if not os.path.isdir(root):
+            # Mocked git seam (tests): there is no real checkout to stage into.
+            return ""
+        os.makedirs(os.path.join(root, PATCH_ARTIFACT_DIR), exist_ok=True)
+        with open(
+            os.path.join(root, relative), "w", encoding="utf-8"
+        ) as handle:
+            handle.write(diff if diff.endswith("\n") else diff + "\n")
+        _run_git(["add", "--", relative])
+        return relative
+    except (OSError, RuntimeError) as exc:
+        logger.warning(f"ensure_pr: could not stage the patch file: {exc}")
+        return ""
 
 
 def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
@@ -765,15 +799,25 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
                 "workflow patch could not be delivered (no comment target?) — "
                 "refusing to discard .github/workflows changes"
             )
+        # The patch itself must survive the ephemeral runner: commit it on the
+        # branch so it is pushed alongside the plain work (never the workflow
+        # files themselves — those are reverted below).
+        patch_commit_path = _stage_patch_commit_file(delivery.diff)
+    else:
+        patch_commit_path = ""
 
+    commit_paths = list(split.plain_paths)
+    if patch_commit_path:
+        commit_paths.append(patch_commit_path)
     commit_hash = ""
     if _has_uncommitted_changes():
-        commit_hash = _commit_pending_changes(split.plain_paths)
+        commit_hash = _commit_pending_changes(commit_paths)
         logger.info(f"ensure_pr: committed pending changes at {commit_hash[:12]}")
 
     # Workflow-only: no plain delta means no push, no PR — the patch *is* the
-    # publication. Committing above (an empty rename/delete-only checkpoint)
-    # does not need to be pushed for the work to be delivered.
+    # publication. The patch file is still committed on the branch above (so it
+    # survives the ephemeral runner); a mixed delta pushes it alongside the
+    # plain work.
     no_plain_delta = not split.plain_paths and not split.republished
 
     pushed = False

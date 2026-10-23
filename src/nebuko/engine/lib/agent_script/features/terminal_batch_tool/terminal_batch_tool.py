@@ -86,6 +86,13 @@ class TerminalBatchAction(Action):
             "individually. Omit to use the terminal's default soft timeout."
         ),
     )
+    summary: str | None = Field(
+        default=None,
+        description=(
+            "Optional one-line description of the batch, shown in the run log. "
+            "Put your narration HERE, never as prose before the tool call."
+        ),
+    )
 
     @field_validator("commands", mode="before")
     @classmethod
@@ -102,6 +109,8 @@ class TerminalBatchAction(Action):
         content = Text()
         content.append("$ ", style="bold green")
         content.append(f"{len(self.commands)} command(s)", style="white")
+        if self.summary:
+            content.append(f" — {self.summary}", style="bright_black")
         if self.stop_on_failure:
             content.append(" [stop on failure]", style="cyan")
         return content
@@ -156,6 +165,8 @@ Parameters:
 - stop_on_failure: optional, default false. When true the batch stops at the
   first non-zero exit code and the remaining entries are reported as skipped.
 - timeout: optional per-command time limit in seconds.
+- summary: optional one-line description of the batch. Write your narration in
+  this parameter — never as free text before the tool call.
 
 Every entry returns its own exit code and output, labelled `[i/N] <command>`,
 and the batch ends with a one-line success/failure summary. The entries share
@@ -332,6 +343,11 @@ class TerminalBatchTool(ToolDefinition[TerminalBatchAction, TerminalBatchObserva
                 action_type=TerminalBatchAction,
                 observation_type=TerminalBatchObservation,
                 executor=TerminalBatchExecutor(),
+                prompt_guidance=(
+                    "Call terminal_batch with JSON arguments only. Any "
+                    "narration belongs in the `summary` parameter, never in "
+                    "prose before the call."
+                ),
                 annotations=ToolAnnotations(
                     title="terminal_batch",
                     readOnlyHint=False,

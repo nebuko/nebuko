@@ -64,20 +64,28 @@ class ResolvedToolset:
 
 
 def ensure_sdk_tools_registered() -> None:
-    """Idempotently register TerminalTool, FileEditorTool, TaskTrackerTool.
+    """Idempotently register TerminalTool, TaskTrackerTool, our file_editor.
 
     Deterministic — importing the classes from ``openhands.tools`` triggers the
     SDK's own import-time registration, but this function *also* registers any
     name that is still missing, so a future change to those side effects cannot
     silently reintroduce the #860 regression. Existing names are left alone to
-    avoid ``register_tool``'s duplicate-registration warning.
+    avoid ``register_tool``'s duplicate-registration warning — except
+    ``file_editor``, which is deliberately re-registered with the engine's
+    ``BoundedFileEditorTool`` subclass (same registered name, so configs keep
+    resolving; it adds view-range prompt guidance and caps unbounded views —
+    the GLM-5.3-flash run of issue #1114 paid ~16K context characters per
+    whole-file view).
     """
+    from agent_script.features.bounded_file_editor.bounded_file_editor import (
+        BoundedFileEditorTool,
+    )
     from openhands.tools.file_editor import FileEditorTool
     from openhands.tools.task_tracker import TaskTrackerTool
     from openhands.tools.terminal import TerminalTool
 
     _register_if_missing(TerminalTool)
-    _register_if_missing(FileEditorTool)
+    _register_bounded_file_editor(BoundedFileEditorTool, FileEditorTool)
     _register_if_missing(TaskTrackerTool)
 
 
@@ -86,6 +94,35 @@ def _register_if_missing(tool_class) -> None:
     if tool_class.name in list_registered_tools():
         return
     register_tool(tool_class.name, tool_class)
+
+
+# Module-level guard: re-registering file_editor warns once per process on the
+# SDK's side (its import already claimed the name), so do it only once here.
+_bounded_file_editor_registered = False
+
+
+def _register_bounded_file_editor(bounded_class, sdk_class) -> None:
+    """Register the engine's ``file_editor`` subclass over the SDK's entry.
+
+    ``register_tool`` overwrites the registry slot for a name, so the order in
+    the process decides which class answers ``Tool(name="file_editor")`` —
+    this must therefore run after ``openhands.tools``'s import-time
+    registration, which is why it lives here and not in the module's import
+    side effects.
+    """
+    global _bounded_file_editor_registered
+    if _bounded_file_editor_registered:
+        return
+    # The SDK claimed the name at import time; clear its entry first so the
+    # replacement registers without a duplicate-name warning.
+    from openhands.sdk.tool import registry
+
+    with registry._LOCK:
+        registry._REG.pop(bounded_class.name, None)
+        registry._USABILITY_REG.pop(bounded_class.name, None)
+        registry._TOOL_CLASSES.pop(bounded_class.name, None)
+    register_tool(bounded_class.name, bounded_class)
+    _bounded_file_editor_registered = True
 
 
 # Module-level guard: register_tool logs a warning on re-registration, so in

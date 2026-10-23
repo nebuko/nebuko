@@ -85,6 +85,16 @@ class TestEnsureSdkToolsRegistered:
         for name in ("terminal", "file_editor", "task_tracker"):
             assert name in registered
 
+    def test_file_editor_resolves_to_the_bounded_subclass(self):
+        from openhands.sdk.tool.registry import _TOOL_CLASSES
+
+        from agent_script.features.bounded_file_editor.bounded_file_editor import (
+            BoundedFileEditorTool,
+        )
+
+        ensure_sdk_tools_registered()
+        assert _TOOL_CLASSES["file_editor"] is BoundedFileEditorTool
+
     def test_idempotent_and_warning_free(self, caplog):
         with caplog.at_level(logging.WARNING):
             ensure_sdk_tools_registered()
