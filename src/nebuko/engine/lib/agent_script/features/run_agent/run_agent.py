@@ -21,6 +21,9 @@ from agent_script.sub_domains.token_budget.condenser import (
     build_condenser,
     resolve_token_budget_policy,
 )
+from agent_script.sub_domains.tool_call_repair.tool_call_repair import (
+    install as install_tool_call_repair,
+)
 from agent_script.sub_domains.tool_resolution.tool_resolution import resolve_toolset
 
 from agent_script.features.dispatch_check import (
@@ -310,6 +313,11 @@ def run_agent(
     )
 
     role_name = os.environ.get("ROLE_NAME", "unknown")
+
+    # Repair malformed tool-call JSON/keys before the SDK turns each one into
+    # a wasted round-trip (13% of the GLM-5.3-flash actions in the issue #1114
+    # run died on extra_forbidden / unparseable arguments).
+    install_tool_call_repair()
 
     # ── Tool resolution ──────────────────────────────────────────
     default_tool_list = ["terminal", "file_editor", "task_tracker", "think", "finish"]

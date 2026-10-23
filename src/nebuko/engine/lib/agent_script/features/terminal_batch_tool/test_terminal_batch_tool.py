@@ -74,6 +74,24 @@ class TestActionSchema:
     def test_single_string_is_coerced_to_one_entry(self):
         assert TerminalBatchAction(commands="ls -la").commands == ["ls -la"]
 
+    def test_summary_is_an_optional_declared_field(self):
+        # Declaring `summary` gives the model's narration a legitimate home
+        # (issue #1114 run: the model welded its "Summary:" line into the JSON
+        # keys instead). The SDK reads a declared summary as the event summary.
+        action = TerminalBatchAction(commands=["ls"], summary="list the checkout")
+        assert action.summary == "list the checkout"
+        assert TerminalBatchAction(commands=["ls"]).summary is None
+        props = TerminalBatchAction.model_json_schema()["properties"]
+        assert "summary" in props
+
+    def test_description_documents_the_summary_parameter(self):
+        assert "summary" in TERMINAL_BATCH_DESCRIPTION
+
+    def test_create_attaches_prompt_guidance_against_prose(self):
+        tool = TerminalBatchTool.create()[0]
+        assert "summary" in tool.prompt_guidance
+        assert "never" in tool.prompt_guidance
+
     def test_stop_on_failure_defaults_off(self):
         action = TerminalBatchAction(commands=["ls"])
         assert action.stop_on_failure is False
