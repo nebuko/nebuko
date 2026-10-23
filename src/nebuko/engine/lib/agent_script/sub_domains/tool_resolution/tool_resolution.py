@@ -19,10 +19,14 @@ names are resolvable.
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from openhands.sdk import get_logger
 from openhands.sdk.tool.registry import list_registered_tools, register_tool
 from openhands.sdk.tool.spec import Tool
+
+if TYPE_CHECKING:
+    from config.sub_domains.token_budget.token_budget import TokenBudgetPolicy
 
 logger = get_logger(__name__)
 
@@ -229,14 +233,33 @@ def _ensure_handoff_tool_registered() -> None:
     _handoff_tool_registered = True
 
 
-def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolset:
+def resolve_toolset(
+    tool_names: Iterable[str],
+    role_name: str,
+    token_budget: "TokenBudgetPolicy | None" = None,
+) -> ResolvedToolset:
     """Map configured tool names to SDK/builtin specs.
 
     Registers the SDK-provided tools (terminal, file_editor, task_tracker)
     explicitly before emitting their ``Tool`` specs, so the SDK can resolve them
     at first ``send_message`` regardless of import order.
+
+    ``token_budget`` (issue #851) carries the role's ``prompt_profile`` and
+    ``require_batched_recon`` knobs to the engine-owned tools' ``create``
+    through the ``Tool`` spec's ``params``: the terminal_batch description goes
+    lean and gains the recon directive, the bounded file_editor description goes
+    lean. The SDK's own tools (``terminal``, ``task_tracker``) accept no
+    parameters, so they are emitted bare regardless of the profile.
     """
     requested = list(tool_names)
+    profile_params = (
+        {
+            "prompt_profile": token_budget.prompt_profile,
+            "require_batched_recon": token_budget.require_batched_recon,
+        }
+        if token_budget is not None
+        else {}
+    )
     if any(name in _SDK_TOOL_NAMES for name in requested):
         ensure_sdk_tools_registered()
     # ``terminal_batch`` replays its commands through the ``terminal`` tool's
@@ -255,12 +278,24 @@ def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolse
 
     for tool_name in requested:
         if tool_name in _SDK_TOOL_NAMES:
-            sdk_tools.append(Tool(name=tool_name))
+            # Only file_editor accepts the lean profile; terminal and
+            # task_tracker take no create() parameters at all.
+            if tool_name == "file_editor" and profile_params:
+                sdk_tools.append(
+                    Tool(
+                        name=tool_name,
+                        params={"prompt_profile": profile_params["prompt_profile"]},
+                    )
+                )
+            else:
+                sdk_tools.append(Tool(name=tool_name))
         elif tool_name in _BUILTIN_TOOL_MAP:
             builtin_tools.append(_BUILTIN_TOOL_MAP[tool_name])
         elif tool_name == "terminal_batch":
             _ensure_terminal_batch_tool_registered()
-            sdk_tools.append(Tool(name=_TERMINAL_BATCH_TOOL_NAME))
+            sdk_tools.append(
+                Tool(name=_TERMINAL_BATCH_TOOL_NAME, params=dict(profile_params))
+            )
         elif tool_name in ("dispatch_next", "call_agent"):
             # Both tools were removed in issue #1033: every step ends through
             # ``finalize``, whose ``turn_outcome`` carries the verdict and whose

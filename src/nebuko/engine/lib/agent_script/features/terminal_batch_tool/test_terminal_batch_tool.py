@@ -27,6 +27,7 @@ from agent_script.features.terminal_batch_tool.terminal_batch_tool import (
     TerminalBatchExecutor,
     TerminalBatchObservation,
     TerminalBatchTool,
+    build_terminal_batch_description,
 )
 from agent_script.sub_domains.tool_resolution.tool_resolution import (
     resolve_toolset,
@@ -62,6 +63,47 @@ class TestDescription:
 
     def test_create_rejects_parameters(self):
         with pytest.raises(ValueError):
+            TerminalBatchTool.create(working_dir="/tmp")
+
+
+class TestPromptProfileAndRecon:
+    """The ``token_budget`` knobs delivered via the Tool spec's params
+    (issue #851 S3): ``prompt_profile="lean"`` trims the description,
+    ``require_batched_recon=True`` appends the batching directive."""
+
+    def test_lean_profile_trims_the_description(self):
+        lean = build_terminal_batch_description(lean=True)
+        assert len(lean) < len(TERMINAL_BATCH_DESCRIPTION) / 2
+        # The parameter contract must survive the trim.
+        for param in ("commands", "stop_on_failure", "timeout", "summary"):
+            assert param in lean
+        # The SDK tail the lean profile drops.
+        assert "Soft timeout" not in lean
+
+    def test_full_profile_is_the_default_create(self):
+        tool = TerminalBatchTool.create()[0]
+        assert tool.description == TERMINAL_BATCH_DESCRIPTION
+        assert "Reconnaissance" not in tool.prompt_guidance
+
+    def test_lean_and_recon_flow_through_create_params(self):
+        tool = TerminalBatchTool.create(
+            prompt_profile="lean", require_batched_recon=True
+        )[0]
+        assert tool.description == build_terminal_batch_description(lean=True)
+        assert "Reconnaissance discipline" in tool.prompt_guidance
+        assert "4+ commands" in tool.prompt_guidance
+
+    def test_recon_alone_keeps_the_full_description(self):
+        tool = TerminalBatchTool.create(require_batched_recon=True)[0]
+        assert tool.description == TERMINAL_BATCH_DESCRIPTION
+        assert "Reconnaissance discipline" in tool.prompt_guidance
+
+    def test_unknown_profile_is_rejected(self):
+        with pytest.raises(ValueError, match="prompt_profile"):
+            TerminalBatchTool.create(prompt_profile="verbose")
+
+    def test_unknown_create_params_are_still_rejected(self):
+        with pytest.raises(ValueError, match="working_dir"):
             TerminalBatchTool.create(working_dir="/tmp")
 
 

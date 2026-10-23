@@ -52,6 +52,18 @@ _FILE_EDITOR_GUIDANCE = """### file_editor usage
   context), not whole functions. Use `insert` to append, `create` only for new
   files."""
 
+#: ``prompt_profile: lean`` description (issue #851 S3). The SDK's ~1.7K-char
+#: description mostly repeats what the schema's per-field descriptions already
+#: carry; the lean variant keeps the operational rules (exact match, unique
+#: old_str, undo) in five lines. The view-range discipline lives in the prompt
+#: guidance, which both profiles keep.
+_FILE_EDITOR_DESCRIPTION_LEAN = """View, create and edit plain-text files.
+- `view`: cat -n of a file, or a 2-level directory listing; pass `view_range`
+  for long files. `create`: write a new file (fails if it exists).
+- `str_replace`: `old_str` must match the file EXACTLY once (include 3-5 lines
+  of context); `new_str` replaces it. `insert`: insert after `insert_line`.
+  `undo_edit`: revert the last edit. Always absolute paths."""
+
 
 class BoundedFileEditorTool(FileEditorTool):
     """``FileEditorTool`` with view discipline for small models."""
@@ -64,16 +76,30 @@ class BoundedFileEditorTool(FileEditorTool):
     def create(
         cls,
         conv_state: Any,
+        *,
+        prompt_profile: str = "full",
         **params: Any,
     ) -> Sequence[Self]:
-        tools = super().create(conv_state, **params)
+        """Build the tool; ``prompt_profile="lean"`` swaps in the compact
+        description (issue #851 S3) delivered via the ``Tool`` spec's params."""
+        if params:
+            raise ValueError(
+                f"BoundedFileEditorTool doesn't accept parameters: {sorted(params)}"
+            )
+        if prompt_profile not in ("full", "lean"):
+            raise ValueError(f"unknown prompt_profile: {prompt_profile!r}")
+        tools = super().create(conv_state)
+        updates: dict[str, Any] = {"prompt_guidance": _FILE_EDITOR_GUIDANCE}
+        if prompt_profile == "lean":
+            updates["description"] = (
+                _FILE_EDITOR_DESCRIPTION_LEAN
+                + f"\n\nYour current working directory is: "
+                f"{conv_state.workspace.working_dir}"
+            )
         # The SDK appends prompt_guidance to the inline system prompt (issue
         # #943), deduplicated by text — set on the built instance because the
         # base create() builds the whole description itself.
-        return [
-            tool.model_copy(update={"prompt_guidance": _FILE_EDITOR_GUIDANCE})
-            for tool in tools
-        ]
+        return [tool.model_copy(update=updates) for tool in tools]
 
     def __call__(self, action, conversation=None):
         observation = super().__call__(action, conversation)
