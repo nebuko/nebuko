@@ -1255,11 +1255,16 @@ class TestRealOpencodeConfigRoundTrip(unittest.TestCase):
         self.assertEqual(cfg["reasoning_effort"], "none")
 
     def test_architect_low_exception_reenables_thinking(self):
-        """The tier override is no longer silently dropped (issue #941)."""
+        """The tier override is no longer silently dropped (issue #941).
+
+        The llm-level ``reasoning_effort: "none"`` kill switch (#958) still
+        rides the top-level config: the tier override re-enables thinking via
+        ``chat_template_kwargs`` but does not lift the explicit effort.
+        """
         cfg = self._resolve("architect", "low")
         kwargs = cfg["litellm_extra_body"]["chat_template_kwargs"]
         self.assertIs(kwargs["enable_thinking"], True)
-        self.assertNotIn("reasoning_effort", cfg)
+        self.assertEqual(cfg["reasoning_effort"], "none")
 
 
 if __name__ == "__main__":
