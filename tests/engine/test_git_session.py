@@ -197,6 +197,39 @@ def test_finalize_commits_and_pushes_leftovers(checkout, remote):
     assert author == f"{GIT_IDENTITY_NAME} <{GIT_IDENTITY_EMAIL}>"
 
 
+def test_finalize_publishes_a_commit_made_on_a_detached_head(checkout, remote):
+    _git(checkout, "checkout", "--detach")
+    (checkout / "new.txt").write_text("new\n", encoding="utf-8")
+    _git(checkout, "add", "new.txt")
+    _git(checkout, "commit", "-m", "agent work")
+
+    result = _local_guard(checkout).finalize()
+
+    assert result.ok, result.detail
+    branch = _git(checkout, "rev-parse", "--abbrev-ref", "HEAD")
+    assert branch.startswith("feature/nebuko-detached-")
+    assert _git(checkout, "rev-parse", "HEAD") == _git(remote, "rev-parse", branch)
+
+
+def test_finalize_publishes_uncommitted_files_on_a_detached_head(checkout, remote):
+    _git(checkout, "checkout", "--detach")
+    (checkout / "left.txt").write_text("left\n", encoding="utf-8")
+
+    result = _local_guard(checkout).finalize()
+
+    assert result.ok, result.detail
+    assert _git(checkout, "status", "--porcelain") == ""
+
+
+def test_finalize_skips_a_clean_detached_head(checkout):
+    _git(checkout, "checkout", "--detach")
+
+    result = _local_guard(checkout).finalize()
+
+    assert result.ok and result.skipped
+    assert result.detail == "detached HEAD"
+
+
 def test_finalize_respects_gitignore(checkout, remote):
     (checkout / ".gitignore").write_text("*.log\n", encoding="utf-8")
     _git(checkout, "add", ".gitignore")

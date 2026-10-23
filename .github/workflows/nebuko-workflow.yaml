@@ -117,6 +117,9 @@ on:
       LOCAL_VLLM_API_TOKEN:
         description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
         required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: 'Long-lived Claude Code token from `claude setup-token` (optional — only for the claude-code backend; a self-hosted runner can provide it in its own environment instead)'
+        required: false
       BRAVE_API_KEY:
         description: 'Brave Search API key (optional — only needed for the Brave Search MCP web-search tool)'
         required: false
@@ -306,6 +309,18 @@ jobs:
                   git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $ENCODED"
                   uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
                   uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
+
+            - name: Export Claude Code token
+              env:
+                CLAUDE_CODE_OAUTH_TOKEN_SECRET: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+              run: |
+                  # Export only a token the caller passed: an empty step-level value
+                  # would shadow one the self-hosted runner already provides in its
+                  # own environment (`nebuko init anthropic-local-runner`).
+                  if [ -n "$CLAUDE_CODE_OAUTH_TOKEN_SECRET" ]; then
+                    echo "::add-mask::$CLAUDE_CODE_OAUTH_TOKEN_SECRET"
+                    echo "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN_SECRET" >> "$GITHUB_ENV"
+                  fi
 
             - name: "Materialize extra secret slots as env vars"
               env:

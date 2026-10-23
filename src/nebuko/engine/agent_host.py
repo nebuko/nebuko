@@ -23,8 +23,14 @@ import tempfile
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping, NamedTuple
 
+from nebuko.engine.acp_finalize import (
+    ACP_CLOSING_PROMPT,
+    ACP_CORRECTION_PROMPT,
+    ClosingReply,
+    parse_closing_reply,
+)
 from nebuko.engine.agent_runner import (
     EngineAgentUnavailable,
     _AGENT_SCRIPT,
@@ -94,6 +100,10 @@ _FINALIZE_PROMPT = (
     "Where the workflow goes next is engine topology, never your choice. "
     "Nothing is posted if `report` is empty."
 )
+
+#: Conversation attribute holding the parsed closing reply of a Claude Code (ACP)
+#: run, whose closing turn has no ``finalize`` call to anchor on.
+_ACP_REPLY_ATTR = "nebuko_acp_reply"
 
 #: Prepended to the closing prompt when the previous attempt called ``finalize``
 #: with no report (issue #1038): the report is the call's ``report`` argument.
@@ -254,7 +264,8 @@ class InProcessAgentHost:
         sections and logs loudly (fix 7, #973).
         """
         setattr(conversation, _REPORT_OFFSET_ATTR, _event_count(conversation))
-        prompt = _FINALIZE_PROMPT.format(
+        turn = _closing_turn_for(conversation)
+        prompt = turn.prompt.format(
             sections=contract.prompt_block() if contract is not None else ""
         )
         if contract is None:
@@ -264,7 +275,7 @@ class InProcessAgentHost:
             text = ""
             for attempt in (1, 2):
                 try:
-                    _run_closing_turn(conversation, prompt)
+                    turn.run(conversation, prompt)
                 except Exception as error:  # noqa: BLE001 - fall back, never abort
                     # The turn never ran (or broke mid-flight); the work-loop
                     # capture chain stays the deliverable (issue #1014).
@@ -274,7 +285,7 @@ class InProcessAgentHost:
                         error,
                     )
                     return
-                text = _finalize_turn_text(conversation)
+                text = turn.text(conversation)
                 if text:
                     break
                 if attempt == 1:
@@ -307,7 +318,7 @@ class InProcessAgentHost:
         handler = FinalizeToolHandler(terminator)
         for attempt in (1, 2):
             try:
-                _run_closing_turn(conversation, prompt)
+                turn.run(conversation, prompt)
             except Exception as error:  # noqa: BLE001 - degrade to the fallback chain
                 # The turn broke mid-flight; the text it already emitted may
                 # still carry the completed sections, so salvage rather than
@@ -317,12 +328,14 @@ class InProcessAgentHost:
                     "turn text seen so far",
                     error,
                 )
-                body = _salvage_finalize_body(handler, contract, conversation)
+                body = _salvage_finalize_body(
+                    handler, contract, conversation, turn.text
+                )
                 if body:
                     rendered.append(body)
                 break
-            turn_text = _finalize_turn_text(conversation)
-            route = _finalize_route(conversation) or RouteDecision(appreciation="hold")
+            turn_text = turn.text(conversation)
+            route = turn.route(conversation) or RouteDecision(appreciation="hold")
             try:
                 handler.handle(route, turn_text)
             # The handler re-raises the raw extraction error on the second
@@ -339,7 +352,9 @@ class InProcessAgentHost:
                         "salvaging the completed sections",
                         error,
                     )
-                    body = _salvage_finalize_body(handler, contract, conversation)
+                    body = _salvage_finalize_body(
+                        handler, contract, conversation, turn.text
+                    )
                     if body:
                         rendered.append(body)
                     break
@@ -370,14 +385,17 @@ class InProcessAgentHost:
 
 
 def _salvage_finalize_body(
-    handler: FinalizeToolHandler, contract: OutputContract, conversation: Any
+    handler: FinalizeToolHandler,
+    contract: OutputContract,
+    conversation: Any,
+    text_of: Callable[[Any], str] | None = None,
 ) -> str:
     """Render the completed sections of a broken finalize turn (issue #1014).
 
     ``salvage`` never raises; an empty result means no section survived, and the
     caller keeps the fallback chain.
     """
-    report = handler.salvage(_finalize_turn_text(conversation))
+    report = handler.salvage((text_of or _finalize_turn_text)(conversation))
     return OutputRenderer(contract).render(report.sections)
 
 
@@ -441,7 +459,10 @@ def _recorded_agent_call_fields(conv_id: Any) -> dict[str, Any] | None:
 
 
 def _has_finalize(conversation: Any) -> bool:
-    """True when the closing turn recorded a finalize call."""
+    """True when the closing turn recorded a finalize call (or an ACP outcome)."""
+    reply = getattr(conversation, _ACP_REPLY_ATTR, None)
+    if isinstance(reply, ClosingReply) and reply.outcome is not None:
+        return True
     return _finalize_anchor_index(conversation) >= 0
 
 
@@ -525,6 +546,109 @@ def _finalize_route(conversation: Any) -> RouteDecision | None:
     outcome = turn_outcome_from_action(
         getattr(events_of(conversation)[anchor], "action", None)
     )
+    if outcome is None:
+        return None
+    return RouteDecision(
+        appreciation=outcome.appreciation,
+        hold_kind=outcome.hold_kind,
+        round=outcome.round,
+        note=outcome.note,
+        complexity=outcome.complexity,
+        pin=outcome.pin,
+    )
+
+
+class _ClosingTurn(NamedTuple):
+    """How a backend runs the closing turn and reads its report and route back."""
+
+    prompt: str
+    run: Callable[[Any, str], None]
+    text: Callable[[Any], str]
+    route: Callable[[Any], RouteDecision | None]
+
+
+def _closing_turn_for(conversation: Any) -> _ClosingTurn:
+    """The closing-turn strategy of the conversation's backend."""
+    if type(getattr(conversation, "agent", None)).__name__ == "ACPAgent":
+        return _ClosingTurn(
+            ACP_CLOSING_PROMPT, _run_acp_closing_turn, _acp_report_text, _acp_route
+        )
+    return _ClosingTurn(
+        _FINALIZE_PROMPT, _run_closing_turn, _finalize_turn_text, _finalize_route
+    )
+
+
+def _run_acp_closing_turn(conversation: Any, prompt: str) -> None:
+    """Run the Claude Code closing turn and record its turn outcome.
+
+    Claude Code cannot call ``finalize``, so the verdict is parsed out of its
+    reply and recorded into the same run-scoped registries the tool's executor
+    writes. A reply without a valid outcome block gets one corrective retry.
+    """
+    reply: ClosingReply | None = None
+    for _ in (1, 2):
+        _send_and_run(conversation, prompt)
+        reply = parse_closing_reply(_acp_reply_text(conversation))
+        if reply.outcome is not None:
+            break
+        log.warning(
+            "[phase:agent] closing reply has no usable turn outcome (%s)",
+            reply.problem,
+        )
+        prompt = ACP_CORRECTION_PROMPT.format(problem=reply.problem)
+    setattr(conversation, _ACP_REPLY_ATTR, reply)
+    if reply is not None and reply.outcome is not None:
+        _record_acp_outcome(conversation, reply)
+
+
+def _acp_reply_text(conversation: Any) -> str:
+    """The text of the latest ``finish`` event at or after the closing-turn offset."""
+    offset = getattr(conversation, _REPORT_OFFSET_ATTR, 0) or 0
+    events = events_of(conversation)
+    for index in range(len(events) - 1, offset - 1, -1):
+        event = events[index]
+        if getattr(event, "tool_name", None) != "finish":
+            continue
+        message = getattr(getattr(event, "action", None), "message", None)
+        if isinstance(message, str):
+            return message
+    return ""
+
+
+def _record_acp_outcome(conversation: Any, reply: ClosingReply) -> None:
+    """Record the parsed outcome (and hand-off) like the ``finalize`` executor."""
+    ensure_import_path()
+    from agent_script.features.call_agent_tool.call_agent_tool import (  # noqa: PLC0415
+        record_function_call,
+    )
+    from agent_script.features.dispatch_next_tool.dispatch_next_tool import (  # noqa: PLC0415
+        record_turn_outcome,
+    )
+    from agent_script.features.finalize_tool.finalize_tool import (  # noqa: PLC0415
+        outcome_to_prefs,
+        outcome_to_turn_outcome,
+    )
+
+    outcome = reply.outcome
+    conversation_id = str(getattr(conversation, "id", "default"))
+    record_turn_outcome(
+        conversation_id, outcome_to_turn_outcome(outcome), outcome_to_prefs(outcome)
+    )
+    handoff = outcome.to_function_call()
+    if handoff is not None:
+        record_function_call(conversation_id, handoff)
+
+
+def _acp_report_text(conversation: Any) -> str:
+    """The report half of the parsed Claude Code closing reply."""
+    reply = getattr(conversation, _ACP_REPLY_ATTR, None)
+    return reply.report if isinstance(reply, ClosingReply) else ""
+
+
+def _acp_route(conversation: Any) -> RouteDecision | None:
+    """The parsed Claude Code outcome in the lenient worker-side route shape."""
+    reply = getattr(conversation, _ACP_REPLY_ATTR, None)
+    outcome = reply.outcome if isinstance(reply, ClosingReply) else None
     if outcome is None:
         return None
     return RouteDecision(

@@ -15,6 +15,11 @@ class AgentConfig(BaseModel):
     """Agent role → model + prompt file + skills + tools."""
 
     model_ref: LLMConfig = Field(alias="model")
+    # Execution backend. ``openhands`` (default) drives the model through the SDK
+    # ``Agent`` loop; ``claude-code`` hands each turn to a Claude Code ACP
+    # session, so the model path names a Claude Code model alias and the tool,
+    # condenser and sampling fields below are ignored.
+    backend: Literal["openhands", "claude-code"] = "openhands"
     temperature: float = 0.0
     prompt_file: str
     # One-line role description, injected into every agent's system prompt as
