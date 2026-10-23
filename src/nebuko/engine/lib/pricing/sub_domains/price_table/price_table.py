@@ -25,6 +25,30 @@ _OPENROUTER_PRICE_KEYS: dict[str, str] = {
     "input_cache_write": "cache_write_price",
 }
 
+#: Vendor prefixes a configured ``model_path`` may carry that the price
+#: services never use (Mistral's API is OpenAI-compatible, so its config paths
+#: are ``mistral/<model>`` while the table keys on ``mistralai/<model>``).
+_VENDOR_ALIASES: dict[str, str] = {"mistral": "mistralai"}
+
+
+def _basename(model_id: str) -> str:
+    """The id's last path segment."""
+    return model_id.rsplit("/", 1)[-1]
+
+
+def _vendor_aliases(model_id: str) -> list[str]:
+    """Alternative org-qualified ids for ``model_id`` under a renamed vendor.
+
+    ``mistral/<model>`` also exists as ``mistralai/<model>``; the reverse
+    mapping is intentionally not generated so a table id is never rewritten
+    into a vendor prefix the provider does not publish.
+    """
+    org, _, rest = model_id.partition("/")
+    if not rest:
+        return []
+    alias = _VENDOR_ALIASES.get(org)
+    return [f"{alias}/{rest}"] if alias else []
+
 
 def _pick(override: Optional[float], base: Optional[float]) -> Optional[float]:
     """The override value when set, else the base value."""
@@ -128,7 +152,7 @@ class PriceTable(BaseModel):
         hits = [
             price
             for model_id, price in self.entries.items()
-            if model_id.rsplit("/", 1)[-1] == basename
+            if _basename(model_id) == basename
         ]
         return hits[0] if len(hits) == 1 else None
 
@@ -140,7 +164,15 @@ def normalize_model_id(model_path: str) -> list[str]:
     A configured path carries a route prefix that the price services do not
     (``openai/deepseek/deepseek-v4.1-flash`` → ``deepseek/deepseek-v4.1-flash``),
     so the exact id is tried first, then progressively stripped of leading
-    path segments.
+    path segments. A vendor alias (``mistral/…`` → ``mistralai/…``) is appended
+    per candidate so a provider-published prefix still resolves.
     """
     segments = model_path.split("/")
-    return ["/".join(segments[i:]) for i in range(len(segments))]
+    candidates = ["/".join(segments[i:]) for i in range(len(segments))]
+    candidates.extend(
+        alias
+        for candidate in candidates
+        for alias in _vendor_aliases(candidate)
+        if alias not in candidates
+    )
+    return candidates
