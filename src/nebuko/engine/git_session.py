@@ -26,12 +26,22 @@ from __future__ import annotations
 import base64
 import subprocess
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from openhands.sdk import get_logger
+
+from nebuko.engine.lib.agent_script.features.ensure_pr.workflow_patch import (
+    build_patch,
+    is_workflow_path,
+    revert_workflow_changes,
+    split_paths,
+    APPLY_COMMAND,
+    PATCH_FILENAME,
+    WORKFLOW_DIR,
+)
 
 logger = get_logger(__name__)
 
@@ -147,6 +157,9 @@ class GitSessionGuard:
     def finalize(self) -> GuardResult:
         """Commit and push any leftovers, then prove the session fully published.
 
+        Detects workflow file changes and delivers them as a patch (issue #1024),
+        preventing the push from being rejected for lacking 'workflow' scope.
+
         Returns:
             ``ok=True`` when the tree is clean and the branch SHA matches the
             remote's, a benign skip for no remote/detached HEAD, and
@@ -173,6 +186,11 @@ class GitSessionGuard:
         problems: list[str] = []
         if commit_problem:
             problems.append(commit_problem)
+
+        workflow_problem = self._handle_workflow_files(branch=branch)
+        if workflow_problem:
+            problems.append(workflow_problem)
+
         if self._pending_paths():
             problems.append(
                 "the working tree still holds uncommitted changes after the "
@@ -398,6 +416,129 @@ class GitSessionGuard:
         except RuntimeError as exc:
             return f"could not push {branch}: {_dedent(str(exc))}"
         return ""
+
+    # @stub-protected
+    def _handle_workflow_files(self, *, branch: str) -> str:
+        """Detect workflow file changes, build patch, revert, and commit revert.
+
+        Returns a problem string if patch handling fails, or "" on success/no-op.
+        Called after _commit_all_pending(), before _push_branch().
+        This prevents the push from being rejected for lacking the 'workflow' scope
+        (issue #1024).
+        """
+        base_ref = self._resolve_base_ref(branch)
+        if base_ref is None:
+            return ""
+
+        patch, workflow_paths = self._build_workflow_patch(base_ref=base_ref)
+        if not workflow_paths:
+            return ""
+
+        artifact_path = self._save_workflow_patch(patch=patch, workflow_paths=workflow_paths)
+        logger.info(
+            "git session: workflow files detected, saved patch to %s",
+            artifact_path,
+        )
+
+        revert_workflow_changes(
+            base_ref=base_ref,
+            workflow_paths=workflow_paths,
+            run_git=self._run_git,
+        )
+
+        try:
+            # Stage any changes from the revert before committing
+            self._run_git(["add", "-A"])
+            self._run_git(
+                [
+                    "commit",
+                    "-m",
+                    "revert: remove workflow files from push\n\n"
+                    f"Workflow files {list(workflow_paths)} were reverted to {base_ref} "
+                    "because the agent token has no 'workflow' scope. A human must apply "
+                    f"the patch at {artifact_path} (see issue #1024).",
+                ]
+            )
+        except RuntimeError as exc:
+            return f"could not commit workflow revert: {_dedent(str(exc))}"
+
+        return ""
+
+    # @stub-protected
+    def _build_workflow_patch(self, *, base_ref: str) -> tuple[str, tuple[str, ...]]:
+        """Build a git diff patch of workflow file changes vs base_ref.
+
+        Returns (patch_content, workflow_paths). Empty patch and paths if no
+        workflow changes.
+        """
+        try:
+            diff_output = self._run_git(
+                ["diff", "--name-only", base_ref, "HEAD"]
+            )
+        except RuntimeError:
+            return "", ()
+
+        all_paths = tuple(line.strip() for line in diff_output.splitlines() if line.strip())
+        if not all_paths:
+            return "", ()
+
+        workflow_paths, _ = split_paths(all_paths)
+        if not workflow_paths:
+            return "", ()
+
+        patch = build_patch(
+            base_ref=base_ref,
+            workflow_paths=workflow_paths,
+            run_git=self._run_git,
+        )
+        return patch, workflow_paths
+
+    # @stub-protected
+    def _save_workflow_patch(
+        self, *, patch: str, workflow_paths: Sequence[str]
+    ) -> str:
+        """Save the patch to .nebuko/workflow-patch.diff and return the path.
+
+        Creates the directory if needed. Returns the artifact path for logging.
+        """
+        nebuko_dir = self.repo_root / ".nebuko"
+        nebuko_dir.mkdir(exist_ok=True)
+        patch_path = nebuko_dir / PATCH_FILENAME
+
+        with open(patch_path, "w", encoding="utf-8") as handle:
+            handle.write(patch if patch.endswith("\n") else patch + "\n")
+
+        return str(patch_path)
+
+    # @stub-protected
+    def _resolve_base_ref(self, branch: str) -> Optional[str]:
+        """Resolve the base ref for diffing: origin/<branch> if remote, else a default branch.
+
+        Returns None if the base ref cannot be resolved (no remote).
+        """
+        if self.remote is None:
+            return None
+
+        try:
+            self._run_git(["rev-parse", f"{self.remote}/{branch}"])
+            return f"{self.remote}/{branch}"
+        except RuntimeError:
+            pass
+
+        # Try common default branch names if the branch doesn't exist on remote
+        for default_branch in ("main", "master", "develop", "development"):
+            try:
+                self._run_git(["rev-parse", f"{self.remote}/{default_branch}"])
+                return f"{self.remote}/{default_branch}"
+            except RuntimeError:
+                continue
+
+        # Last resort: try origin/HEAD
+        try:
+            self._run_git(["rev-parse", f"{self.remote}/HEAD"])
+            return f"{self.remote}/HEAD"
+        except RuntimeError:
+            return None
 
     def _is_token_remote(self, remote_url: str) -> bool:
         return remote_url.startswith(_TOKEN_HOSTS)
