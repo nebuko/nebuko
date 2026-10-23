@@ -19,6 +19,8 @@ from nebuko.adapters.github import ARTIFACT_DIR_NAME
 from nebuko.engine.artifacts import (
     APP_LOG_FILE,
     CONSOLE_LOG_FILE,
+    EVENT_LOG_FILE,
+    PERSISTENCE_DIR_NAME,
     SDK_APP_LOG_FILE,
     ArtifactFile,
     RunArtifactStager,
@@ -70,6 +72,7 @@ class TestRunArtifactStager:
         assert files == (
             ArtifactFile(name=CONSOLE_LOG_FILE, path=staging.resolve() / CONSOLE_LOG_FILE),
             ArtifactFile(name=APP_LOG_FILE, path=staging.resolve() / APP_LOG_FILE),
+            ArtifactFile(name=EVENT_LOG_FILE, path=staging.resolve() / EVENT_LOG_FILE),
         )
         assert all(artifact.path.is_absolute() for artifact in files)
 
@@ -85,7 +88,7 @@ class TestRunArtifactStager:
 
         names = [artifact.name for artifact in RunArtifactStager(staging).artifact_files()]
 
-        assert names == ["console.txt", "app.txt"]
+        assert names == ["console.txt", "app.txt", "events.jsonl"]
 
     def test_bundle_renames_the_sdk_app_log_to_app_txt(self, tmp_path):
         staging = tmp_path / "nebuko-task-logs"
@@ -96,7 +99,7 @@ class TestRunArtifactStager:
 
         assert not (staging / SDK_APP_LOG_FILE).exists()
         assert (staging / APP_LOG_FILE).read_text(encoding="utf-8") == "sdk log line\n"
-        assert RunArtifactStager(staging).artifact_files()[-1].path.is_file()
+        assert RunArtifactStager(staging).artifact_files()[1].path.is_file()
 
     def test_bundle_without_an_sdk_log_still_freezes_the_manifest(self, tmp_path):
         staging = tmp_path / "nebuko-task-logs"
@@ -104,7 +107,61 @@ class TestRunArtifactStager:
         artifacts = RunArtifactStager(staging).bundle("console output")
 
         assert not (staging / APP_LOG_FILE).exists()
-        assert [artifact.name for artifact in artifacts.files] == ["console.txt", "app.txt"]
+        assert [artifact.name for artifact in artifacts.files] == [
+            "console.txt",
+            "app.txt",
+            "events.jsonl",
+        ]
+
+    def test_bundle_without_persistence_writes_no_event_log(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+
+        RunArtifactStager(staging).bundle("console output")
+
+        assert not (staging / EVENT_LOG_FILE).exists()
+
+    def test_bundle_bundles_the_persisted_events_in_index_order(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+        events = staging / PERSISTENCE_DIR_NAME / "0199aaaa" / "events"
+        events.mkdir(parents=True)
+        # Written out of order on purpose: the bundle must sort by index.
+        (events / "event-00002-22222222-2222-6222-8222-222222222222.json").write_text(
+            '{"kind": "second"}\n', encoding="utf-8"
+        )
+        (events / "event-00001-11111111-1111-6111-8111-111111111111.json").write_text(
+            '{"kind": "first"}\n', encoding="utf-8"
+        )
+
+        RunArtifactStager(staging).bundle("console output")
+
+        bundled = (staging / EVENT_LOG_FILE).read_text(encoding="utf-8")
+        assert bundled == '{"kind": "first"}\n{"kind": "second"}\n'
+
+    def test_bundle_skips_the_sdk_lock_and_marker_files(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+        events = staging / PERSISTENCE_DIR_NAME / "0199aaaa" / "events"
+        events.mkdir(parents=True)
+        (events / ".eventlog.lock").write_text("", encoding="utf-8")
+        (events / ".eventlog-len-1.marker").write_text("", encoding="utf-8")
+        (events / "event-00001-11111111-1111-6111-8111-111111111111.json").write_text(
+            '{"kind": "first"}\n', encoding="utf-8"
+        )
+
+        RunArtifactStager(staging).bundle("console output")
+
+        bundled = (staging / EVENT_LOG_FILE).read_text(encoding="utf-8")
+        assert bundled == '{"kind": "first"}\n'
+
+    def test_bundle_ignores_a_persistence_dir_without_events(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+        (staging / PERSISTENCE_DIR_NAME / "0199aaaa").mkdir(parents=True)
+        (staging / PERSISTENCE_DIR_NAME / "0199aaaa" / "base_state.json").write_text(
+            "{}", encoding="utf-8"
+        )
+
+        RunArtifactStager(staging).bundle("console output")
+
+        assert not (staging / EVENT_LOG_FILE).exists()
 
 
 class TestArtifactFile:

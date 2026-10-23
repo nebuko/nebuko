@@ -282,6 +282,24 @@ def _discard_token(_chunk: object) -> None:
     """
 
 
+def _resolve_persistence_dir() -> str:
+    """Directory the SDK persists the conversation's event log into (issue #1120).
+
+    ``OPENHANDS_PERSISTENCE_DIR`` overrides; the default is a
+    ``persistence`` directory next to the SDK file log (``LOG_DIR``), i.e.
+    inside the artifact staging area, so the event JSONs upload with the
+    run's other artifacts. The SDK derives per-conversation subdirectories
+    from this base, so a fresh run never collides with a stale one.
+    """
+    override = os.environ.get("OPENHANDS_PERSISTENCE_DIR")
+    if override:
+        return override
+    log_dir = os.environ.get("LOG_DIR")
+    if log_dir:
+        return os.path.join(log_dir, "persistence")
+    return os.path.join("logs", "persistence")
+
+
 def run_agent(
     llm_config: dict,
     prompt: str,
@@ -381,9 +399,15 @@ def run_agent(
     maybe_register_langfuse()
 
     # ── Conversation setup & supervised execution ────────────────
+    # Persist the conversation's event log (issue #1120): without a
+    # persistence_dir the SDK falls back to an InMemoryFileStore and the
+    # per-event JSON files (with per-command timings) are lost when the run
+    # ends. The default lands under the artifact staging dir via LOG_DIR's
+    # parent so the log uploads with the run's other artifacts.
     conversation = Conversation(
         agent=agent,
         workspace=cwd,
+        persistence_dir=_resolve_persistence_dir(),
         # Keep the streaming path live so the LLM timeout applies between
         # chunks rather than to the whole reasoning turn (issue #775).
         token_callbacks=[_discard_token, collector.on_token],

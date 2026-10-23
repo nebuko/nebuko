@@ -19,6 +19,8 @@ __all__ = [
     "APP_LOG_FILE",
     "ArtifactFile",
     "CONSOLE_LOG_FILE",
+    "EVENT_LOG_FILE",
+    "PERSISTENCE_DIR_NAME",
     "RunArtifactStager",
     "RunArtifacts",
     "SDK_APP_LOG_FILE",
@@ -36,6 +38,23 @@ APP_LOG_FILE = "app.txt"
 # is hardcoded in the SDK); :meth:`RunArtifactStager.bundle` renames it to
 # ``APP_LOG_FILE`` before the upload manifest is frozen.
 SDK_APP_LOG_FILE = "app.log"
+
+# The OpenHands SDK conversation persistence lives under this subdirectory of
+# ``LOG_DIR`` (see ``run_agent._resolve_persistence_dir``): one
+# ``<conversation-id>/`` per conversation holding ``base_state.json`` and the
+# per-event ``events/event-*.json`` files with the per-command timings
+# (issue #1120). The SDK also writes dot-prefixed lock/length-marker files the
+# bundle skips.
+PERSISTENCE_DIR_NAME = "persistence"
+
+# The browser-viewable bundle of the persisted event log (issue #1120).
+EVENT_LOG_FILE = "events.jsonl"
+
+# The SDK's per-conversation layout: ``<id>/events/event-<idx>-<event_id>.json``
+# (``persistence_const.EVENTS_DIR`` / ``EVENT_FILE_PATTERN``), plus dot-prefixed
+# lock/length-marker files the bundle skips.
+_EVENTS_SUBDIR = "events"
+_EVENT_GLOB = "event-*.json"
 
 
 # @stub-protected
@@ -96,9 +115,39 @@ class RunArtifactStager:
             return
         source.replace(self._base_dir / APP_LOG_FILE)
 
+    def _stage_event_log(self) -> None:
+        """Bundle the persisted conversation events into ``events.jsonl`` (#1120).
+
+        The SDK writes one JSON file per event under
+        ``persistence/<conversation-id>/events/``; the bundle concatenates them
+        in index order so the per-command durations can be read straight from
+        the artifact. Best-effort: a run without persistence (or an empty one)
+        simply yields no bundle — the upload steps tolerate a missing file.
+        """
+        events_dir = self._base_dir / PERSISTENCE_DIR_NAME
+        if not events_dir.is_dir():
+            return
+        event_files = sorted(
+            path
+            for path in events_dir.glob(f"*/{_EVENTS_SUBDIR}/{_EVENT_GLOB}")
+            if not path.name.startswith(".")
+        )
+        if not event_files:
+            return
+        lines: list[str] = []
+        for path in event_files:
+            payload = path.read_text(encoding="utf-8").strip()
+            if payload:
+                lines.append(payload)
+        if lines:
+            (self._base_dir / EVENT_LOG_FILE).write_text(
+                "\n".join(lines) + "\n", encoding="utf-8"
+            )
+
     # @stub-protected
     def artifact_files(self) -> tuple[ArtifactFile, ...]:
-        """The per-file unzipped upload manifest (``console.txt``, ``app.txt``).
+        """The per-file unzipped upload manifest (``console.txt``, ``app.txt``,
+        ``events.jsonl``).
 
         The workflow uploads each entry as its own unzipped artifact; the
         filename-derived artifact name is what the debug prompt fetches raw.
@@ -107,11 +156,13 @@ class RunArtifactStager:
         writes its ``app.log`` when ``LOG_TO_FILE`` is on — the entry may point
         at a file that never appears. That is intentional: the upload steps run
         with ``if-no-files-found: ignore``, so a missing ``app.txt`` simply
-        yields no artifact instead of failing the run.
+        yields no artifact instead of failing the run. ``events.jsonl`` is the
+        same deal: it only appears when the conversation persisted events
+        (issue #1120).
         """
         return tuple(
             ArtifactFile(name=name, path=self._base_dir / name)
-            for name in (CONSOLE_LOG_FILE, APP_LOG_FILE)
+            for name in (CONSOLE_LOG_FILE, APP_LOG_FILE, EVENT_LOG_FILE)
         )
 
     # @stub-protected
@@ -119,6 +170,7 @@ class RunArtifactStager:
         """Stage ``console_log`` and freeze the run's artifacts for the host."""
         self.stage_console_log(console_log)
         self._rename_sdk_app_log()
+        self._stage_event_log()
         return RunArtifacts(
             staging_dir=self.log_dir(),
             console_log=console_log,
