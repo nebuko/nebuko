@@ -473,6 +473,19 @@ def _apply_prompt_layer(resolved: dict[str, str], paths: NebukoPaths) -> None:
             continue
 
 
+def _apply_skills_layer(resolved: dict[str, str], paths: NebukoPaths) -> None:
+    """Pin the resolver's skills directory to the layered lookup.
+
+    ``resolve_config`` anchors ``SKILLS_DIR`` at the process working directory
+    (``build_result._skills_dir``), which is a throwaway temp dir in the
+    cross-repo layout — the layered view anchored at the caller's workspace is
+    the authoritative one (issue #1108).
+    """
+    if not resolved.get("SKILLS_DIR"):
+        return
+    resolved["SKILLS_DIR"] = str(paths.directory(ConfigKind.SKILL))
+
+
 def _backfill_workflow_identity(
     env: dict[str, str], state: WorkflowState | None
 ) -> dict[str, str]:
@@ -1392,6 +1405,7 @@ class Engine:
             )
         )
         _apply_prompt_layer(resolved, paths)
+        _apply_skills_layer(resolved, paths)
         # Copy before annotating: the resolver may hand back a cached/shared
         # mapping, and the engine must not mutate another component's object
         # (issue #590 round-4, finding 7).
