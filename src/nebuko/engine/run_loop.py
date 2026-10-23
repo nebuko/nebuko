@@ -473,6 +473,19 @@ def _apply_prompt_layer(resolved: dict[str, str], paths: NebukoPaths) -> None:
             continue
 
 
+def _apply_skills_layer(resolved: dict[str, str], paths: NebukoPaths) -> None:
+    """Pin the resolver's skills directory to the layered lookup.
+
+    ``resolve_config`` anchors ``SKILLS_DIR`` at the process working directory
+    (``build_result._skills_dir``), which is a throwaway temp dir in the
+    cross-repo layout — the layered view anchored at the caller's workspace is
+    the authoritative one (issue #1108).
+    """
+    if not resolved.get("SKILLS_DIR"):
+        return
+    resolved["SKILLS_DIR"] = str(paths.directory(ConfigKind.SKILL))
+
+
 def _backfill_workflow_identity(
     env: dict[str, str], state: WorkflowState | None
 ) -> dict[str, str]:
@@ -1374,7 +1387,11 @@ class Engine:
         ensure_import_path()
         from resolve_config.resolve_config import resolve_config
 
-        paths = NebukoPaths.discover(self.repo_root)
+        # Anchored at the caller's workspace, not the engine checkout (issue
+        # #1108): a cross-repo caller's ``.nebuko/`` overrides live under
+        # ``$GITHUB_WORKSPACE``, while ``self.repo_root`` is the imported
+        # ``.nebuko-engine`` checkout.
+        paths = NebukoPaths.discover(self._caller_root())
         workflows_dir, local_workflows_dir = self._workflow_dirs()
         resolved = dict(
             resolve_config(
@@ -1388,6 +1405,7 @@ class Engine:
             )
         )
         _apply_prompt_layer(resolved, paths)
+        _apply_skills_layer(resolved, paths)
         # Copy before annotating: the resolver may hand back a cached/shared
         # mapping, and the engine must not mutate another component's object
         # (issue #590 round-4, finding 7).
@@ -2200,8 +2218,14 @@ class Engine:
         )
 
     def _workflow_dirs(self) -> tuple[str, str | None]:
-        """The workflow search roots the resolver uses (shipped, most-specific)."""
-        paths = NebukoPaths.discover(self.repo_root)
+        """The workflow search roots the resolver uses (shipped, most-specific).
+
+        Anchored at the caller's workspace, not the engine checkout (issue
+        #1108): a cross-repo caller's ``.nebuko/workflows/`` lives under
+        ``$GITHUB_WORKSPACE``, while ``self.repo_root`` is the imported
+        ``.nebuko-engine`` checkout.
+        """
+        paths = NebukoPaths.discover(self._caller_root())
         roots = paths.search_roots(ConfigKind.WORKFLOW)
         return (
             str(roots[-1]),

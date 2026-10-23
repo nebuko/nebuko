@@ -176,8 +176,10 @@ generates. Details: [adoption.md §3](docs/adoption.md#3-the-entrypoint-copy-pas
 **Minimal config to start.** Beyond your agent config, Nebuko ships default
 agent profiles ([`defaults/agents/`](defaults/agents/)), prompts
 ([`defaults/prompts/`](defaults/prompts/)) and workflows
-([`defaults/workflows/`](defaults/workflows/)). Lookup is layered: your
-`.nebuko/<kind>/` override first, then the shipped default. It runs on
+([`defaults/workflows/`](defaults/workflows/)). Lookup is layered and anchored
+at the caller's workspace (`$GITHUB_WORKSPACE` when set, the working directory
+otherwise, not the engine checkout): your `.nebuko/<kind>/` override first,
+then the shipped default. It runs on
 GitHub-hosted runners; pass `runs_on: "self-hosted"` to use your own.
 
 ## How it works

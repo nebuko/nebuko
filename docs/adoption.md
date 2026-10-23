@@ -287,7 +287,9 @@ The `nebuko[bot]` actor requires the GitHub App and is not available yet.
 Commit your agent config at `.nebuko/agents/agent-config.yaml` — **mandatory
 for now** (section 3, step 1) — and set `agent_config_path` to that path. Other
 config artifacts (prompts, skills, workflows) still resolve through the layered
-lookup: a repo override under `.nebuko/` first, then the copy shipped in
+lookup, anchored at the caller's workspace (`$GITHUB_WORKSPACE` when set, the
+working directory otherwise — not the engine checkout): a repo override under
+`.nebuko/` first, then the copy shipped in
 `defaults/`. The file is layered **providers → llms → agents**; the full schema
 is in [configuration.md](./configuration.md). The shipped `defaults/prompts/`
 need no local copies, so a config like the one below is the whole minimal

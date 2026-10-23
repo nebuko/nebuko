@@ -546,6 +546,79 @@ class TestCommandErrorNotice:
         assert not resolved.get("COMMAND_ERROR")
 
 
+class TestCallerAnchoredConfigLookup:
+    """The config layers anchor at the caller's workspace (issue #1108).
+
+    A cross-repo caller runs the engine from an imported ``.nebuko-engine``
+    checkout while its own overrides live under ``$GITHUB_WORKSPACE/.nebuko/``;
+    anchoring the lookup at ``repo_root`` searches the engine checkout instead
+    (the reported ``Workflow file not found`` error).
+    """
+
+    @staticmethod
+    def _workflow_yaml(agent: str = "dev") -> str:
+        return (
+            "name: digest\n"
+            'description: "caller workflow"\n'
+            "steps:\n"
+            f"  - name: only\n    agent: {agent}\n    next: null\n"
+        )
+
+    def test_a_cross_repo_caller_workflow_resolves_from_the_caller_workspace(
+        self, tmp_path
+    ):
+        caller = tmp_path / "caller"
+        wf_dir = caller / ".nebuko" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "digest.yaml").write_text(self._workflow_yaml(), encoding="utf-8")
+        engine = _engine(
+            tmp_path,
+            _trigger(body="/nebuko run workflow --name digest", number=1108),
+            env={"GITHUB_WORKSPACE": str(caller)},
+        )
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert resolved.get("WORKFLOW_NAME") == "digest"
+        assert resolved.get("TASK") == "dev"
+        # (workflows_dir, local_workflows_dir): the caller dir is the
+        # consumer-local layer that takes precedence over the shipped base.
+        assert engine._workflow_dirs()[1] == str(caller / ".nebuko" / "workflows")
+
+    def test_the_shipped_default_workflow_still_resolves_without_a_caller(
+        self, tmp_path
+    ):
+        """No ``GITHUB_WORKSPACE``: the shipped defaults layer stays reachable."""
+        engine = _engine(
+            tmp_path,
+            _trigger(body="/nebuko run workflow --name default", number=1108),
+        )
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert resolved.get("WORKFLOW_NAME") == "default"
+        assert resolved.get("TASK")
+
+    def test_caller_prompts_and_skills_win_over_the_engine_checkout(
+        self, tmp_path
+    ):
+        caller = tmp_path / "caller"
+        prompts = caller / ".nebuko" / "prompts"
+        skills = caller / ".nebuko" / "skills"
+        prompts.mkdir(parents=True)
+        skills.mkdir(parents=True)
+        (prompts / "dev.md").write_text("CALLER PROMPT", encoding="utf-8")
+        engine = _engine(
+            tmp_path, _trigger(body="@@dev fix it", number=1108),
+            env={"GITHUB_WORKSPACE": str(caller)},
+        )
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert resolved.get("PROMPT_LOCATION") == str(prompts / "dev.md")
+        assert resolved.get("SKILLS_DIR") == str(skills)
+
+
 class TestDeterministicActionPhase:
     """``action`` executes the resolver's agent-free step (issue #724)."""
 
