@@ -46,6 +46,7 @@ _FINALIZE_TOOL_NAME = "FinalizeTool"
 _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
 _COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
 _HANDOFF_TOOL_NAME = "HandoffTool"
+_FETCH_COMMENT_BODIES_TOOL_NAME = "FetchCommentBodiesTool"
 
 
 @dataclass(frozen=True)
@@ -233,6 +234,27 @@ def _ensure_handoff_tool_registered() -> None:
     _handoff_tool_registered = True
 
 
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
+_fetch_comment_bodies_tool_registered = False
+
+
+def _ensure_fetch_comment_bodies_tool_registered() -> None:
+    """Register the ``fetch_comment_bodies`` ToolDefinition with the registry.
+
+    Idempotent — safe to call on every agent run.
+    """
+    global _fetch_comment_bodies_tool_registered
+    if _fetch_comment_bodies_tool_registered:
+        return
+    from agent_script.features.fetch_comment_bodies_tool.fetch_comment_bodies_tool import (
+        FetchCommentBodiesTool,
+    )
+
+    register_tool(_FETCH_COMMENT_BODIES_TOOL_NAME, FetchCommentBodiesTool)
+    _fetch_comment_bodies_tool_registered = True
+
+
 def resolve_toolset(
     tool_names: Iterable[str],
     role_name: str,
@@ -322,6 +344,9 @@ def resolve_toolset(
         elif tool_name == "handoff":
             _ensure_handoff_tool_registered()
             sdk_tools.append(Tool(name=_HANDOFF_TOOL_NAME))
+        elif tool_name == "fetch_comment_bodies":
+            _ensure_fetch_comment_bodies_tool_registered()
+            sdk_tools.append(Tool(name=_FETCH_COMMENT_BODIES_TOOL_NAME))
         else:
             logger.warning(
                 f"Unknown tool '{tool_name}' for agent '{role_name}' — skipping"

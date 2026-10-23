@@ -172,6 +172,23 @@ class TestResolveToolset:
         assert _names(resolved.sdk_tools) == ("FinalizeTool",)
         assert resolved.dispatch_tool_enabled is True
 
+    def test_fetch_comment_bodies_is_a_non_terminal_sdk_tool(self):
+        """``fetch_comment_bodies`` (issue #748) resolves through the SDK
+        registry and never trips the end-tool boundary in answer capture."""
+        resolved = resolve_toolset(["fetch_comment_bodies"], "architect")
+        assert _names(resolved.sdk_tools) == ("FetchCommentBodiesTool",)
+        assert resolved.builtin_tools == ()
+        assert resolved.dispatch_tool_enabled is False
+        assert "FetchCommentBodiesTool" in list_registered_tools()
+
+    def test_fetch_comment_bodies_spec_is_resolvable_by_the_sdk(self):
+        resolved = resolve_toolset(["fetch_comment_bodies"], "architect")
+        spec = next(t for t in resolved.sdk_tools if t.name == "FetchCommentBodiesTool")
+        definitions = resolve_tool(spec, None)
+        # The definition the LLM sees carries the auto-derived snake_case name
+        # — the same name the engine-tool registry and answer capture key on.
+        assert [d.name for d in definitions] == ["fetch_comment_bodies"]
+
     def test_the_removed_tools_are_a_migration_error(self):
         """``dispatch_next`` / ``call_agent`` are no longer agents' tools: a
         config still listing one fails loudly, pointing at ``finalize``."""
