@@ -36,6 +36,7 @@ FILE_RULES = ("C4-prompt-file", "C5-skill-file")
 KNOWN_TOOLS_EXPECTED = frozenset(
     {
         "terminal",
+        "terminal_batch",
         "file_editor",
         "task_tracker",
         "think",

@@ -10,13 +10,8 @@ policy, and the labeled-block rendering.
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
-sys.path.insert(0, str(Path(__file__).parents[1] / "src" / "nebuko" / "engine" / "lib"))
 
 from nebuko.engine.input_wiring import (  # noqa: E402
     MAX_CALL_FRAMES,
