@@ -27,17 +27,24 @@ from dataclasses import dataclass
 
 from nebuko.engine.engine_tools import (
     DEFAULT_ENGINE_TOOLS,
+    TERMINAL_PAYLOAD_KINDS,
     EngineToolPayload,
     EngineToolRegistry,
 )
 
 __all__ = ["DEFAULT_END_TOOLS", "AnswerCapture", "AnswerSnapshot"]
 
-# The two control-plane turns (derived from the engine-tool registry — one
-# classification, no parallel list to drift). Their turn text is a status note
-# (``finish``) or routing metadata (``dispatch_next``); the deliverable is the
-# tool's *typed* payload, not its prose.
-DEFAULT_END_TOOLS = frozenset(DEFAULT_ENGINE_TOOLS.tools)
+# The control-plane turns that end the work loop, derived from the engine-tool
+# registry's terminal payload kinds (one classification, no parallel list to
+# drift — issue #748). A ``query`` tool returns data to the agent and must not
+# freeze the answer, so only terminal kinds are boundaries. Their turn text is a
+# status note (``finish``) or routing metadata (``dispatch_next``); the
+# deliverable is the tool's *typed* payload, not its prose.
+DEFAULT_END_TOOLS = frozenset(
+    name
+    for name, spec in DEFAULT_ENGINE_TOOLS.tools.items()
+    if spec.payload_kind in TERMINAL_PAYLOAD_KINDS
+)
 
 
 @dataclass(frozen=True)

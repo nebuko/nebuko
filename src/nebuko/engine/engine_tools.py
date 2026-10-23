@@ -34,6 +34,7 @@ __all__ = [
     "FinalizeToolError",
     "FinalizeToolHandler",
     "PayloadKind",
+    "TERMINAL_PAYLOAD_KINDS",
     "WorkLoopPresence",
 ]
 
@@ -41,8 +42,17 @@ __all__ = [
 # ``routing`` / ``handoff`` - payload shapes of the removed ``dispatch_next`` /
 # ``call_agent`` tools (read-only legacy compatibility, #1033);
 # ``finalize`` - the terminal tool of every step: the report rides in the turn
-# text and the tool carries the typed ``turn_outcome`` only.
-PayloadKind = Literal["final_message", "routing", "handoff", "finalize"]
+# text and the tool carries the typed ``turn_outcome`` only;
+# ``query`` - a read-only context lookup (issue #748): the tool returns data to
+# the agent and never ends the work loop, so it is not an answer boundary.
+PayloadKind = Literal["final_message", "routing", "handoff", "finalize", "query"]
+
+#: Payload kinds whose turn ends the work loop (issue #748). Derived from the
+#: registry instead of hardcoded at the call sites, so a new non-terminal kind
+#: (``query``) cannot be mistaken for an answer boundary.
+TERMINAL_PAYLOAD_KINDS: Final[frozenset[str]] = frozenset(
+    {"final_message", "finalize"}
+)
 
 # Work-loop role of an engine tool: ``terminator`` ends the run (finish);
 # ``hidden`` is a control signal the work loop keeps running past.
@@ -150,7 +160,7 @@ class EngineToolRegistry(BaseModel):
         ``dispatch_next`` and any unknown tool are ``hidden``.
         """
         spec = self.tools.get(tool_name)
-        if spec is not None and spec.payload_kind in ("final_message", "finalize"):
+        if spec is not None and spec.payload_kind in TERMINAL_PAYLOAD_KINDS:
             return "terminator"
         return "hidden"
 
@@ -276,6 +286,14 @@ DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
             name="finalize",
             payload_kind="finalize",
             payload_fields=("turn_outcome",),
+        ),
+        # Read-only context lookup (issue #748): the agent asks for comment
+        # bodies by id and gets the thread's raw text back. It returns data,
+        # never a verdict, so its payload kind keeps it out of the terminal set.
+        "fetch_comment_bodies": EngineToolSpec(
+            name="fetch_comment_bodies",
+            payload_kind="query",
+            payload_fields=("ids",),
         ),
     }
 )

@@ -338,7 +338,17 @@ def run_agent(
     install_tool_call_repair()
 
     # ── Tool resolution ──────────────────────────────────────────
-    default_tool_list = ["terminal", "file_editor", "task_tracker", "think", "finish"]
+    # ``fetch_comment_bodies`` (issue #748) is a read-only context lookup, so
+    # every role gets it by default: recalling a full comment by id is always
+    # safe and costs a turn only when the agent actually needs it.
+    default_tool_list = [
+        "terminal",
+        "file_editor",
+        "task_tracker",
+        "think",
+        "fetch_comment_bodies",
+        "finish",
+    ]
     agent_tools = agent_cfg.tools if agent_cfg is not None else default_tool_list
     # Every step ends through the terminal ``finalize`` tool (issue #1033), so
     # it must be resolvable even though the role's static tool list predates it.

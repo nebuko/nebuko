@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
@@ -2284,6 +2285,7 @@ class Engine:
         env = _with_step_input_records(
             env, self._step_input_state.get("results") or []
         )
+        env = _with_comment_bodies(env, self._thread_ledger_data())
         return _anchor_config_path(env, self.repo_root, self._caller_root())
 
     def _active_trigger(self) -> Trigger | None:
@@ -3388,6 +3390,10 @@ def _one_line_preview(text: str, limit: int = 200) -> str:
 # which persists them on the advancing HistoryEntry (issue #872).
 STEP_INPUT_RESULTS_ENV = "STEP_INPUT_RESULTS"
 
+#: Env var the ``fetch_comment_bodies`` tool reads the staged thread bodies
+#: from (issue #748); the value is the JSON file's path.
+COMMENT_BODIES_ENV = "NEBUKO_COMMENT_BODIES_FILE"
+
 
 def _with_step_input_records(
     env: dict[str, str], results: Sequence[Materialization]
@@ -3396,6 +3402,35 @@ def _with_step_input_records(
     if not results:
         return env
     env[STEP_INPUT_RESULTS_ENV] = json.dumps(step_input_records(list(results)))
+    return env
+
+
+def _with_comment_bodies(
+    env: dict[str, str], ledger: tuple[list[Any], dict[str, str]] | None
+) -> dict[str, str]:
+    """Stage the thread's comment bodies for the ``fetch_comment_bodies`` tool.
+
+    The ledger's ``bodies`` map (issue #872) is written to a temp file and its
+    path handed to the child, so the agent can recall a full comment by id
+    (issue #748) without the whole thread riding in the prompt. No ledger (the
+    adapter has no full thread) leaves the env untouched and the tool answers
+    "no data" — the run degrades to the bounded window it already had.
+    """
+    if ledger is None or not ledger[1]:
+        return env
+    try:
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".json",
+            prefix="nebuko-comment-bodies-",
+            delete=False,
+        )
+    except OSError:  # noqa: BLE001 - staging is best-effort context
+        return env
+    with handle:
+        json.dump(ledger[1], handle)
+    env[COMMENT_BODIES_ENV] = handle.name
     return env
 
 
