@@ -603,6 +603,15 @@ class TestSystemPromptOverride(unittest.TestCase):
             _SYSTEM_PROMPT,
         )
 
+    def test_prompt_teaches_tool_call_discipline(self):
+        """No prose before tool calls; summaries go in the argument (#1117).
+
+        A free-text `Summary:` line written before a call bleeds into the JSON
+        arguments and produces garbage keys (`defaults\\nsummary`).
+        """
+        self.assertIn("# Tool-call discipline", _SYSTEM_PROMPT)
+        self.assertIn("`summary` argument", _SYSTEM_PROMPT)
+
 
 class TestSdkStaticPromptRegression(unittest.TestCase):
     """The SDK's own static sections must never reach the model again (#943)."""

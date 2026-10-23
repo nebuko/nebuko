@@ -238,6 +238,58 @@ class TestFinalizePromptTeachesTheTypedSchema:
             assert legacy not in _FINALIZE_PROMPT
 
 
+class TestFinalizePromptTeachesToolCallDiscipline:
+    """The `Summary:` prose convention is dropped (issue #1117).
+
+    The SDK injects a `summary` argument on every action schema; when the
+    model writes that summary as free prose before the call, the text bleeds
+    into the JSON arguments and produces garbage keys (`defaults\\nsummary`).
+    The prompt must point at the argument, never the prose.
+    """
+
+    def test_tool_description_teaches_the_discipline(self) -> None:
+        from agent_script.features.finalize_tool.finalize_tool import (
+            FINALIZE_DESCRIPTION,
+        )
+
+        assert "Tool-call discipline" in FINALIZE_DESCRIPTION
+        assert "Summary:" in FINALIZE_DESCRIPTION
+        assert "`summary` argument" in FINALIZE_DESCRIPTION
+
+    def test_rejection_hint_names_the_prose_habit(self) -> None:
+        """A malformed `turn_outcome` comes back with the prose hint attached."""
+        from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+            get_recorded_turn_outcome,
+        )
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+
+        tool = FinalizeTool.create(conversation_id="c-prose-hint")[0]
+        action = tool.action_from_arguments(
+            {"turn_outcome": {"appreciation": "hold"}}
+        )
+        observation = tool.executor(action)
+
+        assert observation.is_error
+        assert "Do not write prose" in observation.text
+        assert "'summary' argument" in observation.text
+        assert get_recorded_turn_outcome("c-prose-hint") is None
+
+    def test_summary_inside_turn_outcome_stays_rejected(self) -> None:
+        """`summary` is the SDK's action-level argument, not a payload field.
+
+        It must not migrate into `TurnOutcomePayload` (extra="forbid" stays):
+        it is a reserved response-schema name in the SDK and would duplicate
+        the argument the prompt points at.
+        """
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+
+        tool = FinalizeTool.create(conversation_id="c-summary-reject")[0]
+        with pytest.raises(ValueError, match="summary"):
+            tool.action_from_arguments(
+                {"turn_outcome": {"appreciation": "approved", "summary": "x"}}
+            )
+
+
 class TestFinalizeToolHandler:
     def _handler(self) -> tuple[FinalizeToolHandler, list[str]]:
         posted: list[str] = []

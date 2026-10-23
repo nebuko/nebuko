@@ -113,6 +113,10 @@ Parameters:
 - turn_outcome.pin: set true to pin this step's output comment(s) for verbatim
   injection into downstream context; omit to leave unpinned.
 
+Tool-call discipline: never write free-text prose (e.g. a `Summary: …` line)
+before a tool call — prose bleeds into the JSON arguments and is rejected as
+an unknown field. A summary belongs only in the tool's `summary` argument.
+
 Where the workflow goes next is engine topology, never your choice: the engine
 maps your appreciation onto the step's declared ``on_result`` edge."""  # noqa: E501
 
@@ -140,6 +144,15 @@ route_to_turn_outcome = outcome_to_turn_outcome
 route_to_prefs = outcome_to_prefs
 
 
+#: Retryable rejection for a finalize call whose `turn_outcome` is malformed.
+#: The prose hint targets the observed failure where a free-text `Summary:`
+#: line written before the call bleeds into the JSON arguments (issue #1117).
+REJECTION_HINT = (
+    "Do not write prose (e.g. a 'Summary: …' line) before the call — "
+    "summaries go in the 'summary' argument."
+)
+
+
 class FinalizeExecutor(ToolExecutor):
     def __init__(self, conversation_id: str = "default") -> None:
         self._conversation_id = conversation_id
@@ -161,7 +174,7 @@ class FinalizeExecutor(ToolExecutor):
             return FinalizeObservation.from_text(
                 text=(
                     f"finalize rejected: {exc}. Fix the turn_outcome and call "
-                    "finalize again."
+                    f"finalize again. {REJECTION_HINT}"
                 ),
                 is_error=True,
             )
