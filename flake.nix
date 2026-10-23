@@ -22,6 +22,10 @@
           uv
           stdenv.cc.cc.lib
           nodejs_26
+          # Remotion renders with headless Chromium; on NixOS the browser it
+          # downloads itself cannot run (missing nspr/nss), so provide the
+          # patched nixpkgs chromium instead.
+          chromium
         ];
 
       in {
