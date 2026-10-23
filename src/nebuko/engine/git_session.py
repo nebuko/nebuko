@@ -24,13 +24,19 @@ turns it into an ``ExitCode.ERROR`` run.
 from __future__ import annotations
 
 import base64
+import logging
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from openhands.sdk import get_logger
+try:  # openhands ships with the ``runtime`` extra only.
+    from openhands.sdk import get_logger
+except ImportError:
+    # The lint-config job installs base deps (no openhands) yet must still
+    # import this module through the engine package (issue #1129).
+    get_logger = logging.getLogger
 
 logger = get_logger(__name__)
 
