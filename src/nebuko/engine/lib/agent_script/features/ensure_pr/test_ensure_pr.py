@@ -1131,6 +1131,8 @@ class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
     WHEN a new file appears under ``.github/workflows/``
     THEN the engine converts it into a patch
     AND commits the patch and deletes the workflow file.
+    AND when the patch cannot be delivered, the failure is reported as an
+    error (captured, never raised out of ``ensure_pr``).
     """
 
     def _git(self, *args, cwd):
@@ -1218,6 +1220,88 @@ class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
                 "the engine must commit the workflow patch ("
                 + PATCH_FILENAME
                 + ") instead of only delivering it as a comment/artifact",
+            )
+
+    def test_undeliverable_patch_reports_error_and_keeps_workflow_file(self):
+        """The test raises an error — captured, not propagated (issue #1114).
+
+        WHEN the patch comment write fails (no comment target survives)
+        THEN ``ensure_pr`` reports the failure in ``EnsurePrResult.error``
+        AND keeps the workflow file in the worktree: an undelivered patch
+        must never be followed by a ``revert_workflow_changes`` discard.
+        """
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        workflow = ".github/workflows/new-pipeline.yaml"
+
+        with tempfile.TemporaryDirectory() as root:
+            remote = os.path.join(root, "origin.git")
+            work = os.path.join(root, "work")
+            os.makedirs(work)
+            self._git("init", "-q", "--bare", "-b", "main", remote, cwd=root)
+            self._git("init", "-q", "-b", "main", work, cwd=root)
+            for key, value in (("user.name", "t"), ("user.email", "t@e.com")):
+                self._git("config", key, value, cwd=work)
+            self._git("remote", "add", "origin", remote, cwd=work)
+            os.makedirs(os.path.join(work, "src"))
+            with open(os.path.join(work, "src", "a.py"), "w", encoding="utf-8") as fh:
+                fh.write("a = 1\n")
+            self._git("add", "-A", cwd=work)
+            self._git("commit", "-qm", "base", cwd=work)
+            self._git("push", "-q", "-u", "origin", "main", cwd=work)
+
+            # WHEN: a brand-new (untracked) file under .github/workflows/
+            os.makedirs(os.path.join(work, ".github", "workflows"))
+            with open(os.path.join(work, workflow), "w", encoding="utf-8") as fh:
+                fh.write("on: [push]\njobs: {}\n")
+
+            class _Transport:
+                def call(self, args, *, mutative=False, cwd=None, timeout=None):
+                    joined = " ".join(args)
+
+                    class _R:
+                        ok = True
+                        status = 200
+                        detail = ""
+                        payload = ""
+
+                    if "default_branch" in joined:
+                        _R.payload = "main"
+                    elif args[:2] == ["pr", "list"]:
+                        _R.payload = ""
+                    elif args[:2] == ["pr", "create"]:
+                        _R.payload = "https://github.com/acme/repo/pull/1"
+                    elif "/comments" in joined:
+                        # The patch comment write is refused by GitHub.
+                        _R.ok = False
+                        _R.status = 422
+                        _R.detail = "refused"
+                    return _R()
+
+            real_git = mod._run_git
+
+            def git_here(args, **kwargs):
+                return real_git(args, cwd=work, **kwargs)
+
+            with patch.object(mod, "_run_git", git_here), patch.object(
+                mod, "GitHubTransport", lambda *a, **k: _Transport()
+            ), patch.dict(
+                os.environ,
+                {"TARGET_NUMBER": "1", "GITHUB_REPOSITORY": "acme/repo"},
+                clear=False,
+            ):
+                result = mod.ensure_pr()
+
+            # THEN: the failure is reported as an error, not raised.
+            self.assertTrue(result.error)
+            self.assertIn("failed (422)", result.message)
+
+            # ... and the workflow file is still on disk: the engine must not
+            # discard the only copy of the work after a failed delivery.
+            self.assertTrue(
+                os.path.exists(os.path.join(work, workflow)),
+                "an undelivered patch must not be followed by a revert of the "
+                "workflow file",
             )
 
 
