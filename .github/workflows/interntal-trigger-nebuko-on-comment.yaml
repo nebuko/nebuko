@@ -14,6 +14,19 @@ permissions:
 
 jobs:
   agent:
+    # Fail-closed caller gate (issue #1024): a denied comment never starts a
+    # run, so the reusable workflow and its secrets are never invoked. The
+    # bot's own comments are excluded as a cheap anti-loop guard on top of the
+    # body markers checked inside the reusable workflow.
+    if: |
+      (github.event_name == 'issue_comment' &&
+       github.event.comment.user.login != 'nebuko[bot]' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                github.event.comment.author_association)) ||
+      (github.event_name == 'issues' &&
+       github.event.issue.user.login != 'nebuko[bot]' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                github.event.issue.author_association))
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
     with:
       agent_config_path: ".nebuko/agents/agent-config-mistral.yaml"
