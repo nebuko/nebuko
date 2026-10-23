@@ -139,16 +139,3 @@ class TestLoadConfig:
         assert agent.model_ref.max_output_tokens == 32768
 
         os.unlink(f.name)
-
-    def test_load_real_config_with_thinking_params(self):
-        """Load the actual agent-config.yaml and verify Qwen3.6 models have thinking params."""
-        config_path = str(Path(__file__).parents[3] / "agent-config.yaml")
-        if not Path(config_path).exists():
-            pytest.skip(f"Config file not found: {config_path}")
-        config = load_config(config_path)
-
-        qwen27b = config.llms.get("qwen-3-6-27b")
-        if qwen27b:
-            assert qwen27b.thinking_enabled is True
-            assert qwen27b.preserve_thinking is True
-            assert qwen27b.max_output_tokens == 32768

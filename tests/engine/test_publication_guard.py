@@ -49,6 +49,16 @@ def test_prompt_names_the_missing_steps_and_the_workflow():
         assert token in prompt
 
 
+def test_prompt_keeps_the_agent_in_control_of_the_workflow():
+    """The agent keeps control of branch, commit message and PR body."""
+    for token in ("Commit", "Push", "pull request", "finalize"):
+        assert token in publication_recall_prompt(["dirty_tree"])
+
+
+def test_prompt_passes_unknown_reasons_through():
+    assert "mystery" in publication_recall_prompt(["mystery"])
+
+
 def test_published_work_triggers_no_recall():
     conv = _Conversation()
     assert perform_publication_recalls(conv, lambda: (), lambda n: True) == 0
@@ -76,6 +86,14 @@ def test_recalls_are_capped():
 def test_dead_conversation_breaks_the_loop():
     conv = _Conversation(fail_send=True)
     assert perform_publication_recalls(conv, lambda: ("dirty_tree",), lambda n: True) == 1
+    assert conv.sent == []
+
+
+def test_budget_exhausted_pass_stops_early():
+    conv = _Conversation()
+    count = perform_publication_recalls(conv, lambda: ("missing_pr",), lambda n: False)
+    assert count == 1
+    assert len(conv.sent) == 1
 
 
 # ── Publication check ───────────────────────────────────────────
