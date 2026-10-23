@@ -373,13 +373,26 @@ def run_agent(
     maybe_register_langfuse()
 
     # ── Conversation setup & supervised execution ────────────────
+    # A persistence_dir keeps the SDK's event log on disk (LocalFileStore
+    # instead of the InMemoryFileStore fallback), so the run's per-command
+    # event JSON survives for the duration analysis (issue #1120). The engine
+    # host points it at the artifact staging dir via OPENHANDS_PERSISTENCE_DIR;
+    # LOG_DIR is the legacy fallback and a bare `agent_script.py` invocation
+    # still persists next to the workspace.
+    persistence_dir = (
+        os.environ.get("OPENHANDS_PERSISTENCE_DIR")
+        or os.environ.get("LOG_DIR")
+        or os.path.join(cwd, ".openhands")
+    )
     conversation = Conversation(
         agent=agent,
         workspace=cwd,
+        persistence_dir=persistence_dir,
         # Keep the streaming path live so the LLM timeout applies between
         # chunks rather than to the whole reasoning turn (issue #775).
         token_callbacks=[_discard_token, collector.on_token],
     )
+    logger.info(f"Conversation persistence_dir: {persistence_dir}")
 
     budget = resolve_timeout_budget()
     logger.info("Starting task execution...")

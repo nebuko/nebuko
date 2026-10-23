@@ -19,6 +19,7 @@ from nebuko.adapters.github import ARTIFACT_DIR_NAME
 from nebuko.engine.artifacts import (
     APP_LOG_FILE,
     CONSOLE_LOG_FILE,
+    PERSISTENCE_DIR_NAME,
     SDK_APP_LOG_FILE,
     ArtifactFile,
     RunArtifactStager,
@@ -44,6 +45,24 @@ class TestRunArtifactStager:
         env = RunArtifactStager(staging).child_log_env()
 
         assert env == {"LOG_TO_FILE": "true", "LOG_DIR": str(staging.resolve())}
+
+    def test_persistence_dir_lives_inside_the_staging_dir(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+
+        persistence = RunArtifactStager(staging).persistence_dir()
+
+        assert persistence == staging.resolve() / PERSISTENCE_DIR_NAME
+        assert persistence.is_absolute()
+
+    def test_child_persistence_env_points_at_the_staged_persistence_dir(
+        self, tmp_path
+    ):
+        staging = tmp_path / "nebuko-task-logs"
+        stager = RunArtifactStager(staging)
+
+        env = stager.child_persistence_env()
+
+        assert env == {"OPENHANDS_PERSISTENCE_DIR": str(stager.persistence_dir())}
 
     def test_stage_console_log_creates_the_dir_and_writes_the_output(self, tmp_path):
         staging = tmp_path / "nested" / "nebuko-task-logs"

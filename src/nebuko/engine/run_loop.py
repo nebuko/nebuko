@@ -2280,7 +2280,9 @@ class Engine:
         env = _backfill_workflow_identity(env, self._seeded_prev_state.get("state"))
         env = _ensure_child_identity(env, self._active_trigger())
         env = _stamp_llm_session_id(env)
-        env.update(self._artifacts().child_log_env())
+        artifacts = self._artifacts()
+        env.update(artifacts.child_log_env())
+        env.update(artifacts.child_persistence_env())
         env = _with_step_input_records(
             env, self._step_input_state.get("results") or []
         )

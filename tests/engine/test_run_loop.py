@@ -2715,6 +2715,21 @@ class TestRunLogArtifacts:
         assert env["LOG_TO_FILE"] == "true"
         assert env["LOG_DIR"] == str(staging)
 
+    def test_the_agent_child_is_pointed_at_the_persistence_dir(self, tmp_path, monkeypatch):
+        """The SDK conversation persists its event log in the staging dir (#1120).
+
+        Without a ``persistence_dir`` the SDK falls back to the
+        ``InMemoryFileStore`` and the per-command event JSON is lost with the
+        process — the exact gap the duration analysis hits.
+        """
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev"})
+
+        env = engine._agent_env()
+
+        staging = engine.adapter.artifact_dir().resolve()
+        assert env["OPENHANDS_PERSISTENCE_DIR"] == str(staging / "conversation")
+
     def test_publish_stages_the_console_log(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
         result = {**_agent_result("done"), "console_log": "[phase:normalize] ok\n"}

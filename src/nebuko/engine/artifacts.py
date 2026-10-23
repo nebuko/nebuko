@@ -19,6 +19,7 @@ __all__ = [
     "APP_LOG_FILE",
     "ArtifactFile",
     "CONSOLE_LOG_FILE",
+    "PERSISTENCE_DIR_NAME",
     "RunArtifactStager",
     "RunArtifacts",
     "SDK_APP_LOG_FILE",
@@ -36,6 +37,10 @@ APP_LOG_FILE = "app.txt"
 # is hardcoded in the SDK); :meth:`RunArtifactStager.bundle` renames it to
 # ``APP_LOG_FILE`` before the upload manifest is frozen.
 SDK_APP_LOG_FILE = "app.log"
+
+# Subdirectory of the staging dir the SDK conversation persists its event log
+# into (issue #1120); uploaded with the rest of the run artifacts.
+PERSISTENCE_DIR_NAME = "conversation"
 
 
 # @stub-protected
@@ -82,6 +87,21 @@ class RunArtifactStager:
     def child_log_env(self) -> dict[str, str]:
         """Env overrides that make the agent child log into :meth:`log_dir`."""
         return {"LOG_TO_FILE": "true", "LOG_DIR": str(self.log_dir())}
+
+    # @stub-protected
+    def persistence_dir(self) -> Path:
+        """Directory the SDK conversation persists its event log into.
+
+        Kept inside the staging dir so the workflow's single
+        ``actions/upload-artifact`` path carries the event JSON too (issue
+        #1120); the agent child resolves it through ``OPENHANDS_PERSISTENCE_DIR``.
+        """
+        return self.log_dir() / PERSISTENCE_DIR_NAME
+
+    # @stub-protected
+    def child_persistence_env(self) -> dict[str, str]:
+        """Env override pointing the agent child at :meth:`persistence_dir`."""
+        return {"OPENHANDS_PERSISTENCE_DIR": str(self.persistence_dir())}
 
     # @stub-protected
     def stage_console_log(self, console_log: str) -> None:
