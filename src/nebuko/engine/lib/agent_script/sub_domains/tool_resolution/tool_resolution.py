@@ -28,7 +28,9 @@ logger = get_logger(__name__)
 
 #: Config tool names the SDK resolves from its own registry (as opposed to the
 #: SDK's builtin classes handled by ``include_default_tools``).
-_SDK_TOOL_NAMES = ("terminal", "file_editor", "task_tracker")
+# ``read`` / ``edit`` / ``write`` are nebuko-owned (issue #1118) but resolve
+# from the same SDK registry, so they live here too.
+_SDK_TOOL_NAMES = ("terminal", "file_editor", "task_tracker", "read", "edit", "write")
 
 #: Config tool name -> SDK builtin class name.
 _BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
@@ -64,18 +66,20 @@ class ResolvedToolset:
 
 
 def ensure_sdk_tools_registered() -> None:
-    """Idempotently register TerminalTool, TaskTrackerTool, our file_editor.
+    """Idempotently register the environment + nebuko file tools.
 
-    Deterministic — importing the classes from ``openhands.tools`` triggers the
-    SDK's own import-time registration, but this function *also* registers any
-    name that is still missing, so a future change to those side effects cannot
-    silently reintroduce the #860 regression. Existing names are left alone to
-    avoid ``register_tool``'s duplicate-registration warning — except
+    Deterministic — importing the SDK classes from ``openhands.tools`` triggers
+    the SDK's own import-time registration, but this function *also* registers
+    any name that is still missing, so a future change to those side effects
+    cannot silently reintroduce the #860 regression. Existing names are left
+    alone to avoid ``register_tool``'s duplicate-registration warning — except
     ``file_editor``, which is deliberately re-registered with the engine's
     ``BoundedFileEditorTool`` subclass (same registered name, so configs keep
     resolving; it adds view-range prompt guidance and caps unbounded views —
     the GLM-5.3-flash run of issue #1114 paid ~16K context characters per
-    whole-file view).
+    whole-file view). The nebuko ``read``/``edit``/``write`` tools
+    (issue #1118) have no SDK import side effect, so their registration lives
+    entirely here.
     """
     from agent_script.features.bounded_file_editor.bounded_file_editor import (
         BoundedFileEditorTool,
@@ -84,9 +88,18 @@ def ensure_sdk_tools_registered() -> None:
     from openhands.tools.task_tracker import TaskTrackerTool
     from openhands.tools.terminal import TerminalTool
 
+    from agent_script.sub_domains.tool_resolution.file_tools import (
+        EditTool,
+        ReadTool,
+        WriteTool,
+    )
+
     _register_if_missing(TerminalTool)
     _register_bounded_file_editor(BoundedFileEditorTool, FileEditorTool)
     _register_if_missing(TaskTrackerTool)
+    _register_if_missing(ReadTool)
+    _register_if_missing(EditTool)
+    _register_if_missing(WriteTool)
 
 
 def _register_if_missing(tool_class) -> None:
@@ -232,9 +245,10 @@ def _ensure_handoff_tool_registered() -> None:
 def resolve_toolset(tool_names: Iterable[str], role_name: str) -> ResolvedToolset:
     """Map configured tool names to SDK/builtin specs.
 
-    Registers the SDK-provided tools (terminal, file_editor, task_tracker)
-    explicitly before emitting their ``Tool`` specs, so the SDK can resolve them
-    at first ``send_message`` regardless of import order.
+    Registers the SDK-provided tools (terminal, file_editor, task_tracker) and
+    the nebuko file tools (read, edit, write — issue #1118) explicitly before
+    emitting their ``Tool`` specs, so the SDK can resolve them at first
+    ``send_message`` regardless of import order.
     """
     requested = list(tool_names)
     if any(name in _SDK_TOOL_NAMES for name in requested):
