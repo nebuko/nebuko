@@ -24,7 +24,7 @@ llms:
   glm-5_3-flash:
     model_path: "mistral/zai-glm-5-3-flash"
     provider: "${providers.mistral}"
-    reasoning_effort: "none"
+    reasoning_effort: "low"
 
 # ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
 mcp_servers:
@@ -67,7 +67,6 @@ agents:
     model: "${llms.glm-5_3-flash}"
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     temperature: 0.1
-    reasoning_effort: "none"
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - inject: ["posting-contract"]
@@ -78,7 +77,6 @@ agents:
     model: "${llms.glm-5_3-flash}"
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
     temperature: 0.1
-    reasoning_effort: "none"
     prompt_file: "defaults/prompts/context.md"
     skills:
       - inject: ["call-agent", "posting-contract", "context-research"]
@@ -91,7 +89,6 @@ agents:
     model: "${llms.glm-5_3-flash}"
     role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
     temperature: 0.4
-    reasoning_effort: "none"
     prompt_file: "defaults/prompts/review.md"
     skills:
       - inject: ["posting-contract", "plan-review"]
