@@ -33,6 +33,7 @@ For the high-level pitch and quick overview, see the root
 | [adr/0012-complexity-governance.md](./adr/0012-complexity-governance.md) | Operators | Layered per-repo `ComplexityPolicy`, evidence bundles, and the `ComplexityGovernor` tier adjudicator. |
 | [adr/0013-step-outputs-are-step-comments.md](./adr/0013-step-outputs-are-step-comments.md) | Contributors | A step's output is its posted comment: step-name references, `{{ <step> }}` prompt syntax, locator storage, no truncation. |
 | [adr/0014-cache-aware-cost-and-default-price-service.md](./adr/0014-cache-aware-cost-and-default-price-service.md) | Contributors | Cost precedence chain, four-rate cache-aware session cost, the OpenRouter-backed default price service, and the removal of SDK price forwarding. |
+| [adr/0016-claude-code-subscription-credential-strategies.md](./adr/0016-claude-code-subscription-credential-strategies.md) | Operators | Anthropic-compliant lanes for billing runs to a user's Claude subscription: single-user secret, actor-bound runners, per-user credential repo + App bridge, org API-key/WIF automation; guards and rejected alternatives. |
 
 Business documents (not user documentation): `etude-de-marche.md` (market
 study, in French), and the root `landscape.md` (product positioning — "what
