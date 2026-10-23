@@ -83,6 +83,52 @@ class TestBoundedView:
         assert "line one" in long_file.read_text()
 
 
+class TestPromptProfile:
+    """``prompt_profile: lean`` (issue #851 S3) delivered via Tool params."""
+
+    def test_lean_description_is_compact_and_keeps_the_rules(self):
+        full = _create_tool("full").description
+        lean = _create_tool("lean").description
+        assert len(lean) < len(full) / 2
+        for rule in ("view", "create", "str_replace", "undo_edit", "absolute"):
+            assert rule in lean
+        # The working-directory hint the SDK appends must survive.
+        assert "working directory" in lean
+
+    def test_lean_keeps_the_prompt_guidance(self):
+        tool = _create_tool("lean")
+        assert "view_range" in tool.prompt_guidance
+
+    def test_full_is_the_default(self):
+        assert "EXACT" in _create_tool("full").description or "exact" in _create_tool(
+            "full"
+        ).description
+
+    def test_unknown_profile_is_rejected(self):
+        with pytest.raises(ValueError, match="prompt_profile"):
+            BoundedFileEditorTool.create(_state(), prompt_profile="verbose")
+
+
+def _state():
+    class _Workspace:
+        working_dir = "/w"
+
+    class _State:
+        workspace = _Workspace()
+
+        class agent:
+            class llm:
+                @staticmethod
+                def vision_is_active():
+                    return False
+
+    return _State()
+
+
+def _create_tool(profile: str) -> BoundedFileEditorTool:
+    return BoundedFileEditorTool.create(_state(), prompt_profile=profile)[0]
+
+
 class TestRegistrationSurface:
     def test_keeps_the_file_editor_name(self):
         assert BoundedFileEditorTool.name == "file_editor"

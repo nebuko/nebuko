@@ -175,14 +175,54 @@ carry over — put a `cd` first and the rest of the batch runs there.
 
 """
 
+#: ``prompt_profile: lean`` header (issue #851 S3): the parameter contract
+#: verbatim, the why-paragraphs dropped. The per-turn fixed block is sent on
+#: every call, so on long runs the prose is pure token overhead — the batch
+#: histogram of the issue #1114 re-run showed the model already batches by
+#: default once the tool exists.
+BATCH_HEADER_LEAN = """Run several shell commands in ONE call, in order, in the same persistent shell.
 
-def build_terminal_batch_description() -> str:
+Parameters:
+- commands: list of shell commands, each ONE statement. A chain joined by `;`,
+  `&&`, `||`, `|` or `&` is one statement; a newline is not — put each
+  newline-separated statement in its own list entry.
+- stop_on_failure: optional; when true the batch stops at the first non-zero exit.
+- timeout: optional per-command limit in seconds. A command exceeding its soft
+  timeout keeps running in the background and reports exit code -1.
+- summary: optional one-line description; narration belongs here, never as
+  prose before the tool call.
+
+Each entry returns its own `[i/N] <command>` block with exit code and output.
+The shell (`cd`, exports, virtualenv) persists across entries and calls.
+"""
+
+#: Recon directive appended to the tool's prompt guidance when the role's
+#: ``token_budget.require_batched_recon`` is on: one read per round-trip is
+#: the dominant turn-count cost (74 of 134 batches in the measured run
+#: carried 1-2 commands).
+RECON_GUIDANCE = """
+### Reconnaissance discipline
+- Aim for 4+ commands per `terminal_batch` call. Stack every read you already
+  know you need (`ls`, `grep`, `sed -n`, `git status`, `git diff`, `wc -l`)
+  into ONE call before acting on the results.
+- Never send a one-command batch for a read. If you find yourself wanting a
+  second look at something, batch it with the checks around it."""
+
+
+
+def build_terminal_batch_description(lean: bool = False) -> str:
     """Our batching header followed by the SDK's shell/platform guidance.
 
     The SDK text carries the rules this tool inherits (soft timeout, background
     commands, output truncation, terminal reset); only its "one command at a
     time" clause is wrong here, so that clause is replaced rather than dropped.
+
+    ``lean=True`` (``prompt_profile: lean``, issue #851 S3) drops the SDK tail:
+    the essential contract lives in the header, and the tail's ~2.5K characters
+    ride along on every call of a long run.
     """
+    if lean:
+        return BATCH_HEADER_LEAN
     sdk_text = (
         WINDOWS_TOOL_DESCRIPTION
         if platform.system() == "Windows"
@@ -332,22 +372,41 @@ class TerminalBatchTool(ToolDefinition[TerminalBatchAction, TerminalBatchObserva
     def create(
         cls,
         conv_state: "ConversationState | None" = None,
+        *,
+        prompt_profile: str = "full",
+        require_batched_recon: bool = False,
         **params: Any,
     ) -> Sequence[Self]:
-        """Create a TerminalBatchTool with a lazily bound executor."""
+        """Create a TerminalBatchTool with a lazily bound executor.
+
+        The two keyword parameters are the role's ``token_budget`` knobs
+        (issue #851), delivered through the ``Tool`` spec's ``params`` by
+        ``resolve_toolset``: ``prompt_profile="lean"`` trims the description,
+        ``require_batched_recon=True`` appends the batching directive to the
+        prompt guidance.
+        """
         if params:
-            raise ValueError("TerminalBatchTool doesn't accept parameters")
+            raise ValueError(
+                f"TerminalBatchTool doesn't accept parameters: {sorted(params)}"
+            )
+        if prompt_profile not in ("full", "lean"):
+            raise ValueError(f"unknown prompt_profile: {prompt_profile!r}")
+        guidance = (
+            "Call terminal_batch with JSON arguments only. Any "
+            "narration belongs in the `summary` parameter, never in "
+            "prose before the call."
+        )
+        if require_batched_recon:
+            guidance += RECON_GUIDANCE
         return [
             cls(
-                description=TERMINAL_BATCH_DESCRIPTION,
+                description=build_terminal_batch_description(
+                    lean=prompt_profile == "lean"
+                ),
                 action_type=TerminalBatchAction,
                 observation_type=TerminalBatchObservation,
                 executor=TerminalBatchExecutor(),
-                prompt_guidance=(
-                    "Call terminal_batch with JSON arguments only. Any "
-                    "narration belongs in the `summary` parameter, never in "
-                    "prose before the call."
-                ),
+                prompt_guidance=guidance,
                 annotations=ToolAnnotations(
                     title="terminal_batch",
                     readOnlyHint=False,

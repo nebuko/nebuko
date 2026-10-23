@@ -72,6 +72,12 @@ agents:
       - inject: ["posting-contract"]
       - discover: ["git-pr-workflow", "complexity"]
     tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
+    # Lean tool/prompt overhead + batched reconnaissance (issue #851): the
+    # GLM-flash #1114 re-run paid ~3.9K chars of tool description every call
+    # and 74 of 134 batches carried 1-2 commands.
+    token_budget:
+      prompt_profile: "lean"
+      require_batched_recon: true
 
   context:
     model: "${llms.glm-5_3-flash}"
@@ -82,6 +88,9 @@ agents:
       - inject: ["call-agent", "posting-contract", "context-research"]
       - discover: ["complexity"]
     tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "finish", "finalize", "complexity_review"]
+    token_budget:
+      prompt_profile: "lean"
+      require_batched_recon: true
     mcp_servers:
       - "${mcp_servers.brave-search}"
 
@@ -94,6 +103,8 @@ agents:
       - inject: ["posting-contract", "plan-review"]
       - discover: ["retrospective", "complexity"]
     tools: ["terminal", "terminal_batch", "finish", "finalize", "complexity_review"]
+    token_budget:
+      prompt_profile: "lean"
 
   po:
     model: "${llms.glm-5_3-flash}"

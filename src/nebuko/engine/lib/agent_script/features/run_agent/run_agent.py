@@ -346,7 +346,9 @@ def run_agent(
     if "finalize" not in agent_tools:
         agent_tools = [*agent_tools, "finalize"]
 
-    resolved = resolve_toolset(agent_tools, role_name)
+    resolved = resolve_toolset(
+        agent_tools, role_name, token_budget=resolve_token_budget_policy(agent_cfg)
+    )
     sdk_tools = list(resolved.sdk_tools)
     include_default_tools = list(resolved.builtin_tools)
     dispatch_tool_enabled = resolved.dispatch_tool_enabled
