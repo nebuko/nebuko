@@ -85,6 +85,48 @@ class TestEnsureSdkToolsRegistered:
         for name in ("terminal", "file_editor", "task_tracker"):
             assert name in registered
 
+    def test_token_budget_flows_into_engine_tool_params(self):
+        # Issue #851 S3: the role's token_budget knobs ride the Tool spec's
+        # params into the engine-owned tools' create(); SDK tools take no
+        # params and stay bare.
+        from config.sub_domains.token_budget.token_budget import TokenBudgetPolicy
+
+        policy = TokenBudgetPolicy(prompt_profile="lean", require_batched_recon=True)
+        resolved = resolve_toolset(
+            ["terminal", "terminal_batch", "file_editor", "task_tracker"],
+            "dev",
+            token_budget=policy,
+        )
+        params = {tool.name: tool.params for tool in resolved.sdk_tools}
+        assert params["terminal_batch"] == {
+            "prompt_profile": "lean",
+            "require_batched_recon": True,
+        }
+        assert params["file_editor"] == {"prompt_profile": "lean"}
+        assert params["terminal"] == {}
+        assert params["task_tracker"] == {}
+
+    def test_no_policy_emits_bare_specs(self):
+        resolved = resolve_toolset(
+            ["terminal", "terminal_batch", "file_editor"], "dev"
+        )
+        assert all(tool.params == {} for tool in resolved.sdk_tools)
+
+    def test_default_policy_is_full_profile(self):
+        from config.sub_domains.token_budget.token_budget import TokenBudgetPolicy
+
+        resolved = resolve_toolset(
+            ["terminal", "terminal_batch", "file_editor"],
+            "dev",
+            token_budget=TokenBudgetPolicy(),
+        )
+        params = {tool.name: tool.params for tool in resolved.sdk_tools}
+        assert params["terminal_batch"] == {
+            "prompt_profile": "full",
+            "require_batched_recon": False,
+        }
+        assert params["file_editor"] == {"prompt_profile": "full"}
+
     def test_file_editor_resolves_to_the_bounded_subclass(self):
         from openhands.sdk.tool.registry import _TOOL_CLASSES
 
