@@ -1374,7 +1374,11 @@ class Engine:
         ensure_import_path()
         from resolve_config.resolve_config import resolve_config
 
-        paths = NebukoPaths.discover(self.repo_root)
+        # Anchored at the caller's workspace, not the engine checkout (issue
+        # #1108): a cross-repo caller's ``.nebuko/`` overrides live under
+        # ``$GITHUB_WORKSPACE``, while ``self.repo_root`` is the imported
+        # ``.nebuko-engine`` checkout.
+        paths = NebukoPaths.discover(self._caller_root())
         workflows_dir, local_workflows_dir = self._workflow_dirs()
         resolved = dict(
             resolve_config(
@@ -2200,8 +2204,14 @@ class Engine:
         )
 
     def _workflow_dirs(self) -> tuple[str, str | None]:
-        """The workflow search roots the resolver uses (shipped, most-specific)."""
-        paths = NebukoPaths.discover(self.repo_root)
+        """The workflow search roots the resolver uses (shipped, most-specific).
+
+        Anchored at the caller's workspace, not the engine checkout (issue
+        #1108): a cross-repo caller's ``.nebuko/workflows/`` lives under
+        ``$GITHUB_WORKSPACE``, while ``self.repo_root`` is the imported
+        ``.nebuko-engine`` checkout.
+        """
+        paths = NebukoPaths.discover(self._caller_root())
         roots = paths.search_roots(ConfigKind.WORKFLOW)
         return (
             str(roots[-1]),
