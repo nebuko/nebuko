@@ -103,11 +103,9 @@ _FINALIZE_RETRY_PROMPT = (
     "argument."
 )
 
-#: The closing turn's tool surface (issues #973, #1014): the terminal tool plus
-#: ``finish``. ``finish`` stays exposed so the model can terminate the turn; it
-#: is not a routing channel and its message is only a fallback deliverable. The
-#: removed ``dispatch_next``/``call_agent`` are hidden — the outcome is typed.
-_FINALIZE_TOOL_NAMES = frozenset({"finalize", "finish"})
+#: The closing turn's tool surface (issues #973, #1014): the single terminal tool.
+#: ``dispatch_next``/``call_agent`` have been removed — the outcome is typed.
+_FINALIZE_TOOL_NAMES = frozenset({"finalize"})
 
 #: Watchdog budget for one engine-elicited closing turn (seconds). A turn that
 #: outlives it is interrupted and the caller keeps the deterministic fallback

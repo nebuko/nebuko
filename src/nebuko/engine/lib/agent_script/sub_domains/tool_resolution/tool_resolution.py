@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 _SDK_TOOL_NAMES = ("terminal", "file_editor", "task_tracker")
 
 #: Config tool name -> SDK builtin class name.
-_BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
+_BUILTIN_TOOL_MAP = {"think": "ThinkTool"}
 
 #: The name ``TerminalBatchTool`` auto-derives from its class name, and the
 #: name the SDK registry is keyed by — the two must stay in step, because
