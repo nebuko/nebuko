@@ -40,6 +40,28 @@ class TestNormalizeModelId:
     def test_bare_id_has_single_candidate(self):
         assert normalize_model_id("gpt-5.5") == ["gpt-5.5"]
 
+    def test_mistral_vendor_prefix_gains_the_mistralai_alias(self):
+        """Mistral's OpenAI-compatible API publishes ``mistral/<model>`` paths
+        while the price table keys on ``mistralai/<model>`` (issue #1126)."""
+        assert "mistralai/mistral-small-2603" in normalize_model_id(
+            "mistral/mistral-small-2603"
+        )
+
+    def test_mistral_alias_keeps_the_exact_id_first(self):
+        candidates = normalize_model_id("mistral/mistral-small-2603")
+        assert candidates[0] == "mistral/mistral-small-2603"
+        assert candidates[-1] == "mistralai/mistral-small-2603"
+
+    def test_mistral_route_prefix_strips_then_aliases(self):
+        candidates = normalize_model_id("openai/mistral/mistral-small-2603")
+        assert "mistral/mistral-small-2603" in candidates
+        assert "mistralai/mistral-small-2603" in candidates
+
+    def test_no_alias_for_unmapped_vendors(self):
+        candidates = normalize_model_id("deepseek/deepseek-v4.1-flash")
+        assert "deepseek/deepseek-v4.1-flash" in candidates
+        assert not any(c.startswith("mistralai/") for c in candidates)
+
 
 class TestFromOpenrouter:
     """PriceTable.from_openrouter: per-token USD strings → per-1M floats."""
@@ -138,6 +160,24 @@ class TestMatch:
             }
         )
         assert table.match("openai/dup") is None
+
+    def test_mistral_vendor_prefix_resolves_to_mistralai_entry(self):
+        # Mistral's OpenAI-compatible API takes ``mistral/<model>`` paths while
+        # the table keys on ``mistralai/<model>`` (issue #1126).
+        table = PriceTable.from_openrouter(
+            {
+                "data": [
+                    {
+                        "id": "mistralai/mistral-small-2603",
+                        "pricing": {"prompt": "0.00000015", "completion": "0.0000006"},
+                    }
+                ]
+            }
+        )
+        price = table.match("mistral/mistral-small-2603")
+        assert price is not None
+        assert price.input_price == pytest.approx(0.15)
+        assert price.output_price == pytest.approx(0.6)
 
 
 class TestModelPriceMergedOver:
