@@ -47,6 +47,15 @@ DEFAULT_END_TOOLS = frozenset(
 )
 
 
+def _terminal_tools(registry: EngineToolRegistry) -> frozenset[str]:
+    """The registry's terminal tools — the injectable form of the derivation."""
+    return frozenset(
+        name
+        for name, spec in registry.tools.items()
+        if spec.payload_kind in TERMINAL_PAYLOAD_KINDS
+    )
+
+
 @dataclass(frozen=True)
 class AnswerSnapshot:
     """The deliverable frozen at the end-tool boundary.
@@ -93,7 +102,7 @@ class AnswerCapture:
     ) -> None:
         self._registry = registry
         self._end_tools = (
-            frozenset(registry.tools) if end_tools is None else frozenset(end_tools)
+            _terminal_tools(registry) if end_tools is None else frozenset(end_tools)
         )
         self._current = ""
         self._snapshot: AnswerSnapshot | None = None
