@@ -14,8 +14,6 @@ import pytest
 
 from nebuko.engine.git_session import (
     BENIGN_SKIPS,
-    GIT_IDENTITY_EMAIL,
-    GIT_IDENTITY_NAME,
     GitSessionGuard,
     GuardResult,
 )
@@ -75,8 +73,10 @@ def test_preflight_writes_the_repo_local_identity(checkout):
     result = _local_guard(checkout).preflight()
 
     assert result.ok
-    assert _git(checkout, "config", "--local", "user.name") == GIT_IDENTITY_NAME
-    assert _git(checkout, "config", "--local", "user.email") == GIT_IDENTITY_EMAIL
+    # Literal values, not the module constants: the constants could drift and
+    # the test would still pass (tautology flagged in review round 2).
+    assert _git(checkout, "config", "--local", "user.name") == "nebuko"
+    assert _git(checkout, "config", "--local", "user.email") == "nebuko@nebuko.dev"
 
 
 def test_preflight_skips_without_a_remote(tmp_path):
@@ -194,7 +194,7 @@ def test_finalize_commits_and_pushes_leftovers(checkout, remote):
         remote, "rev-parse", "feature/x"
     )
     author = _git(checkout, "log", "-1", "--format=%an <%ae>")
-    assert author == f"{GIT_IDENTITY_NAME} <{GIT_IDENTITY_EMAIL}>"
+    assert author == "nebuko <nebuko@nebuko.dev>"
 
 
 def test_finalize_respects_gitignore(checkout, remote):

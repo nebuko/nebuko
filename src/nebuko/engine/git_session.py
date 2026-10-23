@@ -35,9 +35,9 @@ from openhands.sdk import get_logger
 logger = get_logger(__name__)
 
 # @stub-protected
-GIT_IDENTITY_NAME: str = "nebuko-agent"
+GIT_IDENTITY_NAME: str = "nebuko"
 # @stub-protected
-GIT_IDENTITY_EMAIL: str = "nebuko-agent@users.noreply.github.com"
+GIT_IDENTITY_EMAIL: str = "nebuko@nebuko.dev"
 
 #: Skip reasons a guard cannot act on. They mirror the ``check_publication``
 #: taxonomy: no remote or a detached HEAD means there is nothing to publish.
@@ -187,7 +187,7 @@ class GitSessionGuard:
 
     # @stub-protected
     def _configure_identity(self) -> None:
-        """Write the repo-local commit identity (``nebuko-agent``).
+        """Write the repo-local commit identity (``nebuko``).
 
         Repo-local so a bare checkout with no global identity still commits;
         the env overrides keep the two constants the single source of truth.
