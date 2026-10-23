@@ -355,6 +355,11 @@ def run_agent(
     # An ``output:`` declaration only decides how the report is rendered.
     if "finalize" not in agent_tools:
         agent_tools = [*agent_tools, "finalize"]
+    # ``fetch_comment_bodies`` (issue #748) is a read-only context lookup, so
+    # every role gets it even when its config predates the tool — same rule as
+    # ``finalize`` above: a static list never opts a role out of safe context.
+    if "fetch_comment_bodies" not in agent_tools:
+        agent_tools = [*agent_tools, "fetch_comment_bodies"]
 
     resolved = resolve_toolset(
         agent_tools, role_name, token_budget=resolve_token_budget_policy(agent_cfg)

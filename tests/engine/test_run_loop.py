@@ -38,6 +38,7 @@ from workflow_state import (
 from workflow_state.workflow_state import WorkflowState
 from nebuko.engine.input_wiring import Materialization
 from nebuko.engine.run_loop import (
+    COMMENT_BODIES_ENV,
     PHASES,
     STEP_INPUT_RESULTS_ENV,
     Engine,
@@ -51,6 +52,7 @@ from nebuko.engine.run_loop import (
     _render_thread_records,
     _render_unverified_records,
     _stamp_llm_session_id,
+    _with_comment_bodies,
     _with_step_input_records,
     _TRIGGER_KEY,
     main,
@@ -3914,6 +3916,35 @@ class TestStepInputRecordsEnv:
     def test_no_results_leaves_the_env_untouched(self):
         env = {"X": "1"}
         assert _with_step_input_records(env, []) == {"X": "1"}
+
+
+class TestCommentBodiesEnv:
+    """The thread's comment bodies are staged for ``fetch_comment_bodies`` (#748)."""
+
+    def test_bodies_are_written_to_a_json_file_whose_path_is_staged(self):
+        env = _with_comment_bodies({}, ([], {"101": "first body"}))
+        assert COMMENT_BODIES_ENV in env
+        with open(env[COMMENT_BODIES_ENV], encoding="utf-8") as handle:
+            assert json.load(handle) == {"101": "first body"}
+
+    def test_no_ledger_leaves_the_env_untouched(self):
+        env = {"X": "1"}
+        assert _with_comment_bodies(env, None) == {"X": "1"}
+
+    def test_ledger_without_bodies_leaves_the_env_untouched(self):
+        env = {"X": "1"}
+        assert _with_comment_bodies(env, ([], {})) == {"X": "1"}
+
+    def test_staged_file_is_readable_by_the_tool_loader(self, monkeypatch):
+        from agent_script.features.fetch_comment_bodies_tool.fetch_comment_bodies_tool import (
+            load_comment_bodies,
+        )
+
+        env = _with_comment_bodies({}, ([], {"101": "first body"}))
+        monkeypatch.setenv(COMMENT_BODIES_ENV, env[COMMENT_BODIES_ENV])
+        assert load_comment_bodies() == {"101": "first body"}
+
+
 # --- Session hooks (issue #884) -------------------------------------------
 
 
