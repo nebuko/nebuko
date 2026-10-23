@@ -41,7 +41,8 @@ mcp_servers:
       BRAVE_API_KEY: "BRAVE_API_KEY"
 
 # ── Agents: role → model + prompt + skills + tools ──
-# Tools: terminal, file_editor, task_tracker (SDK tools)
+# Tools: terminal, terminal_batch (batched shell, issue #982), file_editor
+#        (bounded views + view-range guidance), task_tracker (SDK tools)
 #        think, finish (built-in defaults)
 agents:
   architect:
