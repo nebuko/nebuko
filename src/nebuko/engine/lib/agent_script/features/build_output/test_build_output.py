@@ -552,6 +552,9 @@ class TestGateLockArming(unittest.TestCase):
                 "WORKFLOW_STEP": "review",
                 "ROLE_NAME": "context",
                 "GATE_CONSULT": "context",
+                # Hermetic: never inherit an ambient gate decision (the test
+                # runner itself may run on a released gate).
+                "GATE_RELEASED": "",
             }
             conversation = NS(
                 state=NS(events=[_msg_event("callee answer")]),
@@ -708,6 +711,9 @@ class TestIsHumanGateHold(unittest.TestCase):
                 "WORKFLOW_STEP": "plan",
                 "WORKFLOW_NEXT": "implement",
                 "ROLE_NAME": "architect",
+                # Hermetic: never inherit an ambient gate decision or consult.
+                "GATE_RELEASED": "",
+                "GATE_CONSULT": "",
             }
             conversation = NS(
                 state=NS(events=[_msg_event("plan answer")]),
@@ -772,6 +778,9 @@ class TestIsHumanGateHold(unittest.TestCase):
                 "WORKFLOW_STEP": "plan",
                 "WORKFLOW_NEXT": "implement",
                 "ROLE_NAME": "architect",
+                # Hermetic: never inherit an ambient gate decision or consult.
+                "GATE_RELEASED": "",
+                "GATE_CONSULT": "",
             }
             conversation = NS(
                 state=NS(events=[_msg_event("plan answer")]),

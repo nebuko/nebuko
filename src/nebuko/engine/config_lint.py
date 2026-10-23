@@ -67,6 +67,7 @@ RULE_SEVERITY: dict[str, str] = {
 KNOWN_TOOLS: frozenset[str] = frozenset(
     {
         "terminal",
+        "terminal_batch",
         "file_editor",
         "task_tracker",
         "think",
