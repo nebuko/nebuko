@@ -1317,6 +1317,171 @@ class TestRealGitBaseRefResolution(unittest.TestCase):
         self.assertEqual(state.skip_reason, "")
         self.assertIn("unpushed_commits", state.reasons)
 
+class TestRealGitNewWorkflowFileBecomesAPatch(unittest.TestCase):
+    """Issue #1114: a *new* file under ``.github/workflows/`` end to end.
+
+    WHEN the agent leaves a brand-new (untracked) workflow file in the tree
+    THEN the engine converts it into a ``git apply``-able patch (comment +
+        artifact),
+      AND commits the remaining work,
+      AND deletes the workflow file from the tree so no push can carry it.
+
+    The failure path is pinned too: when the patch cannot be delivered the
+    engine must raise rather than silently discard the only copy of the work
+    (issue #1080's one forbidden outcome).
+    """
+
+    WORKFLOW = ".github/workflows/new-trigger.yaml"
+    CODE = "src/thing.py"
+
+    def _git(self, *args, cwd):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+        ).stdout
+
+    def _repo(self, root):
+        """Bare origin + work clone with a committed base (no workflow file)."""
+        remote = os.path.join(root, "origin.git")
+        work = os.path.join(root, "work")
+        os.makedirs(work)
+        self._git("init", "-q", "--bare", "-b", "main", remote, cwd=root)
+        self._git("clone", "-q", remote, work, cwd=root)
+        for key, value in (("user.name", "t"), ("user.email", "t@e.com")):
+            self._git("config", key, value, cwd=work)
+        os.makedirs(os.path.join(work, "src"))
+        with open(os.path.join(work, self.CODE), "w", encoding="utf-8") as fh:
+            fh.write("x = 1\n")
+        self._git("add", "-A", cwd=work)
+        self._git("commit", "-qm", "base", cwd=work)
+        self._git("push", "-q", "origin", "main", cwd=work)
+        # The agent works on a feature branch with no upstream (the engine's
+        # real situation): base comparisons must fall back to origin/main.
+        self._git("checkout", "-q", "-b", "feature/issue-1114", cwd=work)
+        return remote, work
+
+    def _agent_work(self, work):
+        """Leave a brand-new workflow file (untracked) plus a code change."""
+        os.makedirs(os.path.join(work, ".github", "workflows"), exist_ok=True)
+        with open(os.path.join(work, self.WORKFLOW), "w", encoding="utf-8") as fh:
+            fh.write("on: [push]\n")
+        with open(os.path.join(work, self.CODE), "w", encoding="utf-8") as fh:
+            fh.write("x = 2\n")
+
+    def _transport(self, posted):
+        class _Transport:
+            def call(self, args, *, mutative=False, cwd=None, timeout=None):
+                class _R:
+                    ok = True
+                    status = 200
+                    detail = ""
+                    payload = ""
+
+                joined = " ".join(args)
+                if "default_branch" in joined:
+                    _R.payload = "main"
+                elif args[:2] == ["pr", "list"]:
+                    _R.payload = ""
+                elif args[:2] == ["pr", "create"]:
+                    _R.payload = "https://github.com/acme/repo/pull/1114"
+                elif "/comments" in joined:
+                    _R.payload = "https://github.com/acme/repo/issues/1114#c1"
+                    posted.append(joined)
+                return _R()
+
+        return _Transport()
+
+    def _run_ensure_pr(self, root, *, env):
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        work = os.path.join(root, "work")
+        real_git = mod._run_git
+
+        def git_here(args, **kwargs):
+            return real_git(args, cwd=work, **kwargs)
+
+        posted: list[str] = []
+        with patch.object(mod, "_run_git", git_here), patch.object(
+            mod,
+            "GitHubTransport",
+            lambda *a, **k: self._transport(posted),
+        ), patch.dict(os.environ, env, clear=False):
+            result = mod.ensure_pr()
+        return result, posted, work
+
+    def test_new_workflow_file_is_patched_committed_and_deleted(self):
+        """WHEN a new file appears under .github/workflows
+        THEN the engine converts it into a patch (comment + artifact),
+          AND commits the remaining work,
+          AND deletes the workflow file from the tree.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            remote, work = self._repo(root)
+            self._agent_work(work)
+            artifact_dir = os.path.join(root, "artifacts")
+
+            result, posted, work = self._run_ensure_pr(
+                root,
+                env={
+                    "TARGET_NUMBER": "1114",
+                    "GITHUB_REPOSITORY": "acme/repo",
+                    "RUNNER_TEMP": artifact_dir,
+                },
+            )
+
+            # The engine reported success and delivered the patch.
+            self.assertFalse(result.error, result.message)
+            self.assertEqual(result.patch_paths, (self.WORKFLOW,))
+            self.assertTrue(posted, "the patch comment must be posted")
+            self.assertIn(self.WORKFLOW, " ".join(posted))
+            self.assertEqual(result.patch_artifact, PATCH_FILENAME)
+
+            # The workflow file is gone from the tree (deleted, not pushed).
+            self.assertFalse(os.path.exists(os.path.join(work, self.WORKFLOW)))
+            self.assertEqual(
+                self._git("status", "--porcelain", cwd=work).strip(),
+                "",
+                "ensure_pr must leave the tree clean",
+            )
+
+            # The remaining work was committed and pushed without the
+            # workflow path — checked against git, not a mock argv.
+            pushed = self._git(
+                "show", "--name-only", "--format=", "feature/issue-1114", cwd=remote
+            ).split()
+            self.assertIn(self.CODE, pushed)
+            self.assertNotIn(self.WORKFLOW, pushed)
+
+            # The delivered patch restores the new workflow file on a clean
+            # checkout of the base.
+            artifact = os.path.join(artifact_dir, "nebuko-task-logs", PATCH_FILENAME)
+            self.assertTrue(os.path.exists(artifact))
+            self._git("checkout", "-q", "origin/main", "--", ".", cwd=work)
+            self._git("apply", artifact, cwd=work)
+            self.assertTrue(os.path.exists(os.path.join(work, self.WORKFLOW)))
+
+    def test_undeliverable_patch_is_reported_as_an_error_and_keeps_the_file(self):
+        """No comment target and no artifact → the engine reports an error
+        instead of silently discarding the only copy of the new workflow
+        file (issue #1080: silent loss is the one forbidden outcome)."""
+        from agent_script.features.ensure_pr import ensure_pr as mod
+
+        with tempfile.TemporaryDirectory() as root:
+            remote, work = self._repo(root)
+            self._agent_work(work)
+
+            def no_artifact(diff):
+                raise OSError("artifact staging unavailable")
+
+            with patch.object(mod, "stage_patch_artifact", side_effect=no_artifact):
+                result, posted, work = self._run_ensure_pr(
+                    root,
+                    env={"TARGET_NUMBER": "", "GITHUB_REPOSITORY": ""},
+                )
+
+            self.assertFalse(posted, "no comment target must mean no comment")
+            self.assertTrue(result.error, "the undelivered patch must be an error")
+            # The workflow file survived: nothing was lost.
+            self.assertTrue(os.path.exists(os.path.join(work, self.WORKFLOW)))
 
 if __name__ == "__main__":
     unittest.main()

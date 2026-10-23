@@ -184,7 +184,14 @@ def _unstage_workflow_paths(paths: Sequence[str]) -> None:
 
 
 def _status_entries() -> tuple[tuple[str, str], ...]:
-    """Parse ``git status --porcelain -z`` into ``(path, code)`` pairs."""
+    """Parse ``git status --porcelain -z -uall`` into ``(path, code)`` pairs.
+
+    ``-uall`` matters as much as ``-z``: without it git collapses an entirely
+    untracked directory into a single ``?? dir/`` entry, so a brand-new
+    ``.github/workflows/*.yaml`` in a fresh ``.github/`` tree would surface as
+    the path ``.github/`` — dodging the workflow-path split and getting swept
+    into the commit/push the token may never carry (issue #1114).
+    """
     entries: list[tuple[str, str]] = []
     # ``-z`` is the raw format: ``XY<path>`` with *no* separator between the
     # two status columns and the path, and NUL (not newline) terminators. The
@@ -192,7 +199,7 @@ def _status_entries() -> tuple[tuple[str, str], ...]:
     # newline form silently ate the leading character of a path that begins
     # with ``.`` — i.e. ``.github/workflows/*``, the very paths this flow
     # must classify (issue #1080).
-    raw = _run_git(["status", "--porcelain", "-z"])
+    raw = _run_git(["status", "--porcelain", "-z", "-uall"])
     fields = raw.split("\0")
     index = 0
     while index < len(fields):
