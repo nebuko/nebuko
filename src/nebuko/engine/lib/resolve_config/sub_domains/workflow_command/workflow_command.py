@@ -176,9 +176,10 @@ COMMAND_REGISTRY: Dict[str, CommandClass] = {
     "reject": "engine",
 }
 
-#: Required flags per action (absent ⇒ malformed ⇒ None).
+#: Required flags per action (absent ⇒ malformed ⇒ None). ``run`` takes an
+#: optional ``--name``: it falls back to the configured default workflow
+#: (issue #1094).
 _REQUIRED_FLAGS: Dict[str, str] = {
-    "run": "name",
     "force-step": "name",
     "update": "value",
 }
@@ -328,7 +329,7 @@ def _parse_flags(
 #: (issue #804). Keyed by the invoked action (so the ``clean`` alias keeps its
 #: own spelling) with the grammar action as fallback.
 _USAGE_BY_ACTION: Dict[str, str] = {
-    "run": "/nebuko run workflow --name <workflow> [--step <step[.step...]>]",
+    "run": "/nebuko run workflow [--name <workflow>] [--step <step[.step...]>]",
     "resume": "/nebuko resume [--feedback <text>]",
     "force-step": "/nebuko force-step step --name <step[.step...]>",
     "delete": "/nebuko delete comments [--issue <number>] [--from <comment-id>]",
@@ -341,7 +342,7 @@ _USAGE_BY_ACTION: Dict[str, str] = {
 #: Usage shown when the action is missing or unrecognized.
 _USAGE_UNKNOWN_ACTION = (
     "unrecognized command; expected one of: "
-    "/nebuko run workflow --name <workflow>, /nebuko resume, "
+    "/nebuko run workflow, /nebuko resume, "
     "/nebuko force-step step --name <step>, /nebuko delete comments, "
     "/nebuko update circuit-breaker --value <n>, /nebuko approve gate, "
     "/nebuko reject gate"
@@ -350,7 +351,7 @@ _USAGE_UNKNOWN_ACTION = (
 #: Usage shown for a leading ``/`` that is not a ``/nebuko`` invocation.
 _USAGE_UNKNOWN_COMMAND = (
     "unrecognized / command; see the Human Commands table in docs/features.md "
-    "(e.g. /nebuko run workflow --name <workflow>, /nebuko resume)"
+    "(e.g. /nebuko run workflow, /nebuko resume)"
 )
 
 

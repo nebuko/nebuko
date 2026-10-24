@@ -17,6 +17,7 @@ from config import (
     WorkflowStep,
     load_workflow,
     load_workflow_with_dirs,
+    NebukoRuntimeConfig,
     WorkflowPosition,
     StepPath,
     StepRef,
@@ -2085,9 +2086,14 @@ def _resolve_human_path(
             config_workflow=config_workflow, fs_state=fs_state,
         )
 
-    # /nebuko run workflow --name <name> [--step <step>] (human only)
+    # /nebuko run workflow [--name <name>] [--step <step>] (human only).
+    # Without --name the workflow comes from nebuko-config's default_workflow,
+    # falling back to a workflow literally named "default" (issue #1094); an
+    # unresolvable default falls through exactly like an unresolvable --name.
     wf_run = wf_cmd if (wf_cmd is not None and wf_cmd.action == "run") else None
     wf_name = wf_run.params.get("name") if wf_run else None
+    if wf_run and not wf_name:
+        wf_name = NebukoRuntimeConfig.load().default_workflow or "default"
     requested_step = (wf_run.params.get("step") or "") if wf_run else ""
     wf_resolved = False
     task = ""

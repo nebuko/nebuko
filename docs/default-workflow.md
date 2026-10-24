@@ -434,7 +434,8 @@ GitHub Event
 
 | Variable | Source | Default | Purpose |
 |----------|--------|---------|---------|
-| `AGENT_CONFIG_PATH` | `inputs.agent_config_path` | `agent-config.yaml` | Path to agent configuration YAML |
+| `AGENT_CONFIG_PATH` | `inputs.agent_config_path` | *(empty)* | Path to agent configuration YAML; when empty, the `agent_config_path` key of `.nebuko/nebuko-config.yaml` wins, then the layered `agent-config.yaml` lookup |
+| `NEBUKO_CONFIG_PATH` | `inputs.nebuko_config_path` | `.nebuko/nebuko-config.yaml` | Path to the Nebuko runtime config (default workflow name, agent-config path; issue #1094) |
 | `CIRCUIT_BREAKER_THRESHOLD` | `inputs.circuit_breaker_threshold` | `25` | Max agent calls before circuit breaker trips |
 | `PIN_COMMENT` | `inputs.pin_comment` | `false` | Pin every agent step output comment for verbatim context injection |
 | `PYTHON_VERSION` | `inputs.python_version` | `3.13` | Python runtime version |

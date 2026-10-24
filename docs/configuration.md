@@ -57,6 +57,35 @@ against the caller's own workspace rather than the imported engine checkout.
 
 ---
 
+## Nebuko runtime config (`.nebuko/nebuko-config.yaml`)
+
+Repository-owned runtime settings live in `.nebuko/nebuko-config.yaml`
+(issue #1094): settings a caller used to pass as reusable-workflow `with:`
+inputs but that belong to the repository, not the workflow file. The schema is
+flat (the file is wholly Nebuko-owned) and unknown keys are ignored, so newer
+Nebuko versions can add settings without breaking older files:
+
+```yaml
+# The workflow `/nebuko run workflow` starts when `--name` is omitted.
+default_workflow: default
+# Where the layered agent-config lives (see the precedence rules below).
+agent_config_path: .nebuko/agents/agent-config.yaml
+```
+
+The file is caller-anchored exactly like `AGENT_CONFIG_PATH`: the
+`nebuko_config_path` workflow input (default `.nebuko/nebuko-config.yaml`) is
+exported as `NEBUKO_CONFIG_PATH`, an absolute value is used unchanged, a
+relative one is anchored at the caller's workspace, and the default location is
+`<caller workspace>/.nebuko/nebuko-config.yaml`. An absent file is not an error
+(every key falls back to its default); a present-but-invalid file fails loudly.
+
+**Precedence for the agent-config path:** the explicit `agent_config_path`
+workflow input (`AGENT_CONFIG_PATH` env) wins, then the `agent_config_path` key
+of `.nebuko/nebuko-config.yaml`, then the layered `agent-config.yaml` lookup.
+Existing callers passing `with: agent_config_path` keep working unchanged.
+
+---
+
 ## Provider Schema
 
 | Field | Type | Required | Description |

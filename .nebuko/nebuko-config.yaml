@@ -1,0 +1,3 @@
+# Nebuko runtime config (issue #1094): repository-owned settings that used to
+# travel as reusable-workflow `with:` inputs. See docs/configuration.md.
+agent_config_path: .nebuko/agents/agent-config-mistral.yaml

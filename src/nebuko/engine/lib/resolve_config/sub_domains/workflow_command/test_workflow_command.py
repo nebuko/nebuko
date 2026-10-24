@@ -91,8 +91,13 @@ class TestParseValid:
             params={"name": "plan-orchestration", "step": "scaffold"},
         )
 
-    def test_run_step_still_requires_name(self):
-        assert parse_workflow_command("/nebuko run workflow --step scaffold") is None
+    def test_run_step_without_name_is_valid(self):
+        # Issue #1094: --name is optional for run; a bare --step parses and the
+        # name resolves downstream (nebuko-config default workflow).
+        cmd = parse_workflow_command("/nebuko run workflow --step scaffold")
+        assert cmd == WorkflowCommand(
+            action="run", resource="workflow", params={"step": "scaffold"}
+        )
 
     def test_run_with_nested_step_path(self):
         # Dot-separated nested selector (issue #822): the grammar carries the
@@ -242,7 +247,10 @@ class TestParseMalformed:
         assert parse_workflow_command("/nebuko resume step") is None
 
     def test_missing_required_name(self):
-        assert parse_workflow_command("/nebuko run workflow") is None
+        # Issue #1094: bare run is valid (--name optional); force-step still
+        # requires it.
+        cmd = parse_workflow_command("/nebuko run workflow")
+        assert cmd == WorkflowCommand(action="run", resource="workflow", params={})
         assert parse_workflow_command("/nebuko force-step step") is None
 
     def test_unknown_flag(self):
@@ -387,7 +395,7 @@ class TestParseCommandTyped:
         result = parse_command("/nebuko run workflow --default")
         assert result.status == "malformed"
         assert result.detail == "unknown_flag"
-        assert result.usage == "/nebuko run workflow --name <workflow> [--step <step[.step...]>]"
+        assert result.usage == "/nebuko run workflow [--name <workflow>] [--step <step[.step...]>]"
 
     def test_duplicate_flag(self):
         result = parse_command("/nebuko resume --feedback a --feedback b")
@@ -401,11 +409,15 @@ class TestParseCommandTyped:
         assert result.detail == "bare_flag_value"
         assert result.usage
 
-    def test_missing_required_flag(self):
+    def test_bare_run_is_valid(self):
+        # Issue #1094: /nebuko run workflow without --name is valid; the name
+        # resolves from nebuko-config (default workflow) downstream.
         result = parse_command("/nebuko run workflow")
-        assert result.status == "malformed"
-        assert result.detail == "missing_required_flag"
-        assert result.usage
+        assert result.status == "valid"
+        assert result.command == WorkflowCommand(
+            action="run", resource="workflow", params={}
+        )
+        assert result.usage is None
 
     def test_invalid_flag_value(self):
         result = parse_command("/nebuko delete comments --issue abc")
@@ -426,7 +438,6 @@ class TestParseCommandTyped:
             "/foo",
             "/nebuko",
             "/nebuko deploy workflow --name x",
-            "/nebuko run workflow",
             "/nebuko run workflow --name",
             "/nebuko delete comments --issue abc",
         ]
@@ -571,7 +582,6 @@ class TestCommandAttempts:
         "/nebuko clean comments --unknown x",  # unknown flag
         "/nebuko clean comments --issue abc",  # non-numeric flag
         "/nebuko delete comments --from abc",  # non-numeric --from
-        "/nebuko run workflow",  # missing required flag
         "/nebuko run workflow --name",  # bare flag value
         "/nebuko resume --feedback a --feedback b",  # duplicate flag
         "/nebuko frobnicate x",  # unknown action

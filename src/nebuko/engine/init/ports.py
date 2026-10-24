@@ -61,12 +61,14 @@ class InitAnswers:
 
 @dataclass(frozen=True)
 class GeneratedFiles:
-    """The two files the pull request carries."""
+    """The files the pull request carries."""
 
     agent_config_path: str
     agent_config: str
     workflow_path: str
     workflow: str
+    nebuko_config_path: str
+    nebuko_config: str
 
 
 class ProviderProfile(ABC):

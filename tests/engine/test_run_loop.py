@@ -525,7 +525,7 @@ class TestCommandErrorNotice:
 
         assert str(resolved.get("SKIP_AGENT")).lower() == "true"
         assert str(resolved.get("COMMAND_ERROR")).lower() == "true"
-        assert "/nebuko run workflow --name" in resolved.get("REASON", "")
+        assert "/nebuko run workflow [--name" in resolved.get("REASON", "")
 
     def test_the_real_resolver_flags_an_unknown_slash_command(self, tmp_path):
         engine = _engine(tmp_path, _trigger(body="/foo bar", number=804))
@@ -592,6 +592,50 @@ class TestCallerAnchoredConfigLookup:
         engine = _engine(
             tmp_path,
             _trigger(body="/nebuko run workflow --name default", number=1108),
+        )
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert resolved.get("WORKFLOW_NAME") == "default"
+        assert resolved.get("TASK")
+
+    def test_a_bare_run_resolves_the_workflow_from_nebuko_config(
+        self, tmp_path, monkeypatch
+    ):
+        """``/nebuko run workflow`` without ``--name`` reads nebuko-config (issue #1094).
+
+        The resolver reads the runtime config from the ambient environment, so
+        the caller workspace is pinned there exactly as the workflow job does.
+        """
+        caller = tmp_path / "caller"
+        wf_dir = caller / ".nebuko" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "digest.yaml").write_text(self._workflow_yaml(), encoding="utf-8")
+        (caller / ".nebuko" / "nebuko-config.yaml").write_text(
+            "default_workflow: digest\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(caller))
+        monkeypatch.delenv("NEBUKO_CONFIG_PATH", raising=False)
+        engine = _engine(
+            tmp_path,
+            _trigger(body="/nebuko run workflow", number=1094),
+            env={"GITHUB_WORKSPACE": str(caller)},
+        )
+
+        resolved = engine.resolve(engine.normalize())
+
+        assert resolved.get("WORKFLOW_NAME") == "digest"
+        assert resolved.get("TASK") == "dev"
+
+    def test_a_bare_run_falls_back_to_the_literal_default_workflow(
+        self, tmp_path, monkeypatch
+    ):
+        """No nebuko-config: bare run starts the shipped ``default`` workflow."""
+        monkeypatch.delenv("NEBUKO_CONFIG_PATH", raising=False)
+        monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+        engine = _engine(
+            tmp_path,
+            _trigger(body="/nebuko run workflow", number=1094),
         )
 
         resolved = engine.resolve(engine.normalize())

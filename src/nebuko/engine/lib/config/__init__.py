@@ -25,6 +25,7 @@ from .sub_domains.human_action_notice.human_action_notice import HumanActionNoti
 from .sub_domains.script_start_notice.script_start_notice import ScriptStartNotice
 from .sub_domains.script_step_report.script_step_report import ScriptStepReport
 from .sub_domains.app_config.app_config import AppConfig
+from .sub_domains.nebuko_config.nebuko_config import NebukoRuntimeConfig
 from .sub_domains.history_window.history_window import HistoryWindowConfig
 from .sub_domains.comment_size.comment_size import CommentSizePolicy
 
@@ -98,6 +99,7 @@ __all__ = [
     "ScriptStartNotice",
     "ScriptStepReport",
     "AppConfig",
+    "NebukoRuntimeConfig",
     "HistoryWindowConfig",
     "CommentSizePolicy",
     # Workflow Config entities

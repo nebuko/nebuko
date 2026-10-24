@@ -138,6 +138,7 @@ class GitHubHost(SetupHost):
         entries = []
         for path, content in (
             (files.agent_config_path, files.agent_config),
+            (files.nebuko_config_path, files.nebuko_config),
             (files.workflow_path, files.workflow),
         ):
             blob = self._api_json(
