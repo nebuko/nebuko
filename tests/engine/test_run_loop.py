@@ -57,6 +57,9 @@ from nebuko.engine.run_loop import (
     resolved_env_overlay,
 )
 from agent_script.features.run_agent.run_outcome import OutcomeStatus
+from nebuko.engine.branch_scaffold import BranchScaffold, ScaffoldResult
+from nebuko.engine.git_session import GuardResult
+from nebuko.engine.pr_finalize import PrFinalizeResult
 from workflow_state import extract_state_from_body
 from workflow_state.step_output_record import StepOutputRecord
 
@@ -4666,3 +4669,229 @@ class TestTwoStepWorkflowPrompt:
         assert "agent started" not in prompt
         assert "OUTPUT BODY" not in prompt
         assert "REVIEW BODY" not in prompt
+
+
+class TestBranchScaffoldWiring:
+    """The engine scaffolds the feature branch around the agent phase (#1138).
+
+    The scaffold runs before the agent (fail-closed on a failed fetch or
+    branch creation), a rebase conflict is appended to the prompt instead of
+    failing the run, and the scaffolded branch is recorded on the persisted
+    state so later runs reuse it.
+    """
+
+    def _run(self, monkeypatch, root, *, scaffold=None):
+        engine = _engine_at_root(root.parent, root)
+        _stub_resolved(monkeypatch, _resolved_with_hooks())
+        calls: list[str] = []
+        # Stub the scaffold class, not the engine method: the real
+        # ``_branch_scaffold`` must run so its staging (branch + conflict into
+        # ``_scaffold_state``) is exercised.
+        monkeypatch.setattr(
+            BranchScaffold,
+            "scaffold",
+            lambda self, number, title: calls.append("scaffold")
+            or (scaffold or ScaffoldResult(ok=True, branch="feature/issue-590-x")),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_preflight",
+            lambda self: calls.append("pre") or GuardResult(ok=True),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_finalize",
+            lambda self: calls.append("post") or GuardResult(ok=True),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_pr_finalize",
+            lambda self, trigger: calls.append("pr") or PrFinalizeResult(ok=True),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: calls.append("agent") or _agent_result("done"),
+        )
+        return engine.run(), calls, engine
+
+    def test_the_scaffold_runs_before_the_agent(self, tmp_path, monkeypatch):
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        outcome, calls, _ = self._run(monkeypatch, root)
+
+        assert calls == ["scaffold", "pre", "agent", "pr", "post"]
+        assert outcome.exit_code == ExitCode.ADVANCE
+
+    def test_a_failed_scaffold_fails_the_run_before_the_agent(
+        self, tmp_path, monkeypatch
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        outcome, calls, _ = self._run(
+            monkeypatch,
+            root,
+            scaffold=ScaffoldResult(ok=False, detail="could not fetch origin/main"),
+        )
+
+        assert calls == ["scaffold", "pre", "pr", "post"]
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+        assert outcome.turn_outcome.note.startswith("branch scaffold failed: ")
+        assert "could not fetch" in outcome.turn_outcome.note
+
+    def test_a_rebase_conflict_reaches_the_prompt_and_the_run_proceeds(
+        self, tmp_path, monkeypatch
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        prompts: list[str] = []
+
+        def _invoke(self, prompt):
+            prompts.append(prompt)
+            return _agent_result("done")
+
+        engine = _engine_at_root(root.parent, root)
+        _stub_resolved(monkeypatch, _resolved_with_hooks())
+        monkeypatch.setattr(
+            BranchScaffold,
+            "scaffold",
+            lambda self, number, title: ScaffoldResult(
+                ok=True,
+                branch="feature/issue-590-x",
+                conflict="Fix the rebase conflict as your FIRST action",
+            ),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_preflight",
+            lambda self: GuardResult(ok=True),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_finalize",
+            lambda self: GuardResult(ok=True),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_pr_finalize",
+            lambda self, trigger: PrFinalizeResult(ok=True),
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", _invoke)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert prompts and "FIRST" in prompts[0]
+
+    def test_the_scaffolded_branch_is_recorded_on_the_state(
+        self, tmp_path, monkeypatch
+    ):
+        from workflow_state.workflow_state import WorkflowState
+
+        root = tmp_path / "repo"
+        root.mkdir()
+        state = WorkflowState(run_id=3, workflow="wf", step="implement", agent="dev")
+
+        def _invoke(self, prompt):
+            return {**_agent_result("done"), "state": state}
+
+        engine = _engine_at_root(root.parent, root)
+        _stub_resolved(monkeypatch, _resolved_with_hooks())
+        monkeypatch.setattr(
+            BranchScaffold,
+            "scaffold",
+            lambda self, number, title: ScaffoldResult(
+                ok=True, branch="feature/issue-590-x"
+            ),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_preflight",
+            lambda self: GuardResult(ok=True),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_finalize",
+            lambda self: GuardResult(ok=True),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_pr_finalize",
+            lambda self, trigger: PrFinalizeResult(ok=True),
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", _invoke)
+
+        outcome = engine.run()
+
+        assert outcome.state is not None
+        assert outcome.state.scaffold_branch == "feature/issue-590-x"
+
+
+class TestPrFinalizerWiring:
+    """The engine ends the session with an open PR (#1138).
+
+    The finalizer runs after the state phase (so the exported ``PR_*`` env vars
+    reach the next state build), a failure is a run error, and the wiring is
+    skipped on non-agent steps.
+    """
+
+    def _run(self, monkeypatch, root, *, pr=None):
+        engine = _engine_at_root(root.parent, root)
+        _stub_resolved(monkeypatch, _resolved_with_hooks())
+        calls: list[str] = []
+        monkeypatch.setattr(
+            Engine,
+            "_branch_scaffold",
+            lambda self, trigger: calls.append("scaffold")
+            or ScaffoldResult(ok=True, branch="feature/issue-590-x"),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_preflight",
+            lambda self: calls.append("pre") or GuardResult(ok=True),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_finalize",
+            lambda self: calls.append("post") or GuardResult(ok=True),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_pr_finalize",
+            lambda self, trigger: calls.append("pr")
+            or (pr or PrFinalizeResult(ok=True)),
+        )
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: calls.append("agent") or _agent_result("done"),
+        )
+        return engine.run(), calls
+
+    def test_the_finalizer_runs_after_the_agent(self, tmp_path, monkeypatch):
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        outcome, calls = self._run(monkeypatch, root)
+
+        assert calls == ["scaffold", "pre", "agent", "pr", "post"]
+        assert outcome.exit_code == ExitCode.ADVANCE
+
+    def test_a_failed_finalizer_fails_the_run(self, tmp_path, monkeypatch):
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        outcome, calls = self._run(
+            monkeypatch,
+            root,
+            pr=PrFinalizeResult(ok=False, detail="gh pr create failed (1): boom"),
+        )
+
+        assert calls[-1] == "post"
+        assert "pr" in calls
+        assert outcome.exit_code == ExitCode.ERROR
+        assert "PR finalizer failed" in outcome.turn_outcome.note
+        assert "boom" in outcome.turn_outcome.note

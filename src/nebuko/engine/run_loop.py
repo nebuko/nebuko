@@ -26,6 +26,11 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.branch_scaffold import (
+    BranchScaffold,
+    ScaffoldResult,
+    issue_title_from_payload,
+)
 from nebuko.engine.git_session import GitSessionGuard, GuardResult
 from nebuko.engine.hook_runner import (
     HookPhase,
@@ -676,6 +681,12 @@ class Engine:
     _hook_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # The branch scaffold's outcome (issue #1138): the scaffolded branch (for
+    # the state persistence) and the rebase-conflict instruction (for the
+    # prompt). Engine-internal, so it is excluded from __init__/equality/repr.
+    _scaffold_state: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
     # The workspace a relative ``AGENT_CONFIG_PATH`` is anchored at (issue #930),
     # snapshotted once at engine start before any chdir. A mutable container
     # because ``Engine`` is frozen; empty until ``_caller_root`` first resolves.
@@ -841,6 +852,7 @@ class Engine:
         publish_failed = False
         self._publish_state.clear()
         self._hook_state.clear()
+        self._scaffold_state.clear()
         # The typed thread and its selection describe *this* run's thread: a
         # reused engine over a new run must not serve the previous snapshots.
         self._context_state.clear()
@@ -1007,7 +1019,19 @@ class Engine:
             # advancing step's HistoryEntry (issue #872).
             self._step_input_state["results"] = list(input_results)
 
+            failure_reason: str | None = None
+            agent_result: dict[str, Any] = {}
+
             self._enter(phases, "prompt")
+            # Branch scaffold (issue #1138): the session workspace is PR-ready
+            # before the prompt is built — fetch the base only, create (or
+            # rebase) the issue's feature branch. Fail-closed on a failed
+            # fetch or branch creation; a rebase conflict is not fatal, the
+            # instruction is appended to the prompt so the agent fixes it as
+            # its first action.
+            scaffold = self._branch_scaffold(trigger)
+            if not scaffold.ok:
+                failure_reason = f"branch scaffold failed: {scaffold.detail}"
             prompt = self.build_prompt(resolved, history, input_results, step_scope)
 
             self._enter(phases, "agent")
@@ -1026,8 +1050,6 @@ class Engine:
             # once here. A ``pre_hook`` runs before the agent and is fail-closed;
             # a ``post_hook`` runs after the agent attempt and is fail-open.
             hooks = hooks_from_resolved(resolved)
-            failure_reason: str | None = None
-            agent_result: dict[str, Any] = {}
 
             # Git session preflight (issue #1089): prove the checkout can
             # authenticate before a single token is spent. A credentials-less
@@ -1111,6 +1133,19 @@ class Engine:
             # in-place retry.
             self._enter(phases, "state")
             state = self.persist(agent_result)
+
+            # PR finalizer (issue #1138): the session ends with an open PR —
+            # the deterministic ensure_pr flow runs engine-side, the agent's
+            # own PR wins, and the PR metadata is exported for the state
+            # builder. Runs even after a failed agent phase: the work still
+            # belongs to the session.
+            if "agent" in phases:
+                pr_result = self._pr_finalize(trigger)
+                if not pr_result.ok:
+                    note = f"PR finalizer failed: {pr_result.detail}"
+                    failure_reason = (
+                        f"{failure_reason}; {note}" if failure_reason else note
+                    )
 
             # Git session finalize (issue #1089): the session must not end with
             # work left in the checkout. Everything still pending is committed
@@ -1553,6 +1588,9 @@ class Engine:
         sections = [] if replacing else [self._base_prompt(resolved)]
         if step_prompt:
             sections.append(f"{_STEP_HEADER}\n\n{step_prompt}")
+        conflict_note = self._render_scaffold_conflict()
+        if conflict_note:
+            sections.append(conflict_note)
         output_block = self._render_step_output(resolved)
         if output_block:
             sections.append(output_block)
@@ -1597,6 +1635,16 @@ class Engine:
         if not body.strip() and store.restore_from_history():
             body = store.load_text()
         return render_handoff_block(body)
+
+    def _render_scaffold_conflict(self) -> str:
+        """The branch scaffold's rebase-conflict instruction, when one is staged.
+
+        A conflicted rebase is not fatal (issue #1138): the run proceeds and the
+        instruction lands here, so fixing the conflict is the agent's first
+        action. Empty on a clean scaffold.
+        """
+        note = self._scaffold_state.get("conflict")
+        return str(note) if note else ""
 
     def _render_injected_skills(self, resolved: Any) -> str:
         """The full bodies of this step's inject-mode skills (issue #955)."""
@@ -2368,6 +2416,29 @@ class Engine:
             return self.env
 
     # @stub-protected
+    def _branch_scaffold(self, trigger: "Trigger") -> "ScaffoldResult":
+        """Prepare the session's feature branch before the agent (issue #1138).
+
+        Mirrors the git session preflight: fail-closed on a failed fetch or
+        branch creation, a benign skip when there is nothing to scaffold, and a
+        rebase conflict returned as data so the prompt can carry the fix-first
+        instruction. The scaffolded branch is staged for the state persistence.
+        """
+        scaffold = BranchScaffold(self.repo_root, self._session_env()).scaffold(
+            trigger.number,
+            issue_title_from_payload(trigger.payload),
+        )
+        if scaffold.branch:
+            self._scaffold_state["branch"] = scaffold.branch
+        if scaffold.conflict:
+            self._scaffold_state["conflict"] = scaffold.conflict
+        if scaffold.ok:
+            log.info("[phase:agent] branch scaffold ok: %s", scaffold.detail)
+        else:
+            log.error("[phase:agent] branch scaffold failed: %s", scaffold.detail)
+        return scaffold
+
+    # @stub-protected
     def _git_session_preflight(self) -> GuardResult:
         """Prove git auth before the agent phase (issue #1089).
 
@@ -2382,6 +2453,36 @@ class Engine:
             log.info("[phase:agent] git preflight ok: %s", result.detail)
         else:
             log.error("[phase:agent] git preflight failed: %s", result.detail)
+        return result
+
+    # @stub-protected
+    def _pr_finalize(self, trigger: "Trigger") -> "PrFinalizeResult":
+        """End the session with an open PR for the session branch (issue #1138).
+
+        Mirrors the git session finalize: the deterministic ``ensure_pr`` flow
+        runs engine-side (idempotent, the agent's own PR wins), the PR metadata
+        is exported for the state builder, and a failure is a run error — an
+        unpublished session must not look green.
+        """
+        from nebuko.engine.pr_finalize import PrFinalizer
+
+        trigger_number = trigger.number if trigger is not None else 0
+        trigger_title = (
+            issue_title_from_payload(trigger.payload)
+            if trigger is not None
+            else ""
+        )
+        finalizer = PrFinalizer(
+            self.repo_root,
+            self._session_env(),
+            issue_number=trigger_number,
+            issue_title=trigger_title,
+        )
+        result = finalizer.finalize()
+        if result.ok:
+            log.info("[phase:state] PR finalize ok: %s", result.detail)
+        else:
+            log.error("[phase:state] PR finalize failed: %s", result.detail)
         return result
 
     # @stub-protected
@@ -2580,6 +2681,7 @@ class Engine:
         if state is None:
             return None
         state = self._record_hook_failure(state)
+        state = self._record_scaffold_branch(state)
         state = self._backfill_step_output(state)
         if self._publish_state.get("failed") and not state.publish_failed:
             # The journal must record that this run's deliverable was lost
@@ -2633,6 +2735,20 @@ class Engine:
         context = dict(state.current_context)
         context["post_hook_failure"] = note
         return state.model_copy(update={"current_context": context})
+
+    def _record_scaffold_branch(self, state: WorkflowState) -> WorkflowState:
+        """Record the scaffolded feature branch on the persisted state (#1138).
+
+        ``scaffold_branch`` is the branch this session's work lives on (issue
+        #604 reused the name for the scaffold-plan ref): the engine sets it
+        when the branch scaffold ran, so later runs reuse the same branch
+        instead of creating another one. A run with no scaffolded branch (a
+        benign skip) leaves the state untouched.
+        """
+        branch = self._scaffold_state.get("branch")
+        if not branch or state.scaffold_branch == branch:
+            return state
+        return state.model_copy(update={"scaffold_branch": branch})
 
     def _backfill_step_output(self, state: WorkflowState) -> WorkflowState:
         """Point the running step's output locator at its just-posted comment.
