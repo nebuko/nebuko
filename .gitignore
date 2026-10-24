@@ -7,4 +7,4 @@ latest_answer.md
 *.egg-info/
 build/
 dist/
-node_modules/
+node_modules/nebuko.spec
