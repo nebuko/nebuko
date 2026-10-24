@@ -69,7 +69,7 @@ agents:
     temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
     skills:
-      - discover: ["git-pr-workflow", "complexity", "posting-contract"]
+      - discover: ["complexity", "posting-contract"]
     tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
     # Lean tool/prompt overhead + batched reconnaissance (issue #851): the
     # GLM-flash #1114 re-run paid ~3.9K chars of tool description every call

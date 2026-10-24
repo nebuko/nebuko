@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 from openhands.sdk import get_logger
 
-from nebuko.engine.git_session import BENIGN_SKIPS
+from nebuko.engine.lib.git.git_session import BENIGN_SKIPS
 
 logger = get_logger(__name__)
 
@@ -79,8 +79,8 @@ Do NOT start any new task and do NOT redo the work.
 1. Commit your changes (stage only the files you changed — never generated
    files, caches, or secrets).
 2. Push the branch.
-3. Open a pull request, following the `git-pr-workflow` skill exactly as you
-   normally would.
+3. The engine opens the pull request after your run — you only need the
+   branch committed and pushed.
 
 You keep control of the branch name, the commit message and the PR body.
 

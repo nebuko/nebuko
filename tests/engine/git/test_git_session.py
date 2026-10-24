@@ -12,7 +12,7 @@ import subprocess
 
 import pytest
 
-from nebuko.engine.git_session import (
+from nebuko.engine.lib.git.git_session import (
     BENIGN_SKIPS,
     GitSessionGuard,
     GuardResult,

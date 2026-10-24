@@ -42,7 +42,7 @@ from agent_script.features.ensure_pr.workflow_patch import (
 from github_client import GitHubTransport, ensure_bot_marker
 from openhands.sdk import get_logger
 
-from nebuko.engine.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
+from nebuko.engine.lib.git.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
 
 logger = get_logger(__name__)
 
