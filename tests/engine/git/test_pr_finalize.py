@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
-from nebuko.engine.pr_finalize import PrFinalizer, pr_number_from_url
+from nebuko.engine.lib.git.pr_finalize import PrFinalizer, pr_number_from_url
 
 
 @pytest.fixture()

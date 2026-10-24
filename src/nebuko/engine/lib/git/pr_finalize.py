@@ -11,7 +11,7 @@ The agent's own PR wins: ``ensure_pr`` looks the branch's PR up first and is a
 no-op when one exists, so an agent that opened a PR itself keeps its branch
 name, commit messages and PR body.
 
-Like :class:`nebuko.engine.git_session.GitSessionGuard`, the finalizer never
+Like :class:`nebuko.engine.lib.git.git_session.GitSessionGuard`, the finalizer never
 raises: a failure is returned as data and the caller turns it into a run
 error — a session whose PR could not be opened must not look green.
 """

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from nebuko.engine.branch_scaffold import (
+from nebuko.engine.lib.git.branch_scaffold import (
     BranchScaffold,
     ScaffoldResult,
     branch_slug,

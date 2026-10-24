@@ -6,7 +6,7 @@ it fetches the base branch only, creates ``feature/issue-<n>-<slug>`` from it
 (or rebases the existing one), and hands a rebase conflict back as data so the
 prompt can carry a fix-first note instead of the run dying.
 
-Like :class:`nebuko.engine.git_session.GitSessionGuard`, the scaffold never
+Like :class:`nebuko.engine.lib.git.git_session.GitSessionGuard`, the scaffold never
 raises: a failure is returned as data and the caller turns it into a run
 error — an unscaffolded session must not look green.
 """
