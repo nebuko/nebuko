@@ -1,0 +1,55 @@
+diff --git a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
+index 4988b9b9..6925f94b 100644
+--- a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
++++ b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
+@@ -15,8 +15,6 @@ permissions:
+ jobs:
+   agent:
+     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
+-    with:
+-      agent_config_path: ".nebuko/agents/agent-config-mistral.yaml"
+     secrets:
+       GH_PAT: ${{ secrets.GH_PAT }}
+       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
+index 9812bc6c..e0dc6305 100644
+--- a/.github/workflows/nebuko-workflow.yaml
++++ b/.github/workflows/nebuko-workflow.yaml
+@@ -4,10 +4,15 @@ on:
+   workflow_call:
+     inputs:
+       agent_config_path:
+-        description: 'Path to the layered YAML config file (providers → llms → agents)'
++        description: 'Path to the layered YAML config file (providers → llms → agents). When empty, the agent_config_path key of .nebuko/nebuko-config.yaml wins, then the layered agent-config.yaml lookup'
+         required: false
+         type: string
+-        default: 'agent-config.yaml'
++        default: ''
++      nebuko_config_path:
++        description: 'Path to the Nebuko runtime config (.nebuko/nebuko-config.yaml): repository-owned settings like the default workflow name and agent-config path (issue #1094)'
++        required: false
++        type: string
++        default: '.nebuko/nebuko-config.yaml'
+       circuit_breaker_threshold:
+         description: 'Circuit breaker threshold'
+         required: false
+@@ -214,7 +219,8 @@ jobs:
+             CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 25 }}
+             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
+             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
+-            AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
++            AGENT_CONFIG_PATH: ${{ inputs.agent_config_path }}
++            NEBUKO_CONFIG_PATH: ${{ inputs.nebuko_config_path || '.nebuko/nebuko-config.yaml' }}
+ 
+             BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+ 
+@@ -336,7 +342,8 @@ jobs:
+                 GFA_SOURCE: github
+                 GH_TOKEN: ${{ env.GH_TOKEN }}
+                 GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+-                AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
++                AGENT_CONFIG_PATH: ${{ inputs.agent_config_path }}
++                NEBUKO_CONFIG_PATH: ${{ inputs.nebuko_config_path || '.nebuko/nebuko-config.yaml' }}
+                 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+                 CHEAPERINFERENCE_API_KEY: ${{ secrets.CHEAPERINFERENCE_API_KEY }}
+                 MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
