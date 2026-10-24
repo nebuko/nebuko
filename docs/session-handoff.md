@@ -40,8 +40,8 @@ The engine does the git work, so an agent needs no worktree write access:
 - If HEAD is on a base branch (`main`/`master`) — the case for a read-only role
   before the dev step has ever run — the engine first creates and pushes
   `feature/nebuko-handoff-<UTCts>`. Dev reuses that checked-out branch
-(`feature/issue-<n>-<slug>`, created by the engine's branch scaffold) instead
-of creating another one, so the handoff and
+  (`feature/issue-<n>-<slug>`, created by the engine's branch scaffold) instead
+  of creating another one, so the handoff and
   the work travel together.
 
 ## Consuming it
