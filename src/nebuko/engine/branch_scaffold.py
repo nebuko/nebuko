@@ -123,7 +123,18 @@ class BranchScaffold:
             # stderr: nothing to branch from, the session has no work either.
             current = "HEAD"
         if current == "HEAD":
-            return ScaffoldResult(ok=True, skipped=True, detail="detached HEAD")
+            # A pinned-SHA checkout (this repo's own trigger workflow) is
+            # detached: the scaffold must still create the feature branch,
+            # or nobody would (issue #1138 round 6). Only an unborn HEAD
+            # (no commits yet) has nothing to branch from.
+            try:
+                self._git("rev-parse", "--verify", "-q", "HEAD")
+            except RuntimeError:
+                return ScaffoldResult(ok=True, skipped=True, detail="unborn HEAD")
+            return self._create_branch(
+                feature_branch_name(self.issue_number, self.issue_title),
+                self._base_branch(),
+            )
 
         branch = feature_branch_name(self.issue_number, self.issue_title)
         base = self._base_branch()

@@ -148,7 +148,6 @@ the prompt through the two modes above.
 | `call-agent` | [`call-agent.md`](../defaults/skills/call-agent.md) | Teaches delegation via the `function_call` / `call_agent` mechanism and the `callback` return address. Default for `architect`, `context`, `po`. |
 | `posting-contract` | [`posting-contract.md`](../defaults/skills/posting-contract.md) | How the final answer is posted to the issue. Default for every agent. |
 | `context-research` | [`context-research.md`](../defaults/skills/context-research.md) | Search strategies and complexity-based exploration depth for `context`. |
-| `git-pr-workflow` | [`git-pr-workflow.md`](../defaults/skills/git-pr-workflow.md) | Rebase/PR mechanics, checkpoints, and git safety rules for `dev`. |
 | `planning` | [`planning.md`](../defaults/skills/planning.md) | Plan artifact shape, `<planWorkflow>` mechanics, and orchestration modes for `architect`. |
 | `plan-review` | [`plan-review.md`](../defaults/skills/plan-review.md) | Plan-workflow review modes for `review`. |
 | `retrospective` | [`retrospective.md`](../defaults/skills/retrospective.md) | Issue retrospective mode for `review`. |

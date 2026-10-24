@@ -145,14 +145,33 @@ class TestScaffold:
         assert result.ok and result.skipped
         assert result.detail == "no git remote"
 
-    def test_skips_on_a_detached_head(self, checkout):
+    def test_scaffolds_from_a_detached_head(self, checkout):
+        # A pinned-SHA checkout (this repo's own trigger workflow) is
+        # detached: the feature branch is still created, from HEAD.
         head = _git(checkout, "rev-parse", "HEAD")
         _git(checkout, "checkout", "-q", "--detach", head)
 
         result = _scaffold(checkout)
 
+        assert result.ok and not result.skipped
+        assert result.branch == BRANCH
+        assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
+        assert _git(checkout, "rev-parse", "HEAD") == head
+
+    def test_skips_on_an_unborn_head(self, tmp_path):
+        # A checkout with a remote but no commits has nothing to branch from.
+        remote = tmp_path / "origin.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True
+        )
+        work = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True)
+        _git(work, "remote", "add", "origin", remote.as_uri())
+
+        result = _scaffold(work)
+
         assert result.ok and result.skipped
-        assert result.detail == "detached HEAD"
+        assert result.detail == "unborn HEAD"
 
     def test_skips_without_an_issue_number(self, checkout):
         result = _scaffold(checkout, issue_number=0)
