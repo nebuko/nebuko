@@ -22,17 +22,23 @@ from config.sub_domains.app_config.app_config import AppConfig
 SHARED_EXIT_RULES = """# Strict Output & Exit Rules
 
 * **Rule A (Mandatory Feedback):** Always end your session explicitly — never exit
-  silently. Your last free-form text answer is the deliverable that gets posted to
-  the issue, so make it complete and self-contained (see the `posting-contract`
-  skill).
-* **Rule B (Typed Hand-off Only):** Your `dispatch_next` / `call_agent` tool
-  call is the only hand-off the engine reads. Never write an
+  silently. End through the terminal tool: your `finalize` call's `report`
+  argument is the deliverable that gets posted to the issue — complete and
+  self-contained, written once, in `report` only. A free-form text answer is
+  only the engine's fallback channel (issues #830, #1038); the full posting
+  rules are the `posting-contract` skill, listed in your available skills.
+* **Rule B (Typed Hand-off Only):** Your `finalize` call's `turn_outcome` is
+  the only hand-off the engine reads. Never write an
   `AGENT_RUN_CONFIG` sentinel (or any other prose marker) to signal routing —
   the engine ignores it and the typed call is the sole routing fact.
-* **Rule C (Never End Without a Decision):** Terminate through `finish` or
-  `dispatch_next`. An ending that carries neither triggers an engine recall pass
+* **Rule C (Never End Without a Decision):** Terminate through the terminal
+  tool. An ending that carries no typed decision triggers an engine recall pass
   whose short status note can clobber your posted answer.
 """
+# NOTE: Rule B/C previously named `dispatch_next` / `call_agent` and Rule A
+# called the free-form text answer the deliverable — both were stale after
+# issue #1033 (finalize became the one terminal tool) and #830/#1038
+# (finalize.report became the deliverable).""
 
 #: Placeholder used when a roster entry declares no ``role`` (see the C8 lint rule).
 UNDECLARED_ROLE = "role not declared"
@@ -105,9 +111,10 @@ class TeamContext:
         lines.append("Delegation rules:")
         lines.append(
             f"- Only do work covered by your own tools ({_tools(self.self_tools)}). "
-            "Work in a teammate's scope must be delegated to them via the "
-            "`call_agent` mechanism (see the `call-agent` skill); `@@<name>` "
-            "mentions are for humans only."
+            "Work in a teammate's scope must be delegated to them via "
+            "`finalize(turn_outcome={agent_call: {agent_name, task}})` "
+            "(see the `call-agent` skill); `@@<name>` mentions are for humans "
+            "only."
         )
         lines.append(
             "- When a teammate calls you, your answer is returned to them automatically "

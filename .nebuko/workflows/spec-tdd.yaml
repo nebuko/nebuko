@@ -1,0 +1,148 @@
+name: spec-tdd
+description: "Spec-first TDD: plan → doc + red tests + stubs (human gate on the diff) → implement → review"
+
+steps:
+  - name: analyze
+    agent: architect
+    complexity: low
+    prompt: |
+      Analysis turn: a human issue or request just arrived.
+      - Decide what context @@context must collect (files, docs, facts).
+      - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
+    next: context
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the request and the analysis.
+        - name: context_request
+          collapsed: true
+          required: true
+          description: What @@context must collect (files, docs, facts). Copy this verbatim into `agent_call.task` of the finalize hand-off.
+        - name: assumptions
+          required: false
+          description: Defaults you will proceed with if context is thin.
+
+  - name: context
+    agent: context
+    next: plan
+
+  - name: plan
+    agent: architect
+    prompt: |
+      Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact, then end with `finalize(turn_outcome={appreciation:'approved', complexity:…})` on the same turn.
+      Downstream is the spec step: your Object Design Contract section is the contract it will materialize 1:1 as stub classes and red tests, so make it complete and exact (file paths, fields with types, every method signature marked `# @stub-protected`). Also state where the user-facing doc goes (existing docs/ dir, or a new file) and what usage/behaviour sections it must contain.
+    next: spec
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the plan.
+        - name: decision
+          description: The chosen approach and the key rulings.
+        - name: design
+          collapsed: true
+          description: The Object Design Contract (classes, fields, method signatures) — the spec step materializes this 1:1.
+        - name: doc_contract
+          required: false
+          description: Where the doc lives and the sections it must contain (how to use, how it works).
+        - name: questions
+          required: false
+          description: Open questions for the human gate.
+
+  - name: spec
+    agent: dev
+    prompt_replace: true
+    prompt: |
+      You are in spec-materialization mode. Convert the approved @@architect plan into
+      a reviewable spec diff on a branch. NO business logic — this step's output is
+      doc + failing tests + skeleton code only.
+
+      Do, in order:
+      1. Write the user-facing doc from the plan's doc contract: how to USE the
+         feature (usage) and how it WORKS (mechanics, where it plugs into the
+         codebase). No raw spec prose: this doc replaces it.
+      2. Write the tests that lock the expected outcome and behaviour (given/when/
+         then style names). They are EXPECTED TO FAIL against stubs.
+      3. Create the skeleton code exactly as the plan's Object Design Contract
+         specifies: fields, method signatures with `# @stub-protected` markers,
+         bodies `raise NotImplementedError`. Do not deviate from the contract.
+      4. Run the new tests and capture the failure output — this is the RED evidence.
+         A test that passes or errors on import is not red: fix it until it fails
+         on the assertion/NotImplementedError, then leave it failing.
+      5. Commit, push, and open the PR as a DRAFT (or push to the existing PR's
+         branch). Title it from the plan headline; body = doc summary + the red
+         test list + the contract file paths.
+    skill:
+      - git-pr-workflow
+      - stub-only
+    human_gate: true
+    conditions:
+      - on_result: approved
+        next: implement
+      - on_result: rejected
+        next: plan
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the spec.
+        - name: spec_files
+          description: Paths of the doc, the test file(s) and the stub module(s), plus the PR URL.
+        - name: red_evidence
+          collapsed: true
+          description: The failing pytest output proving the tests are red against the stubs.
+        - name: contract_fidelity
+          required: false
+          description: Any deviation from the plan's Object Design Contract, with justification (deviations need the gate's explicit ruling).
+
+  - name: implement
+    agent: dev
+    prompt: |
+      Implementation turn: the human has approved the spec diff. Fill the stub bodies
+      exactly as the Object Design Contract and the red tests dictate; the tests you
+      must turn green are already on the branch. You MAY create helpers called only
+      from stub bodies; you MAY NOT change any `# @stub-protected` signature, the
+      doc, or the test expectations. If a test itself was wrong, stop and escalate to
+      @@architect instead of editing the test.
+      Verify green with `uv run pytest` on the relevant paths, push, and mark the PR
+      ready for review. End with finalize(turn_outcome={appreciation:'approved'}).
+    skill:
+      - stub-only
+    next: review
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the change.
+        - name: changes
+          description: What changed, with file paths.
+        - name: verification
+          required: false
+          description: Tests run and their results (must show the spec tests green).
+
+  - name: review
+    agent: review
+    prompt: |
+      Review turn. Besides the usual review, verify the spec chain: (1) every doc claim
+      matches the shipped behaviour; (2) every spec test is green and still exercises
+      the contract that was gated; (3) no `# @stub-protected` signature, doc section or
+      test expectation was silently changed during implementation.
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: implement
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line verdict summary.
+        - name: findings
+          description: Review findings, round by round.
+        - name: spec_chain
+          required: false
+          description: Result of the doc/test/signature fidelity check.
+        - name: verdict
+          required: false
+          description: The decision and its justification.
