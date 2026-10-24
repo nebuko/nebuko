@@ -199,6 +199,14 @@ workflow:
 | `NONE`, `FIRST_TIMER`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` | ❌ skipped |
 | missing / `null` | ❌ skipped (fail-closed) |
 
+The bundled caller workflow
+(`.github/workflows/interntal-trigger-nebuko-on-comment.yaml`) carries its own
+hardcoded, fail-closed copy of this gate in its job-level `if:` — a denied
+comment never starts a run at all, so the reusable workflow and its secrets are
+never invoked. Setting `CALLER_AUTH: off` therefore only relaxes the reusable
+workflow's check; the caller's `if:` must be relaxed too before outsiders can
+trigger anything.
+
 Notes and trade-offs:
 
 - **`workflow_call` is exempt** — the association field is not present on
