@@ -136,6 +136,8 @@ def test_the_pull_request_carries_the_config_and_the_pinned_workflow(monkeypatch
 
     files = host.prs[0]["files"]
     assert files.agent_config_path == ".nebuko/agents/agent-config.yaml"
+    assert files.nebuko_config_path == ".nebuko/nebuko-config.yaml"
+    assert "agent_config_path: .nebuko/agents/agent-config.yaml" in files.nebuko_config
     assert files.workflow_path == ".github/workflows/nebuko.yaml"
     assert "OPENROUTER_API_KEY" in files.agent_config
     assert f"nebuko-workflow.yaml@{PIN}" in files.workflow

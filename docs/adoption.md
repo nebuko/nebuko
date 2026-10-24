@@ -139,11 +139,21 @@ curl -fsSL -o .nebuko/agents/agent-config.yaml \
 Commit the file. Note every `api_token_env` it declares (one per provider):
 each one is a secret you must pass in step 2 and create in step 3.
 
+Then create `.nebuko/nebuko-config.yaml` telling the engine where that config
+lives (issue #1094) — this replaces the `agent_config_path` `with:` input:
+
+```yaml
+agent_config_path: .nebuko/agents/agent-config.yaml
+```
+
+The file also carries the `default_workflow` key, the workflow
+`/nebuko run workflow` starts when `--name` is omitted (see
+[configuration.md](./configuration.md)).
+
 ### Step 2 — Add the workflow
 
-Create `.github/workflows/nebuko.yaml` in your repository, point
-`agent_config_path` at your config, and pass the secrets that config reads
-(here, the OpenRouter profile):
+Create `.github/workflows/nebuko.yaml` in your repository and pass the secrets
+your config reads (here, the OpenRouter profile):
 
 ```yaml
 name: Nebuko
@@ -163,8 +173,6 @@ permissions:
 jobs:
   agent:
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@v0.0.2
-    with:
-      agent_config_path: ".nebuko/agents/agent-config.yaml"
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # = api_token_env in your config
       GH_PAT: ${{ secrets.GH_PAT }}
@@ -187,7 +195,8 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 
 | Input | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `agent_config_path` | string | `agent-config.yaml` | Path to your agent config — set it to `.nebuko/agents/agent-config.yaml` (step 1, section 5). A bare file name is looked up in `.nebuko/agents/`. |
+| `agent_config_path` | string | *(empty)* | Path to your agent config. Leave unset: the `agent_config_path` key of `.nebuko/nebuko-config.yaml` is used (step 1, section 5), falling back to the layered `agent-config.yaml` lookup. A bare file name is looked up in `.nebuko/agents/`. |
+| `nebuko_config_path` | string | `.nebuko/nebuko-config.yaml` | Path to the Nebuko runtime config (default workflow name, agent-config path; issue #1094). Relative values anchor at your repository's workspace. |
 | `runs_on` | string | `ubuntu-latest` | Runner label used by the jobs (section 6). |
 | `circuit_breaker_threshold` | number | `25` | Bot-marker count that trips the circuit breaker (per-issue override: `/nebuko update circuit-breaker --value <n>`). |
 | `pin_comment` | boolean | `false` | Pin every agent-step comment for verbatim context injection. |
@@ -227,7 +236,6 @@ jobs:
   agent:
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@v0.0.2
     with:
-      agent_config_path: ".nebuko/agents/agent-config.yaml"
       EXTRA_SECRET_1_NAME: "BRAVE_API_KEY"       # env var the MCP reads
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -285,7 +293,8 @@ The `nebuko[bot]` actor requires the GitHub App and is not available yet.
 ## 5. Provider configuration — ready-to-paste configs
 
 Commit your agent config at `.nebuko/agents/agent-config.yaml` — **mandatory
-for now** (section 3, step 1) — and set `agent_config_path` to that path. Other
+for now** (section 3, step 1) — and point the `agent_config_path` key of
+`.nebuko/nebuko-config.yaml` at that path. Other
 config artifacts (prompts, skills, workflows) still resolve through the layered
 lookup, anchored at the caller's workspace (`$GITHUB_WORKSPACE` when set, the
 working directory otherwise — not the engine checkout): a repo override under

@@ -525,7 +525,7 @@ class TestCommandErrorNotice:
 
         assert str(resolved.get("SKIP_AGENT")).lower() == "true"
         assert str(resolved.get("COMMAND_ERROR")).lower() == "true"
-        assert "/nebuko run workflow --name" in resolved.get("REASON", "")
+        assert "/nebuko run workflow [--name" in resolved.get("REASON", "")
 
     def test_the_real_resolver_flags_an_unknown_slash_command(self, tmp_path):
         engine = _engine(tmp_path, _trigger(body="/foo bar", number=804))

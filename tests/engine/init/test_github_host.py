@@ -24,6 +24,8 @@ FILES = GeneratedFiles(
     agent_config="providers: {}\n",
     workflow_path=".github/workflows/nebuko.yaml",
     workflow="name: Nebuko\n",
+    nebuko_config_path=".nebuko/nebuko-config.yaml",
+    nebuko_config="agent_config_path: .nebuko/agents/agent-config.yaml\n",
 )
 
 
@@ -284,7 +286,7 @@ def _pr_runner(pr_create=None):
     )
 
 
-def test_open_pr_commits_both_files_and_returns_the_url():
+def test_open_pr_commits_all_files_and_returns_the_url():
     runner = _pr_runner()
     url = GitHubHost(runner=runner).open_pr(TARGET, "nebuko/init", "title", "body", FILES)
     assert url == "https://github.com/acme/widgets/pull/7"
@@ -296,6 +298,7 @@ def test_open_pr_commits_both_files_and_returns_the_url():
     ]
     assert [payload["content"] for payload in blob_payloads] == [
         FILES.agent_config,
+        FILES.nebuko_config,
         FILES.workflow,
     ]
 
@@ -303,6 +306,7 @@ def test_open_pr_commits_both_files_and_returns_the_url():
     assert tree["base_tree"] == "basetree"
     assert [entry["path"] for entry in tree["tree"]] == [
         FILES.agent_config_path,
+        FILES.nebuko_config_path,
         FILES.workflow_path,
     ]
 

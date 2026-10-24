@@ -16,7 +16,6 @@ jobs:
   agent:
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@${pin_ref}
     with:
-      agent_config_path: "${agent_config_path}"
       runs_on: "${runs_on}"
     secrets:
 ${secrets_block}
