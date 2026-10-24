@@ -26,7 +26,13 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.branch_scaffold import (
+    BranchScaffold,
+    ScaffoldResult,
+    issue_title_from_payload,
+)
 from nebuko.engine.git_session import GitSessionGuard, GuardResult
+from nebuko.engine.pr_finalize import PrFinalizer, PrFinalizeResult
 from nebuko.engine.hook_runner import (
     HookPhase,
     HookResult,
@@ -676,6 +682,12 @@ class Engine:
     _hook_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # The branch scaffold's outcome for this run (issue #1138): the prepared
+    # branch feeds the state recording, a conflict note feeds the prompt.
+    # Engine-internal, so it is excluded from ``__init__``/equality/repr.
+    _scaffold_state: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
     # The workspace a relative ``AGENT_CONFIG_PATH`` is anchored at (issue #930),
     # snapshotted once at engine start before any chdir. A mutable container
     # because ``Engine`` is frozen; empty until ``_caller_root`` first resolves.
@@ -841,6 +853,7 @@ class Engine:
         publish_failed = False
         self._publish_state.clear()
         self._hook_state.clear()
+        self._scaffold_state.clear()
         # The typed thread and its selection describe *this* run's thread: a
         # reused engine over a new run must not serve the previous snapshots.
         self._context_state.clear()
@@ -1008,7 +1021,18 @@ class Engine:
             self._step_input_state["results"] = list(input_results)
 
             self._enter(phases, "prompt")
+            failure_reason: str | None = None
+            # Branch scaffold (issue #1138): the engine prepares the feature
+            # branch before the prompt is built, so a rebase-conflict note
+            # reaches the prompt and the agent never spends turns on branch
+            # mechanics. Fail-closed: a failed scaffold skips the agent.
+            scaffold = self._branch_scaffold()
+            if not scaffold.ok:
+                failure_reason = f"branch scaffold failed: {scaffold.detail}"
             prompt = self.build_prompt(resolved, history, input_results, step_scope)
+            conflict_note = self._render_scaffold_conflict()
+            if conflict_note:
+                prompt = f"{prompt}\n\n{conflict_note}"
 
             self._enter(phases, "agent")
             # Resolve the legacy comment/validation bridge once, before the
@@ -1026,7 +1050,6 @@ class Engine:
             # once here. A ``pre_hook`` runs before the agent and is fail-closed;
             # a ``post_hook`` runs after the agent attempt and is fail-open.
             hooks = hooks_from_resolved(resolved)
-            failure_reason: str | None = None
             agent_result: dict[str, Any] = {}
 
             # Git session preflight (issue #1089): prove the checkout can
@@ -1035,7 +1058,10 @@ class Engine:
             # ``gh`` kept succeeding — and the run still exited 0.
             preflight = self._git_session_preflight()
             if not preflight.ok:
-                failure_reason = f"git session preflight failed: {preflight.detail}"
+                note = f"git session preflight failed: {preflight.detail}"
+                failure_reason = (
+                    f"{failure_reason}; {note}" if failure_reason else note
+                )
 
             pre_hook = hooks.get("pre")
             if failure_reason is None and pre_hook is not None:
@@ -1110,7 +1136,22 @@ class Engine:
             # returns ``ExitCode.ERROR`` and the whole workflow dies before the
             # in-place retry.
             self._enter(phases, "state")
-            state = self.persist(agent_result)
+            state = self._record_scaffold_branch(self.persist(agent_result))
+
+            # PR finalize (issue #1138): the engine opens the session's PR and
+            # records its metadata in the persisted state. Runs only after an
+            # agent phase (a deterministic step publishes nothing), and after
+            # ``persist`` so the recording starts from the just-persisted
+            # state. Fail-closed: a session whose PR could not be opened must
+            # not look green.
+            if "agent" in phases:
+                pr_result = self._pr_finalize()
+                state = self._record_pull_request(state, pr_result)
+                if not pr_result.ok:
+                    note = f"PR finalizer failed: {pr_result.detail}"
+                    failure_reason = (
+                        f"{failure_reason}; {note}" if failure_reason else note
+                    )
 
             # Git session finalize (issue #1089): the session must not end with
             # work left in the checkout. Everything still pending is committed
@@ -2400,6 +2441,134 @@ class Engine:
         else:
             log.error("[phase:agent] git finalize failed: %s", result.detail)
         return result
+
+    # @stub-protected
+    def _branch_scaffold(self) -> ScaffoldResult:
+        """Prepare the dev session's feature branch (issue #1138).
+
+        Runs in the ``prompt`` phase, before the prompt is built, so a
+        rebase-conflict note reaches the prompt. Never raises: a failure is
+        returned as data and the caller turns it into a run error.
+        """
+        trigger = self._active_trigger()
+        if trigger is None or trigger.type not in ("issue", "issue_comment"):
+            # Branch mechanics only make sense for an issue-driven dev session;
+            # a PR-review or dispatch trigger carries no issue to scaffold for.
+            result = ScaffoldResult(
+                ok=True, skipped=True, detail="not an issue-triggered run"
+            )
+            self._scaffold_state["result"] = result
+            return result
+        scaffold = BranchScaffold(
+            self.repo_root,
+            self._session_env(),
+            issue_number=trigger.number if trigger is not None else 0,
+            issue_title=issue_title_from_payload(trigger.payload)
+            if trigger is not None
+            else "",
+        )
+        result = scaffold.scaffold()
+        self._scaffold_state["result"] = result
+        if result.ok:
+            log.info("[phase:prompt] branch scaffold: %s", result.detail)
+        else:
+            log.error("[phase:prompt] branch scaffold failed: %s", result.detail)
+        return result
+
+    def _render_scaffold_conflict(self) -> str:
+        """The fix-first prompt section for a conflicted rebase (issue #1138).
+
+        Empty unless this run's scaffold hit a rebase conflict: the agent
+        session starts, but its first instruction is to resolve the conflict.
+        """
+        result = self._scaffold_state.get("result")
+        if not isinstance(result, ScaffoldResult):
+            return ""
+        if not result.conflict or not result.note:
+            return ""
+        return f"## Branch conflict — fix first\n\n{result.note}"
+
+    # @stub-protected
+    def _pr_finalize(self) -> PrFinalizeResult:
+        """Open the session's PR and export its metadata (issue #1138).
+
+        Runs after ``persist``, gated on the agent phase: a deterministic step
+        publishes nothing to finalize. Never raises: a failure is returned as
+        data and the caller turns it into a run error.
+        """
+        result = PrFinalizer().finalize()
+        if result.ok:
+            log.info("[phase:state] pr finalize: %s", result.detail)
+        else:
+            log.error("[phase:state] pr finalize failed: %s", result.detail)
+        return result
+
+    def _record_scaffold_branch(self, state: WorkflowState) -> WorkflowState:
+        """Record the engine-scaffolded dev branch in the persisted state.
+
+        ``current_context`` is the durable surface (it is serialized into the
+        state comment and ``state.json``), so the next run finds the branch
+        without re-deriving it. ``scaffold_branch`` itself stays reserved for
+        the branch-mounted scaffold plan (issue #604) that ``resolve_route``
+        consumes — the dev branch must never clobber it.
+        """
+        result = self._scaffold_state.get("result")
+        if (
+            state is None
+            or not isinstance(result, ScaffoldResult)
+            or not result.branch
+        ):
+            return state
+        context = dict(state.current_context)
+        context["dev_branch"] = result.branch
+        updated = state.model_copy(update={"current_context": context})
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the dev branch")
+        return updated
+
+    def _record_pull_request(
+        self, state: WorkflowState | None, pr_result: PrFinalizeResult
+    ) -> WorkflowState | None:
+        """Record the engine-opened PR in the persisted state (issue #1138).
+
+        The state artifact was built during the agent phase, before the PR
+        existed, so the engine writes the metadata here — the same
+        ``model_copy`` + ``save_state`` pattern as ``_record_terminal_skip``.
+        The next transition preserves it (``build_state`` keeps a set
+        ``pull_request``). A stateless run or an unparseable PR URL is left
+        alone; the exported ``PR_*`` env remains for in-process readers.
+        """
+        if state is None or not pr_result.ok or not pr_result.pr_url:
+            return state
+        ensure_import_path()
+        from workflow_state import PullRequestInfo
+
+        from nebuko.engine.pr_finalize import pr_number_from_url
+
+        number = pr_number_from_url(pr_result.pr_url)
+        if number is None:
+            log.warning(
+                "[phase:state] could not parse the PR number from %s; "
+                "not recorded in state",
+                pr_result.pr_url,
+            )
+            return state
+        pr = PullRequestInfo(
+            number=number,
+            url=pr_result.pr_url,
+            title=os.environ.get("PR_TITLE", ""),
+            author=os.environ.get("PR_AUTHOR", ""),
+            repo=os.environ.get("GITHUB_REPOSITORY", "")
+            or os.environ.get("REPO_NAME", ""),
+        )
+        updated = state.model_copy(update={"pull_request": pr})
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the PR metadata")
+        return updated
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""
