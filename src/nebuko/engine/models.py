@@ -50,7 +50,6 @@ class NebukoManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     skills_dir: str | None = None
-    default_workflow: str | None = None
 
 
 # @stub-protected

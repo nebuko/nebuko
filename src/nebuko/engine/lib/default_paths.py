@@ -104,5 +104,23 @@ def config_path(name: str) -> str:
 
 
 def agent_config_file() -> str:
-    """Default agent-config path, pinned by ``AGENT_CONFIG_PATH`` when set."""
-    return config_path(os.environ.get("AGENT_CONFIG_PATH") or "agent-config.yaml")
+    """Default agent-config path, pinned by ``AGENT_CONFIG_PATH`` when set.
+
+    Precedence (issue #1094): the explicit ``AGENT_CONFIG_PATH`` env var (the
+    workflow input), then the ``agent_config_path`` key of
+    ``.nebuko/nebuko-config.yaml`` — anchored at the caller workspace like every
+    caller-relative path (issue #930) — then the layered ``agent-config.yaml``
+    lookup.
+    """
+    from config import NebukoRuntimeConfig
+
+    explicit = os.environ.get("AGENT_CONFIG_PATH")
+    if explicit:
+        return config_path(explicit)
+    configured = NebukoRuntimeConfig.load().agent_config_path
+    if not configured:
+        return config_path("agent-config.yaml")
+    path = Path(configured)
+    if not path.is_absolute():
+        path = NebukoRuntimeConfig.resolve_caller_root() / path
+    return config_path(str(path))

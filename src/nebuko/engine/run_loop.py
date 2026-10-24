@@ -443,13 +443,19 @@ def _anchor_config_path(
     Relative values anchor at ``caller_root`` — the caller's workspace, not the
     engine checkout — so a cross-repo caller's ``.nebuko/agents/...`` is not
     joined onto the imported ``.nebuko-engine`` checkout (issue #930).
+
+    ``NEBUKO_CONFIG_PATH`` (issue #1094) is anchored the same way: the runtime
+    config is caller-owned, so a relative value must resolve against the
+    caller's workspace in the child too.
     """
     raw = env.get("AGENT_CONFIG_PATH")
-    if not raw or os.path.isabs(raw):
-        return env
-    env["AGENT_CONFIG_PATH"] = ConfigPathAnchor(
-        raw=raw, caller_root=caller_root, engine_root=repo_root
-    ).resolve()
+    if raw and not os.path.isabs(raw):
+        env["AGENT_CONFIG_PATH"] = ConfigPathAnchor(
+            raw=raw, caller_root=caller_root, engine_root=repo_root
+        ).resolve()
+    config_raw = env.get("NEBUKO_CONFIG_PATH")
+    if config_raw and not os.path.isabs(config_raw):
+        env["NEBUKO_CONFIG_PATH"] = str(caller_root / config_raw)
     return env
 
 
