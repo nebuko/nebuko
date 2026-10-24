@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 from openhands.sdk import get_logger
 
-from nebuko.engine.git_session import BENIGN_SKIPS
+from nebuko.engine.lib.git.git_session import BENIGN_SKIPS
 
 logger = get_logger(__name__)
 

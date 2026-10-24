@@ -56,9 +56,9 @@ from nebuko.engine.run_loop import (
     main,
     resolved_env_overlay,
 )
-from nebuko.engine.branch_scaffold import BranchScaffold, ScaffoldResult
-from nebuko.engine.git_session import GuardResult
-from nebuko.engine.pr_finalize import PrFinalizeResult
+from nebuko.engine.lib.git import branch_scaffold
+from nebuko.engine.lib.git import git_session
+from nebuko.engine.lib.git import pr_finalize
 from agent_script.features.run_agent.run_outcome import OutcomeStatus
 from workflow_state import extract_state_from_body
 from workflow_state.step_output_record import StepOutputRecord
@@ -4202,7 +4202,7 @@ class TestGitSessionGuardWiring:
     """
 
     def _run(self, monkeypatch, root, *, preflight=None, finalize=None):
-        from nebuko.engine.git_session import GuardResult
+        from nebuko.engine.lib.git import git_session
 
         engine = _engine_at_root(root.parent, root)
         _stub_resolved(monkeypatch, _resolved_with_hooks())
@@ -4210,12 +4210,12 @@ class TestGitSessionGuardWiring:
         monkeypatch.setattr(
             Engine,
             "_git_session_preflight",
-            lambda self: calls.append("pre") or (preflight or GuardResult(ok=True)),
+            lambda self: calls.append("pre") or (preflight or git_session.GuardResult(ok=True)),
         )
         monkeypatch.setattr(
             Engine,
             "_git_session_finalize",
-            lambda self: calls.append("post") or (finalize or GuardResult(ok=True)),
+            lambda self: calls.append("post") or (finalize or git_session.GuardResult(ok=True)),
         )
         monkeypatch.setattr(
             Engine,
@@ -4236,7 +4236,7 @@ class TestGitSessionGuardWiring:
     def test_a_failed_preflight_fails_the_run_before_the_agent(
         self, tmp_path, monkeypatch
     ):
-        from nebuko.engine.git_session import GuardResult
+        from nebuko.engine.lib.git import git_session
 
         root = tmp_path / "repo"
         root.mkdir()
@@ -4244,7 +4244,7 @@ class TestGitSessionGuardWiring:
         outcome, calls = self._run(
             monkeypatch,
             root,
-            preflight=GuardResult(
+            preflight=git_session.GuardResult(
                 ok=False, detail="cannot authenticate to origin — set NEBUKO_GIT_TOKEN"
             ),
         )
@@ -4256,7 +4256,7 @@ class TestGitSessionGuardWiring:
         assert "NEBUKO_GIT_TOKEN" in outcome.turn_outcome.note
 
     def test_a_failed_finalize_fails_the_run(self, tmp_path, monkeypatch):
-        from nebuko.engine.git_session import GuardResult
+        from nebuko.engine.lib.git import git_session
 
         root = tmp_path / "repo"
         root.mkdir()
@@ -4264,7 +4264,7 @@ class TestGitSessionGuardWiring:
         outcome, _ = self._run(
             monkeypatch,
             root,
-            finalize=GuardResult(ok=False, detail="branch x is not fully pushed"),
+            finalize=git_session.GuardResult(ok=False, detail="branch x is not fully pushed"),
         )
 
         assert outcome.exit_code == ExitCode.ERROR
@@ -4276,7 +4276,7 @@ class TestGitSessionGuardWiring:
     def test_a_finalize_failure_appends_to_an_existing_failure(
         self, tmp_path, monkeypatch
     ):
-        from nebuko.engine.git_session import GuardResult
+        from nebuko.engine.lib.git import git_session
 
         root = tmp_path / "repo"
         root.mkdir()
@@ -4284,8 +4284,8 @@ class TestGitSessionGuardWiring:
         outcome, _ = self._run(
             monkeypatch,
             root,
-            preflight=GuardResult(ok=False, detail="no credentials"),
-            finalize=GuardResult(ok=False, detail="still dirty"),
+            preflight=git_session.GuardResult(ok=False, detail="no credentials"),
+            finalize=git_session.GuardResult(ok=False, detail="still dirty"),
         )
 
         assert outcome.turn_outcome.note == (
@@ -4294,7 +4294,7 @@ class TestGitSessionGuardWiring:
         )
 
     def test_a_skipped_finalize_is_not_a_failure(self, tmp_path, monkeypatch):
-        from nebuko.engine.git_session import GuardResult
+        from nebuko.engine.lib.git import git_session
 
         root = tmp_path / "repo"
         root.mkdir()
@@ -4302,7 +4302,7 @@ class TestGitSessionGuardWiring:
         outcome, _ = self._run(
             monkeypatch,
             root,
-            finalize=GuardResult(ok=True, skipped=True, detail="detached HEAD"),
+            finalize=git_session.GuardResult(ok=True, skipped=True, detail="detached HEAD"),
         )
 
         assert outcome.exit_code == ExitCode.ADVANCE
@@ -4688,7 +4688,7 @@ class TestBranchScaffoldWiring:
 
         def _scaffold_stub(self):
             calls.append("scaffold")
-            result = scaffold or ScaffoldResult(
+            result = scaffold or branch_scaffold.ScaffoldResult(
                 ok=True, branch="feature/issue-590-x"
             )
             self._scaffold_state["result"] = result
@@ -4698,18 +4698,18 @@ class TestBranchScaffoldWiring:
         monkeypatch.setattr(
             Engine,
             "_git_session_preflight",
-            lambda self: calls.append("pre") or GuardResult(ok=True),
+            lambda self: calls.append("pre") or git_session.GuardResult(ok=True),
         )
         monkeypatch.setattr(
             Engine,
             "_git_session_finalize",
-            lambda self: calls.append("post") or GuardResult(ok=True),
+            lambda self: calls.append("post") or git_session.GuardResult(ok=True),
         )
         monkeypatch.setattr(
             Engine,
             "_pr_finalize",
             lambda self: calls.append("pr")
-            or PrFinalizeResult(ok=True, skipped=True, detail="no git remote"),
+            or pr_finalize.PrFinalizeResult(ok=True, skipped=True, detail="no git remote"),
         )
         monkeypatch.setattr(
             Engine,
@@ -4742,7 +4742,7 @@ class TestBranchScaffoldWiring:
         outcome, calls, _ = self._run(
             monkeypatch,
             root,
-            scaffold=ScaffoldResult(
+            scaffold=branch_scaffold.ScaffoldResult(
                 ok=False, detail="could not fetch origin/main: no credentials"
             ),
         )
@@ -4767,7 +4767,7 @@ class TestBranchScaffoldWiring:
             monkeypatch,
             root,
             invoke=_capture,
-            scaffold=ScaffoldResult(
+            scaffold=branch_scaffold.ScaffoldResult(
                 ok=True,
                 conflict=True,
                 branch="feature/issue-590-x",
@@ -4809,7 +4809,7 @@ class TestPrFinalizerWiring:
 
         def _scaffold_stub(self):
             calls.append("scaffold")
-            result = ScaffoldResult(ok=True, skipped=True, detail="not an issue run")
+            result = branch_scaffold.ScaffoldResult(ok=True, skipped=True, detail="not an issue run")
             self._scaffold_state["result"] = result
             return result
 
@@ -4817,18 +4817,18 @@ class TestPrFinalizerWiring:
         monkeypatch.setattr(
             Engine,
             "_git_session_preflight",
-            lambda self: calls.append("pre") or GuardResult(ok=True),
+            lambda self: calls.append("pre") or git_session.GuardResult(ok=True),
         )
         monkeypatch.setattr(
             Engine,
             "_git_session_finalize",
-            lambda self: calls.append("post") or GuardResult(ok=True),
+            lambda self: calls.append("post") or git_session.GuardResult(ok=True),
         )
         monkeypatch.setattr(
             Engine,
             "_pr_finalize",
             lambda self: calls.append("pr")
-            or (pr or PrFinalizeResult(ok=True, skipped=True, detail="no git remote")),
+            or (pr or pr_finalize.PrFinalizeResult(ok=True, skipped=True, detail="no git remote")),
         )
         monkeypatch.setattr(
             Engine,
@@ -4857,7 +4857,7 @@ class TestPrFinalizerWiring:
         outcome, _, _ = self._run(
             monkeypatch,
             root,
-            pr=PrFinalizeResult(ok=False, detail="push rejected"),
+            pr=pr_finalize.PrFinalizeResult(ok=False, detail="push rejected"),
         )
 
         assert outcome.exit_code == ExitCode.ERROR
@@ -4873,24 +4873,24 @@ class TestPrFinalizerWiring:
         _stub_resolved(monkeypatch, _resolved_with_hooks())
 
         def _scaffold_stub(self):
-            self._scaffold_state["result"] = ScaffoldResult(ok=True, skipped=True)
-            return ScaffoldResult(ok=True, skipped=True)
+            self._scaffold_state["result"] = branch_scaffold.ScaffoldResult(ok=True, skipped=True)
+            return branch_scaffold.ScaffoldResult(ok=True, skipped=True)
 
         monkeypatch.setattr(Engine, "_branch_scaffold", _scaffold_stub)
         monkeypatch.setattr(
             Engine,
             "_git_session_preflight",
-            lambda self: GuardResult(ok=False, detail="no credentials"),
+            lambda self: git_session.GuardResult(ok=False, detail="no credentials"),
         )
         monkeypatch.setattr(
             Engine,
             "_git_session_finalize",
-            lambda self: GuardResult(ok=True),
+            lambda self: git_session.GuardResult(ok=True),
         )
         monkeypatch.setattr(
             Engine,
             "_pr_finalize",
-            lambda self: PrFinalizeResult(ok=False, detail="push rejected"),
+            lambda self: pr_finalize.PrFinalizeResult(ok=False, detail="push rejected"),
         )
         monkeypatch.setattr(
             Engine,
@@ -4912,7 +4912,7 @@ class TestPrFinalizerWiring:
         outcome, _, engine = self._run(
             monkeypatch,
             root,
-            pr=PrFinalizeResult(
+            pr=pr_finalize.PrFinalizeResult(
                 ok=True,
                 detail="PR opened",
                 pr_url="https://github.com/olivier-norture/git-flow-ai/pull/42",

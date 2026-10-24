@@ -26,13 +26,11 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
-from nebuko.engine.branch_scaffold import (
-    BranchScaffold,
-    ScaffoldResult,
-    issue_title_from_payload,
+from nebuko.engine.lib.git import (
+    branch_scaffold,
+    git_session,
+    pr_finalize,
 )
-from nebuko.engine.git_session import GitSessionGuard, GuardResult
-from nebuko.engine.pr_finalize import PrFinalizer, PrFinalizeResult
 from nebuko.engine.hook_runner import (
     HookPhase,
     HookResult,
@@ -2409,7 +2407,7 @@ class Engine:
             return self.env
 
     # @stub-protected
-    def _git_session_preflight(self) -> GuardResult:
+    def _git_session_preflight(self) -> git_session.GuardResult:
         """Prove git auth before the agent phase (issue #1089).
 
         Fail-closed: the caller turns a failure into ``failure_reason``, so the
@@ -2417,7 +2415,7 @@ class Engine:
         pushed. A benign skip (no remote, detached HEAD) leaves the caller's
         environment untouched.
         """
-        guard = GitSessionGuard(self.repo_root, self._session_env())
+        guard = git_session.GitSessionGuard(self.repo_root, self._session_env())
         result = guard.preflight()
         if result.ok:
             log.info("[phase:agent] git preflight ok: %s", result.detail)
@@ -2426,7 +2424,7 @@ class Engine:
         return result
 
     # @stub-protected
-    def _git_session_finalize(self) -> GuardResult:
+    def _git_session_finalize(self) -> git_session.GuardResult:
         """Prove the session left a clean, fully pushed tree (issue #1089).
 
         Runs after the agent phase (and so after publication), before the
@@ -2434,7 +2432,7 @@ class Engine:
         once, then the tree and the remote SHA are verified. A failure is a run
         error — an unpublished session must not look green.
         """
-        guard = GitSessionGuard(self.repo_root, self._session_env())
+        guard = git_session.GitSessionGuard(self.repo_root, self._session_env())
         result = guard.finalize()
         if result.ok:
             log.info("[phase:agent] git finalize ok: %s", result.detail)
@@ -2443,7 +2441,7 @@ class Engine:
         return result
 
     # @stub-protected
-    def _branch_scaffold(self) -> ScaffoldResult:
+    def _branch_scaffold(self) -> branch_scaffold.ScaffoldResult:
         """Prepare the dev session's feature branch (issue #1138).
 
         Runs in the ``prompt`` phase, before the prompt is built, so a
@@ -2454,16 +2452,16 @@ class Engine:
         if trigger is None or trigger.type not in ("issue", "issue_comment"):
             # Branch mechanics only make sense for an issue-driven dev session;
             # a PR-review or dispatch trigger carries no issue to scaffold for.
-            result = ScaffoldResult(
+            result = branch_scaffold.ScaffoldResult(
                 ok=True, skipped=True, detail="not an issue-triggered run"
             )
             self._scaffold_state["result"] = result
             return result
-        scaffold = BranchScaffold(
+        scaffold = branch_scaffold.BranchScaffold(
             self.repo_root,
             self._session_env(),
             issue_number=trigger.number if trigger is not None else 0,
-            issue_title=issue_title_from_payload(trigger.payload)
+            issue_title=branch_scaffold.issue_title_from_payload(trigger.payload)
             if trigger is not None
             else "",
         )
@@ -2482,21 +2480,21 @@ class Engine:
         session starts, but its first instruction is to resolve the conflict.
         """
         result = self._scaffold_state.get("result")
-        if not isinstance(result, ScaffoldResult):
+        if not isinstance(result, branch_scaffold.ScaffoldResult):
             return ""
         if not result.conflict or not result.note:
             return ""
         return f"## Branch conflict — fix first\n\n{result.note}"
 
     # @stub-protected
-    def _pr_finalize(self) -> PrFinalizeResult:
+    def _pr_finalize(self) -> pr_finalize.PrFinalizeResult:
         """Open the session's PR and export its metadata (issue #1138).
 
         Runs after ``persist``, gated on the agent phase: a deterministic step
         publishes nothing to finalize. Never raises: a failure is returned as
         data and the caller turns it into a run error.
         """
-        result = PrFinalizer().finalize()
+        result = pr_finalize.PrFinalizer().finalize()
         if result.ok:
             log.info("[phase:state] pr finalize: %s", result.detail)
         else:
@@ -2515,7 +2513,7 @@ class Engine:
         result = self._scaffold_state.get("result")
         if (
             state is None
-            or not isinstance(result, ScaffoldResult)
+            or not isinstance(result, branch_scaffold.ScaffoldResult)
             or not result.branch
         ):
             return state
@@ -2529,7 +2527,7 @@ class Engine:
         return updated
 
     def _record_pull_request(
-        self, state: WorkflowState | None, pr_result: PrFinalizeResult
+        self, state: WorkflowState | None, pr_result: pr_finalize.PrFinalizeResult
     ) -> WorkflowState | None:
         """Record the engine-opened PR in the persisted state (issue #1138).
 
@@ -2545,7 +2543,7 @@ class Engine:
         ensure_import_path()
         from workflow_state import PullRequestInfo
 
-        from nebuko.engine.pr_finalize import pr_number_from_url
+        from nebuko.engine.lib.git.pr_finalize import pr_number_from_url
 
         number = pr_number_from_url(pr_result.pr_url)
         if number is None:
