@@ -15,7 +15,9 @@ same guarantee without declaring anything:
   probe fails on a github.com HTTPS remote.
 * :meth:`GitSessionGuard.finalize` runs after the agent phase — it commits and
   pushes anything still pending, then verifies the tree is clean *and* the
-  branch is fully pushed.
+  branch is fully pushed. Before pushing it re-proves auth and installs the
+  env token when the probe fails, so it never depends on ambient credentials
+  surviving the session (issue #1134).
 
 Both entry points never raise: a failure is returned as data, and the engine
 turns it into an ``ExitCode.ERROR`` run.
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -100,6 +103,8 @@ class GitSessionGuard:
         self.repo_root = Path(repo_root)
         self.env = env
         self.remote = remote
+        #: Set when this guard installed the token extraheader itself.
+        self._token_installed = False
 
     @property
     def repo(self) -> str:
@@ -127,29 +132,26 @@ class GitSessionGuard:
 
         self._configure_identity()
 
-        probe_failure = self._verify_remote()
-        if probe_failure is None:
-            return GuardResult(ok=True, detail=f"{self.remote} authenticated")
-
-        if not self._is_token_remote(remote_url):
-            return GuardResult(
-                ok=False, detail=self._auth_failure_detail(remote_url, probe_failure)
-            )
-        if not self._install_credentials():
-            return GuardResult(
-                ok=False, detail=self._auth_failure_detail(remote_url, probe_failure)
-            )
-        probe_failure = self._verify_remote()
+        probe_failure = self._ensure_push_auth()
         if probe_failure is not None:
             return GuardResult(
                 ok=False, detail=self._auth_failure_detail(remote_url, probe_failure)
             )
-        logger.info("git session: installed the push token for %s", self.remote)
-        return GuardResult(ok=True, detail=f"{self.remote} authenticated with a token")
+        if self._token_installed:
+            return GuardResult(
+                ok=True, detail=f"{self.remote} authenticated with a token"
+            )
+        return GuardResult(ok=True, detail=f"{self.remote} authenticated")
 
     # @stub-protected
     def finalize(self) -> GuardResult:
         """Commit and push any leftovers, then prove the session fully published.
+
+        Auth is re-proven first and the env token installed when the probe
+        fails on a github.com HTTPS remote (issue #1134): finalize never
+        depends on ambient credentials surviving the session. On a token host
+        a failed probe is fatal; elsewhere the push is still attempted, since
+        the probe may lack the caller's own credentials.
 
         Returns:
             ``ok=True`` when the tree is clean and the branch SHA matches the
@@ -163,6 +165,21 @@ class GitSessionGuard:
             return GuardResult(ok=True, skipped=True, detail="detached HEAD")
 
         self._configure_identity()
+
+        auth_failure = self._ensure_push_auth()
+        if auth_failure is not None:
+            remote_url = self._remote_url()
+            if remote_url is not None and self._is_token_remote(remote_url):
+                return GuardResult(
+                    ok=False,
+                    detail=self._auth_failure_detail(remote_url, auth_failure),
+                )
+            logger.warning(
+                "git session: could not verify %s auth before the push: %s",
+                self.remote,
+                auth_failure,
+            )
+
         commit_problem = self._commit_all_pending()
 
         problems: list[str] = []
@@ -250,6 +267,31 @@ class GitSessionGuard:
             return _dedent(str(exc))
         return None
 
+    # @stub-protected
+    def _ensure_push_auth(self) -> Optional[str]:
+        """Prove push auth, installing the env token when the probe fails.
+
+        Shared by preflight and finalize so neither depends on ambient
+        credentials surviving the session (issue #1134). Returns the probe
+        failure detail, or ``None`` when the remote authenticates. A token is
+        installed only for a github.com HTTPS remote, and only when the probe
+        failed — the caller's own auth is left untouched otherwise.
+        """
+        probe_failure = self._verify_remote()
+        if probe_failure is None:
+            return None
+        remote_url = self._remote_url()
+        if remote_url is None or not self._is_token_remote(remote_url):
+            return probe_failure
+        if not self._install_credentials():
+            return probe_failure
+        probe_failure = self._verify_remote()
+        if probe_failure is not None:
+            return probe_failure
+        self._token_installed = True
+        logger.info("git session: installed the push token for %s", self.remote)
+        return None
+
     # ── Publication ───────────────────────────────────────────────
 
     # @stub-protected
@@ -310,6 +352,9 @@ class GitSessionGuard:
             text=True,
             timeout=timeout,
             cwd=str(self.repo_root),
+            # Never block on a credentials prompt: fail fast instead (no TTY
+            # in CI, so a prompt would hang until the timeout).
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
         )
         if result.returncode != 0:
             raise RuntimeError(

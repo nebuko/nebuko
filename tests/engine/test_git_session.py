@@ -173,6 +173,22 @@ def test_token_precedence_prefers_the_dedicated_variable(checkout):
     assert GitSessionGuard(checkout, {})._resolve_token() is None
 
 
+def test_ensure_push_auth_installs_token_after_probe_failure(checkout):
+    """A failed probe on a github HTTPS remote installs the env token (#1134)."""
+    guard = GitSessionGuard(checkout, {"GH_TOKEN": "tok-1134"})
+    guard._remote_url = lambda: "https://github.com/o/r"  # type: ignore[method-assign]
+    probes = iter(["authentication failed", None])
+    guard._verify_remote = lambda: next(probes)  # type: ignore[method-assign]
+
+    assert guard._ensure_push_auth() is None
+    assert guard._token_installed
+    header = _git(
+        checkout, "config", "--local", "http.https://github.com/.extraheader"
+    )
+    assert header.startswith("AUTHORIZATION: basic ")
+    assert "tok-1134" not in header
+
+
 # ── finalize ─────────────────────────────────────────────────────
 
 
@@ -263,7 +279,40 @@ def test_finalize_keeps_the_token_out_of_the_detail(checkout):
     assert "tok-secret" not in result.detail
 
 
+def test_finalize_reports_actionable_detail_when_auth_cannot_be_restored(checkout):
+    """On a token host an unrestorable probe failure is fatal, before any push."""
+    guard = GitSessionGuard(checkout, {"NEBUKO_GIT_TOKEN": "tok-secret"})
+    guard._remote_url = lambda: "https://github.com/o/r"  # type: ignore[method-assign]
+    guard._verify_remote = lambda: "could not read Username"  # type: ignore[method-assign]
+    pushed: list[str] = []
+    guard._push_branch = lambda branch: pushed.append(branch) or ""  # type: ignore[method-assign]
+    (checkout / "left.txt").write_text("left\n", encoding="utf-8")
+
+    result = guard.finalize()
+
+    assert not result.ok
+    assert "cannot authenticate" in result.detail
+    assert "NEBUKO_GIT_TOKEN" in result.detail
+    assert "tok-secret" not in result.detail
+    assert pushed == []
+
+
 def test_guard_result_defaults_are_a_clean_pass():
     result = GuardResult(ok=True)
 
     assert not result.skipped and result.detail == ""
+
+
+def test_run_git_disables_terminal_prompt(checkout, monkeypatch):
+    """A credentials-less git fails fast instead of blocking on a prompt."""
+    captured: dict = {}
+
+    def fake_run(args, **kwargs):
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    GitSessionGuard(checkout, {})._run_git(["status"])
+
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
