@@ -177,7 +177,6 @@ agents:
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - inject: ["posting-contract"]
-      - discover: ["git-pr-workflow"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
 ```
 
