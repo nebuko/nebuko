@@ -64,6 +64,34 @@ def checkout(tmp_path: Path) -> Path:
     return work
 
 
+@pytest.fixture()
+def detached_checkout(tmp_path: Path) -> Path:
+    """A pinned-SHA checkout: detached at the base SHA, no remote-tracking refs.
+
+    ``actions/checkout@v5`` with ``ref: <sha>`` (this repo's own trigger
+    workflow) leaves neither ``origin/main`` nor any other remote-tracking
+    ref behind.
+    """
+    remote = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+    _git(seed, "config", "user.name", "t")
+    _git(seed, "config", "user.email", "t@example.com")
+    _git(seed, "remote", "add", "origin", remote.as_uri())
+    _commit(seed, "base.txt", "base\n", "base")
+    _git(seed, "push", "-q", "origin", "main")
+
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", remote.as_uri(), str(work)], check=True)
+    _git(work, "config", "user.name", "t")
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "update-ref", "-d", "refs/remotes/origin/main")
+    _git(work, "symbolic-ref", "-d", "refs/remotes/origin/HEAD")
+    _git(work, "checkout", "-q", "--detach", "HEAD")
+    return work
+
+
 def _scaffold(checkout: Path, **kwargs) -> ScaffoldResult:
     return BranchScaffold(
         checkout,
@@ -157,6 +185,46 @@ class TestScaffold:
         assert result.branch == BRANCH
         assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
         assert _git(checkout, "rev-parse", "HEAD") == head
+
+    def test_scaffolds_from_a_detached_head_without_remote_refs(
+        self, detached_checkout
+    ):
+        # The real pinned-SHA condition: detached at the base SHA with no
+        # remote-tracking refs at all. The base must be fetched before the
+        # branch can be created from it (issue #1138 round 8).
+        assert not _git(detached_checkout, "branch", "-r")
+
+        result = _scaffold(detached_checkout)
+
+        assert result.ok and not result.skipped
+        assert result.branch == BRANCH
+        assert _git(detached_checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
+        assert _git(detached_checkout, "rev-parse", "HEAD") == _git(
+            detached_checkout, "rev-parse", "origin/main"
+        )
+
+    def test_continues_a_remote_only_branch_from_a_detached_head(
+        self, detached_checkout
+    ):
+        # Round 2 on the same issue: the remote branch carries round 1's
+        # commits, the fresh checkout is detached at the base. The branch
+        # must be continued (rebased), never reset by ``checkout -B``.
+        base = _git(detached_checkout, "rev-parse", "HEAD")
+        _git(detached_checkout, "checkout", "-q", "-b", BRANCH)
+        _commit(detached_checkout, "work.txt", "work\n", "round 1")
+        _git(detached_checkout, "push", "-q", "origin", BRANCH)
+        round1 = _git(detached_checkout, "rev-parse", "HEAD")
+        _git(detached_checkout, "checkout", "-q", "--detach", base)
+        _git(detached_checkout, "update-ref", "-d", f"refs/remotes/origin/{BRANCH}")
+        _git(detached_checkout, "branch", "-qD", BRANCH)
+
+        result = _scaffold(detached_checkout)
+
+        assert result.ok and not result.skipped
+        assert result.branch == BRANCH
+        assert _git(detached_checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
+        # Round 1's commit is still reachable: the branch was not reset.
+        _git(detached_checkout, "merge-base", "--is-ancestor", round1, "HEAD")
 
     def test_skips_on_an_unborn_head(self, tmp_path):
         # A checkout with a remote but no commits has nothing to branch from.

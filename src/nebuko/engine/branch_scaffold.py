@@ -124,27 +124,22 @@ class BranchScaffold:
             current = "HEAD"
         if current == "HEAD":
             # A pinned-SHA checkout (this repo's own trigger workflow) is
-            # detached: the scaffold must still create the feature branch,
+            # detached: the scaffold must still prepare the feature branch,
             # or nobody would (issue #1138 round 6). Only an unborn HEAD
             # (no commits yet) has nothing to branch from.
             try:
                 self._git("rev-parse", "--verify", "-q", "HEAD")
             except RuntimeError:
                 return ScaffoldResult(ok=True, skipped=True, detail="unborn HEAD")
-            return self._create_branch(
-                feature_branch_name(self.issue_number, self.issue_title),
-                self._base_branch(),
-            )
-
         branch = feature_branch_name(self.issue_number, self.issue_title)
         base = self._base_branch()
+        # A pinned-SHA checkout has no remote-tracking refs at all: the base
+        # must be fetched before anything can be created from it (round 8).
         if not self._fetch_base(base):
             return ScaffoldResult(
                 ok=False, detail=f"could not fetch origin/{base}"
             )
-        if current == branch:
-            return self._rebase_existing(branch, base)
-        return self._create_branch(branch, base)
+        return self._prepare_branch(branch, base)
 
     def _base_branch(self) -> str:
         """The base branch: ``GITHUB_BASE_REF`` when set, else the remote HEAD."""
@@ -168,6 +163,41 @@ class BranchScaffold:
             logger.warning("branch scaffold: fetch failed: %s", exc)
             return False
 
+    def _prepare_branch(self, branch: str, base: str) -> ScaffoldResult:
+        """Continue an existing branch, or create it from the fetched base.
+
+        An existing branch — local, or remote-only from a previous round —
+        must be rebased onto the base, never reset: ``checkout -B`` would
+        orphan the prior round's commits (issue #1138 round 8).
+        """
+        if self._branch_exists(branch):
+            return self._rebase_existing(branch, base)
+        return self._create_branch(branch, base)
+
+    def _branch_exists(self, branch: str) -> bool:
+        """Whether the branch exists locally or on the remote.
+
+        A fresh pinned-SHA checkout has no local branches: a branch that only
+        exists on the remote (a previous round's work) is fetched so the
+        session continues it.
+        """
+        try:
+            if self._git("rev-parse", "--verify", "-q", f"refs/heads/{branch}"):
+                return True
+        except RuntimeError:
+            pass  # no local branch: look on the remote
+        try:
+            if not self._git(
+                "ls-remote", "--heads", "origin", f"refs/heads/{branch}"
+            ):
+                return False
+            # Populates ``refs/remotes/origin/<branch>`` opportunistically.
+            self._git("fetch", "--no-tags", "origin", branch)
+            return True
+        except RuntimeError as exc:
+            logger.warning("branch scaffold: remote branch lookup failed: %s", exc)
+            return False
+
     def _create_branch(self, branch: str, base: str) -> ScaffoldResult:
         try:
             self._git("checkout", "-B", branch, f"origin/{base}")
@@ -180,6 +210,9 @@ class BranchScaffold:
         return ScaffoldResult(ok=True, detail=detail, branch=branch)
 
     def _rebase_existing(self, branch: str, base: str) -> ScaffoldResult:
+        # After a remote-only fetch the session is still on the detached
+        # base HEAD: the rebase must run on the feature branch itself.
+        self._git("checkout", branch)
         try:
             self._git("rebase", f"origin/{base}")
         except RuntimeError:
