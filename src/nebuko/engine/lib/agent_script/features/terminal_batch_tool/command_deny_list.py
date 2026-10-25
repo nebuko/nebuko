@@ -20,17 +20,47 @@ PUSH_DENY_MESSAGE = (
     "locally instead."
 )
 
-#: Matches an actual ``git push`` invocation anywhere in the statement:
+#: Matches a single ``git push`` statement (one shell segment):
 #: optional leading whitespace, optional ``VAR=value`` environment
-#: assignments, git's global options, then ``git ... push``. A mention inside
-#: another command (``echo git push``, ``grep push``) does not match, and
-#: neither does any other git subcommand (``git status``, ``git log
-#: origin/main``).
+#: assignments, git's global options, then ``push`` as the subcommand —
+#: git's global options all precede the subcommand, so ``push`` must be the
+#: first non-option token. A mention inside another command (``echo git
+#: push``, ``grep push``) or as an argument of another subcommand
+#: (``git log --oneline push``) does not match.
+#: Git global options that take a separate value token (e.g. ``git -C repo
+#: push``): the value must be consumed with the option so the subcommand is
+#: still the first non-option token.
 PUSH_PATTERN = (
     r"\s*"
     r"(?:[A-Za-z_][A-Za-z_0-9]*=\S*\s+)*"
-    r"git(?:\s+(?:-{1,2}\S+|[^\s-]\S*))*\s+push(?:\s+\S+)*\s*"
+    r"git(?:\s+(?:-{1,2}\S+|-c|-C|--git-dir|--work-tree|--namespace"
+    r"|--exec-path|--super-prefix)(?:\s+[^\s-]\S*)?)*\s+push(?:\s+\S+)*\s*"
 )
+
+#: Shell operators that chain statements inside one ``commands`` entry.
+#: Quoted text is never split (``git commit -m 'a; git push'`` is one
+#: statement whose message happens to contain a mention).
+_CHAIN_OPERATORS = re.compile(r"&&|\|\||[;|&]")
+
+
+def split_statements(statement: str) -> list[str]:
+    """Split a ``commands`` entry on shell operators, honoring quotes."""
+    parts: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    for char in statement:
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in "'\"":
+            quote = char
+        elif _CHAIN_OPERATORS.match(char):
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current))
+    return parts
 
 
 @dataclass(frozen=True)
@@ -59,9 +89,16 @@ class CommandDenyList:
 
     # @stub-protected: signature defined by architect — do not modify
     def check(self, statement: str) -> DenyResult | None:
-        """Return the first rule matching ``statement``, else ``None``."""
+        """Return the first rule matching any segment of ``statement``.
+
+        A ``commands`` entry may chain statements with shell operators
+        (``&&``, ``||``, ``;``, ``|``, ``&``); each segment is checked so a
+        chained ``git push`` cannot slip past a deny rule.
+        """
         for rule in self.rules:
-            if rule.pattern.fullmatch(statement):
+            if any(
+                rule.pattern.fullmatch(segment) for segment in split_statements(statement)
+            ):
                 return DenyResult(
                     rule_name=rule.name, statement=statement, message=rule.message
                 )
