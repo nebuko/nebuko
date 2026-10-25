@@ -11,7 +11,6 @@ from openhands.sdk import get_logger
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.sdk.event import ActionEvent, MessageEvent
 from openhands.sdk.llm.message import content_to_str
-from openhands.sdk.tool.builtins.finish import FinishTool
 from pydantic import ValidationError
 
 from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS
@@ -96,7 +95,9 @@ LATEST_ANSWER_FILE = "latest_answer.md"
 # Tool names whose turns carry the agent's text in ``ActionEvent.thought``
 # instead of a standalone ``MessageEvent`` (issue #553/#555). Agents place
 # their full deliverable on the same turn as these control-plane calls.
-FINISH_TOOL_NAME = FinishTool.name
+# ``finish`` is retired as a tool (issue #1071); the name is kept only so a
+# recorded pre-migration run's events stay readable.
+FINISH_TOOL_NAME = "finish"
 DISPATCH_NEXT_TOOL_NAME = "dispatch_next"
 # Every step now ends through the engine-elicited finalize turn (issue #1033),
 # whose text is the report; the engine prompt that quotes the section skeleton

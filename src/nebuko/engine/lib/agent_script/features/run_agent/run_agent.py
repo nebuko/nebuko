@@ -338,7 +338,7 @@ def run_agent(
     install_tool_call_repair()
 
     # ── Tool resolution ──────────────────────────────────────────
-    default_tool_list = ["terminal", "file_editor", "task_tracker", "think", "finish"]
+    default_tool_list = ["terminal", "file_editor", "task_tracker", "think"]
     agent_tools = agent_cfg.tools if agent_cfg is not None else default_tool_list
     # Every step ends through the terminal ``finalize`` tool (issue #1033), so
     # it must be resolvable even though the role's static tool list predates it.

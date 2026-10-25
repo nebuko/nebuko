@@ -48,6 +48,7 @@ _RULE_SKILL_FILE = "C5-skill-file"
 _RULE_UNREFERENCED = "C6-unreferenced-entry"
 _RULE_MCP_SERVERS = "C7-mcp-servers"
 _RULE_MISSING_ROLE = "C8-missing-role"
+_RULE_DEPRECATED_TOOL = "C9-deprecated-tool"
 
 RULE_SEVERITY: dict[str, str] = {
     _RULE_SCHEMA: _SEVERITY_ERROR,
@@ -58,12 +59,15 @@ RULE_SEVERITY: dict[str, str] = {
     _RULE_UNREFERENCED: _SEVERITY_WARNING,
     _RULE_MCP_SERVERS: _SEVERITY_ERROR,
     _RULE_MISSING_ROLE: _SEVERITY_WARNING,
+    _RULE_DEPRECATED_TOOL: _SEVERITY_WARNING,
 }
 
 # Canonical tool names accepted at run time. Source of truth:
 # engine/lib/agent_script/features/run_agent/run_agent.py (sdk_tool_names ∪
 # builtin_tool_map ∪ {finalize, report_scaffold_branch, complexity_review});
 # duplicated here so the pure linter need not import the SDK runtime.
+# ``finish`` is a deprecated alias for ``finalize`` (issue #1071): accepted so
+# pre-existing .nebuko/ overrides keep loading, but reported as C6.
 KNOWN_TOOLS: frozenset[str] = frozenset(
     {
         "terminal",
@@ -497,6 +501,18 @@ class ConfigLinter:
                             f"unknown tool '{tool}'",
                             f"agents.{name}.tools",
                             f"Use one of: {known}",
+                        )
+                    )
+                elif tool == "finish":
+                    # Deprecated alias for ``finalize`` (issue #1071): still
+                    # loads, but the run resolves it to finalize with a warning.
+                    issues.append(
+                        _make_issue(
+                            _RULE_DEPRECATED_TOOL,
+                            "tool 'finish' is deprecated — use 'finalize' "
+                            "(the terminal tool)",
+                            f"agents.{name}.tools",
+                            "Replace 'finish' with 'finalize' in the tool list",
                         )
                     )
         return issues

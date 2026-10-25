@@ -14,18 +14,21 @@ from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS, EngineToolRegistry
 
 
 class TestDefaultRegistry:
-    def test_finish_is_classified_as_the_final_message(self):
-        spec = DEFAULT_ENGINE_TOOLS.tools["finish"]
-        assert spec.payload_kind == "final_message"
-        assert spec.payload_fields == ("message",)
-
-    def test_finalize_carries_the_turn_outcome(self):
+    def test_finalize_is_the_only_terminal_tool(self):
+        # Issue #1071: ``finish`` is retired from the control plane; the legacy
+        # spec in _LEGACY_TOOL_SPECS keeps recorded pre-migration runs readable.
         spec = DEFAULT_ENGINE_TOOLS.tools["finalize"]
         assert spec.payload_kind == "finalize"
         assert spec.payload_fields == ("turn_outcome",)
+        assert "finish" not in DEFAULT_ENGINE_TOOLS.tools
 
-    def test_finish_is_the_work_loop_terminator(self):
-        assert DEFAULT_ENGINE_TOOLS.work_loop_presence("finish") == "terminator"
+    def test_finish_is_a_legacy_read_only_spec(self):
+        from nebuko.engine.engine_tools import _LEGACY_TOOL_SPECS
+
+        spec = _LEGACY_TOOL_SPECS["finish"]
+        assert spec.payload_kind == "final_message"
+        assert spec.payload_fields == ("message",)
+        assert DEFAULT_ENGINE_TOOLS.work_loop_presence("finish") == "hidden"
 
     def test_the_removed_tools_are_not_in_the_default_control_plane(self):
         # Issue #1033: ``dispatch_next``/``call_agent`` are gone from every
