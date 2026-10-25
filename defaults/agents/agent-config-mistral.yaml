@@ -32,9 +32,10 @@ llms:
     model_path: "mistral/zai-glm-5-3"
     provider: "${providers.mistral}"
     # Table id is z-ai/glm-5.3: the path alone does not resolve.
-    input_price: 0.079
-    output_price: 1.4
-    cache_read_price: 0.078
+    # Prices pinned from https://docs.mistral.ai/inference/pricing (USD /M).
+    input_price: 1.4
+    output_price: 4.4
+    cache_read_price: 0.14
 
 # ── Agents: role → model + prompt + skills + tools ──
 # Tools: terminal, file_editor, task_tracker (SDK tools)
