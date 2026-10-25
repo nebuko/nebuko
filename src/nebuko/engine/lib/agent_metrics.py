@@ -38,7 +38,10 @@ from human_metrics import (
     IssueData,
 )
 from workflow_state.features.get_last_state.get_last_state import extract_state_from_body
-from agent_script.sub_domains.metrics.report_cost_resolver import ReportCostResolver
+from agent_script.sub_domains.metrics.report_cost_resolver import (
+    ReportCostResolver,
+    load_config_prices,
+)
 
 # Agent role marker emitted at the top of every agent comment (e.g. bot-agent-dev).
 BOT_AGENT_ROLE_REGEX = re.compile(r"<!--\s*bot-agent-([a-z0-9_-]+)\s*-->")
@@ -1362,8 +1365,9 @@ def main():
             summary = f"{summary}\n\n{human_section}"
     else:
         # Fill zero-cost entries at report time from the OpenRouter price table
-        # keyed by each entry's recorded model identity (issue #928); fail-open.
-        resolver = ReportCostResolver.build()
+        # keyed by each entry's recorded model identity, with the agent
+        # config's per-llm prices as fallback (issue #1144); fail-open.
+        resolver = ReportCostResolver.build(config_prices=load_config_prices())
         agent_aggregated = aggregate_by_agent(all_metrics, resolver)
 
         sections = []

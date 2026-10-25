@@ -14,16 +14,35 @@ llms:
   mistral-small-4:
     model_path: "mistral/mistral-small-2603"
     provider: "${providers.mistral}"
+    # Per-1M USD prices (https://docs.mistral.ai/inference/pricing): the
+    # OpenRouter table cannot match every routed path, so the config pins the
+    # tiers and report-time pricing never falls back to $0 (issue #1144).
+    input_price: 0.15
+    output_price: 0.6
+    cache_read_price: 0.015
     reasoning_effort: "none"
   mistral-large-4:
     model_path: "mistral/mistral-large-4"
     provider: "${providers.mistral}"
+    # Table id is mistralai/mistral-large-4-0: the path alone does not resolve.
+    input_price: 1.36
+    output_price: 4.18
+    cache_read_price: 0.14
   glm-5_3:
     model_path: "mistral/zai-glm-5-3"
     provider: "${providers.mistral}"
+    # Table id is z-ai/glm-5.3: the path alone does not resolve.
+    # Prices pinned from https://docs.mistral.ai/inference/pricing (USD /M).
+    input_price: 1.4
+    output_price: 4.4
+    cache_read_price: 0.14
   glm-5_3-flash:
     model_path: "mistral/zai-glm-5-3-flash"
     provider: "${providers.mistral}"
+    # Table id is z-ai/glm-5.3-flash: the path alone does not resolve.
+    input_price: 0.15
+    output_price: 0.5
+    cache_read_price: 0.03
     reasoning_effort: "low"
 
 # ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
