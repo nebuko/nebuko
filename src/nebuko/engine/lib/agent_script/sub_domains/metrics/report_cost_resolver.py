@@ -50,7 +50,34 @@ def load_config_prices(  # @stub-protected
     ``{}`` (issue #1144).
     """
     path = config_path or agent_config_file()
-    raise NotImplementedError  # @stub-protected
+    try:
+        with open(path) as stream:
+            config = yaml.safe_load(stream) or {}
+    except Exception:  # noqa: BLE001 — pricing is a report bonus, never fatal
+        return {}
+    llms = config.get("llms") or {}
+    if not isinstance(llms, dict):
+        return {}
+
+    prices: dict[str, ModelPrice] = {}
+    for entry in llms.values():
+        if not isinstance(entry, dict):
+            continue
+        model_path = entry.get("model_path")
+        input_price = entry.get("input_price")
+        output_price = entry.get("output_price")
+        if not model_path or input_price is None or output_price is None:
+            continue  # a partial bundle cannot price a session cost
+        prices[model_path] = ModelPrice(
+            input_price=float(input_price),
+            output_price=float(output_price),
+            cache_read_price=(
+                float(entry["cache_read_price"])
+                if entry.get("cache_read_price") is not None
+                else None
+            ),
+        )
+    return prices
 
 
 def _field(metric: "Metrics | Mapping[str, Any]", name: str, default: Any) -> Any:
@@ -124,7 +151,16 @@ class ReportCostResolver:  # @stub-protected
         if config_entry is None and self.table is None:
             return None
 
-        raise NotImplementedError  # @stub-protected
+        if config_entry is None:
+            return resolve_model_rates(_ModelRef(model_path=model_path), self.table)
+
+        # Table-over-config per-field merge (the red tests' precedence): the
+        # default table's set tiers win, the config fills the gaps.
+        table_price = self.table.match(model_path) if self.table is not None else None
+        merged = config_entry if table_price is None else config_entry.merged_over(table_price)
+        if merged.input_price is None or merged.output_price is None:
+            return None
+        return merged
 
     def _config_price(self, model_path: str) -> Optional[ModelPrice]:  # @stub-protected
         """The agent config's price for ``model_path``, or ``None``.
@@ -133,7 +169,13 @@ class ReportCostResolver:  # @stub-protected
         (route prefixes stripped, vendor aliases), so a config entry keyed by
         the provider-published path still matches a prefixed recorded id.
         """
-        raise NotImplementedError  # @stub-protected
+        if not self.config_prices:
+            return None
+        for candidate in normalize_model_id(model_path):
+            price = self.config_prices.get(candidate)
+            if price is not None:
+                return price
+        return None
 
     def effective_cost(self, metric: "Metrics | Mapping[str, Any]") -> float:  # @stub-protected
         """The entry's USD cost for reporting; never mutates ``metric``."""
