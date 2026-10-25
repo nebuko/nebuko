@@ -300,7 +300,9 @@ class GitSessionGuard:
 
         ``.gitignore`` still applies, so generated files never ride along. An
         already-clean tree is not a problem; a commit that could not be made
-        (no identity, a hook refusal) is returned as actionable prose.
+        (no identity, a hook refusal) is returned as actionable prose. A made
+        commit's short sha is returned so the engine can record it (issue
+        #1153); an empty string means nothing was committed.
         """
         if not self._pending_paths():
             return ""

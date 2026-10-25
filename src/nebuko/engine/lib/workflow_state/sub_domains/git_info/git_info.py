@@ -33,6 +33,7 @@ class GitInfo(BaseModel):
     pr_number: int | None = None
     history: list[GitHistoryEntry] = Field(default_factory=list)
 
+    # @stub-protected
     def record(
         self,
         status: GitActionStatus,
