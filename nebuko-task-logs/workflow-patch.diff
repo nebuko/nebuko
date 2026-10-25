@@ -1,0 +1,15 @@
+diff --git a/.github/workflows/internal-release.yml b/.github/workflows/internal-release.yml
+index aba69f4..98cb2fa 100644
+--- a/.github/workflows/internal-release.yml
++++ b/.github/workflows/internal-release.yml
+@@ -30,9 +30,7 @@ jobs:
+       - uses: astral-sh/setup-uv@v5
+       - run: uv sync
+       - name: Build the single-file binary
+-        run: >-
+-          uv run --with pyinstaller pyinstaller --onefile --name nebuko
+-          --collect-data nebuko packaging/entry.py
++        run: uv run --with pyinstaller pyinstaller nebuko.spec
+       - name: Name the asset
+         shell: bash
+         run: |
