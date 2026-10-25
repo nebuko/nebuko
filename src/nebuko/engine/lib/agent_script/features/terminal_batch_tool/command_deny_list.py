@@ -13,6 +13,25 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+#: The deny message returned verbatim to the agent for a matched statement.
+PUSH_DENY_MESSAGE = (
+    "git push is disabled for agents: the engine commits leftovers, pushes "
+    "the branch and opens the pull request after your run. Commit your work "
+    "locally instead."
+)
+
+#: Matches an actual ``git push`` invocation anywhere in the statement:
+#: optional leading whitespace, optional ``VAR=value`` environment
+#: assignments, git's global options, then ``git ... push``. A mention inside
+#: another command (``echo git push``, ``grep push``) does not match, and
+#: neither does any other git subcommand (``git status``, ``git log
+#: origin/main``).
+PUSH_PATTERN = (
+    r"\s*"
+    r"(?:[A-Za-z_][A-Za-z_0-9]*=\S*\s+)*"
+    r"git(?:\s+(?:-{1,2}\S+|[^\s-]\S*))*\s+push(?:\s+\S+)*\s*"
+)
+
 
 @dataclass(frozen=True)
 class DenyRule:
@@ -41,10 +60,23 @@ class CommandDenyList:
     # @stub-protected: signature defined by architect — do not modify
     def check(self, statement: str) -> DenyResult | None:
         """Return the first rule matching ``statement``, else ``None``."""
-        raise NotImplementedError
+        for rule in self.rules:
+            if rule.pattern.fullmatch(statement):
+                return DenyResult(
+                    rule_name=rule.name, statement=statement, message=rule.message
+                )
+        return None
 
 
 # @stub-protected: signature defined by architect — do not modify
 def push_deny_list() -> CommandDenyList:
     """The built-in deny list: one rule, ``git-push``."""
-    raise NotImplementedError
+    return CommandDenyList(
+        [
+            DenyRule(
+                name="git-push",
+                pattern=re.compile(PUSH_PATTERN),
+                message=PUSH_DENY_MESSAGE,
+            )
+        ]
+    )
