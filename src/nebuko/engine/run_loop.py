@@ -2501,6 +2501,7 @@ class Engine:
             log.error("[phase:state] pr finalize failed: %s", result.detail)
         return result
 
+    # @stub-protected
     def _record_scaffold_branch(self, state: WorkflowState) -> WorkflowState:
         """Record the engine-scaffolded dev branch in the persisted state.
 
@@ -2526,6 +2527,7 @@ class Engine:
             log.warning("[phase:state] could not persist the dev branch")
         return updated
 
+    # @stub-protected
     def _record_pull_request(
         self, state: WorkflowState | None, pr_result: pr_finalize.PrFinalizeResult
     ) -> WorkflowState | None:
@@ -2567,6 +2569,16 @@ class Engine:
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
             log.warning("[phase:state] could not persist the PR metadata")
         return updated
+
+    # @stub-protected
+    def _record_git_finalize(self, state, finalize_result) -> "WorkflowState | None":
+        """Record a dirty-tree auto-commit in the state's git history (#1153).
+
+        Appends one ``dirty`` entry carrying the short sha of the commit the
+        session guard made (when it made one); a clean/skipped finalize appends
+        nothing.
+        """
+        raise NotImplementedError
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""

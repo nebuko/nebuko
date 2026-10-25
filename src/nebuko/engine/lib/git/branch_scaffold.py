@@ -48,6 +48,8 @@ class ScaffoldResult:
     detail: str = ""
     branch: str = ""
     note: str = ""
+    # True when the branch was newly created this pass, vs rebased/reused.
+    created: bool = False
 
 
 def branch_slug(title: str) -> str:
@@ -56,8 +58,13 @@ def branch_slug(title: str) -> str:
     return slug[:50].rstrip("-")
 
 
-def feature_branch_name(issue_number: int, title: str) -> str:
-    """The dev session's branch: ``feature/issue-<n>-<slug>``."""
+def feature_branch_name(issue_number: int, title: str) -> str:  # @stub-protected
+    """The dev session's branch: ``feature/<n>-<slug>`` (issue #1153)."""
+    return f"feature/issue-{issue_number}-{branch_slug(title)}"
+
+
+def legacy_branch_name(issue_number: int, title: str) -> str:  # @stub-protected
+    """The pre-#1153 branch name, kept as a fallback lookup."""
     return f"feature/issue-{issue_number}-{branch_slug(title)}"
 
 

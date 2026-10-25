@@ -9,6 +9,7 @@ from config import (
 )
 
 # Import domain entities first (no circular dependency)
+from .sub_domains.git_info.git_info import GitInfo
 from .sub_domains.history_entry.history_entry import HistoryEntry
 from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
@@ -242,6 +243,10 @@ class WorkflowState(BaseModel):
     scaffold_branch: Optional[str] = None
     issue: Optional[IssueInfo] = None
     pull_request: Optional[PullRequestInfo] = None
+    # Engine-owned git lifecycle (issue #1153): the single dev branch, the PR
+    # opened for it, and one history entry per engine git action. Written by
+    # the engine's scaffold/PR/finalize recording; legacy blobs load unchanged.
+    git: GitInfo = Field(default_factory=GitInfo)
     # Factual outcome of the latest transition (issue #964): the router's only
     # input. None on a state that has not yet recorded a turn.
     turn_outcome: Optional[TurnOutcome] = None  # @stub-protected
