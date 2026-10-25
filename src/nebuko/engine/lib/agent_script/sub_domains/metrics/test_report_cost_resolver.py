@@ -247,69 +247,6 @@ class TestModelPrice:
         assert resolver.effective_cost(m) == pytest.approx(1.0)
 
 
-class TestConfigPriceFallback:
-    """Config-priced model paths the default table cannot match (issue #1144).
-
-    A subscription provider (Mistral) routes by a path the OpenRouter table
-    keys differently (``mistral/zai-glm-5-3-flash`` vs ``z-ai/glm-5.3-flash``),
-    so pricing must not depend on the table alone.
-    """
-
-    @staticmethod
-    def _resolver(table, config_prices):
-        return ReportCostResolver(table=table, config_prices=config_prices)
-
-    @staticmethod
-    def _metric():
-        return Metrics(
-            model_name="mistral/zai-glm-5-3-flash",
-            input_tokens=1_000_000,
-            output_tokens=500_000,
-            cost=0.0,
-        )
-
-    def test_empty_table_resolves_the_config_price(self):
-        resolver = self._resolver(
-            PriceTable(source="openrouter", fetched_at=1.0, entries={}),
-            {
-                "mistral/zai-glm-5-3-flash": ModelPrice(
-                    input_price=0.15, output_price=0.5
-                )
-            },
-        )
-        price = resolver.model_price(self._metric())
-        assert price is not None
-        assert price.input_price == pytest.approx(0.15)
-        assert price.output_price == pytest.approx(0.5)
-        assert resolver.is_estimated(self._metric())
-        # 1M in @0.15 + 500k out @0.5
-        assert resolver.effective_cost(self._metric()) == pytest.approx(0.40)
-
-    def test_partial_config_fields_fill_gaps_in_partial_table_match(self):
-        """Config tiers win per field; the table completes the unset ones."""
-        resolver = self._resolver(
-            PriceTable(
-                source="openrouter",
-                fetched_at=1.0,
-                entries={
-                    # Table entry without a cache-read tier.
-                    "mistral/zai-glm-5-3-flash": ModelPrice(
-                        input_price=9.0, output_price=9.0
-                    )
-                },
-            ),
-            {
-                "mistral/zai-glm-5-3-flash": ModelPrice(
-                    input_price=0.15, output_price=0.5
-                )
-            },
-        )
-        price = resolver.model_price(self._metric())
-        assert price is not None
-        assert price.input_price == pytest.approx(0.15)
-        assert price.output_price == pytest.approx(0.5)
-
-
 class TestBuild:
     def test_build_loads_the_table_through_the_injected_fetcher(self, tmp_path, monkeypatch):
         import json
@@ -389,3 +326,114 @@ class TestBaseDepsImportability:
             env=env,
         )
         assert result.returncode == 0, result.stderr
+
+def _mistral_config_prices() -> dict:
+    """Config prices keyed the way ``load_config_prices`` keys them."""
+    return {
+        "mistral/mistral-small-2603": ModelPrice(
+            input_price=0.15, output_price=0.6, cache_read_price=0.015
+        )
+    }
+
+
+class TestConfigPriceFallback:
+    """Report-time fallback to agent-config llm prices (issue #1144)."""
+
+    def test_model_price_falls_back_to_config_prices_when_table_has_no_match(self):
+        # Given: no price table and a priced config entry.
+        # When: a zero-cost metric for the config's model is priced.
+        # Then: the config price is returned and tokens are priced from it.
+        resolver = ReportCostResolver(table=None, config_prices=_mistral_config_prices())
+        m = Metrics(
+            model_name="mistral/mistral-small-2603",
+            input_tokens=1_000_000,
+            output_tokens=500_000,
+            cost=0.0,
+        )
+        assert resolver.model_price(m) == ModelPrice(
+            input_price=0.15, output_price=0.6, cache_read_price=0.015
+        )
+        # 1M × $0.15/M + 0.5M × $0.60/M
+        assert resolver.effective_cost(m) == pytest.approx(0.45)
+        assert resolver.is_estimated(m)
+
+    def test_config_fields_fill_gaps_in_partial_table_match(self):
+        # Given: a table entry missing output_price, and a config entry with it.
+        # When: the model is priced.
+        # Then: the merge fills output from config, input from the table
+        # (table wins where both are set).
+        table = PriceTable(
+            source="openrouter",
+            fetched_at=1.0,
+            entries={
+                "mistral/mistral-small-2603": ModelPrice(input_price=0.9)
+            },
+        )
+        resolver = ReportCostResolver(table=table, config_prices=_mistral_config_prices())
+        m = Metrics(model_name="mistral/mistral-small-2603", cost=0.0)
+        price = resolver.model_price(m)
+        assert price is not None
+        assert price.input_price == pytest.approx(0.9)
+        assert price.output_price == pytest.approx(0.6)
+
+    def test_model_price_returns_none_without_table_or_config_entry(self):
+        # Given: no table and no matching config entry.
+        # When: a zero-cost metric for an unknown model is priced.
+        # Then: ``None`` — the fail-open $0 outcome is preserved.
+        resolver = ReportCostResolver(table=None, config_prices=_mistral_config_prices())
+        m = Metrics(model_name="mistral/does-not-exist", input_tokens=1_000, cost=0.0)
+        assert resolver.model_price(m) is None
+        assert resolver.effective_cost(m) == 0.0
+        assert not resolver.is_estimated(m)
+
+    def test_config_entry_matches_a_stripped_prefixed_model_id(self):
+        # Given: a config entry keyed by the provider-published path and a
+        # metric recording a route-prefixed id.
+        # When: the model is priced.
+        # Then: a candidate id from ``normalize_model_id`` resolves it.
+        resolver = ReportCostResolver(table=None, config_prices=_mistral_config_prices())
+        m = Metrics(model_name="openrouter/mistral/mistral-small-2603", cost=0.0)
+        assert resolver.model_price(m) is not None
+
+    def test_reported_cost_still_wins_over_any_estimation(self):
+        # Given: a metric whose provider reported a cost.
+        # When: it is priced with a config entry present.
+        # Then: the reported cost passes through and no estimate is claimed.
+        resolver = ReportCostResolver(table=None, config_prices=_mistral_config_prices())
+        m = Metrics(model_name="mistral/mistral-small-2603", cost=1.25)
+        assert resolver.effective_cost(m) == 1.25
+        assert resolver.model_price(m) is None
+        assert not resolver.is_estimated(m)
+
+
+class TestLoadConfigPrices:
+    """``load_config_prices`` reads the agent config's llm prices, fail-open."""
+
+    def test_load_config_prices_reads_llm_prices_and_skips_incomplete_entries(self, tmp_path):
+        config = tmp_path / "agent-config.yaml"
+        config.write_text(
+            "llms:\n"
+            "  small:\n"
+            "    model_path: mistral/mistral-small-2603\n"
+            "    input_price: 0.15\n"
+            "    output_price: 0.6\n"
+            "    cache_read_price: 0.015\n"
+            "  large:\n"
+            "    model_path: mistral/mistral-large-4\n"
+            "    input_price: 1.36\n"  # output_price missing → skipped
+            "  glm:\n"
+            "    model_path: mistral/zai-glm-5-3\n"  # no prices at all → skipped
+        )
+        prices = mod.load_config_prices(str(config))
+        assert list(prices) == ["mistral/mistral-small-2603"]
+        assert prices["mistral/mistral-small-2603"] == ModelPrice(
+            input_price=0.15, output_price=0.6, cache_read_price=0.015
+        )
+
+    def test_load_config_prices_returns_empty_when_config_missing(self, tmp_path):
+        assert mod.load_config_prices(str(tmp_path / "nope.yaml")) == {}
+
+    def test_load_config_prices_is_fail_open_on_a_parse_error(self, tmp_path):
+        config = tmp_path / "agent-config.yaml"
+        config.write_text("llms: [broken\n")
+        assert mod.load_config_prices(str(config)) == {}
