@@ -60,7 +60,7 @@ mcp_servers:
       BRAVE_API_KEY: "BRAVE_API_KEY"
 
 # ── Agents: role → model + prompt + skills + tools ──
-# Tools: terminal, terminal_batch (batched shell, issue #982), file_editor
+# Tools: terminal, terminal_batch (batched shell, issue #982)
 #        (bounded views + view-range guidance), task_tracker (SDK tools)
 #        think, finish (built-in defaults)
 agents:
@@ -89,7 +89,7 @@ agents:
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - discover: ["complexity", "posting-contract"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
     # Lean tool/prompt overhead + batched reconnaissance (issue #851): the
     # GLM-flash #1114 re-run paid ~3.9K chars of tool description every call
     # and 74 of 134 batches carried 1-2 commands.
@@ -105,7 +105,7 @@ agents:
     skills:
       - inject: ["call-agent", "context-research"]
       - discover: ["complexity", "posting-contract"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "finish", "finalize", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "finish", "finalize", "complexity_review"]
     token_budget:
       prompt_profile: "lean"
       require_batched_recon: true

@@ -2,7 +2,7 @@
 
 The agent tool surface has two planes:
 
-* **work tools** (``terminal``, ``file_editor``, ``think``, ...) - the agent's
+* **work tools** (``terminal``, ``read``, ``edit``, ``write``, ``think``, ...) - the agent's
   operational capability. Their payloads are never harvested by the engine.
 * **engine tools** (``finish``, ``dispatch_next``) - the control plane. The
   engine reads their *typed* arguments: ``finish.message`` is the final

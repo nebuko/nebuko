@@ -45,7 +45,7 @@ mcp_servers:
       BRAVE_API_KEY: "BRAVE_API_KEY"
 
 # ── Agents: role → model + prompt + skills + tools ──
-# Tools: terminal, terminal_batch (batched shell, issue #982), file_editor
+# Tools: terminal, terminal_batch (batched shell, issue #982)
 #        (bounded views + view-range guidance), task_tracker (SDK tools)
 #        think, finish (built-in defaults)
 agents:
@@ -76,7 +76,7 @@ agents:
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - discover: ["complexity", "posting-contract"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
 
   context:
     model: "${llms.deepseek-v4_1-flash}"
@@ -88,7 +88,7 @@ agents:
     skills:
       - inject: ["call-agent", "context-research"]
       - discover: ["complexity", "posting-contract"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "complexity_review"]
     mcp_servers:
       - "${mcp_servers.brave-search}"
 
