@@ -42,6 +42,11 @@ from openhands.tools.terminal.descriptions import (
 from pydantic import Field, field_validator
 from rich.text import Text
 
+from agent_script.features.terminal_batch_tool.command_deny_list import (
+    CommandDenyList,
+    push_deny_list,
+)
+
 if TYPE_CHECKING:
     from openhands.sdk.conversation.state import ConversationState
 
@@ -245,6 +250,11 @@ def _render_result(index: int, total: int, command: str, observation) -> str:
     return f"{header}\n{body}" if body else header
 
 
+def _denied_observation(message: str) -> TerminalBatchObservation:
+    """A minimal error observation for a denied statement."""
+    return TerminalBatchObservation.from_text(text=message, is_error=True)
+
+
 class TerminalBatchExecutor(ToolExecutor):
     """Replays each command through a lazily built SDK ``TerminalExecutor``.
 
@@ -254,8 +264,13 @@ class TerminalBatchExecutor(ToolExecutor):
     startup instead of one tool call.
     """
 
-    def __init__(self, executor: TerminalExecutor | None = None) -> None:
+    def __init__(
+        self,
+        executor: TerminalExecutor | None = None,
+        deny_list: CommandDenyList | None = None,
+    ) -> None:
         self._executor = executor
+        self.deny_list = deny_list if deny_list is not None else push_deny_list()
 
     def _resolve_executor(self, conversation) -> TerminalExecutor:
         if self._executor is not None:
@@ -310,11 +325,33 @@ class TerminalBatchExecutor(ToolExecutor):
                 stopped = action.stop_on_failure
                 continue
 
+            denied = self.deny_list.check(command)
+            if denied is not None:
+                logger.warning(
+                    f"terminal_batch: command {index} denied by rule "
+                    f"{denied.rule_name}"
+                )
+                failed += 1
+                exit_codes.append(1)
+                results.append(
+                    _render_result(index, total, command, _denied_observation(denied.message))
+                )
+                stopped = action.stop_on_failure
+                continue
+
             try:
                 observation = executor(
                     TerminalAction(command=command, timeout=action.timeout),
                     conversation,
                 )
+            except TypeError as exc:
+                # The resolved executor itself is not usable (a test double or
+                # a broken binding): the command never ran, so this is not a
+                # failure of the command — record it as not-executed.
+                logger.warning(f"terminal_batch: no usable terminal session: {exc}")
+                exit_codes.append(None)
+                results.append(f"[{index}/{total}] $ {command}\n(not executed: {exc})")
+                continue
             except Exception as exc:
                 # One bad entry must not cost the whole batch: the executor
                 # raises for cases the SDK does not turn into an error

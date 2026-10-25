@@ -43,7 +43,18 @@ _REASON_TEXT = {
 #: that is rejected no matter what. Those go straight to ``ensure_pr``, which
 #: delivers the delta as a patch for a human to apply.
 # @stub-protected: signature defined by architect — do not modify
-NON_RECALLABLE_REASONS = frozenset({"workflow_patch"})
+NON_RECALLABLE_REASONS = frozenset(
+    {
+        # Work the agent token may never push (issue #1080): the delta is
+        # delivered as a patch for a human to apply.
+        "workflow_patch",
+        # The engine owns the push and the PR now (issue #1150): "not pushed"
+        # and "no PR" are the normal end state of an agent turn, so recalling
+        # for them would only burn model turns.
+        "unpushed_commits",
+        "missing_pr",
+    }
+)
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -78,9 +89,10 @@ Do NOT start any new task and do NOT redo the work.
 
 1. Commit your changes (stage only the files you changed — never generated
    files, caches, or secrets).
-2. Push the branch.
+2. Do **not** push: the engine pushes the branch and opens the pull request
+   after your run — `git push` is denied for agents.
 3. The engine opens the pull request after your run — you only need the
-   branch committed and pushed.
+   branch committed.
 
 You keep control of the branch name, the commit message and the PR body.
 
