@@ -20,7 +20,7 @@ from pathlib import Path
 
 from openhands.sdk import get_logger
 
-from nebuko.engine.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
+from nebuko.engine.lib.git.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
 
 from agent_script.features.handoff_tool.handoff_document import HandoffDocument
 from agent_script.features.ensure_pr.ensure_pr import _run_git
