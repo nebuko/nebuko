@@ -3,9 +3,10 @@ name: Lint workflows
 on:
   pull_request:
     paths:
-      - "workflows/**"
-      - "engine/**"
-      - ".github/workflows/lint-workflows.yaml"
+      - "defaults/workflows/**"
+      - ".nebuko/workflows/**"
+      - "src/nebuko/engine/**"
+      - ".github/workflows/internal-lint-workflows.yaml"
 
 permissions:
   contents: read
@@ -21,4 +22,8 @@ jobs:
       - name: Install dependencies
         run: pip install pyyaml pydantic
       - name: Lint workflow YAML
-        run: python -m engine lint workflows/
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m nebuko.engine lint defaults/workflows/
+          python -m nebuko.engine lint .nebuko/workflows/
