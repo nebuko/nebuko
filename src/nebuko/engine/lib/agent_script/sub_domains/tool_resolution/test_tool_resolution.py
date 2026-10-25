@@ -160,10 +160,21 @@ class TestResolveToolset:
         for name in ("terminal", "file_editor", "task_tracker"):
             assert name in registered
 
-    def test_think_and_finish_map_to_builtins(self):
-        resolved = resolve_toolset(["think", "finish"], "review")
+    def test_think_maps_to_the_think_builtin(self):
+        resolved = resolve_toolset(["think"], "review")
         assert resolved.sdk_tools == ()
-        assert resolved.builtin_tools == ("ThinkTool", "FinishTool")
+        assert resolved.builtin_tools == ("ThinkTool",)
+
+    def test_finish_is_a_deprecated_alias_for_finalize(self, caplog):
+        """Issue #1071: ``finish`` is no longer a tool, but a pre-existing
+        .nebuko/ override that lists it still loads — resolved to the terminal
+        ``finalize`` gate, with a deprecation warning."""
+        with caplog.at_level(logging.WARNING):
+            resolved = resolve_toolset(["finish"], "review")
+        assert _names(resolved.sdk_tools) == ("FinalizeTool",)
+        assert resolved.builtin_tools == ()
+        assert resolved.dispatch_tool_enabled is True
+        assert "'finish' is deprecated" in caplog.text
 
     def test_finalize_enables_dispatch(self):
         """Every step ends through ``finalize`` (issue #1033): the single
@@ -233,9 +244,10 @@ class TestResolveToolset:
         assert not resolved.has("file_editor")
 
     def test_default_tool_list_parity(self):
-        """The legacy default list still resolves to the legacy toolset."""
+        """The default list resolves to the sdk tools plus ThinkTool; the
+        terminal ``finalize`` gate is appended by run_agent (issue #1033)."""
         resolved = resolve_toolset(
-            ["terminal", "file_editor", "task_tracker", "think", "finish"],
+            ["terminal", "file_editor", "task_tracker", "think"],
             "unknown",
         )
         assert _names(resolved.sdk_tools) == (
@@ -243,7 +255,7 @@ class TestResolveToolset:
             "file_editor",
             "task_tracker",
         )
-        assert resolved.builtin_tools == ("ThinkTool", "FinishTool")
+        assert resolved.builtin_tools == ("ThinkTool",)
         assert resolved.dispatch_tool_enabled is False
 
     def test_resolved_toolset_is_frozen(self):

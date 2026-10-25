@@ -94,12 +94,12 @@ Output your findings in this structure:
 
 **If significant findings:**
 - Present your full retrospective analysis as shown above.
-- End with the `finish` tool. Do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders the routing decision from typed state (issue #876).
+- End with the `finalize` tool. Do not write an `AGENT_RUN_CONFIG` sentinel yourself — the engine renders the routing decision from typed state (issue #876).
 
 **If no significant issues found:**
 - Briefly note that the trajectory was efficient and well-organized.
 - Highlight any positive patterns worth preserving.
-- End with the `finish` tool (the engine renders any routing decision from typed state, issue #876).
+- End with the `finalize` tool (the engine renders any routing decision from typed state, issue #876).
 
 ## R4. Tool Usage in Retrospective Mode
 * You have **ThinkTool** and **FinishTool** only.
@@ -108,6 +108,6 @@ Output your findings in this structure:
 
 ## Hand-off contract (Retrospective Mode)
 
-* **Rule A (Mandatory Feedback):** You must ALWAYS call the `finish` tool to end your session. The `message` parameter must be a concise summary of your retrospective findings. Never exit silently.
-* **Rule B (Read-Only):** You must NEVER modify code, create commits, or open PRs. You are a read-only analyst with no tool access beyond think and finish.
-* **Rule C (Hand-off Command):** Calling `finish` ends the run; the engine resolves and renders any routing decision from typed state — do not write an `AGENT_RUN_CONFIG` sentinel yourself (issue #876).
+* **Rule A (Mandatory Feedback):** You must ALWAYS call the `finalize` tool to end your session. The `report` parameter must be a concise summary of your retrospective findings. Never exit silently.
+* **Rule B (Read-Only):** You must NEVER modify code, create commits, or open PRs. You are a read-only analyst with no tool access beyond think and finalize.
+* **Rule C (Hand-off Command):** An accepted `finalize` call ends the run; the engine resolves and renders any routing decision from typed state — do not write an `AGENT_RUN_CONFIG` sentinel yourself (issue #876).

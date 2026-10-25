@@ -16,6 +16,7 @@ guarded by a lock.
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Self
 
+from openhands.sdk.conversation.state import ConversationExecutionStatus
 from openhands.sdk.tool.tool import (
     Action,
     Observation,
@@ -186,6 +187,18 @@ class FinalizeExecutor(ToolExecutor):
         handoff = outcome.to_function_call()
         if handoff is not None:
             record_function_call(self._conversation_id, handoff)
+        # An accepted finalize ends the run, exactly as FinishTool did (issue
+        # #1071): the SDK run loop breaks on
+        # ``conversation.state.execution_status == FINISHED``. Rejected calls
+        # (invalid turn_outcome, missing closing-turn report) return earlier
+        # and leave the status untouched, so the agent can fix the call. The
+        # executor receives the conversation object itself, whose ``state``
+        # attribute is the live ConversationState. send_message() resets
+        # FINISHED back to IDLE, so the engine's closing/recall turns still run.
+        if conversation is not None:
+            state = getattr(conversation, "state", None)
+            if state is not None:
+                state.execution_status = ConversationExecutionStatus.FINISHED
         return FinalizeObservation.from_text(
             text=(
                 f"Turn outcome recorded: appreciation={outcome.appreciation}, "
@@ -195,7 +208,7 @@ class FinalizeExecutor(ToolExecutor):
                     if handoff is not None
                     else ""
                 )
-                + "."
+                + ". The step is complete: do not call any more tools."
             )
         )
 

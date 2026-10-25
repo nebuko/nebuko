@@ -29,9 +29,11 @@ SHARED_EXIT_RULES = """# Strict Output & Exit Rules
   call is the only hand-off the engine reads. Never write an
   `AGENT_RUN_CONFIG` sentinel (or any other prose marker) to signal routing —
   the engine ignores it and the typed call is the sole routing fact.
-* **Rule C (Never End Without a Decision):** Terminate through `finish` or
-  `dispatch_next`. An ending that carries neither triggers an engine recall pass
-  whose short status note can clobber your posted answer.
+* **Rule C (Never End Without a Decision):** Terminate through an accepted
+  `finalize` call (which carries the typed verdict and ends the run) or through
+  a `dispatch_next` / `call_agent` hand-off. An ending that carries neither
+  triggers an engine recall pass whose short status note can clobber your
+  posted answer.
 """
 
 #: Placeholder used when a roster entry declares no ``role`` (see the C8 lint rule).

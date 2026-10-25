@@ -11,4 +11,4 @@ agents:
     model: "${llms.l1}"
     prompt_file: ".agents/prompts/a.md"
     skills: ["skill-a"]
-    tools: ["think", "finish", "warp_drive"]
+    tools: ["think", "warp_drive"]

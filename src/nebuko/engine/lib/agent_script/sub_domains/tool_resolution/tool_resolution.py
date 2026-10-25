@@ -34,8 +34,10 @@ logger = get_logger(__name__)
 #: SDK's builtin classes handled by ``include_default_tools``).
 _SDK_TOOL_NAMES = ("terminal", "file_editor", "task_tracker")
 
-#: Config tool name -> SDK builtin class name.
-_BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
+#: Config tool name -> SDK builtin class name. ``finish`` is no longer a
+#: builtin: it is accepted below as a deprecated alias for ``finalize``
+#: (issue #1071) so pre-existing .nebuko/ overrides keep loading.
+_BUILTIN_TOOL_MAP = {"think": "ThinkTool"}
 
 #: The name ``TerminalBatchTool`` auto-derives from its class name, and the
 #: name the SDK registry is keyed by — the two must stay in step, because
@@ -307,6 +309,19 @@ def resolve_toolset(
                 "turn_outcome.appreciation and the hand-off in "
                 "turn_outcome.agent_call)"
             )
+        elif tool_name == "finish":
+            # Deprecated alias (issue #1071): ``finish`` is no longer a tool of
+            # any agent. Accept it so pre-existing .nebuko/ overrides keep
+            # loading, resolve it to the terminal ``finalize`` gate and warn so
+            # the config is migrated.
+            logger.warning(
+                f"tool 'finish' is deprecated for agent '{role_name}' — "
+                "resolving it to 'finalize' (the terminal tool); remove it "
+                "from the config"
+            )
+            _ensure_finalize_tool_registered()
+            sdk_tools.append(Tool(name=_FINALIZE_TOOL_NAME))
+            dispatch_tool_enabled = True
         elif tool_name == "finalize":
             _ensure_finalize_tool_registered()
             sdk_tools.append(Tool(name=_FINALIZE_TOOL_NAME))
