@@ -1,11 +1,11 @@
 ---
-description: "Where the deliverable goes: the `report` argument of the closing `finalize` call, not `finish` and not routing metadata."
+description: "Where the deliverable goes: the `report` argument of the closing `finalize` call, not the turn text and not routing metadata."
 ---
 
 # Posting Contract — What Gets Posted to the Issue
 
 Applies to **every agent**. The engine owns the answer channel: the control
-plane (`finish` / `finalize`) is a *typed schema*, not a prose convention.
+plane (`finalize`) is a *typed schema*, not a prose convention.
 When your work loop ends, the engine opens one **closing turn** and asks you to
 call `finalize` once. The `report` argument of that call is what gets posted on
 the GitHub issue. Where you happened to write your prose during the work loop
@@ -20,21 +20,15 @@ no longer decides the posted answer (issues #830, #1038).
    issue thread (headings, lists, exact snippets where useful). The engine
    reads this typed field structurally and posts it verbatim.
    **Write the report once, in `report` only.** Do not also write it as the
-   turn's text or in `finish.message`: every copy is output you pay for, and a
+   turn's text: every copy is output you pay for, and a
    response that runs out of output tokens loses the `finalize` call and your
    verdict with it. A `finalize` call with an empty `report` is refused in the
    closing turn and nothing is posted.
 
-2. **The work-loop `finish` message is an optional short note.**
-   Calling `finish` during (or at the end of) the work loop is still how you
-   signal completion to the SDK, but its `message` is **not** the deliverable and
-   is not posted. Keep it to a one-line status note.
-   *Wind-down exception:* when the run trips its soft time budget the engine
-   injects the wind-down prompt, whose step 4 asks for the checkpoint report
-   (work completed / current state / blocking point / remaining work) in the
-   `finish` message — the closing turn may never run because the remaining budget
-   is spent winding down. In a wind-down run that `finish.message` **is** the
-   deliverable and the engine harvests and posts it (issues #822/#830).
+2. **The accepted `finalize` call ends the run.**
+   Once `finalize` is accepted, the step is over — do not call any more tools
+   (issue #1071). There is no separate `finish` tool; a `finish` entry in a
+   role's tool list is a deprecated alias for `finalize`.
 
 3. **`finalize` turn_outcome fields are routing metadata.**
    `appreciation` / `hold_kind` / `complexity` / `pin` carry the turn's verdict
@@ -43,8 +37,8 @@ no longer decides the posted answer (issues #830, #1038).
 
 4. **A standalone text answer is the fallback deliverable.**
    If the closing turn cannot run (LLM error, no `finalize` call returned), the
-   engine falls back, in this fixed order: a standalone agent text answer → the
-   work-loop `finish.message` → the turn text. This path is deterministic and
+   engine falls back, in this fixed order: a standalone agent text answer →
+   the turn text. This path is deterministic and
    visibly marked in the run's answer snapshot — it is not a license to skip the
    closing `finalize` call.
 
@@ -86,12 +80,13 @@ no longer decides the posted answer (issues #830, #1038).
 
 ## Anti-patterns
 
-- Treating the work-loop `finish` message as the place for the report — it is
+- Treating the work-loop prose as the place for the report — it is
   ignored; the closing `finalize` call's `report` is the answer channel.
 - Writing the report as turn text and again in `report`, or following the
   `finalize` call with a "report posted" message — one copy, in `report`.
 - Squeezing the deliverable into the `turn_outcome.note` field — the
   arguments are routing metadata.
+- Calling more tools after an accepted `finalize` call — the step is over.
 - Ending the session with chatter ("I'll now finish…") after the real answer —
   on the fallback path that chatter becomes the posted comment.
 - Ending a proposal or clarification turn without calling `finalize`

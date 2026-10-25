@@ -705,7 +705,6 @@ class TestFinalizeTurn:
         _write_entry_point(repo_root)
         tools = {
             "terminal": object(),
-            "finish": object(),
             "dispatch_next": object(),
             "finalize": object(),
             "call_agent": object(),
@@ -722,7 +721,7 @@ class TestFinalizeTurn:
 
         host.run("prompt")
 
-        assert conversation.tools_seen == [{"finalize", "finish"}]
+        assert conversation.tools_seen == [{"finalize"}]
         assert set(conversation.agent._tools) == set(tools)
 
     def test_retries_once_then_salvages_a_truncated_turn(self, tmp_path: Path) -> None:
@@ -1218,6 +1217,53 @@ class TestFinalizeHarvestAnchor:
 
         assert not observation.is_error
         assert _recorded_turn_outcome_fields(conversation) is not None
+
+    def test_an_accepted_call_sets_the_execution_status_to_finished(self) -> None:
+        # Issue #1071: the accepted finalize call ends the SDK run loop, exactly
+        # as FinishTool did — the loop breaks on the FINISHED enum member.
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+        from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.id = "conv-finished"
+        conversation.state.execution_status = ConversationExecutionStatus.RUNNING
+        conversation.state.events = [
+            _finalize_event_without_thought({"appreciation": "approved"})
+        ]
+        action = conversation.state.events[0].action
+
+        observation = FinalizeExecutor(conversation_id=conversation.id)(
+            action, conversation
+        )
+
+        assert not observation.is_error
+        assert conversation.state.execution_status is (
+            ConversationExecutionStatus.FINISHED
+        )
+        assert "do not call any more tools" in observation.text
+
+    def test_a_rejected_call_leaves_the_execution_status_untouched(self) -> None:
+        # An invalid turn_outcome must not end the run: the agent has to be
+        # able to fix the call (issue #1071).
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+        from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+        conversation = _FinalizeConversation(turns=[])
+        conversation.id = "conv-rejected"
+        conversation.state.execution_status = ConversationExecutionStatus.RUNNING
+        conversation.state.events = [
+            _finalize_event_without_thought(None)
+        ]
+        action = conversation.state.events[0].action
+
+        observation = FinalizeExecutor(conversation_id=conversation.id)(
+            action, conversation
+        )
+
+        assert observation.is_error
+        assert conversation.state.execution_status is (
+            ConversationExecutionStatus.RUNNING
+        )
 
     def test_the_report_argument_is_the_report(self) -> None:
         from nebuko.engine.report_text import closing_turn_report_text

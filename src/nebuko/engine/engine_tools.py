@@ -258,18 +258,12 @@ def _field_text(value: object) -> str:
 
 
 # The control plane, frozen for every agent in the engine (issue #830).
-# ``finalize`` is the *only* terminal tool (issue #1033): it carries the typed
-# ``turn_outcome`` (the verdict plus the optional ``agent_call`` hand-off) and
-# the report is its ``report`` argument (issue #1038). ``finish`` remains the
-# SDK end signal; its ``message`` is a fallback deliverable, never a routing
-# channel.
+# ``finalize`` is the *only* terminal tool (issues #1033, #1071): it carries the
+# typed ``turn_outcome`` (the verdict plus the optional ``agent_call`` hand-off)
+# and the report is its ``report`` argument. ``finish`` is retired as a tool; a
+# legacy spec is kept below so recorded pre-migration runs stay readable.
 DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
     tools={
-        "finish": EngineToolSpec(
-            name="finish",
-            payload_kind="final_message",
-            payload_fields=("message",),
-        ),
         # Terminal tool of every step, ``output:`` or not: the typed turn outcome
         # is the payload; the report is the action's own ``report`` argument.
         "finalize": EngineToolSpec(
@@ -284,6 +278,14 @@ DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
 #: agent is offered them); the specs only keep a pre-migration run's recorded
 #: action readable.
 _LEGACY_TOOL_SPECS: Final[Mapping[str, EngineToolSpec]] = {
+    # ``finish`` was removed as a tool in issue #1071 (finalize is the only
+    # terminal tool); the spec keeps a pre-migration run's recorded action
+    # readable, as was done for dispatch_next in #1033.
+    "finish": EngineToolSpec(
+        name="finish",
+        payload_kind="final_message",
+        payload_fields=("message",),
+    ),
     "dispatch_next": EngineToolSpec(
         name="dispatch_next",
         payload_kind="routing",
