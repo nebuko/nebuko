@@ -259,6 +259,7 @@ def resolve_toolset(
     ``send_message`` regardless of import order.
 
     ``token_budget`` (issue #851) carries the role's ``prompt_profile`` and
+    ``require_batched_recon``, which only ``file_editor`` accepts.
     """
     requested = list(tool_names)
     profile_params = (

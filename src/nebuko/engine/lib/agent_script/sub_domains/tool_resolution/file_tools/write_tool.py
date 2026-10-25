@@ -24,6 +24,8 @@ from openhands.sdk.tool.tool import (
 from pydantic import Field
 from rich.text import Text
 
+from .read_tool import ReadAction
+
 if TYPE_CHECKING:
     from openhands.sdk.conversation.state import ConversationState
 
@@ -54,6 +56,31 @@ class WriteObservation(Observation):
         )
 
 
+def _was_read(path: Path, conversation: Any | None) -> bool:
+    """Whether this conversation already read ``path`` with the read tool.
+
+    Scans the conversation's action events for a successful ``read`` on the
+    same resolved path. Without a conversation (direct/standalone calls) there
+    is no history to consult, so the guard cannot apply and the write is
+    allowed — the SDK always passes a conversation in real agent runs.
+    """
+    if conversation is None:
+        return False
+    try:
+        events = conversation.state.events
+    except AttributeError:
+        return False
+    resolved = str(path.resolve())
+    for event in events:
+        tool_name = getattr(event, "tool_name", None)
+        action = getattr(event, "action", None)
+        if tool_name != "read" or not isinstance(action, ReadAction):
+            continue
+        if str(Path(action.path).resolve()) == resolved:
+            return True
+    return False
+
+
 class WriteExecutor(ToolExecutor):
     """Creates parent directories as needed; guards silent content loss."""
 
@@ -81,6 +108,22 @@ class WriteExecutor(ToolExecutor):
                     f"({len(action.file_text)} chars); nothing written.",
                     path=str(path),
                     created=False,
+                )
+            if (
+                current is not None
+                and current != action.file_text
+                and conversation is not None
+                and not _was_read(path, conversation)
+            ):
+                return WriteObservation.from_text(
+                    text=(
+                        f"write refused: {path} exists with different content "
+                        "and has not been read in this conversation. Read the "
+                        "file with the `read` tool first, then write again — "
+                        "or confirm the full replacement content."
+                    ),
+                    is_error=True,
+                    path=str(path),
                 )
 
         try:

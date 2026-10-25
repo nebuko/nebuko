@@ -130,18 +130,27 @@ class ReadExecutor(ToolExecutor):
                 start=1, end=1, total=1, cap="2000 lines", next_offset=1
             ).encode("utf-8")
         )
-        numbered = "\n".join(
+        numbered_parts = [
             f"{number:>6}\t{line}" for number, line in enumerate(selected, start + 1)
+        ]
+
+        # Byte cap: drop whole trailing lines until the slice fits. The
+        # truncation notice is appended after the loop, so reserve its size.
+        notice_budget = len(
+            _TRUNCATION_NOTICE.format(
+                start=1, end=1, total=1, cap="2000 lines", next_offset=1
+            ).encode("utf-8")
         )
-        while selected and (
-            len(numbered.encode("utf-8")) + notice_budget > MAX_READ_BYTES
-        ):
-            selected = selected[:-1]
-            numbered = "\n".join(
-                f"{number:>6}\t{line}"
-                for number, line in enumerate(selected, start + 1)
-            )
-        end = start + len(selected)
+        # Running byte count: dropping a line costs its length plus the
+        # joining newline, so no re-encode of the whole slice per drop.
+        total_bytes = sum(len(part.encode("utf-8")) for part in numbered_parts) + max(
+            0, len(numbered_parts) - 1
+        )
+        while numbered_parts and total_bytes + notice_budget > MAX_READ_BYTES:
+            dropped = numbered_parts.pop()
+            total_bytes -= len(dropped.encode("utf-8")) + 1
+        numbered = "\n".join(numbered_parts)
+        end = start + len(numbered_parts)
 
         if not selected and not numbered:
             numbered = "[empty file]" if total == 0 else "[no lines in range]"

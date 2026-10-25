@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from openhands.sdk.conversation.secret_registry import SecretRegistry
 from openhands.tools.file_editor.exceptions import ToolError
 
 from agent_script.sub_domains.tool_resolution.file_tools import (
@@ -37,8 +38,10 @@ def _edit(path: Path, edits, **kwargs):
     return EditTool.create()[0](EditAction(path=str(path), edits=edits, **kwargs))
 
 
-def _write(path: Path, file_text: str):
-    return WriteTool.create()[0](WriteAction(path=str(path), file_text=file_text))
+def _write(path: Path, file_text: str, **kwargs):
+    return WriteTool.create()[0](
+        WriteAction(path=str(path), file_text=file_text), **kwargs
+    )
 
 
 class TestReadTool:
@@ -255,6 +258,48 @@ class TestWriteTool:
         assert not observation.is_error
         assert observation.created is False
         assert tmp_file.read_text(encoding="utf-8") == "replaced\n"
+
+    def test_overwrite_without_prior_read_is_refused(self, tmp_file: Path):
+        class _FakeEvent:
+            def __init__(self, tool_name: str, action: object) -> None:
+                self.tool_name = tool_name
+                self.action = action
+
+        class _FakeState:
+            def __init__(self, events: list) -> None:
+                self.events = events
+                self.secret_registry = SecretRegistry()
+
+        class _FakeConversation:
+            def __init__(self, state: object) -> None:
+                self.state = state
+
+        # No conversation at all (standalone/direct call): no history to
+        # consult, so the guard does not apply.
+        observation = _write(tmp_file, "replaced\n", conversation=None)
+        assert not observation.is_error
+        assert tmp_file.read_text(encoding="utf-8") == "replaced\n"
+        tmp_file.write_text("alpha\nbeta\ngamma\ndelta\n", encoding="utf-8")
+
+        # A conversation whose history has no read of this path.
+        empty = _FakeConversation(_FakeState([]))
+        observation = _write(tmp_file, "replaced\n", conversation=empty)
+        assert observation.is_error
+
+        # A successful read of the same path unlocks the overwrite.
+        read_action = ReadAction(path=str(tmp_file))
+        read_conversation = _FakeConversation(
+            _FakeState([_FakeEvent("read", read_action)])
+        )
+        observation = _write(tmp_file, "replaced\n", conversation=read_conversation)
+        assert not observation.is_error
+        assert tmp_file.read_text(encoding="utf-8") == "replaced\n"
+
+    def test_write_new_file_needs_no_prior_read(self, tmp_path: Path):
+        target = tmp_path / "new" / "file.txt"
+        observation = _write(target, "contents\n")
+        assert not observation.is_error
+        assert observation.created is True
 
     def test_identical_content_is_a_no_op(self, tmp_file: Path):
         before = tmp_file.stat().st_mtime_ns
