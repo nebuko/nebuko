@@ -18,7 +18,12 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    hiddenimports=[
+        "config",  # engine/lib runtime tree: finalize.py imports config.sub_domains.* at module scope
+        "config.sub_domains",
+        "config.sub_domains.workflow_step",
+        "config.sub_domains.workflow_step.output_field",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
