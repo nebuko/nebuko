@@ -13,7 +13,10 @@ from io import StringIO
 sys.path.insert(0, os.path.dirname(__file__))
 from metrics_schema import Metrics
 from workflow_state import STATE_MARKER_START, STATE_MARKER_END
-from agent_script.sub_domains.metrics.report_cost_resolver import ReportCostResolver
+from agent_script.sub_domains.metrics.report_cost_resolver import (
+    ReportCostResolver,
+    load_config_prices,
+)
 from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
 from agent_metrics import (
     extract_metrics_from_comment,
@@ -2196,6 +2199,57 @@ class TestReportTimePricing(unittest.TestCase):
         self.assertAlmostEqual(
             by_model["openai/deepseek/deepseek-v4.1-flash"]["total_cost"], 0.30
         )
+
+
+class TestConfigPriceFallback(unittest.TestCase):
+    """Zero-cost Mistral entries price from agent-config llm prices (issue #1144)."""
+
+    @staticmethod
+    def _config_prices():
+        return {
+            "mistral/mistral-small-2603": ModelPrice(
+                input_price=0.15, output_price=0.6, cache_read_price=0.015
+            )
+        }
+
+    def test_zero_cost_roles_are_priced_starred_and_listed(self):
+        # Given: zero-cost entries for three roles sharing one Mistral model,
+        # and the resolver built with the agent config's prices (no table hit).
+        # When: aggregation + rendering run.
+        # Then: each role's Cost cell is non-zero with the * marker, the
+        # footnote renders, and the folded price block lists one shared row.
+        resolver = ReportCostResolver(
+            table=None, config_prices=self._config_prices()
+        )
+        metrics = [
+            Metrics(agent_role=role, model_name="mistral/mistral-small-2603",
+                    input_tokens=1_000_000, output_tokens=500_000, cost=0.0)
+            for role in ("context", "dev", "review")
+        ]
+        lines = generate_agent_summary_table(aggregate_by_agent(metrics, resolver))
+        result = "\n".join(lines)
+        for role in ("Context", "Dev", "Review"):
+            cell = self._row(lines, "Cost")[["Architect", "Context", "Dev", "Review",
+                                             "Po", "Total"].index(role) + 1] \
+                if role != "Context" else self._row(lines, "Cost")[2]
+            self.assertTrue(str(cell).endswith("*"), cell)
+            self.assertNotIn("$0.0000", str(cell))
+        self.assertIn("estimated from the price table", result)
+        self.assertIn("Price details used for the estimation", result)
+        self.assertIn("mistral/mistral-small-2603", result)
+        # Roles sharing the model share one price row.
+        self.assertEqual(
+            sum(1 for line in lines if "mistral/mistral-small-2603" in line), 1
+        )
+        # 3 runs × (1M × 0.15 + 0.5M × 0.6) = 3 × 0.45
+        for role in ("context", "dev", "review"):
+            self.assertAlmostEqual(
+                aggregate_by_agent(metrics, resolver)[role]["total_cost"], 0.45
+            )
+
+    @staticmethod
+    def _row(lines, label):
+        return next(line for line in lines if line.startswith(f"| **{label}**"))
 
 
 if __name__ == "__main__":
