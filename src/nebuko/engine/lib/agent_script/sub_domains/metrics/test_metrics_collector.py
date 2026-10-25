@@ -574,3 +574,109 @@ class TestErrorsPerTool:
         metrics = collect_llm_metrics(_conversation_with_events(events))
 
         assert metrics.errors_per_tool == {"unknown": 1}
+
+
+class TestModelExecutionConfigCaptured:
+    """The applied model execution config is recorded for audit/replay (#820)."""
+
+    def _cfg(self, **overrides):
+        from types import SimpleNamespace
+
+        ref = SimpleNamespace(
+            model_path="openai/deepseek/deepseek-v4.1-flash",
+            provider_ref=SimpleNamespace(id="openrouter"),
+        )
+        cfg = SimpleNamespace(
+            model_ref=ref,
+            complexity_overrides={},
+            temperature=0.3,
+            top_p=None,
+            top_k=None,
+            min_p=None,
+            presence_penalty=None,
+            repetition_penalty=None,
+            stop_sequences=None,
+        )
+        for key, value in overrides.items():
+            setattr(cfg, key, value)
+        return cfg
+
+    def test_resolved_llm_config_wins(self):
+        import os
+
+        os.environ.pop("CONFIG_COMPLEXITY", None)
+        usage = _AccumulatedUsage(prompt_tokens=10, completion_tokens=5)
+        metrics = collect_llm_metrics(
+            _conversation_with_usage(usage),
+            self._cfg(top_p=0.9),
+            None,
+            llm_config={
+                "model": "openai/glm-4.6",
+                "temperature": 0.7,
+                "litellm_extra_body": {
+                    "top_p": 0.8,
+                    "top_k": 40,
+                    "stop": ["</answer>"],
+                    "chat_template_kwargs": {"enable_thinking": False},
+                },
+                "reasoning_effort": "none",
+                "max_output_tokens": 8192,
+            },
+        )
+
+        config = metrics.model_execution_config
+        assert config["model_path"] == "openai/glm-4.6"
+        assert config["temperature"] == 0.7
+        assert config["top_p"] == 0.8
+        assert config["top_k"] == 40
+        assert config["stop_sequences"] == ["</answer>"]
+        assert config["thinking_enabled"] is False
+        assert config["reasoning_effort"] == "none"
+        assert config["max_output_tokens"] == 8192
+        assert config["provider"] == "openrouter"
+
+    def test_falls_back_to_agent_config(self):
+        import os
+
+        os.environ.pop("CONFIG_COMPLEXITY", None)
+        usage = _AccumulatedUsage(prompt_tokens=10, completion_tokens=5)
+        metrics = collect_llm_metrics(
+            _conversation_with_usage(usage), self._cfg(stop_sequences=["STOP"])
+        )
+
+        config = metrics.model_execution_config
+        assert config["model_path"] == "openai/deepseek/deepseek-v4.1-flash"
+        assert config["temperature"] == 0.3
+        assert config["stop_sequences"] == ["STOP"]
+        assert config["model_source"] == "base"
+
+    def test_records_complexity_override_source(self):
+        import os
+        from types import SimpleNamespace
+
+        os.environ["CONFIG_COMPLEXITY"] = "high"
+        cfg = self._cfg()
+        cfg.complexity_overrides = {
+            "high": SimpleNamespace(model_ref=SimpleNamespace(model_path="openai/glm-4.6"))
+        }
+        usage = _AccumulatedUsage(prompt_tokens=10, completion_tokens=5)
+
+        try:
+            metrics = collect_llm_metrics(_conversation_with_usage(usage), cfg)
+        finally:
+            os.environ.pop("CONFIG_COMPLEXITY", None)
+
+        config = metrics.model_execution_config
+        assert config["model_source"] == "complexity_override"
+        assert config["complexity_tier"] == "high"
+        assert config["model_path"] == "openai/glm-4.6"
+
+    def test_none_when_no_config_available(self):
+        import os
+
+        os.environ.pop("CONFIG_COMPLEXITY", None)
+        usage = _AccumulatedUsage(prompt_tokens=10, completion_tokens=5)
+        metrics = collect_llm_metrics(_conversation_with_usage(usage))
+
+        assert metrics.model_execution_config is None
+

@@ -72,7 +72,7 @@ def main():
     # 6. Collect metrics — the default price table prices models the config
     #    leaves unpriced (subscription providers); load is fail-open (#714).
     metrics = collect_and_save_metrics(
-        conversation, agent_cfg, price_table=load_price_table()
+        conversation, agent_cfg, price_table=load_price_table(), llm_config=llm_config
     )
 
     # 7. Build output

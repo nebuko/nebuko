@@ -640,7 +640,7 @@ def _host_for(
 
     pipeline = SimpleNamespace(
         build_output=_build_output,
-        collect_and_save_metrics=lambda conversation, agent_cfg: object(),
+        collect_and_save_metrics=lambda conversation, agent_cfg, **_: object(),
         load_prev_state_or_recover=lambda: None,
         resolve_llm_config=lambda args, prompt: (object(), prompt, object()),
         run_agent=_run_agent,

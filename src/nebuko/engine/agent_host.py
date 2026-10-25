@@ -596,7 +596,9 @@ def _run_pipeline(
     )
     if host is not None:
         host._elicit_report(conversation)
-    metrics = pipeline.collect_and_save_metrics(conversation, agent_cfg)
+    metrics = pipeline.collect_and_save_metrics(
+        conversation, agent_cfg, llm_config=llm_config
+    )
     pipeline.build_output(
         conversation, metrics, args, prev_state=pipeline.load_prev_state_or_recover()
     )
