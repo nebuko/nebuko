@@ -247,6 +247,69 @@ class TestModelPrice:
         assert resolver.effective_cost(m) == pytest.approx(1.0)
 
 
+class TestConfigPriceFallback:
+    """Config-priced model paths the default table cannot match (issue #1144).
+
+    A subscription provider (Mistral) routes by a path the OpenRouter table
+    keys differently (``mistral/zai-glm-5-3-flash`` vs ``z-ai/glm-5.3-flash``),
+    so pricing must not depend on the table alone.
+    """
+
+    @staticmethod
+    def _resolver(table, config_prices):
+        return ReportCostResolver(table=table, config_prices=config_prices)
+
+    @staticmethod
+    def _metric():
+        return Metrics(
+            model_name="mistral/zai-glm-5-3-flash",
+            input_tokens=1_000_000,
+            output_tokens=500_000,
+            cost=0.0,
+        )
+
+    def test_empty_table_resolves_the_config_price(self):
+        resolver = self._resolver(
+            PriceTable(source="openrouter", fetched_at=1.0, entries={}),
+            {
+                "mistral/zai-glm-5-3-flash": ModelPrice(
+                    input_price=0.15, output_price=0.5
+                )
+            },
+        )
+        price = resolver.model_price(self._metric())
+        assert price is not None
+        assert price.input_price == pytest.approx(0.15)
+        assert price.output_price == pytest.approx(0.5)
+        assert resolver.is_estimated(self._metric())
+        # 1M in @0.15 + 500k out @0.5
+        assert resolver.effective_cost(self._metric()) == pytest.approx(0.40)
+
+    def test_partial_config_fields_fill_gaps_in_partial_table_match(self):
+        """Config tiers win per field; the table completes the unset ones."""
+        resolver = self._resolver(
+            PriceTable(
+                source="openrouter",
+                fetched_at=1.0,
+                entries={
+                    # Table entry without a cache-read tier.
+                    "mistral/zai-glm-5-3-flash": ModelPrice(
+                        input_price=9.0, output_price=9.0
+                    )
+                },
+            ),
+            {
+                "mistral/zai-glm-5-3-flash": ModelPrice(
+                    input_price=0.15, output_price=0.5
+                )
+            },
+        )
+        price = resolver.model_price(self._metric())
+        assert price is not None
+        assert price.input_price == pytest.approx(0.15)
+        assert price.output_price == pytest.approx(0.5)
+
+
 class TestBuild:
     def test_build_loads_the_table_through_the_injected_fetcher(self, tmp_path, monkeypatch):
         import json

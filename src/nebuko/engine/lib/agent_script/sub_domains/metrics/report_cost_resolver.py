@@ -16,7 +16,7 @@ Base-deps-safe by construction: imports only ``cost``/``pricing``/
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from metrics_schema import Metrics
@@ -41,13 +41,46 @@ def _field(metric: "Metrics | Mapping[str, Any]", name: str, default: Any) -> An
 
 @dataclass(frozen=True)
 class _ModelRef:
-    """Path-only model reference for :func:`resolve_model_rates`.
+    """Model reference for :func:`resolve_model_rates`.
 
-    The report-time job has no agent config, so no configured ``*_price`` is
-    supplied; the merge then resolves the table's per-field prices.
+    Carries the operator's configured per-1M prices when the recorded model
+    identity matches an ``llms`` entry (issue #1144): the merge then resolves
+    config-over-table per field, so a subscription-provider path the table
+    cannot match is still priced from the config alone.
     """
 
     model_path: str
+    input_price: Optional[float] = None
+    output_price: Optional[float] = None
+    cache_read_price: Optional[float] = None
+    cache_write_price: Optional[float] = None
+
+
+def load_config_prices(config_path: Optional[str] = None) -> dict[str, ModelPrice]:
+    """Per-1M prices keyed by the agent config's ``model_path`` (issue #1144).
+
+    Reads the layered agent config (``default_paths.agent_config_file()``) and
+    collects the priced ``llms`` entries. Fail-open: an unreadable or absent
+    config yields ``{}`` — pricing is a report bonus, never fatal.
+    """
+    try:
+        import default_paths
+        from config import load_config
+
+        path = config_path or default_paths.agent_config_file()
+        cfg = load_config(path)
+        return {
+            llm.model_path: ModelPrice(
+                input_price=llm.input_price,
+                output_price=llm.output_price,
+                cache_read_price=llm.cache_read_price,
+                cache_write_price=llm.cache_write_price,
+            )
+            for llm in (cfg.llms or {}).values()
+            if llm.input_price is not None or llm.output_price is not None
+        }
+    except Exception:  # noqa: BLE001 — pricing is a report bonus, never fatal
+        return {}
 
 
 @dataclass(frozen=True)
@@ -55,6 +88,9 @@ class ReportCostResolver:  # @stub-protected
     """Effective per-entry cost for reporting from recorded identity + tokens."""
 
     table: Optional[PriceTable]
+    #: Per-1M prices from the agent config's ``llms``, keyed by ``model_path``
+    #: (issue #1144); they win per field over the table's match.
+    config_prices: dict[str, ModelPrice] = field(default_factory=dict)
 
     @classmethod
     def build(  # @stub-protected
@@ -65,7 +101,7 @@ class ReportCostResolver:  # @stub-protected
             table = load_price_table(fetcher=fetcher)
         except Exception:  # noqa: BLE001 — pricing is a report bonus, never fatal
             table = None
-        return cls(table=table)
+        return cls(table=table, config_prices=load_config_prices())
 
     def model_key(self, metric: "Metrics | Mapping[str, Any]") -> str:  # @stub-protected
         """The aggregation row key: the recorded model id, or the placeholder."""
@@ -90,7 +126,17 @@ class ReportCostResolver:  # @stub-protected
         if model_path == PLACEHOLDER_MODEL or self.table is None:
             return None
 
-        return resolve_model_rates(_ModelRef(model_path=model_path), self.table)
+        ref = self.config_prices.get(model_path)
+        return resolve_model_rates(
+            _ModelRef(
+                model_path=model_path,
+                input_price=ref.input_price if ref else None,
+                output_price=ref.output_price if ref else None,
+                cache_read_price=ref.cache_read_price if ref else None,
+                cache_write_price=ref.cache_write_price if ref else None,
+            ),
+            self.table,
+        )
 
     def effective_cost(self, metric: "Metrics | Mapping[str, Any]") -> float:  # @stub-protected
         """The entry's USD cost for reporting; never mutates ``metric``."""
