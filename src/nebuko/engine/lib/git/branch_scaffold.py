@@ -60,7 +60,7 @@ def branch_slug(title: str) -> str:
 
 def feature_branch_name(issue_number: int, title: str) -> str:  # @stub-protected
     """The dev session's branch: ``feature/<n>-<slug>`` (issue #1153)."""
-    return f"feature/issue-{issue_number}-{branch_slug(title)}"
+    return f"feature/{issue_number}-{branch_slug(title)}"
 
 
 def legacy_branch_name(issue_number: int, title: str) -> str:  # @stub-protected

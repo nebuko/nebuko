@@ -245,6 +245,56 @@ def _exit_code_for(
     return exit_code
 
 
+def _record_scaffold_branch(
+    state: WorkflowState | None, result: "branch_scaffold.ScaffoldResult"
+) -> WorkflowState | None:
+    """Record one scaffold pass in the state's ``git`` sub-domain (#1153).
+
+    Sets the branch name (unless already set by an earlier turn) and appends
+    one ``create`` / ``rebase`` / ``conflict`` entry; the legacy
+    ``current_context["dev_branch"]`` write is preserved next to it. A
+    stateless run or an empty pass is a no-op.
+    """
+    if state is None or not result.branch:
+        return state
+    from workflow_state.sub_domains.git_info.git_info import GitActionStatus
+
+    if not state.git.branch_name:
+        state.git.branch_name = result.branch
+    if result.conflict:
+        status = GitActionStatus.CONFLICT
+    elif result.created:
+        status = GitActionStatus.CREATE
+    else:
+        status = GitActionStatus.REBASE
+    state.git.record(status, detail=result.detail)
+    context = dict(state.current_context)
+    context["dev_branch"] = result.branch
+    return state.model_copy(update={"current_context": context, "git": state.git})
+
+
+def _record_pull_request_state(
+    state: "WorkflowState | None", pr_result: "pr_finalize.PrFinalizeResult"
+) -> "WorkflowState | None":
+    """Record one opened PR in the state's ``git`` sub-domain (#1153)."""
+    if state is None or not pr_result.ok or not pr_result.pr_url:
+        return state
+    from workflow_state.sub_domains.git_info.git_info import GitActionStatus
+
+    number = pr_number_from_url(pr_result.pr_url)
+    if number is None:
+        return state
+    state.git.pr_number = number
+    state.git.record(GitActionStatus.PR, detail=pr_result.detail)
+    return state
+
+
+def _sha_from_detail(detail: str) -> str:
+    """The short sha mentioned in a guard detail ("committed abc1234"), or ""."""
+    match = re.search(r"\b[0-9a-f]{7,40}\b", detail or "")
+    return match.group(0) if match else ""
+
+
 def _is_bot_trigger(trigger: Trigger) -> bool:
     """True when the trigger body carries a bot marker (loop safety, issue #804).
 
@@ -1159,6 +1209,7 @@ class Engine:
             # phase: the leftovers still belong to the session.
             if "agent" in phases:
                 finalize_result = self._git_session_finalize()
+                state = self._record_git_finalize(state, finalize_result)
                 if not finalize_result.ok:
                     note = f"git session finalize failed: {finalize_result.detail}"
                     failure_reason = (
@@ -2518,9 +2569,25 @@ class Engine:
             or not result.branch
         ):
             return state
+        from workflow_state.sub_domains.git_info.git_info import GitActionStatus
+
+        if not state.git.branch_name:
+            state.git.branch_name = result.branch
+        if result.conflict:
+            status = GitActionStatus.CONFLICT
+        elif result.created:
+            status = GitActionStatus.CREATE
+        else:
+            status = GitActionStatus.REBASE
+        if not any(
+            e.status is status for e in state.git.history
+        ):
+            state.git.record(status, detail=result.detail)
         context = dict(state.current_context)
         context["dev_branch"] = result.branch
-        updated = state.model_copy(update={"current_context": context})
+        updated = state.model_copy(
+            update={"current_context": context, "git": state.git}
+        )
         try:
             self.adapter.save_state(updated)
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
@@ -2563,7 +2630,17 @@ class Engine:
             repo=os.environ.get("GITHUB_REPOSITORY", "")
             or os.environ.get("REPO_NAME", ""),
         )
-        updated = state.model_copy(update={"pull_request": pr})
+        from workflow_state.sub_domains.git_info.git_info import GitActionStatus
+
+        if not any(e.status is GitActionStatus.PR for e in state.git.history):
+            state.git.pr_number = number
+            state.git.record(
+                GitActionStatus.PR,
+                detail=f"PR #{number} opened: {pr_result.pr_url}",
+            )
+        updated = state.model_copy(
+            update={"pull_request": pr, "git": state.git}
+        )
         try:
             self.adapter.save_state(updated)
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
@@ -2578,7 +2655,24 @@ class Engine:
         session guard made (when it made one); a clean/skipped finalize appends
         nothing.
         """
-        raise NotImplementedError
+        if state is None:
+            return None
+        from workflow_state.sub_domains.git_info.git_info import GitActionStatus
+
+        sha = _sha_from_detail(getattr(finalize_result, "detail", ""))
+        if not sha:
+            return state
+        state.git.record(
+            GitActionStatus.DIRTY,
+            commit_id=sha,
+            detail=getattr(finalize_result, "detail", ""),
+        )
+        updated = state.model_copy(update={"git": state.git})
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the git finalize entry")
+        return updated
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""

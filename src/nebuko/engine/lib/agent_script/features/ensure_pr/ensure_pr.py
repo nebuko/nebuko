@@ -547,9 +547,9 @@ def check_publication() -> PublicationState:
         return PublicationState(published=True, skip_reason=f"error: {exc}")
 
 
-def pr_title(issue_number: int, issue_title: str) -> str:  # @stub-protected
+def pr_title(issue_number: int, issue_title: str) -> str:
     """The engine-opened PR's title: ``<issue_title> (#<issue_number>)``."""
-    raise NotImplementedError
+    return f"{issue_title} (#{issue_number})"
 
 
 def _open_pr(

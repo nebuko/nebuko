@@ -82,6 +82,11 @@ class GuardResult:
     detail: str = ""
 
 
+#: The engine's dirty-tree auto-commit message: recognizable as an engine-made
+#: commit, and recorded as a ``dirty`` history entry (issue #1153).
+DIRTY_COMMIT_MESSAGE = "chore: engine: commit changes forgotten by agent"
+
+
 class GitSessionGuard:
     """Prove git auth before a session and a clean, pushed tree after it.
 
@@ -308,18 +313,17 @@ class GitSessionGuard:
             return ""
         try:
             self._run_git(["add", "-A"])
-            self._run_git(
-                [
-                    "commit",
-                    "-m",
-                    "chore: finalize the agent session\n\n"
-                    "The engine commits anything the session left behind so the "
-                    "work is not lost (issue #1089).",
-                ]
-            )
+            self._run_git(["commit", "-m", DIRTY_COMMIT_MESSAGE])
         except RuntimeError as exc:
             return f"automatic session commit failed: {_dedent(str(exc))}"
-        return ""
+        return self._short_sha()
+
+    def _short_sha(self) -> str:
+        """The current HEAD's short sha, or ``""`` when it cannot be read."""
+        try:
+            return self._run_git(["rev-parse", "--short", "HEAD"])
+        except RuntimeError:
+            return ""
 
     # @stub-protected
     def _is_fully_pushed(self, branch: str) -> Optional[str]:
