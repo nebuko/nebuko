@@ -16,6 +16,7 @@ from openhands.sdk.tool.tool import (
     Observation,
     ToolAnnotations,
     ToolDefinition,
+    ToolExecutor,
 )
 from pydantic import Field
 from rich.text import Text
@@ -125,18 +126,29 @@ class FetchCommentBodiesObservation(Observation):
         return Text("\n\n".join(parts))
 
 
-class _SdkExecutorAdapter:
+class _SdkExecutorAdapter(
+    ToolExecutor[FetchCommentBodiesAction, FetchCommentBodiesObservation]
+):
     """Adapt the dataclass executor to the SDK executor protocol."""
 
     def __init__(self, executor: FetchCommentBodiesExecutor) -> None:
         self.executor = executor
 
-    def __call__(self, action: FetchCommentBodiesAction) -> FetchCommentBodiesObservation:
-        result = self.executor.execute(
-            FetchCommentBodiesActionData(comment_ids=action.comment_ids)
-        )
+    def __call__(
+        self,
+        action: FetchCommentBodiesAction,
+        conversation: "object | None" = None,
+    ) -> FetchCommentBodiesObservation:
+        result = self.executor.execute(action)
+        # ``result.bodies`` is a ``_FramedBodies`` view; materialise it with the
+        # framing applied exactly once, at the prompt boundary, so pydantic
+        # never stores a doubly-framed or unframed copy.
         return FetchCommentBodiesObservation(
-            bodies=dict(result.bodies), not_found=list(result.not_found)
+            bodies={
+                comment_id: _framed_as_untrusted(body)
+                for comment_id, body in result.bodies.items()
+            },
+            not_found=list(result.not_found),
         )
 
 

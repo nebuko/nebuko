@@ -7,6 +7,13 @@ from nebuko.engine.fetch_comment_bodies_tool import (
     FetchCommentBodiesExecutor,
 )
 
+try:  # SDK path; the dataclass path is exercised regardless
+    from nebuko.engine.fetch_comment_bodies_tool import (
+        FetchCommentBodiesAction as FetchCommentBodiesActionData,
+    )
+except Exception:  # pragma: no cover
+    FetchCommentBodiesActionData = FetchCommentBodiesAction
+
 
 class TestExecutorLookup:
     def test_found_ids_return_their_bodies(self):
@@ -39,3 +46,21 @@ class TestRegistry:
         spec = DEFAULT_ENGINE_TOOLS.tools["fetch_comment_bodies"]
         assert spec.payload_kind == "query"
         assert spec.payload_fields == ("comment_ids",)
+
+
+class TestSdkTool:
+    """End-to-end path: ToolDefinition.create() + executor call (#748)."""
+
+    def test_create_builds_a_valid_sdk_tool(self):
+        from nebuko.engine.fetch_comment_bodies_tool import FetchCommentBodiesTool
+
+        (tool,) = FetchCommentBodiesTool.create(
+            context_bodies={"101": "body one"}
+        )
+        observation = tool.executor(
+            FetchCommentBodiesActionData(comment_ids=[101, 999])
+        )
+        assert observation.not_found == [999]
+        assert "body one" in observation.bodies["101"]
+        assert "untrusted" in observation.bodies["101"].lower()
+        assert set(observation.bodies) == {"101"}
