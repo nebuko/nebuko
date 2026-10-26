@@ -104,7 +104,11 @@ class EngineAgentUnavailable(RuntimeError):
 
 
 def run_engine_agent(
-    prompt: str, *, repo_root: Path, env: Mapping[str, str] | None = None
+    prompt: str,
+    *,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+    context_bodies: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run the agent assembly in-process and capture the real deliverable.
 
@@ -126,7 +130,7 @@ def run_engine_agent(
 
     return InProcessAgentHost(
         repo_root=repo_root, load_pipeline=_load_pipeline, env=env
-    ).run(prompt)
+    ).run(prompt, context_bodies=context_bodies)
 
 
 def _load_pipeline() -> SimpleNamespace:

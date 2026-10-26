@@ -2290,7 +2290,12 @@ class Engine:
 
         env = self._agent_env()
         try:
-            return run_engine_agent(prompt, repo_root=self.repo_root, env=env)
+            return run_engine_agent(
+                prompt,
+                repo_root=self.repo_root,
+                env=env,
+                context_bodies=self._context_bodies(),
+            )
         except EngineAgentUnavailable as exc:
             log.warning(
                 "[phase:agent] in-process agent seam unavailable (%s); "

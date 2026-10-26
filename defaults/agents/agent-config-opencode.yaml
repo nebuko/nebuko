@@ -41,7 +41,7 @@ agents:
     skills:
       - inject: ["call-agent", "planning"]
       - discover: ["complexity", "posting-contract"]
-    tools: ["think", "finish", "finalize", "complexity_review"]
+    tools: ["think", "finish", "finalize", "complexity_review", "fetch_comment_bodies"]
     complexity_overrides:
       low:
         model: "${llms.deepseek-v4_1-flash}"
@@ -70,7 +70,7 @@ agents:
     skills:
       - inject: ["call-agent", "context-research"]
       - discover: ["complexity", "posting-contract"]
-    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "complexity_review", "fetch_comment_bodies"]
 
   review:
     model: "${llms.glm-5_3-flash}"
@@ -80,7 +80,7 @@ agents:
     skills:
       - inject: ["plan-review"]
       - discover: ["retrospective", "complexity", "posting-contract"]
-    tools: ["terminal", "terminal_batch", "think", "finish", "finalize", "complexity_review"]
+    tools: ["terminal", "terminal_batch", "think", "finish", "finalize", "complexity_review", "fetch_comment_bodies"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"
@@ -89,4 +89,4 @@ agents:
     skills:
       - inject: ["call-agent", "issue-refinement"]
       - discover: ["complexity", "posting-contract"]
-    tools: ["think", "finish", "finalize", "complexity_review"]
+    tools: ["think", "finish", "finalize", "complexity_review", "fetch_comment_bodies"]

@@ -9,6 +9,16 @@ still explicitly marked as untrusted third-party text.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Sequence
+
+from openhands.sdk.tool.tool import (
+    Action,
+    Observation,
+    ToolAnnotations,
+    ToolDefinition,
+)
+from pydantic import Field
+from rich.text import Text
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -89,3 +99,91 @@ class FetchCommentBodiesTool:
     @classmethod
     def create(cls, context_bodies: dict[str, str]) -> "FetchCommentBodiesTool":
         return cls(executor=FetchCommentBodiesExecutor(context_bodies))
+
+
+class FetchCommentBodiesAction(Action):
+    """The comment ids the agent wants the full bodies for."""
+
+    comment_ids: list[int] = Field(
+        description="Comment ids to fetch the full text of (from the thread summaries)."
+    )
+
+
+class FetchCommentBodiesObservation(Observation):
+    """Bodies found in the run's cached thread, plus ids missing from the cache."""
+
+    bodies: dict[str, str]
+    not_found: list[int]
+
+    @property
+    def visualize(self) -> Text:
+        if not self.bodies and not self.not_found:
+            return Text("No comment ids given.", style="yellow")
+        parts = [f"{cid}:\n{body}" for cid, body in self.bodies.items()]
+        if self.not_found:
+            parts.append("not found: " + ", ".join(str(i) for i in self.not_found))
+        return Text("\n\n".join(parts))
+
+
+class _SdkExecutorAdapter:
+    """Adapt the dataclass executor to the SDK executor protocol."""
+
+    def __init__(self, executor: FetchCommentBodiesExecutor) -> None:
+        self.executor = executor
+
+    def __call__(self, action: FetchCommentBodiesAction) -> FetchCommentBodiesObservation:
+        result = self.executor.execute(
+            FetchCommentBodiesActionData(comment_ids=action.comment_ids)
+        )
+        return FetchCommentBodiesObservation(
+            bodies=dict(result.bodies), not_found=list(result.not_found)
+        )
+
+
+class FetchCommentBodiesTool(
+    ToolDefinition[FetchCommentBodiesAction, FetchCommentBodiesObservation]
+):
+    """SDK tool exposing the cached thread comment bodies to agents (issue #748)."""
+
+    @classmethod
+    def create(
+        cls,
+        conv_state: "object | None" = None,
+        **params: Any,
+    ) -> Sequence["FetchCommentBodiesTool"]:
+        """Create the tool bound to the run's cached comment bodies.
+
+        The cached bodies map is injected via the ``context_bodies`` param by
+        ``resolve_toolset``; lookups read from it at call time.
+        """
+        context_bodies = params.pop("context_bodies", {})
+        if params:
+            raise ValueError(
+                f"FetchCommentBodiesTool doesn't accept parameters: {sorted(params)}"
+            )
+        return [
+            cls(
+                description=FETCH_COMMENT_BODIES_DESCRIPTION,
+                action_type=FetchCommentBodiesAction,
+                observation_type=FetchCommentBodiesObservation,
+                executor=_SdkExecutorAdapter(
+                    FetchCommentBodiesExecutor(dict(context_bodies))
+                ),
+                annotations=ToolAnnotations(
+                    readOnlyHint=True,
+                    destructiveHint=False,
+                    idempotentHint=True,
+                    openWorldHint=False,
+                ),
+            )
+        ]
+
+
+FETCH_COMMENT_BODIES_DESCRIPTION = """Recall the full text of earlier thread comments by id.
+
+Agents receive the latest message verbatim plus one-line summaries of the earlier
+thread comments; when a summary is not enough, fetch the full bodies by id.
+
+Parameters:
+- comment_ids: the ids to fetch the full text of.
+"""  # noqa: E501
