@@ -57,6 +57,21 @@ against the caller's own workspace rather than the imported engine checkout.
 
 ---
 
+## The Default Workflow
+
+A bare `/nebuko run workflow` (no `--name`) starts the repo's **default
+workflow** (issue #1094). Set it in the Nebuko manifest `.nebuko/nebuko.yaml`:
+
+```yaml
+default_workflow: default
+```
+
+When the manifest is absent or does not declare `default_workflow`, the shipped
+`default` workflow is used. The manifest is read from the caller's workspace
+(the same `.nebuko/` directory that holds workflow and agent overrides).
+
+---
+
 ## Provider Schema
 
 | Field | Type | Required | Description |
