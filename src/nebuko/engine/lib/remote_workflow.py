@@ -74,7 +74,11 @@ def workflow_candidate_paths(
     layer; only the repo-local override (``.nebuko/workflows``) and the
     shipped defaults (``defaults/workflows``) are consulted, in that order.
     """
-    raise NotImplementedError
+    root = Path(repo_path)
+    return [
+        str(root / ".nebuko" / "workflows" / workflow_name),
+        str(root / "defaults" / "workflows" / workflow_name),
+    ]
 
 
 def _find_workflow_file(repo_path: str, workflow_name: Optional[str]) -> str:
