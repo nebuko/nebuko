@@ -109,6 +109,9 @@ tagged `<!-- bot-agent-{role} -->` exactly like the monolith's
 **engine-owned**: an engine-driven workflow file must not run its own ack step
 (that double-posts), and a failed notice is logged, never fatal to the run.
 
+The platform adapter surface (typed `post()`, capabilities, degradation) is
+documented in [docs/adapters.md](adapters.md).
+
 ---
 
 ## State Management
