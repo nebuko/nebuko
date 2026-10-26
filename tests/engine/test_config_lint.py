@@ -87,7 +87,7 @@ class TestConfigLinterContract:
         )
 
         assert _known_tools() == CONFIG_TOOL_NAMES
-        assert "fetch_comment_bodies" in KNOWN_TOOLS
+        assert "fetch_comment_bodies" in _known_tools()
 
     def test_exposes_the_plan_rule_methods(self):
         for name in (
