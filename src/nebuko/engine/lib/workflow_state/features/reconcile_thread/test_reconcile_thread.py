@@ -3,18 +3,12 @@
 import os
 import sys
 
-sys.path.insert(
-    0,
-    os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    ),
-)
 
-from workflow_state.features.reconcile_thread import (  # noqa: E402
+from nebuko.engine.lib.workflow_state.features.reconcile_thread import (  # noqa: E402
     DEFAULT_TRUST_ALLOWLIST,
     reconcile_thread,
 )
-from workflow_state.sub_domains.thread_record import (  # noqa: E402
+from nebuko.engine.lib.workflow_state.sub_domains.thread_record import (  # noqa: E402
     ThreadRecord,
     ThreadRecordKind,
 )

@@ -3,15 +3,9 @@
 import os
 import sys
 
-sys.path.insert(
-    0,
-    os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    ),
-)
 
-from workflow_state.features.classify_comment import classify_comment  # noqa: E402
-from workflow_state.sub_domains.thread_record import ThreadRecordKind  # noqa: E402
+from nebuko.engine.lib.workflow_state.features.classify_comment import classify_comment  # noqa: E402
+from nebuko.engine.lib.workflow_state.sub_domains.thread_record import ThreadRecordKind  # noqa: E402
 
 HUMAN_ACTION = "<!-- bot-human-action -->\n**human action needed**"
 AGENT_STARTED = (

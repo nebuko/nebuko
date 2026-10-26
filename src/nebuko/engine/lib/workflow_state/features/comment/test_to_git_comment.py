@@ -2,11 +2,10 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from config import brand
-from workflow_state import WorkflowState, HistoryEntry, StateMetrics
-from workflow_state.features.comment.to_git_comment import (
+from nebuko.engine.lib.config import brand
+from nebuko.engine.lib.workflow_state import WorkflowState, HistoryEntry, StateMetrics
+from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
     format_collapsed_section,
     strip_state_section,
     wrap_comment_with_state,
@@ -16,7 +15,7 @@ from workflow_state.features.comment.to_git_comment import (
 
 def _outcome():
     """A completed/approved outcome — the mandatory routing fact (issue #964)."""
-    from workflow_state import Appreciation, TurnOutcome, TurnStatus
+    from nebuko.engine.lib.workflow_state import Appreciation, TurnOutcome, TurnStatus
 
     return TurnOutcome(status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED)
 

@@ -69,9 +69,10 @@ class TestNoSysPathInjection:
         """Given the invariant of zero sys.path mutation, when scanning src/ and
         tests/, then no sys.path.insert/append call remains."""
         offenders = []
+        self_path = str(Path(__file__))
         for root in ("src", "tests"):
             for path in (REPO_ROOT / root).rglob("*.py"):
-                if "__pycache__" in path.parts:
+                if "__pycache__" in path.parts or str(path) == self_path:
                     continue
                 text = path.read_text(encoding="utf-8")
                 if "sys.path.insert" in text or "sys.path.append" in text:

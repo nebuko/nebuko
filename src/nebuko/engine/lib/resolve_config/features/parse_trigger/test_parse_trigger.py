@@ -3,8 +3,7 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
     build_trigger_commands,
     extract_debug_flag,
     extract_machine_trigger,
@@ -15,10 +14,10 @@ from resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
     normalize_resume_input,
     BARE_RESUME_INPUT,
 )
-from resolve_config.sub_domains.trigger_commands.trigger_commands import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.sub_domains.trigger_commands.trigger_commands import (  # noqa: E402
     TriggerCommands,
 )
-from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
     parse_workflow_command,
     WorkflowCommand,
 )
@@ -107,7 +106,7 @@ class TestExtractMentionAgent:
         assert extract_mention_agent("@@ctx gather context") == "context"
 
     def test_all_configured_agents_mentionable(self):
-        from config import load_agent_names
+        from nebuko.engine.lib.config import load_agent_names
 
         for agent in sorted(load_agent_names()):
             assert extract_mention_agent(f"@@{agent} go") == agent

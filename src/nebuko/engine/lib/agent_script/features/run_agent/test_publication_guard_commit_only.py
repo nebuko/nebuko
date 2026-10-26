@@ -6,7 +6,7 @@ stop recalling for push-related reasons and ask the agent only to commit.
 
 import unittest
 
-from agent_script.features.run_agent.publication_guard import (
+from nebuko.engine.lib.agent_script.features.run_agent.publication_guard import (
     publication_recall_prompt,
     recallable_reasons,
 )

@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from config import AgentConfig, LLMConfig, ProviderConfig, SkillSpec, WorkflowStep
+from nebuko.engine.lib.config import AgentConfig, LLMConfig, ProviderConfig, SkillSpec, WorkflowStep
 
 
 def _llm() -> LLMConfig:

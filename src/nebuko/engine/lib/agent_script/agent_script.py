@@ -6,7 +6,7 @@ import os
 import sys
 
 from openhands.sdk import get_logger
-from agent_script import (
+from nebuko.engine.lib.agent_script import (
     load_prompt,
     collect_and_save_metrics,
     resolve_llm_config,
@@ -14,7 +14,7 @@ from agent_script import (
     build_output,
     load_prev_state_or_recover,
 )
-from pricing.features.load_price_table.load_price_table import load_price_table
+from nebuko.engine.lib.pricing.features.load_price_table.load_price_table import load_price_table
 
 logger = get_logger(__name__)
 

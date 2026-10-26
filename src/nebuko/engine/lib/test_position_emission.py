@@ -20,9 +20,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent))
 
-from resolve_workflow import (  # noqa: E402
+from nebuko.engine.lib.resolve_workflow import (  # noqa: E402
     _build_position_chain,
     _position_pair,
     _position_path_str,
@@ -30,8 +29,8 @@ from resolve_workflow import (  # noqa: E402
     build_workflow_position,
     resolve_workflow_step,
 )
-from config import POSITION_STATE_VERSION  # noqa: E402
-from config import WorkflowPosition  # noqa: E402
+from nebuko.engine.lib.config import POSITION_STATE_VERSION  # noqa: E402
+from nebuko.engine.lib.config import WorkflowPosition  # noqa: E402
 
 
 def _write(tmp_path: Path, name: str, doc: dict) -> None:
@@ -257,7 +256,7 @@ class TestNonEntryEmission:
 
     @staticmethod
     def _build(workflows_dir: str, **cfg) -> dict:
-        from resolve_config.features.build_result.build_result import (
+        from nebuko.engine.lib.resolve_config.features.build_result.build_result import (
             _build_result,
         )
         base = {
@@ -269,7 +268,7 @@ class TestNonEntryEmission:
         }
         base.update(cfg)
         prompt_base = tempfile.mkdtemp()
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
         for name in set(TASK_TO_PROMPT.values()):
             (Path(prompt_base) / name).write_text("# prompt")
         return _build_result(base, prompt_base, workflows_dir)
@@ -374,7 +373,7 @@ class TestCarryForwardEmission:
 
     @staticmethod
     def _build(workflows_dir: str, position=None, **cfg) -> dict:
-        from resolve_config.features.build_result.build_result import (
+        from nebuko.engine.lib.resolve_config.features.build_result.build_result import (
             _build_result,
         )
         base = {
@@ -388,20 +387,20 @@ class TestCarryForwardEmission:
             base["config_position"] = position
         base.update(cfg)
         prompt_base = tempfile.mkdtemp()
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
         for name in set(TASK_TO_PROMPT.values()):
             (Path(prompt_base) / name).write_text("# prompt")
         return _build_result(base, prompt_base, workflows_dir)
 
     @staticmethod
     def _position(*pairs) -> WorkflowPosition:
-        from config import StepRef
+        from nebuko.engine.lib.config import StepRef
         return WorkflowPosition(
             refs=[StepRef(workflow=w, step=s) for w, s in pairs]
         )
 
     def test_with_step_replaces_leaf_and_keeps_ancestors(self):
-        from config import StepRef
+        from nebuko.engine.lib.config import StepRef
         pos = self._position(
             ("plan-orchestration", "sub_impl"),
             ("tmp-impl", "step_1"),
@@ -415,7 +414,7 @@ class TestCarryForwardEmission:
         assert pos.path_str().endswith("dev-review-loop/implement")
 
     def test_with_step_empty_position_raises(self):
-        from config import StepRef
+        from nebuko.engine.lib.config import StepRef
         with pytest.raises(ValueError):
             WorkflowPosition().with_step(StepRef(workflow="w", step="s"))
 

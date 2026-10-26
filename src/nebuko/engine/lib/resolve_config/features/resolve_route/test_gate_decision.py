@@ -15,22 +15,21 @@ import unittest.mock
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from config import StepRef  # noqa: E402
+from nebuko.engine.lib.config import StepRef  # noqa: E402
 
-from resolve_config import resolve_config  # noqa: E402
-from resolve_config.features.resolve_route.resolve_route import (  # noqa: E402
+from nebuko.engine.lib.resolve_config import resolve_config  # noqa: E402
+from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (  # noqa: E402
     _resolve_gate_decision_path,
     _resolve_resume_path,
 )
-from resolve_config.sub_domains.author_identity.author_identity import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.sub_domains.author_identity.author_identity import (  # noqa: E402
     AuthorIdentity,
 )
-from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
     parse_workflow_command,
 )
-from workflow_state import (  # noqa: E402
+from nebuko.engine.lib.workflow_state import (  # noqa: E402
     Appreciation,
     GateDecision,
     GateLock,

@@ -22,23 +22,22 @@ from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 # Import the Metrics schema
-sys.path.insert(0, os.path.dirname(__file__))
-from github_client import (
+from nebuko.engine.lib.github_client import (
     BOT_MARKER,
     GitHubTransport,
     fetch_issue_comments,
 )
-from github_client import post_comment as _github_post_comment
-from metrics_schema import Metrics
-from human_metrics import (
+from nebuko.engine.lib.github_client import post_comment as _github_post_comment
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.human_metrics import (
     CommentRecord,
     HumanMetricsAnalyzer,
     HumanMetricsConfig,
     HumanMetricsRenderer,
     IssueData,
 )
-from workflow_state.features.get_last_state.get_last_state import extract_state_from_body
-from agent_script.sub_domains.metrics.report_cost_resolver import (
+from nebuko.engine.lib.workflow_state.features.get_last_state.get_last_state import extract_state_from_body
+from nebuko.engine.lib.agent_script.sub_domains.metrics.report_cost_resolver import (
     ReportCostResolver,
     load_config_prices,
 )

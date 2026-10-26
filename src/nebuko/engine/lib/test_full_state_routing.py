@@ -32,11 +32,10 @@ from typing import Optional
 import pytest
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent))
 
-from workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START  # noqa: E402
-from resolve_config import resolve_config  # noqa: E402
-from resolve_workflow import TASK_TO_PROMPT  # noqa: E402
+from nebuko.engine.lib.workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START  # noqa: E402
+from nebuko.engine.lib.resolve_config import resolve_config  # noqa: E402
+from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -696,7 +695,7 @@ class TestReviewRound2Restart:
         # missing successor; either way it is an unresolved skip, not a finish.
         assert "no verdict" in result.get("REASON", "")
 
-        from resolve_workflow import RouteKind, resolve_next_from_workflow
+        from nebuko.engine.lib.resolve_workflow import RouteKind, resolve_next_from_workflow
 
         resolution = resolve_next_from_workflow(
             "default", "review", str(default_workflows_dir),

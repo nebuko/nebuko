@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from resolve_config.features.resolve_route.resolve_route import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (  # noqa: E402
     MAX_LOOP_COUNT,
     count_consecutive_same_agent,
 )
@@ -14,7 +13,7 @@ from resolve_config.features.resolve_route.resolve_route import (  # noqa: E402
 
 def _entry(step: str, agent: str):
     """A history entry with the mandatory factual outcome (issue #964)."""
-    from workflow_state import Appreciation, HistoryEntry, TurnOutcome, TurnStatus
+    from nebuko.engine.lib.workflow_state import Appreciation, HistoryEntry, TurnOutcome, TurnStatus
 
     return HistoryEntry(
         step=step,
@@ -27,7 +26,7 @@ def _entry(step: str, agent: str):
 
 class TestCountConsecutiveSameAgent:
     def test_counts_trailing_run(self):
-        from workflow_state import HistoryEntry
+        from nebuko.engine.lib.workflow_state import HistoryEntry
         history = [
             _entry("s1", "architect"),
             _entry("s2", "dev"),
@@ -37,7 +36,7 @@ class TestCountConsecutiveSameAgent:
         assert count_consecutive_same_agent(history, "dev") == 3
 
     def test_no_run(self):
-        from workflow_state import HistoryEntry
+        from nebuko.engine.lib.workflow_state import HistoryEntry
         history = [_entry("s1", "architect")]
         assert count_consecutive_same_agent(history, "dev") == 0
 
@@ -50,8 +49,8 @@ class TestCountConsecutiveSameAgent:
 
 class TestResolveFunctionCallPath:
     def test_pins_target_agent_and_complexity(self):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall
 
         fc = FunctionCall.model_validate(
             {"agent_name": "context", "complexity": "high"}
@@ -65,8 +64,8 @@ class TestResolveFunctionCallPath:
         assert "SKIP_AGENT" not in config
 
     def test_unset_complexity_defers_to_step_tier(self):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall
 
         # An unset caller tier stays "" here so build_result can apply the
         # callee step's declared tier before defaulting to "medium" (#787).
@@ -75,7 +74,7 @@ class TestResolveFunctionCallPath:
         assert config["config_complexity"] == ""
 
     def test_missing_agent_name_rejected_by_model(self):
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.workflow_state import FunctionCall
 
         # The model validator (added by issue #478 review) rejects blank
         # agent names before they can reach the resolver.
@@ -85,8 +84,8 @@ class TestResolveFunctionCallPath:
             FunctionCall(agent_name="   ")
 
     def test_missing_agent_name_skips_via_model_construct(self):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall
 
         # Bypass model validation to exercise the resolver's own guard.
         fc = FunctionCall.model_construct(agent_name="")
@@ -95,8 +94,8 @@ class TestResolveFunctionCallPath:
         assert "agent_name" in config["REASON"]
 
     def test_unknown_function_skips(self):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall
 
         # Bypass registry validation to simulate drift
         fc = FunctionCall.model_construct(function="explode", agent_name="context")
@@ -130,8 +129,8 @@ class TestResolveFunctionCallPathWorkflowContext:
     )
 
     def test_issue506_repro_callee_step_established(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall, WorkflowState
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall, WorkflowState
 
         # architect (step=analyze) hands off to context via function_call while
         # workflow 'spec' is active — the exact #506 trigger shape.
@@ -145,8 +144,8 @@ class TestResolveFunctionCallPathWorkflowContext:
         assert config["config_step"] == "context"
 
     def test_callee_not_linear_successor_falls_back_to_owned_step(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall, WorkflowState
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall, WorkflowState
 
         # architect at plan calls dev directly; the linear successor of plan
         # belongs to context, so the helper falls back to the first step owned
@@ -171,8 +170,8 @@ class TestResolveFunctionCallPathWorkflowContext:
         assert config["config_step"] == "build"
 
     def test_callee_owns_no_step_keeps_empty(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall, WorkflowState
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall, WorkflowState
 
         prev = WorkflowState(workflow="spec", step="analyze", agent="architect")
         config = _resolve_function_call_path(
@@ -185,8 +184,8 @@ class TestResolveFunctionCallPathWorkflowContext:
         assert config["config_step"] == ""
 
     def test_unknown_workflow_keeps_empty(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall, WorkflowState
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall, WorkflowState
 
         prev = WorkflowState(workflow="ghost", step="analyze", agent="architect")
         config = _resolve_function_call_path(
@@ -196,8 +195,8 @@ class TestResolveFunctionCallPathWorkflowContext:
         assert config["config_step"] == ""
 
     def test_no_prev_state_keeps_legacy_empty(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall
 
         config = _resolve_function_call_path(
             FunctionCall(agent_name="context"), self._workflows_dir(tmp_path, self.SPEC_YAML)
@@ -211,7 +210,7 @@ class TestWorkflowCommandPrecedence:
 
     @staticmethod
     def _run_cmd(name):
-        from resolve_config.sub_domains.workflow_command.workflow_command import (
+        from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (
             parse_workflow_command,
         )
         return parse_workflow_command("/nebuko run workflow --name " + name)
@@ -232,7 +231,7 @@ class TestWorkflowCommandPrecedence:
         return d
 
     def test_local_override_wins_over_builtin(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
         local = self._dir(tmp_path, "local", {"foo.yaml": self._wf_yaml("context")})
@@ -244,7 +243,7 @@ class TestWorkflowCommandPrecedence:
         assert "SKIP_AGENT" not in config
 
     def test_builtin_used_when_local_absent(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("architect")})
         local = self._dir(tmp_path, "local", {})
@@ -255,7 +254,7 @@ class TestWorkflowCommandPrecedence:
         assert config["config_workflow"] == "foo"
 
     def test_missing_everywhere_falls_back_to_mention_with_skip_reason(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {})
         local = self._dir(tmp_path, "local", {})
@@ -271,7 +270,7 @@ class TestWorkflowCommandPrecedence:
         assert str(local / "nope.yaml") in reason
 
     def test_schema_invalid_local_override_fails_loudly(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
         local = self._dir(tmp_path, "local", {"foo.yaml": "name: foo\n"})
@@ -284,7 +283,7 @@ class TestWorkflowCommandPrecedence:
         assert "schema-invalid" in config["config_skip_reason"]
 
     def test_valid_resolution_has_no_skip_reason(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._wf_yaml("dev")})
         config = _resolve_human_path("/nebuko run workflow --name foo", None, None, str(base), workflow_command=self._run_cmd("foo"))
@@ -302,7 +301,7 @@ class TestWorkflowCommandPrecedence:
     )
 
     def _step_cmd(self, step):
-        from resolve_config.sub_domains.workflow_command.workflow_command import (
+        from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (
             parse_workflow_command,
         )
         return parse_workflow_command(
@@ -310,7 +309,7 @@ class TestWorkflowCommandPrecedence:
         )
 
     def test_run_step_enters_at_named_step(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._MULTI_STEP_YAML})
         local = self._dir(tmp_path, "local", {})
@@ -324,7 +323,7 @@ class TestWorkflowCommandPrecedence:
         assert "SKIP_AGENT" not in config
 
     def test_run_without_step_keeps_first_step(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._MULTI_STEP_YAML})
         local = self._dir(tmp_path, "local", {})
@@ -337,7 +336,7 @@ class TestWorkflowCommandPrecedence:
         assert config["config_step"] == ""
 
     def test_run_step_unknown_step_fails_loudly(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._MULTI_STEP_YAML})
         local = self._dir(tmp_path, "local", {})
@@ -350,7 +349,7 @@ class TestWorkflowCommandPrecedence:
         assert "not found in workflow 'foo'" in config["config_skip_reason"]
 
     def test_run_step_path_traversal_rejected(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
 
         base = self._dir(tmp_path, "base", {"foo.yaml": self._MULTI_STEP_YAML})
         local = self._dir(tmp_path, "local", {})
@@ -401,7 +400,7 @@ class TestHandoffDecisionContract:
     """The frozen `HandoffDecision` value object (issue #733 Object Design)."""
 
     def test_carries_the_resolved_target_and_reason(self):
-        from resolve_config.features.resolve_route.resolve_route import HandoffDecision
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import HandoffDecision
 
         decision = HandoffDecision(
             target_agent="architect", target_step="stub_approval", reason_code="gate_hold"
@@ -413,7 +412,7 @@ class TestHandoffDecisionContract:
         )
 
     def test_to_config_maps_task_and_step(self):
-        from resolve_config.features.resolve_route.resolve_route import HandoffDecision
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import HandoffDecision
 
         decision = HandoffDecision(
             target_agent="dev", target_step="implement", reason_code="function_call"
@@ -429,7 +428,7 @@ class TestForwardOnlyCalleeResolution:
         return str(tmp_path)
 
     def test_never_re_enters_an_already_consumed_step(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_callee_step
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_callee_step
 
         resolved = _resolve_callee_step(
             "spec-driven-impl", "stub_review", "dev", self._workflows_dir(tmp_path)
@@ -444,7 +443,7 @@ class TestGatePrecedenceOverFunctionCall:
 
     @staticmethod
     def _dirs(tmp_path):
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
         prompt_base = tmp_path / "prompts"
         workflows_dir = tmp_path / "workflows"
@@ -458,7 +457,7 @@ class TestGatePrecedenceOverFunctionCall:
     def _resolve(self, tmp_path, state):
         import json as _json
 
-        from resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config import resolve_config
 
         block = (
             "<!-- WORKFLOW_STATE_START -->\n"
@@ -533,8 +532,8 @@ class TestGatePrecedenceOverFunctionCall:
     def _resolve_real_workflow(self, tmp_path, state):
         import json as _json
 
-        from resolve_config import resolve_config
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
         prompt_base = tmp_path / "prompts"
         prompt_base.mkdir()
@@ -543,7 +542,7 @@ class TestGatePrecedenceOverFunctionCall:
         # The shipped definitions, not the per-repo `.nebuko` override:
         # `config_dir` prefers a checkout-local override directory whose
         # contents vary per machine, so pin the packaged defaults.
-        from default_paths import checkout_root
+        from nebuko.engine.lib.default_paths import checkout_root
         workflows_dir = str(checkout_root() / "defaults" / "workflows")
         block = (
             "<!-- WORKFLOW_STATE_START -->\n"
@@ -607,7 +606,7 @@ class TestHumanGateHoldPrecedence:
 
     @staticmethod
     def _dirs(tmp_path):
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
         prompt_base = tmp_path / "prompts"
         workflows_dir = tmp_path / "workflows"
@@ -621,7 +620,7 @@ class TestHumanGateHoldPrecedence:
     def _resolve(self, tmp_path, state):
         import json as _json
 
-        from resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config import resolve_config
 
         block = (
             "<!-- WORKFLOW_STATE_START -->\n"
@@ -720,7 +719,7 @@ class TestCallbackReturnTarget:
 
     @staticmethod
     def _state(tmp_path, callback):
-        from workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state import WorkflowState
 
         (tmp_path / "cb.yaml").write_text(_CALLBACK_WF_YAML)
         return WorkflowState(
@@ -728,27 +727,27 @@ class TestCallbackReturnTarget:
         ), str(tmp_path)
 
     def test_completion_with_no_target_returns_callback_step(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
 
         state, wf_dir = self._state(tmp_path, "architect")
         assert _callback_return_target(state, None, wf_dir) == ("architect", "answer")
 
     def test_no_callback_returns_none(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
 
         state, wf_dir = self._state(tmp_path, None)
         assert _callback_return_target(state, None, wf_dir) is None
 
     def test_callback_equal_to_self_is_noop(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
 
         state, wf_dir = self._state(tmp_path, "context")
         assert _callback_return_target(state, None, wf_dir) is None
 
     def test_approved_verdict_fires_the_callback(self, tmp_path):
         """Issue #1033: ``approved``/``rejected`` both return to the caller."""
-        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
-        from workflow_state import Appreciation, TurnOutcome, TurnStatus
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from nebuko.engine.lib.workflow_state import Appreciation, TurnOutcome, TurnStatus
 
         state, wf_dir = self._state(tmp_path, "architect")
         for verdict in (Appreciation.APPROVED, Appreciation.REJECTED):
@@ -759,8 +758,8 @@ class TestCallbackReturnTarget:
             )
 
     def test_hold_outranks_callback(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
-        from workflow_state import Appreciation, HoldKind, TurnOutcome, TurnStatus
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from nebuko.engine.lib.workflow_state import Appreciation, HoldKind, TurnOutcome, TurnStatus
 
         state, wf_dir = self._state(tmp_path, "architect")
         hold = TurnOutcome(
@@ -771,7 +770,7 @@ class TestCallbackReturnTarget:
         assert _callback_return_target(state, hold, wf_dir) is None
 
     def test_callback_absent_from_workflow_falls_through(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
 
         # `review` owns no step in this workflow: never emit a bare callback
         # into a workflow; let the forward edge handle it instead.
@@ -785,8 +784,8 @@ class TestCallbackReturnTarget:
         ``INCOMPLETE``/``NO_OUTCOME`` outcome carrying no destination fields, so
         the existing callback gate carries it to the caller.
         """
-        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
-        from workflow_state import IncompleteReason, TurnOutcome
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from nebuko.engine.lib.workflow_state import IncompleteReason, TurnOutcome
 
         state, wf_dir = self._state(tmp_path, "architect")
         outcome = TurnOutcome.for_incomplete(
@@ -797,8 +796,8 @@ class TestCallbackReturnTarget:
 
     def test_agent_explicit_hold_still_outranks_callback(self, tmp_path):
         """An explicit agent hold is never redirected to the callback (#864)."""
-        from resolve_config.features.resolve_route.resolve_route import _callback_return_target
-        from workflow_state import Appreciation, HoldKind, TurnOutcome, TurnStatus
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from nebuko.engine.lib.workflow_state import Appreciation, HoldKind, TurnOutcome, TurnStatus
 
         state, wf_dir = self._state(tmp_path, "architect")
         hold = TurnOutcome(
@@ -814,7 +813,7 @@ class TestCallbackReturnAddressEndToEnd:
 
     @staticmethod
     def _dirs(tmp_path):
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
         prompt_base = tmp_path / "prompts"
         workflows_dir = tmp_path / "workflows"
@@ -828,7 +827,7 @@ class TestCallbackReturnAddressEndToEnd:
     def _resolve(self, tmp_path, state):
         import json as _json
 
-        from resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config import resolve_config
 
         block = (
             "<!-- WORKFLOW_STATE_START -->\n"
@@ -912,8 +911,8 @@ class TestFunctionCallPathCallbackDefault:
     SPEC_YAML = TestResolveFunctionCallPathWorkflowContext.SPEC_YAML
 
     def test_callback_defaults_to_emitting_caller(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall, WorkflowState
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall, WorkflowState
 
         prev = WorkflowState(workflow="spec", step="analyze", agent="architect")
         config = _resolve_function_call_path(
@@ -924,8 +923,8 @@ class TestFunctionCallPathCallbackDefault:
         assert config["config_callback"] == "architect"
 
     def test_explicit_callback_overrides_default(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall, WorkflowState
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall, WorkflowState
 
         prev = WorkflowState(workflow="spec", step="analyze", agent="architect")
         config = _resolve_function_call_path(
@@ -936,8 +935,8 @@ class TestFunctionCallPathCallbackDefault:
         assert config["config_callback"] == "issue"
 
     def test_callback_equal_to_callee_is_cleared(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall, WorkflowState
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall, WorkflowState
 
         prev = WorkflowState(workflow="spec", step="analyze", agent="architect")
         config = _resolve_function_call_path(
@@ -948,8 +947,8 @@ class TestFunctionCallPathCallbackDefault:
         assert config["config_callback"] == ""
 
     def test_no_prev_state_has_no_callback(self, tmp_path):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_function_call_path
+        from nebuko.engine.lib.workflow_state import FunctionCall
 
         config = _resolve_function_call_path(
             FunctionCall(agent_name="context"),
@@ -981,15 +980,15 @@ class TestWorkflowCommandPerStepComplexity:
 
     @staticmethod
     def _parse(body):
-        from resolve_config.sub_domains.workflow_command.workflow_command import (
+        from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (
             parse_workflow_command,
         )
         return parse_workflow_command(body)
 
     def _resolve(self, tmp_path, body):
-        from resolve_config.features.resolve_route.resolve_route import _resolve_human_path
-        from resolve_config.features.build_result.build_result import _build_result
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _resolve_human_path
+        from nebuko.engine.lib.resolve_config.features.build_result.build_result import _build_result
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
         wf_dir = tmp_path / "workflows"
         wf_dir.mkdir(exist_ok=True)
@@ -1071,7 +1070,7 @@ class TestRoutingPolicyTable:
 
     @staticmethod
     def _dirs(tmp_path):
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
         prompt_base = tmp_path / "prompts"
         workflows_dir = tmp_path / "workflows"
@@ -1085,7 +1084,7 @@ class TestRoutingPolicyTable:
     def _resolve(self, tmp_path, **outcome):
         import json as _json
 
-        from resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config import resolve_config
 
         state = {
             "version": 1,
@@ -1245,7 +1244,7 @@ class TestUnmatchedVerdictFallback:
 
     @staticmethod
     def _dirs(tmp_path, yaml: str, name: str):
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
         prompt_base = tmp_path / "prompts"
         workflows_dir = tmp_path / "workflows"
@@ -1259,7 +1258,7 @@ class TestUnmatchedVerdictFallback:
     def _resolve(self, tmp_path, workflow: str, step: str, yaml: str, name: str, **outcome):
         import json as _json
 
-        from resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config import resolve_config
 
         state = {
             "version": 1,

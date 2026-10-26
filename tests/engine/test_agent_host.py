@@ -22,10 +22,10 @@ from nebuko.engine.agent_host import (
     _FINALIZE_PROMPT,
 )
 from nebuko.engine.agent_runner import EngineAgentUnavailable
-from workflow_state import Appreciation, TurnOutcome, TurnStatus
+from nebuko.engine.lib.workflow_state import Appreciation, TurnOutcome, TurnStatus
 
 # The engine-measured run status the host folds into the outcome (issue #964).
-from agent_script.features.run_agent.run_outcome import OutcomeStatus
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
 
 _SUCCESS = OutcomeStatus.SUCCESS
 
@@ -95,7 +95,7 @@ def _finalize_report_event(report: str, **outcome: Any) -> object:
     SDK splits the ``response_schema`` fields out of the action arguments and
     hands them over as the action's structured output, which is mirrored here.
     """
-    from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeAction
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
@@ -124,10 +124,8 @@ def _run_recorded_finalize_actions(events: list[Any], conversation: Any) -> None
     the turn without the SDK, so the executor is invoked here to record the
     typed outcome in the run-scoped registry exactly as a live run would.
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
 
     executor = FinalizeExecutor(conversation_id="conv-test")
     for event in events:

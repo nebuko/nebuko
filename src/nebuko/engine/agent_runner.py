@@ -31,7 +31,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from nebuko.engine.paths import ensure_import_path
 
 __all__ = ["EngineAgentUnavailable", "run_engine_agent", "run_legacy_agent"]
 
@@ -132,7 +131,7 @@ def run_engine_agent(
 def _load_pipeline() -> SimpleNamespace:
     """Import the legacy agent assembly once, or declare the seam unavailable."""
     try:
-        from agent_script import (  # type: ignore[import-not-found]
+        from nebuko.engine.lib.agent_script import (  # type: ignore[import-not-found]
             build_output,
             collect_and_save_metrics,
             load_prev_state_or_recover,
@@ -187,8 +186,7 @@ def _child_env(
 def _load_state(path: Path) -> Any:
     if not path.is_file():
         return None
-    ensure_import_path()
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
     try:
         return WorkflowState.model_validate_json(path.read_text(encoding="utf-8"))

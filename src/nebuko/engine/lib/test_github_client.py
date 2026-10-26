@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from github_client import (
+from nebuko.engine.lib.github_client import (
     BOT_MARKER,
     COMMENTS_PER_PAGE,
     ApiErrorKind,

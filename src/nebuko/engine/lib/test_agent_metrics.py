@@ -10,15 +10,14 @@ from unittest.mock import patch, MagicMock
 from io import StringIO
 
 # Import the module under test
-sys.path.insert(0, os.path.dirname(__file__))
-from metrics_schema import Metrics
-from workflow_state import STATE_MARKER_START, STATE_MARKER_END
-from agent_script.sub_domains.metrics.report_cost_resolver import (
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.workflow_state import STATE_MARKER_START, STATE_MARKER_END
+from nebuko.engine.lib.agent_script.sub_domains.metrics.report_cost_resolver import (
     ReportCostResolver,
     load_config_prices,
 )
-from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
-from agent_metrics import (
+from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
+from nebuko.engine.lib.agent_metrics import (
     extract_metrics_from_comment,
     deduplicate_metrics,
     aggregate_by_model,

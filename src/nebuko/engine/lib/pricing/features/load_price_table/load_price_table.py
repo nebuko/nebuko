@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.request import urlopen
 
-from pricing.sub_domains.price_table.price_table import PriceTable
+from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import PriceTable
 
 try:  # openhands ships with the ``runtime`` extra only.
     from openhands.sdk import get_logger

@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from config import load_workflow
+from nebuko.engine.lib.config import load_workflow
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIRS = (

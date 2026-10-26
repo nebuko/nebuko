@@ -12,10 +12,9 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from workflow_state.step_output_record import StepOutputRecord
-from workflow_state.features.resolve_step_output.resolve_step_output import (
+from nebuko.engine.lib.workflow_state.step_output_record import StepOutputRecord
+from nebuko.engine.lib.workflow_state.features.resolve_step_output.resolve_step_output import (
     PROMPT_REF_PATTERN,
     ResolvedOutput,
     render_prompt_refs,

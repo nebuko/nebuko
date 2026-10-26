@@ -11,13 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_script.sub_domains.metrics import report_cost_resolver as mod
-from agent_script.sub_domains.metrics.report_cost_resolver import (
+from nebuko.engine.lib.agent_script.sub_domains.metrics import report_cost_resolver as mod
+from nebuko.engine.lib.agent_script.sub_domains.metrics.report_cost_resolver import (
     PLACEHOLDER_MODEL,
     ReportCostResolver,
 )
-from metrics_schema import Metrics
-from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
 
 # tests live at <lib>/agent_script/sub_domains/metrics/, so the importable lib
 # root is parents[3] (parents[4] would be.../engine, which cannot satisfy
@@ -294,7 +294,6 @@ def _import_guard_script(lib: Path) -> str:
         "import builtins, os, sys;"
         "sys.path[:] = [p for p in sys.path if not p or not os.path.exists("
         "os.path.join(p, 'agent_script'))];"
-        f"sys.path.insert(0, {lib!r});"
         "real = builtins.__import__;"
         "guard = lambda name, *a, **k: (_ for _ in ()).throw("
         "ImportError(name)) if name.split('.')[0] in "
@@ -303,7 +302,7 @@ def _import_guard_script(lib: Path) -> str:
         "import agent_script, pricing;"
         "from agent_script.sub_domains.metrics.report_cost_resolver import"
         " ReportCostResolver;"
-        "from pricing.features.load_price_table.load_price_table import"
+        "from nebuko.engine.lib.pricing.features.load_price_table.load_price_table import"
         " load_price_table;"
         f"assert agent_script.__file__.startswith({lib!r}), "
         "agent_script.__file__;"

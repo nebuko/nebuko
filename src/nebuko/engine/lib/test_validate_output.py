@@ -8,7 +8,7 @@ role-level output check and the complexity-review contract.
 
 import unittest
 
-from validate_output import (
+from nebuko.engine.lib.validate_output import (
     ValidationResult,
     strip_agent_run_config,
     validate_forbidden_sections,
@@ -139,7 +139,7 @@ class TestValidateComplexityReview(unittest.TestCase):
 
     @staticmethod
     def _bundle():
-        from complexity_governor import EvidenceBundle
+        from nebuko.engine.lib.complexity_governor import EvidenceBundle
 
         return EvidenceBundle(llm={"loops": 2, "stalled_steps": 1})
 
@@ -155,7 +155,7 @@ class TestValidateComplexityReview(unittest.TestCase):
         self.assertTrue(any("evidence" in e for e in result.errors))
 
     def test_empty_evidence_rejected(self):
-        from complexity_governor import EvidenceBundle
+        from nebuko.engine.lib.complexity_governor import EvidenceBundle
 
         result = validate_complexity_review(
             {"evidence": EvidenceBundle(), "feeling": "loop"}
@@ -171,7 +171,7 @@ class TestValidateComplexityReview(unittest.TestCase):
         self.assertTrue(any("feeling" in e for e in result.errors))
 
     def test_accepts_model_instance(self):
-        from complexity_governor import ComplexityReviewRequest
+        from nebuko.engine.lib.complexity_governor import ComplexityReviewRequest
 
         request = ComplexityReviewRequest(
             evidence=self._bundle(), feeling="weird design", suggested_tier="high"

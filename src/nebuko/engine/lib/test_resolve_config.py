@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from resolve_config import (
+from nebuko.engine.lib.resolve_config import (
     parse_workflow_command,
     is_bot_comment,
     extract_mention_agent,
@@ -17,7 +17,7 @@ from resolve_config import (
     resolve_next_agent_from_workflow,
     count_consecutive_same_agent,
 )
-from resolve_workflow import TASK_TO_PROMPT
+from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
 
 import unittest
@@ -50,7 +50,7 @@ def _hold_outcome(**overrides) -> dict:
 
 def _real_workflows_dir() -> str:
     """The shipped workflow dir, not the per-machine ``.nebuko`` override."""
-    from default_paths import checkout_root
+    from nebuko.engine.lib.default_paths import checkout_root
 
     return str(checkout_root() / "defaults" / "workflows")
 
@@ -627,18 +627,18 @@ class TestCountConsecutiveSameAgent(unittest.TestCase):
     """Tests for count_consecutive_same_agent function."""
 
     def test_empty_history(self):
-        from workflow_state import HistoryEntry
+        from nebuko.engine.lib.workflow_state import HistoryEntry
         count = count_consecutive_same_agent([], "dev")
         self.assertEqual(count, 0)
 
     def test_single_match(self):
-        from workflow_state import HistoryEntry
+        from nebuko.engine.lib.workflow_state import HistoryEntry
         history = [HistoryEntry(step="s", agent="dev", turn_outcome=_completed_outcome())]
         count = count_consecutive_same_agent(history, "dev")
         self.assertEqual(count, 1)
 
     def test_mixed_agents(self):
-        from workflow_state import HistoryEntry
+        from nebuko.engine.lib.workflow_state import HistoryEntry
         history = [
             HistoryEntry(step="s1", agent="architect", turn_outcome=_completed_outcome()),
             HistoryEntry(step="s2", agent="dev", turn_outcome=_completed_outcome()),
@@ -648,7 +648,7 @@ class TestCountConsecutiveSameAgent(unittest.TestCase):
         self.assertEqual(count, 2)
 
     def test_different_agent(self):
-        from workflow_state import HistoryEntry
+        from nebuko.engine.lib.workflow_state import HistoryEntry
         history = [HistoryEntry(step="s1", agent="architect", turn_outcome=_completed_outcome())]
         count = count_consecutive_same_agent(history, "dev")
         self.assertEqual(count, 0)
@@ -1511,7 +1511,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
         """The comment fallback must not re-paginate the whole thread (issue #805)."""
         from unittest.mock import patch
 
-        from thread_snapshot import state_tail_limit
+        from nebuko.engine.lib.thread_snapshot import state_tail_limit
 
         prompt_base, workflows_dir = self._setup_dirs()
         state_block = self._build_state_block(workflow="default", step="analyze")

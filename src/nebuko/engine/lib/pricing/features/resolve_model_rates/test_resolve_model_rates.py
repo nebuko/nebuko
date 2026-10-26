@@ -2,10 +2,10 @@
 
 import pytest
 
-from pricing.features.resolve_model_rates.resolve_model_rates import (
+from nebuko.engine.lib.pricing.features.resolve_model_rates.resolve_model_rates import (
     resolve_model_rates,
 )
-from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
+from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
 
 
 class _ModelRef:

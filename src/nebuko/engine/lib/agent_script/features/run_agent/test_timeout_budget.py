@@ -3,7 +3,7 @@
 import os
 import unittest
 
-from agent_script.features.run_agent.timeout_budget import (
+from nebuko.engine.lib.agent_script.features.run_agent.timeout_budget import (
     DEFAULT_SOFT_TIMEOUT_MINUTES,
     DEFAULT_WIND_DOWN_TIMEOUT_MINUTES,
     TimeoutBudget,

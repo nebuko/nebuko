@@ -19,7 +19,7 @@ from typing import Callable, Optional
 
 from pydantic import BaseModel
 
-from config import StepPath, WorkflowDefinition, WorkflowStep
+from nebuko.engine.lib.config import StepPath, WorkflowDefinition, WorkflowStep
 
 __all__ = ["WorkflowEntryPoint", "StepEntryResolver"]
 

@@ -27,10 +27,10 @@ from unittest.mock import patch
 
 import pytest
 
-from resolve_config import resolve_config
-from resolve_workflow import TASK_TO_PROMPT
-from workflow_state import WorkflowState
-from workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
+from nebuko.engine.lib.resolve_config import resolve_config
+from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
+from nebuko.engine.lib.workflow_state import WorkflowState
+from nebuko.engine.lib.workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / "defaults" / "workflows"
@@ -64,7 +64,7 @@ def prompt_base(tmp_path: Path) -> str:
 
 def _state_block(state: WorkflowState) -> str:
     """The state marker block exactly as ``prepare_comment`` embeds it."""
-    from workflow_state.features.to_json.to_json import state_to_json
+    from nebuko.engine.lib.workflow_state.features.to_json.to_json import state_to_json
 
     return (
         STATE_MARKER_START
@@ -98,11 +98,11 @@ def _crashed_implement_state() -> WorkflowState:
 
 def _crashed_conversation():
     """A conversation that crashed on the provider rate limit (issue #978)."""
-    from agent_script.features.run_agent.run_failure import (
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
         RunFailure,
         RunFailureKind,
     )
-    from agent_script.features.run_agent.run_outcome import (
+    from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
         OutcomeStatus,
         RunOutcome,
     )
@@ -135,9 +135,9 @@ def _build_failure_body(prev_state: WorkflowState) -> str:
     message, then the publish seam prepends the answer header (bot marker +
     continue token + collapsed state) exactly as ``prepare_comment`` does.
     """
-    from agent_script.features.build_output.build_output import build_output
-    from metrics_schema import Metrics
-    from prepare_comment import format_answer_header
+    from nebuko.engine.lib.agent_script.features.build_output.build_output import build_output
+    from nebuko.engine.lib.metrics_schema import Metrics
+    from nebuko.engine.lib.prepare_comment import format_answer_header
 
     with tempfile.TemporaryDirectory() as tmp:
         cwd = os.getcwd()
@@ -192,7 +192,7 @@ class TestCrashedRunStaysOnTheStep:
         assert CONTINUE_TOKEN not in body
 
     def test_crashed_run_persists_no_dispatch_in_its_state(self, prompt_base: str):
-        from workflow_state.features.to_json.to_json import state_to_json
+        from nebuko.engine.lib.workflow_state.features.to_json.to_json import state_to_json
 
         body = _build_failure_body(_crashed_implement_state())
 
@@ -274,7 +274,7 @@ class TestContinueTokenIsPrefixAnchored:
             assert "bot-agent-" in guard or "bot-workflow-terminal" in guard
 
     def test_live_run_body_starts_with_the_marker_and_token(self, prompt_base: str):
-        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.prepare_comment import format_answer_header
 
         header = format_answer_header("dev", _implement_state())
 
@@ -319,7 +319,7 @@ class TestPostedBodySatisfiesTheGateAnchors:
     """
 
     def test_a_posted_live_answer_still_matches_the_gate_anchor(self):
-        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.prepare_comment import format_answer_header
         from nebuko.engine.lib.github_client import ensure_bot_marker
 
         posted = ensure_bot_marker(format_answer_header("dev", _implement_state()))
@@ -327,7 +327,7 @@ class TestPostedBodySatisfiesTheGateAnchors:
         assert posted.startswith(LIVE_HEADER_LINE)
 
     def test_the_seam_leaves_a_live_answer_byte_identical(self):
-        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.prepare_comment import format_answer_header
         from nebuko.engine.lib.github_client import ensure_bot_marker
 
         header = format_answer_header("dev", _implement_state())
@@ -343,9 +343,9 @@ class TestPostedBodySatisfiesTheGateAnchors:
         assert CONTINUE_TOKEN not in posted
 
     def test_a_posted_live_answer_is_still_classified_as_a_bot_comment(self):
-        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.prepare_comment import format_answer_header
         from nebuko.engine.lib.github_client import ensure_bot_marker
-        from resolve_config.features.parse_trigger.parse_trigger import (
+        from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import (
             UNIVERSAL_BOT_MARKER,
         )
 
@@ -362,7 +362,7 @@ def _parked_state(
     agent: str = "dev",
 ) -> WorkflowState:
     """A state the engine persisted for an INCOMPLETE turn (issue #978)."""
-    from workflow_state import IncompleteReason, TurnOutcome
+    from nebuko.engine.lib.workflow_state import IncompleteReason, TurnOutcome
 
     return WorkflowState(
         workflow=workflow,
@@ -409,7 +409,7 @@ class TestInterruptedTurnIsNotABurntRun:
     """
 
     def test_interrupted_turn_keeps_the_continue_token(self):
-        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.prepare_comment import format_answer_header
 
         header = format_answer_header("dev", _parked_state("interrupted"))
 
@@ -429,7 +429,7 @@ class TestInterruptedTurnIsNotABurntRun:
         assert result["TASK"] == "dev"
 
     def test_crashed_run_is_a_notification_and_keeps_no_token(self):
-        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.prepare_comment import format_answer_header
 
         header = format_answer_header("dev", _parked_state("failure"))
 

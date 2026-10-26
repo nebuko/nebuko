@@ -17,27 +17,27 @@ from openhands.sdk.context import AgentContext
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.sdk.mcp import MCPServer
 
-from agent_script.sub_domains.token_budget.condenser import (
+from nebuko.engine.lib.agent_script.sub_domains.token_budget.condenser import (
     build_condenser,
     resolve_token_budget_policy,
 )
-from agent_script.sub_domains.tool_call_repair.tool_call_repair import (
+from nebuko.engine.lib.agent_script.sub_domains.tool_call_repair.tool_call_repair import (
     install as install_tool_call_repair,
 )
-from agent_script.sub_domains.tool_resolution.tool_resolution import resolve_toolset
+from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import resolve_toolset
 
-from agent_script.features.dispatch_check import (
+from nebuko.engine.lib.agent_script.features.dispatch_check import (
     has_dispatch_decision,
     recorded_is_approved,
 )
-from agent_script.features.ensure_pr.ensure_pr import check_publication, ensure_pr
-from agent_script.features.handoff_tool.handoff_tool import take_fold
-from agent_script.features.run_agent.dispatch_recall import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import check_publication, ensure_pr
+from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_tool import take_fold
+from nebuko.engine.lib.agent_script.features.run_agent.dispatch_recall import (
     MAX_DISPATCH_RECALLS,
     RECALL_PASS_BUDGET_S,
     perform_dispatch_recalls,
 )
-from agent_script.features.run_agent.publication_guard import (
+from nebuko.engine.lib.agent_script.features.run_agent.publication_guard import (
     MAX_PUBLICATION_RECALLS,
     NON_RECALLABLE_REASONS,
     PUBLICATION_RECALL_PASS_BUDGET_S,
@@ -45,29 +45,29 @@ from agent_script.features.run_agent.publication_guard import (
     perform_publication_recalls,
     recallable_reasons,
 )
-from agent_script.features.run_agent.run_failure import RunFailure, classify_failure
-from agent_script.features.run_agent.run_outcome import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailure, classify_failure
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
     _STATUS_FINISHED,
     classify_run,
     status_value,
 )
-from agent_script.features.run_agent.run_watchdog import RunWatchdog
-from agent_script.features.run_agent.timeout_budget import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
+from nebuko.engine.lib.agent_script.features.run_agent.timeout_budget import (
     TimeoutBudget,
     resolve_timeout_budget,
 )
-from agent_script.features.run_agent.wind_down_prompt import WIND_DOWN_PROMPT
-from agent_script.sub_domains.metrics.token_telemetry_collector import (
+from nebuko.engine.lib.agent_script.features.run_agent.wind_down_prompt import WIND_DOWN_PROMPT
+from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry_collector import (
     TokenTelemetryCollector,
     install,
     maybe_register_langfuse,
 )
-from resolve_config.features.skill_context.skill_context import (
+from nebuko.engine.lib.resolve_config.features.skill_context.skill_context import (
     skill_context_from_env,
 )
-from resolve_config.features.team_context.team_context import compose_system_context
+from nebuko.engine.lib.resolve_config.features.team_context.team_context import compose_system_context
 
 logger = get_logger(__name__)
 

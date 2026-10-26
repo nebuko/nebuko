@@ -42,8 +42,8 @@ from .features.resolve_route.resolve_route import (
     _resolve_bot_fallback_path,
     _resolve_workflow_next_step,
 )
-from config import WorkflowPosition, is_self_function_call
-from workflow_state import Appreciation, IncompleteReason, TurnOutcome
+from nebuko.engine.lib.config import WorkflowPosition, is_self_function_call
+from nebuko.engine.lib.workflow_state import Appreciation, IncompleteReason, TurnOutcome
 
 
 def _is_resumable_outcome(outcome: Optional[TurnOutcome]) -> bool:
@@ -465,7 +465,7 @@ def resolve_config(
     # the prior history. Best-effort — a policy/config failure must never break
     # routing, so anything unexpected degrades to "no adjustment".
     try:
-        from complexity_governor.integration import (
+        from nebuko.engine.lib.complexity_governor.integration import (
             compute_boundary_adjustment,
             resolve_run_policy,
         )
@@ -494,7 +494,7 @@ def resolve_config(
 
 
 def main():
-    import default_paths
+    import nebuko.engine.lib.default_paths
 
     parser = argparse.ArgumentParser(
         description="Resolve agent configuration from trigger body"

@@ -4,14 +4,14 @@ from types import SimpleNamespace
 
 from openhands.sdk import LLM
 
-from agent_script.sub_domains.token_budget.condenser import (
+from nebuko.engine.lib.agent_script.sub_domains.token_budget.condenser import (
     CONDENSER_USAGE_ID,
     DEFAULT_EFFECTIVE_INPUT_LIMIT,
     build_condenser,
     resolve_effective_input_limit,
     resolve_token_budget_policy,
 )
-from config import TokenBudgetPolicy
+from nebuko.engine.lib.config import TokenBudgetPolicy
 
 
 def _llm() -> LLM:

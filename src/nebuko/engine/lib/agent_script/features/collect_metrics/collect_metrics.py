@@ -5,9 +5,9 @@ import os
 
 from openhands.sdk import get_logger
 
-from metrics_schema import Metrics
-from agent_script.sub_domains.metrics.metrics_collector import collect_llm_metrics
-from pricing.sub_domains.price_table.price_table import PriceTable
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import collect_llm_metrics
+from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import PriceTable
 
 logger = get_logger(__name__)
 

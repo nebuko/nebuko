@@ -3,7 +3,7 @@
 import time
 import unittest
 
-from agent_script.features.run_agent.run_watchdog import RunWatchdog
+from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
 
 class TestRunWatchdog(unittest.TestCase):

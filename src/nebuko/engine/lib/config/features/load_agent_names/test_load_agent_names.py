@@ -8,9 +8,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import DEFAULT_AGENT_NAMES, load_agent_names  # noqa: E402
-from config.features.load_agent_names.load_agent_names import (  # noqa: E402
+from nebuko.engine.lib.config import DEFAULT_AGENT_NAMES, load_agent_names  # noqa: E402
+from nebuko.engine.lib.config.features.load_agent_names.load_agent_names import (  # noqa: E402
     load_agent_names as load_agent_names_direct,
 )
 

@@ -8,7 +8,7 @@ enums out at every call site.
 
 from __future__ import annotations
 
-from workflow_state import Appreciation, IncompleteReason, TurnOutcome, TurnStatus
+from nebuko.engine.lib.workflow_state import Appreciation, IncompleteReason, TurnOutcome, TurnStatus
 
 
 def approved_outcome(**overrides) -> TurnOutcome:

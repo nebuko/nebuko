@@ -22,12 +22,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 
-sys.path.insert(
-    0,
-    os.path.dirname(os.path.abspath(__file__)),
-)
-
-from human_metrics import (  # noqa: E402
+from nebuko.engine.lib.human_metrics import (  # noqa: E402
     CommentRecord,
     HumanMetrics,
     HumanMetricsAnalyzer,

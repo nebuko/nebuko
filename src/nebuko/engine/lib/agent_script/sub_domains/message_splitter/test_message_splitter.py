@@ -1,11 +1,11 @@
 """Tests for multi-comment answer splitting (issue #913)."""
 
-from agent_script.sub_domains.message_splitter.message_splitter import (
+from nebuko.engine.lib.agent_script.sub_domains.message_splitter.message_splitter import (
     CommentPart,
     split_comment_body,
 )
-from config import CommentSizePolicy
-from prepare_comment import ANSWER_CONTINUATION_TOKEN
+from nebuko.engine.lib.config import CommentSizePolicy
+from nebuko.engine.lib.prepare_comment import ANSWER_CONTINUATION_TOKEN
 
 
 def _lines(text: str, count: int) -> str:

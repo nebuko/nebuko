@@ -27,7 +27,6 @@ from nebuko.engine.agent_runner import (
     run_engine_agent,
     run_legacy_agent,
 )
-from nebuko.engine.paths import ensure_import_path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRY_POINT = (
@@ -100,8 +99,7 @@ def test_state_file_missing_is_reported_as_none(tmp_path: Path) -> None:
 
 def test_artifact_names_match_the_legacy_readers() -> None:
     """The seam's file names are the ones the legacy host and scripts already use."""
-    ensure_import_path()
-    import prepare_comment
+    import nebuko.engine.lib.prepare_comment
 
     assert _LATEST_ANSWER_FILE == prepare_comment.LATEST_ANSWER_FILE
 

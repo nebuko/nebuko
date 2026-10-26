@@ -7,13 +7,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent))
 
-from resolve_workflow import RouteKind  # noqa: E402
+from nebuko.engine.lib.resolve_workflow import RouteKind  # noqa: E402
 
 
 def _import_resolver():
-    from resolve_workflow import resolve_next_from_workflow
+    from nebuko.engine.lib.resolve_workflow import resolve_next_from_workflow
 
     # The resolver returns a typed ``RouteResolution`` (issues #923, #964);
     # these assertions consume it directly.
@@ -416,8 +415,7 @@ class TestThreeLevelNestingRuntime:
 
     def _r(self, tmp_path):
         import sys
-        sys.path.insert(0, str(Path(__file__).parent))
-        from resolve_workflow import resolve_workflow_step
+        from nebuko.engine.lib.resolve_workflow import resolve_workflow_step
         return lambda task, workflow, step, **kw: resolve_workflow_step(
             task=task, workflow_name=workflow, step_name=step,
             workflows_dir=str(tmp_path), prompt_base="/tmp/prompts", **kw,
@@ -495,15 +493,13 @@ class TestThreeLevelNestingRuntime:
 
 def _import_workflow_step():
     import sys
-    sys.path.insert(0, str(Path(__file__).parent))
-    from resolve_workflow import resolve_workflow_step
+    from nebuko.engine.lib.resolve_workflow import resolve_workflow_step
     return resolve_workflow_step
 
 
 def _import_resolve_module():
     import sys
-    sys.path.insert(0, str(Path(__file__).parent))
-    import resolve_workflow
+    import nebuko.engine.lib.resolve_workflow
     return resolve_workflow
 
 
@@ -1133,7 +1129,7 @@ def _real_workflows_dir() -> Path:
     vary per machine (it may even be empty), so the shipped definitions are
     what these resolution assertions must read.
     """
-    from default_paths import checkout_root
+    from nebuko.engine.lib.default_paths import checkout_root
     return Path(checkout_root()) / "defaults" / "workflows"
 
 
@@ -1187,8 +1183,7 @@ class TestDefaultWorkflowWithRealFile:
         resolve = _import_resolver()
 
         import sys
-        sys.path.insert(0, str(Path(__file__).parent))
-        from workflow_state.features.get_last_state.get_last_state import extract_state_from_body
+        from nebuko.engine.lib.workflow_state.features.get_last_state.get_last_state import extract_state_from_body
 
         body = (
             "<summary>🤖 Workflow State (v1)</summary>\n"
@@ -1241,8 +1236,7 @@ class TestDefaultWorkflowWithRealFile:
 
 def _import_return_marker_for_parent():
     import sys
-    sys.path.insert(0, str(Path(__file__).parent))
-    from resolve_workflow import _return_marker_for_parent
+    from nebuko.engine.lib.resolve_workflow import _return_marker_for_parent
     return _return_marker_for_parent
 
 

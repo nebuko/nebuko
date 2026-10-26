@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Protocol, Sequence
 
 if TYPE_CHECKING:
-    from config import ProviderConfig
+    from nebuko.engine.lib.config import ProviderConfig
 
 __all__ = [
     "LLMProviderRuntime",

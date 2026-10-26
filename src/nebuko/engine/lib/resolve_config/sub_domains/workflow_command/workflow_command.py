@@ -48,7 +48,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional, Set, Tuple
 
-from config import brand
+from nebuko.engine.lib.config import brand
 
 __all__ = [
     "WorkflowCommand",
@@ -275,7 +275,7 @@ def _strip_engine_bookkeeping(text: str) -> str:
     """
     if not text:
         return text
-    from workflow_state.features.comment.to_git_comment import strip_state_section
+    from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import strip_state_section
 
     return strip_state_section(text)
 

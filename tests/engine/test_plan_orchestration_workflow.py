@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from config import load_workflow
+from nebuko.engine.lib.config import load_workflow
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / "defaults" / "workflows"

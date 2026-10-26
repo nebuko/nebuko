@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from subprocess import TimeoutExpired
 from typing import Optional
 
-from agent_script.features.ensure_pr.workflow_patch import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.workflow_patch import (
     APPLY_COMMAND,
     PATCH_ARTIFACT_DIR,
     PATCH_FILENAME,
@@ -39,7 +39,7 @@ from agent_script.features.ensure_pr.workflow_patch import (
     split_paths,
     stage_patch_artifact,
 )
-from github_client import GitHubTransport, ensure_bot_marker
+from nebuko.engine.lib.github_client import GitHubTransport, ensure_bot_marker
 from openhands.sdk import get_logger
 
 from nebuko.engine.lib.git.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME

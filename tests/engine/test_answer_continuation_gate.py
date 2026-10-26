@@ -22,8 +22,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from resolve_config import resolve_config
-from resolve_workflow import TASK_TO_PROMPT
+from nebuko.engine.lib.resolve_config import resolve_config
+from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_YAML = REPO_ROOT / ".github" / "workflows" / "nebuko-workflow.yaml"
@@ -43,7 +43,7 @@ PART_2_OF_2 = (
 
 
 def _answer_continuation_token() -> str:
-    from prepare_comment import ANSWER_CONTINUATION_TOKEN
+    from nebuko.engine.lib.prepare_comment import ANSWER_CONTINUATION_TOKEN
 
     return ANSWER_CONTINUATION_TOKEN
 
@@ -75,7 +75,7 @@ class TestGateRejectsContinuationParts:
 
     def test_the_gate_literal_matches_the_python_token(self):
         """One literal, two languages: the producer and the gate must agree."""
-        from resolve_config.features.parse_trigger.parse_trigger import (
+        from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import (
             ANSWER_CONTINUATION_MARKER,
         )
 
@@ -99,7 +99,7 @@ class TestContinuationBodyIsInertInTheEngine:
         self, prompt_base: str
     ):
         """The ``bot-trigger:`` arm of the gate must not rescue a continuation."""
-        from resolve_config.features.parse_trigger.parse_trigger import (
+        from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import (
             extract_machine_trigger,
             is_answer_continuation,
         )
@@ -115,7 +115,7 @@ class TestContinuationBodyIsInertInTheEngine:
 
     def test_the_state_bearing_first_part_still_routes(self, prompt_base: str):
         """The guard must not neutralize part 1 — the run that owns the payload."""
-        from resolve_config.features.parse_trigger.parse_trigger import (
+        from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import (
             is_answer_continuation,
         )
 

@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import SkillSpec, WorkflowCondition, WorkflowStep
+from nebuko.engine.lib.config import SkillSpec, WorkflowCondition, WorkflowStep
 
 
 class TestWorkflowStepSubWorkflow:

@@ -2,7 +2,7 @@
 
 import unittest
 
-from agent_script.features.run_agent.wind_down_prompt import WIND_DOWN_PROMPT
+from nebuko.engine.lib.agent_script.features.run_agent.wind_down_prompt import WIND_DOWN_PROMPT
 
 
 class TestWindDownPrompt(unittest.TestCase):

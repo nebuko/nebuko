@@ -13,9 +13,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent))
 
-from resolve_workflow import resolve_workflow_step  # noqa: E402
+from nebuko.engine.lib.resolve_workflow import resolve_workflow_step  # noqa: E402
 
 ENTRY_PATH = "plan-orchestration/sub_impl|tmp-impl/step_1|dev-review-loop/implement"
 

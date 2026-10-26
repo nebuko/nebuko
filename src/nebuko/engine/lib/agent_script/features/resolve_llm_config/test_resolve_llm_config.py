@@ -9,8 +9,6 @@ from pathlib import Path
 
 import litellm
 
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from resolve_llm_config import (
     LLM_TIMEOUT_S,
@@ -22,10 +20,10 @@ from resolve_llm_config import (
 )
 import resolve_llm_config as _rlc
 
-from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
+from nebuko.engine.lib.agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
     build_provider_runtime,
 )
-from config import ProviderConfig
+from nebuko.engine.lib.config import ProviderConfig
 
 
 class TestResolveApiUrl(unittest.TestCase):
@@ -943,7 +941,7 @@ agents:
         self.assertNotIn("prompt_cache_key", cfg.get("litellm_extra_body", {}))
 
     def test_preserves_static_body_params(self):
-        from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
+        from nebuko.engine.lib.agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
             IssueCacheKeyRuntime,
             StaticProviderRuntime,
         )

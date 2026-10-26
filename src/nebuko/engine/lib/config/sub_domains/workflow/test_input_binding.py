@@ -13,8 +13,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import (  # noqa: E402
+from nebuko.engine.lib.config import (  # noqa: E402
     InputBinding,
     InputMaterializationError,
     WorkflowDefinition,

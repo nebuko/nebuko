@@ -2,7 +2,7 @@
 
 import unittest
 
-from agent_script.features.scaffold_branch_tool import (
+from nebuko.engine.lib.agent_script.features.scaffold_branch_tool import (
     ScaffoldBranchReportAction,
     ScaffoldBranchReportExecutor,
     ScaffoldBranchReportTool,

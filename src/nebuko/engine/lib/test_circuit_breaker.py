@@ -2,7 +2,7 @@
 
 import pytest
 
-from circuit_breaker import count_bot_markers, check_circuit_breaker, circuit_breaker_warning
+from nebuko.engine.lib.circuit_breaker import count_bot_markers, check_circuit_breaker, circuit_breaker_warning
 
 
 class TestCountBotMarkers:

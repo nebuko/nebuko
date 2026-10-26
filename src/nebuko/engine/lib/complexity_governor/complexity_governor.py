@@ -18,7 +18,7 @@ import json
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from config.sub_domains.complexity_policy.complexity_policy import (
+from nebuko.engine.lib.config.sub_domains.complexity_policy.complexity_policy import (
     TIERS,
     ComplexityPolicy,
     Tier,

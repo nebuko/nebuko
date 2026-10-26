@@ -6,12 +6,11 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))  # src/nebuko/engine/lib
 
-from config.sub_domains.complexity_policy.complexity_policy import (  # noqa: E402
+from nebuko.engine.lib.config.sub_domains.complexity_policy.complexity_policy import (  # noqa: E402
     build_builtin_policy,
 )
-from complexity_governor import (  # noqa: E402
+from nebuko.engine.lib.complexity_governor import (  # noqa: E402
     ComplexityAdjustment,
     ComplexityGovernor,
     ComplexityReviewRequest,
@@ -23,8 +22,8 @@ from complexity_governor import (  # noqa: E402
     distribution_report,
     load_repo_policy_layer,
 )
-from workflow_state import WorkflowState, to_json  # noqa: E402
-from workflow_state.features.build_state.build_state import build_state  # noqa: E402
+from nebuko.engine.lib.workflow_state import WorkflowState, to_json  # noqa: E402
+from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state  # noqa: E402
 
 
 def _policy():

@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from config import SkillSpec
-from resolve_config.features.skill_context.skill_context import (
+from nebuko.engine.lib.config import SkillSpec
+from nebuko.engine.lib.resolve_config.features.skill_context.skill_context import (
     AGENT_SKILL_SPECS_ENV,
     SKILLS_DIR_ENV,
     STEP_SKILL_SPECS_ENV,
@@ -247,7 +247,7 @@ class TestShippedRoster:
     """The shipped configs must resolve through the real shipped skill files."""
 
     def test_architect_skills_resolve(self):
-        from config import load_config
+        from nebuko.engine.lib.config import load_config
 
         agent = load_config("agent-config-opencode.yaml").agents["architect"]
         specs = list(agent.skills)

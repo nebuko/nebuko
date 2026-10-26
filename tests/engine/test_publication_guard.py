@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import pytest
 
-from agent_script.features.ensure_pr.ensure_pr import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import (
     ENGINE_OWNED_PATHS,
     PublicationState,
     check_publication,
 )
-from agent_script.features.run_agent.publication_guard import (
+from nebuko.engine.lib.agent_script.features.run_agent.publication_guard import (
     MAX_PUBLICATION_RECALLS,
     is_benign_skip,
     perform_publication_recalls,
@@ -120,7 +120,7 @@ def _git(status="", upstream="0", base="0", branch="feature/x"):
 
 
 def _check(monkeypatch, git, pr=None):
-    from agent_script.features.ensure_pr import ensure_pr as module
+    from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as module
 
     monkeypatch.setattr(module, "_run_git", git)
     monkeypatch.setattr(module, "_find_pr_for_branch", lambda *a, **k: pr)

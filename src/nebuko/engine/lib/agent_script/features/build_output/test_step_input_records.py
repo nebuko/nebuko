@@ -14,9 +14,9 @@ from unittest import mock
 
 import build_output as bo
 from build_output import build_output
-from metrics_schema import Metrics
-from workflow_state import WorkflowState
-from workflow_state.workflow_state import STATE_SCHEMA_VERSION
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.workflow_state import WorkflowState
+from nebuko.engine.lib.workflow_state.workflow_state import STATE_SCHEMA_VERSION
 
 
 def _msg_event(text: str) -> "object":

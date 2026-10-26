@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from build_output import _neutralize_self_and_pin, _resolve_outcome
-from workflow_state import Appreciation, FunctionCall, RunPrefs, TurnOutcome, WorkflowState
+from nebuko.engine.lib.workflow_state import Appreciation, FunctionCall, RunPrefs, TurnOutcome, WorkflowState
 
 
 class _FakeConv:

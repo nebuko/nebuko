@@ -13,9 +13,9 @@ from build_output import (
 )
 from openhands.sdk.event import MessageEvent
 from openhands.sdk.llm import Message
-from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
-from metrics_schema import Metrics
-from agent_script.features.run_agent.run_outcome import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
 )
@@ -217,7 +217,7 @@ class TestPublicationGuardSurfacing(unittest.TestCase):
         self.assertEqual(context["publication_guard_detail"], "")
 
     def test_fallback_failure_is_surfaced_on_the_comment(self):
-        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.prepare_comment import format_answer_header
 
         result = self._build("fallback_failed", "remote rejected the push")
         header = format_answer_header("dev", result["workflow_state"])
@@ -226,14 +226,14 @@ class TestPublicationGuardSurfacing(unittest.TestCase):
         self.assertIn("remote rejected the push", header)
 
     def test_recalled_ok_gets_a_soft_notice(self):
-        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.prepare_comment import format_answer_header
 
         result = self._build("recalled_ok")
         header = format_answer_header("dev", result["workflow_state"])
         self.assertIn("after an engine recall", header)
 
     def test_clean_run_renders_no_notice(self):
-        from prepare_comment import format_answer_header
+        from nebuko.engine.lib.prepare_comment import format_answer_header
 
         result = self._build("clean")
         header = format_answer_header("dev", result["workflow_state"])

@@ -17,7 +17,7 @@ never be mistaken for a success.
 Supports --dry-run mode for testing without making actual API calls.
 
 Usage:
-    from github_client import get_issue_comments, post_comment
+    from nebuko.engine.lib.github_client import get_issue_comments, post_comment
 """
 
 import json

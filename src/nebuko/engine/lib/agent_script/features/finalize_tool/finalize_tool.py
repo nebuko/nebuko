@@ -26,10 +26,10 @@ from openhands.sdk.tool.tool import (
 from pydantic import Field
 from rich.text import Text
 
-from agent_script.features.call_agent_tool.call_agent_tool import (
+from nebuko.engine.lib.agent_script.features.call_agent_tool.call_agent_tool import (
     record_function_call,
 )
-from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
     record_turn_outcome,
 )
 from nebuko.engine.finalize import (
@@ -42,7 +42,7 @@ from nebuko.engine.report_text import (
     REPORT_OFFSET_ATTR,
     closing_turn_report_text,
 )
-from workflow_state import RunPrefs, TurnOutcome
+from nebuko.engine.lib.workflow_state import RunPrefs, TurnOutcome
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation.base import BaseConversation

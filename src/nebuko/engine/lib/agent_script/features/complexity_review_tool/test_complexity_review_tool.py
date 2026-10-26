@@ -5,9 +5,8 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))  # src/nebuko/engine/lib
 
-from agent_script.features.complexity_review_tool import (  # noqa: E402
+from nebuko.engine.lib.agent_script.features.complexity_review_tool import (  # noqa: E402
     ComplexityReviewAction,
     action_to_request,
     clear_complexity_review_run,
@@ -15,10 +14,10 @@ from agent_script.features.complexity_review_tool import (  # noqa: E402
     record_review_request,
     reset_complexity_review_registry,
 )
-from agent_script.sub_domains.tool_resolution.tool_resolution import (  # noqa: E402
+from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import (  # noqa: E402
     resolve_toolset,
 )
-from complexity_governor import (  # noqa: E402
+from nebuko.engine.lib.complexity_governor import (  # noqa: E402
     ComplexityReviewRequest,
     EvidenceBundle,
     HumanSignals,

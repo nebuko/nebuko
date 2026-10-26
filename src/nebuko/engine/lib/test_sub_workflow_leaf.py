@@ -15,9 +15,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from resolve_workflow import (  # noqa: E402
+from nebuko.engine.lib.resolve_workflow import (  # noqa: E402
     TASK_TO_PROMPT,
     RouteKind,
     SubWorkflowLeafError,
@@ -226,7 +225,7 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
         # Re-import at call time: other suites reload ``resolve_workflow``
         # (to reset its remote-fetch hook), which redefines the class, so the
         # module-level binding would be a stale identity.
-        from resolve_workflow import SubWorkflowLeafError as CurrentLeafError
+        from nebuko.engine.lib.resolve_workflow import SubWorkflowLeafError as CurrentLeafError
 
         self.assertIsInstance(leaf, CurrentLeafError)
         self.assertTrue(leaf.reason)
@@ -241,7 +240,7 @@ class TestBranchMountedNestedLeaf(unittest.TestCase):
         self.assertEqual(followup["WORKFLOW_STEP"], "implement")
 
     def test_entry_leaf_resolution_returns_typed_leaf(self):
-        from resolve_workflow import SubWorkflowLeaf
+        from nebuko.engine.lib.resolve_workflow import SubWorkflowLeaf
 
         def run(workflows_dir):
             parent = _load_child_workflow("plan-orchestration", workflows_dir, None, {})

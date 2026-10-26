@@ -10,13 +10,13 @@ import re
 import unittest
 from unittest.mock import patch
 
-from agent_script.features.terminal_batch_tool.command_deny_list import (
+from nebuko.engine.lib.agent_script.features.terminal_batch_tool.command_deny_list import (
     DenyResult,
     DenyRule,
     CommandDenyList,
     push_deny_list,
 )
-from agent_script.features.terminal_batch_tool.terminal_batch_tool import (
+from nebuko.engine.lib.agent_script.features.terminal_batch_tool.terminal_batch_tool import (
     TerminalBatchAction,
     TerminalBatchExecutor,
     TerminalBatchTool,

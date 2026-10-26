@@ -3,8 +3,7 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import BRAND, BrandIdentity, brand
+from nebuko.engine.lib.config import BRAND, BrandIdentity, brand
 
 
 class TestBrandIdentity:

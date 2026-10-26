@@ -7,7 +7,7 @@ out of ``run_agent.py`` so it can be unit-tested without an event loop.
 from dataclasses import dataclass
 from enum import Enum
 
-from agent_script.features.run_agent.run_failure import RunFailure
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailure
 
 
 class OutcomeStatus(str, Enum):

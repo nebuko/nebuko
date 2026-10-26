@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from config import OutputField, StepFieldRef, StepOutput, WorkflowStep
+from nebuko.engine.lib.config import OutputField, StepFieldRef, StepOutput, WorkflowStep
 
 
 class TestOutputFieldValidation:

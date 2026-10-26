@@ -7,15 +7,15 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from build_output import _build_failure_summary, build_output
-from metrics_schema import Metrics
+from nebuko.engine.lib.metrics_schema import Metrics
 from openhands.sdk.event import MessageEvent
 from openhands.sdk.llm import Message
-from agent_script.features.run_agent.run_failure import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
     RESUME_COMMAND,
     RunFailure,
     RunFailureKind,
 )
-from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 
 
 def _failure_outcome(kind: RunFailureKind, summary: str) -> RunOutcome:

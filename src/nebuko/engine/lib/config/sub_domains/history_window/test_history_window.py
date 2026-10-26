@@ -3,9 +3,8 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import HistoryWindowConfig
-from config.sub_domains.history_window.history_window import (
+from nebuko.engine.lib.config import HistoryWindowConfig
+from nebuko.engine.lib.config.sub_domains.history_window.history_window import (
     DEFAULT_HISTORY_COMMENT_COUNT,
 )
 

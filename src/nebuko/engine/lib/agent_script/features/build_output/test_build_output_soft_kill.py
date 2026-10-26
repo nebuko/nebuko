@@ -15,22 +15,16 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-sys.path.insert(
-    0,
-    os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
-    ),
+from nebuko.engine.lib.agent_script.features.build_output.build_output import (
+    _soft_kill_outcome,
+    build_output,
 )
-
-from build_output import _soft_kill_outcome, build_output
 from openhands.sdk.event import MessageEvent
 from openhands.sdk.llm import Message
-from workflow_state import Appreciation, TurnOutcome, TurnStatus
-from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
-from metrics_schema import Metrics
-from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
+from nebuko.engine.lib.workflow_state import Appreciation, TurnOutcome, TurnStatus
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 
 
 def _make_conversation(events=None, run_outcome=None):
@@ -128,7 +122,7 @@ class TestBuildOutputSoftKill(unittest.TestCase):
     def test_agent_verdict_survives_when_run_did_not_time_out(self):
         # Control: the same recorded verdict really persists, so the test
         # above exercises the override rather than a dropped outcome.
-        from agent_script.features.dispatch_next_tool import record_turn_outcome
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool import record_turn_outcome
 
         answer = "**Work completed**: X"
         conv = _make_conversation(

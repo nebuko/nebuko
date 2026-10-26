@@ -9,16 +9,15 @@ and skills — is resolved through one layered lookup:
 :class:`NebukoPaths` is the single place that knows those locations and their
 priority, so the rest of the engine never builds a config path by hand.
 
-:data:`LIB_DIR` is deliberately *not* part of that layering: it is the frozen
-orchestration runtime shipped inside the package, made importable once through
-:func:`ensure_import_path`.
+:data:`LIB_DIR` points at that runtime, shipped inside the package as the
+``nebuko.engine.lib`` subpackage (issue #1165) — importable directly, no path
+configuration needed.
 """
 
 from __future__ import annotations
 
 import enum
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Mapping
@@ -31,7 +30,6 @@ __all__ = [
     "LIB_DIR",
     "NebukoPaths",
     "defaults_dir",
-    "ensure_import_path",
     "repo_root",
 ]
 
@@ -63,14 +61,6 @@ def repo_root() -> Path:
 def defaults_dir() -> Path:
     """The shipped ``defaults/`` tree, sibling of ``src/`` in the checkout."""
     return repo_root() / "defaults"
-
-
-# @stub-protected
-def ensure_import_path() -> None:
-    """Append :data:`LIB_DIR` to ``sys.path`` (no-op when already present)."""
-    path = str(LIB_DIR)
-    if path not in sys.path:
-        sys.path.append(path)
 
 
 # @stub-protected

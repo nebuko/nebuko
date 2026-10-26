@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_script.features.ensure_pr.workflow_patch import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.workflow_patch import (
     APPLY_COMMAND,
     PATCH_ARTIFACT_DIR,
     PATCH_FILENAME,
@@ -159,7 +159,7 @@ class TestRenderPatchComment(unittest.TestCase):
         self.assertNotIn("xxxx", comment.body)
 
     def test_default_limit_is_the_repo_comment_policy(self):
-        from config.sub_domains.comment_size.comment_size import (
+        from nebuko.engine.lib.config.sub_domains.comment_size.comment_size import (
             DEFAULT_MAX_COMMENT_CHARS,
         )
 

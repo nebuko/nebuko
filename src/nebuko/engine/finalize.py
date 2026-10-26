@@ -32,18 +32,13 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-from nebuko.engine.paths import ensure_import_path
 
-# ``config`` lives on the frozen runtime path (``engine/lib``), which the
-# engine makes importable lazily; bootstrap it before the top-level import.
-ensure_import_path()
-
-from config.sub_domains.workflow_step.output_field import (  # noqa: E402
+from nebuko.engine.lib.config.sub_domains.workflow_step.output_field import (
     NAME_PATTERN,
     OutputField,
     StepOutput,
 )
-from workflow_state import (  # noqa: E402 - runtime-path module
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     FunctionCall,
     HoldKind,

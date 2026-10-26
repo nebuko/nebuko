@@ -25,7 +25,7 @@ from ..classify_comment.classify_comment import classify_comment
 # for a bare marker substring, so it also fires on a human quote-reply (which
 # copies the marker verbatim) — the ledger needs the stricter top-level check
 # below (see :func:`_has_top_level_bot_marker`).
-from resolve_config.features.parse_trigger.parse_trigger import UNIVERSAL_BOT_MARKER
+from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import UNIVERSAL_BOT_MARKER
 
 __all__ = ["reconcile_thread", "DEFAULT_TRUST_ALLOWLIST"]
 

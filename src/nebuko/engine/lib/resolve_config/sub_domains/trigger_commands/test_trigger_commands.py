@@ -5,11 +5,10 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from resolve_config.sub_domains.trigger_commands.trigger_commands import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.sub_domains.trigger_commands.trigger_commands import (  # noqa: E402
     TriggerCommands,
 )
-from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
     WorkflowCommand,
 )
 

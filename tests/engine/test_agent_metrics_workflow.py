@@ -93,7 +93,6 @@ class TestReportTimePricingImportability:
             "import builtins, os, sys;"
             "sys.path[:] = [p for p in sys.path if not p or not os.path.exists("
             "os.path.join(p, 'agent_script'))];"
-            f"sys.path.insert(0, {str(ENGINE_LIB)!r});"
             "real = builtins.__import__;"
             "guard = lambda name, *a, **k: (_ for _ in ()).throw("
             "ImportError(name)) if name.split('.')[0] in "

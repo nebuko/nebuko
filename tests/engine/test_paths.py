@@ -8,7 +8,6 @@ from nebuko.engine.paths import (
     ConfigPathAnchor,
     LIB_DIR,
     defaults_dir,
-    ensure_import_path,
     repo_root,
 )
 
@@ -28,25 +27,6 @@ class TestLibDir:
     def test_points_at_the_migrated_orchestration_library(self):
         assert LIB_DIR.is_dir()
         assert (LIB_DIR / "event_normalizer.py").is_file()
-
-
-class TestEnsureImportPath:
-    def test_makes_runtime_importable(self, monkeypatch):
-        monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(LIB_DIR)])
-        assert str(LIB_DIR) not in sys.path
-
-        ensure_import_path()
-
-        assert str(LIB_DIR) in sys.path
-        assert str(LIB_DIR) in sys.path
-
-    def test_is_idempotent(self, monkeypatch):
-        monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(LIB_DIR)])
-
-        ensure_import_path()
-        ensure_import_path()
-
-        assert sys.path.count(str(LIB_DIR)) == 1
 
 
 class TestConfigPathAnchorResolve:

@@ -12,13 +12,12 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from workflow_state import WorkflowState, build_state
-from workflow_state.workflow_state import STATE_MARKER_START, STATE_MARKER_END
-from workflow_state.step_output_record import STEP_OUTPUTS_KEY, StepOutputRecord
-from workflow_state.features.to_json.to_json import state_to_json
-from workflow_state.features.get_last_state.get_last_state import (
+from nebuko.engine.lib.workflow_state import WorkflowState, build_state
+from nebuko.engine.lib.workflow_state.workflow_state import STATE_MARKER_START, STATE_MARKER_END
+from nebuko.engine.lib.workflow_state.step_output_record import STEP_OUTPUTS_KEY, StepOutputRecord
+from nebuko.engine.lib.workflow_state.features.to_json.to_json import state_to_json
+from nebuko.engine.lib.workflow_state.features.get_last_state.get_last_state import (
     extract_latest_state_from_comments,
 )
 
