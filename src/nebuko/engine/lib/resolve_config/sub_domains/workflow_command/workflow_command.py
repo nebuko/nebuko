@@ -6,7 +6,8 @@ Value object + parser for the explicit first-line command grammar::
 
 Canonical actions (issue #635):
   - ``run``        resource ``workflow`` — start/switch a workflow; ``--name``
-                   required, ``--step`` optional (enter at a dedicated step,
+                   optional (omitting it runs the repo's default workflow —
+                   issue #1094), ``--step`` optional (enter at a dedicated step,
                    issue #789; a dotted ``a.b`` selector descends into mounted
                    sub-workflows, issue #822)
   - ``resume``     no resource — resume the held step; ``--feedback`` optional
@@ -178,7 +179,6 @@ COMMAND_REGISTRY: Dict[str, CommandClass] = {
 
 #: Required flags per action (absent ⇒ malformed ⇒ None).
 _REQUIRED_FLAGS: Dict[str, str] = {
-    "run": "name",
     "force-step": "name",
     "update": "value",
 }
