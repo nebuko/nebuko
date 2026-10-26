@@ -38,7 +38,15 @@ class FetchCommentBodiesExecutor:
         self.context_bodies = context_bodies
 
     def execute(self, action: FetchCommentBodiesAction) -> CommentBodiesObservation:
-        raise NotImplementedError
+        bodies: dict[str, str] = {}
+        not_found: list[int] = []
+        for comment_id in action.comment_ids:
+            body = self.context_bodies.get(str(comment_id))
+            if body is None:
+                not_found.append(comment_id)
+            else:
+                bodies[str(comment_id)] = body
+        return CommentBodiesObservation(bodies=bodies, not_found=not_found)
 
 
 # @stub-protected: signature defined by architect — do not modify
