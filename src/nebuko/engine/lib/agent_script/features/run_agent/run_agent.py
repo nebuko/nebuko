@@ -31,6 +31,7 @@ from agent_script.features.dispatch_check import (
     recorded_is_approved,
 )
 from agent_script.features.ensure_pr.ensure_pr import check_publication, ensure_pr
+from agent_script.features.handoff_tool.handoff_store import HandoffStore
 from agent_script.features.handoff_tool.handoff_tool import take_fold
 from agent_script.features.run_agent.dispatch_recall import (
     MAX_DISPATCH_RECALLS,
@@ -46,6 +47,11 @@ from agent_script.features.run_agent.publication_guard import (
     recallable_reasons,
 )
 from agent_script.features.run_agent.run_failure import RunFailure, classify_failure
+from agent_script.features.run_agent.checkpoints import (
+    CheckpointScheduler,
+    compute_checkpoints,
+    count_plan_changes,
+)
 from agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
@@ -426,9 +432,42 @@ def run_agent(
     )
 
     conversation.send_message(prompt)
+
+    # ── Checkpoint schedule (issue #966) ─────────────────────────
+    # Ask the agent to write the handoff at 50% and 75% of the soft budget,
+    # before the soft kill loses everything. Delivery is queued via
+    # send_message (no interrupt): the agent reads it at the next turn
+    # boundary. Checkpoint 3 (100%) is the existing wind-down, so it is not
+    # scheduled separately. Comparing plan_changes across handoff versions
+    # gives a per-run drift signal, logged for later analysis.
+    def _handoff_plan_changes() -> int:
+        try:
+            text = HandoffStore().load_text()
+        except Exception as e:  # noqa: BLE001 - drift logging must not break the run
+            logger.warning(f"handoff drift read failed: {e}")
+            return 0
+        if not text.strip():
+            return 0
+        return count_plan_changes(text)
+
+    checkpoint_scheduler = CheckpointScheduler(
+        compute_checkpoints(budget.soft_timeout_s)[:2],
+        deliver=lambda event: conversation.send_message(event.prompt),
+        is_finished=lambda: status_value(conversation) == _STATUS_FINISHED,
+    ).arm()
+    handoff_snapshot = _handoff_plan_changes()
+
     first_watchdog, main_error = _run_supervised(
         conversation, budget.soft_timeout_s, "Main run"
     )
+    checkpoint_scheduler.cancel()
+    handoff_after = _handoff_plan_changes()
+    if handoff_after != handoff_snapshot:
+        logger.info(
+            f"handoff drift: plan_changes {handoff_snapshot} -> {handoff_after}"
+        )
+    else:
+        logger.info("handoff drift: no handoff writes during main run")
 
     soft_timeout_fired = first_watchdog.fired
     main_status = status_value(conversation)
