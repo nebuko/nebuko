@@ -8,6 +8,9 @@ graph must declare them here — otherwise the frozen binary crashes with
 ``ModuleNotFoundError: No module named 'config'``.
 """
 
+import sys
+from pathlib import Path
+
 # ``engine/lib`` holds the frozen-runtime packages imported through the path
 # bootstrap; put it on the build-time search path so PyInstaller can resolve
 # the hidden imports below.

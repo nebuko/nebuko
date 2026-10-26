@@ -34,3 +34,12 @@ def test_the_registered_hook_dir_ships_the_litellm_hook():
     assert dirs, "hook-dirs entry point returned no directories"
     for hook_dir in dirs:
         assert (Path(hook_dir) / "hook-litellm.py").is_file()
+
+
+def test_the_engine_hook_executes_and_declares_hidden_imports():
+    import runpy
+
+    hook_path = Path(_pyinstaller_hooks.__file__).resolve().parent / "hook-nebuko.engine.py"
+    ns = runpy.run_path(str(hook_path))
+    assert "config" in ns["hiddenimports"]
+    assert "workflow_state" in ns["hiddenimports"]
