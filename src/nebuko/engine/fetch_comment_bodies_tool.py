@@ -156,7 +156,8 @@ class FetchCommentBodiesTool(
         The cached bodies map is injected via the ``context_bodies`` param by
         ``resolve_toolset``; lookups read from it at call time.
         """
-        context_bodies = params.pop("context_bodies", {})
+        context_bodies = dict(getattr(cls, "_context_bodies", None) or {})
+        context_bodies.update(params.pop("context_bodies", {}))
         if params:
             raise ValueError(
                 f"FetchCommentBodiesTool doesn't accept parameters: {sorted(params)}"

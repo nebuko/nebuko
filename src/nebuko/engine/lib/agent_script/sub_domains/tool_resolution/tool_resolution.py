@@ -234,6 +234,10 @@ def _ensure_complexity_review_tool_registered() -> None:
 # long-lived processes (or repeated test runs) we register only once.
 _handoff_tool_registered = False
 
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
+_fetch_comment_bodies_tool_registered = False
+
 
 def _ensure_fetch_comment_bodies_tool_registered(
     context_bodies: dict[str, str] | None = None,
@@ -247,13 +251,18 @@ def _ensure_fetch_comment_bodies_tool_registered(
     global _fetch_comment_bodies_tool_registered
     if _fetch_comment_bodies_tool_registered:
         return
+    from functools import partial
+
     from nebuko.engine.fetch_comment_bodies_tool import FetchCommentBodiesTool
 
-    register_tool(
-        _FETCH_COMMENT_BODIES_TOOL_NAME,
-        FetchCommentBodiesTool,
-        context_bodies=context_bodies or {},
+    # register_tool only accepts a ToolDefinition subclass whose create() takes
+    # **params; bind the run's cached bodies through a small subclass instead.
+    tool_cls = type(
+        "FetchCommentBodiesTool",
+        (FetchCommentBodiesTool,),
+        {"_context_bodies": context_bodies or {}},
     )
+    register_tool(_FETCH_COMMENT_BODIES_TOOL_NAME, tool_cls)
     _fetch_comment_bodies_tool_registered = True
 
 
