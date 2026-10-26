@@ -171,7 +171,7 @@ class BranchScaffold:
         orphan the prior round's commits (issue #1138 round 8).
         """
         if self._branch_exists(branch):
-            return self._rebase_existing(branch, base)
+            return self._merge_origin(branch, base)
         return self._create_branch(branch, base)
 
     def _branch_exists(self, branch: str) -> bool:
@@ -209,32 +209,8 @@ class BranchScaffold:
         logger.info("branch scaffold: %s", detail)
         return ScaffoldResult(ok=True, detail=detail, branch=branch)
 
-    def _rebase_existing(self, branch: str, base: str) -> ScaffoldResult:
-        # After a remote-only fetch the session is still on the detached
-        # base HEAD: the rebase must run on the feature branch itself.
-        self._git("checkout", branch)
-        try:
-            self._git("rebase", f"origin/{base}")
-        except RuntimeError:
-            conflicted = self._git(
-                "diff", "--name-only", "--diff-filter=U"
-            ).splitlines()
-            self._git("rebase", "--abort")
-            note = (
-                f"The engine rebased `{branch}` onto `origin/{base}` and hit "
-                "conflicts in: "
-                + ", ".join(f"`{p}`" for p in conflicted)
-                + ". Resolve them as your FIRST action "
-                "(`git rebase --continue` after staging), before any other work."
-            )
-            detail = f"rebase has conflicts in: {', '.join(conflicted)}"
-            logger.warning("branch scaffold: %s", detail)
-            return ScaffoldResult(
-                ok=True, conflict=True, detail=detail, branch=branch, note=note
-            )
-        detail = f"rebased {branch} onto origin/{base}"
-        logger.info("branch scaffold: %s", detail)
-        return ScaffoldResult(ok=True, detail=detail, branch=branch)
+    def _merge_origin(self, branch: str, base: str) -> ScaffoldResult:  # @stub-protected
+        raise NotImplementedError
 
     # ── Plumbing ─────────────────────────────────────────────────
 

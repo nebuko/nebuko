@@ -65,19 +65,27 @@ its own default (reasoning on, issue #958). The SDK's model-feature gate
 accept the param. Verify end-to-end with
 `select_chat_options(LLM(**cfg), {}, has_tools=True)`.
 
-## Git checkpoints in this sandbox (rebase gotchas)
+## Git checkpoints in this sandbox (merge procedure)
 The workspace checkout is a **shallow/grafted** clone, so `git rev-list
 --left-right --count origin/main...HEAD` reports `0 0` until history is
-deepened, and `git rebase origin/main` aborts with "empty ident name" until an
-identity is set. Use:
+deepened, and git aborts with "empty ident name" until an identity is set.
+
+### Usage
 ```bash
 git config user.email "agent@nebuko.local" && git config user.name "Nebuko Agent"
 git fetch --unshallow origin || git fetch --depth=200 origin
-git rebase origin/main          # resolve any conflicts, then --continue
-git push --force-with-lease origin <branch>
+git checkout <branch>
+git merge origin/main
+git push origin <branch>        # plain push — never --force-with-lease
 ```
-A leftover `.git/rebase-merge` from a failed attempt blocks the next rebase:
-`git rebase --abort` (or `rm -fr .git/rebase-merge`) before retrying.
+
+### Conflict behaviour
+The engine merges `origin/<base>` into the branch; on a conflict it aborts the
+merge (leaving a clean worktree) and reports the conflicted paths in the
+"Branch conflict — fix first" prompt section. You then resolve by re-running
+the merge yourself: `git merge origin/main`, resolve the markers, `git add` +
+`git commit`, then push plainly. A merge never rewrites published history,
+so no force-push is ever needed.
 
 ## System prompt assembly (issue #943)
 
