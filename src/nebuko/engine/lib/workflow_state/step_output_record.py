@@ -25,6 +25,9 @@ class StepOutputRecord(BaseModel):
 
     step: str
     comment_id: Optional[str] = None
+    permalink: Optional[str] = None
+    anchor: Optional[str] = None
+    posted_at: Optional[str] = None
 
     @field_validator("comment_id", mode="before")
     @classmethod
