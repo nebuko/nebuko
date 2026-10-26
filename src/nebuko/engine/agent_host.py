@@ -137,7 +137,9 @@ class InProcessAgentHost:
         self._load_pipeline = load_pipeline
         self._env = env
 
-    def run(self, prompt: str) -> dict[str, Any]:
+    def run(
+        self, prompt: str, context_bodies: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         """Run ``prompt`` in-process and read the run artefacts back.
 
         Returns the mapping :func:`nebuko.engine.agent_runner.run_legacy_agent` returns,
@@ -145,6 +147,12 @@ class InProcessAgentHost:
         its legacy value so routing/validation — which read the run's outcome
         from the workflow state, never from this text — are unchanged; only the
         posted body prefers ``deliverable``.
+
+        Args:
+            prompt: The assembled agent prompt.
+            context_bodies: Optional cached thread comment bodies by id
+                (issue #748); handed to the fetch_comment_bodies tool when
+                the role's tool list includes it.
 
         Raises:
             EngineAgentUnavailable: Setup failed before the run began.
@@ -163,7 +171,7 @@ class InProcessAgentHost:
                 _child_env(script, self._env, repo_root=self._repo_root)
             ), contextlib.chdir(workdir):
                 with _capture_console() as console:
-                    conversation = _run_pipeline(pipeline, prompt, self._repo_root, self)
+                    conversation = _run_pipeline(pipeline, prompt, self._repo_root, self, context_bodies)
                     console_log = console.getvalue()
             return self._capture_artifacts(work, conversation, console_log)
 
@@ -580,6 +588,7 @@ def _run_pipeline(
     prompt: str,
     workspace: Path,
     host: "InProcessAgentHost" | None = None,
+    context_bodies: dict[str, str] | None = None,
 ) -> Any:
     """Drive the legacy steps (resolve -> run -> report -> metrics -> build).
 
@@ -593,7 +602,8 @@ def _run_pipeline(
     args = SimpleNamespace(prompt_location=None)
     llm_config, resolved_prompt, agent_cfg = pipeline.resolve_llm_config(args, prompt)
     conversation = pipeline.run_agent(
-        llm_config, resolved_prompt, args, agent_cfg=agent_cfg, workspace=workspace
+        llm_config, resolved_prompt, args, agent_cfg=agent_cfg, workspace=workspace,
+        context_bodies=context_bodies
     )
     if host is not None:
         host._elicit_report(conversation)

@@ -306,6 +306,7 @@ def run_agent(
     args=None,
     agent_cfg=None,
     workspace=None,
+    context_bodies: "dict[str, str] | None" = None,
 ) -> Conversation:
     """
     Create an agent, start a conversation, send a prompt, and run the agent.
@@ -316,6 +317,9 @@ def run_agent(
         args: Parsed argparse namespace (unused, retained for compatibility).
         agent_cfg: Optional AgentConfig object for tool resolution.
                    If None, default tool list is used.
+        context_bodies: Optional cached thread comment bodies by id (issue
+                   #748); passed to the fetch_comment_bodies tool when the
+                   role's tool list includes it.
         workspace: Checkout the agent must operate on. The in-process engine host
                    runs under a temporary cwd, so it passes the real repo root
                    explicitly (issue #766); when omitted, ``GFA_REPO_ROOT`` is
@@ -349,7 +353,10 @@ def run_agent(
         agent_tools = [*agent_tools, "finalize"]
 
     resolved = resolve_toolset(
-        agent_tools, role_name, token_budget=resolve_token_budget_policy(agent_cfg)
+        agent_tools,
+        role_name,
+        token_budget=resolve_token_budget_policy(agent_cfg),
+        context_bodies=context_bodies,
     )
     sdk_tools = list(resolved.sdk_tools)
     include_default_tools = list(resolved.builtin_tools)
