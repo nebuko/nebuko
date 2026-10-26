@@ -341,7 +341,16 @@ def resolve_post_decision_gate(  # @stub-protected: signature defined by archite
     - gate_released and gate is not None -> gate.model_copy(update={"status": GateStatus.RELEASED}).
     - otherwise -> gate unchanged.
     """
-    raise NotImplementedError
+    if decision is not None:
+        if (
+            decision.status == "rejected"
+            and decision.feedback
+            and decision.target_step == workflow_step
+        ):
+            return GateLock(step=workflow_step)
+        if gate_released and gate is not None:
+            return gate.model_copy(update={"status": GateStatus.RELEASED})
+    return gate
 
 
 def _parse_gate_consult_env() -> str:
@@ -1385,6 +1394,12 @@ def build_output(
         workflow_name=workflow_name,
         workflow_step=workflow_step,
         gate=prev_state.gate if prev_state is not None else None,
+    )
+    gate = resolve_post_decision_gate(
+        gate,
+        workflow_step,
+        _parse_gate_decision_env(),
+        _parse_gate_released_env(),
     )
     if _parse_gate_released_env() and gate is not None:
         # A recorded gate decision is the only authorized release (issue
