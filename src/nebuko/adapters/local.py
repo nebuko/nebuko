@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Sequence
 
 from nebuko.engine.paths import ensure_import_path
+from nebuko.adapters.base import HistoryPage, PostedComment, PosterCapabilities
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -22,6 +23,8 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from nebuko.engine.context_selection import ContextEntry
     from nebuko.engine.models import CommentEntry, Trigger
     from workflow_state.workflow_state import WorkflowState
+
+from nebuko.adapters.base import PostedComment, PosterCapabilities
 
 __all__ = ["LocalAdapter"]
 
@@ -126,15 +129,16 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
             trigger_login=login,
         )
 
-    def post(self, body: str) -> str:
+    def post(self, body: str) -> PostedComment:
         self._run_dir.mkdir(parents=True, exist_ok=True)
         stored = self._ensure_terminal_marker(body)
+        comment_id = str(len(self._read_journal()) + 1)
         journal = self._run_dir / JOURNAL_FILE
         separator = "\n\n" if journal.is_file() and journal.stat().st_size > 0 else ""
         with journal.open("a", encoding="utf-8") as handle:
             handle.write(f"{separator}<!-- journal-entry @ {_utc_now_iso()} -->\n{stored}")
         (self._run_dir / LATEST_ANSWER_FILE).write_text(stored, encoding="utf-8")
-        return str(len(self._read_journal()))
+        return PostedComment(comment_id=comment_id, author="nebuko-local", created_at=_utc_now_iso())
 
     # @stub-protected
     def load_state(self) -> WorkflowState | None:
@@ -175,6 +179,23 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         path = self.artifact_dir() / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+
+    # @stub-protected
+    def capabilities(self) -> PosterCapabilities:
+        """The local journal is plain markdown with no platform markup."""
+        return PosterCapabilities()
+
+    # @stub-protected
+    def edit_comment(self, comment_id: str, body: str) -> PostedComment:
+        raise NotImplementedError("edit_comment not supported by this adapter")
+
+    # @stub-protected
+    def add_reaction(self, comment_id: str, emoji: str) -> None:
+        raise NotImplementedError("add_reaction not supported by this adapter")
+
+    # @stub-protected
+    def load_history_page(self, cursor: str | None = None) -> HistoryPage:
+        raise NotImplementedError("load_history_page not supported by this adapter")
 
     # ── internals ────────────────────────────────────────────────────
 

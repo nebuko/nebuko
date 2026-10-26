@@ -25,6 +25,9 @@ class StepOutputRecord(BaseModel):
 
     step: str
     comment_id: Optional[str] = None
+    permalink: Optional[str] = None
+    anchor: Optional[str] = None
+    posted_at: Optional[str] = None
 
     @field_validator("comment_id", mode="before")
     @classmethod
@@ -43,7 +46,7 @@ class StepOutputRecord(BaseModel):
         """
         records = [r for r in self.load_all(current_context) if r.step != self.step]
         records.append(self)
-        current_context[STEP_OUTPUTS_KEY] = [r.model_dump() for r in records]
+        current_context[STEP_OUTPUTS_KEY] = [r.model_dump(exclude_none=True) for r in records]
 
     @classmethod
     def load_all(cls, current_context: dict[str, Any]) -> list["StepOutputRecord"]:

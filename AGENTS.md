@@ -42,14 +42,15 @@ run `gh auth setup-git`, push, then restore the saved gitconfig.
 Under `.github/workflows/` the `nebuko-workflow.yaml` is build to be use externally.
 So by contention all repo's workflow related file are prefixed with `internal-`.
 
-## Known pre-existing test failures (not regressions)
-`uv run pytest src/nebuko/engine/lib` has **15 failures on `main`** unrelated to
-config/resolver work — all in workflow-routing and real-workflow-YAML tests
-(`test_workflow.py`, `test_resolve_workflow_step.py`, `test_resolve_config.py`,
-`build_output/test_build_output.py`, `resolve_route`). They stem from the
-checkout carrying both a root `workflows/` dir and `defaults/workflows/`. The
-`tests/` suite (616) and the config/agent_script modules are green, so diff
-against this baseline before blaming your change.
+## Workflow resolution precedence
+Workflow files resolve the repo-local override `.nebuko/workflows/<name>`
+first, then the shipped `defaults/workflows/<name>`. A repo-root `workflows/`
+directory is **never** consulted — untracked scaffolding there cannot shadow
+shipped defaults. To override a shipped workflow in a checkout, place a file
+with the same filename under `.nebuko/workflows/` (or set `WORKFLOWS_DIR` /
+`LOCAL_WORKFLOWS_DIR` as documented in `default_paths.py`).
+`uv run pytest tests src/nebuko/engine/lib` is fully green; red means a real
+regression — no baseline-diffing required.
 
 ## Thinking/reasoning config plumbing (issue #941)
 `thinking_enabled`/`preserve_thinking`/`reasoning_effort` live on `LLMConfig`
@@ -64,19 +65,27 @@ its own default (reasoning on, issue #958). The SDK's model-feature gate
 accept the param. Verify end-to-end with
 `select_chat_options(LLM(**cfg), {}, has_tools=True)`.
 
-## Git checkpoints in this sandbox (rebase gotchas)
+## Git checkpoints in this sandbox (merge procedure)
 The workspace checkout is a **shallow/grafted** clone, so `git rev-list
 --left-right --count origin/main...HEAD` reports `0 0` until history is
-deepened, and `git rebase origin/main` aborts with "empty ident name" until an
-identity is set. Use:
+deepened, and git aborts with "empty ident name" until an identity is set.
+
+### Usage
 ```bash
 git config user.email "agent@nebuko.local" && git config user.name "Nebuko Agent"
 git fetch --unshallow origin || git fetch --depth=200 origin
-git rebase origin/main          # resolve any conflicts, then --continue
-git push --force-with-lease origin <branch>
+git checkout <branch>
+git merge origin/main
+git push origin <branch>        # plain push — never --force-with-lease
 ```
-A leftover `.git/rebase-merge` from a failed attempt blocks the next rebase:
-`git rebase --abort` (or `rm -fr .git/rebase-merge`) before retrying.
+
+### Conflict behaviour
+The engine merges `origin/<base>` into the branch; on a conflict it aborts the
+merge (leaving a clean worktree) and reports the conflicted paths in the
+"Branch conflict — fix first" prompt section. You then resolve by re-running
+the merge yourself: `git merge origin/main`, resolve the markers, `git add` +
+`git commit`, then push plainly. A merge never rewrites published history,
+so no force-push is ever needed.
 
 ## System prompt assembly (issue #943)
 

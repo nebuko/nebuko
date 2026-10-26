@@ -823,7 +823,7 @@ class Engine:
         this comment.
         """
         self._publish_state["body"] = body
-        self._publish_state["comment_id"] = self.adapter.post(body)
+        self._publish_state["comment_id"] = self.adapter.post(body).comment_id
         new_state = self._backfill_step_output(state)
         self.adapter.save_state(new_state)
         return new_state
@@ -2723,7 +2723,7 @@ class Engine:
         # The part ids the adapter accepted, in order, so the state journal can
         # record every comment the answer was posted as (issue #913).
         self._publish_state["comment_ids"] = [
-            self.adapter.post(bridge.escape_agent_triggers(part.body))
+            self.adapter.post(bridge.escape_agent_triggers(part.body)).comment_id
             for part in parts
         ]
         # Keep the state-bearing comment id so ``persist`` can point this step's

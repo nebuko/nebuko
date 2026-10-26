@@ -1,8 +1,9 @@
 """Tests for the engine-owned branch scaffold (issue #1138).
 
 Real git against a local bare remote: the scaffold must create the feature
-branch from the fetched base, rebase an existing one, return a rebase conflict
-as data (fix-first note, branch restored), skip benignly and fail closed.
+branch from the fetched base, merge an existing one onto the base, return a
+merge conflict as data (fix-first note, branch restored), skip benignly and
+fail closed.
 """
 
 from __future__ import annotations
@@ -131,7 +132,7 @@ class TestScaffold:
             checkout, "rev-parse", "origin/main"
         )
 
-    def test_rebases_an_existing_branch(self, checkout):
+    def test_merges_an_existing_branch(self, checkout):
         _git(checkout, "checkout", "-q", "-b", BRANCH)
         _commit(checkout, "work.txt", "work\n", "work")
         # The base moves on after the branch was cut.
@@ -142,11 +143,14 @@ class TestScaffold:
         result = _scaffold(checkout)
 
         assert result.ok and not result.conflict
-        assert "rebased" in result.detail
-        # ``--is-ancestor`` exits non-zero (raising in ``_git``) when the base
-        # is not an ancestor of the rebased HEAD.
+        assert f"merged origin/main" in result.detail
+        # The merge commit makes the base an ancestor of the merged HEAD.
         _git(checkout, "merge-base", "--is-ancestor", "origin/main", "HEAD")
         assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
+        # The merge is a real merge commit: round 1's commit survives.
+        assert _git(checkout, "rev-parse", "HEAD^1") != _git(
+            checkout, "rev-parse", "HEAD^2"
+        )
 
     def test_a_conflict_is_data_with_a_fix_first_note(self, checkout):
         _git(checkout, "checkout", "-q", "-b", BRANCH)
@@ -159,10 +163,13 @@ class TestScaffold:
 
         assert result.ok and result.conflict
         assert "FIRST" in result.note
+        assert "git merge origin/main" in result.note
         assert "base.txt" in result.detail
-        # The rebase was aborted: the session starts on a clean branch.
+        # The merge was aborted: the session starts on a clean branch.
         assert _git(checkout, "status", "--porcelain") == ""
         assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
+        # No merge is left in progress.
+        assert not (checkout / ".git" / "MERGE_HEAD").exists()
 
     def test_skips_without_a_remote(self, tmp_path):
         work = tmp_path / "work"
@@ -208,7 +215,8 @@ class TestScaffold:
     ):
         # Round 2 on the same issue: the remote branch carries round 1's
         # commits, the fresh checkout is detached at the base. The branch
-        # must be continued (rebased), never reset by ``checkout -B``.
+        # must be continued (merged onto the base), never reset by
+        # ``checkout -B``.
         base = _git(detached_checkout, "rev-parse", "HEAD")
         _git(detached_checkout, "checkout", "-q", "-b", BRANCH)
         _commit(detached_checkout, "work.txt", "work\n", "round 1")
