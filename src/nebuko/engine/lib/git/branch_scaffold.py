@@ -214,7 +214,7 @@ class BranchScaffold:
             )
         detail = f"created {branch} from origin/{base}"
         logger.info("branch scaffold: %s", detail)
-        return ScaffoldResult(ok=True, detail=detail, branch=branch)
+        return ScaffoldResult(ok=True, detail=detail, branch=branch, created=True)
 
     def _rebase_existing(self, branch: str, base: str) -> ScaffoldResult:
         # After a remote-only fetch the session is still on the detached

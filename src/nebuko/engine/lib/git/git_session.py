@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -185,7 +186,13 @@ class GitSessionGuard:
                 auth_failure,
             )
 
-        commit_problem = self._commit_all_pending()
+        commit_result = self._commit_all_pending()
+        # A made commit's short sha comes back as the result; any prose is a
+        # problem (issue #1153: the sha is surfaced in the finalize detail).
+        if re.fullmatch(r"[0-9a-f]{7,40}", commit_result):
+            committed_sha, commit_problem = commit_result, ""
+        else:
+            committed_sha, commit_problem = "", commit_result
 
         problems: list[str] = []
         if commit_problem:
@@ -209,7 +216,10 @@ class GitSessionGuard:
                 detail="; ".join(problems)
                 + self._token_hint(),
             )
-        return GuardResult(ok=True, detail=f"{branch} is clean and pushed")
+        detail = f"{branch} is clean and pushed"
+        if committed_sha:
+            detail = f"committed {committed_sha}; {detail}"
+        return GuardResult(ok=True, detail=detail)
 
     # ── Identity and credentials ──────────────────────────────────
 
