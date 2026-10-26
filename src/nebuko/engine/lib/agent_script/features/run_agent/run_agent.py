@@ -48,6 +48,7 @@ from agent_script.features.run_agent.publication_guard import (
 )
 from agent_script.features.run_agent.run_failure import RunFailure, classify_failure
 from agent_script.features.run_agent.checkpoints import (
+    CHECKPOINT_100_PROMPT,
     CheckpointScheduler,
     compute_checkpoints,
     count_plan_changes,
@@ -64,7 +65,6 @@ from agent_script.features.run_agent.timeout_budget import (
     TimeoutBudget,
     resolve_timeout_budget,
 )
-from agent_script.features.run_agent.wind_down_prompt import WIND_DOWN_PROMPT
 from agent_script.sub_domains.metrics.token_telemetry_collector import (
     TokenTelemetryCollector,
     install,
@@ -255,7 +255,9 @@ def _perform_wind_down(
         True if the wind-down completed without tripping its own budget.
     """
     logger.info("Soft timeout reached — starting graceful wind-down phase")
-    conversation.send_message(WIND_DOWN_PROMPT)
+    # CHECKPOINT_100_PROMPT wraps WIND_DOWN_PROMPT and asks for the handoff
+    # update first (issue #966, scope item 3).
+    conversation.send_message(CHECKPOINT_100_PROMPT)
     wind_down_watchdog, _ = _run_supervised(
         conversation, budget.wind_down_timeout_s, "Wind-down run"
     )
