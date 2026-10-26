@@ -18,12 +18,15 @@ from agent_script.features.ensure_pr.ensure_pr import (
     _default_base,
     _find_pr_for_branch,
     _issue_number_from_env,
+    _needs_push,
+    _prepare_publish,
     _repo_root,
     _run_gh,
     _run_git,
     check_publication,
     ensure_pr,
 )
+from agent_script.features.ensure_pr.ensure_pr import PublishSplit
 from agent_script.features.ensure_pr.workflow_patch import (
     PATCH_FILENAME,
     WORKFLOW_DIR,
@@ -1416,3 +1419,88 @@ class TestRealGitBaseRefResolution(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCommittedOnlyPublication(unittest.TestCase):
+    """Committed-but-unpushed plain work is published as-is (issue #1180).
+
+    The guard saw ``unpushed_commits`` + ``missing_pr`` with a clean tree and
+    ``ensure_pr`` answered ``"workflow patch delivered"`` without pushing or
+    opening anything. These tests lock the fix: committed plain paths are
+    published by pushing the branch as-is and opening the PR.
+    """
+
+    COMMITTED = "src/x.py"
+
+    def _git(self, committed=COMMITTED):
+        # Clean tree (no dirty paths); the delta lives only in unpushed commits.
+        return _patch_git(status="", committed=committed)
+
+    def test_given_clean_tree_with_one_unpushed_plain_commit_when_preparing_publish_then_committed_plain_paths_are_reported(self):
+        git = self._git()
+        with patch("agent_script.features.ensure_pr.ensure_pr._run_git", git):
+            split = _prepare_publish("origin/main", "feature/issue-1180", "origin/main")
+        self.assertEqual(
+            split,
+            PublishSplit(
+                workflow_paths=(),
+                plain_paths=(),
+                republished=False,
+                committed_plain_paths=(self.COMMITTED,),
+            ),
+        )
+        # The tree is left untouched: no reset to merge base for plain work.
+        self.assertFalse(any(c and c[0] == "reset" for c in git.calls))
+
+    def test_given_committed_only_split_when_checking_needs_push_then_true_and_workflow_only_false(self):
+        self.assertTrue(
+            _needs_push(
+                PublishSplit(
+                    workflow_paths=(),
+                    plain_paths=(),
+                    republished=False,
+                    committed_plain_paths=(self.COMMITTED,),
+                )
+            )
+        )
+        self.assertFalse(
+            _needs_push(
+                PublishSplit(
+                    workflow_paths=(".github/workflows/ci.yml",),
+                    plain_paths=(),
+                    republished=False,
+                )
+            )
+        )
+
+    def test_given_one_unpushed_plain_commit_and_no_pr_when_running_ensure_pr_then_branch_is_pushed_and_pr_opened(self):
+        git = self._git()
+        gh = _GhRecorder(pr_lookup="")
+        with _patch_ensure_pr(git, gh, env={"TARGET_NUMBER": "1180"}):
+            result = ensure_pr()
+
+        self.assertFalse(result.error)
+        self.assertTrue(result.pushed)
+        self.assertTrue(result.pr_url, "a PR must be opened for committed-only work")
+        self.assertTrue(result.message.startswith("PR opened: "))
+        self.assertTrue(any(c and c[0] == "push" for c in git.calls))
+        create_calls = [
+            args for args, _mutative in gh.recorded if args[:2] == ["pr", "create"]
+        ]
+        self.assertEqual(len(create_calls), 1)
+        body = create_calls[0][create_calls[0].index("--body") + 1]
+        self.assertIn("Closes #1180", body)
+
+    def test_given_no_dirty_paths_no_unpushed_work_and_no_pr_when_running_ensure_pr_then_message_is_nothing_to_publish(self):
+        git = self._git(committed="")
+        gh = _GhRecorder(pr_lookup="")
+        with _patch_ensure_pr(git, gh, env={"TARGET_NUMBER": "1180"}):
+            result = ensure_pr()
+
+        self.assertFalse(result.error)
+        self.assertFalse(result.pushed)
+        self.assertEqual(result.pr_url, "")
+        self.assertEqual(
+            result.message,
+            "nothing to publish: no plain delta and no PR opened",
+        )
