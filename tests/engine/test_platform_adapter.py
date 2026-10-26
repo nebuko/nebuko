@@ -19,6 +19,10 @@ PORT_METHODS = (
     "read_trigger",
     "load_history",
     "post",
+    "capabilities",
+    "edit_comment",
+    "add_reaction",
+    "load_history_page",
     "load_state",
     "save_state",
     "artifact_dir",
@@ -40,7 +44,14 @@ class TestPlatformAdapterProtocol:
     def test_base_module_exports_the_seam_callables(self):
         import nebuko.adapters.base as base
 
-        assert set(base.__all__) == {"HistoryProvider", "Poster", "PlatformAdapter"}
+        assert set(base.__all__) == {
+            "HistoryPage",
+            "HistoryProvider",
+            "PlatformAdapter",
+            "PostedComment",
+            "Poster",
+            "PosterCapabilities",
+        }
         assert Poster is not None
         assert HistoryProvider is not None
 

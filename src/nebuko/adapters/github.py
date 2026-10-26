@@ -12,6 +12,7 @@ import os
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from nebuko.engine.paths import ensure_import_path
+from nebuko.adapters.base import PostedComment, PosterCapabilities
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -257,7 +258,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return build_snapshot(client.get_issue_comments(repo, number, limit=limit))
 
     # @stub-protected
-    def post(self, body: str) -> str:
+    def post(self, body: str) -> PostedComment:
         """Publish ``body``; raise :class:`PublishError` if it cannot be delivered.
 
         The client already retries transient/rate-limit failures; a remaining
@@ -274,9 +275,33 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
                 getattr(result, "error_kind", None),
             )
         if isinstance(result, dict):
-            return str(result.get("html_url") or result.get("id") or "")
-        url = getattr(result, "comment_url", "") or getattr(result, "comment_id", "")
-        return str(url or "")
+            comment_id = str(result.get("id") or "")
+            permalink = str(result.get("html_url") or "") or None
+        else:
+            comment_id = str(
+                getattr(result, "comment_id", "") or getattr(result, "id", "") or ""
+            )
+            permalink = str(getattr(result, "comment_url", "") or "") or None
+        if not comment_id:
+            raise PublishError("comment write returned no comment id", None)
+        return PostedComment(comment_id=comment_id, permalink=permalink, anchor=permalink)
+
+    # @stub-protected
+    def capabilities(self) -> PosterCapabilities:
+        """GitHub renders markdown, details, task lists and comment anchors."""
+        return PosterCapabilities(edit_comment=True, reactions=True, history_pagination=True)
+
+    # @stub-protected
+    def edit_comment(self, comment_id: str, body: str) -> PostedComment:
+        raise NotImplementedError("edit_comment not supported by this adapter")
+
+    # @stub-protected
+    def add_reaction(self, comment_id: str, emoji: str) -> None:
+        raise NotImplementedError("add_reaction not supported by this adapter")
+
+    # @stub-protected
+    def load_history_page(self, cursor: str | None = None) -> HistoryPage:
+        raise NotImplementedError("load_history_page not supported by this adapter")
 
     # @stub-protected
     def load_state(self) -> WorkflowState | None:
