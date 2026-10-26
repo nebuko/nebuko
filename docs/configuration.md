@@ -127,6 +127,41 @@ providers:
 > A table entry without a cache-read price bills cache hits at the input rate,
 > so the `Cache hit price ($/1M)` column shows that input price rather than `—`.
 
+### Model pricing & cost estimation
+
+**How to use.** Set `input_price` and `output_price` (USD per 1M tokens) on an
+`llms` entry in the agent config YAML, and optionally `cache_read_price` where
+the provider publishes one:
+
+```yaml
+llms:
+  mistral-small-4:
+    model_path: "mistral/mistral-small-2603"
+    provider: "${providers.mistral}"
+    input_price: 0.15
+    output_price: 0.6
+    cache_read_price: 0.015
+```
+
+These prices apply to every agent role that references the llm entry.
+
+**How it works.** Pricing merges two sources, per field, with the price-table
+value winning where both are set:
+
+- **Run time** — when the provider reports no cost, the local four-tier
+  estimate prices tokens with the configured `*_price` fields, completed from
+  the default price table where unset.
+- **Report time** — the issue-close `agent-metrics` job estimates zero-cost
+  entries with the same merge: the price table first, then the agent config's
+  `*_price` fields as fallback (loaded from `defaults/agents/` or the path
+  pinned by `AGENT_CONFIG_PATH`). An estimated cell carries the `*` marker
+  with the footnote, and the folded `Price details used for the estimation`
+  block lists the per-model prices actually used.
+
+**Fail-open.** When no price resolves for a model from either source —
+unlisted model, missing table, unpriced config — its cost shows `$0.0000`
+with no marker and no price row (unchanged behaviour).
+
 Sampling parameters and their typical ranges:
 
 | Parameter | Type | Description | Typical range |
@@ -177,7 +212,7 @@ agents:
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - inject: ["posting-contract"]
-      - discover: ["git-pr-workflow"]
+      - discover: ["complexity"]
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish", "dispatch_next"]
 ```
 

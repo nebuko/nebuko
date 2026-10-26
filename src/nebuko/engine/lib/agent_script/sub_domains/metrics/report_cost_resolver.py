@@ -16,20 +16,68 @@ Base-deps-safe by construction: imports only ``cost``/``pricing``/
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+
+import yaml  # noqa: F401 — used by the stub bodies once implemented
 
 from metrics_schema import Metrics
 
 from agent_script.sub_domains.metrics.cost import CostRates, SessionCost
+from default_paths import agent_config_file
 from pricing.features.load_price_table.load_price_table import load_price_table
 from pricing.features.resolve_model_rates.resolve_model_rates import (
     resolve_model_rates,
 )
-from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
+from pricing.sub_domains.price_table.price_table import (
+    ModelPrice,
+    PriceTable,
+    normalize_model_id,
+)
 
 #: The SDK's placeholder for an unidentified model (see ``metrics_collector``).
 PLACEHOLDER_MODEL = "default"
+
+
+def load_config_prices(  # @stub-protected
+    config_path: Optional[str] = None,
+) -> "dict[str, ModelPrice]":
+    """Agent-config per-1M prices keyed by each llm entry's ``model_path``.
+
+    Only entries setting **both** ``input_price`` and ``output_price`` are
+    loadable — a partial bundle cannot produce a trustworthy session cost.
+    Fail-open: a missing file, a parse error or no priced entries all yield
+    ``{}`` (issue #1144).
+    """
+    path = config_path or agent_config_file()
+    try:
+        with open(path) as stream:
+            config = yaml.safe_load(stream) or {}
+    except Exception:  # noqa: BLE001 — pricing is a report bonus, never fatal
+        return {}
+    llms = config.get("llms") or {}
+    if not isinstance(llms, dict):
+        return {}
+
+    prices: dict[str, ModelPrice] = {}
+    for entry in llms.values():
+        if not isinstance(entry, dict):
+            continue
+        model_path = entry.get("model_path")
+        input_price = entry.get("input_price")
+        output_price = entry.get("output_price")
+        if not model_path or input_price is None or output_price is None:
+            continue  # a partial bundle cannot price a session cost
+        prices[model_path] = ModelPrice(
+            input_price=float(input_price),
+            output_price=float(output_price),
+            cache_read_price=(
+                float(entry["cache_read_price"])
+                if entry.get("cache_read_price") is not None
+                else None
+            ),
+        )
+    return prices
 
 
 def _field(metric: "Metrics | Mapping[str, Any]", name: str, default: Any) -> Any:
@@ -41,13 +89,17 @@ def _field(metric: "Metrics | Mapping[str, Any]", name: str, default: Any) -> An
 
 @dataclass(frozen=True)
 class _ModelRef:
-    """Path-only model reference for :func:`resolve_model_rates`.
+    """Model reference for :func:`resolve_model_rates`.
 
-    The report-time job has no agent config, so no configured ``*_price`` is
-    supplied; the merge then resolves the table's per-field prices.
+    The report-time job supplies the agent config's per-1M prices for the
+    recorded identity (issue #1144), so the merge still resolves when the
+    price table has no entry for the model.
     """
 
     model_path: str
+    input_price: Optional[float] = None
+    output_price: Optional[float] = None
+    cache_read_price: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -55,17 +107,26 @@ class ReportCostResolver:  # @stub-protected
     """Effective per-entry cost for reporting from recorded identity + tokens."""
 
     table: Optional[PriceTable]
+    #: Per-1M prices from the agent config's ``llms``, keyed by ``model_path``
+    #: (issue #1144); the table's match wins per field, the config fills gaps.
+    config_prices: dict[str, ModelPrice] = field(default_factory=dict)
 
     @classmethod
     def build(  # @stub-protected
-        cls, *, fetcher: Optional[Callable[..., Any]] = None
+        cls,
+        *,
+        fetcher: Optional[Callable[..., Any]] = None,
+        config_prices: Optional["dict[str, ModelPrice]"] = None,
     ) -> "ReportCostResolver":
         """Load the default price table, fail-open (``table=None`` on failure)."""
         try:
             table = load_price_table(fetcher=fetcher)
         except Exception:  # noqa: BLE001 — pricing is a report bonus, never fatal
             table = None
-        return cls(table=table)
+        return cls(
+            table=table,
+            config_prices=config_prices if config_prices is not None else {},
+        )
 
     def model_key(self, metric: "Metrics | Mapping[str, Any]") -> str:  # @stub-protected
         """The aggregation row key: the recorded model id, or the placeholder."""
@@ -80,17 +141,46 @@ class ReportCostResolver:  # @stub-protected
         """The per-1M price the estimate used for ``metric``, or ``None``.
 
         ``None`` when the provider reported the cost, when the model identity is
-        the placeholder, or when the table has no complete price — i.e. exactly
-        the cases where ``effective_cost`` did not price tokens (issue #1048).
+        the placeholder, or when neither the config nor the table resolves a
+        complete price — i.e. exactly the cases where ``effective_cost`` did not
+        price tokens (issue #1048).
         """
         if (_field(metric, "cost", 0.0) or 0.0) > 0:
             return None
 
         model_path = self.model_key(metric)
-        if model_path == PLACEHOLDER_MODEL or self.table is None:
+        if model_path == PLACEHOLDER_MODEL:
             return None
 
-        return resolve_model_rates(_ModelRef(model_path=model_path), self.table)
+        config_entry = self._config_price(model_path)
+        if config_entry is None and self.table is None:
+            return None
+
+        if config_entry is None:
+            return resolve_model_rates(_ModelRef(model_path=model_path), self.table)
+
+        # Table-over-config per-field merge: the default table's set tiers
+        # win, the config fills the gaps.
+        table_price = self.table.match(model_path) if self.table is not None else None
+        merged = config_entry if table_price is None else config_entry.merged_over(table_price)
+        if merged.input_price is None or merged.output_price is None:
+            return None
+        return merged
+
+    def _config_price(self, model_path: str) -> Optional[ModelPrice]:
+        """The agent config's price for ``model_path``, or ``None``.
+
+        Exact key first, then each candidate id ``normalize_model_id`` derives
+        (route prefixes stripped, vendor aliases), so a config entry keyed by
+        the provider-published path still matches a prefixed recorded id.
+        """
+        if not self.config_prices:
+            return None
+        for candidate in normalize_model_id(model_path):
+            price = self.config_prices.get(candidate)
+            if price is not None:
+                return price
+        return None
 
     def effective_cost(self, metric: "Metrics | Mapping[str, Any]") -> float:  # @stub-protected
         """The entry's USD cost for reporting; never mutates ``metric``."""

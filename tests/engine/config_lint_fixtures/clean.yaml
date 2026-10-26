@@ -13,7 +13,7 @@ agents:
     role: "Test agent role."
     prompt_file: ".agents/prompts/a.md"
     skills: ["skill-a"]
-    tools: ["think"]
+    tools: ["think", "finish"]
     mcp_servers:
       - name: "brave-search"
         command: "npx"

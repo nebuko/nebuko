@@ -396,7 +396,7 @@ class TestEngineElicitedClosingTurn:
     def test_restricts_the_tool_surface_to_the_terminal_gate(
         self, tmp_path: Path
     ) -> None:
-        """The closing turn exposes only the terminal ``finalize`` gate (issue #1071)."""
+        """The closing turn exposes ``finalize``/``finish``, then restores the map."""
         repo_root = tmp_path / "checkout"
         _write_entry_point(repo_root)
         tools = {
@@ -414,7 +414,7 @@ class TestEngineElicitedClosingTurn:
 
         host.run("prompt")
 
-        assert set(conversation.tools_seen_during_run) == {"finalize"}
+        assert set(conversation.tools_seen_during_run) == {"finalize", "finish"}
         assert set(conversation.agent._tools) == set(tools)
 
     def test_reports_an_empty_tool_map_without_restricting(self, tmp_path: Path) -> None:

@@ -40,7 +40,7 @@ Call the `finalize` tool NOW with your factual turn outcome:
 
 The engine derives the route from the workflow topology — you report what
 happened, not where to go. Base the verdict on the work you just completed.
-Call the tool. The call ends the turn — no further tool call is needed.
+Call the tool, then finish.
 
 Your previous answer already stands as the posted deliverable — you are only
 being asked to supply the missing turn outcome; do not restate or rework it.

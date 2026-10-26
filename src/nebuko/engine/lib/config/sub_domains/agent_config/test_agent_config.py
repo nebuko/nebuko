@@ -36,7 +36,7 @@ class TestAgentConfig:
             model=llm,
             prompt_file=".agents/prompts/architect.md",
         )
-        assert agent.tools == ["terminal", "file_editor", "task_tracker", "think"]
+        assert agent.tools == ["terminal", "read", "edit", "write", "task_tracker", "think", "finish"]
 
     def test_mcp_servers_default_empty(self):
         """AgentConfig defaults mcp_servers to an empty list."""
@@ -149,9 +149,9 @@ class TestAgentConfig:
         agent = AgentConfig(
             model=llm,
             prompt_file=".agents/prompts/context.md",
-            tools=["terminal", "think"],
+            tools=["terminal", "think", "finish"],
         )
-        assert agent.tools == ["terminal", "think"]
+        assert agent.tools == ["terminal", "think", "finish"]
 
     def test_empty_tools(self):
         """AgentConfig accepts an empty tools list."""
@@ -165,15 +165,15 @@ class TestAgentConfig:
         assert agent.tools == []
 
     def test_restricted_tools_architect_pattern(self):
-        """Architect/issue pattern: think only."""
+        """Architect/issue pattern: think + finish only."""
         provider = ProviderConfig(api_url="https://example.com", api_token_env="MY_TOKEN")
         llm = LLMConfig(model_path="openrouter/deepseek/v4", provider=provider)
         agent = AgentConfig(
             model=llm,
             prompt_file=".agents/prompts/architect.md",
-            tools=["think"],
+            tools=["think", "finish"],
         )
-        assert agent.tools == ["think"]
+        assert agent.tools == ["think", "finish"]
 
     def test_load_config_with_tools(self):
         """load_config parses tools field from YAML correctly."""
@@ -196,7 +196,7 @@ class TestAgentConfig:
                     "temperature": 0.2,
                     "prompt_file": ".agents/prompts/architect.md",
                     "skills": [],
-                    "tools": ["think"],
+                    "tools": ["think", "finish"],
                 },
                 "dev": {
                     "model": "${llms.deepseek}",
@@ -212,9 +212,9 @@ class TestAgentConfig:
             f.flush()
             config = load_config(f.name)
 
-        assert config.agents["architect"].tools == ["think"]
+        assert config.agents["architect"].tools == ["think", "finish"]
         assert config.agents["dev"].tools == [
-            "terminal", "file_editor", "task_tracker", "think",
+            "terminal", "read", "edit", "write", "task_tracker", "think", "finish",
         ]
 
         os.unlink(f.name)

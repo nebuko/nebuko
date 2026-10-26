@@ -255,8 +255,13 @@ class TestShippedRoster:
 
         assert [doc.name for doc in context.injected] == [
             "call-agent",
-            "posting-contract",
             "planning",
         ]
-        assert [doc.name for doc in context.discoverable] == ["complexity"]
+        # posting-contract moved from inject to discover (its contract is
+        # restated by the engine's closing-turn prompt, so the body no longer
+        # rides every step's prompt).
+        assert [doc.name for doc in context.discoverable] == [
+            "complexity",
+            "posting-contract",
+        ]
         assert all(doc.summary for doc in context.discoverable)

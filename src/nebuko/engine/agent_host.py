@@ -79,7 +79,8 @@ _FINALIZE_BODY_ATTR = "nebuko_finalize_body"
 #: declaration only decides how the report is extracted and rendered.
 _FINALIZE_PROMPT = (
     "Engine finalize turn - the work phase is over; do not call any work tool "
-    "(no terminal, file_editor, think, ...). Call the `finalize` tool once. Put "
+    "(no terminal, read, edit, write, think, ...). Call the `finalize` tool "
+    "once. Put "
     "your COMPLETE, self-contained report in its `report` argument - the full "
     "deliverable that must be posted on the issue (never a one-line note) - and "
     "your turn outcome in `turn_outcome`.\n\n"
@@ -103,11 +104,11 @@ _FINALIZE_RETRY_PROMPT = (
     "argument."
 )
 
-#: The closing turn's tool surface (issues #973, #1014): only the terminal
-#: gate. A ``finalize`` call ends the run by itself (issue #1071), so no other
-#: terminal tool is exposed. The removed ``dispatch_next``/``call_agent`` are
-#: hidden — the outcome is typed.
-_FINALIZE_TOOL_NAMES = frozenset({"finalize"})
+#: The closing turn's tool surface (issues #973, #1014): the terminal tool plus
+#: ``finish``. ``finish`` stays exposed so the model can terminate the turn; it
+#: is not a routing channel and its message is only a fallback deliverable. The
+#: removed ``dispatch_next``/``call_agent`` are hidden — the outcome is typed.
+_FINALIZE_TOOL_NAMES = frozenset({"finalize", "finish"})
 
 #: Watchdog budget for one engine-elicited closing turn (seconds). A turn that
 #: outlives it is interrupted and the caller keeps the deterministic fallback

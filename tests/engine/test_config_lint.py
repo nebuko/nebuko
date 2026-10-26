@@ -29,7 +29,6 @@ RULE_SEVERITY_EXPECTED = {
     "C6-unreferenced-entry": "warning",
     "C7-mcp-servers": "error",
     "C8-missing-role": "warning",
-    "C9-deprecated-tool": "warning",
 }
 
 FILE_RULES = ("C4-prompt-file", "C5-skill-file")
@@ -40,6 +39,9 @@ KNOWN_TOOLS_EXPECTED = frozenset(
         "terminal_batch",
         "file_editor",
         "task_tracker",
+        "read",
+        "edit",
+        "write",
         "think",
         "finish",
         "finalize",

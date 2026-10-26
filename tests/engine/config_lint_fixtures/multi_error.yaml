@@ -11,7 +11,7 @@ agents:
     model: "${llms.nope}"
     prompt_file: ".agents/prompts/ghost.md"
     skills: ["ghost-skill"]
-    tools: ["think", "warp_drive", "finish"]
+    tools: ["think", "warp_drive"]
     mcp_servers:
       - name: "dup"
         command: "npx"

@@ -20,7 +20,7 @@ agents:
     role: "Test agent role."
     prompt_file: ".agents/prompts/a.md"
     skills: ["skill-a"]
-    tools: ["think"]
+    tools: ["think", "finish"]
     mcp_servers:
       - "${mcp_servers.brave-search}"
       - "${mcp_servers.malformed}"

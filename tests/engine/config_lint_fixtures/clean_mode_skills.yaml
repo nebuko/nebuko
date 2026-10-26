@@ -14,4 +14,4 @@ agents:
     skills:
       - inject: ["skill-a"]
       - discover: ["skill-a"]
-    tools: ["think"]
+    tools: ["think", "finish"]

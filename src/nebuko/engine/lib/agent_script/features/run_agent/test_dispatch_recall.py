@@ -104,11 +104,6 @@ class TestDispatchRecallPromptTeachesTheTypedSchema(unittest.TestCase):
         for legacy in ("status:", "agent:", "reason:", "loop"):
             self.assertNotIn(legacy, DISPATCH_RECALL_PROMPT)
 
-    def test_prompt_does_not_ask_for_a_finish_call(self):
-        """Issue #1071: ``finish`` is gone; the recall prompt must not tell
-        the model to end with it (the finalize call itself ends the turn)."""
-        self.assertNotIn("finish", DISPATCH_RECALL_PROMPT)
-
 
 if __name__ == "__main__":
     unittest.main()

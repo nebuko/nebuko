@@ -45,13 +45,13 @@ def test_prompt_names_the_missing_steps_and_the_workflow():
     prompt = publication_recall_prompt(
         ["dirty_tree", "unpushed_commits", "missing_pr"]
     )
-    for token in ("uncommitted", "not pushed", "no pull request", "git-pr-workflow"):
+    for token in ("uncommitted", "not pushed", "no pull request", "engine opens the pull request"):
         assert token in prompt
 
 
 def test_prompt_keeps_the_agent_in_control_of_the_workflow():
     """The agent keeps control of branch, commit message and PR body."""
-    for token in ("Commit", "Push", "pull request", "finalize"):
+    for token in ("Commit", "push", "pull request", "finalize"):
         assert token in publication_recall_prompt(["dirty_tree"])
 
 

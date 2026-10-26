@@ -338,7 +338,9 @@ def run_agent(
     install_tool_call_repair()
 
     # ── Tool resolution ──────────────────────────────────────────
-    default_tool_list = ["terminal", "file_editor", "task_tracker", "think"]
+    default_tool_list = [
+        "terminal", "read", "edit", "write", "task_tracker", "think", "finish",
+    ]
     agent_tools = agent_cfg.tools if agent_cfg is not None else default_tool_list
     # Every step ends through the terminal ``finalize`` tool (issue #1033), so
     # it must be resolvable even though the role's static tool list predates it.
@@ -534,7 +536,9 @@ def run_agent(
     # review), non-approved verdicts and every non-SUCCESS status are never
     # checked — their dirty tree is not an error.
     if (
-        "file_editor" in agent_tools
+        any(
+            name in ("file_editor", "edit", "write") for name in agent_tools
+        )
         and outcome is OutcomeStatus.SUCCESS
         and recorded_is_approved(conversation)
     ):

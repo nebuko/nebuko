@@ -24,7 +24,7 @@ you are on a short time budget.
    (link it to the target issue, describe the work done and what remains).
    If a PR already exists, update its description instead.
 
-4. FINALIZE — End your execution with a finalize call whose report contains:
+4. FINAL MESSAGE — End your execution with a finish message that contains:
    - **Work completed**: what was done in this run (concrete deliverables).
    - **Current state**: branch/PR names and URLs.
    - **Blocking point**: what exactly is stuck or incomplete right now.

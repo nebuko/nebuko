@@ -23,8 +23,8 @@ llms:
     preserve_thinking: true
 
 # ── Agents: role → model + prompt + skills + tools ──
-# Tools: terminal, file_editor, task_tracker (SDK tools)
-#        think (built-in defaults); every step ends via finalize
+# Tools: terminal, terminal_batch, read, edit, write, task_tracker (SDK tools)
+#        think, finish (built-in defaults)
 agents:
   architect:
     model: "${llms.mimo-2_6-pro}"
@@ -32,9 +32,9 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/architect.md"
     skills:
-      - inject: ["call-agent", "posting-contract", "planning"]
-      - discover: ["complexity"]
-    tools: ["think", "finalize", "complexity_review"]
+      - inject: ["call-agent", "planning"]
+      - discover: ["complexity", "posting-contract"]
+    tools: ["think", "finish", "finalize", "complexity_review"]
     complexity_overrides:
       low:
         model: "${llms.deepseek-v4_1-flash}"
@@ -51,9 +51,8 @@ agents:
     reasoning_effort: "none"
     prompt_file: "defaults/prompts/dev.md"
     skills:
-      - inject: ["posting-contract"]
-      - discover: ["git-pr-workflow", "complexity"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finalize", "report_scaffold_branch", "complexity_review"]
+      - discover: ["complexity", "posting-contract"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
 
   context:
     model: "${llms.deepseek-v4_1-flash}"
@@ -62,9 +61,9 @@ agents:
     reasoning_effort: "none"
     prompt_file: "defaults/prompts/context.md"
     skills:
-      - inject: ["call-agent", "posting-contract", "context-research"]
-      - discover: ["complexity"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finalize", "complexity_review"]
+      - inject: ["call-agent", "context-research"]
+      - discover: ["complexity", "posting-contract"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "complexity_review"]
 
   review:
     model: "${llms.glm-5_3-flash}"
@@ -72,15 +71,15 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
     skills:
-      - inject: ["posting-contract", "plan-review"]
-      - discover: ["retrospective", "complexity"]
-    tools: ["terminal", "terminal_batch", "think", "finalize", "complexity_review"]
+      - inject: ["plan-review"]
+      - discover: ["retrospective", "complexity", "posting-contract"]
+    tools: ["terminal", "terminal_batch", "think", "finish", "finalize", "complexity_review"]
 
   po:
     model: "${llms.deepseek-v4_1-flash}"
     role: "Product owner — triages and refines issues into actionable specs; never modifies code."
     prompt_file: "defaults/prompts/po.md"
     skills:
-      - inject: ["call-agent", "posting-contract", "issue-refinement"]
-      - discover: ["complexity"]
-    tools: ["think", "finalize", "complexity_review"]
+      - inject: ["call-agent", "issue-refinement"]
+      - discover: ["complexity", "posting-contract"]
+    tools: ["think", "finish", "finalize", "complexity_review"]

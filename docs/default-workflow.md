@@ -60,9 +60,10 @@ otherwise, when the workflow file lives in the repository being checked out
 (same-repo/vendored case), the checkout is pinned to the workflow's own commit
 (`job.workflow_sha`) so a workflow pinned via `uses: …@<sha1|tag>` operates on
 the same version; otherwise the checkout falls back to `actions/checkout`'s
-event default. A pinned SHA yields a detached HEAD — `ensure_pr` treats that as
-"no branch to push" and skips, so the agent must create its feature branch
-before handing off.
+event default. A pinned SHA yields a detached HEAD — the engine's branch
+scaffold creates the dev session's `feature/issue-<n>-<slug>` branch from it
+before the agent runs, so publication and PR finalization have a branch to
+push.
 
 ---
 

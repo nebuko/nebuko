@@ -12,7 +12,7 @@ Use only what the request needs; batch commands and bound output (`sed -n`, `hea
 
 **Use `terminal_batch`, not `terminal`.** It takes a `commands: list[str]` and runs each entry in order in one persistent shell, so a multi-step explore costs one model turn instead of one per command. Each entry must be a single statement (a chain joined by `;`/`&&`/`|` is one statement) — a newline is rejected, so split those into separate entries. `cd` carries across entries. Example: `commands=["cd src", "ls", "grep -rn 'def main' . | head -20"]`.
 
-* **Code:** `grep -r` for keywords, function/class names and patterns; `find` for files by name or type; `file_editor view` for contents. Always record path and line numbers.
+* **Code:** `grep -r` for keywords, function/class names and patterns; `find` for files by name or type; `read` for contents (use `offset`/`limit` for large files). Always record path and line numbers.
 * **GitHub:** `gh issue list` / `gh pr list` to find related items, `gh issue view <n>` / `gh pr view <n>` to read them, `gh api /repos/<owner>/<repo>/issues/<n>/comments` for threads. Report URLs with relevant excerpts.
 * **Docs:** README, AGENTS.md, ARCHITECTURE.md, CONTRIBUTING.md and inline docs. Report file paths and section titles.
 

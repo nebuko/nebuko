@@ -34,7 +34,7 @@ mcp_servers:
       BRAVE_API_KEY: "BRAVE_API_KEY"
 
 # ── Agents: role → model + prompt + skills + tools ──
-# Tools: terminal, terminal_batch (batched shell, issue #982), file_editor
+# Tools: terminal, terminal_batch (batched shell, issue #982)
 #        (bounded views + view-range guidance), task_tracker (SDK tools)
 #        think, finish (built-in defaults)
 agents:
@@ -44,8 +44,8 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/architect.md"
     skills:
-      - inject: ["call-agent", "posting-contract", "planning"]
-      - discover: ["complexity"]
+      - inject: ["call-agent", "planning"]
+      - discover: ["complexity", "posting-contract"]
     tools: ["think", "finish", "finalize", "complexity_review", "handoff"]
     complexity_overrides:
       low:
@@ -61,9 +61,8 @@ agents:
     reasoning_effort: "none"
     prompt_file: "defaults/prompts/dev.md"
     skills:
-      - inject: ["posting-contract"]
-      - discover: ["git-pr-workflow", "complexity"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review", "handoff"]
+      - discover: ["complexity", "posting-contract"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review", "handoff"]
     complexity_overrides:
       low:
         reasoning: "low"
@@ -77,9 +76,9 @@ agents:
     reasoning_effort: "none"
     prompt_file: "defaults/prompts/context.md"
     skills:
-      - inject: ["call-agent", "posting-contract", "context-research"]
-      - discover: ["complexity"]
-    tools: ["terminal", "terminal_batch", "file_editor", "task_tracker", "think", "finish", "finalize", "complexity_review", "handoff"]
+      - inject: ["call-agent", "context-research"]
+      - discover: ["complexity", "posting-contract"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "complexity_review", "handoff"]
     complexity_overrides:
       low:
         reasoning: "low"
@@ -94,8 +93,8 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
     skills:
-      - inject: ["posting-contract", "plan-review"]
-      - discover: ["retrospective", "complexity"]
+      - inject: ["plan-review"]
+      - discover: ["retrospective", "complexity", "posting-contract"]
     tools: ["terminal", "terminal_batch", "think", "finish", "finalize", "complexity_review", "handoff"]
 
   po:
@@ -103,6 +102,6 @@ agents:
     role: "Product owner — triages and refines issues into actionable specs; never modifies code."
     prompt_file: "defaults/prompts/po.md"
     skills:
-      - inject: ["call-agent", "posting-contract", "issue-refinement"]
-      - discover: ["complexity"]
+      - inject: ["call-agent", "issue-refinement"]
+      - discover: ["complexity", "posting-contract"]
     tools: ["think", "finish", "finalize", "complexity_review", "handoff"]
