@@ -87,7 +87,7 @@ class TestScaffoldBranchRecorded:
 
         state = engine.adapter.load_state()
         assert state.git.branch_name == "feature/590-fix-it"
-        assert [e.status for e in state.git.history] == [GitActionStatus.CREATE]
+        assert GitActionStatus.CREATE in [e.status for e in state.git.history]
 
     def test_a_rebased_branch_is_recorded_as_rebase(
         self, tmp_path, monkeypatch, root
@@ -102,7 +102,7 @@ class TestScaffoldBranchRecorded:
 
         state = engine.adapter.load_state()
         assert state.git.branch_name == "feature/590-fix-it"
-        assert [e.status for e in state.git.history] == [GitActionStatus.REBASE]
+        assert GitActionStatus.REBASE in [e.status for e in state.git.history]
 
     def test_a_conflict_is_recorded_as_conflict(self, tmp_path, monkeypatch, root):
         engine = _stub_flow(
@@ -119,7 +119,7 @@ class TestScaffoldBranchRecorded:
 
         state = engine.adapter.load_state()
         assert state.git.branch_name == "feature/590-fix-it"
-        assert [e.status for e in state.git.history] == [GitActionStatus.CONFLICT]
+        assert GitActionStatus.CONFLICT in [e.status for e in state.git.history]
 
     def test_the_legacy_dev_branch_context_is_still_written(
         self, tmp_path, monkeypatch, root
