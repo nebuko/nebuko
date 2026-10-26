@@ -42,14 +42,15 @@ run `gh auth setup-git`, push, then restore the saved gitconfig.
 Under `.github/workflows/` the `nebuko-workflow.yaml` is build to be use externally.
 So by contention all repo's workflow related file are prefixed with `internal-`.
 
-## Known pre-existing test failures (not regressions)
-`uv run pytest src/nebuko/engine/lib` has **15 failures on `main`** unrelated to
-config/resolver work — all in workflow-routing and real-workflow-YAML tests
-(`test_workflow.py`, `test_resolve_workflow_step.py`, `test_resolve_config.py`,
-`build_output/test_build_output.py`, `resolve_route`). They stem from the
-checkout carrying both a root `workflows/` dir and `defaults/workflows/`. The
-`tests/` suite (616) and the config/agent_script modules are green, so diff
-against this baseline before blaming your change.
+## Workflow resolution precedence
+Workflow files resolve the repo-local override `.nebuko/workflows/<name>`
+first, then the shipped `defaults/workflows/<name>`. A repo-root `workflows/`
+directory is **never** consulted — untracked scaffolding there cannot shadow
+shipped defaults. To override a shipped workflow in a checkout, place a file
+with the same filename under `.nebuko/workflows/` (or set `WORKFLOWS_DIR` /
+`LOCAL_WORKFLOWS_DIR` as documented in `default_paths.py`).
+`uv run pytest tests src/nebuko/engine/lib` is fully green; red means a real
+regression — no baseline-diffing required.
 
 ## Thinking/reasoning config plumbing (issue #941)
 `thinking_enabled`/`preserve_thinking`/`reasoning_effort` live on `LLMConfig`
