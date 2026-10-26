@@ -32,6 +32,12 @@ runtime = [
 [project.scripts]
 nebuko = "nebuko.engine.run_loop:main"
 
+# PyInstaller discovers these hooks when building the release binary
+# (packaging/entry.py): litellm's model-cost JSON must be bundled or every
+# command that imports the SDK crashes (issue #1113).
+[project.entry-points.pyinstaller40]
+hook-dirs = "nebuko.engine._pyinstaller_hooks:hook_dirs"
+
 [dependency-groups]
 # Test tooling. `dev` is a default uv group, so `uv sync` / `uv run` provision
 # pytest + pytest-mock automatically — agents and humans must not install them
