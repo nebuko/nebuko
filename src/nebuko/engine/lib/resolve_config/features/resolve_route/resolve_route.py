@@ -1967,6 +1967,31 @@ def _build_force_next_result(
     }
 
 
+def _default_workflow_name() -> str:
+    """The workflow a bare ``/nebuko run workflow`` starts (issue #1094).
+
+    Reads ``default_workflow`` from the caller's ``.nebuko/nebuko.yaml``
+    manifest when it declares one; otherwise the shipped ``default`` workflow.
+    Best-effort: an unreadable manifest degrades to the built-in default so a
+    bare run command never crashes resolution.
+    """
+    from default_paths import user_dir
+
+    try:
+        import yaml
+
+        manifest_path = user_dir() / "nebuko.yaml"
+        if manifest_path.is_file():
+            raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            if isinstance(raw, dict):
+                name = raw.get("default_workflow")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+    except Exception as e:  # noqa: BLE001 - routing must not crash on a bad manifest
+        print(f"Warning: unreadable .nebuko/nebuko.yaml ({e}); using default", file=sys.stderr)
+    return "default"
+
+
 def _resolve_human_path(
     trigger_body: str,
     repo: Optional[str],
@@ -2085,9 +2110,13 @@ def _resolve_human_path(
             config_workflow=config_workflow, fs_state=fs_state,
         )
 
-    # /nebuko run workflow --name <name> [--step <step>] (human only)
+# /nebuko run workflow [--name <name>] [--step <step>] (human only)
     wf_run = wf_cmd if (wf_cmd is not None and wf_cmd.action == "run") else None
     wf_name = wf_run.params.get("name") if wf_run else None
+    if wf_run and not wf_name:
+        # Bare ``/nebuko run workflow`` (issue #1094): the repo's default
+        # workflow from ``.nebuko/nebuko.yaml``, else the shipped ``default``.
+        wf_name = _default_workflow_name()
     requested_step = (wf_run.params.get("step") or "") if wf_run else ""
     wf_resolved = False
     task = ""
