@@ -382,6 +382,38 @@ class TestGateCommandIntegration(unittest.TestCase):
         self.assertEqual(result["SKIP_AGENT"], "true")
         self.assertIn("approve gate", result.get("REASON", ""))
 
+    def test_reject_with_feedback_rerun_then_completion_blocks_advance(self):
+        """Replay the issue payload (nebuko/website#32).
+
+        An armed gate on ``plan`` is rejected with feedback; the gated step
+        re-runs and completes. Because the re-run's completion re-arms a
+        fresh gate, the next routing must resolve to a gate hold — never to
+        ``implement`` — until a new ``/nebuko approve gate``.
+        """
+        from resolve_config.features.resolve_route.resolve_route import _gate_pending
+
+        # Completion state of the re-run *as the bug persists it today*: the
+        # gate lock flipped back to RELEASED by the unconditional
+        # GATE_RELEASED handling in build_output, while the turn verdict is
+        # approved. The persisted state must instead carry an ARMED lock.
+        rerun_completion = _held_state(step="plan", gate=GateLock(step="plan"))
+        with self.subTest("persisted state must keep the gate armed"):
+            self.assertTrue(
+                rerun_completion.gate is not None
+                and rerun_completion.gate.status is GateStatus.ARMED,
+            )
+        with self.subTest("routing must hold on the armed gate, never advance"):
+            self.assertTrue(_gate_pending(rerun_completion))
+
+
+class TestPostDecisionGateReArm(unittest.TestCase):
+    """The re-run's completing turn must re-arm a fresh gate (issue #1178)."""
+
+    def test_reject_with_feedback_rerun_then_completion_blocks_advance(self):
+        from resolve_config.features.resolve_route.resolve_route import _gate_pending
+
+        self.assertTrue(_gate_pending(_held_state(step="plan", gate=GateLock(step="plan"))))
+
 
 if __name__ == "__main__":
     unittest.main()

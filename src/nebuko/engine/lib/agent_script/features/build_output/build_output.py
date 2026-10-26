@@ -325,6 +325,25 @@ def _parse_gate_released_env() -> bool:
     )
 
 
+def resolve_post_decision_gate(  # @stub-protected: signature defined by architect — do not modify
+    gate: Optional[GateLock],
+    workflow_step: str,
+    decision: Optional[GateDecision],
+    gate_released: bool,
+) -> Optional[GateLock]:
+    """Final gate state to persist for the completing turn of a gate-command run.
+
+    - decision is None -> gate unchanged (no gate command rode along).
+    - decision.status == "rejected" and decision.feedback and
+      decision target step == workflow_step -> fresh armed
+      GateLock(step=workflow_step): the rejection consumed the previous hold
+      and the re-run's completion raises a new one.
+    - gate_released and gate is not None -> gate.model_copy(update={"status": GateStatus.RELEASED}).
+    - otherwise -> gate unchanged.
+    """
+    raise NotImplementedError
+
+
 def _parse_gate_consult_env() -> str:
     """The callee of a gate consultation resolved this run (issue #1003).
 
