@@ -60,26 +60,28 @@ RULE_SEVERITY: dict[str, str] = {
     _RULE_MISSING_ROLE: _SEVERITY_WARNING,
 }
 
-# Canonical tool names accepted at run time. Source of truth:
-# engine/lib/agent_script/features/run_agent/run_agent.py (sdk_tool_names ∪
-# builtin_tool_map ∪ {finalize, report_scaffold_branch, complexity_review});
-# duplicated here so the pure linter need not import the SDK runtime.
-KNOWN_TOOLS: frozenset[str] = frozenset(
-    {
-        "terminal",
-        "terminal_batch",
-        "file_editor",
-        "task_tracker",
-        "read",
-        "edit",
-        "write",
-        "think",
-        "finish",
-        "finalize",
-        "report_scaffold_branch",
-        "complexity_review",
-    }
-)
+# Canonical tool names accepted at run time. Single source of truth:
+# tool_resolution.CONFIG_TOOL_NAMES (the same registry ``resolve_toolset``
+# dispatches on at run time), imported lazily with the config package so the
+# pure linter never triggers the SDK runtime's import side effects. Seeded
+# None and populated by :func:`_known_tools` on first use.
+KNOWN_TOOLS: frozenset[str] | None = None
+
+
+def _known_tools() -> frozenset[str]:
+    """Resolve the canonical tool-name set from the runtime registry."""
+    global KNOWN_TOOLS
+    if KNOWN_TOOLS is None:
+        from nebuko.engine.paths import ensure_import_path
+
+        ensure_import_path()
+        from agent_script.sub_domains.tool_resolution.tool_resolution import (
+            CONFIG_TOOL_NAMES,
+        )
+
+        KNOWN_TOOLS = CONFIG_TOOL_NAMES
+    return KNOWN_TOOLS
+
 
 # Sentinel returned by ref lookup when a dotted path does not resolve.
 _MISSING = object()
@@ -490,10 +492,11 @@ class ConfigLinter:
     def _check_tools(self, raw: dict) -> list[LintIssue]:
         """C3: every ``tools`` entry must be a known tool name."""
         issues: list[LintIssue] = []
-        known = ", ".join(sorted(KNOWN_TOOLS))
+        known = ", ".join(sorted(_known_tools()))
+        known_tools = _known_tools()
         for name, agent in _iter_agents(raw):
             for tool in agent.get("tools") or []:
-                if tool not in KNOWN_TOOLS:
+                if tool not in known_tools:
                     issues.append(
                         _make_issue(
                             _RULE_UNKNOWN_TOOL,

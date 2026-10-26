@@ -52,6 +52,23 @@ _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
 _COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
 _HANDOFF_TOOL_NAME = "HandoffTool"
 
+#: Canonical ``tools:`` entry names this module can resolve (the config-facing
+#: side of the sdk-vs-builtin decision). Single source of truth for the offline
+#: linter's C3 rule: ``config_lint.KNOWN_TOOLS`` derives from this so the two
+#: lists can never drift apart again (issue #748 follow-up).
+CONFIG_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        *_SDK_TOOL_NAMES,
+        "terminal_batch",
+        *_BUILTIN_TOOL_MAP,
+        "finalize",
+        "report_scaffold_branch",
+        "complexity_review",
+        "handoff",
+        "fetch_comment_bodies",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ResolvedToolset:
