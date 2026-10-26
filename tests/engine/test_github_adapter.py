@@ -342,7 +342,8 @@ class TestPost:
 
         result = adapter.post("hello")
 
-        assert "4242" in result
+        assert result.comment_id == "4242"
+        assert result.permalink == "https://example.test/c/4242"
         assert ("post_comment", "olivier-norture/git-flow-ai", 590, "hello") in client.calls
 
 

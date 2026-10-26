@@ -292,6 +292,18 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return PosterCapabilities(edit_comment=True, reactions=True, history_pagination=True)
 
     # @stub-protected
+    def edit_comment(self, comment_id: str, body: str) -> PostedComment:
+        raise NotImplementedError("edit_comment not supported by this adapter")
+
+    # @stub-protected
+    def add_reaction(self, comment_id: str, emoji: str) -> None:
+        raise NotImplementedError("add_reaction not supported by this adapter")
+
+    # @stub-protected
+    def load_history_page(self, cursor: str | None = None) -> HistoryPage:
+        raise NotImplementedError("load_history_page not supported by this adapter")
+
+    # @stub-protected
     def load_state(self) -> WorkflowState | None:
         # Reads the shared snapshot (one bounded fetch per run) instead of
         # re-listing the whole thread a second time (issue #805, Pillar C).
