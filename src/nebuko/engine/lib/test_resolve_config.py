@@ -372,6 +372,30 @@ class TestResolveConfigWithWorkflowCommand:
             )
         return prompt_base, workflows_dir
 
+    def test_bare_run_resolves_default_workflow(self):
+        """Issue #1094: bare `/nebuko run workflow` runs the default workflow."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        body = "/nebuko run workflow\nPlease analyze this issue."
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["TASK"] == "architect"
+        assert result["WORKFLOW_NAME"] == "default"
+
+    def test_bare_run_uses_manifest_default_workflow(self, monkeypatch):
+        """Issue #1094: `default_workflow` in .nebuko/nebuko.yaml wins."""
+        prompt_base, workflows_dir = self._setup_dirs_with_workflows()
+        base = Path(workflows_dir).parent
+        (base / ".nebuko").mkdir(exist_ok=True)
+        (base / ".nebuko" / "nebuko.yaml").write_text("default_workflow: review-only\n")
+        body = "/nebuko run workflow\nReview please."
+
+        monkeypatch.chdir(base)
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["TASK"] == "review"
+        assert result["WORKFLOW_NAME"] == "review-only"
+
     def test_workflow_default_resolves_architect(self):
         prompt_base, workflows_dir = self._setup_dirs_with_workflows()
         body = "/nebuko run workflow --name default\nPlease analyze this issue."
