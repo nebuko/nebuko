@@ -16,6 +16,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
+sys.path.insert(
+    0,
+    str(
+        Path(__file__).parents[4]
+        / "lib" / "agent_script" / "features" / "build_output"
+    ),
+)
 
 from config import StepRef  # noqa: E402
 
@@ -392,10 +399,9 @@ class TestGateCommandIntegration(unittest.TestCase):
         """
         from resolve_config.features.resolve_route.resolve_route import _gate_pending
 
-        # Completion state of the re-run *as the bug persists it today*: the
-        # gate lock flipped back to RELEASED by the unconditional
-        # GATE_RELEASED handling in build_output, while the turn verdict is
-        # approved. The persisted state must instead carry an ARMED lock.
+        # The persisted re-run completion state must carry an ARMED lock so the
+        # routing holds (see TestPostDecisionGateReArm for the build_output
+        # integration that guarantees this persistence).
         rerun_completion = _held_state(step="plan", gate=GateLock(step="plan"))
         with self.subTest("persisted state must keep the gate armed"):
             self.assertTrue(
@@ -407,12 +413,115 @@ class TestGateCommandIntegration(unittest.TestCase):
 
 
 class TestPostDecisionGateReArm(unittest.TestCase):
-    """The re-run's completing turn must re-arm a fresh gate (issue #1178)."""
+    """The re-run's completing turn must re-arm a fresh gate (issue #1178).
 
-    def test_reject_with_feedback_rerun_then_completion_blocks_advance(self):
-        from resolve_config.features.resolve_route.resolve_route import _gate_pending
+    End-to-end through ``build_output``: the re-run of a rejected-with-feedback
+    gated step completes with ``GATE_DECISION`` (rejected, with feedback) and
+    ``GATE_RELEASED=true`` riding along (resolve_route sets
+    ``config_gate_released`` on this path too). The persisted gate must stay
+    ARMED — an unconditional release after the re-arm used to flip it straight
+    back to RELEASED and let the workflow advance without a new approval.
+    """
 
-        self.assertTrue(_gate_pending(_held_state(step="plan", gate=GateLock(step="plan"))))
+    @staticmethod
+    def _msg_event(text):
+        from openhands.sdk.event import MessageEvent
+        from openhands.sdk.llm import Message
+
+        return MessageEvent(
+            llm_message=Message(role="assistant", content=text), source="agent"
+        )
+
+    @staticmethod
+    def _completed():
+        return TurnOutcome(
+            status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED
+        )
+
+    def test_reject_with_feedback_rerun_then_completion_keeps_gate_armed(self):
+        import build_output as bo
+        from types import SimpleNamespace as NS
+        from workflow_state import GateLock, RunPrefs, WorkflowState
+
+        # The re-run of the gated step ``plan`` carries the previous state
+        # whose lock was consumed by the decision (released by the decision
+        # resolution). The re-run's completion must raise a fresh ARMED lock.
+        prior = WorkflowState(
+            workflow="wf",
+            step="plan",
+            agent="architect",
+            gate=GateLock(step="plan", status=GateStatus.RELEASED),
+        )
+        decision = GateDecision(
+            status="rejected",
+            workflow="wf",
+            target_step="plan",
+            decided_by="olivier-norture",
+            decided_at=datetime.now(timezone.utc),
+            feedback="Use Posthog",
+            position=[StepRef(workflow="wf", step="plan")],
+        )
+        captured = {}
+
+        def _capture_build_state(prev_state, **kwargs):
+            captured.update(kwargs)
+            return NS(run_id=2)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "wf.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "name: wf\n"
+                    'description: "test workflow"\n'
+                    "steps:\n"
+                    "  - name: plan\n"
+                    "    agent: architect\n"
+                    "    human_gate: true\n"
+                    "    next: implement\n"
+                )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "WORKFLOW_NAME": "wf",
+                "WORKFLOW_STEP": "plan",
+                "ROLE_NAME": "architect",
+                "GATE_DECISION": decision.model_dump_json(),
+                "GATE_RELEASED": "true",
+            }
+            conversation = NS(
+                state=NS(events=[self._msg_event("plan answer")]),
+                id="conv-1178-rearm",
+                run_outcome=None,
+            )
+            metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+            with unittest.mock.patch.object(bo, "get_agent_final_response", return_value="plan answer"), \
+                 unittest.mock.patch.object(bo, "_load_prev_state", return_value=prior), \
+                 unittest.mock.patch.object(bo, "_build_issue_info", return_value=None), \
+                 unittest.mock.patch.object(bo, "_build_pr_info", return_value=None), \
+                 unittest.mock.patch.object(
+                     bo, "_resolve_outcome",
+                     return_value=(self._completed(), RunPrefs(), None),
+                 ), \
+                 unittest.mock.patch.object(bo, "clear_run"), \
+                 unittest.mock.patch.object(bo, "clear_call_agent_run"), \
+                 unittest.mock.patch.object(bo, "clear_scaffold_branch_run"), \
+                 unittest.mock.patch.object(bo, "clear_complexity_review_run"), \
+                 unittest.mock.patch.object(bo, "get_recorded_review_request", return_value=None), \
+                 unittest.mock.patch.object(bo, "build_state", side_effect=_capture_build_state), \
+                 unittest.mock.patch.object(bo, "split_message", return_value=[]), \
+                 unittest.mock.patch.object(bo, "_write_output_files", return_value=None), \
+                 unittest.mock.patch.dict(os.environ, env, clear=False):
+                cwd = os.getcwd()
+                os.chdir(tmpdir)
+                try:
+                    bo.build_output(conversation, metrics)
+                finally:
+                    os.chdir(cwd)
+
+        gate = captured["gate"]
+        self.assertIsNotNone(gate)
+        self.assertEqual(gate.step, "plan")
+        self.assertIs(gate.status, GateStatus.ARMED)
+        self.assertTrue(gate.armed())
 
 
 if __name__ == "__main__":
