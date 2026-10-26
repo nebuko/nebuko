@@ -3,8 +3,8 @@
 The ``git-pr-workflow`` skill used to spend agent turns on branch mechanics
 (issue #1138). The engine now prepares the branch before the prompt is built:
 it fetches the base branch only, creates ``feature/issue-<n>-<slug>`` from it
-(or rebases the existing one), and hands a rebase conflict back as data so the
-prompt can carry a fix-first note instead of the run dying.
+(or merges the existing one onto the base), and hands a merge conflict back as
+data so the prompt can carry a fix-first note instead of the run dying.
 
 Like :class:`nebuko.engine.lib.git.git_session.GitSessionGuard`, the scaffold never
 raises: a failure is returned as data and the caller turns it into a run
@@ -37,7 +37,7 @@ class ScaffoldResult:
 
     ``ok`` is the pass/fail verdict; ``skipped`` marks the benign case where
     there was nothing to do (``ok`` is then True and ``detail`` explains why);
-    ``conflict`` marks a rebase that hit conflicts (the run continues, the
+    ``conflict`` marks a merge that hit conflicts (the run continues, the
     prompt carries ``note``); ``branch`` is the prepared branch, empty when
     none was prepared.
     """
@@ -48,8 +48,6 @@ class ScaffoldResult:
     detail: str = ""
     branch: str = ""
     note: str = ""
-    # True when the branch was newly created this pass, vs rebased/reused.
-    created: bool = False
 
 
 def branch_slug(title: str) -> str:
@@ -58,13 +56,8 @@ def branch_slug(title: str) -> str:
     return slug[:50].rstrip("-")
 
 
-def feature_branch_name(issue_number: int, title: str) -> str:  # @stub-protected
-    """The dev session's branch: ``feature/<n>-<slug>`` (issue #1153)."""
-    return f"feature/{issue_number}-{branch_slug(title)}"
-
-
-def legacy_branch_name(issue_number: int, title: str) -> str:  # @stub-protected
-    """The pre-#1153 branch name, kept as a fallback lookup."""
+def feature_branch_name(issue_number: int, title: str) -> str:
+    """The dev session's branch: ``feature/issue-<n>-<slug>``."""
     return f"feature/issue-{issue_number}-{branch_slug(title)}"
 
 
@@ -97,7 +90,7 @@ class BranchScaffold:
 
     # @stub-protected
     def scaffold(self) -> ScaffoldResult:
-        """Create or rebase the feature branch; never raises.
+        """Create or merge the feature branch onto the base; never raises.
 
         Returns:
             ``ok=True`` with ``branch`` when the branch is ready, a benign
@@ -174,11 +167,11 @@ class BranchScaffold:
         """Continue an existing branch, or create it from the fetched base.
 
         An existing branch — local, or remote-only from a previous round —
-        must be rebased onto the base, never reset: ``checkout -B`` would
+        must be merged onto the base, never reset: ``checkout -B`` would
         orphan the prior round's commits (issue #1138 round 8).
         """
         if self._branch_exists(branch):
-            return self._rebase_existing(branch, base)
+            return self._merge_origin(branch, base)
         return self._create_branch(branch, base)
 
     def _branch_exists(self, branch: str) -> bool:
@@ -214,34 +207,46 @@ class BranchScaffold:
             )
         detail = f"created {branch} from origin/{base}"
         logger.info("branch scaffold: %s", detail)
-        return ScaffoldResult(ok=True, detail=detail, branch=branch, created=True)
+        return ScaffoldResult(ok=True, detail=detail, branch=branch)
 
-    def _rebase_existing(self, branch: str, base: str) -> ScaffoldResult:
-        # After a remote-only fetch the session is still on the detached
-        # base HEAD: the rebase must run on the feature branch itself.
-        self._git("checkout", branch)
+    def _merge_origin(self, branch: str, base: str) -> ScaffoldResult:  # @stub-protected
+        """Merge ``origin/<base>`` into ``branch``; a conflict is data, not a crash."""
         try:
-            self._git("rebase", f"origin/{base}")
+            # A remote-only branch from a previous round is fetched but not
+            # checked out yet (a pinned-SHA checkout is detached): the merge
+            # must happen on the branch, never on the detached HEAD.
+            self._git("checkout", branch)
+        except RuntimeError as exc:
+            return ScaffoldResult(ok=False, detail=f"could not check out {branch}: {exc}")
+        try:
+            self._git("merge", "--no-edit", f"origin/{base}")
         except RuntimeError:
-            conflicted = self._git(
-                "diff", "--name-only", "--diff-filter=U"
-            ).splitlines()
-            self._git("rebase", "--abort")
+            conflicted = self._conflicted_files()
+            try:
+                self._git("merge", "--abort")
+            except RuntimeError as exc:
+                logger.warning("branch scaffold: merge abort failed: %s", exc)
+            detail = ", ".join(conflicted) or f"merge of origin/{base} into {branch} failed"
             note = (
-                f"The engine rebased `{branch}` onto `origin/{base}` and hit "
-                "conflicts in: "
-                + ", ".join(f"`{p}`" for p in conflicted)
-                + ". Resolve them as your FIRST action "
-                "(`git rebase --continue` after staging), before any other work."
+                f"FIRST: the engine hit a merge conflict with origin/{base}. "
+                f"Resolve it as your FIRST action: re-run `git merge origin/{base}`, "
+                f"resolve the markers, `git add` + commit, then push."
             )
-            detail = f"rebase has conflicts in: {', '.join(conflicted)}"
-            logger.warning("branch scaffold: %s", detail)
+            logger.info("branch scaffold: merge conflict in %s", detail)
             return ScaffoldResult(
                 ok=True, conflict=True, detail=detail, branch=branch, note=note
             )
-        detail = f"rebased {branch} onto origin/{base}"
+        detail = f"merged origin/{base} into {branch}"
         logger.info("branch scaffold: %s", detail)
         return ScaffoldResult(ok=True, detail=detail, branch=branch)
+
+    def _conflicted_files(self) -> list[str]:
+        """Paths left unmerged by the failed merge (called before the abort)."""
+        try:
+            out = self._git("diff", "--name-only", "--diff-filter=U")
+        except RuntimeError:
+            return []
+        return [line for line in out.splitlines() if line]
 
     # ── Plumbing ─────────────────────────────────────────────────
 

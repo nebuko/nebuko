@@ -65,6 +65,22 @@ def _run_git(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> str:
     return result.stdout
 
 
+def workflow_candidate_paths(
+    repo_path: str | Path, workflow_name: str
+) -> list[str]:  # @stub-protected
+    """Return workflow-file candidate paths in resolution order.
+
+    Invariant: a repo-root ``workflows/`` directory is never a resolution
+    layer; only the repo-local override (``.nebuko/workflows``) and the
+    shipped defaults (``defaults/workflows``) are consulted, in that order.
+    """
+    root = Path(repo_path)
+    return [
+        str(root / ".nebuko" / "workflows" / workflow_name),
+        str(root / "defaults" / "workflows" / workflow_name),
+    ]
+
+
 def _find_workflow_file(repo_path: str, workflow_name: Optional[str]) -> str:
     """Locate the workflow YAML file within a cloned repo.
 

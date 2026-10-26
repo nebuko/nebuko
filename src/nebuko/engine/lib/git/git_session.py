@@ -28,7 +28,6 @@ from __future__ import annotations
 import base64
 import logging
 import os
-import re
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -81,11 +80,6 @@ class GuardResult:
     ok: bool
     skipped: bool = False
     detail: str = ""
-
-
-#: The engine's dirty-tree auto-commit message: recognizable as an engine-made
-#: commit, and recorded as a ``dirty`` history entry (issue #1153).
-DIRTY_COMMIT_MESSAGE = "chore: engine: commit changes forgotten by agent"
 
 
 class GitSessionGuard:
@@ -186,13 +180,7 @@ class GitSessionGuard:
                 auth_failure,
             )
 
-        commit_result = self._commit_all_pending()
-        # A made commit's short sha comes back as the result; any prose is a
-        # problem (issue #1153: the sha is surfaced in the finalize detail).
-        if re.fullmatch(r"[0-9a-f]{7,40}", commit_result):
-            committed_sha, commit_problem = commit_result, ""
-        else:
-            committed_sha, commit_problem = "", commit_result
+        commit_problem = self._commit_all_pending()
 
         problems: list[str] = []
         if commit_problem:
@@ -216,10 +204,7 @@ class GitSessionGuard:
                 detail="; ".join(problems)
                 + self._token_hint(),
             )
-        detail = f"{branch} is clean and pushed"
-        if committed_sha:
-            detail = f"committed {committed_sha}; {detail}"
-        return GuardResult(ok=True, detail=detail)
+        return GuardResult(ok=True, detail=f"{branch} is clean and pushed")
 
     # ── Identity and credentials ──────────────────────────────────
 
@@ -315,25 +300,24 @@ class GitSessionGuard:
 
         ``.gitignore`` still applies, so generated files never ride along. An
         already-clean tree is not a problem; a commit that could not be made
-        (no identity, a hook refusal) is returned as actionable prose. A made
-        commit's short sha is returned so the engine can record it (issue
-        #1153); an empty string means nothing was committed.
+        (no identity, a hook refusal) is returned as actionable prose.
         """
         if not self._pending_paths():
             return ""
         try:
             self._run_git(["add", "-A"])
-            self._run_git(["commit", "-m", DIRTY_COMMIT_MESSAGE])
+            self._run_git(
+                [
+                    "commit",
+                    "-m",
+                    "chore: finalize the agent session\n\n"
+                    "The engine commits anything the session left behind so the "
+                    "work is not lost (issue #1089).",
+                ]
+            )
         except RuntimeError as exc:
             return f"automatic session commit failed: {_dedent(str(exc))}"
-        return self._short_sha()
-
-    def _short_sha(self) -> str:
-        """The current HEAD's short sha, or ``""`` when it cannot be read."""
-        try:
-            return self._run_git(["rev-parse", "--short", "HEAD"])
-        except RuntimeError:
-            return ""
+        return ""
 
     # @stub-protected
     def _is_fully_pushed(self, branch: str) -> Optional[str]:

@@ -4771,7 +4771,7 @@ class TestBranchScaffoldWiring:
                 ok=True,
                 conflict=True,
                 branch="feature/issue-590-x",
-                detail="rebase has conflicts: base.txt",
+                detail="merge has conflicts in: base.txt",
                 note="Resolve them as your FIRST action",
             ),
         )
