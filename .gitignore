@@ -8,3 +8,4 @@ latest_answer.md
 build/
 dist/
 node_modules/
+demo/out/

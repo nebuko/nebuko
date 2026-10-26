@@ -1,4 +1,4 @@
-<!-- bot-workflow-terminal -->
+<!-- bot-workflow-terminal --><!-- workflow-continue -->
 <!-- bot-agent-architect -->
 <details>
 <summary><picture><source srcset="https://raw.githubusercontent.com/nebuko/nebuko/main/logo/final/mark-dark.svg" media="(prefers-color-scheme: dark)"><img src="https://raw.githubusercontent.com/nebuko/nebuko/main/logo/final/mark-light.svg" alt="Nebuko" width="16" height="16"></picture> Workflow State (run 3)</summary>
@@ -7,8 +7,8 @@
 <!-- WORKFLOW_STATE_START -->
 {
   "run_id": 3,
-  "schema_version": 4,
-  "workflow": "default",
+  "schema_version": 6,
+  "workflow": "default-with-output",
   "step": "plan",
   "agent": "architect",
   "phase": "planning",
@@ -16,139 +16,263 @@
     {
       "step": "analyze",
       "agent": "architect",
-      "summary": "## \ud83e\udded Architect Analysis \u2014 human_gate on the `plan` step is recorded but not honored (issue #885)\n\n### Summary of the bug\nThe `human_gate: true` on the `plan` step did **not** block execution: the run advanced to `implement` immediately after the architect posted its plan. The gate *was* recognized \u2014",
+      "summary": "Context request posted and hand-off to @@\u200bcontext recorded.",
       "position": [
         {
-          "workflow": "default",
+          "workflow": "default-with-output",
           "step": "analyze"
         }
       ],
-      "dispatch": {
-        "task_hint": "context",
-        "complexity": "high",
-        "reason": "Fresh bug report; delegate high-depth context collection on human_gate handling, resolution/gate ordering, resume routing, workflow YAML, and persistence before planning a fix."
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "Analysis step report: scoped the CI dependency failure and handed fact collection to @@\u200bcontext."
       },
-      "comment_ids": [6117391863],
+      "prefs": {
+        "complexity": "low"
+      },
+      "comment_ids": [6376624748],
       "metrics": {
-        "run_id": "00df6a6b-5a53-411d-8dac-ee1a5634acd0",
-        "model_name": "default",
+        "run_id": "c2ccbdaa-462e-405e-8a23-374c895dc512",
+        "model_name": "mistral/zai-glm-5-3-flash",
         "agent_role": "architect",
-        "input_tokens": 33415,
-        "output_tokens": 5354,
-        "tool_call_latency_ms": 15078.480323155722,
-        "agent_runtime_ms": 45235.44,
-        "nb_tool_calls": 4,
-        "start_time": "2026-10-12T03:47:56.233639",
-        "end_time": "2026-10-12T03:48:42.014167+00:00",
-        "agent_runtimes_per_call_ms": [25392.09, 7492.05, 12351.3],
+        "input_tokens": 30067,
+        "output_tokens": 3201,
+        "reasoning_tokens": 1041,
+        "tool_call_latency_ms": 4942.405998706818,
+        "agent_runtime_ms": 19769.62,
+        "nb_tool_calls": 2,
+        "start_time": "2026-10-23T23:14:48.945745",
+        "end_time": "2026-10-23T23:15:09.211847+00:00",
+        "agent_runtimes_per_call_ms": [8897.15, 2975.5, 6018.16, 1878.81],
         "tool_calls_per_tool": {
-          "dispatch_next": 2,
-          "finish": 2
+          "finalize": 2
         },
         "tokens_per_tool": {
           "unknown": {
-            "input": 11679,
-            "output": 1459,
+            "input": 30067,
+            "output": 3201,
             "cache_hit": 0,
-            "reasoning": 107
+            "reasoning": 1041
           }
         },
-        "tokens_per_second": 133.36486261136272,
-        "time_to_first_token": 1.524595326045528
+        "tool_time_per_tool": {
+          "finalize": {
+            "total_ms": 23.96,
+            "count": 2.0
+          }
+        },
+        "tool_runtime_ms": 23.96,
+        "wall_clock_ms": 20266.1,
+        "tokens_per_second": 271.31428582482187,
+        "time_to_first_token": 2.296360702500003
       }
     },
     {
       "step": "context",
       "agent": "context",
-      "summary": "## \ud83d\udcda Context Report \u2014 issue #885: `human_gate` on `plan` recorded but not honored\n\nRead-only collection from `/runner/_work/nebuko/nebuko` @ `HEAD` (`0819271ef0a9eabb719309e5dc1178d40db6623b`, \"add .nebuko/workflow/default-with-cmd workflow\"). Facts only \u2014 no analysis or recommendations.\n\n### FILES ",
+      "summary": "Context collection step finalized. The complete report \u2014 covering all six requested fact groups (lint workflow install steps, pyproject dependency declarations, the failing import chain, existing optional-import patterns, PR #1106 diff scope, and other CI jobs' dependency installation) \u2014 has been po",
       "position": [
         {
-          "workflow": "default",
+          "workflow": "default-with-output",
           "step": "context"
         }
       ],
-      "dispatch": {
-        "reason": "no-action default: agent emitted no decision and the AGENT_RUN_CONFIG sentinel could not be parsed (unparseable JSON (Expecting property name enclosed in double quotes at line 1 column 33)); returning to caller 'architect'",
-        "origin": "engine_fallback"
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "All six requested fact groups collected verbatim: lint workflow install steps, pyproject dependency/extra declarations, the failing import chain, existing ImportError fallback patterns, PR #1106 diff scope, and the absence of any other PR-check job installing openhands."
       },
-      "comment_ids": [6117507100],
+      "comment_ids": [6376654915],
       "metrics": {
-        "run_id": "a64cc167-f74c-42a2-ad63-3e95dacddbfe",
-        "model_name": "default",
+        "run_id": "27ef0952-ecbe-410d-95de-6d53ca6770e6",
+        "model_name": "mistral/zai-glm-5-3-flash",
         "agent_role": "context",
-        "input_tokens": 5408715,
-        "output_tokens": 76762,
-        "tool_call_latency_ms": 9171.377592086792,
-        "agent_runtime_ms": 687853.32,
-        "nb_tool_calls": 105,
-        "tool_call_error_rate": 1.9230769230769231,
-        "complexity": "high",
-        "start_time": "2026-10-12T03:49:26.947437",
-        "end_time": "2026-10-12T04:01:28.007383+00:00",
-        "agent_runtimes_per_call_ms": [22094.14, 19674.36, 3297.36, 3059.32, 3819.81, 17469.48, 22504.77, 24924.68, 5774.53, 27390.89, 25964.24, 4648.89, 6547.34, 3782.11, 2968.03, 5835.13, 4955.74, 3579.49, 6796.08, 3214.52, 6241.17, 3049.9, 21140.82, 5040.59, 10005.49, 2120.28, 15025.83, 22624.61, 3134.42, 5634.79, 2653.97, 5833.06, 3106.44, 2862.01, 25956.14, 5480.36, 9814.52, 1853.95, 8594.4, 5823.67, 3251.43, 3007.23, 9579.77, 1849.53, 15602.99, 12931.76, 2656.25, 33847.82, 43487.66, 16935.37],
+        "input_tokens": 324816,
+        "output_tokens": 13749,
+        "cache_hit_rate": 0.5319934978572484,
+        "cache_hit_tokens": 172800,
+        "reasoning_tokens": 2737,
+        "tool_call_latency_ms": 5442.499986061683,
+        "agent_runtime_ms": 70752.5,
+        "nb_tool_calls": 11,
+        "complexity": "low",
+        "start_time": "2026-10-23T23:15:45.038517",
+        "end_time": "2026-10-23T23:17:26.992947+00:00",
+        "agent_runtimes_per_call_ms": [4921.15, 3491.31, 3357.27, 2580.78, 2494.63, 2536.25, 2071.74, 6061.15, 2443.8, 18148.04, 4166.4, 14422.51, 4057.48],
         "tool_calls_per_tool": {
-          "terminal": 99,
-          "file_editor": 4,
-          "finish": 1,
-          "dispatch_next": 1
-        },
-        "errors_per_tool": {
-          "unknown": 2
+          "terminal_batch": 9,
+          "finalize": 2
         },
         "tokens_per_tool": {
           "unknown": {
-            "input": 6568,
-            "output": 2265,
-            "cache_hit": 0,
-            "reasoning": 730
+            "input": 324816,
+            "output": 13749,
+            "cache_hit": 172800,
+            "reasoning": 2737
           }
         },
-        "tokens_per_second": 158.58832831407935,
-        "time_to_first_token": 1.7934141204585448
+        "tool_time_per_tool": {
+          "terminal_batch": {
+            "total_ms": 30523.42,
+            "count": 9.0
+          },
+          "finalize": {
+            "total_ms": 39.66,
+            "count": 2.0
+          }
+        },
+        "tool_runtime_ms": 30563.08,
+        "wall_clock_ms": 101954.43,
+        "tokens_per_second": 399.60273567677785,
+        "time_to_first_token": 2.5579193998461554
       }
     },
     {
       "step": "plan",
       "agent": "architect",
-      "summary": "## \ud83e\udded Architect Plan \u2014 `human_gate` on `plan` recorded but not honored (issue #885)\n\n<!-- architect-state: phase=plan,status=awaiting_gate -->\n\n### Decision\nHonor a persisted human-gate hold **before** any workflow-edge resolution runs on the state-only bot path. The bug is a single precedence gap: `",
+      "summary": "The plan is finalized and approved: fix the lint-job failure by guarding the unconditional `openhands.sdk.get_logger` import in `src/nebuko/engine/git_session.py` with the repo's established `try/except ImportError` fallback (issue #928 precedent), keeping `openhands-sdk` out of the default environm",
       "position": [
         {
-          "workflow": "default",
+          "workflow": "default-with-output",
           "step": "plan"
         }
       ],
-      "dispatch": {
-        "status": "hold",
-        "complexity": "high",
-        "reason": "human_gate:plan"
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "Plan complete: guard the pre-existing openhands import in git_session.py per repo precedent instead of adding the SDK to the lint environment."
+      },
+      "prefs": {
+        "complexity": "low"
       },
       "metrics": {
-        "run_id": "4bb4734c-6d7e-4931-bdbb-2b0379d5f0bf",
-        "model_name": "default",
+        "run_id": "b1b3be2b-ae11-4954-91a2-fa3ed413bc91",
+        "model_name": "mistral/zai-glm-5-3",
         "agent_role": "architect",
-        "input_tokens": 100196,
-        "output_tokens": 6398,
-        "tool_call_latency_ms": 42568.02034378052,
-        "agent_runtime_ms": 170272.08,
-        "nb_tool_calls": 3,
-        "start_time": "2026-10-12T04:02:08.310764",
-        "end_time": "2026-10-12T04:04:59.257883+00:00",
-        "agent_runtimes_per_call_ms": [60672.47, 55988.42, 17885.17, 35726.02],
+        "input_tokens": 69138,
+        "output_tokens": 4214,
+        "max_context_window": 1048576,
+        "cache_hit_rate": 0.5591136567444821,
+        "cache_hit_tokens": 38656,
+        "reasoning_tokens": 1022,
+        "cost": 0.06662823999999999,
+        "tool_call_latency_ms": 5390.32381772995,
+        "agent_runtime_ms": 21561.3,
+        "nb_tool_calls": 2,
+        "start_time": "2026-10-23T23:18:09.596746",
+        "end_time": "2026-10-23T23:18:31.697978+00:00",
+        "agent_runtimes_per_call_ms": [15151.98, 995.02, 4464.56, 949.73],
         "tool_calls_per_tool": {
-          "dispatch_next": 2,
-          "finish": 1
+          "finalize": 2
         },
         "tokens_per_tool": {
           "unknown": {
-            "input": 26511,
-            "output": 2119,
-            "cache_hit": 0,
-            "reasoning": 155
+            "input": 69138,
+            "output": 4214,
+            "cache_hit": 38656,
+            "reasoning": 1022
           }
         },
-        "tokens_per_second": 41.360213288406726,
-        "time_to_first_token": 2.8122852463275194
+        "tool_time_per_tool": {
+          "finalize": {
+            "total_ms": 32.27,
+            "count": 2.0
+          }
+        },
+        "tool_runtime_ms": 32.27,
+        "wall_clock_ms": 22101.23,
+        "tokens_per_second": 300.54601858027763,
+        "time_to_first_token": 0.9389381239999999
+      },
+      "complexity_adjustment": {
+        "delta": 1,
+        "trigger": "evidence-drift",
+        "evidence": {
+          "llm": {
+            "input_tokens": 324816.0,
+            "output_tokens": 13749.0,
+            "nb_tool_calls": 11.0,
+            "cost": 0.0,
+            "tool_call_error_rate": 0.0,
+            "review_fix_requests": 0.0,
+            "dispatch_recall_count": 0.0
+          }
+        },
+        "rationale": "evidence drift low -> high"
       }
+    }
+  ],
+  "thread": [
+    {
+      "kind": "issue-body",
+      "id": 6006831837,
+      "url": "https://github.com/nebuko/nebuko/issues/1129",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-23T23:13:46Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "command",
+      "id": 6376610071,
+      "url": "https://github.com/nebuko/nebuko/issues/1129#issuecomment-6376610071",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-23T23:14:03Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "engine-output",
+      "id": 6376615521,
+      "url": "https://github.com/nebuko/nebuko/issues/1129#issuecomment-6376615521",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-23T23:14:28Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "engine-output",
+      "id": 6376619887,
+      "url": "https://github.com/nebuko/nebuko/issues/1129#issuecomment-6376619887",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-23T23:14:48Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "agent-output",
+      "id": 6376624748,
+      "url": "https://github.com/nebuko/nebuko/issues/1129#issuecomment-6376624748",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-23T23:15:10Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "engine-output",
+      "id": 6376632304,
+      "url": "https://github.com/nebuko/nebuko/issues/1129#issuecomment-6376632304",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-23T23:15:43Z",
+      "author_association": "MEMBER",
+      "trusted": true
+    },
+    {
+      "kind": "agent-output",
+      "id": 6376654915,
+      "url": "https://github.com/nebuko/nebuko/issues/1129#issuecomment-6376654915",
+      "user_id": 11475739,
+      "user_login": "olivier-norture",
+      "created_at": "2026-10-23T23:17:27Z",
+      "author_association": "MEMBER",
+      "trusted": true
     }
   ],
   "current_context": {
@@ -156,41 +280,46 @@
     "step_outputs": [
       {
         "step": "analyze",
-        "comment_id": "6117391863"
+        "comment_id": "6376624748"
       },
       {
         "step": "context",
-        "comment_id": "6117507100"
+        "comment_id": "6376654915"
       },
       {
         "step": "plan"
       }
     ]
   },
-  "dispatch": {
-    "status": "hold",
-    "complexity": "high",
-    "reason": "human_gate:plan"
+  "turn_outcome": {
+    "status": "completed",
+    "appreciation": "approved",
+    "note": "Plan complete: guard the pre-existing openhands import in git_session.py per repo precedent instead of adding the SDK to the lint environment."
+  },
+  "prefs": {
+    "complexity": "low"
+  },
+  "gate": {
+    "step": "plan"
   },
   "resolution": {
     "task": "architect",
-    "input_workflow": "default",
+    "input_workflow": "default-with-output",
     "input_step": "plan",
     "input_complexity": "N/A",
     "role_name": "architect",
-    "prompt_location": "/runner/_work/nebuko/nebuko/defaults/prompts/architect.md",
+    "prompt_location": "/home/runner/work/nebuko/nebuko/defaults/prompts/architect.md",
     "agent_selected": "true",
-    "selected_workflow": "default",
+    "selected_workflow": "default-with-output",
     "selected_step": "plan",
-    "next_step": "implement",
     "reasoning": "none",
-    "matched_rule": "workflow:default/step:plan",
-    "timestamp": "2026-10-12T04:04:59.259051+00:00"
+    "matched_rule": "workflow:default-with-output/step:plan",
+    "timestamp": "2026-10-23T23:18:31.699038+00:00"
   },
   "workflow_ref": "nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@refs/heads/main",
   "position": [
     {
-      "workflow": "default",
+      "workflow": "default-with-output",
       "step": "plan"
     }
   ],
@@ -256,72 +385,61 @@
 
 *Architect answer*
 
-## 🧭 Architect Plan — `human_gate` on `plan` recorded but not honored (issue #885)
+# Guard `get_logger` import in `git_session.py` — fix lint job without installing the SDK
 
-<!-- architect-state: phase=plan,status=awaiting_gate -->
+## Decision
+<!-- nebuko:section decision -->
+## Context (root cause)
 
-### Decision
-Honor a persisted human-gate hold **before** any workflow-edge resolution runs on the state-only bot path. The bug is a single precedence gap: `resolve_config()` routes `prev_state + dispatch_obj` into `_resolve_dispatch_path`, which computes the workflow successor *first* and only falls back to the `hold` status when no successor exists. Since `plan → implement` always resolves, the hold is dead code there (and identically in `_resolve_bot_fallback_path`).
+`python -m nebuko.engine lint-config` (lint job `internal-lint-agent-config.yaml`, base deps only) imports `nebuko/engine/__init__.py` → `run_loop.py:30` → `git_session.py:33`, which does an unconditional `from openhands.sdk import get_logger`. `openhands-sdk` exists only in the optional `runtime` extra (deliberately — the library must import without the SDK), so the job can never succeed as-is. The import predates PR #1106 (introduced by #1090); #1106 merely touched lint-trigger paths.
 
-**Root cause (confirmed by the empirical replay in the context report):** `dispatch.status == "hold"` with `reason == "human_gate:plan"` is persisted correctly by `apply_human_gate_intercept`, but the bot re-trigger path (`_resolve_dispatch_path`) never consults `_is_human_gate_hold` — it advances straight to `implement`/dev. The gate *is* honored on the human path (`/nebuko resume` correctly reports the hold; `/nebuko approve gate` / `/nebuko reject gate` correctly route), so the fix is confined to the **bot/auto-dispatch routing paths**, not to gate detection, persistence, or gate-command handling.
+## Decision
 
-### Approaches considered
-1. **Gate-hold precedence check at the top of the dispatch/fallback routing paths (chosen).** Reuse the existing `_is_human_gate_hold` predicate (already used by `_resolve_resume_path`) as an early guard in `_resolve_dispatch_path` and `_resolve_bot_fallback_path`, before `resolve_next_from_workflow` is consulted. Minimal, symmetrical, and consistent with the existing `test_hold_outranks_callback` precedence model.
-2. **Rewrite `resolution.next_step` at gate-intercept time** (clear it to `""` when converting to `hold`, so no reader can follow the ungated edge). Rejected as sufficient alone: the state-only path deliberately does *not* read `resolution.next_step` (`_resolve_workflow_next_step` docstring), and it would add a semantic mutation to the persisted resolution. Included only as secondary hardening so the persisted state is internally consistent.
-3. **Add an explicit `pending_gate` field to schema-v4 `WorkflowState`.** Rejected: `dispatch.status == "hold"` + `reason.startswith("human_gate")` already carries the fact durably (and `human_action_notice.classify()` consumes exactly that shape). A schema bump would be churn without new information.
+Do **not** add `openhands` to the default environment. Guard the import in `src/nebuko/engine/git_session.py` with the repo's established fallback pattern (verbatim precedent: `load_price_table.py:20-26`, issue #928):
 
-### Object Design Anchor (the design being approved)
-The change lives in `src/nebuko/engine/lib/resolve_config/features/resolve_route/resolve_route.py`. The primary object is the **existing** module-level predicate extended into a routing guard — no new domain class is warranted (the routing module is function-composed; the state it consults is the existing `Dispatch` pydantic model at `src/nebuko/engine/lib/workflow_state/sub_domains/dispatch/dispatch.py`).
+```python
+try:  # openhands ships with the ``runtime`` extra only.
+    from openhands.sdk import get_logger
+except ImportError:
+    get_logger = logging.getLogger
+```
 
-- **`_is_human_gate_hold(dispatch: Dispatch | None) -> bool`** — existing predicate (`resolve_route.py:312`); responsibility: *detect that the carried-forward dispatch is a human-gate hold that must block auto-advance*. (Fields consumed: `Dispatch.status: Literal["advance","loop","hold","terminate","soft_kill"]`, `Dispatch.reason: str`.)
-- **`_human_gate_hold_result(step: str) -> dict`** — new; one-line responsibility: *produce the `SKIP_AGENT` routing result that keeps the gate step parked until a gate command releases it.*
-- Secondary consistency touch: `StepResolution.next_step` (`workflow_state/sub_domains/step_resolution/step_resolution.py:61`) is written as `""` by the gate intercept so the persisted state no longer advertises an ungated forward edge.
+Key rulings:
+- Keep `openhands-sdk` optional: installing a git-pinned SDK in a fast PR lint job is slow, network-fragile, and contradicts the documented design intent (`pyproject.toml:19-20` — the library imports without the SDK).
+- Only `git_session.py` needs the guard: it is the sole unconditional `openhands` import on the lint-job import chain; the other openhands import sites are either already guarded (`load_price_table.py`) or function-local / inside `lib/agent_script` features not on the chain.
+- After the fix, verify the whole import chain with base deps — the traceback stops at the first missing module, so further unguarded imports later in `run_loop.py`'s import block would only surface after this change.
 
-**The Object Design Anchor (the `_is_human_gate_hold`-first guard in `_resolve_dispatch_path` / `_resolve_bot_fallback_path`, plus the `next_step` consistency fix) is the design being approved.**
+## Approaches considered
+
+| Approach | Pros | Cons | Verdict |
+|---|---|---|---|
+| Guard import with `try/except ImportError` fallback | Repo precedent (#928); minimal diff; lint stays fast and offline | Slightly weaker logger outside the runtime extra (acceptable) | ✅ |
+| Install `openhands-sdk` in the lint job / base deps | No code change | Git dependency in PR lint; slow, fragile, contradicts optional-runtime design | ❌ |
+| Lazy/function-local logger in `git_session.py` | Avoids module-level guard | More churn; diverges from established pattern | ❌ |
+<!-- /nebuko:section -->
+
+## Design
+<details><summary>Design</summary>
+
+<!-- nebuko:section design -->
+## Object Design Contract
+
+No new or changed classes — the change is a module-level import guard plus `import logging`, mirroring `load_price_table.py:20-26`; `GitSessionGuard`/`GuardResult` signatures are untouched.
+
+## Implementation Plan
 
 <details>
-<summary>Implementation Steps & Object Design Contract</summary>
+<summary>Implementation Plan</summary>
 
-### Dev Steps
-1. **`src/nebuko/engine/lib/resolve_config/features/resolve_route/resolve_route.py`** — in `_resolve_dispatch_path` (~line 602) and `_resolve_bot_fallback_path` (~line 1704): insert the human-gate-hold guard **before** `resolve_next_from_workflow` / the status dispatch chain, so a `human_gate` hold returns `SKIP_AGENT` regardless of whether a successor step resolves. Factor the shared result via `_human_gate_hold_result(step)`. Keep the existing terminal-step `hold` fallback intact for non-gate holds.
-2. **`src/nebuko/engine/lib/agent_script/features/build_output/build_output.py`** — in `apply_human_gate_intercept` (~line 390): when converting a completing dispatch to `hold`, ensure `build_state` writes `resolution.next_step = ""` for the intercepted state (clear the ungated edge captured from `WORKFLOW_NEXT` at lines 559-580). Do not mutate other resolution fields.
-3. **Regression test — `src/nebuko/engine/lib/test_full_state_routing.py`** — replay the pasted `workflow_state` verbatim (as a new fixture `src/nebuko/engine/lib/fixtures/workflow_state_issue885_gate_hold.json`, modeled on `workflow_state_issue864_context_hold.json`) through `resolve_config()` and assert: bot state-only re-trigger yields `SKIP_AGENT='true'` with a `human_gate` reason and **no** `TASK='dev'`/`WORKFLOW_STEP='implement'`; the engine-sentinel variant behaves identically. Keep the existing approve/reject-gate assertions green (`approved → implement`, `rejected → context`) and `/nebuko resume` still reports the hold.
-4. **Unit tests — `src/nebuko/engine/lib/resolve_config/features/resolve_route/test_resolve_route.py`** — add cases next to `test_hold_outranks_callback` / `test_engine_fallback_advance_passes_the_gate`: a `human_gate:*` hold with a resolvable successor must still `SKIP_AGENT` (the exact inversion this fix closes); a non-gate `hold` with a resolvable successor retains current behavior unless the review flags it as also wrong (then extend the same guard to all holds — see open question).
-5. **Docs** — `docs/architecture.md` § "The `human_gate` intercept" and `docs/workflows.md` § "Human Gates": one short paragraph each stating that a persisted human-gate hold blocks auto-advance on all bot routing paths until a gate command releases it.
-
-### Object Design Contract
-
-`src/nebuko/engine/lib/resolve_config/features/resolve_route/resolve_route.py`
-
-```python
-def _is_human_gate_hold(dispatch: Dispatch | None) -> bool:
-    # @stub-protected  (existing; becomes the first guard in the two paths below)
-    ...
-
-def _human_gate_hold_result(step: str) -> dict[str, str]:
-    # @stub-protected
-    # Returns {"SKIP_AGENT": "true", "REASON": "human_gate:<step> held — use /nebuko approve gate or /nebuko reject gate"}
-    ...
-```
-
-`src/nebuko/engine/lib/agent_script/features/build_output/build_output.py`
-
-```python
-def apply_human_gate_intercept(dispatch, workflow_name, workflow_step):
-    # @stub-protected  (existing signature, extended contract)
-    # Post-condition: when the intercept converts a completing dispatch to hold,
-    # build_state records an emptied resolution.next_step for the intercepted state.
-    ...
-```
-
-`src/nebuko/engine/lib/fixtures/workflow_state_issue885_gate_hold.json` — schema-v4 `WorkflowState` fixture mirroring the pasted state (step `plan`, dispatch `{status: "hold", reason: "human_gate:plan"}`, `resolution.next_step` cleared per step 2).
-
+1. **`src/nebuko/engine/git_session.py`** — add `import logging` (stdlib block, ~line 29) and wrap the line-33 `from openhands.sdk import get_logger` in the `try/except ImportError: get_logger = logging.getLogger` guard, same comment style as `load_price_table.py:20-26` (reference the lint job). Why: makes the module importable with base deps only.
+2. **Verification (dev)** — in a clean env with only `pip install pyyaml pydantic`, run `PYTHONPATH=src python -m nebuko.engine lint-config defaults/agents/`; if a second `ModuleNotFoundError` surfaces further down `run_loop.py`'s import chain, apply the same guard to that import site and re-run until the lint command completes.
+3. **Regression** — run `tests/engine/test_git_session.py` and the broader engine test suite with the runtime extra installed to confirm logging behavior is unchanged.
+</details>
+<!-- /nebuko:section -->
 </details>
 
-**Open question for the gate review:** should the precedence guard apply to *all* `hold` dispatches on the bot path (arguably any hold means "wait for a human"), or strictly `human_gate:*` holds as scoped here? The plan scopes it to `human_gate:*` to keep the blast radius minimal; widening is a one-line change in the same guard.
-
-**Routing decision:** advance to the `plan` human gate for approval, then to @@​dev for implementation at **high** complexity (cross-module engine routing + persistence + regression fixtures).
-
-This plan was created by an AI agent (OpenHands) on behalf of @​olivier-norture.
-
-<!-- AGENT_RUN_CONFIG {"dispatch": {"status": "hold", "complexity": "high", "reason": "human_gate:plan"}} -->
+## Questions
+<!-- nebuko:section questions -->
+- Assumption: the fix lands as its own change off `main`, not inside PR #1106 — the broken import is pre-existing (#1090) and #1106 only changed constants. Default: separate fix; #1106's lint passes once its branch picks up the fix.
+- Assumption: lint jobs should stay minimal-install (no `openhands`), per `pyproject.toml`'s documented design intent. Default: proceed with the guard.
+<!-- /nebuko:section -->

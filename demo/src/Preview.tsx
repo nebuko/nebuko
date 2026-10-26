@@ -101,8 +101,8 @@ const GOTO_CAPTION = 'The agents are done: open the pull request and review it y
 
 const PR: PrContent = {
   ...SAMPLE_PR,
-  number: 843,
-  title: 'feat: /nebuko update circuit-breaker',
+  number: 1133,
+  title: 'Guard openhands import in git_session.py so lint-config runs on base deps',
   body: eventById('e10').body,
   code: eventById('e10').code,
   botReview: eventById('e12').body,

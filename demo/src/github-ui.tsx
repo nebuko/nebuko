@@ -304,8 +304,8 @@ export const IssueFrame: React.FC<{
   children,
   theme = 'light',
   commentCount = 4,
-  title = 'human_gate ignore by engine',
-  number = 887,
+  title = 'No module names openhands',
+  number = 1129,
   repoOwner = 'nebuko',
   repoName = 'nebuko',
   author = 'alex-dev',
@@ -313,7 +313,6 @@ export const IssueFrame: React.FC<{
   state = 'open',
   labels = [
     {name: 'bug', color: '#d73a4a'},
-    {name: 'circuit-breaker', color: '#007ec6'},
   ],
   assignees = ['alex-dev'],
   linkedPr = null,

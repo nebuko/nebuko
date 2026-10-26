@@ -1,31 +1,32 @@
 <!-- bot-workflow-terminal -->
 ## 📊 Agent Statistics Summary
 
-Total: 4 runs · 26.4 min LLM time · 182 tool calls (2% failed) · $0.0000
+Total: 5 runs · 5.0 min LLM time · 86 tool calls (7% failed) · $0.0666
 
-| | **Total** | Architect | Context | Dev |
-|---:|---:|---:|---:|---:|
-| Runs | **4** | 2 | 1 | 1 |
-| LLM time | **26.4 min** | 3.6 min (14%) | 11.5 min (43%) | 11.4 min (43%) |
-| Cost | **$0.0000** | $0.0000 | $0.0000 | $0.0000 |
-| Input / output tokens | **8,379,436 / 142,363** | 133,611 / 11,752 | 5,408,715 / 76,762 | 2,837,110 / 53,849 |
-| Cache hit tokens | **0** | 0 | 0 | 0 |
-| Tool calls | **182** | 7 | 105 | 70 |
-| Tool error rate | **2%** | 0% | 2% | 1% |
+| | **Total** | Architect | Context | Dev | Review |
+|---:|---:|---:|---:|---:|---:|
+| Runs | **5** | 2 | 1 | 1 | 1 |
+| LLM time | **5.0 min** | 0.7 min (14%) | 1.2 min (24%) | 1.5 min (30%) | 1.6 min (33%) |
+| Cost | **$0.0666** | $0.0666 (100%) | $0.0000 (0%) | $0.0000 (0%) | $0.0000 (0%) |
+| Input / output tokens | **459,926 / 39,015** | 60,549 / 7,415 | 152,016 / 13,749 | 112,829 / 7,603 | 134,532 / 10,248 |
+| Cache hit tokens | **1,152,640 (71.48%)** | 38,656 (38.97%) | 172,800 (53.20%) | 574,848 (83.59%) | 366,336 (73.14%) |
+| Tool calls | **86** | 4 | 11 | 36 | 35 |
+| Tool error rate | **7%** | 0% | 0% | 6% | 11% |
 
 <details>
 <summary>Per-tool breakdown & provider health</summary>
 
-| | **Total** | Architect | Context | Dev |
-|---:|---:|---:|---:|---:|
-| Avg LLM call latency (s) | **20** | 29 | 9 | 13 |
-| Avg tokens/sec | **109.8** | 87.4 | 158.6 | 105.8 |
-| Avg TTFT (s) | **1.87** | 2.17 | 1.79 | 1.36 |
-| Reasoning tokens | **0** | 0 | 0 | 0 |
-|   ↳ dispatch_next | **6** | 4 | 1 | 1 |
-|   ↳ file_editor | **4** | — | 4 | — |
-|   ↳ finish | **5** | 3 | 1 | 1 |
-|   ↳ terminal | **167** | — | 99 | 68 |
+| | **Total** | Architect | Context | Dev | Review |
+|---:|---:|---:|---:|---:|---:|
+| Avg LLM call latency (s) | **4** | 5 | 5 | 2 | 3 |
+| Avg tokens/sec | **324.4** | 285.9 | 399.6 | 308.6 | 342.1 |
+| Avg TTFT (s) | **1.81** | 1.62 | 2.56 | 1.60 | 1.66 |
+| Reasoning tokens | **12,213** | 2,063 | 2,737 | 2,942 | 4,471 |
+|   ↳ file_editor | **2** | — | — | 2 | — |
+|   ↳ finalize | **11** | 4 | 2 | 3 | 2 |
+|   ↳ finish | **1** | — | — | — | 1 |
+|   ↳ invoke_skill | **1** | — | — | 1 | — |
+|   ↳ terminal_batch | **71 (6 err)** | — | 9 | 30 (2 err) | 32 (4 err) |
 
 </details>
 
@@ -33,15 +34,15 @@ Total: 4 runs · 26.4 min LLM time · 182 tool calls (2% failed) · $0.0000
 
 | Metric | Value |
 |--------|-------|
-| Human comments | 3 |
-| Human interventions after implementation | 1 |
-| Human workflow commands | 1 |
-| Agent tool invocations | 228 |
-| Estimated human reading time | 14.9 min |
-| Wall-clock duration (first agent start → close) | 956.8 min |
-| Agent time spent (benefit proxy) | 31.9 min |
-| Average human response latency | 456.0 min |
-| Accepted on first pass | No |
+| Human comments | 2 |
+| Human interventions after implementation | 0 |
+| Human workflow commands | 0 |
+| Agent tool invocations | 86 |
+| Estimated human reading time | 6.7 min |
+| Wall-clock duration (first agent start → close) | 32.3 min |
+| Agent time spent (benefit proxy) | 5.0 min |
+| Average human response latency | 13.3 min |
+| Accepted on first pass | Yes |
 
 > _Human metrics are estimates/proxies derived from issue text and workflow timestamps (reading speed: 200 wpm; scope: issue body + all comments except context-agent reports, non-rendered markup excluded). Agent time spent is a proxy for human effort avoided, not a measured saving._
 

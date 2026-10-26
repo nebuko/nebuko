@@ -198,7 +198,7 @@ export const GithubMergeBox: React.FC<{
   mergeState = 'ready',
   commitTitle,
   commitBody,
-  headBranch = 'nebuko/839-circuit-breaker',
+  headBranch = 'nebuko/1133-guard-openhands',
   branchDeleted = false,
   pointer = null,
   reviewPopover = null,
@@ -327,7 +327,7 @@ export const GithubMergeBox: React.FC<{
             <Avatar emoji="🧑‍💻" human size={32} ring={false} />
             <div style={{flex: 1, display: 'flex', flexDirection: 'column', gap: 8}}>
               <div style={{border: '1px solid ' + t.border, borderRadius: 6, background: t.bg, padding: '6px 12px', fontSize: 14}}>
-                {commitTitle ?? 'feat: per-issue circuit breaker limit (#842)'}
+                {commitTitle ?? 'Guard openhands import in git_session.py so lint-config runs on base deps'}
               </div>
               <div
                 style={{
@@ -588,14 +588,14 @@ export const PullRequestFrame: React.FC<{
 }> = ({
   children,
   theme = 'light',
-  title = 'feat: per-issue circuit breaker limit',
-  number = 842,
+  title = 'Guard openhands import in git_session.py so lint-config runs on base deps',
+  number = 1133,
   repoOwner = 'nebuko',
   repoName = 'nebuko',
   author = 'nebuko-dev',
   state = 'open',
   base = 'main',
-  head = 'nebuko/839-circuit-breaker',
+  head = 'nebuko/1133-guard-openhands',
   commits = 3,
   checks = 3,
   filesChanged = 2,
