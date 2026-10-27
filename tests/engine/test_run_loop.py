@@ -38,6 +38,7 @@ from workflow_state import (
 from workflow_state.workflow_state import WorkflowState
 from nebuko.engine.input_wiring import Materialization
 from nebuko.engine.run_loop import (
+    CONTEXT_BODIES_ENV,
     PHASES,
     STEP_INPUT_RESULTS_ENV,
     Engine,
@@ -51,6 +52,7 @@ from nebuko.engine.run_loop import (
     _render_thread_records,
     _render_unverified_records,
     _stamp_llm_session_id,
+    _with_context_bodies,
     _with_step_input_records,
     _TRIGGER_KEY,
     main,
@@ -3917,6 +3919,26 @@ class TestStepInputRecordsEnv:
     def test_no_results_leaves_the_env_untouched(self):
         env = {"X": "1"}
         assert _with_step_input_records(env, []) == {"X": "1"}
+
+
+class TestContextBodiesEnv:
+    """The cached thread bodies are handed off via a temp-file path (#748, #1193).
+
+    Inlining the JSON directly into the env var overflowed ``tmux
+    set-environment``'s message-size limit on threads with enough comment
+    content, so only the file's path goes into the env.
+    """
+
+    def test_bodies_are_written_to_a_file_and_the_path_is_stamped(self):
+        env = _with_context_bodies({}, {"101": "full text"})
+        path = env[CONTEXT_BODIES_ENV]
+        assert json.loads(Path(path).read_text(encoding="utf-8")) == {
+            "101": "full text"
+        }
+
+    def test_no_bodies_leaves_the_env_untouched(self):
+        env = {"X": "1"}
+        assert _with_context_bodies(env, {}) == {"X": "1"}
 # --- Session hooks (issue #884) -------------------------------------------
 
 

@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
@@ -3576,10 +3577,19 @@ def _with_context_bodies(env: dict[str, str], bodies: dict[str, str]) -> dict[st
     ``fetch_comment_bodies``'s executor reads this hand-off; an empty cache is
     omitted so the tool still resolves (every lookup then degrades to
     ``not_found``) without carrying a large unused payload.
+
+    The bodies are written to a temp file and only the *path* goes into the
+    env var: a thread with enough comment content inlined directly as JSON
+    overflowed ``tmux set-environment``'s own message-size limit when the
+    in-process host's env snapshot is installed into every tmux pane
+    (issue #1193).
     """
     if not bodies:
         return env
-    env[CONTEXT_BODIES_ENV] = json.dumps(bodies)
+    fd, path = tempfile.mkstemp(prefix="nebuko-context-bodies-", suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(bodies, handle)
+    env[CONTEXT_BODIES_ENV] = path
     return env
 
 
