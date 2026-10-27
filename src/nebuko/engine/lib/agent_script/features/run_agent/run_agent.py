@@ -9,6 +9,7 @@ GitHub Actions timeout (issue #489).
 
 import asyncio
 import dataclasses
+import json
 import os
 from typing import Any, Sequence
 
@@ -308,12 +309,35 @@ def _resolve_persistence_dir() -> str:
     return os.path.join("logs", "persistence")
 
 
+def _parse_context_bodies_env() -> dict[str, str]:
+    """Parse the run's cached thread-comment bodies from ``CONTEXT_BODIES`` (#748).
+
+    Emitted by the engine before the agent is invoked so the configured
+    ``fetch_comment_bodies`` tool can resolve ids against the actual thread.
+    Absent/empty yields an empty map (every lookup then returns ``not_found``);
+    a malformed value is ignored (logged) rather than aborting the run.
+    """
+    raw = os.environ.get("CONTEXT_BODIES", "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Ignoring malformed CONTEXT_BODIES env value")
+        return {}
+    if not isinstance(payload, dict):
+        logger.warning("Ignoring malformed CONTEXT_BODIES env value")
+        return {}
+    return {str(k): str(v) for k, v in payload.items()}
+
+
 def run_agent(
     llm_config: dict,
     prompt: str,
     args=None,
     agent_cfg=None,
     workspace=None,
+    context_bodies: "dict[str, str] | None" = None,
 ) -> Conversation:
     """
     Create an agent, start a conversation, send a prompt, and run the agent.
@@ -328,6 +352,9 @@ def run_agent(
                    runs under a temporary cwd, so it passes the real repo root
                    explicitly (issue #766); when omitted, ``GFA_REPO_ROOT`` is
                    preferred over the ambient cwd.
+        context_bodies: The run's cached thread-comment bodies by id (issue #748),
+                   bound to ``fetch_comment_bodies``'s executor when configured.
+                   Defaults to the engine's ``CONTEXT_BODIES`` env hand-off.
 
     Returns:
         The completed Conversation object.
@@ -357,7 +384,14 @@ def run_agent(
         agent_tools = [*agent_tools, "finalize"]
 
     resolved = resolve_toolset(
-        agent_tools, role_name, token_budget=resolve_token_budget_policy(agent_cfg)
+        agent_tools,
+        role_name,
+        token_budget=resolve_token_budget_policy(agent_cfg),
+        context_bodies=(
+            context_bodies
+            if context_bodies is not None
+            else _parse_context_bodies_env()
+        ),
     )
     sdk_tools = list(resolved.sdk_tools)
     include_default_tools = list(resolved.builtin_tools)

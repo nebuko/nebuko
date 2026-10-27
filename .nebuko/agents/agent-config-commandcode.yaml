@@ -46,7 +46,7 @@ agents:
     skills:
       - inject: ["call-agent", "planning"]
       - discover: ["complexity", "posting-contract"]
-    tools: ["think", "finish", "finalize", "complexity_review", "handoff"]
+    tools: ["think", "finish", "finalize", "complexity_review", "handoff", "fetch_comment_bodies"]
     complexity_overrides:
       low:
         model: "${llms.deepseek-v4_1-flash}"

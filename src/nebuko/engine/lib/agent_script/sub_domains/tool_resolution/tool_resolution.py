@@ -19,7 +19,7 @@ names are resolvable.
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
 from openhands.sdk import get_logger
 from openhands.sdk.tool.registry import list_registered_tools, register_tool
@@ -48,6 +48,7 @@ _FINALIZE_TOOL_NAME = "FinalizeTool"
 _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
 _COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
 _HANDOFF_TOOL_NAME = "HandoffTool"
+_FETCH_COMMENT_BODIES_TOOL_NAME = "fetch_comment_bodies"
 
 
 @dataclass(frozen=True)
@@ -246,10 +247,30 @@ def _ensure_handoff_tool_registered() -> None:
     _handoff_tool_registered = True
 
 
+# Module-level guard: register_tool logs a warning on re-registration, so in
+# long-lived processes (or repeated test runs) we register only once.
+_fetch_comment_bodies_tool_registered = False
+
+
+def _ensure_fetch_comment_bodies_tool_registered() -> None:
+    """Register the ``fetch_comment_bodies`` ToolDefinition with the registry.
+
+    Idempotent — safe to call on every agent run.
+    """
+    global _fetch_comment_bodies_tool_registered
+    if _fetch_comment_bodies_tool_registered:
+        return
+    from nebuko.engine.fetch_comment_bodies_tool import FetchCommentBodiesTool
+
+    register_tool(FetchCommentBodiesTool.name, FetchCommentBodiesTool)
+    _fetch_comment_bodies_tool_registered = True
+
+
 def resolve_toolset(
     tool_names: Iterable[str],
     role_name: str,
     token_budget: "TokenBudgetPolicy | None" = None,
+    context_bodies: Mapping[str, str] | None = None,
 ) -> ResolvedToolset:
     """Map configured tool names to SDK/builtin specs.
 
@@ -260,6 +281,10 @@ def resolve_toolset(
 
     ``token_budget`` (issue #851) carries the role's ``prompt_profile`` and
     ``require_batched_recon``, which only ``file_editor`` accepts.
+
+    ``context_bodies`` (issue #748) is the run's cached thread-comment bodies
+    by id, handed to ``fetch_comment_bodies``'s executor when that tool is
+    configured.
     """
     requested = list(tool_names)
     profile_params = (
@@ -332,6 +357,14 @@ def resolve_toolset(
         elif tool_name == "handoff":
             _ensure_handoff_tool_registered()
             sdk_tools.append(Tool(name=_HANDOFF_TOOL_NAME))
+        elif tool_name == "fetch_comment_bodies":
+            _ensure_fetch_comment_bodies_tool_registered()
+            sdk_tools.append(
+                Tool(
+                    name=_FETCH_COMMENT_BODIES_TOOL_NAME,
+                    params={"context_bodies": dict(context_bodies or {})},
+                )
+            )
         else:
             logger.warning(
                 f"Unknown tool '{tool_name}' for agent '{role_name}' — skipping"
