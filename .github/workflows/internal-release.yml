@@ -30,9 +30,18 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
       - name: Build the single-file binary
-        run: >-
-          uv run --with pyinstaller pyinstaller --onefile --name nebuko
-          --collect-data nebuko packaging/entry.py
+        shell: bash
+        run: |
+          strip_flag=""
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            strip_flag="--strip"
+          fi
+          uv run --with pyinstaller pyinstaller --onefile --name nebuko \
+            --collect-data nebuko $strip_flag \
+            --exclude-module pygments --exclude-module markdown_it \
+            --exclude-module mdurl --exclude-module setuptools \
+            --exclude-module pip --exclude-module wheel \
+            packaging/entry.py
       - name: Name the asset
         shell: bash
         run: |
