@@ -194,7 +194,7 @@ def _host_for(
 ) -> InProcessAgentHost:
     """A host whose ``run_agent`` returns ``conversation``."""
 
-    def _run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+    def _run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None):
         return conversation
 
     return _host(
@@ -229,7 +229,7 @@ def _host(
             state["turn_outcome"] = state_turn_outcome
         Path("workflow_state.json").write_text(json.dumps(state), encoding="utf-8")
 
-    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None):
         # The engine-elicited closing turn calls ``send_message``/``run`` on the
         # conversation, so the work-loop stand-in must expose the SDK surface
         # (a bare ``state.events`` namespace no longer suffices, issue #1033).
@@ -328,7 +328,7 @@ def test_run_binds_the_explicit_repo_root_workspace(tmp_path: Path) -> None:
     _write_entry_point(repo_root)
     seen: dict[str, Any] = {}
 
-    def _capture_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+    def _capture_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None):
         seen["workspace"] = workspace
         seen["cwd"] = os.getcwd()
         return _FakeConversation(events=[])
