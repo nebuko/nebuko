@@ -20,11 +20,11 @@ into a frozen `TriggerCommands` dataclass: `is_bot`, `mention_agent`,
 
 | Command | Effect |
 |---------|--------|
-| `@@<agent>` | Run the named agent directly (`architect`, `context`, `dev`, `review`, ...). To start a workflow, use `/nebuko run workflow --name <name>` (or bare `/nebuko run workflow` for the default workflow, issue #1094) — which enters at the workflow's first step. |
-| `/nebuko run workflow [--name <name>] [--step <step>[.<step>...]]` | Start (or switch to) the named workflow, regardless of current state. With no `--name`, runs the repo's **default workflow** (issue #1094): `default_workflow` from `.nebuko/nebuko.yaml`, else the shipped `default` workflow. `--step` seeds a **fresh** run directly at `<step>` instead of the first step (issue #789) — useful to enter `plan-orchestration` at `plan`/`scaffold` without replaying `architect`. A **dotted** selector (`sub_impl.step_3`, `sub_impl.step_3.review`) descends into mounted sub-workflows to address a non-first nested step (issue #822). An unknown, malformed, or not-yet-scaffolded target fails loudly. Human-only. |
+| `@@<agent>` | Run the named agent directly (`architect`, `context`, `dev`, `review`, ...). To start a workflow, use `/nebuko run workflow --name <name>` — which enters at the workflow's first step. |
+| `/nebuko run workflow --name <name> [--step <step>[.<step>...]]` | Start (or switch to) the named workflow, regardless of current state. `--step` seeds a **fresh** run directly at `<step>` instead of the first step (issue #789) — useful to enter `plan-orchestration` at `plan`/`scaffold` without replaying `architect`. A **dotted** selector (`sub_impl.step_3`, `sub_impl.step_3.review`) descends into mounted sub-workflows to address a non-first nested step (issue #822). An unknown, malformed, or not-yet-scaffolded target fails loudly. Human-only. |
 | `/nebuko resume` | Resume the held workflow step with your input (bare), or advance if there is no active dispatch. On a `human_gate:*` hold it is **inert** (points at the gate commands) — use `/nebuko approve gate` / `/nebuko reject gate` there. |
 | `/nebuko approve gate [--feedback "..."]` | Release a `human_gate` hold: record an engine-owned **`GateDecision`** (`approved`) and route via the gated step's `on_result: approved` successor. Handled inline by the engine, never routed to an agent. Authorized humans only (`OWNER`/`MEMBER`/`COLLABORATOR`), always-on regardless of `CALLER_AUTH` (issue #648). |
-| `/nebuko reject gate [--feedback "..."]` | Release a `human_gate` hold as **rejected**: with `--feedback` the gated step is **re-run** with the feedback injected, and a **fresh gate is armed when the re-run completes** — the workflow cannot advance (e.g. `plan -> implement`) until a new `/nebuko approve gate` (WHEN a step with `human_gate` is executed THEN the engine holds the workflow until the human runs `/workflow approve gate`); without feedback it routes via `on_result: rejected`. Same identity rules as `approve gate`. |
+| `/nebuko reject gate [--feedback "..."]` | Release a `human_gate` hold as **rejected**: with `--feedback` the gated step is **re-run** with the feedback injected (gate re-arms on completion); without feedback it routes via `on_result: rejected`. Same identity rules as `approve gate`. |
 | `/nebuko force-step step --name <step>[.<step>...]` | Jump directly to `<step>` of the **active** workflow, regardless of state. A dotted selector descends mounted sub-workflows (issue #822), exactly as for `run --step`. Unlike `run --step`, this replays/forks within the current run (it requires an active workflow). |
 | `/nebuko delete comments [--issue <id>] [--from <comment-id>]` | Human-only batch deletion of issue comments. `--issue <id>` selects the target issue (mandatory on the CLI surface; auto-filled with the invoking issue when the command is posted in that issue). Optional `--from <comment-id>` deletes that comment **and every later one**; omit it to delete **all** comments. Terminal command: it runs the deterministic deletion step and no agent. Requires `GH_PAT` with `issues:write`. |
 | `/nebuko clean comments [--issue <id>] [--from <comment-id>]` | Alias of `/nebuko delete comments` (issue #679), accepting the same optional `--issue`/`--from` flags. Terminal; runs the deterministic deletion step and no agent. |
@@ -324,3 +324,38 @@ wrapper each consumer repo writes to invoke this repo's reusable orchestrator
 with their `agent_config_path` and secrets (a ready-to-paste example lives in
 [adoption.md](./adoption.md)). For the full orchestrator step reference, see
 [default-workflow.md](./default-workflow.md).
+---
+
+## Comment Recall — `fetch_comment_bodies` (issue #748)
+
+Agents receive the latest message verbatim plus one-line summaries of the
+earlier thread comments. When a summary is not enough — an agent (typically
+`@@architect` on a rejected gate) needs the full text of an earlier comment —
+it calls the non-terminal engine tool `fetch_comment_bodies`.
+
+### Using it
+
+Call the tool with the ids you want the full text of:
+
+```json
+{"comment_ids": [6413627704, 6413699200]}
+```
+
+The observation returns the bodies found in this run's cached thread and the
+ids that were not found (already trimmed out of the cache, or never part of
+the thread):
+
+```json
+{"bodies": {"6413627704": "...full comment text..."}, "not_found": [6413699200]}
+```
+
+### How it works
+
+The tool is declared in `DEFAULT_ENGINE_TOOLS`
+(`src/nebuko/engine/engine_tools.py`) as `payload_kind="query"` with payload
+field `comment_ids`, alongside `finish` and `finalize`. Its executor
+(`src/nebuko/engine/fetch_comment_bodies_tool.py`) looks ids up in the per-run
+cached comment bodies and wraps every returned body in the same
+untrusted-content framing the unverified appendix uses: a full comment body is
+untrusted third-party text, exactly like any other included comment, and is
+treated as such by the consumer.

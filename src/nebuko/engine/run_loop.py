@@ -2323,6 +2323,7 @@ class Engine:
         env = _with_step_input_records(
             env, self._step_input_state.get("results") or []
         )
+        env = _with_context_bodies(env, self._context_bodies())
         return _anchor_config_path(env, self.repo_root, self._caller_root())
 
     def _active_trigger(self) -> Trigger | None:
@@ -3563,6 +3564,22 @@ def _with_step_input_records(
     if not results:
         return env
     env[STEP_INPUT_RESULTS_ENV] = json.dumps(step_input_records(list(results)))
+    return env
+
+
+CONTEXT_BODIES_ENV = "CONTEXT_BODIES"
+
+
+def _with_context_bodies(env: dict[str, str], bodies: dict[str, str]) -> dict[str, str]:
+    """Attach the run's cached thread-comment bodies for the agent child (#748).
+
+    ``fetch_comment_bodies``'s executor reads this hand-off; an empty cache is
+    omitted so the tool still resolves (every lookup then degrades to
+    ``not_found``) without carrying a large unused payload.
+    """
+    if not bodies:
+        return env
+    env[CONTEXT_BODIES_ENV] = json.dumps(bodies)
     return env
 
 
