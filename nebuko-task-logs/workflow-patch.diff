@@ -1,0 +1,19 @@
+diff --git a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
+index 4988b9b..f32d26c 100644
+--- a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
++++ b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
+@@ -14,6 +14,14 @@ permissions:
+ 
+ jobs:
+   agent:
++    # Caller-side pre-filter mirroring CALLER_AUTH: trusted associations only,
++    # and bot-authored comments never re-trigger a run.
++    if: >-
++      (github.event_name != 'issues' ||
++        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)) &&
++      (github.event_name != 'issue_comment' ||
++        (!endsWith(github.event.comment.user.login, '[bot]') &&
++         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)))
+     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
+     with:
+       agent_config_path: ".nebuko/agents/agent-config-mistral.yaml"
