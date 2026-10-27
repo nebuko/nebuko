@@ -162,6 +162,15 @@ permissions:
 
 jobs:
   agent:
+    # Cheap caller-side pre-filter: only trusted authors (OWNER, MEMBER,
+    # COLLABORATOR) may start a run, and the app's own comments never re-trigger
+    # it. Full CALLER_AUTH enforcement happens inside the reusable workflow.
+    if: >-
+      (github.event_name != 'issues' ||
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)) &&
+      (github.event_name != 'issue_comment' ||
+        (!endsWith(github.event.comment.user.login, '[bot]') &&
+         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)))
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@v0.0.2
     with:
       agent_config_path: ".nebuko/agents/agent-config.yaml"

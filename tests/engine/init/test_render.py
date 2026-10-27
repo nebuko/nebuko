@@ -57,6 +57,13 @@ def test_workflow_pins_the_ref_and_never_main():
     assert "@main" not in workflow
 
 
+def test_workflow_grants_id_token_and_gates_the_run_by_author():
+    workflow = _render("openrouter").workflow
+    assert "id-token: write" in workflow
+    for token in ("author_association", "[bot]", "OWNER", "MEMBER", "COLLABORATOR"):
+        assert token in workflow
+
+
 def test_workflow_points_at_the_generated_config_and_runner_label():
     workflow = _render("openrouter", runs_on="self-hosted").workflow
     assert 'agent_config_path: ".nebuko/agents/agent-config.yaml"' in workflow
