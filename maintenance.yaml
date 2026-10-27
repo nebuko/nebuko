@@ -1,0 +1,4 @@
+maintenance:
+  site: true
+  docs: true
+  blog: true
