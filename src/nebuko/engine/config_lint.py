@@ -78,6 +78,7 @@ KNOWN_TOOLS: frozenset[str] = frozenset(
         "finalize",
         "report_scaffold_branch",
         "complexity_review",
+        "fetch_comment_bodies",
     }
 )
 
