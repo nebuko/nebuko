@@ -312,21 +312,36 @@ def _resolve_persistence_dir() -> str:
 def _parse_context_bodies_env() -> dict[str, str]:
     """Parse the run's cached thread-comment bodies from ``CONTEXT_BODIES`` (#748).
 
-    Emitted by the engine before the agent is invoked so the configured
+    The engine writes the bodies to a temp file and emits the file's *path*
+    in this env var before the agent is invoked (issue #1193 - inlining the
+    JSON directly could overflow ``tmux set-environment``'s message-size
+    limit on threads with enough comment content) so the configured
     ``fetch_comment_bodies`` tool can resolve ids against the actual thread.
     Absent/empty yields an empty map (every lookup then returns ``not_found``);
-    a malformed value is ignored (logged) rather than aborting the run.
+    a malformed value is ignored (logged) rather than aborting the run. The
+    temp file is removed once read since nothing else owns it.
     """
-    raw = os.environ.get("CONTEXT_BODIES", "").strip()
-    if not raw:
+    path = os.environ.get("CONTEXT_BODIES", "").strip()
+    if not path:
         return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            raw = handle.read()
+    except OSError:
+        logger.warning("Ignoring unreadable CONTEXT_BODIES path")
+        return {}
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning("Ignoring malformed CONTEXT_BODIES env value")
+        logger.warning("Ignoring malformed CONTEXT_BODIES file contents")
         return {}
     if not isinstance(payload, dict):
-        logger.warning("Ignoring malformed CONTEXT_BODIES env value")
+        logger.warning("Ignoring malformed CONTEXT_BODIES file contents")
         return {}
     return {str(k): str(v) for k, v in payload.items()}
 
