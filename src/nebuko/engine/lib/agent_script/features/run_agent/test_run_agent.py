@@ -723,5 +723,47 @@ class TestMCPServerWiring(unittest.TestCase):
         )
 
 
+class TestParseContextBodiesEnv(unittest.TestCase):
+    """``CONTEXT_BODIES`` carries a temp-file *path*, not inline JSON (#1193)."""
+
+    def setUp(self) -> None:
+        import json
+        import os
+        import tempfile
+
+        self._json = json
+        self._os = os
+        self._tempfile = tempfile
+        self._prior = os.environ.get("CONTEXT_BODIES")
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self) -> None:
+        if self._prior is None:
+            self._os.environ.pop("CONTEXT_BODIES", None)
+        else:
+            self._os.environ["CONTEXT_BODIES"] = self._prior
+
+    def test_reads_bodies_from_the_path_and_removes_the_file(self) -> None:
+        from agent_script.features.run_agent.run_agent import (
+            _parse_context_bodies_env,
+        )
+
+        fd, path = self._tempfile.mkstemp(suffix=".json")
+        with self._os.fdopen(fd, "w") as handle:
+            self._json.dump({"101": "full text"}, handle)
+        self._os.environ["CONTEXT_BODIES"] = path
+
+        self.assertEqual(_parse_context_bodies_env(), {"101": "full text"})
+        self.assertFalse(self._os.path.exists(path))
+
+    def test_missing_file_degrades_to_an_empty_map(self) -> None:
+        from agent_script.features.run_agent.run_agent import (
+            _parse_context_bodies_env,
+        )
+
+        self._os.environ["CONTEXT_BODIES"] = "/nonexistent/path.json"
+        self.assertEqual(_parse_context_bodies_env(), {})
+
+
 if __name__ == "__main__":
     unittest.main()
