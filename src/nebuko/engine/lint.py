@@ -83,7 +83,7 @@ def _ensure_runtime() -> None:
 def _runtime() -> Any:
     """Return the resolver module whose traversal helpers the linter reuses."""
     _ensure_runtime()
-    import nebuko.engine.lib.resolve_workflow
+    from nebuko.engine.lib import resolve_workflow
 
     return resolve_workflow
 

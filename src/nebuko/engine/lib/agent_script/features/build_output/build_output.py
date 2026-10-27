@@ -412,7 +412,7 @@ def _load_gated_step_def(
     if not workflow_name or not workflow_step:
         return False
     try:
-        import nebuko.engine.lib.default_paths
+        from nebuko.engine.lib import default_paths
         from nebuko.engine.lib.resolve_workflow import WorkflowLoadContext
 
         shipped_dir, local_dir = default_paths.workflow_dirs()

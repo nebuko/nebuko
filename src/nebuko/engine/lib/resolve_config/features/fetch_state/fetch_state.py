@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Optional, Sequence
 
-import nebuko.engine.lib.resolve_config
+from nebuko.engine.lib import resolve_config
 from nebuko.engine.lib.workflow_state import extract_latest_state_from_comments
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
@@ -38,9 +38,10 @@ def _fetch_workflow_state_from_history(
     try:
         from nebuko.engine.lib.thread_snapshot import state_tail_limit
 
-        # Call through the package attribute so patch("resolve_config.get_issue_comments")
-        # intercepts, exactly as the old flat module did. The tail bound keeps
-        # this fallback to a single page instead of the whole thread (#805).
+        # Call through the package attribute so
+        # patch("nebuko.engine.lib.resolve_config.get_issue_comments") intercepts.
+        # The tail bound keeps this fallback to a single page instead of the
+        # whole thread (#805).
         comments = resolve_config.get_issue_comments(
             repo, issue_number, limit=state_tail_limit()
         )

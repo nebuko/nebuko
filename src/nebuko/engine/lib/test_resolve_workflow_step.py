@@ -499,7 +499,7 @@ def _import_workflow_step():
 
 def _import_resolve_module():
     import sys
-    import nebuko.engine.lib.resolve_workflow
+    from nebuko.engine.lib import resolve_workflow
     return resolve_workflow
 
 

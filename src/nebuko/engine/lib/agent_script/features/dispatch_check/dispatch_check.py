@@ -104,7 +104,7 @@ def _agent_roster_names() -> frozenset:
     if _config_names_cache is not None:
         return _config_names_cache
     try:
-        import nebuko.engine.lib.default_paths
+        from nebuko.engine.lib import default_paths
         from nebuko.engine.lib.config import load_config
 
         config = load_config(default_paths.agent_config_file())
