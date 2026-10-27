@@ -142,12 +142,18 @@ class PublishSplit:
         plain_paths: Everything else — staged/committed/pushed as today.
         republished: True when unpushed commits already carried workflow
             files and the publish commit had to be rebuilt.
+        committed_plain_paths: plain paths found only in already-committed,
+            unpushed commits (clean tree); publishable by pushing the branch
+            as-is. Empty when the unpushed commits touched workflow files
+            (those force the merge-base rebuild) or there is nothing unpushed.
     """
 
     # @stub-protected: signature defined by architect — do not modify
     workflow_paths: tuple[str, ...]
     plain_paths: tuple[str, ...]
     republished: bool
+    # @stub-protected: signature defined by architect — do not modify
+    committed_plain_paths: tuple[str, ...] = ()
 
 
 def _current_branch() -> str:
@@ -361,6 +367,22 @@ def _prepare_publish(compare_ref: str, branch: str, publish_base: str) -> Publis
         workflow_paths=workflow_dirty,
         plain_paths=plain_dirty,
         republished=republished,
+        committed_plain_paths=tuple(
+            p for p in committed if not is_workflow_path(p)
+        ),
+    )
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _needs_push(split: PublishSplit) -> bool:
+    """Whether the publish flow has anything to push to the remote.
+
+    Committed-but-unpushed plain work (a clean tree with unpushed commits)
+    counts: the publish flow must push the branch as-is and open the PR for
+    it, not report "workflow patch delivered" for nothing (issue #1180).
+    """
+    return bool(
+        split.plain_paths or split.committed_plain_paths or split.republished
     )
 
 
@@ -814,14 +836,12 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
         commit_hash = _commit_pending_changes(commit_paths)
         logger.info(f"ensure_pr: committed pending changes at {commit_hash[:12]}")
 
-    # Workflow-only: no plain delta means no push, no PR — the patch *is* the
-    # publication. The patch file is still committed on the branch above (so it
-    # survives the ephemeral runner); a mixed delta pushes it alongside the
-    # plain work.
-    no_plain_delta = not split.plain_paths and not split.republished
+    # Committed-only plain work is published by pushing the existing commit
+    # and opening the PR (issue #1180); workflow-only deltas are patch-only.
+    no_push = not _needs_push(split)
 
     pushed = False
-    if not no_plain_delta:
+    if not no_push:
         _push_branch(branch, remote, force=split.republished)
         pushed = True
         logger.info(f"ensure_pr: pushed branch '{branch}' to {remote}")
@@ -830,7 +850,7 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
 
     existing = _find_pr_for_branch(branch, transport=transport)
     pr_url = existing or ""
-    if not pr_url and not no_plain_delta:
+    if not pr_url and not no_push:
         repo = _run_git(["remote", "get-url", remote])
         issue_number = _issue_number_from_env()
         title = (
@@ -839,6 +859,8 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
         )
         pr_url = _open_pr(repo, branch, base, title, issue_number, transport=transport)
         logger.info(f"ensure_pr: opened PR {pr_url}")
+        if issue_number:
+            logger.info(f"ensure_pr: PR links the target issue via 'Closes #{issue_number}'")
     elif existing:
         logger.info(f"ensure_pr: PR already exists for '{branch}': {existing}")
 
@@ -872,7 +894,14 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
         )
 
 
-    message = "PR opened: " + pr_url if pr_url else "workflow patch delivered"
+    if pr_url:
+        message = "PR opened: " + pr_url
+    elif delivery.comment_url or delivery.artifact:
+        message = "workflow patch delivered"
+    else:
+        # Honest terminal state (issue #1180): "workflow patch delivered" here
+        # masqueraded as a delivery when nothing was published at all.
+        message = "nothing to publish: no plain delta and no PR opened"
     return EnsurePrResult(
         commit_hash=commit_hash,
         pushed=pushed,

@@ -325,6 +325,34 @@ def _parse_gate_released_env() -> bool:
     )
 
 
+def resolve_post_decision_gate(  # @stub-protected: signature defined by architect — do not modify
+    gate: Optional[GateLock],
+    workflow_step: str,
+    decision: Optional[GateDecision],
+    gate_released: bool,
+) -> Optional[GateLock]:
+    """Final gate state to persist for the completing turn of a gate-command run.
+
+    - decision is None -> gate unchanged (no gate command rode along).
+    - decision.status == "rejected" and decision.feedback and
+      decision target step == workflow_step -> fresh armed
+      GateLock(step=workflow_step): the rejection consumed the previous hold
+      and the re-run's completion raises a new one.
+    - gate_released and gate is not None -> gate.model_copy(update={"status": GateStatus.RELEASED}).
+    - otherwise -> gate unchanged.
+    """
+    if decision is not None:
+        if (
+            decision.status == "rejected"
+            and decision.feedback
+            and decision.target_step == workflow_step
+        ):
+            return GateLock(step=workflow_step)
+        if gate_released and gate is not None:
+            return gate.model_copy(update={"status": GateStatus.RELEASED})
+    return gate
+
+
 def _parse_gate_consult_env() -> str:
     """The callee of a gate consultation resolved this run (issue #1003).
 
@@ -1367,11 +1395,18 @@ def build_output(
         workflow_step=workflow_step,
         gate=prev_state.gate if prev_state is not None else None,
     )
-    if _parse_gate_released_env() and gate is not None:
-        # A recorded gate decision is the only authorized release (issue
-        # #1003): mark the lock released so it stops blocking the advance while
-        # the audit trail (gate_history) keeps the decision itself.
-        gate = gate.model_copy(update={"status": GateStatus.RELEASED})
+    # The release is folded into ``resolve_post_decision_gate`` (issue #1178):
+    # it is the single authority over the lock, so a rejected-with-feedback
+    # decision re-arms a fresh gate even though ``resolve_route`` sets
+    # ``config_gate_released=true`` on the re-run path too. An unconditional
+    # release here used to flip the fresh lock straight back to RELEASED and
+    # let the workflow advance without a new human approval.
+    gate = resolve_post_decision_gate(
+        gate,
+        workflow_step,
+        _parse_gate_decision_env(),
+        _parse_gate_released_env(),
+    )
     gate_consult = _parse_gate_consult_env()
     if gate_consult and gate is not None:
         # This run is the delegated consult (issue #1003): spend one round from

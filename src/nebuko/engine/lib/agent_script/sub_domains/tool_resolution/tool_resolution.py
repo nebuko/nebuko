@@ -44,30 +44,10 @@ _BUILTIN_TOOL_MAP = {"think": "ThinkTool", "finish": "FinishTool"}
 #: ``resolve_tool`` looks the emitted ``Tool`` spec up in that registry.
 _TERMINAL_BATCH_TOOL_NAME = "terminal_batch"
 
-#: Config tool name the engine owns but resolves through the SDK registry.
-_FETCH_COMMENT_BODIES_TOOL_NAME = "FetchCommentBodiesTool"
-
 _FINALIZE_TOOL_NAME = "FinalizeTool"
 _SCAFFOLD_BRANCH_TOOL_NAME = "ScaffoldBranchReportTool"
 _COMPLEXITY_REVIEW_TOOL_NAME = "ComplexityReviewTool"
 _HANDOFF_TOOL_NAME = "HandoffTool"
-
-#: Canonical ``tools:`` entry names this module can resolve (the config-facing
-#: side of the sdk-vs-builtin decision). Single source of truth for the offline
-#: linter's C3 rule: ``config_lint.KNOWN_TOOLS`` derives from this so the two
-#: lists can never drift apart again (issue #748 follow-up).
-CONFIG_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        *_SDK_TOOL_NAMES,
-        "terminal_batch",
-        *_BUILTIN_TOOL_MAP,
-        "finalize",
-        "report_scaffold_branch",
-        "complexity_review",
-        "handoff",
-        "fetch_comment_bodies",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -251,37 +231,6 @@ def _ensure_complexity_review_tool_registered() -> None:
 # long-lived processes (or repeated test runs) we register only once.
 _handoff_tool_registered = False
 
-# Module-level guard: register_tool logs a warning on re-registration, so in
-# long-lived processes (or repeated test runs) we register only once.
-_fetch_comment_bodies_tool_registered = False
-
-
-def _ensure_fetch_comment_bodies_tool_registered(
-    context_bodies: dict[str, str] | None = None,
-) -> None:
-    """Register the ``fetch_comment_bodies`` ToolDefinition with the registry.
-
-    Idempotent — safe to call on every agent run. The run's cached comment
-    bodies are injected at registration time so the executor's lookups read
-    from the same cache the prompt summaries were built from.
-    """
-    global _fetch_comment_bodies_tool_registered
-    if _fetch_comment_bodies_tool_registered:
-        return
-    from functools import partial
-
-    from nebuko.engine.fetch_comment_bodies_tool import FetchCommentBodiesTool
-
-    # register_tool only accepts a ToolDefinition subclass whose create() takes
-    # **params; bind the run's cached bodies through a small subclass instead.
-    tool_cls = type(
-        "FetchCommentBodiesTool",
-        (FetchCommentBodiesTool,),
-        {"_context_bodies": context_bodies or {}},
-    )
-    register_tool(_FETCH_COMMENT_BODIES_TOOL_NAME, tool_cls)
-    _fetch_comment_bodies_tool_registered = True
-
 
 def _ensure_handoff_tool_registered() -> None:
     """Register the ``handoff`` ToolDefinition with the SDK registry.
@@ -301,7 +250,6 @@ def resolve_toolset(
     tool_names: Iterable[str],
     role_name: str,
     token_budget: "TokenBudgetPolicy | None" = None,
-    context_bodies: "dict[str, str] | None" = None,
 ) -> ResolvedToolset:
     """Map configured tool names to SDK/builtin specs.
 
@@ -384,11 +332,6 @@ def resolve_toolset(
         elif tool_name == "handoff":
             _ensure_handoff_tool_registered()
             sdk_tools.append(Tool(name=_HANDOFF_TOOL_NAME))
-        elif tool_name == "fetch_comment_bodies":
-            _ensure_fetch_comment_bodies_tool_registered(
-                context_bodies=context_bodies
-            )
-            sdk_tools.append(Tool(name=_FETCH_COMMENT_BODIES_TOOL_NAME))
         else:
             logger.warning(
                 f"Unknown tool '{tool_name}' for agent '{role_name}' — skipping"

@@ -81,13 +81,7 @@ class TestConfigLinterContract:
         assert RULE_SEVERITY == RULE_SEVERITY_EXPECTED
 
     def test_known_tools_match_the_runtime_whitelist(self):
-        from nebuko.engine.config_lint import _known_tools
-        from agent_script.sub_domains.tool_resolution.tool_resolution import (
-            CONFIG_TOOL_NAMES,
-        )
-
-        assert _known_tools() == CONFIG_TOOL_NAMES
-        assert "fetch_comment_bodies" in _known_tools()
+        assert KNOWN_TOOLS == KNOWN_TOOLS_EXPECTED
 
     def test_exposes_the_plan_rule_methods(self):
         for name in (

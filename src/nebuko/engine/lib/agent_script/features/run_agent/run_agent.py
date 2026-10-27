@@ -31,6 +31,7 @@ from agent_script.features.dispatch_check import (
     recorded_is_approved,
 )
 from agent_script.features.ensure_pr.ensure_pr import check_publication, ensure_pr
+from agent_script.features.handoff_tool.handoff_store import HandoffStore
 from agent_script.features.handoff_tool.handoff_tool import take_fold
 from agent_script.features.run_agent.dispatch_recall import (
     MAX_DISPATCH_RECALLS,
@@ -46,6 +47,12 @@ from agent_script.features.run_agent.publication_guard import (
     recallable_reasons,
 )
 from agent_script.features.run_agent.run_failure import RunFailure, classify_failure
+from agent_script.features.run_agent.checkpoints import (
+    CHECKPOINT_100_PROMPT,
+    CheckpointScheduler,
+    compute_checkpoints,
+    count_plan_changes,
+)
 from agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
@@ -58,7 +65,6 @@ from agent_script.features.run_agent.timeout_budget import (
     TimeoutBudget,
     resolve_timeout_budget,
 )
-from agent_script.features.run_agent.wind_down_prompt import WIND_DOWN_PROMPT
 from agent_script.sub_domains.metrics.token_telemetry_collector import (
     TokenTelemetryCollector,
     install,
@@ -249,7 +255,9 @@ def _perform_wind_down(
         True if the wind-down completed without tripping its own budget.
     """
     logger.info("Soft timeout reached — starting graceful wind-down phase")
-    conversation.send_message(WIND_DOWN_PROMPT)
+    # CHECKPOINT_100_PROMPT wraps WIND_DOWN_PROMPT and asks for the handoff
+    # update first (issue #966, scope item 3).
+    conversation.send_message(CHECKPOINT_100_PROMPT)
     wind_down_watchdog, _ = _run_supervised(
         conversation, budget.wind_down_timeout_s, "Wind-down run"
     )
@@ -306,7 +314,6 @@ def run_agent(
     args=None,
     agent_cfg=None,
     workspace=None,
-    context_bodies: "dict[str, str] | None" = None,
 ) -> Conversation:
     """
     Create an agent, start a conversation, send a prompt, and run the agent.
@@ -317,9 +324,6 @@ def run_agent(
         args: Parsed argparse namespace (unused, retained for compatibility).
         agent_cfg: Optional AgentConfig object for tool resolution.
                    If None, default tool list is used.
-        context_bodies: Optional cached thread comment bodies by id (issue
-                   #748); passed to the fetch_comment_bodies tool when the
-                   role's tool list includes it.
         workspace: Checkout the agent must operate on. The in-process engine host
                    runs under a temporary cwd, so it passes the real repo root
                    explicitly (issue #766); when omitted, ``GFA_REPO_ROOT`` is
@@ -353,10 +357,7 @@ def run_agent(
         agent_tools = [*agent_tools, "finalize"]
 
     resolved = resolve_toolset(
-        agent_tools,
-        role_name,
-        token_budget=resolve_token_budget_policy(agent_cfg),
-        context_bodies=context_bodies,
+        agent_tools, role_name, token_budget=resolve_token_budget_policy(agent_cfg)
     )
     sdk_tools = list(resolved.sdk_tools)
     include_default_tools = list(resolved.builtin_tools)
@@ -433,9 +434,42 @@ def run_agent(
     )
 
     conversation.send_message(prompt)
+
+    # ── Checkpoint schedule (issue #966) ─────────────────────────
+    # Ask the agent to write the handoff at 50% and 75% of the soft budget,
+    # before the soft kill loses everything. Delivery is queued via
+    # send_message (no interrupt): the agent reads it at the next turn
+    # boundary. Checkpoint 3 (100%) is the existing wind-down, so it is not
+    # scheduled separately. Comparing plan_changes across handoff versions
+    # gives a per-run drift signal, logged for later analysis.
+    def _handoff_plan_changes() -> int:
+        try:
+            text = HandoffStore().load_text()
+        except Exception as e:  # noqa: BLE001 - drift logging must not break the run
+            logger.warning(f"handoff drift read failed: {e}")
+            return 0
+        if not text.strip():
+            return 0
+        return count_plan_changes(text)
+
+    checkpoint_scheduler = CheckpointScheduler(
+        compute_checkpoints(budget.soft_timeout_s)[:2],
+        deliver=lambda event: conversation.send_message(event.prompt),
+        is_finished=lambda: status_value(conversation) == _STATUS_FINISHED,
+    ).arm()
+    handoff_snapshot = _handoff_plan_changes()
+
     first_watchdog, main_error = _run_supervised(
         conversation, budget.soft_timeout_s, "Main run"
     )
+    checkpoint_scheduler.cancel()
+    handoff_after = _handoff_plan_changes()
+    if handoff_after != handoff_snapshot:
+        logger.info(
+            f"handoff drift: plan_changes {handoff_snapshot} -> {handoff_after}"
+        )
+    else:
+        logger.info("handoff drift: no handoff writes during main run")
 
     soft_timeout_fired = first_watchdog.fired
     main_status = status_value(conversation)
