@@ -81,7 +81,7 @@ class TestBuildOutputGracefulTimeout(unittest.TestCase):
     def _run(self, run_outcome, pr_result=None):
         conv = _make_conversation(run_outcome=run_outcome)
         ensure_pr_mock = (
-            lambda: pr_result
+            lambda **_: pr_result
             if pr_result is not None
             else EnsurePrResult(skipped=True, message="no git remote")
         )
@@ -104,7 +104,7 @@ class TestBuildOutputGracefulTimeout(unittest.TestCase):
             ),
             pr_result=pr,
         )
-        ep.assert_called_once()
+        ep.assert_called_once_with(interrupted=True)
         state = result["workflow_state"]
         self.assertEqual(
             state.current_context.get("last_run_status"), "gracefully_timed_out"
@@ -133,7 +133,7 @@ class TestBuildOutputGracefulTimeout(unittest.TestCase):
             ),
         )
         ensure_pr_mock = (
-            lambda: EnsurePrResult(skipped=True, message="no git remote")
+            lambda **_: EnsurePrResult(skipped=True, message="no git remote")
         )
         with patch("build_output.ensure_pr", side_effect=ensure_pr_mock) as ep:
             result = build_output(

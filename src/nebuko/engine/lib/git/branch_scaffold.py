@@ -19,7 +19,10 @@ import re
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from .git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
 
 if TYPE_CHECKING:
     from .idempotency import GitIdempotency
@@ -35,6 +38,20 @@ logger = get_logger(__name__)
 
 #: The default base branch when neither the env nor the remote HEAD names one.
 DEFAULT_BASE_BRANCH = "main"
+
+#: Installed by the scaffold: agent commits may not stage workflow files.
+WORKFLOW_PRE_COMMIT_HOOK = """#!/bin/sh
+# Installed by the nebuko engine (branch scaffold).
+staged=$(git diff --cached --name-only -- .github/workflows/)
+if [ -n "$staged" ]; then
+  echo "nebuko: do not commit .github/workflows/* changes:" >&2
+  echo "$staged" >&2
+  echo "Unstage them (git restore --staged .github/workflows/) and leave them" >&2
+  echo "in the working tree: the engine delivers them as a patch for a human" >&2
+  echo "to apply, because the agent token cannot push workflow files." >&2
+  exit 1
+fi
+"""
 
 
 @dataclass(frozen=True)
@@ -173,7 +190,16 @@ class BranchScaffold:
             return ScaffoldResult(
                 ok=False, detail=f"could not fetch origin/{base}"
             )
-        return self._prepare_branch(branch, base)
+        # ``actions/checkout`` clones at depth 1: the merge base of a previous
+        # round's branch and the base lies past the shallow boundary, and git
+        # refuses with "unrelated histories".
+        unshallow_problem = self._unshallow()
+        if unshallow_problem:
+            return ScaffoldResult(ok=False, detail=unshallow_problem)
+        result = self._prepare_branch(branch, base)
+        if result.ok and result.branch:
+            self._install_workflow_hook()
+        return result
 
     def _base_branch(self) -> str:
         """The base branch: ``GITHUB_BASE_REF`` when set, else the remote HEAD."""
@@ -191,11 +217,45 @@ class BranchScaffold:
     def _fetch_base(self, base: str) -> bool:
         """Fetch the base branch only (issue #1138: no tags, no full history)."""
         try:
-            self._git("fetch", "--no-tags", "origin", base)
+            self._git(
+                "fetch", "--no-tags", "origin",
+                f"+refs/heads/{base}:refs/remotes/origin/{base}",
+            )
             return True
         except RuntimeError as exc:
             logger.warning("branch scaffold: fetch failed: %s", exc)
             return False
+
+    def _unshallow(self) -> str:
+        """Fetch the full history of a shallow checkout. Returns a problem."""
+        try:
+            if self._git("rev-parse", "--is-shallow-repository") != "true":
+                return ""
+            self._git("fetch", "--no-tags", "--unshallow", "origin")
+        except RuntimeError as exc:
+            return f"could not unshallow the checkout: {exc}"
+        logger.info("branch scaffold: unshallowed the checkout")
+        return ""
+
+    def _install_workflow_hook(self) -> None:
+        """Refuse agent commits that stage ``.github/workflows/*``.
+
+        The agent token cannot push workflow files, so the engine delivers
+        them as a patch (issue #1080). Blocking the commit up front keeps them
+        in the working tree, where the publisher captures them, instead of
+        forcing a history rewrite later. Best effort: a missing hook only
+        means the publisher's rebuild path is taken.
+        """
+        try:
+            hooks_dir = Path(self._git("rev-parse", "--git-path", "hooks"))
+            if not hooks_dir.is_absolute():
+                hooks_dir = Path(self.repo_root) / hooks_dir
+            hooks_dir.mkdir(parents=True, exist_ok=True)
+            hook = hooks_dir / "pre-commit"
+            hook.write_text(WORKFLOW_PRE_COMMIT_HOOK, encoding="utf-8")
+            hook.chmod(0o755)
+        except (OSError, RuntimeError) as exc:
+            logger.warning("branch scaffold: could not install the hook: %s", exc)
 
     def _prepare_branch(self, branch: str, base: str) -> ScaffoldResult:
         """Continue an existing branch, or create it from the fetched base.
@@ -215,22 +275,32 @@ class BranchScaffold:
         exists on the remote (a previous round's work) is fetched so the
         session continues it.
         """
-        try:
-            if self._git("rev-parse", "--verify", "-q", f"refs/heads/{branch}"):
-                return True
-        except RuntimeError:
-            pass  # no local branch: look on the remote
+        if self._has_local_branch(branch):
+            return True
         try:
             if not self._git(
                 "ls-remote", "--heads", "origin", f"refs/heads/{branch}"
             ):
                 return False
-            # Populates ``refs/remotes/origin/<branch>`` opportunistically.
-            self._git("fetch", "--no-tags", "origin", branch)
+            # The checkout below needs ``refs/remotes/origin/<branch>``.
+            self._fetch_branch(branch)
             return True
         except RuntimeError as exc:
             logger.warning("branch scaffold: remote branch lookup failed: %s", exc)
             return False
+
+    def _has_local_branch(self, branch: str) -> bool:
+        try:
+            return bool(self._git("rev-parse", "--verify", "-q", f"refs/heads/{branch}"))
+        except RuntimeError:
+            return False
+
+    def _fetch_branch(self, branch: str) -> None:
+        """Fetch ``branch`` into its remote-tracking ref (explicit refspec)."""
+        self._git(
+            "fetch", "--no-tags", "origin",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        )
 
     def _create_branch(self, branch: str, base: str) -> ScaffoldResult:
         try:
@@ -253,23 +323,50 @@ class BranchScaffold:
         try:
             # A remote-only branch from a previous round is fetched but not
             # checked out yet (a pinned-SHA checkout is detached): the merge
-            # must happen on the branch, never on the detached HEAD.
-            self._git("checkout", branch)
+            # must happen on the branch, never on the detached HEAD. It is
+            # created from the remote ref explicitly: ``git checkout <branch>``
+            # only guesses through the configured fetch refspec, which a
+            # single-branch (shallow) clone limits to the base.
+            if self._has_local_branch(branch):
+                self._git("checkout", branch)
+            else:
+                self._git("checkout", "-b", branch, f"refs/remotes/origin/{branch}")
         except RuntimeError as exc:
             return ScaffoldResult(ok=False, detail=f"could not check out {branch}: {exc}")
+        if self._idempotency.base_already_merged(branch, base):
+            detail = f"{branch} already contains origin/{base}"
+            logger.info("branch scaffold: %s", detail)
+            return ScaffoldResult(
+                ok=True, already_up_to_date=True, detail=detail, branch=branch
+            )
         try:
-            self._git("merge", "--no-edit", f"origin/{base}")
-        except RuntimeError:
+            # The identity is passed inline: the preflight that writes the
+            # repo-local identity may not have run yet, and a runner without a
+            # global one cannot create the merge commit.
+            self._git(*self._identity_args(), "merge", "--no-edit", f"origin/{base}")
+        except RuntimeError as exc:
             conflicted = self._conflicted_files()
-            try:
-                self._git("merge", "--abort")
-            except RuntimeError as exc:
-                logger.warning("branch scaffold: merge abort failed: %s", exc)
-            detail = ", ".join(conflicted) or f"merge of origin/{base} into {branch} failed"
+            if not conflicted:
+                # Not a conflict (unrelated histories, a dirty tree, …): the
+                # agent cannot fix it, so the run must fail instead.
+                self._abort_merge()
+                return ScaffoldResult(
+                    ok=False,
+                    detail=f"merge of origin/{base} into {branch} failed: {exc}",
+                )
+            # The merge is left in progress so the agent resolves the markers
+            # in place; the publisher concludes it with the engine commit.
+            detail = ", ".join(conflicted)
+            listed = "\n".join(f"- `{path}`" for path in conflicted)
             note = (
-                f"FIRST: the engine hit a merge conflict with origin/{base}. "
-                f"Resolve it as your FIRST action: re-run `git merge origin/{base}`, "
-                f"resolve the markers, `git add` + commit, then push."
+                f"FIRST: the engine merged origin/{base} into `{branch}` and the "
+                "merge stopped on conflicts. The merge is still in progress. "
+                "Resolve it before anything else:\n\n"
+                f"{listed}\n\n"
+                "Edit each file to remove the conflict markers, then `git add` it. "
+                "Do not run `git merge --abort`. Committing is optional: the engine "
+                "commits the merge after your run, and refuses to publish if "
+                "conflicts remain."
             )
             logger.info("branch scaffold: merge conflict in %s", detail)
             return ScaffoldResult(
@@ -286,6 +383,21 @@ class BranchScaffold:
         except RuntimeError:
             return []
         return [line for line in out.splitlines() if line]
+
+    def _abort_merge(self) -> None:
+        try:
+            self._git("rev-parse", "-q", "--verify", "MERGE_HEAD")
+        except RuntimeError:
+            return  # the merge never started: nothing to abort
+        try:
+            self._git("merge", "--abort")
+        except RuntimeError as exc:
+            logger.warning("branch scaffold: merge abort failed: %s", exc)
+
+    def _identity_args(self) -> list[str]:
+        name = self.env.get("NEBUKO_GIT_AUTHOR_NAME") or GIT_IDENTITY_NAME
+        email = self.env.get("NEBUKO_GIT_AUTHOR_EMAIL") or GIT_IDENTITY_EMAIL
+        return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
 
     # ── Plumbing ─────────────────────────────────────────────────
 

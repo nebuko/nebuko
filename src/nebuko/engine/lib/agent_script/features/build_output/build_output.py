@@ -1256,7 +1256,7 @@ def build_output(
 
     if is_graceful_timeout:
         logger.info("Graceful timeout detected — running deterministic PR fallback")
-        pr_result = ensure_pr()
+        pr_result = ensure_pr(interrupted=True)
         if not final_message:
             # The wind-down did not finish its work — synthesize a clear
             # summary so downstream doesn't treat this as a crashed run.

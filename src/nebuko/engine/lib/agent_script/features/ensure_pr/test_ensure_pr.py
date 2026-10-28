@@ -25,6 +25,7 @@ from agent_script.features.ensure_pr.ensure_pr import (
     _run_git,
     check_publication,
     ensure_pr,
+    pr_title,
 )
 from agent_script.features.ensure_pr.ensure_pr import PublishSplit
 from agent_script.features.ensure_pr.workflow_patch import (
@@ -434,6 +435,7 @@ def _patch_git(
     patch="diff --git a/x b/x\n",
     on_push=None,
     after_rebuild=None,
+    unmerged="",
 ):
     """Git fake for the path-split publication flow.
 
@@ -467,6 +469,8 @@ def _patch_git(
             return _porcelain_z(status)
         if joined.startswith("diff --name-only"):
             return committed
+        if joined.startswith("ls-files --unmerged"):
+            return unmerged
         if joined.startswith("rev-list --count @{u}..HEAD"):
             return "0"
         if joined.startswith("rev-list --count"):
@@ -760,6 +764,115 @@ class TestWorkflowPatchPublication(unittest.TestCase):
         ]
         self.assertEqual(mutating, [])
         self.assertFalse(any(mutative for _, mutative in gh.recorded))
+
+
+class TestPublicationNaming(unittest.TestCase):
+    """The commit and the PR are named after the issue, never "WIP checkpoint"."""
+
+    def _run(self, *, env, status=f" M {_CODE}\n", issue_view="", **kwargs):
+        git = _patch_git(status=status, **kwargs)
+        gh = _GhRecorder()
+        original_call = gh.call
+
+        def call(args, **kw):
+            if args[:2] == ["issue", "view"]:
+                gh.recorded.append((list(args), kw.get("mutative", False)))
+
+                class _R:
+                    ok = True
+                    status = 200
+                    detail = ""
+                    payload = issue_view
+
+                return _R()
+            return original_call(args, **kw)
+
+        gh.call = call
+        with _patch_ensure_pr(git, gh, env):
+            result = ensure_pr(**self.ensure_kwargs)
+        return result, git, gh
+
+    def setUp(self):
+        self.ensure_kwargs = {}
+
+    @staticmethod
+    def _commit_message(git):
+        commits = [c for c in git.calls if "commit" in c]
+        assert len(commits) == 1, commits
+        return commits[0][commits[0].index("-m") + 1]
+
+    @staticmethod
+    def _created_pr(gh):
+        creates = [args for args, _ in gh.recorded if args[:2] == ["pr", "create"]]
+        assert len(creates) == 1, creates
+        args = creates[0]
+        return args[args.index("--title") + 1], args[args.index("--body") + 1]
+
+    def test_the_issue_title_names_the_commit_and_the_pr(self):
+        result, git, gh = self._run(
+            env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": "Deliver workflow patches"}
+        )
+
+        self.assertFalse(result.error, result.message)
+        title, body = self._created_pr(gh)
+        self.assertEqual(title, "Deliver workflow patches (#1080)")
+        self.assertNotIn("WIP", title)
+        self.assertNotIn("time budget", body)
+        message = self._commit_message(git)
+        self.assertTrue(message.startswith("Deliver workflow patches (#1080)"), message)
+        self.assertNotIn("WIP", message)
+
+    def test_the_issue_title_is_looked_up_when_not_given(self):
+        result, _, gh = self._run(
+            env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": ""},
+            issue_view="Title from GitHub",
+        )
+
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(self._created_pr(gh)[0], "Title from GitHub (#1080)")
+
+    def test_the_branch_names_the_pr_without_an_issue_title(self):
+        result, _, gh = self._run(env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": ""})
+
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(self._created_pr(gh)[0], "feature/issue-1080")
+
+    def test_an_explicit_title_wins(self):
+        self.ensure_kwargs = {"issue_title": "Explicit"}
+        result, _, gh = self._run(env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": "Env"})
+
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(self._created_pr(gh)[0], "Explicit (#1080)")
+
+    def test_an_interrupted_run_says_so_in_the_body_only(self):
+        self.ensure_kwargs = {"interrupted": True}
+        result, git, gh = self._run(
+            env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": "Deliver workflow patches"}
+        )
+
+        self.assertFalse(result.error, result.message)
+        title, body = self._created_pr(gh)
+        self.assertEqual(title, "Deliver workflow patches (#1080)")
+        self.assertIn("interrupted", body)
+        self.assertIn("interrupted", self._commit_message(git))
+
+    def test_unresolved_conflicts_are_never_published(self):
+        result, git, gh = self._run(
+            env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": "T"},
+            unmerged="100644 abc 1\tsrc/a.py\n100644 def 2\tsrc/a.py\n",
+        )
+
+        self.assertTrue(result.error)
+        self.assertIn("src/a.py", result.message)
+        self.assertFalse(any("commit" in c for c in git.calls))
+        self.assertFalse(any(c and c[0] == "push" for c in git.calls))
+        self.assertFalse(any(args[:2] == ["pr", "create"] for args, _ in gh.recorded))
+
+    def test_pr_title_helper(self):
+        self.assertEqual(pr_title(1153, "Prevent multiple branches"),
+                         "Prevent multiple branches (#1153)")
+        self.assertEqual(pr_title(None, "No number"), "No number")
+        self.assertEqual(pr_title(7, "  "), "")
 
 
 class TestCheckPublicationWorkflowPaths(unittest.TestCase):
@@ -1222,6 +1335,18 @@ class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
                 + PATCH_FILENAME
                 + ") instead of only delivering it as a comment/artifact",
             )
+
+            # ... and pushed with a PR, so a human can fetch the branch and
+            # apply it (degraded delivery): the remote branch carries the
+            # patch file, never the workflow file.
+            self.assertTrue(result.pushed)
+            self.assertEqual(result.pr_url, "https://github.com/acme/repo/pull/1")
+            branch = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=work).strip()
+            pushed = self._git(
+                "ls-tree", "-r", "--name-only", branch, cwd=remote
+            ).split()
+            self.assertIn("nebuko-task-logs/workflow-patch.diff", pushed)
+            self.assertNotIn(workflow, pushed)
 
 
 class TestRealGitMissingLocalBase(unittest.TestCase):

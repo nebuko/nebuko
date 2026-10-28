@@ -34,7 +34,6 @@ from agent_script.features.ensure_pr.workflow_patch import (
     PATCH_FILENAME,
     build_patch,
     is_workflow_path,
-    patch_is_already_applied,
     render_patch_comment,
     revert_workflow_changes,
     split_paths,
@@ -233,26 +232,26 @@ def _status_entries() -> tuple[tuple[str, str], ...]:
     return tuple(entries)
 
 
-def _commit_pending_changes(paths: Sequence[str] | None = None) -> str:
-    """Stage and commit untracked/modified tracked files. Returns the hash.
+def _commit_pending_changes(
+    paths: Sequence[str] | None = None, message: str = ""
+) -> str:
+    """Stage and commit the agent's leftovers. Returns the hash, or ``""``.
 
     ``paths`` restricts the commit to exactly those paths; it must never
     contain a ``.github/workflows/*`` path, because committing one would only
-    make the next ``git push`` fail (issue #1080). ``None`` keeps the historic
-    "everything git reports" behaviour.
+    make the next ``git push`` fail (issue #1080). ``None`` stages everything
+    git reports except workflow and engine-owned paths. Every change kind is
+    staged (deletions and renames included), so no second engine commit is
+    needed for what this one skipped. A merge left in progress by the scaffold
+    is concluded by this commit.
     """
-    # Scope staging to untracked + modified tracked files only; deletions,
-    # type changes and renames are left for the next run to handle in
-    # context (keeps the automatic checkpoint conservative).
-    allowed = None if paths is None else set(paths)
-    staged: list[str] = []
-    for path, code in _status_entries():
-        if allowed is not None and path not in allowed:
-            continue
-        if code == "??" or " M" in code or "M " in code:
-            staged.append(path)
+    if paths is None:
+        _, paths = split_paths(_dirty_paths())
+    staged = list(dict.fromkeys(paths))
     if staged:
         _run_git(["add", "--"] + staged)
+    if not staged and not _merge_in_progress():
+        return ""
     _run_git(
         [
             "-c",
@@ -261,13 +260,61 @@ def _commit_pending_changes(paths: Sequence[str] | None = None) -> str:
             f"user.email={GIT_IDENTITY_EMAIL}",
             "commit",
             "-m",
-            "WIP checkpoint — automatic commit from graceful agent interruption\n\n"
-            "The agent hit its soft time budget. This checkpoint preserves the "
-            "in-flight work so the next run can resume instead of starting over.\n\n"
-            "(auto-committed by the ensure_pr fallback, issue #489)",
+            message or _commit_message(),
         ]
     )
     return _run_git(["rev-parse", "HEAD"])
+
+
+def _merge_in_progress() -> bool:
+    """Whether a merge (left by the branch scaffold) awaits its commit."""
+    git_path = _run_git(["rev-parse", "--git-path", "MERGE_HEAD"])
+    if not os.path.isabs(git_path):
+        git_path = os.path.join(_repo_root() or os.getcwd(), git_path)
+    return os.path.isfile(git_path)
+
+
+def _unmerged_paths() -> tuple[str, ...]:
+    """Paths still carrying merge conflicts (unmerged index entries)."""
+    out = _run_git(["ls-files", "--unmerged"])
+    paths = (line.split("\t", 1)[-1] for line in out.splitlines() if "\t" in line)
+    return tuple(dict.fromkeys(paths))
+
+
+def _issue_title(*, transport: Optional[GitHubTransport] = None) -> str:
+    """The triggering issue's title: ``ISSUE_TITLE``, else asked of GitHub."""
+    title = os.environ.get("ISSUE_TITLE", "").strip()
+    if title:
+        return title
+    number = _issue_number_from_env()
+    if number is None:
+        return ""
+    try:
+        out = _run_gh(
+            ["issue", "view", str(number), "--json", "title", "--jq", ".title"],
+            transport=transport,
+        )
+    except (RuntimeError, TimeoutExpired) as exc:
+        logger.warning(f"ensure_pr: could not read the issue title: {exc}")
+        return ""
+    return out.strip().strip('"')
+
+
+def _commit_message(issue_title: str = "", *, interrupted: bool = False) -> str:
+    """The engine commit message: the issue it works on, not a WIP stamp."""
+    number = _issue_number_from_env()
+    ref = f"#{number}" if number else ""
+    subject = issue_title or "commit remaining agent changes"
+    head = f"{subject} ({ref})" if ref else subject
+    if interrupted:
+        return (
+            f"{head}\n\nCheckpoint of an interrupted agent run: the agent hit its "
+            "time budget, the next run resumes from this commit."
+        )
+    return (
+        f"{head}\n\nChanges the agent left uncommitted, committed by the engine "
+        "before it pushed the branch."
+    )
 
 
 def _changed_paths(compare_ref: str) -> tuple[str, ...]:
@@ -577,13 +624,26 @@ def _open_pr(
     title: str,
     issue_number: Optional[int],
     *,
+    interrupted: bool = False,
+    patch_path: str = "",
     transport: Optional[GitHubTransport] = None,
 ) -> str:
-    body_lines = [
-        "_This PR was opened automatically by the ensure_pr fallback because the "
-        "agent reached its soft time budget (issue #489). It contains the "
-        "checkpointed work from that run; a follow-up run will pick up from here._",
-    ]
+    if interrupted:
+        body_lines = [
+            "_Opened by the nebuko engine after an interrupted agent run: the "
+            "agent hit its time budget, so this branch holds checkpointed work "
+            "and a follow-up run picks up from here._",
+        ]
+    else:
+        body_lines = ["_Opened by the nebuko engine for the agent's work._"]
+    if patch_path:
+        body_lines += [
+            "",
+            "**Workflow change needs a human.** The agent token cannot push "
+            "`.github/workflows/*`, so that change is committed here as "
+            f"`{patch_path}`. Fetch this branch and run `git apply {patch_path}`, "
+            "then commit the result with a token that has the `workflow` scope.",
+        ]
     if issue_number:
         body_lines.append("")
         body_lines.append(f"Closes #{issue_number}")
@@ -709,13 +769,13 @@ def _render_patch(workflow_paths: Sequence[str], patch_base: str, base_name: str
     if not diff.strip():
         # Delivery alias: identical content on both sides, nothing to apply.
         return None
-    root = _repo_root()
-    applied = bool(root) and patch_is_already_applied(diff, root)
+    # A non-empty diff against the base means the base does not carry the
+    # change yet. (Probing the working tree instead would always answer
+    # "already applied": the change is still there until it is reverted.)
     return diff, render_patch_comment(
         diff=diff,
         workflow_paths=workflow_paths,
         base_name=base_name,
-        already_applied=applied,
     )
 
 
@@ -763,14 +823,17 @@ def _stage_patch_commit_file(diff: str) -> str:
             os.path.join(root, relative), "w", encoding="utf-8"
         ) as handle:
             handle.write(diff if diff.endswith("\n") else diff + "\n")
-        _run_git(["add", "--", relative])
+        # ``-f``: the repository may gitignore the logs directory.
+        _run_git(["add", "-f", "--", relative])
         return relative
     except (OSError, RuntimeError) as exc:
         logger.warning(f"ensure_pr: could not stage the patch file: {exc}")
         return ""
 
 
-def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
+def _ensure_pr_impl(
+    dry_run: bool, issue_title: str = "", interrupted: bool = False
+) -> EnsurePrResult:
     """The real ``ensure_pr`` body (wrapped by the public entry point)."""
     # One transport for the whole flow so the PR lookup, the PR creation and
     # the patch comment share a single pacing/budget state (issue #805).
@@ -785,6 +848,14 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
         logger.info("ensure_pr: detached HEAD — skipping")
         return EnsurePrResult(skipped=True, message="detached HEAD")
 
+    # The scaffold leaves a conflicted merge for the agent to resolve; markers
+    # it did not resolve must never be committed and pushed.
+    unmerged = _unmerged_paths()
+    if unmerged:
+        raise RuntimeError(
+            "unresolved merge conflicts, refusing to publish: " + ", ".join(unmerged)
+        )
+
     # ``patch_base`` is the diff anchor (must be a resolvable ref: a checkout
     # may only carry ``origin/main``); ``compare_ref`` is the
     # branch-comparison anchor.
@@ -794,7 +865,10 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
         compare_ref = _run_git(["rev-parse", "--abbrev-ref", "@{u}"]).strip() or patch_base
     except RuntimeError:
         compare_ref = patch_base
-    publish_base = patch_base
+    # A rebuild only rewrites what the remote does not have yet: pushed
+    # commits can never carry a workflow file (GitHub rejected those pushes),
+    # so resetting past the upstream would only discard published history.
+    publish_base = compare_ref
 
     split = _prepare_publish(compare_ref, branch, publish_base)
 
@@ -827,24 +901,33 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
                 "workflow patch could not be delivered (no comment target?) — "
                 "refusing to discard .github/workflows changes"
             )
-        # The patch itself must survive the ephemeral runner: commit it on the
-        # branch so it is pushed alongside the plain work (never the workflow
-        # files themselves — those are reverted below).
+        # Degraded delivery: the patch is committed on the branch so a human
+        # fetches it and applies it with a workflow-scoped token (never the
+        # workflow files themselves — those are reverted below).
         patch_commit_path = _stage_patch_commit_file(delivery.diff)
+        # A workflow file the agent staged (or ``build_patch``'s
+        # intent-to-add) would otherwise ride along in the commit below.
+        _unstage_workflow_paths(split.workflow_paths)
     else:
         patch_commit_path = ""
 
+    if not issue_title:
+        issue_title = _issue_title(transport=transport)
     commit_paths = list(split.plain_paths)
     if patch_commit_path:
         commit_paths.append(patch_commit_path)
     commit_hash = ""
-    if _has_uncommitted_changes():
-        commit_hash = _commit_pending_changes(commit_paths)
-        logger.info(f"ensure_pr: committed pending changes at {commit_hash[:12]}")
+    if _has_uncommitted_changes() or _merge_in_progress():
+        commit_hash = _commit_pending_changes(
+            commit_paths, _commit_message(issue_title, interrupted=interrupted)
+        )
+        if commit_hash:
+            logger.info(f"ensure_pr: committed pending changes at {commit_hash[:12]}")
 
     # Committed-only plain work is published by pushing the existing commit
-    # and opening the PR (issue #1180); workflow-only deltas are patch-only.
-    no_push = not _needs_push(split)
+    # and opening the PR (issue #1180); a committed workflow patch is
+    # published the same way, so a human can fetch the branch and apply it.
+    no_push = not (_needs_push(split) or patch_commit_path)
 
     pushed = False
     if not no_push:
@@ -859,11 +942,17 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
     if not pr_url and not no_push:
         repo = _run_git(["remote", "get-url", remote])
         issue_number = _issue_number_from_env()
-        title = (
-            "WIP checkpoint: in-flight work from interrupted agent run "
-            f"(#{issue_number or 'n/a'})"
+        title = pr_title(issue_number, issue_title) or branch
+        pr_url = _open_pr(
+            repo,
+            branch,
+            base,
+            title,
+            issue_number,
+            interrupted=interrupted,
+            patch_path=patch_commit_path,
+            transport=transport,
         )
-        pr_url = _open_pr(repo, branch, base, title, issue_number, transport=transport)
         logger.info(f"ensure_pr: opened PR {pr_url}")
         if issue_number:
             logger.info(f"ensure_pr: PR links the target issue via 'Closes #{issue_number}'")
@@ -919,7 +1008,17 @@ def _ensure_pr_impl(dry_run: bool) -> EnsurePrResult:
     )
 
 
-def ensure_pr(dry_run: bool = False) -> EnsurePrResult:
+def pr_title(issue_number: Optional[int], issue_title: str) -> str:
+    """The PR title: ``<issue title> (#N)``; ``""`` without a title."""
+    title = issue_title.strip()
+    if not title:
+        return ""
+    return f"{title} (#{issue_number})" if issue_number else title
+
+
+def ensure_pr(
+    dry_run: bool = False, *, issue_title: str = "", interrupted: bool = False
+) -> EnsurePrResult:
     """Commit/push/open a PR for the current branch — idempotent.
 
     Never raises: any failure is logged and reported in the returned
@@ -935,12 +1034,16 @@ def ensure_pr(dry_run: bool = False) -> EnsurePrResult:
 
     Args:
         dry_run: If True, log intended actions without mutating git state.
+        issue_title: Title of the issue the branch works on, used for the
+            commit message and the PR title. Looked up on GitHub when empty.
+        interrupted: True when the agent run was cut short (graceful
+            timeout); only the commit message and PR body change.
 
     Returns:
         EnsurePrResult describing what happened.
     """
     try:
-        return _ensure_pr_impl(dry_run)
+        return _ensure_pr_impl(dry_run, issue_title, interrupted)
     except Exception as e:
         logger.error(f"ensure_pr failed: {e}")
         return EnsurePrResult(error=True, message=f"error: {e}")

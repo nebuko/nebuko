@@ -19,8 +19,11 @@ def ensure_pr_result(monkeypatch):
     calls: list[bool] = []
     holder: dict[str, EnsurePrResult | Exception] = {}
 
-    def _fake(dry_run: bool = False) -> EnsurePrResult:
+    def _fake(
+        dry_run: bool = False, *, issue_title: str = "", interrupted: bool = False
+    ) -> EnsurePrResult:
         calls.append(dry_run)
+        holder["issue_title"] = issue_title
         outcome = holder.get("result")
         if isinstance(outcome, Exception):
             raise outcome

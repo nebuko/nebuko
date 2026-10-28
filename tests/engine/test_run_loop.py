@@ -4752,7 +4752,7 @@ class TestBranchScaffoldWiring:
 
         outcome, calls, _ = self._run(monkeypatch, root)
 
-        assert calls == ["scaffold", "pre", "agent", "pr", "post"]
+        assert calls == ["pre", "scaffold", "agent", "pr", "post"]
         assert outcome.exit_code == ExitCode.ADVANCE
 
     def test_a_failed_scaffold_fails_the_run_before_the_agent(
@@ -4771,7 +4771,7 @@ class TestBranchScaffoldWiring:
 
         # The preflight still proves the checkout (cheap, no tokens); only the
         # agent is skipped.
-        assert calls == ["scaffold", "pre", "pr", "post"]
+        assert calls == ["pre", "scaffold", "pr", "post"]
         assert outcome.exit_code == ExitCode.ERROR
         assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
         assert outcome.turn_outcome.note.startswith("branch scaffold failed: ")
@@ -4802,6 +4802,8 @@ class TestBranchScaffoldWiring:
         assert len(prompts) == 1
         assert "Branch conflict" in prompts[0]
         assert "FIRST" in prompts[0]
+        # The fix-first note leads the prompt, ahead of the task itself.
+        assert prompts[0].startswith("## Branch conflict")
 
     def test_the_prepared_branch_is_recorded_in_the_state(
         self, tmp_path, monkeypatch
@@ -4869,7 +4871,7 @@ class TestPrFinalizerWiring:
 
         outcome, calls, _ = self._run(monkeypatch, root)
 
-        assert calls == ["scaffold", "pre", "agent", "pr", "post"]
+        assert calls == ["pre", "scaffold", "agent", "pr", "post"]
         assert outcome.exit_code == ExitCode.ADVANCE
 
     def test_a_failed_finalizer_fails_the_run(self, tmp_path, monkeypatch):

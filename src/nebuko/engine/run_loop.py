@@ -1021,17 +1021,28 @@ class Engine:
 
             self._enter(phases, "prompt")
             failure_reason: str | None = None
+            # Git session preflight (issue #1089): prove the checkout can
+            # authenticate before a single token is spent. A credentials-less
+            # session used to run to the end and only fail on push — while
+            # ``gh`` kept succeeding — and the run still exited 0. It runs
+            # before the scaffold, whose fetch and merge need the auth and the
+            # commit identity it installs.
+            preflight = self._git_session_preflight()
+            if not preflight.ok:
+                failure_reason = f"git session preflight failed: {preflight.detail}"
             # Branch scaffold (issue #1138): the engine prepares the feature
-            # branch before the prompt is built, so a rebase-conflict note
+            # branch before the prompt is built, so a merge-conflict note
             # reaches the prompt and the agent never spends turns on branch
             # mechanics. Fail-closed: a failed scaffold skips the agent.
-            scaffold = self._branch_scaffold()
-            if not scaffold.ok:
-                failure_reason = f"branch scaffold failed: {scaffold.detail}"
+            if failure_reason is None:
+                scaffold = self._branch_scaffold()
+                if not scaffold.ok:
+                    failure_reason = f"branch scaffold failed: {scaffold.detail}"
             prompt = self.build_prompt(resolved, history, input_results, step_scope)
             conflict_note = self._render_scaffold_conflict()
             if conflict_note:
-                prompt = f"{prompt}\n\n{conflict_note}"
+                # First, not last: resolving the merge comes before the task.
+                prompt = f"{conflict_note}\n\n{prompt}"
 
             self._enter(phases, "agent")
             # Resolve the legacy comment/validation bridge once, before the
@@ -1050,17 +1061,6 @@ class Engine:
             # a ``post_hook`` runs after the agent attempt and is fail-open.
             hooks = hooks_from_resolved(resolved)
             agent_result: dict[str, Any] = {}
-
-            # Git session preflight (issue #1089): prove the checkout can
-            # authenticate before a single token is spent. A credentials-less
-            # session used to run to the end and only fail on push — while
-            # ``gh`` kept succeeding — and the run still exited 0.
-            preflight = self._git_session_preflight()
-            if not preflight.ok:
-                note = f"git session preflight failed: {preflight.detail}"
-                failure_reason = (
-                    f"{failure_reason}; {note}" if failure_reason else note
-                )
 
             pre_hook = hooks.get("pre")
             if failure_reason is None and pre_hook is not None:
@@ -2496,7 +2496,13 @@ class Engine:
         publishes nothing to finalize. Never raises: a failure is returned as
         data and the caller turns it into a run error.
         """
-        result = pr_finalize.PrFinalizer().finalize()
+        trigger = self._active_trigger()
+        issue_title = (
+            branch_scaffold.issue_title_from_payload(trigger.payload)
+            if trigger is not None
+            else ""
+        )
+        result = pr_finalize.PrFinalizer(issue_title=issue_title).finalize()
         if result.ok:
             log.info("[phase:state] pr finalize: %s", result.detail)
         else:

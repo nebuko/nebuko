@@ -48,7 +48,18 @@ def patch_is_already_applied(patch_text: str, repo_root: str) -> bool:
     probe) so the delivery can say "already applied" instead of re-issuing
     the apply command for a change a human already applied.
     """
-    raise NotImplementedError
+    if not patch_text.strip():
+        return False
+
+    def run_git(args: Sequence[str]) -> str:
+        result = subprocess.run(
+            ["git", *args], cwd=repo_root, capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip())
+        return result.stdout.strip()
+
+    return GitIdempotency(repo_root, run_git).patch_already_applied(patch_text)
 
 
 # @stub-protected
@@ -150,6 +161,22 @@ def render_patch_comment(
     only: the change is already in the tree, so no apply command is
     offered (issue #1194).
     """
+    if already_applied:
+        listed = "\n".join(f"- `{path}`" for path in workflow_paths)
+        body = "\n".join(
+            [
+                "### Workflow change already applied",
+                "",
+                f"`{base_name}` already carries this change, so there is "
+                "nothing to apply:",
+                "",
+                listed,
+            ]
+        )
+        return PatchComment(
+            body=body, workflow_paths=tuple(workflow_paths), oversized=False
+        )
+
     inline_lines = [
         "```diff",
         diff.strip("\n"),

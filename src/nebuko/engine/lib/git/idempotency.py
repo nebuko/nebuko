@@ -15,6 +15,7 @@ Like the rest of the git layer, the checks never raise for an expected
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable, Sequence
 
 
@@ -41,7 +42,11 @@ class GitIdempotency:
         ``git merge-base --is-ancestor`` exits 0 when the base is an ancestor
         of the branch — the merge would be a no-op and must not run.
         """
-        raise NotImplementedError
+        try:
+            self._run_git(["merge-base", "--is-ancestor", f"origin/{base}", branch])
+        except RuntimeError:
+            return False
+        return True
 
     def patch_already_applied(self, patch_text: str) -> bool:  # @stub-protected
         """Whether the patch is already present in the working tree.
@@ -49,8 +54,24 @@ class GitIdempotency:
         ``git apply --check --reverse`` succeeds exactly when the diff can be
         reversed out of the tree — i.e. the change is already applied.
         """
-        raise NotImplementedError
+        return self._apply_check(patch_text, reverse=True)
 
     def patch_applies_cleanly(self, patch_text: str) -> bool:  # @stub-protected
         """Whether the patch applies cleanly to the working tree."""
-        raise NotImplementedError
+        return self._apply_check(patch_text, reverse=False)
+
+    def _apply_check(self, patch_text: str, *, reverse: bool) -> bool:
+        """``git apply --check`` probe; an empty patch is a ``False`` answer."""
+        if not patch_text.strip():
+            return False
+        args = ["git", "apply", "--check"] + (["--reverse"] if reverse else [])
+        # ``git apply`` reads the patch on stdin, which the ``run_git`` seam
+        # cannot feed — run it directly in the bound checkout.
+        result = subprocess.run(
+            args,
+            input=patch_text if patch_text.endswith("\n") else patch_text + "\n",
+            cwd=self._repo_root,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
