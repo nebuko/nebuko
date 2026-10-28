@@ -1,15 +1,18 @@
-"""Deterministic PR fallback — commit, push, and open/update a PR.
+"""The engine's publisher — commit, push, and open/update a PR.
 
-Guarantees the "checkpoint the work in a PR" requirement of graceful
-interruption (issue #489) even when the wind-down LLM run is uncooperative:
+``PrFinalizer`` runs it once after every agent phase, gracefully
+timed-out runs included (issue #489): it is the only engine component that
+commits, pushes and opens PRs, so the agent never has to (and cannot push).
 
-  1. Split the delta by path — ``.github/workflows/*`` is patch-only.
-  2. Commit the non-workflow working-tree changes (if any).
-  3. Push the current branch to origin.
-  4. Open a PR if none exists for the branch (idempotent).
-  5. Deliver the workflow delta as a patch comment (issue #1080).
+  1. Refuse to publish while merge conflicts remain unresolved.
+  2. Split the delta by path — ``.github/workflows/*`` is patch-only.
+  3. Commit everything else the agent left (if any), named after the issue.
+  4. Push the current branch to origin.
+  5. Open a PR if none exists for the branch (idempotent).
+  6. Deliver the workflow delta as a patch: committed on the branch and
+     commented on the PR (issue #1080).
 
-The split (step 1/5) exists because the agent's token has no ``workflow``
+The split (steps 2/6) exists because the agent's token has no ``workflow``
 scope: any push carrying ``.github/workflows/*`` is rejected by GitHub, which
 used to fail the whole fallback and lose the work with the runner. A human
 applies the patch instead — see ``workflow_patch.py``.
@@ -317,17 +320,6 @@ def _commit_message(issue_title: str = "", *, interrupted: bool = False) -> str:
     )
 
 
-def _changed_paths(compare_ref: str) -> tuple[str, ...]:
-    """Paths differing between ``compare_ref`` and HEAD.
-
-    Raises when the comparison itself fails (an unknown ref is not "no
-    changes") so a broken base can never masquerade as a clean branch — which
-    would let ``ensure_pr`` skip the checkpoint entirely.
-    """
-    out = _run_git(["diff", "--name-only", compare_ref, "HEAD"])
-    return tuple(line.strip() for line in out.splitlines() if line.strip())
-
-
 def _resolve_base_ref(base: str, remote: str) -> str:
     """Pick the ref ``base`` names in *this* checkout.
 
@@ -462,36 +454,6 @@ def _find_pr_for_branch(
     return url or None
 
 
-@dataclass(frozen=True)
-class PublicationState:
-    """Immutable result of :func:`check_publication`.
-
-    Fields:
-        published: True when the branch has no unpublished work left.
-        reasons: Why the work counts as unpublished — a subset of
-            ``{"dirty_tree", "unpushed_commits", "missing_pr",
-            "workflow_patch"}``.
-        dirty_paths: The publishing dirtiness — every dirty path that is not
-            engine-owned. Unpushed-commit-only paths are not included (they
-            are not in ``git status``), and neither are workflow paths (those
-            are patch-only, see ``workflow_paths``).
-        workflow_paths: ``.github/workflows/*`` paths with unpublished
-            changes — dirty *or* inside unpushed commits. These can never be
-            pushed with the agent token, so the guard must not recall the
-            agent for them (issue #1080).
-        skip_reason: Set when the check could not run at all
-            (``"no git remote"`` / ``"detached HEAD"``); ``published`` is True
-            in that case and nothing is changed.
-    """
-
-    published: bool
-    reasons: tuple[str, ...] = ()  # @stub-protected
-    dirty_paths: tuple[str, ...] = ()
-    # @stub-protected: signature defined by architect — do not modify
-    workflow_paths: tuple[str, ...] = ()
-    skip_reason: str = ""
-
-
 def _dirty_paths() -> tuple[str, ...]:
     """Working-tree paths git reports, minus the engine-owned ones."""
     paths = []
@@ -500,121 +462,6 @@ def _dirty_paths() -> tuple[str, ...]:
             continue
         paths.append(path)
     return tuple(paths)
-
-
-def _branch_holds_unpublished_commits(branch: str, remote: str) -> bool:
-    """Whether HEAD has commits the remote does not have.
-
-    With an upstream this is exactly ``@{u}..HEAD``. A branch that was never
-    pushed has no upstream, so the comparison falls back to the repository's
-    base branch — otherwise every fresh branch would look "unpushed" even
-    when it holds nothing. The base is resolved to a real ref first, and a
-    comparison that still fails raises rather than reading as "nothing
-    unpushed" (issue #1084).
-    """
-    try:
-        ahead = _run_git(["rev-list", "--count", "@{u}..HEAD"])
-        return int(ahead or 0) > 0
-    except RuntimeError:
-        pass
-    base_ref = _resolve_base_ref(_default_base(), remote)
-    ahead = _run_git(["rev-list", "--count", f"{base_ref}..HEAD"])
-    return int(ahead or 0) > 0
-
-
-def check_publication() -> PublicationState:
-    # @stub-protected: signature defined by architect — do not modify
-    """Detect work that was never committed, pushed or opened as a PR.
-
-    The publication guard (see ``run_agent.publication_guard``) calls this
-    after an approved write step: the engine must not let a step end with the
-    work sitting only in the checkout.
-
-    Unpublished means any of:
-      * the working tree holds changes (gitignored paths are invisible to
-        ``git status``; engine-owned paths are excluded explicitly),
-      * the current branch has commits the remote does not have,
-      * the branch holds such commits but no open PR exists for it. (A branch
-        with nothing on it is not "missing a PR" — opening an empty WIP PR
-        would be noise.)
-
-    ``.github/workflows/*`` changes are reported separately: they are
-    unpublished (``workflow_patch``) but can never be pushed with the agent
-    token, so the guard hands them to ``ensure_pr``'s patch delivery instead
-    of recalling the agent for work it cannot publish (issue #1080).
-
-    Never raises, mirroring :func:`ensure_pr`: any failure is logged and
-    reported as a skip so the caller degrades gracefully.
-    """
-    try:
-        remote = _default_remote()
-        if remote is None:
-            logger.info("check_publication: no git remote configured — skipping")
-            return PublicationState(published=True, skip_reason="no git remote")
-
-        branch = _current_branch()
-        if branch in ("HEAD", ""):
-            logger.info("check_publication: detached HEAD — skipping")
-            return PublicationState(published=True, skip_reason="detached HEAD")
-
-        dirty = _dirty_paths()
-        workflow_dirty, plain_dirty = split_paths(dirty)
-        reasons: list[str] = []
-        if plain_dirty:
-            reasons.append("dirty_tree")
-
-        workflow_committed: tuple[str, ...] = ()
-        try:
-            has_branch_work = _branch_holds_unpublished_commits(branch, remote)
-            if has_branch_work:
-                # Workflow files that only live in unpushed commits are
-                # patch-only too — the push carrying them would be rejected.
-                base_ref = _resolve_base_ref(_default_base(), remote)
-                committed = _unpushed_commit_paths(base_ref, branch)
-                workflow_committed, plain_committed = split_paths(committed)
-                if plain_committed:
-                    reasons.append("unpushed_commits")
-                if plain_committed or workflow_committed:
-                    try:
-                        pr_url = _find_pr_for_branch(branch)
-                    except (RuntimeError, TimeoutExpired) as exc:
-                        # A failing PR lookup must not become a publication
-                        # failure — ensure_pr would fail the same way; surface
-                        # it as a skip.
-                        logger.warning(f"check_publication: PR lookup failed: {exc}")
-                        return PublicationState(
-                            published=True, skip_reason="pr lookup failed"
-                        )
-                    if plain_committed and not pr_url:
-                        reasons.append("missing_pr")
-        except RuntimeError as exc:
-            # The git state cannot be inspected (e.g. no resolvable base ref).
-            # Reading that as "nothing unpushed" is what let a workflow path
-            # reach the rejected push in #1058 — report unpublished instead.
-            logger.warning(f"check_publication: cannot inspect unpushed work: {exc}")
-            return PublicationState(
-                published=False,
-                reasons=("unpushed_commits",),
-                dirty_paths=dirty,
-                workflow_paths=workflow_dirty,
-            )
-
-        workflow_paths = tuple(
-            dict.fromkeys((*workflow_dirty, *workflow_committed))
-        )
-        if workflow_paths:
-            reasons.append("workflow_patch")
-
-        return PublicationState(
-            published=not reasons,
-            reasons=tuple(reasons),
-            dirty_paths=dirty,
-            workflow_paths=workflow_paths,
-        )
-
-    except Exception as exc:  # noqa: BLE001 - must never break the run
-        logger.warning(f"check_publication failed: {exc}")
-        return PublicationState(published=True, skip_reason=f"error: {exc}")
 
 
 def _open_pr(
@@ -1022,7 +869,7 @@ def ensure_pr(
     """Commit/push/open a PR for the current branch — idempotent.
 
     Never raises: any failure is logged and reported in the returned
-    :class:`EnsurePrResult` so the caller (build_output) degrades gracefully.
+    :class:`EnsurePrResult` so the caller (``PrFinalizer``) degrades gracefully.
 
     ``.github/workflows/*`` paths are never staged, committed or pushed: the
     agent token has no ``workflow`` scope, so GitHub rejects such a push

@@ -62,10 +62,6 @@ from agent_script.features.extract_recovery_trace.extract_recovery_trace import 
 from agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
 from agent_script.features.run_agent.run_failure import RunFailure, RunFailureKind
 from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
-from agent_script.features.ensure_pr.ensure_pr import (
-    EnsurePrResult,
-    ensure_pr,
-)
 from agent_script.features.dispatch_next_tool import (
     clear_run,
     get_recorded_run_prefs,
@@ -137,25 +133,19 @@ def _get_run_outcome(conversation):
     return getattr(conversation, "run_outcome", None)
 
 
-def _build_timeout_summary(pr_result: EnsurePrResult | None) -> str:
+def _build_timeout_summary() -> str:
     """Synthesize a final message for a graceful timeout that produced none."""
-    lines = [
-        "_⏱ The agent reached its soft time budget and execution was "
-        "gracefully interrupted (issue #489). It was asked to conclude its "
-        "work but did not produce a closing summary._",
-        "",
-        "**Checkpoint:** pending changes were committed and pushed, and a PR "
-        "was opened or updated with the current content. The next run will "
-        "resume from the recovery log instead of starting over.",
-    ]
-    if pr_result is not None:
-        if pr_result.pr_url:
-            lines.append(f"- Checkpoint PR: {pr_result.pr_url}")
-        if pr_result.error:
-            lines.append(f"- PR fallback issue: {pr_result.message}")
-        elif pr_result.skipped:
-            lines.append(f"- PR fallback skipped: {pr_result.message}")
-    return "\n".join(lines)
+    return "\n".join(
+        [
+            "_⏱ The agent reached its soft time budget and execution was "
+            "gracefully interrupted (issue #489). It was asked to conclude its "
+            "work but did not produce a closing summary._",
+            "",
+            "**Checkpoint:** after this run the engine commits and pushes the "
+            "pending changes and opens or updates the PR. The next run will "
+            "resume from the recovery log instead of starting over.",
+        ]
+    )
 
 
 _UNREACHABLE_RESUME_HINT = (
@@ -959,23 +949,13 @@ def _work_loop_events(events: list, conversation) -> list:
 
 
 def _first_recall_offset(run_outcome) -> int | None:
-    """Earliest engine-injected recall boundary on the run outcome (#558).
+    """Engine-injected recall boundary on the run outcome (#558).
 
-    Both bounded recalls (dispatch and publication) inject turns whose text is
-    an engine prompt, never an agent answer, so the earliest recorded offset is
-    the boundary every answer must sit before.
+    A dispatch recall injects turns whose text is an engine prompt, never an
+    agent answer, so its offset is the boundary every answer must sit before.
     """
-    if run_outcome is None:
-        return None
-    offsets = [
-        getattr(run_outcome, name, None)
-        for name in (
-            "dispatch_recall_event_offset",
-            "publication_recall_event_offset",
-        )
-    ]
-    present = [o for o in offsets if isinstance(o, int)]
-    return min(present) if present else None
+    offset = getattr(run_outcome, "dispatch_recall_event_offset", None)
+    return offset if isinstance(offset, int) else None
 
 
 def _write_latest_answer_file(text: str) -> None:
@@ -1238,29 +1218,16 @@ def build_output(
         run_outcome is not None
         and run_outcome.status is OutcomeStatus.GRACEFULLY_TIMED_OUT
     )
-    pr_result: EnsurePrResult | None = None
     context_updates: dict[str, str] = {}
     if run_outcome is not None:
         context_updates["last_run_status"] = run_outcome.status.value
-        publication_guard = getattr(run_outcome, "publication_guard", "")
-        if publication_guard:
-            context_updates["publication_guard"] = publication_guard
-            context_updates["publication_guard_detail"] = getattr(
-                run_outcome, "publication_detail", ""
-            )
-            # Where a delivered .github/workflows patch lives (comment URL or
-            # artifact name) — the answer points the reviewer at it (#1080).
-            publication_patch = getattr(run_outcome, "publication_patch", "")
-            if publication_patch:
-                context_updates["publication_patch"] = publication_patch
 
-    if is_graceful_timeout:
-        logger.info("Graceful timeout detected — running deterministic PR fallback")
-        pr_result = ensure_pr(interrupted=True)
-        if not final_message:
-            # The wind-down did not finish its work — synthesize a clear
-            # summary so downstream doesn't treat this as a crashed run.
-            final_message = _build_timeout_summary(pr_result)
+    # The checkpoint itself (commit, push, PR) is the engine's publisher's
+    # job after the run (``PrFinalizer``); only the summary is built here.
+    if is_graceful_timeout and not final_message:
+        # The wind-down did not finish its work — synthesize a clear
+        # summary so downstream doesn't treat this as a crashed run.
+        final_message = _build_timeout_summary()
 
     # ── Failure handling (issue #668, #978) ───────────────────────
     # A run that crashed with no output would otherwise reach the opaque

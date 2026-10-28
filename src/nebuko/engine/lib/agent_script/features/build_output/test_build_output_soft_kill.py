@@ -28,7 +28,6 @@ from build_output import _soft_kill_outcome, build_output
 from openhands.sdk.event import MessageEvent
 from openhands.sdk.llm import Message
 from workflow_state import Appreciation, TurnOutcome, TurnStatus
-from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
 from metrics_schema import Metrics
 from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 
@@ -104,11 +103,7 @@ class TestBuildOutputSoftKill(unittest.TestCase):
         self._tmp.cleanup()
 
     def _build(self, conv):
-        with patch(
-            "build_output.ensure_pr",
-            return_value=EnsurePrResult(skipped=True, message="no git remote"),
-        ):
-            return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
+        return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
 
     def test_soft_kill_is_emitted_as_the_turn_outcome(self):
         state = self._build(_timed_out())["workflow_state"]

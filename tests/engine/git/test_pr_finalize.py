@@ -24,6 +24,7 @@ def ensure_pr_result(monkeypatch):
     ) -> EnsurePrResult:
         calls.append(dry_run)
         holder["issue_title"] = issue_title
+        holder["interrupted"] = interrupted
         outcome = holder.get("result")
         if isinstance(outcome, Exception):
             raise outcome
@@ -106,6 +107,16 @@ class TestPrFinalizer:
 
         assert result.ok and result.skipped
         assert result.pr_url == ""
+
+
+    def test_naming_and_interruption_reach_ensure_pr(self, ensure_pr_result):
+        holder, _ = ensure_pr_result
+        holder["result"] = EnsurePrResult(pr_url="https://github.com/o/r/pull/1")
+
+        PrFinalizer(issue_title="Fix it", interrupted=True).finalize()
+
+        assert holder["issue_title"] == "Fix it"
+        assert holder["interrupted"] is True
 
 
 class TestPrNumberFromUrl:

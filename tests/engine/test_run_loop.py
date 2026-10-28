@@ -47,7 +47,6 @@ from nebuko.engine.run_loop import (
     _exit_code_for,
     _is_renderable,
     _one_line_preview,
-    _publication_guard_failure,
     _render_history,
     _render_thread_records,
     _render_unverified_records,
@@ -4219,8 +4218,7 @@ class TestGitSessionGuardWiring:
     """The engine runs the git session guard around every agent phase (#1089).
 
     Preflight is fail-closed before the agent runs; finalize makes an unpublished
-    session an ``ExitCode.ERROR``; and a failed publication fallback is a run
-    error rather than only a line in the state comment.
+    session an ``ExitCode.ERROR``.
     """
 
     def _run(self, monkeypatch, root, *, preflight=None, finalize=None):
@@ -4328,72 +4326,6 @@ class TestGitSessionGuardWiring:
         )
 
         assert outcome.exit_code == ExitCode.ADVANCE
-
-    def test_a_failed_publication_fallback_is_a_run_error(self, tmp_path, monkeypatch):
-        root = tmp_path / "repo"
-        root.mkdir()
-        engine = _engine_at_root(tmp_path, root)
-        _stub_resolved(monkeypatch, _resolved_with_hooks())
-        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
-
-        state = build_state(None, workflow="wf", step="implement", agent="dev")
-        state = state.model_copy(
-            update={
-                "current_context": {
-                    "publication_guard": "fallback_failed",
-                    "publication_guard_detail": "push rejected",
-                }
-            }
-        )
-
-        def persist(self, agent_result):
-            self.adapter.save_state(state)
-            return state
-
-        monkeypatch.setattr(Engine, "persist", persist)
-
-        outcome = engine.run()
-
-        assert outcome.exit_code == ExitCode.ERROR
-        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
-        assert outcome.turn_outcome.note == (
-            "publication guard fallback failed: push rejected"
-        )
-
-
-def _publication_guard_state(**context):
-    return WorkflowState.model_construct(step=None, current_context=context)
-
-
-class TestPublicationGuardFailure:
-    """``fallback_failed`` in the state is the signal the driver maps to ERROR."""
-
-    def test_a_failed_fallback_reports_its_detail(self):
-        state = _publication_guard_state(
-            publication_guard="fallback_failed",
-            publication_guard_detail="remote rejected the push",
-        )
-
-        assert _publication_guard_failure(state) == "remote rejected the push"
-
-    def test_a_failed_fallback_without_a_detail_still_reports(self):
-        state = _publication_guard_state(publication_guard="fallback_failed")
-
-        assert _publication_guard_failure(state) == "unknown error"
-
-    @pytest.mark.parametrize(
-        "context",
-        [
-            {},
-            {"publication_guard": "clean"},
-            {"publication_guard": "fallback_pr", "publication_guard_detail": "url"},
-        ],
-    )
-    def test_other_publication_results_are_not_failures(self, context):
-        assert _publication_guard_failure(_publication_guard_state(**context)) is None
-
-    def test_no_state_is_not_a_failure(self):
-        assert _publication_guard_failure(None) is None
 
 
 class TestBuildPromptPreviousSessionHandoff:
@@ -4730,7 +4662,7 @@ class TestBranchScaffoldWiring:
         monkeypatch.setattr(
             Engine,
             "_pr_finalize",
-            lambda self: calls.append("pr")
+            lambda self, agent_result=None: calls.append("pr")
             or pr_finalize.PrFinalizeResult(ok=True, skipped=True, detail="no git remote"),
         )
         monkeypatch.setattr(
@@ -4826,6 +4758,37 @@ class TestPrFinalizerWiring:
     state's ``pull_request``.
     """
 
+    @pytest.mark.parametrize(
+        ("agent_result", "interrupted"),
+        [
+            ({"status": "running", "soft_timeout": True}, True),
+            ({"status": "finished"}, False),
+            ({}, False),
+        ],
+    )
+    def test_the_finalizer_is_told_when_the_run_was_interrupted(
+        self, tmp_path, monkeypatch, agent_result, interrupted
+    ):
+        """The engine's own observed status, not the agent, marks the
+        checkpoint as interrupted (the only publisher after a timeout)."""
+        root = tmp_path / "repo"
+        root.mkdir()
+        engine = _engine_at_root(tmp_path, root)
+        seen: dict[str, object] = {}
+
+        class _Finalizer:
+            def __init__(self, issue_title="", *, interrupted=False):
+                seen["interrupted"] = interrupted
+
+            def finalize(self):
+                return pr_finalize.PrFinalizeResult(ok=True, skipped=True)
+
+        monkeypatch.setattr(pr_finalize, "PrFinalizer", _Finalizer)
+
+        engine._pr_finalize(agent_result)
+
+        assert seen["interrupted"] is interrupted
+
     def _run(self, monkeypatch, root, *, pr=None, invoke=None):
         engine = _engine_at_root(root.parent, root)
         _stub_resolved(monkeypatch, _resolved_with_hooks())
@@ -4851,7 +4814,7 @@ class TestPrFinalizerWiring:
         monkeypatch.setattr(
             Engine,
             "_pr_finalize",
-            lambda self: calls.append("pr")
+            lambda self, agent_result=None: calls.append("pr")
             or (pr or pr_finalize.PrFinalizeResult(ok=True, skipped=True, detail="no git remote")),
         )
         monkeypatch.setattr(
@@ -4914,7 +4877,7 @@ class TestPrFinalizerWiring:
         monkeypatch.setattr(
             Engine,
             "_pr_finalize",
-            lambda self: pr_finalize.PrFinalizeResult(ok=False, detail="push rejected"),
+            lambda self, agent_result=None: pr_finalize.PrFinalizeResult(ok=False, detail="push rejected"),
         )
         monkeypatch.setattr(
             Engine,

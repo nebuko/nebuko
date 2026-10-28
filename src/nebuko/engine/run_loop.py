@@ -216,20 +216,6 @@ def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
     return None
 
 
-def _publication_guard_failure(state: WorkflowState | None) -> Optional[str]:
-    """The detail of a failed publication fallback, or ``None`` (issue #1089).
-
-    ``run_agent`` records ``publication_guard="fallback_failed"`` when a
-    credentials-less session left approved work unpublished and ``ensure_pr``
-    could not rescue it. That used to reach only the state comment, so the run
-    still exited 0; the caller maps this to ``ExitCode.ERROR``.
-    """
-    context = (state.current_context or {}) if state is not None else {}
-    if (context.get("publication_guard") or "").strip() != "fallback_failed":
-        return None
-    return (context.get("publication_guard_detail") or "").strip() or "unknown error"
-
-
 def _exit_code_for(
     exit_code: ExitCode, turn_outcome: TurnOutcome | None
 ) -> ExitCode:
@@ -1144,7 +1130,7 @@ class Engine:
             # state. Fail-closed: a session whose PR could not be opened must
             # not look green.
             if "agent" in phases:
-                pr_result = self._pr_finalize()
+                pr_result = self._pr_finalize(agent_result)
                 state = self._record_pull_request(state, pr_result)
                 if not pr_result.ok:
                     note = f"PR finalizer failed: {pr_result.detail}"
@@ -1234,23 +1220,6 @@ class Engine:
                 exit_code=ExitCode.ERROR,
                 turn_outcome=TurnOutcome.for_incomplete(
                     IncompleteReason.FAILURE, note=reason
-                ),
-                prompt=prompt,
-                posted_body=posted_body,
-                state=state,
-                phases=tuple(phases),
-            )
-
-        # A publication fallback that could not rescue approved work is a run
-        # error too (issue #1089): the work may be lost, so the run must not
-        # look green just because the state comment explains it.
-        guard_failure = _publication_guard_failure(state)
-        if guard_failure is not None:
-            return RunOutcome(
-                exit_code=ExitCode.ERROR,
-                turn_outcome=TurnOutcome.for_incomplete(
-                    IncompleteReason.FAILURE,
-                    note="publication guard fallback failed: " + guard_failure,
                 ),
                 prompt=prompt,
                 posted_body=posted_body,
@@ -2489,20 +2458,30 @@ class Engine:
         return f"## Branch conflict — fix first\n\n{result.note}"
 
     # @stub-protected
-    def _pr_finalize(self) -> pr_finalize.PrFinalizeResult:
+    def _pr_finalize(self, agent_result: Any = None) -> pr_finalize.PrFinalizeResult:
         """Open the session's PR and export its metadata (issue #1138).
 
         Runs after ``persist``, gated on the agent phase: a deterministic step
-        publishes nothing to finalize. Never raises: a failure is returned as
-        data and the caller turns it into a run error.
+        publishes nothing to finalize. This is the session's only publisher:
+        it commits what the agent left, pushes, and opens the PR — also for a
+        gracefully timed-out run, which it marks as interrupted. Never raises:
+        a failure is returned as data and the caller turns it into a run error.
         """
+        ensure_import_path()
+        from agent_script.features.run_agent.run_outcome import OutcomeStatus
+
         trigger = self._active_trigger()
         issue_title = (
             branch_scaffold.issue_title_from_payload(trigger.payload)
             if trigger is not None
             else ""
         )
-        result = pr_finalize.PrFinalizer(issue_title=issue_title).finalize()
+        interrupted = (
+            self._observed_status(agent_result) is OutcomeStatus.GRACEFULLY_TIMED_OUT
+        )
+        result = pr_finalize.PrFinalizer(
+            issue_title=issue_title, interrupted=interrupted
+        ).finalize()
         if result.ok:
             log.info("[phase:state] pr finalize: %s", result.detail)
         else:

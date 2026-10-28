@@ -48,8 +48,8 @@ GIT_IDENTITY_NAME: str = "nebuko"
 # @stub-protected
 GIT_IDENTITY_EMAIL: str = "nebuko@nebuko.dev"
 
-#: Skip reasons a guard cannot act on. They mirror the ``check_publication``
-#: taxonomy: no remote or a detached HEAD means there is nothing to publish.
+#: Skip reasons a guard cannot act on: no remote or a detached HEAD means
+#: there is nothing to publish.
 # @stub-protected
 BENIGN_SKIPS: tuple[str, ...] = ("no git remote", "detached HEAD")
 
