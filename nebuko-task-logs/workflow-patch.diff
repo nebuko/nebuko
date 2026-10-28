@@ -1,0 +1,26 @@
+diff --git a/.github/workflows/internal-release.yml b/.github/workflows/internal-release.yml
+index 27aa9aa..aba69f4 100644
+--- a/.github/workflows/internal-release.yml
++++ b/.github/workflows/internal-release.yml
+@@ -30,18 +30,9 @@ jobs:
+       - uses: astral-sh/setup-uv@v5
+       - run: uv sync
+       - name: Build the single-file binary
+-        shell: bash
+-        run: |
+-          strip_flag=""
+-          if [ "${{ runner.os }}" != "Windows" ]; then
+-            strip_flag="--strip"
+-          fi
+-          uv run --with pyinstaller pyinstaller --onefile --name nebuko \
+-            --collect-data nebuko $strip_flag \
+-            --exclude-module pygments --exclude-module markdown_it \
+-            --exclude-module mdurl --exclude-module setuptools \
+-            --exclude-module pip --exclude-module wheel \
+-            packaging/entry.py
++        run: >-
++          uv run --with pyinstaller pyinstaller --onefile --name nebuko
++          --collect-data nebuko packaging/entry.py
+       - name: Name the asset
+         shell: bash
+         run: |
