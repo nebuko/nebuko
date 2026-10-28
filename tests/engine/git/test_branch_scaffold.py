@@ -156,6 +156,23 @@ class TestScaffold:
             checkout, "rev-parse", "HEAD^2"
         )
 
+    def test_an_up_to_date_branch_skips_the_merge(self, checkout):
+        """Issue #1194: a branch that already contains the base must not be
+        re-merged — the redundant merge made committed work look absent and
+        the agent re-applied it."""
+        _git(checkout, "checkout", "-q", "-b", BRANCH)
+        _commit(checkout, "work.txt", "work\n", "work")
+        head_before = _git(checkout, "rev-parse", "HEAD")
+
+        result = _scaffold(checkout)
+
+        assert result.ok and not result.conflict
+        assert result.already_up_to_date
+        assert result.branch == BRANCH
+        assert "already contains origin/main" in result.detail
+        # No merge commit was created: the branch head is untouched.
+        assert _git(checkout, "rev-parse", "HEAD") == head_before
+
     def test_a_conflict_is_data_with_a_fix_first_note(self, checkout):
         _git(checkout, "checkout", "-q", "-b", BRANCH)
         _commit(checkout, "base.txt", "branch version\n", "branch edit")

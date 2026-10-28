@@ -19,10 +19,12 @@ never carry a workflow path, so no reject-text parsing is needed.
 """
 
 import os
+import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from config.sub_domains.comment_size.comment_size import DEFAULT_MAX_COMMENT_CHARS
+from nebuko.engine.lib.git.idempotency import GitIdempotency
 
 #: Everything under this repo-relative prefix is patch-only, never pushed.
 WORKFLOW_DIR = ".github/workflows/"
@@ -36,6 +38,33 @@ PATCH_ARTIFACT_DIR = "nebuko-task-logs"
 
 #: The one-line command a human runs after saving the patch.
 APPLY_COMMAND = f"git apply {PATCH_FILENAME}"
+
+
+# @stub-protected
+def patch_is_already_applied(patch_text: str, repo_root: str) -> bool:
+    """Whether the patch content is already present in the checkout (issue #1194).
+
+    Wraps :class:`GitIdempotency.patch_already_applied` (a reverse-apply
+    probe) so the delivery can say "already applied" instead of re-issuing
+    the apply command for a change a human already applied.
+    """
+    if not patch_text.strip():
+        return False
+
+    def run_git(args: Sequence[str]) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"git {' '.join(args)} failed: {(result.stderr or result.stdout).strip()}"
+            )
+        return result.stdout.strip()
+
+    return GitIdempotency(repo_root, run_git).patch_already_applied(patch_text)
 
 
 # @stub-protected
@@ -105,6 +134,18 @@ def build_patch(
     return run_git(["diff", "--binary", base_ref, "--"] + paths)
 
 
+def _already_applied_notice(workflow_paths: Sequence[str]) -> list[str]:
+    listed = "\n".join(f"- `{path}`" for path in workflow_paths)
+    return [
+        "### \u2139\ufe0f  Workflow change already applied \u2014 no action needed",
+        "",
+        "The workflow change below is **already present** in this checkout, "
+        "so there is nothing to apply:",
+        "",
+        listed,
+    ]
+
+
 def _patch_notice(workflow_paths: Sequence[str], apply_lines: str) -> list[str]:
     listed = "\n".join(f"- `{path}`" for path in workflow_paths)
     return [
@@ -127,13 +168,29 @@ def render_patch_comment(
     workflow_paths: Sequence[str],
     base_name: str,
     max_chars: int = DEFAULT_MAX_COMMENT_CHARS,
+    already_applied: bool = False,
 ) -> PatchComment:
     """Render the patch comment body, or an artifact link when it is too big.
 
     Over ``max_chars`` an inline fence would be rejected by GitHub (65,536
     hard cap), so the diff stays out of the comment and the staged artifact is
-    linked instead.
+    linked instead. With ``already_applied`` the diff is informational
+    only: the change is already in the tree, so no apply command is
+    offered (issue #1194).
     """
+    if already_applied:
+        body = "\n".join(
+            _already_applied_notice(workflow_paths)
+            + [
+                "",
+                "```diff",
+                diff.strip("\n"),
+                "```",
+            ]
+        )
+        return PatchComment(
+            body=body, workflow_paths=tuple(workflow_paths), oversized=False
+        )
     inline_lines = [
         "```diff",
         diff.strip("\n"),

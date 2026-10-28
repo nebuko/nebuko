@@ -34,6 +34,8 @@ from agent_script.features.ensure_pr.workflow_patch import (
     PATCH_FILENAME,
     build_patch,
     is_workflow_path,
+    patch_is_already_applied,
+    patch_is_already_applied,
     render_patch_comment,
     revert_workflow_changes,
     split_paths,
@@ -708,8 +710,13 @@ def _render_patch(workflow_paths: Sequence[str], patch_base: str, base_name: str
     if not diff.strip():
         # Delivery alias: identical content on both sides, nothing to apply.
         return None
+    root = _repo_root()
+    applied = bool(root) and patch_is_already_applied(diff, root)
     return diff, render_patch_comment(
-        diff=diff, workflow_paths=workflow_paths, base_name=base_name
+        diff=diff,
+        workflow_paths=workflow_paths,
+        base_name=base_name,
+        already_applied=applied,
     )
 
 
