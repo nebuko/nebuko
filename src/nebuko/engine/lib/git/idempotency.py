@@ -15,8 +15,6 @@ Like the rest of the git layer, the checks never raise for an expected
 
 from __future__ import annotations
 
-import os
-import tempfile
 from collections.abc import Callable, Sequence
 
 
@@ -43,13 +41,7 @@ class GitIdempotency:
         ``git merge-base --is-ancestor`` exits 0 when the base is an ancestor
         of the branch — the merge would be a no-op and must not run.
         """
-        try:
-            self._run_git(
-                ["merge-base", "--is-ancestor", f"origin/{base}", branch]
-            )
-            return True
-        except RuntimeError:
-            return False
+        raise NotImplementedError
 
     def patch_already_applied(self, patch_text: str) -> bool:  # @stub-protected
         """Whether the patch is already present in the working tree.
@@ -57,37 +49,8 @@ class GitIdempotency:
         ``git apply --check --reverse`` succeeds exactly when the diff can be
         reversed out of the tree — i.e. the change is already applied.
         """
-        return self._check_patch(patch_text, reverse=True)
+        raise NotImplementedError
 
     def patch_applies_cleanly(self, patch_text: str) -> bool:  # @stub-protected
         """Whether the patch applies cleanly to the working tree."""
-        return self._check_patch(patch_text, reverse=False)
-
-    def _check_patch(self, patch_text: str, *, reverse: bool) -> bool:
-        """Dry-run ``git apply`` against the tree; a failed check is ``False``.
-
-        The patch goes through a temp file inside the checkout (``git apply``
-        resolves relative paths against the repo root), so the guard works
-        with any ``run_git`` that takes arguments only.
-        """
-        if not patch_text.strip():
-            return False
-        fd, path = tempfile.mkstemp(dir=self._repo_root, suffix=".patch")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(
-                    patch_text if patch_text.endswith("\n") else patch_text + "\n"
-                )
-            args = ["apply", "--check"]
-            if reverse:
-                args.append("--reverse")
-            args.append(os.path.basename(path))
-            self._run_git(args)
-            return True
-        except RuntimeError:
-            return False
-        finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+        raise NotImplementedError

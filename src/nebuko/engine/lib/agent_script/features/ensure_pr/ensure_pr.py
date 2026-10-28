@@ -35,7 +35,6 @@ from agent_script.features.ensure_pr.workflow_patch import (
     build_patch,
     is_workflow_path,
     patch_is_already_applied,
-    patch_is_already_applied,
     render_patch_comment,
     revert_workflow_changes,
     split_paths,

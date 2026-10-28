@@ -250,15 +250,6 @@ class BranchScaffold:
         entirely (issue #1194): re-merging an unchanged base made the
         already-committed work look absent and the agent re-applied it.
         """
-        if self._idempotency.base_already_merged(branch, base):
-            detail = f"{branch} already contains origin/{base}"
-            logger.info("branch scaffold: %s", detail)
-            return ScaffoldResult(
-                ok=True,
-                detail=detail,
-                branch=branch,
-                already_up_to_date=True,
-            )
         try:
             # A remote-only branch from a previous round is fetched but not
             # checked out yet (a pinned-SHA checkout is detached): the merge
