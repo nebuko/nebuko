@@ -14,9 +14,13 @@ error — an unscaffolded session must not look green.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
+
+from .idempotency import GitIdempotency
 
 try:  # openhands ships with the ``runtime`` extra only.
     from openhands.sdk import get_logger
@@ -48,6 +52,7 @@ class ScaffoldResult:
     detail: str = ""
     branch: str = ""
     note: str = ""
+    already_up_to_date: bool = False
 
 
 def branch_slug(title: str) -> str:
@@ -72,6 +77,26 @@ def issue_title_from_payload(payload: object) -> str:
     return ""
 
 
+# @stub-protected
+def _git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
+    """Bounded env for git subprocesses: ambient env plus git/credential keys.
+
+    The session env carries unbounded JSON payloads (CONTEXT_BODIES,
+    STEP_INPUT_RESULTS) that count toward the kernel's E2BIG argv+env limit
+    (issue: "Argument list too long" crash). Only GIT_* and *TOKEN*/*CREDENTIAL*
+    keys from ``env`` are overlaid onto ``os.environ``. ``env`` itself remains
+    the Python-side source for base-ref overrides (``GITHUB_BASE_REF``).
+    """
+    overlay = {
+        key: value
+        for key, value in (env or {}).items()
+        if key.startswith("GIT_")
+        or "TOKEN" in key
+        or "CREDENTIAL" in key
+    }
+    return {**os.environ, **overlay, "GIT_TERMINAL_PROMPT": "0"}
+
+
 class BranchScaffold:
     """Prepare the session's feature branch from the base branch."""
 
@@ -87,6 +112,9 @@ class BranchScaffold:
         self.env = dict(env or {})
         self.issue_number = issue_number
         self.issue_title = issue_title
+        self._idempotency: GitIdempotency = GitIdempotency(
+            str(repo_root), lambda *args: self._git(*args)
+        )
 
     # @stub-protected
     def scaffold(self) -> ScaffoldResult:
@@ -209,8 +237,18 @@ class BranchScaffold:
         logger.info("branch scaffold: %s", detail)
         return ScaffoldResult(ok=True, detail=detail, branch=branch)
 
-    def _merge_origin(self, branch: str, base: str) -> ScaffoldResult:  # @stub-protected
+    # @stub-protected: signature defined by architect — do not modify
+    def _merge_origin(self, branch: str, base: str) -> ScaffoldResult:
         """Merge ``origin/<base>`` into ``branch``; a conflict is data, not a crash."""
+        # A base that is already contained would make the merge a no-op; a
+        # redundant merge is what made already-committed work look absent and
+        # triggered re-application (issue #1194).
+        if self._idempotency.base_already_merged(branch, base):
+            detail = f"{branch} already contains origin/{base}"
+            logger.info("branch scaffold: %s", detail)
+            return ScaffoldResult(
+                ok=True, detail=detail, branch=branch, already_up_to_date=True
+            )
         try:
             # A remote-only branch from a previous round is fetched but not
             # checked out yet (a pinned-SHA checkout is detached): the merge
@@ -250,21 +288,17 @@ class BranchScaffold:
 
     # ── Plumbing ─────────────────────────────────────────────────
 
+    # @stub-protected
     def _git(self, *args: str) -> str:
         """Run git in the session checkout; a failure raises ``RuntimeError``."""
-        command = ["git", "-C", str(self.repo_root), *args]
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                env={**self.env, "GIT_TERMINAL_PROMPT": "0"},
-                timeout=120,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise RuntimeError(f"git {' '.join(args)} failed: {exc}") from exc
+        result = subprocess.run(
+            ["git", *args],
+            cwd=self.repo_root,
+            capture_output=True,
+            text=True,
+            env=_git_subprocess_env(self.env),
+        )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"git {' '.join(args)} failed: {result.stderr.strip()}"
-            )
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
         return result.stdout.strip()

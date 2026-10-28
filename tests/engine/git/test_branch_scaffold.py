@@ -3,19 +3,23 @@
 Real git against a local bare remote: the scaffold must create the feature
 branch from the fetched base, merge an existing one onto the base, return a
 merge conflict as data (fix-first note, branch restored), skip benignly and
-fail closed.
+fail closed. Also covers the bounded git subprocess env (oversized session
+env must not reach the subprocess, E2BIG regression).
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 from nebuko.engine.lib.git.branch_scaffold import (
     BranchScaffold,
     ScaffoldResult,
+    _git_subprocess_env,
     branch_slug,
     feature_branch_name,
     issue_title_from_payload,
@@ -307,3 +311,90 @@ class TestScaffold:
 
         assert not result.ok
         assert "is not a git checkout" in result.detail
+
+
+class TestMergeNoOpSkip:
+    def test_existing_branch_already_containing_base_is_not_merged(self, checkout):
+        _git(checkout, "checkout", "-q", "-b", BRANCH)
+        _commit(checkout, "work.txt", "work\n", "work")
+        # The base moves on, but the branch merges it itself first — the
+        # next scaffold run must not merge again (issue #1194).
+        seed = checkout.parent / "seed"
+        _commit(seed, "base.txt", "base\nmore\n", "base moves")
+        _git(seed, "push", "-q", "origin", "main")
+        _git(checkout, "fetch", "-q", "origin", "main")
+        _git(checkout, "merge", "-q", "--no-edit", "origin/main")
+        head_before = _git(checkout, "rev-parse", "HEAD")
+
+        result = _scaffold(checkout)
+
+        assert result.ok
+        assert result.already_up_to_date is True
+        assert "already contains origin/main" in result.detail
+        # The merge was skipped: HEAD did not move.
+        assert _git(checkout, "rev-parse", "HEAD") == head_before
+
+
+class TestGitSubprocessEnv:
+    """The git subprocess env must be bounded (E2BIG regression)."""
+
+    def test_git_subprocess_env_drops_payload_vars(self):
+        env = _git_subprocess_env(
+            {
+                "CONTEXT_BODIES": "x" * (1 << 21),
+                "STEP_INPUT_RESULTS": "...",
+                "GITHUB_TOKEN": "t",
+                "GIT_AUTHOR_NAME": "n",
+            }
+        )
+
+        assert "CONTEXT_BODIES" not in env
+        assert "STEP_INPUT_RESULTS" not in env
+        assert env["GITHUB_TOKEN"] == "t"
+        assert env["GIT_AUTHOR_NAME"] == "n"
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        # Based on the ambient environment, not the passed mapping.
+        for key, value in os.environ.items():
+            assert env.get(key) == value
+
+    def test_scaffold_succeeds_with_oversized_env(self, checkout):
+        captured_env = {}
+        real_run = subprocess.run
+
+        def capturing_run(*args, **kwargs):
+            if "env" in kwargs:
+                captured_env.update(kwargs["env"])
+            return real_run(*args, **kwargs)
+
+        with mock.patch(
+            "nebuko.engine.lib.git.branch_scaffold.subprocess.run",
+            side_effect=capturing_run,
+        ):
+            result = _scaffold(
+                checkout,
+                env={"CONTEXT_BODIES": "x" * (2 << 20)},
+            )
+
+        assert result.ok
+        assert "CONTEXT_BODIES" not in captured_env
+
+    def test_scaffold_env_carries_token_keys(self, checkout):
+        captured_env = {}
+        real_run = subprocess.run
+
+        def capturing_run(*args, **kwargs):
+            if "env" in kwargs:
+                captured_env.update(kwargs["env"])
+            return real_run(*args, **kwargs)
+
+        with mock.patch(
+            "nebuko.engine.lib.git.branch_scaffold.subprocess.run",
+            side_effect=capturing_run,
+        ):
+            result = _scaffold(
+                checkout,
+                env={"GITHUB_TOKEN": "tok"},
+            )
+
+        assert result.ok
+        assert captured_env.get("GITHUB_TOKEN") == "tok"

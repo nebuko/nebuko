@@ -19,6 +19,7 @@ never carry a workflow path, so no reject-text parsing is needed.
 """
 
 import os
+import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -118,6 +119,18 @@ def _patch_notice(workflow_paths: Sequence[str], apply_lines: str) -> list[str]:
         "",
         apply_lines,
     ]
+
+
+# @stub-protected: signature defined by architect — do not modify
+def patch_is_already_applied(patch_text: str, repo_root: str) -> bool:
+    """Whether the workflow patch is already present in the tree.
+
+    Wraps :meth:`GitIdempotency.patch_already_applied` (reverse
+    ``git apply --check``); delivery uses it to annotate the patch comment
+    as "already applied — no action needed" instead of re-issuing the bare
+    apply command.
+    """
+    raise NotImplementedError
 
 
 # @stub-protected

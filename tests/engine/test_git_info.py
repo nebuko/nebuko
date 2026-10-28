@@ -29,13 +29,14 @@ class TestGitInfoModel:
         assert entry.turn == 0
         assert entry.detail == ""
 
-    def test_statuses_are_the_five_engine_actions(self):
+    def test_statuses_are_the_six_engine_actions(self):
         assert [s.value for s in GitActionStatus] == [
             "create",
             "rebase",
             "conflict",
             "dirty",
             "pr",
+            "already_applied",
         ]
 
 
@@ -49,6 +50,17 @@ class TestGitInfoRecord:
         assert entry.status is GitActionStatus.CREATE
         assert entry.commit_id == "abc1234"
         assert entry.turn == 1
+
+    def test_record_accepts_already_applied_status(self):
+        info = GitInfo()
+        entry = info.record(
+            GitActionStatus.ALREADY_APPLIED,
+            turn=2,
+            detail="feature/x already contains origin/main",
+        )
+        assert entry.status is GitActionStatus.ALREADY_APPLIED
+        assert entry.status == "already_applied"
+        assert info.history[-1] is entry
 
     def test_record_appends_in_order(self):
         info = GitInfo()

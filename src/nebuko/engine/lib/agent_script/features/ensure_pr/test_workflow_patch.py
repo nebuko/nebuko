@@ -16,6 +16,7 @@ from agent_script.features.ensure_pr.workflow_patch import (
     WORKFLOW_DIR,
     build_patch,
     is_workflow_path,
+    patch_is_already_applied,
     render_patch_comment,
     revert_workflow_changes,
     split_paths,
@@ -309,6 +310,42 @@ class TestApplyCommandOnACleanCheckout(unittest.TestCase):
                 self.assertEqual(handle.read(), "on: [push, pull_request]\n")
             # The file mode survives the round trip too.
             self.assertTrue(os.stat(path).st_mode & 0o100)
+
+
+class TestPatchIsAlreadyApplied(unittest.TestCase):
+    NEW_FILE_PATCH = (
+        "diff --git a/f.txt b/f.txt\n"
+        "new file mode 100644\n"
+        "index 0000000..ce01362\n"
+        "--- /dev/null\n"
+        "+++ b/f.txt\n"
+        "@@ -0,0 +1 @@\n"
+        "+hello\n"
+    )
+
+    def test_true_when_the_patch_is_already_in_the_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*args, **kwargs):
+                return subprocess.run(
+                    ["git", *args], cwd=tmp, capture_output=True, text=True, **kwargs
+                )
+
+            git("init", "-q", "-b", "main", check=True)
+            (os.path.join(tmp, "f.txt"),)
+            with open(os.path.join(tmp, "f.txt"), "w", encoding="utf-8") as handle:
+                handle.write("hello\n")
+            git("add", "f.txt", check=True)
+
+            self.assertTrue(patch_is_already_applied(self.NEW_FILE_PATCH, tmp))
+
+    def test_false_when_the_patch_is_not_in_the_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(
+                ["git", "init", "-q", "-b", "main", tmp],
+                check=True,
+                capture_output=True,
+            )
+            self.assertFalse(patch_is_already_applied(self.NEW_FILE_PATCH, tmp))
 
 
 if __name__ == "__main__":

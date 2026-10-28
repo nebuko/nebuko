@@ -15,6 +15,7 @@ class GitActionStatus(str, Enum):
     CONFLICT = "conflict"
     DIRTY = "dirty"
     PR = "pr"
+    ALREADY_APPLIED = "already_applied"
 
 
 class GitHistoryEntry(BaseModel):

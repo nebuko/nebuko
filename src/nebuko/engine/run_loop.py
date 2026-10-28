@@ -2562,6 +2562,20 @@ class Engine:
             return state
         context = dict(state.current_context)
         context["dev_branch"] = result.branch
+        if result.already_up_to_date:
+            ensure_import_path()
+            from workflow_state.sub_domains.git_info.git_info import (
+                GitActionStatus,
+                GitInfo,
+            )
+
+            info = context.get("git_info")
+            info = info if isinstance(info, GitInfo) else GitInfo()
+            info.record(
+                GitActionStatus.ALREADY_APPLIED,
+                detail=result.detail or "branch already up to date with base",
+            )
+            context["git_info"] = info
         updated = state.model_copy(update={"current_context": context})
         try:
             self.adapter.save_state(updated)
