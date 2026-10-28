@@ -45,7 +45,7 @@ def _stub_flow(monkeypatch, root, *, scaffold=None, pr=None, finalize=None):
     monkeypatch.setattr(
         Engine,
         "_pr_finalize",
-        lambda self: pr
+        lambda self, agent_result=None: pr
         or pr_finalize.PrFinalizeResult(
             ok=True,
             detail="PR opened",

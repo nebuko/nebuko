@@ -78,6 +78,42 @@ class TestPushDenyListMatching(unittest.TestCase):
         self.assertEqual(result.statement, raw)
 
 
+class TestNoVerifyDenyListMatching(unittest.TestCase):
+    """Agents may not skip the engine's workflow pre-commit hook."""
+
+    def setUp(self):
+        self.deny_list = push_deny_list()
+
+    def _rule(self, statement):
+        result = self.deny_list.check(statement)
+        return result.rule_name if result else None
+
+    def test_no_verify_flags_match(self):
+        for statement in (
+            "git commit --no-verify -m x",
+            "git commit -m x --no-verify",
+            "git commit -n -m x",
+            "git commit -anm x",
+            "git -C repo commit --no-verify -m x",
+            "git add -A && git commit -nm x",
+        ):
+            self.assertEqual(self._rule(statement), "git-commit-no-verify", statement)
+
+    def test_plain_commits_and_other_n_flags_do_not_match(self):
+        for statement in (
+            "git commit -m x",
+            "git commit -am fix",
+            'git commit -m "drop -n from the script"',
+            "git log -n 3",
+            "git status -n",
+        ):
+            self.assertIsNone(self._rule(statement), statement)
+
+    def test_message_points_at_the_patch_flow(self):
+        result = self.deny_list.check("git commit --no-verify -m x")
+        self.assertIn(".github/workflows", result.message)
+
+
 class TestCommandDenyListOrdering(unittest.TestCase):
     """Ordered rules; the first match wins."""
 

@@ -216,20 +216,6 @@ def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
     return None
 
 
-def _publication_guard_failure(state: WorkflowState | None) -> Optional[str]:
-    """The detail of a failed publication fallback, or ``None`` (issue #1089).
-
-    ``run_agent`` records ``publication_guard="fallback_failed"`` when a
-    credentials-less session left approved work unpublished and ``ensure_pr``
-    could not rescue it. That used to reach only the state comment, so the run
-    still exited 0; the caller maps this to ``ExitCode.ERROR``.
-    """
-    context = (state.current_context or {}) if state is not None else {}
-    if (context.get("publication_guard") or "").strip() != "fallback_failed":
-        return None
-    return (context.get("publication_guard_detail") or "").strip() or "unknown error"
-
-
 def _exit_code_for(
     exit_code: ExitCode, turn_outcome: TurnOutcome | None
 ) -> ExitCode:
@@ -1021,17 +1007,28 @@ class Engine:
 
             self._enter(phases, "prompt")
             failure_reason: str | None = None
+            # Git session preflight (issue #1089): prove the checkout can
+            # authenticate before a single token is spent. A credentials-less
+            # session used to run to the end and only fail on push — while
+            # ``gh`` kept succeeding — and the run still exited 0. It runs
+            # before the scaffold, whose fetch and merge need the auth and the
+            # commit identity it installs.
+            preflight = self._git_session_preflight()
+            if not preflight.ok:
+                failure_reason = f"git session preflight failed: {preflight.detail}"
             # Branch scaffold (issue #1138): the engine prepares the feature
-            # branch before the prompt is built, so a rebase-conflict note
+            # branch before the prompt is built, so a merge-conflict note
             # reaches the prompt and the agent never spends turns on branch
             # mechanics. Fail-closed: a failed scaffold skips the agent.
-            scaffold = self._branch_scaffold()
-            if not scaffold.ok:
-                failure_reason = f"branch scaffold failed: {scaffold.detail}"
+            if failure_reason is None:
+                scaffold = self._branch_scaffold()
+                if not scaffold.ok:
+                    failure_reason = f"branch scaffold failed: {scaffold.detail}"
             prompt = self.build_prompt(resolved, history, input_results, step_scope)
             conflict_note = self._render_scaffold_conflict()
             if conflict_note:
-                prompt = f"{prompt}\n\n{conflict_note}"
+                # First, not last: resolving the merge comes before the task.
+                prompt = f"{conflict_note}\n\n{prompt}"
 
             self._enter(phases, "agent")
             # Resolve the legacy comment/validation bridge once, before the
@@ -1050,17 +1047,6 @@ class Engine:
             # a ``post_hook`` runs after the agent attempt and is fail-open.
             hooks = hooks_from_resolved(resolved)
             agent_result: dict[str, Any] = {}
-
-            # Git session preflight (issue #1089): prove the checkout can
-            # authenticate before a single token is spent. A credentials-less
-            # session used to run to the end and only fail on push — while
-            # ``gh`` kept succeeding — and the run still exited 0.
-            preflight = self._git_session_preflight()
-            if not preflight.ok:
-                note = f"git session preflight failed: {preflight.detail}"
-                failure_reason = (
-                    f"{failure_reason}; {note}" if failure_reason else note
-                )
 
             pre_hook = hooks.get("pre")
             if failure_reason is None and pre_hook is not None:
@@ -1144,7 +1130,7 @@ class Engine:
             # state. Fail-closed: a session whose PR could not be opened must
             # not look green.
             if "agent" in phases:
-                pr_result = self._pr_finalize()
+                pr_result = self._pr_finalize(agent_result)
                 state = self._record_pull_request(state, pr_result)
                 if not pr_result.ok:
                     note = f"PR finalizer failed: {pr_result.detail}"
@@ -1234,23 +1220,6 @@ class Engine:
                 exit_code=ExitCode.ERROR,
                 turn_outcome=TurnOutcome.for_incomplete(
                     IncompleteReason.FAILURE, note=reason
-                ),
-                prompt=prompt,
-                posted_body=posted_body,
-                state=state,
-                phases=tuple(phases),
-            )
-
-        # A publication fallback that could not rescue approved work is a run
-        # error too (issue #1089): the work may be lost, so the run must not
-        # look green just because the state comment explains it.
-        guard_failure = _publication_guard_failure(state)
-        if guard_failure is not None:
-            return RunOutcome(
-                exit_code=ExitCode.ERROR,
-                turn_outcome=TurnOutcome.for_incomplete(
-                    IncompleteReason.FAILURE,
-                    note="publication guard fallback failed: " + guard_failure,
                 ),
                 prompt=prompt,
                 posted_body=posted_body,
@@ -2489,14 +2458,30 @@ class Engine:
         return f"## Branch conflict — fix first\n\n{result.note}"
 
     # @stub-protected
-    def _pr_finalize(self) -> pr_finalize.PrFinalizeResult:
+    def _pr_finalize(self, agent_result: Any = None) -> pr_finalize.PrFinalizeResult:
         """Open the session's PR and export its metadata (issue #1138).
 
         Runs after ``persist``, gated on the agent phase: a deterministic step
-        publishes nothing to finalize. Never raises: a failure is returned as
-        data and the caller turns it into a run error.
+        publishes nothing to finalize. This is the session's only publisher:
+        it commits what the agent left, pushes, and opens the PR — also for a
+        gracefully timed-out run, which it marks as interrupted. Never raises:
+        a failure is returned as data and the caller turns it into a run error.
         """
-        result = pr_finalize.PrFinalizer().finalize()
+        ensure_import_path()
+        from agent_script.features.run_agent.run_outcome import OutcomeStatus
+
+        trigger = self._active_trigger()
+        issue_title = (
+            branch_scaffold.issue_title_from_payload(trigger.payload)
+            if trigger is not None
+            else ""
+        )
+        interrupted = (
+            self._observed_status(agent_result) is OutcomeStatus.GRACEFULLY_TIMED_OUT
+        )
+        result = pr_finalize.PrFinalizer(
+            issue_title=issue_title, interrupted=interrupted
+        ).finalize()
         if result.ok:
             log.info("[phase:state] pr finalize: %s", result.detail)
         else:

@@ -60,12 +60,6 @@ class Metrics:
         review_fix_requests: Number of times review asked dev to fix something.
         dispatch_recall_count: Number of recall turns injected because the agent
             ended without calling dispatch_next (issue #524).
-        publication_guard: Result of the publication guard on an approved write
-            step — ``clean``, ``recalled_ok``, ``fallback_pr``,
-            ``fallback_patch`` (a ``.github/workflows/*`` change delivered as a
-            patch for a human, issue #1080) or ``fallback_failed``. None when
-            the guard did not run (non-write role, non-approved verdict, no git
-            remote).
         tokens_per_second: Derived generation throughput in tokens/second, or
             None when it could not be observed (issue #722).
         time_to_first_token: Derived seconds between request start and first
@@ -99,7 +93,6 @@ class Metrics:
     wall_clock_ms: float = 0.0
     review_fix_requests: int = 0
     dispatch_recall_count: int = 0
-    publication_guard: Optional[str] = None
     tokens_per_second: float | None = None
     time_to_first_token: float | None = None
     error: Optional[str] = None

@@ -16,7 +16,6 @@ from agent_script.features.ensure_pr.workflow_patch import (
     WORKFLOW_DIR,
     build_patch,
     is_workflow_path,
-    patch_is_already_applied,
     render_patch_comment,
     revert_workflow_changes,
     split_paths,
@@ -173,65 +172,6 @@ class TestRenderPatchComment(unittest.TestCase):
         fits = self._render(diff="+" + "x" * (marker - 800))
         self.assertTrue(oversized.oversized)
         self.assertFalse(fits.oversized)
-
-
-class TestAlreadyApplied(unittest.TestCase):
-    """Issue #1194: an already-applied patch must not re-offer the apply."""
-
-    def test_already_applied_comment_states_it_and_omits_the_command(self):
-        comment = render_patch_comment(
-            diff="--- a/x\n+++ b/x\n",
-            workflow_paths=[".github/workflows/ci.yaml"],
-            base_name="main",
-            already_applied=True,
-        )
-
-        self.assertIn("already applied", comment.body)
-        self.assertNotIn(APPLY_COMMAND, comment.body)
-
-    def test_patch_is_already_applied_true_for_applied_change(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            subprocess.run(["git", "init", "-q", tmp], check=True)
-            path = f"{tmp}/f.txt"
-            with open(path, "w") as fh:
-                fh.write("a\n")
-            subprocess.run(["git", "-C", tmp, "add", "f.txt"], check=True)
-            subprocess.run(
-                ["git", "-C", tmp, "-c", "user.email=t@t", "-c", "user.name=t",
-                 "commit", "-qm", "one"], check=True
-            )
-            with open(path, "w") as fh:
-                fh.write("b\n")
-            diff = subprocess.run(
-                ["git", "-C", tmp, "diff"], capture_output=True, text=True,
-                check=True,
-            ).stdout
-
-            self.assertTrue(patch_is_already_applied(diff, tmp))
-
-    def test_patch_is_already_applied_false_for_absent_change(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            subprocess.run(["git", "init", "-q", tmp], check=True)
-            with open(f"{tmp}/f.txt", "w") as fh:
-                fh.write("a\n")
-            subprocess.run(["git", "-C", tmp, "add", "f.txt"], check=True)
-            subprocess.run(
-                ["git", "-C", tmp, "-c", "user.email=t@t", "-c", "user.name=t",
-                 "commit", "-qm", "one"], check=True
-            )
-            diff = (
-                "diff --git a/f.txt b/f.txt\n"
-                "--- a/f.txt\n"
-                "+++ b/f.txt\n"
-                "@@ -1 +1,2 @@\n"
-                " a\n"
-                "+b\n"
-            )
-
-            self.assertFalse(patch_is_already_applied(diff, tmp))
-
-    def test_patch_is_already_applied_false_for_empty_patch(self):
-        self.assertFalse(patch_is_already_applied("   ", "/tmp"))
 
 
 class TestStagePatchArtifact(unittest.TestCase):

@@ -40,7 +40,6 @@ class StateMetrics(BaseModel):
     tool_runtime_ms: float = 0.0
     wall_clock_ms: float = 0.0
     dispatch_recall_count: int = 0
-    publication_guard: Optional[str] = None
     tokens_per_second: Optional[float] = None
     time_to_first_token: Optional[float] = None
     error: Optional[str] = None
@@ -76,7 +75,6 @@ class StateMetrics(BaseModel):
             tool_runtime_ms=data.get("tool_runtime_ms", 0.0),
             wall_clock_ms=data.get("wall_clock_ms", 0.0),
             dispatch_recall_count=data.get("dispatch_recall_count", 0),
-            publication_guard=data.get("publication_guard"),
             tokens_per_second=data.get("tokens_per_second"),
             time_to_first_token=data.get("time_to_first_token"),
             error=data.get("error"),
