@@ -17,8 +17,12 @@ import logging
 import os
 import re
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .idempotency import GitIdempotency
 
 try:  # openhands ships with the ``runtime`` extra only.
     from openhands.sdk import get_logger
@@ -47,6 +51,9 @@ class ScaffoldResult:
     ok: bool
     skipped: bool = False
     conflict: bool = False
+    # True when the branch already contained the base (issue #1194): the
+    # merge was skipped, so already-committed work must not look absent.
+    already_up_to_date: bool = False
     detail: str = ""
     branch: str = ""
     note: str = ""
@@ -109,6 +116,11 @@ class BranchScaffold:
         self.env = dict(env or {})
         self.issue_number = issue_number
         self.issue_title = issue_title
+        from .idempotency import GitIdempotency
+
+        self._idempotency: GitIdempotency = GitIdempotency(
+            str(repo_root), self._git_args
+        )
 
     # @stub-protected
     def scaffold(self) -> ScaffoldResult:
@@ -232,7 +244,12 @@ class BranchScaffold:
         return ScaffoldResult(ok=True, detail=detail, branch=branch)
 
     def _merge_origin(self, branch: str, base: str) -> ScaffoldResult:  # @stub-protected
-        """Merge ``origin/<base>`` into ``branch``; a conflict is data, not a crash."""
+        """Merge ``origin/<base>`` into ``branch``; a conflict is data, not a crash.
+
+        When the branch already contains the base the merge is skipped
+        entirely (issue #1194): re-merging an unchanged base made the
+        already-committed work look absent and the agent re-applied it.
+        """
         try:
             # A remote-only branch from a previous round is fetched but not
             # checked out yet (a pinned-SHA checkout is detached): the merge
@@ -271,6 +288,10 @@ class BranchScaffold:
         return [line for line in out.splitlines() if line]
 
     # ── Plumbing ─────────────────────────────────────────────────
+
+    def _git_args(self, args: Sequence[str]) -> str:
+        """List-argument adapter over :meth:`_git` for shared helpers."""
+        return self._git(*args)
 
     # @stub-protected
     def _git(self, *args: str) -> str:

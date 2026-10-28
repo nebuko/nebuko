@@ -2521,6 +2521,12 @@ class Engine:
             return state
         context = dict(state.current_context)
         context["dev_branch"] = result.branch
+        if getattr(result, "already_up_to_date", False):
+            # Issue #1194: the branch already contains the base, so the
+            # already-committed work is present — the prompt must say so
+            # instead of letting the agent re-apply it.
+            context["dev_branch_up_to_date"] = True
+            context["dev_branch_note"] = result.detail
         updated = state.model_copy(update={"current_context": context})
         try:
             self.adapter.save_state(updated)

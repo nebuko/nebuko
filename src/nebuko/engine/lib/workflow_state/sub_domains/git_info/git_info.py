@@ -15,6 +15,8 @@ class GitActionStatus(str, Enum):
     CONFLICT = "conflict"
     DIRTY = "dirty"
     PR = "pr"
+    # The requested change was already present (issue #1194): no action taken.
+    ALREADY_APPLIED = "already_applied"
 
 
 class GitHistoryEntry(BaseModel):

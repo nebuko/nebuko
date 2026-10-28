@@ -21,6 +21,7 @@ from .git_session import (
     GitSessionGuard,
     GuardResult,
 )
+from .idempotency import GitIdempotency
 from .pr_finalize import PrFinalizer, PrFinalizeResult, pr_number_from_url
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "GIT_IDENTITY_EMAIL",
     "GIT_IDENTITY_NAME",
     "BranchScaffold",
+    "GitIdempotency",
     "GitSessionGuard",
     "GuardResult",
     "PrFinalizeResult",
