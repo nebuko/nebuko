@@ -14,8 +14,10 @@ error — an unscaffolded session must not look green.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 try:  # openhands ships with the ``runtime`` extra only.
@@ -70,6 +72,26 @@ def issue_title_from_payload(payload: object) -> str:
             if isinstance(title, str):
                 return title
     return ""
+
+
+# @stub-protected
+def _git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
+    """Bounded env for git subprocesses: ambient env plus git/credential keys.
+
+    The session env carries unbounded JSON payloads (CONTEXT_BODIES,
+    STEP_INPUT_RESULTS) that count toward the kernel's E2BIG argv+env limit
+    (issue: "Argument list too long" crash). Only GIT_* and *TOKEN*/*CREDENTIAL*
+    keys from ``env`` are overlaid onto ``os.environ``. ``env`` itself remains
+    the Python-side source for base-ref overrides (``GITHUB_BASE_REF``).
+    """
+    overlay = {
+        key: value
+        for key, value in (env or {}).items()
+        if key.startswith("GIT_")
+        or "TOKEN" in key
+        or "CREDENTIAL" in key
+    }
+    return {**os.environ, **overlay, "GIT_TERMINAL_PROMPT": "0"}
 
 
 class BranchScaffold:
@@ -250,21 +272,17 @@ class BranchScaffold:
 
     # ── Plumbing ─────────────────────────────────────────────────
 
+    # @stub-protected
     def _git(self, *args: str) -> str:
         """Run git in the session checkout; a failure raises ``RuntimeError``."""
-        command = ["git", "-C", str(self.repo_root), *args]
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                env={**self.env, "GIT_TERMINAL_PROMPT": "0"},
-                timeout=120,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise RuntimeError(f"git {' '.join(args)} failed: {exc}") from exc
+        result = subprocess.run(
+            ["git", *args],
+            cwd=self.repo_root,
+            capture_output=True,
+            text=True,
+            env=_git_subprocess_env(self.env),
+        )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"git {' '.join(args)} failed: {result.stderr.strip()}"
-            )
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
         return result.stdout.strip()
