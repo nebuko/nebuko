@@ -17,7 +17,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
-from types import ModuleType, SimpleNamespace
+from types import ModuleType, SimpleNamespace, TracebackType
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from nebuko.engine.finalize import (
@@ -167,6 +167,49 @@ PHASES: tuple[str, ...] = (
 
 def _is_true(value: Any) -> bool:
     return str(value).strip().lower() == "true"
+
+
+class PhaseOverride:
+    """Scoped override registry for phase callables (spec).
+
+    Only one replacement per phase is visible while its ``with`` block is
+    live; nested overrides unwind LIFO and teardown restores the previous
+    entry even on exception.
+    """
+
+    # @stub-protected: signature defined by architect — do not modify
+    _OVERRIDES: dict[str, Callable[[], object]] = {}
+
+    # @stub-protected: signature defined by architect — do not modify
+    def __init__(self, phase: str, replacement: Callable[[], object]) -> None:
+        self.phase = phase
+        self.replacement = replacement
+        self._token = 0
+
+    # @stub-protected: signature defined by architect — do not modify
+    def __enter__(self) -> "PhaseOverride":
+        raise NotImplementedError
+
+    # @stub-protected: signature defined by architect — do not modify
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
+        raise NotImplementedError
+
+    # @stub-protected: signature defined by architect — do not modify
+    @classmethod
+    def active(cls, phase: str) -> Callable[[], object] | None:
+        raise NotImplementedError
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _resolve_phase_callable(
+    phase: str, default: Callable[[], object]
+) -> Callable[[], object]:
+    raise NotImplementedError
 
 
 def _script_exit_code(result: StepResult) -> int | None:
