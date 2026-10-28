@@ -40,6 +40,40 @@ CI job; `RunOutcome.exit_code` still carries the run-outcome code
 (`HOLD` 10 / `TERMINAL` 20) for machine callers. See
 [ADR-0015](./adr/0015-human-actionable-stops-do-not-fail-ci.md).
 
+### Agent answer footer
+
+Every **agent** answer (never an engine notice or a script-step comment) ends
+with a one-line workflow footer, so a human returning to an issue that runs in
+parallel with others instantly sees which workflow is running, where it stands,
+and what to do next — without expanding the collapsed state block. The footer
+is rendered **engine-side** at publish time (module
+`src/nebuko/engine/lib/answer_footer.py`, appended in
+`prepare_comment.build_comment_body_parts`) from the same `WorkflowState` that
+already rides the answer header, so agents cannot forget it, forge it, or use
+it to re-arm a gate — the `/nebuko` tokens in a hint are inert text (commands
+are classified by author, never by content) and the body's trigger-escaping
+and multi-part splitting cover the footer untouched (a very long answer carries
+the footer on its **last** part).
+
+**Format:** `{workflow} | {steps} | {status} | {hint}` — the hint segment is
+omitted entirely while the run is simply in progress:
+
+```
+spec-tdd | plan -> **spec** -> implement | gate: need approval | approve or reject: /nebuko approve|reject gate
+spec-tdd | spec -> implement -> review | soft-kill failed | retry /nebuko resume or escalate to architect
+```
+
+| Segment | Content |
+|---------|---------|
+| workflow | Name of the active workflow (e.g. `spec-tdd`). |
+| steps | Ordered workflow steps, separated by `->`. Each **completed** step is a Markdown link to that step's latest agent-output comment permalink (click it to jump to the plan/answer); the **current** step is **bold**; steps with no posted output are plain. |
+| status | One of: `in progress`, `gate: need approval`, `waiting for your input`, `soft-kill failed`, `circuit breaker open` — resolved in that priority order. |
+| hint | The next action: gate → `approve or reject: /nebuko approve\|reject gate`; awaiting input → `reply then /nebuko resume`; soft-kill exhausted → `retry /nebuko resume or escalate to architect`; breaker open → `adjust: /nebuko update circuit-breaker --value <n>`; in progress → (no hint segment). |
+
+Each footer is an append-only **snapshot** of its moment: older answers keep
+their older footers, and the **latest** agent answer's footer is the
+authoritative current status.
+
 **Multiline `--feedback`:** the command line is the grammar line, but a terminal
 `--feedback` flag spans the remainder of the comment body verbatim, newlines
 preserved (issue #919). So a bare `--feedback` with the payload on following

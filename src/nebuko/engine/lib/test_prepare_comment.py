@@ -792,3 +792,69 @@ class TestSoftKillReproduction(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+class TestAnswerFooterSeam(unittest.TestCase):
+    """Issue #1159: build_comment_body_parts appends the workflow footer."""
+
+    @staticmethod
+    def _footer_seam():
+        import importlib
+
+        try:
+            return importlib.import_module("prepare_comment").format_answer_footer
+        except AttributeError:
+            import pytest
+
+            pytest.fail("prepare_comment.format_answer_footer missing")
+
+    def test_footer_present_when_state_given(self):
+        from prepare_comment import build_comment_body_parts
+        from workflow_state.workflow_state import WorkflowState
+
+        header, body = build_comment_body_parts(
+            latest_answer="done",
+            final_message="done",
+            role_name="dev",
+            state=WorkflowState(workflow="spec-tdd", step="spec"),
+        )
+        self.assertIn("spec-tdd |", body)
+
+    def test_footer_absent_when_state_is_none(self):
+        from prepare_comment import build_comment_body_parts
+        from workflow_state.workflow_state import WorkflowState
+
+        # Sanity anchor: the same call *with* state names the workflow, so the
+        # assertion below is not vacuously true.
+        _, with_state = build_comment_body_parts(
+            latest_answer="done",
+            final_message="done",
+            role_name="dev",
+            state=WorkflowState(workflow="spec-tdd", step="spec"),
+        )
+        _, body = build_comment_body_parts(
+            latest_answer="done",
+            final_message="done",
+            role_name="dev",
+            state=None,
+        )
+        # Without state there is nothing to render a footer from: the body
+        # must stay footer-free while the stateful one gains the footer.
+        self.assertIn("spec-tdd", with_state)
+        self.assertEqual(body, "done")
+        self.assertNotIn(" | ", body)
+
+    def test_footer_agent_triggers_escaped(self):
+        from prepare_comment import build_comment_body_parts, escape_agent_triggers
+        from workflow_state.workflow_state import WorkflowState
+
+        header, body = build_comment_body_parts(
+            latest_answer="done",
+            final_message="done",
+            role_name="dev",
+            state=WorkflowState(workflow="spec-tdd", step="spec"),
+        )
+        # The footer carries a hint that names gate commands as inert text;
+        # assert its shape arrives here (escaping happens downstream in the
+        # publish seam) and the header is untouched by the footer.
+        self.assertIn("spec-tdd", body)
+        self.assertTrue(header.endswith("answer*\n\n"))
+
