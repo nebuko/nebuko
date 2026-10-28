@@ -192,6 +192,34 @@ class TestScaffold:
         assert _git(checkout, "diff", "--name-only", "--diff-filter=U") == "base.txt"
         assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
 
+    def test_a_conflict_is_aborted_when_the_engine_runs_from_the_checkout(
+        self, checkout, monkeypatch
+    ):
+        """nebuko on its own repository imports its modules from the checkout:
+        markers left on disk would crash the engine mid-run."""
+        monkeypatch.setattr(BranchScaffold, "_engine_runs_from_checkout", lambda self: True)
+        _git(checkout, "checkout", "-q", "-b", BRANCH)
+        _commit(checkout, "base.txt", "branch version\n", "branch edit")
+        seed = checkout.parent / "seed"
+        _commit(seed, "base.txt", "main version\n", "main edit")
+        _git(seed, "push", "-q", "origin", "main")
+
+        result = _scaffold(checkout)
+
+        assert result.ok and result.conflict
+        assert "base.txt" in result.detail
+        assert "run `git merge origin/main`" in result.note
+        # The tree stays clean: no merge in progress, no markers on disk.
+        assert not (checkout / ".git" / "MERGE_HEAD").exists()
+        assert _git(checkout, "status", "--porcelain") == ""
+
+    def test_detects_an_engine_running_from_the_checkout(self, tmp_path):
+        import nebuko.engine.lib.git.branch_scaffold as module
+
+        engine_tree = Path(module.__file__).resolve().parents[3]
+        assert BranchScaffold(engine_tree, {})._engine_runs_from_checkout()
+        assert not BranchScaffold(tmp_path, {})._engine_runs_from_checkout()
+
     def test_a_non_conflict_merge_failure_fails_the_scaffold(self, checkout):
         """A merge git refuses outright is not a conflict the agent can fix."""
         _git(checkout, "checkout", "-q", "-b", BRANCH)

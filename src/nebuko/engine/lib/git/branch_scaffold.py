@@ -354,10 +354,27 @@ class BranchScaffold:
                     ok=False,
                     detail=f"merge of origin/{base} into {branch} failed: {exc}",
                 )
-            # The merge is left in progress so the agent resolves the markers
-            # in place; the publisher concludes it with the engine commit.
             detail = ", ".join(conflicted)
             listed = "\n".join(f"- `{path}`" for path in conflicted)
+            if self._engine_runs_from_checkout():
+                # The engine imports its own modules lazily from this very
+                # tree: conflict markers left on disk crash it mid-run. Keep
+                # the tree clean and hand the merge to the agent instead.
+                self._abort_merge()
+                note = (
+                    f"FIRST: merging origin/{base} into `{branch}` conflicts in:\n\n"
+                    f"{listed}\n\n"
+                    f"Before anything else, run `git merge origin/{base}`, resolve "
+                    "every conflict marker, `git add` the files and commit. The "
+                    "engine pushes after your run and refuses to publish while "
+                    "conflicts remain."
+                )
+                logger.info("branch scaffold: merge conflict in %s (aborted)", detail)
+                return ScaffoldResult(
+                    ok=True, conflict=True, detail=detail, branch=branch, note=note
+                )
+            # The merge is left in progress so the agent resolves the markers
+            # in place; the publisher concludes it with the engine commit.
             note = (
                 f"FIRST: the engine merged origin/{base} into `{branch}` and the "
                 "merge stopped on conflicts. The merge is still in progress. "
@@ -383,6 +400,19 @@ class BranchScaffold:
         except RuntimeError:
             return []
         return [line for line in out.splitlines() if line]
+
+    def _engine_runs_from_checkout(self) -> bool:
+        """Whether the engine's own source lives inside the session checkout.
+
+        True when nebuko runs on its own repository from the workspace (the
+        workflow's ``NEBUKO_ROOT`` is the checkout): every merge then rewrites
+        modules the running engine has yet to import.
+        """
+        try:
+            Path(__file__).resolve().relative_to(Path(self.repo_root).resolve())
+        except ValueError:
+            return False
+        return True
 
     def _abort_merge(self) -> None:
         try:
