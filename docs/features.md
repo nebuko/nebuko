@@ -87,6 +87,44 @@ every later one on the target issue; omit it to delete all comments.
 
 ---
 
+## Agent answer footer (issue #1159)
+
+Every **agent** answer ends with a one-line footer showing the workflow, the
+position in it, the current status and the next action — so a human returning
+to an issue that runs several workflows in parallel instantly sees where
+things stand. Engine notices and script-step comments never carry a footer:
+only agent answers do.
+
+**Format** — four pipe-separated segments:
+
+```
+{workflow} | {steps} | {status} | {hint}
+
+spec-tdd | plan -> **spec** -> implement | gate: need approval | approve or reject: /nebuko approve|reject gate
+spec-tdd | spec -> implement -> review | soft-kill failed | retry /nebuko resume or escalate to architect
+```
+
+| Segment | Content |
+|---|---|
+| workflow | Active workflow name (`WorkflowState.workflow`). |
+| steps | Ordered workflow steps. A **completed** step links to its latest output comment (click to jump to, e.g., the plan); the **current** step is **bold**; pending steps are plain. Separator: `->`. Without a resolvable permalink the step stays a plain name. |
+| status | One of: `in progress`, `gate: need approval`, `waiting for your input`, `soft-kill failed`, `circuit breaker open`. First match wins: circuit breaker → exhausted soft-kill retries → armed gate → awaiting-input hold → in progress. |
+| hint | The next command to run (see status); omitted entirely while `in progress`. |
+
+**How it works.** The footer is rendered by the engine at publish time
+(`engine/lib/answer_footer.py`, appended in the `build_comment_body_parts`
+seam of `prepare_comment.py`) from the same `WorkflowState` that already rides
+the collapsed header block — agents never emit it, so the format cannot drift.
+Because it is appended before the body is escaped and split, it can never
+re-arm a gate (issue #482) and a long multi-part answer carries the footer on
+its last part.
+
+**Version note.** Each footer is a snapshot of the moment that answer was
+posted; earlier answers keep their older footers. The **latest** agent
+answer's footer is the authoritative current status.
+
+---
+
 ## Safety Mechanisms
 
 Three independent guards prevent runaway automation. All live in
