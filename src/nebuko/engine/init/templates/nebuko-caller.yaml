@@ -11,9 +11,17 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  id-token: write
 
 jobs:
   agent:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                 github.event.comment.author_association) &&
+        github.event.comment.user.login != 'nebuko[bot]'
+      )
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@${pin_ref}
     with:
       agent_config_path: "${agent_config_path}"
