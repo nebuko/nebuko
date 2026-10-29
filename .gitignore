@@ -7,4 +7,17 @@ latest_answer.md
 *.egg-info/
 build/
 dist/
+node_modules/console.txt
+__pycache__/
+openhands-task-logs/
+output/
+.pytest_cache
+latest_answer.md
+*.egg-info/
+build/
+dist/
 node_modules/
+nebuko-task-logs/
+site/
+docs/
+blog/

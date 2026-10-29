@@ -1,19 +1,49 @@
-diff --git a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
-index 4988b9b..f32d26c 100644
---- a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
-+++ b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
-@@ -14,6 +14,14 @@ permissions:
- 
- jobs:
-   agent:
-+    # Caller-side pre-filter mirroring CALLER_AUTH: trusted associations only,
-+    # and bot-authored comments never re-trigger a run.
-+    if: >-
-+      (github.event_name != 'issues' ||
-+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)) &&
-+      (github.event_name != 'issue_comment' ||
-+        (!endsWith(github.event.comment.user.login, '[bot]') &&
-+         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)))
-     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
-     with:
-       agent_config_path: ".nebuko/agents/agent-config-mistral.yaml"
+diff --git a/.github/workflows/internal-deploy-sites.yaml b/.github/workflows/internal-deploy-sites.yaml
+new file mode 100644
+index 00000000..aa685f27
+--- /dev/null
++++ b/.github/workflows/internal-deploy-sites.yaml
+@@ -0,0 +1,43 @@
++name: internal-deploy-sites
++
++# Builds the per-site deploy outputs from the maintenance flags and uploads them
++# to the Cloudflare Pages projects. Toggling maintenance = flip the value in
++# `maintenance.yaml`, push, and this pipeline materializes the new state.
++#
++# `site` and `blog` deploy from the generator outputs; `docs` keeps the project
++# documentation (only `index.html`/`logo.svg` are overwritten by the generator).
++#
++# Required repository secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID.
++# The project names must match the Cloudflare Pages projects for each site.
++on:
++  push:
++    branches: [main]
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++jobs:
++  deploy:
++    runs-on: ubuntu-latest
++    strategy:
++      matrix:
++        include:
++          - site: site
++            project: nebuko-site
++          - site: docs
++            project: nebuko-docs
++          - site: blog
++            project: nebuko-blog
++    steps:
++      - uses: actions/checkout@v5
++
++      - name: Build the site outputs
++        run: uv run python scripts/build_sites.py
++
++      - name: Upload to Cloudflare Pages
++        uses: cloudflare/wrangler-action@v3
++        with:
++          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
++          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
++          command: pages deploy "${{ matrix.site }}" --project-name "${{ matrix.project }}"
