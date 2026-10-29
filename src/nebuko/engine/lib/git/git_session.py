@@ -148,8 +148,17 @@ class GitSessionGuard:
         return GuardResult(ok=True, detail=f"{self.remote} authenticated")
 
     # @stub-protected
-    def finalize(self) -> GuardResult:
+    def finalize(
+        self, expected_branch: str = "", head_before: str = ""
+    ) -> GuardResult:
         """Commit and push any leftovers, then prove the session fully published.
+
+        ``expected_branch`` is the branch the engine scaffolded for the
+        session: ending on a detached HEAD or another branch is then a failure,
+        not a benign skip (the agent, or a test it ran, moved the checkout and
+        its work would never reach the PR). ``head_before`` is the HEAD SHA
+        recorded before the agent ran; when it is unchanged the success detail
+        says so, so "committed and pushed" can be checked against fact.
 
         Auth is re-proven first and the env token installed when the probe
         fails on a github.com HTTPS remote (issue #1134): finalize never
@@ -165,6 +174,15 @@ class GitSessionGuard:
         if self._remote_url() is None:
             return GuardResult(ok=True, skipped=True, detail="no git remote")
         branch = self._current_branch()
+        if expected_branch and branch != expected_branch:
+            detached = " (detached HEAD)" if branch in ("", "HEAD") else ""
+            return GuardResult(
+                ok=False,
+                detail=(
+                    f"the session ended on {branch or '<unknown>'!r}{detached}, "
+                    f"not on the scaffolded branch {expected_branch!r}"
+                ),
+            )
         if branch in ("", "HEAD"):
             return GuardResult(ok=True, skipped=True, detail="detached HEAD")
 
@@ -208,7 +226,17 @@ class GitSessionGuard:
                 detail="; ".join(problems)
                 + self._token_hint(),
             )
-        return GuardResult(ok=True, detail=f"{branch} is clean and pushed")
+        detail = f"{branch} is clean and pushed"
+        if head_before and self.head_sha() == head_before:
+            detail += " (no new commit this session)"
+        return GuardResult(ok=True, detail=detail)
+
+    def head_sha(self) -> str:
+        """The current HEAD SHA, empty when it cannot be read."""
+        try:
+            return self._run_git(["rev-parse", "HEAD"]).strip()
+        except (RuntimeError, OSError):
+            return ""
 
     # ── Identity and credentials ──────────────────────────────────
 
