@@ -12,7 +12,9 @@
 # {% raw %}${{ vars.{% endraw %}{{ broker_variable }}{% raw %} }}{% endraw %}, so the repository variable must stay set.
 name: Nebuko
 
-on:
+# `!!str` keeps the key a string: YAML 1.1 parsers (PyYAML) would otherwise read
+# an unquoted `on` as the boolean true. GitHub reads it as the `on` key either way.
+!!str on:
   issue_comment:
     types: [created, edited]
 

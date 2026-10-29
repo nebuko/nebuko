@@ -2428,6 +2428,7 @@ name = "nebuko"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "jinja2" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -2448,6 +2449,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "jinja2", specifier = ">=3.1.6" },
     { name = "litellm", marker = "extra == 'runtime'" },
     { name = "openhands-sdk", marker = "extra == 'runtime'", git = "https://github.com/OpenHands/software-agent-sdk.git?subdirectory=openhands-sdk&rev=8ba966d1d3af49f08e04349c055009e1614b48d6" },
     { name = "openhands-tools", marker = "extra == 'runtime'", git = "https://github.com/OpenHands/software-agent-sdk.git?subdirectory=openhands-tools&rev=8ba966d1d3af49f08e04349c055009e1614b48d6" },

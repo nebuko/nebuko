@@ -8,7 +8,10 @@ package wraps (``github_client.GitHubTransport``).
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from nebuko.engine.init.ports import SetupError
 
 
 class RepoVariableWriter:
@@ -22,9 +25,30 @@ class RepoVariableWriter:
     # @stub-protected: signature defined by architect — do not modify
     def get(self, name: str) -> str | None:
         """The variable's current value, or ``None`` when it does not exist."""
-        raise NotImplementedError
+        result = self.client.call(["api", f"{self._base()}/{name}"], mutative=False)
+        if not result.ok:
+            return None
+        try:
+            payload = json.loads(result.payload or "{}")
+        except ValueError:
+            return None
+        value = payload.get("value") if isinstance(payload, dict) else None
+        return value if isinstance(value, str) else None
 
     # @stub-protected: signature defined by architect — do not modify
     def set(self, name: str, value: str) -> None:
         """Upsert ``name``: create it when absent, update it when present."""
-        raise NotImplementedError
+        body = json.dumps({"name": name, "value": value})
+        if self.get(name) is None:
+            args = ["api", "--method", "POST", self._base()]
+        else:
+            args = ["api", "--method", "PATCH", f"{self._base()}/{name}"]
+        result = self.client.call(args, mutative=True, input_data=body)
+        if not result.ok:
+            raise SetupError(
+                f"cannot set repository variable {name} on "
+                f"{self.owner}/{self.repo_name}: {result.detail or result.status}"
+            )
+
+    def _base(self) -> str:
+        return f"repos/{self.owner}/{self.repo_name}/actions/variables"
