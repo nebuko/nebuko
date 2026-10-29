@@ -200,7 +200,7 @@ def _install_fake_pipeline(
             encoding="utf-8",
         )
 
-    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, **kwargs):
         return SimpleNamespace(state=SimpleNamespace(events=events))
 
     pipeline = SimpleNamespace(

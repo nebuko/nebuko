@@ -2272,7 +2272,10 @@ class Engine:
         caller_root = self._caller_root()
         try:
             return run_engine_agent(
-                prompt, repo_root=caller_root, env=env, caller_root=caller_root
+                prompt,
+                repo_root=self.repo_root,
+                env=env,
+                caller_root=caller_root,
             )
         except EngineAgentUnavailable as exc:
             log.warning(
@@ -2281,7 +2284,10 @@ class Engine:
                 exc,
             )
             return run_legacy_agent(
-                prompt, repo_root=caller_root, env=env, caller_root=caller_root
+                prompt,
+                repo_root=self.repo_root,
+                env=env,
+                caller_root=caller_root,
             )
 
     def _agent_env(self) -> dict[str, str]:
