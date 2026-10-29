@@ -432,16 +432,19 @@ def _needs_push(split: PublishSplit) -> bool:
 def _base_already_in_branch(branch: str, base: str) -> bool:
     """True when ``origin/<base>`` is already an ancestor of ``branch``
     (``git merge-base --is-ancestor``): the publish-time merge is a no-op
-    and must be skipped (the #1194 ancestry guard). Never raises for "no":
-    any git failure answers False so the sync is attempted.
+    and must be skipped (the #1194 ancestry guard). An "is not an ancestor"
+    answer (git exits 1) returns False so the sync is attempted; any other
+    git failure (broken repo, unknown ref) is an infrastructure error and
+    propagates — the caller refuses the publish instead of attempting a
+    doomed fetch+merge.
     """
-    # ``--is-ancestor`` fails on "no" (exit 1) or on an unknown ref; both mean
-    # containment is not proven, so the sync merge is attempted — the guard
-    # must only ever skip work when containment is proven.
     try:
         _run_git(["merge-base", "--is-ancestor", f"origin/{base}", branch])
-    except RuntimeError:
-        return False
+    except RuntimeError as exc:
+        if " failed (1)" in str(exc):
+            # Exit code 1 is git's "no, not an ancestor" answer.
+            return False
+        raise
     return True
 
 
@@ -452,9 +455,15 @@ def _sync_base_before_push(branch: str, base: str) -> str:
     skip when ``_base_already_in_branch``, else ``git merge --no-edit
     origin/<base>`` into ``branch``. On a conflict, abort the merge and
     report it. Returns ``""`` on success or benign skip, or an actionable
-    error detail (fetch failed / merge failed / conflict aborted) that the
-    caller MUST treat as a refusal to push.
+    error detail (fetch failed / dirty tree / merge failed / conflict
+    aborted, with the abort outcome) that the caller MUST treat as a refusal
+    to push.
     """
+    if _run_git(["status", "--porcelain"]).strip():
+        return (
+            f"cannot merge base '{base}' into '{branch}': the working tree has "
+            "uncommitted changes — commit or stash them before publishing"
+        )
     try:
         _run_git([
             "fetch", "--no-tags", "origin",
@@ -470,13 +479,21 @@ def _sync_base_before_push(branch: str, base: str) -> str:
         if _unmerged_paths():
             try:
                 _run_git(["merge", "--abort"])
+                cleanup = "merge aborted cleanly"
             except RuntimeError as abort_exc:
                 logger.warning(f"ensure_pr: merge --abort failed: {abort_exc}")
+                cleanup = (
+                    "merge --abort FAILED — resolve the conflicts manually "
+                    f"(merge --abort reported: {abort_exc})"
+                )
             return (
-                f"merging base '{base}' into '{branch}' conflicts — publish refused, "
-                f"merge aborted: {exc}"
+                f"merging base '{base}' into '{branch}' conflicts with local "
+                f"changes — publish refused, {cleanup}: {exc}"
             )
-        return f"merging base '{base}' into '{branch}' failed: {exc}"
+        return (
+            f"merging base '{base}' into '{branch}' failed (no conflicts, "
+            f"no merge in progress): {exc}"
+        )
     return ""
 
 

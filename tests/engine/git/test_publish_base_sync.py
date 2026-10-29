@@ -122,6 +122,25 @@ def test_publish_skips_the_merge_when_the_base_is_already_contained(
     assert not _git(publish_repo, "log", "--merges", "--oneline"), "no merge commit"
 
 
+def test_publish_refuses_to_push_when_the_working_tree_is_dirty(
+    publish_repo: Path, monkeypatch
+) -> None:
+    # given: the agent left an uncommitted tracked change behind; the guard
+    # must refuse the sync merge before touching the index
+    import agent_script.features.ensure_pr.ensure_pr as ep
+
+    _stub_gh(monkeypatch)
+    (publish_repo / "leftover.txt").write_text("wip\n", encoding="utf-8")
+    _git(publish_repo, "add", "leftover.txt")
+
+    # when: the publish-time sync runs directly against the dirty tree
+    detail = ep._sync_base_before_push("feature/issue-1219", "main")
+
+    # then: it is refused with an actionable message and nothing is merged
+    assert "uncommitted" in detail.lower()
+    assert not _git(publish_repo, "log", "--merges", "--oneline")
+
+
 def test_publish_refuses_to_push_when_the_base_fetch_fails(
     publish_repo: Path, monkeypatch
 ) -> None:
@@ -151,7 +170,11 @@ def test_publish_refuses_to_push_when_the_base_fetch_fails(
 def test_publish_refuses_to_push_on_a_merge_conflict(
     publish_repo: Path, monkeypatch
 ) -> None:
-    # given: main changed the same file the branch changed
+    # given: the branch and main changed the same file since the fork point
+    _git(publish_repo, "checkout", "-q", "feature/issue-1219")
+    (publish_repo / "base.txt").write_text("branch\n", encoding="utf-8")
+    _git(publish_repo, "add", "base.txt")
+    _git(publish_repo, "commit", "-q", "-m", "branch changes base.txt")
     seed = publish_repo.parent / "seed"
     _git(seed, "checkout", "-q", "main")
     _commit(seed, "base.txt", "main\n", "conflicting main")
@@ -169,6 +192,35 @@ def test_publish_refuses_to_push_on_a_merge_conflict(
     assert not any(a[:2] == ["pr", "list"] for a in calls)
     # the merge left nothing in progress
     assert not (publish_repo / ".git" / "MERGE_HEAD").exists()
+    # the refusal distinguishes the conflict-abort from other merge failures
+    assert "aborted" in result.message.lower()
+
+
+def test_publish_refuses_to_push_when_the_base_ref_is_unresolvable(
+    publish_repo: Path, monkeypatch
+) -> None:
+    # given: the ancestry check hits a git infrastructure error (a corrupted
+    # ref, not git's "not an ancestor" exit 1) — it must propagate instead of
+    # being read as "needs sync"
+    import agent_script.features.ensure_pr.ensure_pr as ep
+
+    real = ep._run_git
+
+    def _fail_ancestry(args, **kw):
+        if args[:2] == ["merge-base", "--is-ancestor"]:
+            raise RuntimeError("git merge-base --is-ancestor failed (128): fatal")
+        return real(args, **kw)
+
+    monkeypatch.setattr(ep, "_run_git", _fail_ancestry)
+    _stub_gh(monkeypatch)
+
+    # when: the publish flow runs
+    result = ensure_pr(issue_title="sync")
+
+    # then: the publish is refused with the infrastructure error, no push
+    assert result.error, result.message
+    assert not result.pushed
+    assert "128" in result.message
 
 
 def test_publish_pushes_the_sync_merge_commit_together_with_the_branch(

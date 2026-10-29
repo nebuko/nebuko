@@ -103,12 +103,14 @@ it — the branch can carry hunks identical to main, and the PR shows them as
 the freshest main, so base-identical hunks no longer appear in the PR.
 
 **Failure and recovery.** Publishing is fail-closed: if the base fetch
-fails, the merge fails, or the merge leaves conflicts, `ensure_pr` aborts
+fails, or the merge leaves conflicts, `ensure_pr` aborts
 the merge (where applicable) and refuses to push — the PR is not opened or
 updated with stale content. The agent's work is already committed locally on
 the branch, so nothing is lost: re-running the workflow re-syncs the branch
 against the base and retries the publish; a conflict is handed to the agent
-as its fix-first work, the same way the pre-agent scaffold does.
+as its fix-first work, the same way the pre-agent scaffold does. The sync
+also refuses to run while the working tree is dirty (uncommitted tracked
+changes), so a publish-time merge can never wedge the index.
 
 **Accepted caveat:** the handoff stays in the branch history after cleanup
 unless the merge is squashed. That is intentional — it is what makes the
