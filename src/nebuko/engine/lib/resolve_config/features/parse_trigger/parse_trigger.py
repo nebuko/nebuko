@@ -69,6 +69,17 @@ UNIVERSAL_BOT_MARKER = "<!-- bot-workflow-terminal -->"
 ANSWER_CONTINUATION_MARKER = "<!-- bot-answer-continuation -->"
 
 
+# @stub-protected: signature defined by architect — do not modify
+def parse_bot_mention(text: str, identity) -> Optional[object]:
+    """Return a trigger when a *human* body mentions ``@<identity.login>``.
+
+    Returns ``None`` when the body carries a bot marker (reuses the module's
+    existing bot-marker suppression) or when the mention is a bare ``@nebuko``
+    (a login without the ``[bot]`` suffix is a different, nonexistent account).
+    """
+    raise NotImplementedError
+
+
 def is_answer_continuation(trigger_body: str) -> bool:
     """True when the body is a continuation part of a split answer (issue #1002).
 
