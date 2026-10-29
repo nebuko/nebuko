@@ -81,6 +81,43 @@ RUN_ENV = {
 ACK_LINE = f"{brand().logo_mark()} **dev agent started** — [View workflow run logs]({RUN_URL})"
 
 
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_checkout(monkeypatch, tmp_path_factory):
+    """Keep the git-mutating phases off the checkout the tests run from.
+
+    ``_engine`` points the Engine at ``repo_root()`` (it needs ``defaults/``),
+    which is also the git workspace: the session guard and branch scaffold
+    would otherwise commit, push and switch branches in the developer's (or the
+    agent's) own tree. Against any other root the real methods still run.
+
+    The PR finalizer is stubbed everywhere: ``ensure_pr`` runs git/gh in the
+    process cwd (or ``GFA_REPO_ROOT``), never in the Engine's ``repo_root``, so
+    it used to hit the real tree whatever root the test chose. The tests of the
+    flow itself live in ``tests/engine/git/test_pr_finalize.py``.
+    """
+    real = repo_root()
+    monkeypatch.delenv("GFA_REPO_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path_factory.mktemp("cwd"))
+
+    def isolate(name, benign):
+        original = getattr(Engine, name)
+
+        def wrapper(self, *args, **kwargs):
+            if Path(self.repo_root).resolve() == real:
+                return benign
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Engine, name, wrapper)
+
+    isolate("_git_session_preflight", git_session.GuardResult(ok=True, skipped=True))
+    isolate("_git_session_finalize", git_session.GuardResult(ok=True, skipped=True))
+    isolate("_branch_scaffold", branch_scaffold.ScaffoldResult(ok=True, skipped=True))
+    monkeypatch.setattr(
+        pr_finalize.PrFinalizer,
+        "finalize",
+        lambda self: pr_finalize.PrFinalizeResult(ok=True, skipped=True),
+    )
+
 def _trigger(body: str = "@@dev fix it", number: int = 590, issue_body: str = "") -> Trigger:
     return Trigger(
         author="olivier-norture",

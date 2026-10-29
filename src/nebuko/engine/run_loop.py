@@ -1024,7 +1024,11 @@ class Engine:
                 scaffold = self._branch_scaffold()
                 if not scaffold.ok:
                     failure_reason = f"branch scaffold failed: {scaffold.detail}"
-            prompt = self.build_prompt(resolved, history, input_results, step_scope)
+                else:
+                    self._scaffold_state["head_before"] = git_session.GitSessionGuard(
+                        self.repo_root, self._session_env()
+                    ).head_sha()
+            prompt =self.build_prompt(resolved, history, input_results, step_scope)
             conflict_note = self._render_scaffold_conflict()
             if conflict_note:
                 # First, not last: resolving the merge comes before the task.
@@ -2404,7 +2408,16 @@ class Engine:
         error — an unpublished session must not look green.
         """
         guard = git_session.GitSessionGuard(self.repo_root, self._session_env())
-        result = guard.finalize()
+        scaffold = self._scaffold_state.get("result")
+        expected = (
+            scaffold.branch
+            if isinstance(scaffold, branch_scaffold.ScaffoldResult) and scaffold.ok
+            else ""
+        )
+        result = guard.finalize(
+            expected_branch=expected,
+            head_before=self._scaffold_state.get("head_before", ""),
+        )
         if result.ok:
             log.info("[phase:agent] git finalize ok: %s", result.detail)
         else:

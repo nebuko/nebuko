@@ -198,6 +198,45 @@ def test_finalize_passes_a_clean_pushed_tree(checkout):
     assert result.ok and not result.skipped
 
 
+def test_finalize_fails_on_a_detached_head_when_a_branch_was_scaffolded(checkout):
+    _git(checkout, "checkout", "-b", "feature/x")
+    _git(checkout, "checkout", "--detach")
+
+    result = _local_guard(checkout).finalize(expected_branch="feature/x")
+
+    assert not result.ok
+    assert "detached HEAD" in result.detail and "feature/x" in result.detail
+
+
+def test_finalize_fails_when_the_session_switched_branch(checkout):
+    _git(checkout, "checkout", "-b", "feature/other")
+
+    result = _local_guard(checkout).finalize(expected_branch="feature/x")
+
+    assert not result.ok
+    assert "feature/other" in result.detail
+
+
+def test_finalize_without_expected_branch_still_skips_a_detached_head(checkout):
+    _git(checkout, "checkout", "--detach")
+
+    result = _local_guard(checkout).finalize()
+
+    assert result.ok and result.skipped
+
+
+def test_finalize_reports_when_no_new_commit_was_made(checkout):
+    guard = _local_guard(checkout)
+    before = guard.head_sha()
+
+    unchanged = guard.finalize(head_before=before)
+    (checkout / "new.txt").write_text("n\n", encoding="utf-8")
+    committed = guard.finalize(head_before=before)
+
+    assert "no new commit" in unchanged.detail
+    assert committed.ok and "no new commit" not in committed.detail
+
+
 def test_finalize_commits_and_pushes_leftovers(checkout, remote):
     (checkout / "left.txt").write_text("left\n", encoding="utf-8")
     _git(checkout, "checkout", "-b", "feature/x")
