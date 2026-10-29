@@ -56,5 +56,5 @@ where = ["src"]
 "nebuko.engine.init" = ["templates/*.yaml"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "src/nebuko/engine/lib"]
-testpaths = ["tests"]
+pythonpath = ["src"]
+testpaths = ["tests", "src/nebuko/engine/lib"]

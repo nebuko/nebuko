@@ -169,6 +169,7 @@ def _stage_entry_point(script: Path, work: Path) -> Path:
     return staged
 
 
+# @stub-protected
 def _child_env(
     script: Path, env: Mapping[str, str] | None, *, repo_root: Path | None = None
 ) -> dict[str, str]:

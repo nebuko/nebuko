@@ -1,4 +1,4 @@
-"""Configuration-path resolution for Nebuko (issues #590, #741).
+"""Configuration-path resolution for Nebuko (issues #590, #741, #1165).
 
 Every declarative artifact Nebuko consumes — workflows, agent configs, prompts
 and skills — is resolved through one layered lookup:
@@ -9,9 +9,30 @@ and skills — is resolved through one layered lookup:
 :class:`NebukoPaths` is the single place that knows those locations and their
 priority, so the rest of the engine never builds a config path by hand.
 
-:data:`LIB_DIR` is deliberately *not* part of that layering: it is the frozen
-orchestration runtime shipped inside the package, made importable once through
-:func:`ensure_import_path`.
+How to import the orchestration library
+---------------------------------------
+``src/nebuko/engine/lib/`` is an ordinary subpackage of ``nebuko``. Import it
+by its package name, exactly like any other engine module::
+
+    from nebuko.engine.lib.workflow_state import WorkflowState
+    from nebuko.engine.lib.config import AppConfig
+
+Never put a directory on ``sys.path`` to make these imports work, and never
+add ``# noqa: E402`` to them: the import is a normal package import, so it
+belongs with the other imports at the top of the module.
+
+How it works
+------------
+The layout already lives inside the packaged tree, and setuptools discovers it
+through ``[tool.setuptools.packages.find] where = ["src"]`` — every directory
+with an ``__init__.py`` under ``src/`` becomes a package member, so
+``nebuko.engine.lib.<subpackage>`` resolves without any path configuration.
+That is also what lets mypy/pyright resolve the library and what makes the
+PyInstaller build see it through static analysis.
+
+:data:`LIB_DIR` is therefore a *filesystem* constant only — a way to name the
+directory that holds the shipped runtime files (fixtures, entry-point scripts)
+— and is never used to extend the import path.
 """
 
 from __future__ import annotations
