@@ -435,7 +435,14 @@ def _base_already_in_branch(branch: str, base: str) -> bool:
     and must be skipped (the #1194 ancestry guard). Never raises for "no":
     any git failure answers False so the sync is attempted.
     """
-    raise NotImplementedError
+    # ``--is-ancestor`` fails on "no" (exit 1) or on an unknown ref; both mean
+    # containment is not proven, so the sync merge is attempted — the guard
+    # must only ever skip work when containment is proven.
+    try:
+        _run_git(["merge-base", "--is-ancestor", f"origin/{base}", branch])
+    except RuntimeError:
+        return False
+    return True
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -448,7 +455,29 @@ def _sync_base_before_push(branch: str, base: str) -> str:
     error detail (fetch failed / merge failed / conflict aborted) that the
     caller MUST treat as a refusal to push.
     """
-    raise NotImplementedError
+    try:
+        _run_git([
+            "fetch", "--no-tags", "origin",
+            f"+refs/heads/{base}:refs/remotes/origin/{base}",
+        ])
+    except RuntimeError as exc:
+        return f"could not fetch base '{base}' before pushing: {exc}"
+    if _base_already_in_branch(branch, base):
+        return ""
+    try:
+        _run_git(["merge", "--no-edit", f"origin/{base}"])
+    except RuntimeError as exc:
+        if _unmerged_paths():
+            try:
+                _run_git(["merge", "--abort"])
+            except RuntimeError as abort_exc:
+                logger.warning(f"ensure_pr: merge --abort failed: {abort_exc}")
+            return (
+                f"merging base '{base}' into '{branch}' conflicts — publish refused, "
+                f"merge aborted: {exc}"
+            )
+        return f"merging base '{base}' into '{branch}' failed: {exc}"
+    return ""
 
 
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:
