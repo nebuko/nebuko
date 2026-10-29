@@ -103,3 +103,29 @@ def test_next_steps_message_names_the_pull_request_and_the_slug():
     assert "1. Review and merge the pull request: https://github.com/acme/widgets/pull/7" in message
     assert 'comment "@@dev Hello Nebuko!" on an issue in acme/widgets.' in message
     assert message.endswith("Let's build something with Nebuko's agent teams 🤝")
+
+
+def test_caller_workflow_grants_id_token_write():
+    """Rendered workflow contains 'id-token: write' in the permissions block."""
+    workflow = _render("openrouter").workflow
+    permissions = workflow.split("permissions:", 1)[1].split("jobs:", 1)[0]
+    assert "  id-token: write" in permissions
+
+
+def test_caller_workflow_gates_comment_author_association():
+    """Rendered gate checks OWNER/MEMBER/COLLABORATOR on author_association."""
+    workflow = _render("openrouter").workflow
+    assert "contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]')" in workflow
+    assert "github.event.comment.author_association" in workflow
+
+
+def test_caller_workflow_ignores_nebuko_bot_comments():
+    """Rendered gate excludes comments whose user.login == 'nebuko[bot]'."""
+    workflow = _render("openrouter").workflow
+    assert "github.event.comment.user.login != 'nebuko[bot]'" in workflow
+
+
+def test_caller_workflow_gate_passes_issue_events():
+    """Rendered gate short-circuits on non-issue_comment events."""
+    workflow = _render("openrouter").workflow
+    assert "github.event_name != 'issue_comment' ||" in workflow
