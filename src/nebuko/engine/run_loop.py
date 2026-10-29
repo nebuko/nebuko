@@ -1026,7 +1026,7 @@ class Engine:
                     failure_reason = f"branch scaffold failed: {scaffold.detail}"
                 else:
                     self._scaffold_state["head_before"] = git_session.GitSessionGuard(
-                        self.repo_root, self._session_env()
+                        self._caller_root(), self._session_env()
                     ).head_sha()
             prompt =self.build_prompt(resolved, history, input_results, step_scope)
             conflict_note = self._render_scaffold_conflict()
@@ -2263,15 +2263,18 @@ class Engine:
         )
 
         env = self._agent_env()
+        # The agent commits and pushes in the caller's checkout, not in the
+        # imported engine checkout (issue #1205).
+        caller_root = self._caller_root()
         try:
-            return run_engine_agent(prompt, repo_root=self.repo_root, env=env)
+            return run_engine_agent(prompt, repo_root=caller_root, env=env)
         except EngineAgentUnavailable as exc:
             log.warning(
                 "[phase:agent] in-process agent seam unavailable (%s); "
                 "falling back to the legacy subprocess",
                 exc,
             )
-            return run_legacy_agent(prompt, repo_root=self.repo_root, env=env)
+            return run_legacy_agent(prompt, repo_root=caller_root, env=env)
 
     def _agent_env(self) -> dict[str, str]:
         """``self.env`` overlaid with the resolver's ``$GITHUB_ENV`` hand-off.
@@ -2390,7 +2393,13 @@ class Engine:
         pushed. A benign skip (no remote, detached HEAD) leaves the caller's
         environment untouched.
         """
-        raise NotImplementedError
+        guard = git_session.GitSessionGuard(self._caller_root(), self._session_env())
+        result = guard.preflight()
+        if result.ok:
+            log.info("[phase:agent] git preflight ok: %s", result.detail)
+        else:
+            log.error("[phase:agent] git preflight failed: %s", result.detail)
+        return result
 
     # @stub-protected
     def _git_session_finalize(self) -> git_session.GuardResult:
@@ -2401,7 +2410,22 @@ class Engine:
         once, then the tree and the remote SHA are verified. A failure is a run
         error — an unpublished session must not look green.
         """
-        raise NotImplementedError
+        guard = git_session.GitSessionGuard(self._caller_root(), self._session_env())
+        scaffold = self._scaffold_state.get("result")
+        expected = (
+            scaffold.branch
+            if isinstance(scaffold, branch_scaffold.ScaffoldResult) and scaffold.ok
+            else ""
+        )
+        result = guard.finalize(
+            expected_branch=expected,
+            head_before=self._scaffold_state.get("head_before", ""),
+        )
+        if result.ok:
+            log.info("[phase:agent] git finalize ok: %s", result.detail)
+        else:
+            log.error("[phase:agent] git finalize failed: %s", result.detail)
+        return result
 
     # @stub-protected
     def _branch_scaffold(self) -> branch_scaffold.ScaffoldResult:
@@ -2411,7 +2435,28 @@ class Engine:
         rebase-conflict note reaches the prompt. Never raises: a failure is
         returned as data and the caller turns it into a run error.
         """
-        raise NotImplementedError
+        trigger = self._active_trigger()
+        if trigger is None or trigger.type not in ("issue", "issue_comment"):
+            # Branch mechanics only make sense for an issue-driven dev session;
+            # a PR-review or dispatch trigger carries no issue to scaffold for.
+            result = branch_scaffold.ScaffoldResult(
+                ok=True, skipped=True, detail="not an issue-triggered run"
+            )
+            self._scaffold_state["result"] = result
+            return result
+        scaffold = branch_scaffold.BranchScaffold(
+            self._caller_root(),
+            self._session_env(),
+            issue_number=trigger.number,
+            issue_title=branch_scaffold.issue_title_from_payload(trigger.payload),
+        )
+        result = scaffold.scaffold()
+        self._scaffold_state["result"] = result
+        if result.ok:
+            log.info("[phase:prompt] branch scaffold: %s", result.detail)
+        else:
+            log.error("[phase:prompt] branch scaffold failed: %s", result.detail)
+        return result
 
     def _render_scaffold_conflict(self) -> str:
         """The fix-first prompt section for a conflicted rebase (issue #1138).
