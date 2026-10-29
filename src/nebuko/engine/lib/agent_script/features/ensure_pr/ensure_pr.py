@@ -45,7 +45,7 @@ from agent_script.features.ensure_pr.workflow_patch import (
 from github_client import GitHubTransport, ensure_bot_marker
 from openhands.sdk import get_logger
 
-from nebuko.engine.lib.git.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
+from nebuko.engine.lib.git.git_session import git_identity_args
 
 logger = get_logger(__name__)
 
@@ -257,10 +257,7 @@ def _commit_pending_changes(
         return ""
     _run_git(
         [
-            "-c",
-            f"user.name={GIT_IDENTITY_NAME}",
-            "-c",
-            f"user.email={GIT_IDENTITY_EMAIL}",
+            *git_identity_args(),
             "commit",
             "-m",
             message or _commit_message(),
