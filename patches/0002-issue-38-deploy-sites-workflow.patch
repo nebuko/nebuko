@@ -1,0 +1,39 @@
+diff --git a/.github/workflows/internal-deploy-sites.yaml b/.github/workflows/internal-deploy-sites.yaml
+new file mode 100644
+index 00000000..ed837bb8
+--- /dev/null
++++ b/.github/workflows/internal-deploy-sites.yaml
+@@ -0,0 +1,33 @@
++name: internal-deploy-sites
++
++# Builds each website (site, docs, blog) driven by the per-site maintenance
++# flags in maintenance.yaml and deploys the result to Cloudflare Pages.
++# Flipping a flag in maintenance.yaml and pushing to main redeploys.
++on:
++  push:
++    branches: [main]
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++jobs:
++  deploy:
++    runs-on: ubuntu-latest
++    strategy:
++      matrix:
++        site: [site, docs, blog]
++    steps:
++      - uses: actions/checkout@v5
++
++      - uses: astral-sh/setup-uv@v5
++
++      - name: Build the site output
++        run: uv run python scripts/build_sites.py
++
++      - name: Deploy to Cloudflare Pages
++        uses: cloudflare/wrangler-action@v3
++        with:
++          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
++          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
++          command: pages deploy "${{ matrix.site }}" --project-name=nebuko-${{ matrix.site }} --branch=main
