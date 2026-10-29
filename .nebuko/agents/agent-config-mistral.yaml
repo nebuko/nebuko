@@ -44,6 +44,13 @@ llms:
     output_price: 0.5
     cache_read_price: 0.03
     reasoning_effort: "low"
+  deepseek-4_1-flash:
+    model_path: "mistral/deepseek-v4-1-flash-1017"
+    provider: "${providers.mistral}"
+    input_price: 0.3
+    output_price: 1.2
+    cache_read_price: 0.007
+    reasoning_effort: "low"
 
 # ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
 mcp_servers:
@@ -83,7 +90,7 @@ agents:
         reasoning_effort: "high"
 
   dev:
-    model: "${llms.glm-5_3-flash}"
+    model: "${llms.deepseek-4_1-flash}"
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
@@ -98,7 +105,7 @@ agents:
       require_batched_recon: true
 
   context:
-    model: "${llms.glm-5_3-flash}"
+    model: "${llms.deepseek-4_1-flash}"
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
     temperature: 0.1
     prompt_file: "defaults/prompts/context.md"
