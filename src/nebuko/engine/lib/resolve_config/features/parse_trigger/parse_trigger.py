@@ -77,7 +77,12 @@ def parse_bot_mention(text: str, identity) -> Optional[object]:
     existing bot-marker suppression) or when the mention is a bare ``@nebuko``
     (a login without the ``[bot]`` suffix is a different, nonexistent account).
     """
-    raise NotImplementedError
+    if is_bot_comment(text):
+        return None
+    token = identity.mention_token()
+    if re.search(rf"(?<![A-Za-z0-9_-])@{re.escape(identity.login)}(?![A-Za-z0-9_-])", text):
+        return token
+    return None
 
 
 def is_answer_continuation(trigger_body: str) -> bool:
