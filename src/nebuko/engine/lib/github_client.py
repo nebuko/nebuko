@@ -145,9 +145,11 @@ def classify_integration_denial(result: "ApiCallResult") -> bool:
     integration denial is deterministic auth information, not a rate
     limit: detect it so the transport can fail fast instead.
 
-    A 403 that carries a rate-limit signature (exhausted
-    ``x-ratelimit-remaining``, "rate limit exceeded", "secondary rate
-    limit") is *not* an integration denial and stays retryable.
+    A 403 that carries a rate-limit signature ("rate limit
+    exceeded", "secondary rate limit") is *not* an integration
+    denial and stays retryable. An exhausted rate-limit header alone
+    does not appear in the response text, so it is not matched here —
+    ``_classify`` still resolves it to ``PRIMARY_RATE_LIMIT``.
     """
     if result.ok:
         return False
@@ -157,7 +159,6 @@ def classify_integration_denial(result: "ApiCallResult") -> bool:
     rate_limit_signatures = (
         "rate limit exceeded",
         "secondary rate limit",
-        "x-ratelimit-remaining: 0",
     )
     return not any(sig in text for sig in rate_limit_signatures)
 
@@ -388,8 +389,6 @@ class GitHubTransport:
         status = result.status
         if status == 404 or "http 404" in text or "not found" in text:
             return ApiErrorKind.NOT_FOUND
-        if status == 401 or "bad credentials" in text or "http 401" in text:
-            return ApiErrorKind.AUTH
         if status == 401 or "bad credentials" in text or "http 401" in text:
             return ApiErrorKind.AUTH
         if classify_integration_denial(result):

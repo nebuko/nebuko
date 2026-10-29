@@ -32,8 +32,10 @@ sitting out a cooldown that never applied.
 1. **Detection** — `github_client.classify_integration_denial(result)`
    recognizes the integration-denial signature: a failed `403` whose body is
    "Resource not accessible by integration" and which carries **no**
-   rate-limit signature (`x-ratelimit-remaining: 0`, "rate limit exceeded",
-   "secondary rate limit"). Rate-limit 403s remain retryable.
+   rate-limit signature in its text ("rate limit exceeded",
+   "secondary rate limit"). Rate-limit 403s remain retryable; an exhausted
+   `x-ratelimit-remaining` header is not part of the body text, so it never
+   reaches this classifier — `_classify` maps it to `PRIMARY_RATE_LIMIT`.
 2. **Classification** — `GitHubTransport._classify` returns
    `ApiErrorKind.AUTH` for an integration denial. `AUTH` is in the
    non-retryable set, so the call fails on the first attempt with no sleep.
