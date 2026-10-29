@@ -7,9 +7,11 @@ commits, pushes and opens PRs, so the agent never has to (and cannot push).
   1. Refuse to publish while merge conflicts remain unresolved.
   2. Split the delta by path — ``.github/workflows/*`` is patch-only.
   3. Commit everything else the agent left (if any), named after the issue.
-  4. Push the current branch to origin.
-  5. Open a PR if none exists for the branch (idempotent).
-  6. Deliver the workflow delta as a patch: committed on the branch and
+  4. Merge ``origin/<base>`` into the branch, skipped when the base is
+     already contained; a conflict refuses the publish.
+  5. Push the current branch to origin.
+  6. Open a PR if none exists for the branch (idempotent).
+  7. Deliver the workflow delta as a patch: committed on the branch and
      commented on the PR (issue #1080).
 
 The split (steps 2/6) exists because the agent's token has no ``workflow``
@@ -426,6 +428,29 @@ def _needs_push(split: PublishSplit) -> bool:
     )
 
 
+# @stub-protected: signature defined by architect — do not modify
+def _base_already_in_branch(branch: str, base: str) -> bool:
+    """True when ``origin/<base>`` is already an ancestor of ``branch``
+    (``git merge-base --is-ancestor``): the publish-time merge is a no-op
+    and must be skipped (the #1194 ancestry guard). Never raises for "no":
+    any git failure answers False so the sync is attempted.
+    """
+    raise NotImplementedError
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _sync_base_before_push(branch: str, base: str) -> str:
+    """Publish-time base sync (issue #1219): fetch ``origin/<base>`` (no
+    tags, explicit refspec, same shape as ``BranchScaffold._fetch_base``),
+    skip when ``_base_already_in_branch``, else ``git merge --no-edit
+    origin/<base>`` into ``branch``. On a conflict, abort the merge and
+    report it. Returns ``""`` on success or benign skip, or an actionable
+    error detail (fetch failed / merge failed / conflict aborted) that the
+    caller MUST treat as a refusal to push.
+    """
+    raise NotImplementedError
+
+
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:
     args = ["push", remote, branch]
     try:
@@ -776,8 +801,11 @@ def _ensure_pr_impl(
     # published the same way, so a human can fetch the branch and apply it.
     no_push = not (_needs_push(split) or patch_commit_path)
 
-    pushed = False
     if not no_push:
+        # @stub-protected: signature defined by architect — do not modify
+        sync_detail = _sync_base_before_push(branch, base)
+        if sync_detail:
+            return EnsurePrResult(error=True, message=f"error: {sync_detail}")
         _push_branch(branch, remote, force=split.republished)
         pushed = True
         logger.info(f"ensure_pr: pushed branch '{branch}' to {remote}")

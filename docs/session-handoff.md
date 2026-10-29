@@ -82,6 +82,34 @@ route only:
 Cleanup runs *after* the reviewer agent, because a `rejected` review sends the
 work back to `implement`, which still needs the document.
 
+## Branch and PR base sync
+
+The engine keeps a PR branch on top of the freshest base by merging
+`origin/<base>` into it at two points:
+
+1. **Pre-agent** — `BranchScaffold` fetches the base and merges it while
+   creating (or resuming) the feature branch, before the agent runs.
+2. **Publish-time** — before the final push, `ensure_pr` fetches
+   `origin/<base>` again and merges it into the branch. Main can advance
+   while the agent works; this second merge closes that gap. Both merges are
+   skipped when the base is already contained in the branch
+   (`git merge-base --is-ancestor`), so re-runs stay idempotent.
+
+**What a PR contains.** GitHub's PR diff is a three-dot diff against the
+merge base. When main advances after the pre-agent merge — or when earlier
+work on the same issue was squash-merged into main and the branch re-applies
+it — the branch can carry hunks identical to main, and the PR shows them as
+"changes already in main". The publish-time merge moves the merge base up to
+the freshest main, so base-identical hunks no longer appear in the PR.
+
+**Failure and recovery.** Publishing is fail-closed: if the base fetch
+fails, the merge fails, or the merge leaves conflicts, `ensure_pr` aborts
+the merge (where applicable) and refuses to push — the PR is not opened or
+updated with stale content. The agent's work is already committed locally on
+the branch, so nothing is lost: re-running the workflow re-syncs the branch
+against the base and retries the publish; a conflict is handed to the agent
+as its fix-first work, the same way the pre-agent scaffold does.
+
 **Accepted caveat:** the handoff stays in the branch history after cleanup
 unless the merge is squashed. That is intentional — it is what makes the
 document recoverable — but it means the file's contents are part of the branch's
