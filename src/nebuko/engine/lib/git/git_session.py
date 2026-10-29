@@ -356,7 +356,7 @@ class GitSessionGuard:
                     "commit",
                     "--no-verify",
                     "-m",
-                    "chore: engine: commit changes forgotten by agent\n\n"
+                    "chore: engine: commit changes forgotten by agent (nebuko)\n\n"
                     "The engine commits anything the session left behind so the "
                     "work is not lost (issue #1089).",
                 ]

@@ -65,6 +65,19 @@ scaffold creates the dev session's `feature/issue-<n>-<slug>` branch from it
 before the agent runs, so publication and PR finalization have a branch to
 push.
 
+#### Which repository the dev branch is created in
+
+The branch scaffold, the git session guards (preflight and finalize) and the
+agent's commit/push/PR wind-down all run in the **caller's checked-out
+workspace** — the repository that triggered the run, at `$GITHUB_WORKSPACE` —
+never in the imported `.nebuko-engine` checkout that holds the engine's own
+source. That is what gives a cross-repo `uses: nebuko/nebuko/...` caller its
+`feature/issue-<n>-<slug>` branch, commits and PR in *its* repository. For a
+local (non-CI) run the workspace is the directory the engine was started in,
+falling back to the engine checkout when that directory is gone. The caller
+checkout must therefore be a git checkout with an `origin` remote and push
+credentials; the workflow's checkout step above provides both.
+
 ---
 
 ### Step 2: Check if nebuko Checkout is Needed
