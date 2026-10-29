@@ -174,6 +174,26 @@ On another provider, replace `OPENROUTER_API_KEY` with the secret named by your
 config's `api_token_env` (e.g. `COMMANDCODE_API_KEY`); list one line per
 provider your config uses.
 
+### Who can trigger a run
+
+**How to use:** only comments authored by a user with OWNER, MEMBER, or
+COLLABORATOR association start a run; anyone else's comments are ignored at
+the caller workflow level. Comments authored by `nebuko[bot]` never start a
+run (anti-loop guard). `issues` events (issue-body `@@nebuko` mentions, and
+the cleanup that runs when an issue is closed) are gated by the reusable
+workflow as before.
+
+**How it works:** the installed caller workflow's `agent` job carries a
+job-level `if:` gate that is evaluated before the reusable workflow is
+invoked, so a non-member comment never spins up a caller run. The reusable
+workflow's own caller check (its `CALLER_AUTH` input) remains a second,
+independent layer — defense in depth. The caller workflow's `permissions:`
+block includes `id-token: write`, matching the reusable workflow's
+requirement.
+
+If `nebuko init` installed your caller workflow earlier, re-run
+`nebuko init` to refresh it with the gate (init asks before overwriting).
+
 ### Step 3 — Add the secrets
 
 Under **Settings → Secrets and variables → Actions**, create a repository secret
