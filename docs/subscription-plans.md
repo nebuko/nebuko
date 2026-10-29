@@ -70,7 +70,6 @@ jobs:
       agent_config_path: "agent-config-commandcode.yaml"
     secrets:
       COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
-      GH_PAT: ${{ secrets.GH_PAT }}
 ```
 
 `COMMANDCODE_API_KEY` is an optional secret of the reusable workflow (like
