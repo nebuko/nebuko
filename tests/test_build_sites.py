@@ -46,7 +46,7 @@ def test_flag_off_keeps_existing_content_untouched(tmp_path: Path) -> None:
     (tmp_path / "site" / "index.html").write_text("real content", encoding="utf-8")
     builder = make_builder(tmp_path, "maintenance:\n  site: false\n  docs: false\n  blog: false\n")
     outputs = builder.build()
-    assert tmp_path / "site" / "index.html" in outputs or outputs  # site untouched
+    assert tmp_path / "site" / "index.html" not in outputs  # site untouched
     assert (tmp_path / "site" / "index.html").read_text(encoding="utf-8") == "real content"
 
 
