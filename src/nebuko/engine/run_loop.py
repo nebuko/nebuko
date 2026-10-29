@@ -2444,11 +2444,18 @@ class Engine:
             )
             self._scaffold_state["result"] = result
             return result
+        issue_title = branch_scaffold.issue_title_from_payload(trigger.payload)
+        if not issue_title:
+            # An issue-comment trigger carries no payload title: the request
+            # body, minus the markers and the @@mention that routed it, is the
+            # only title the branch can be named after.
+            body = re.sub(r"<!--.*?-->", " ", trigger.body or "", flags=re.DOTALL)
+            issue_title = " ".join(re.sub(r"@@\S+", " ", body).split())
         scaffold = branch_scaffold.BranchScaffold(
             self._caller_root(),
             self._session_env(),
             issue_number=trigger.number,
-            issue_title=branch_scaffold.issue_title_from_payload(trigger.payload),
+            issue_title=issue_title,
         )
         result = scaffold.scaffold()
         self._scaffold_state["result"] = result
