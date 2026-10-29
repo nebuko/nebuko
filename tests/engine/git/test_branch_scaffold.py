@@ -3,19 +3,23 @@
 Real git against a local bare remote: the scaffold must create the feature
 branch from the fetched base, merge an existing one onto the base, return a
 merge conflict as data (fix-first note, branch restored), skip benignly and
-fail closed.
+fail closed. Also covers the bounded git subprocess env (oversized session
+env must not reach the subprocess, E2BIG regression).
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 from nebuko.engine.lib.git.branch_scaffold import (
     BranchScaffold,
     ScaffoldResult,
+    _git_subprocess_env,
     branch_slug,
     feature_branch_name,
     issue_title_from_payload,
@@ -152,6 +156,23 @@ class TestScaffold:
             checkout, "rev-parse", "HEAD^2"
         )
 
+    def test_an_up_to_date_branch_skips_the_merge(self, checkout):
+        """Issue #1194: a branch that already contains the base must not be
+        re-merged — the redundant merge made committed work look absent and
+        the agent re-applied it."""
+        _git(checkout, "checkout", "-q", "-b", BRANCH)
+        _commit(checkout, "work.txt", "work\n", "work")
+        head_before = _git(checkout, "rev-parse", "HEAD")
+
+        result = _scaffold(checkout)
+
+        assert result.ok and not result.conflict
+        assert result.already_up_to_date
+        assert result.branch == BRANCH
+        assert "already contains origin/main" in result.detail
+        # No merge commit was created: the branch head is untouched.
+        assert _git(checkout, "rev-parse", "HEAD") == head_before
+
     def test_a_conflict_is_data_with_a_fix_first_note(self, checkout):
         _git(checkout, "checkout", "-q", "-b", BRANCH)
         _commit(checkout, "base.txt", "branch version\n", "branch edit")
@@ -163,13 +184,114 @@ class TestScaffold:
 
         assert result.ok and result.conflict
         assert "FIRST" in result.note
-        assert "git merge origin/main" in result.note
+        assert "`base.txt`" in result.note
         assert "base.txt" in result.detail
-        # The merge was aborted: the session starts on a clean branch.
-        assert _git(checkout, "status", "--porcelain") == ""
+        # The merge is left in progress for the agent to resolve in place;
+        # the publisher concludes it with the engine commit.
+        assert (checkout / ".git" / "MERGE_HEAD").exists()
+        assert _git(checkout, "diff", "--name-only", "--diff-filter=U") == "base.txt"
         assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
-        # No merge is left in progress.
+
+    def test_a_conflict_is_aborted_when_the_engine_runs_from_the_checkout(
+        self, checkout, monkeypatch
+    ):
+        """nebuko on its own repository imports its modules from the checkout:
+        markers left on disk would crash the engine mid-run."""
+        monkeypatch.setattr(BranchScaffold, "_engine_runs_from_checkout", lambda self: True)
+        _git(checkout, "checkout", "-q", "-b", BRANCH)
+        _commit(checkout, "base.txt", "branch version\n", "branch edit")
+        seed = checkout.parent / "seed"
+        _commit(seed, "base.txt", "main version\n", "main edit")
+        _git(seed, "push", "-q", "origin", "main")
+
+        result = _scaffold(checkout)
+
+        assert result.ok and result.conflict
+        assert "base.txt" in result.detail
+        assert "run `git merge origin/main`" in result.note
+        # The tree stays clean: no merge in progress, no markers on disk.
         assert not (checkout / ".git" / "MERGE_HEAD").exists()
+        assert _git(checkout, "status", "--porcelain") == ""
+
+    def test_detects_an_engine_running_from_the_checkout(self, tmp_path):
+        import nebuko.engine.lib.git.branch_scaffold as module
+
+        engine_tree = Path(module.__file__).resolve().parents[3]
+        assert BranchScaffold(engine_tree, {})._engine_runs_from_checkout()
+        assert not BranchScaffold(tmp_path, {})._engine_runs_from_checkout()
+
+    def test_a_non_conflict_merge_failure_fails_the_scaffold(self, checkout):
+        """A merge git refuses outright is not a conflict the agent can fix."""
+        _git(checkout, "checkout", "-q", "-b", BRANCH)
+        _commit(checkout, "work.txt", "work\n", "work")
+        seed = checkout.parent / "seed"
+        _commit(seed, "new.txt", "from main\n", "main adds new.txt")
+        _git(seed, "push", "-q", "origin", "main")
+        # An untracked file the merge would overwrite: git aborts the merge
+        # before it starts, with no unmerged path.
+        (checkout / "new.txt").write_text("local\n", encoding="utf-8")
+
+        result = _scaffold(checkout)
+
+        assert not result.ok and not result.conflict
+        assert "merge of origin/main" in result.detail
+        assert not (checkout / ".git" / "MERGE_HEAD").exists()
+
+    def test_merges_a_previous_round_from_a_shallow_checkout(self, tmp_path):
+        """``actions/checkout`` clones at depth 1: without the unshallow the
+        merge of a previous round's branch fails with "unrelated histories"."""
+        remote = tmp_path / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+        seed = tmp_path / "seed"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+        _git(seed, "config", "user.name", "t")
+        _git(seed, "config", "user.email", "t@example.com")
+        _git(seed, "remote", "add", "origin", remote.as_uri())
+        _commit(seed, "base.txt", "base\n", "base")
+        _git(seed, "checkout", "-q", "-b", BRANCH)
+        _commit(seed, "work.txt", "work\n", "round 1")
+        _git(seed, "checkout", "-q", "main")
+        _commit(seed, "base.txt", "base\nmore\n", "main moves")
+        _commit(seed, "other.txt", "other\n", "main moves again")
+        _git(seed, "push", "-q", "origin", "main", BRANCH)
+
+        work = tmp_path / "work"
+        subprocess.run(
+            ["git", "clone", "-q", "--depth", "1", remote.as_uri(), str(work)],
+            check=True,
+        )
+        _git(work, "checkout", "-q", "--detach", "HEAD")
+        assert _git(work, "rev-parse", "--is-shallow-repository") == "true"
+
+        # No identity in the checkout: the merge commit must not need one.
+        env = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        result = _scaffold(work, env=env)
+
+        assert result.ok and not result.conflict, result.detail
+        assert result.branch == BRANCH
+        _git(work, "merge-base", "--is-ancestor", "origin/main", "HEAD")
+        assert (work / "work.txt").exists()
+
+    def test_installs_a_hook_refusing_workflow_commits(self, checkout):
+        result = _scaffold(checkout)
+        assert result.ok
+
+        workflows = checkout / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yaml").write_text("on: [push]\n", encoding="utf-8")
+        (checkout / "code.txt").write_text("code\n", encoding="utf-8")
+        _git(checkout, "add", "-A")
+        refused = subprocess.run(
+            ["git", "-C", str(checkout), "commit", "-qm", "with workflow"],
+            capture_output=True,
+            text=True,
+        )
+
+        assert refused.returncode != 0
+        assert ".github/workflows/ci.yaml" in refused.stderr
+        _git(checkout, "restore", "--staged", ".github/workflows/")
+        _git(checkout, "commit", "-qm", "code only")
+        assert _git(checkout, "show", "--name-only", "--format=") == "code.txt"
 
     def test_skips_without_a_remote(self, tmp_path):
         work = tmp_path / "work"
@@ -307,3 +429,68 @@ class TestScaffold:
 
         assert not result.ok
         assert "is not a git checkout" in result.detail
+
+
+class TestGitSubprocessEnv:
+    """The git subprocess env must be bounded (E2BIG regression)."""
+
+    def test_git_subprocess_env_drops_payload_vars(self):
+        env = _git_subprocess_env(
+            {
+                "CONTEXT_BODIES": "x" * (1 << 21),
+                "STEP_INPUT_RESULTS": "...",
+                "GITHUB_TOKEN": "t",
+                "GIT_AUTHOR_NAME": "n",
+            }
+        )
+
+        assert "CONTEXT_BODIES" not in env
+        assert "STEP_INPUT_RESULTS" not in env
+        assert env["GITHUB_TOKEN"] == "t"
+        assert env["GIT_AUTHOR_NAME"] == "n"
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        # Based on the ambient environment, not the passed mapping.
+        for key, value in os.environ.items():
+            assert env.get(key) == value
+
+    def test_scaffold_succeeds_with_oversized_env(self, checkout):
+        captured_env = {}
+        real_run = subprocess.run
+
+        def capturing_run(*args, **kwargs):
+            if "env" in kwargs:
+                captured_env.update(kwargs["env"])
+            return real_run(*args, **kwargs)
+
+        with mock.patch(
+            "nebuko.engine.lib.git.branch_scaffold.subprocess.run",
+            side_effect=capturing_run,
+        ):
+            result = _scaffold(
+                checkout,
+                env={"CONTEXT_BODIES": "x" * (2 << 20)},
+            )
+
+        assert result.ok
+        assert "CONTEXT_BODIES" not in captured_env
+
+    def test_scaffold_env_carries_token_keys(self, checkout):
+        captured_env = {}
+        real_run = subprocess.run
+
+        def capturing_run(*args, **kwargs):
+            if "env" in kwargs:
+                captured_env.update(kwargs["env"])
+            return real_run(*args, **kwargs)
+
+        with mock.patch(
+            "nebuko.engine.lib.git.branch_scaffold.subprocess.run",
+            side_effect=capturing_run,
+        ):
+            result = _scaffold(
+                checkout,
+                env={"GITHUB_TOKEN": "tok"},
+            )
+
+        assert result.ok
+        assert captured_env.get("GITHUB_TOKEN") == "tok"

@@ -48,7 +48,16 @@ class PrFinalizeResult:
 
 
 class PrFinalizer:
-    """Open the session's PR through the deterministic fallback flow."""
+    """Open the session's PR through the deterministic fallback flow.
+
+    ``issue_title`` names the commit and the PR (``<title> (#N)``); when empty
+    ``ensure_pr`` looks it up on GitHub, then falls back to the branch name.
+    ``interrupted`` marks a gracefully timed-out run in the commit and PR body.
+    """
+
+    def __init__(self, issue_title: str = "", *, interrupted: bool = False) -> None:
+        self.issue_title = issue_title
+        self.interrupted = interrupted
 
     # @stub-protected
     def finalize(self) -> PrFinalizeResult:
@@ -68,7 +77,11 @@ class PrFinalizer:
         from agent_script.features.ensure_pr.ensure_pr import ensure_pr
 
         try:
-            result = ensure_pr(dry_run=False)
+            result = ensure_pr(
+                dry_run=False,
+                issue_title=self.issue_title,
+                interrupted=self.interrupted,
+            )
         except Exception as exc:  # noqa: BLE001 - never crash the host
             logger.error("pr finalize: ensure_pr crashed: %s", exc)
             return PrFinalizeResult(ok=False, detail=f"ensure_pr crashed: {exc}")

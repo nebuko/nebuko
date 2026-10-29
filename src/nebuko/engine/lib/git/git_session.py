@@ -48,13 +48,16 @@ GIT_IDENTITY_NAME: str = "nebuko"
 # @stub-protected
 GIT_IDENTITY_EMAIL: str = "nebuko@nebuko.dev"
 
-#: Skip reasons a guard cannot act on. They mirror the ``check_publication``
-#: taxonomy: no remote or a detached HEAD means there is nothing to publish.
+#: Skip reasons a guard cannot act on: no remote or a detached HEAD means
+#: there is nothing to publish.
 # @stub-protected
 BENIGN_SKIPS: tuple[str, ...] = ("no git remote", "detached HEAD")
 
 #: Env vars carrying push credentials, in precedence order.
 _TOKEN_ENV_VARS: tuple[str, ...] = ("NEBUKO_GIT_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+
+#: Patch-only paths (mirrors ``workflow_patch.WORKFLOW_DIR``).
+_WORKFLOW_DIR = ".github/workflows/"
 
 _GIT_TIMEOUT_S = 30
 _PUSH_TIMEOUT_S = 120
@@ -119,16 +122,17 @@ class GitSessionGuard:
 
         Returns:
             ``ok=True`` when the remote is reachable (the caller's auth is
-            untouched), a benign skip when there is no remote or a detached
-            HEAD, and ``ok=False`` with actionable detail otherwise.
+            untouched), a benign skip when there is no remote, and
+            ``ok=False`` with actionable detail otherwise.
         """
         if not self._is_git_checkout():
             return GuardResult(ok=False, detail=f"{self.repo} is not a git checkout")
         remote_url = self._remote_url()
         if remote_url is None:
             return GuardResult(ok=True, skipped=True, detail="no git remote")
-        if self._current_branch() in ("", "HEAD"):
-            return GuardResult(ok=True, skipped=True, detail="detached HEAD")
+        # A detached HEAD is not skipped: preflight runs before the branch
+        # scaffold, which fetches and merges from a pinned-SHA (detached)
+        # checkout and needs the identity and auth in place.
 
         self._configure_identity()
 
@@ -180,12 +184,12 @@ class GitSessionGuard:
                 auth_failure,
             )
 
-        commit_problem = self._commit_all_pending()
-
         problems: list[str] = []
-        if commit_problem:
-            problems.append(commit_problem)
-        if self._pending_paths():
+        try:
+            self._commit_all_pending()
+        except RuntimeError as exc:
+            problems.append(str(exc))
+        if self._pending_paths(exclude_workflows=True):
             problems.append(
                 "the working tree still holds uncommitted changes after the "
                 "automatic commit (see `git status`)"
@@ -296,28 +300,44 @@ class GitSessionGuard:
 
     # @stub-protected
     def _commit_all_pending(self) -> str:
-        """Commit everything git reports once (``git add -A``). Returns a problem.
+        """Commit everything git reports once. Returns the short sha, or ``""``.
 
-        ``.gitignore`` still applies, so generated files never ride along. An
-        already-clean tree is not a problem; a commit that could not be made
-        (no identity, a hook refusal) is returned as actionable prose.
+        ``.gitignore`` still applies, so generated files never ride along, and
+        ``.github/workflows/*`` is excluded: the agent token cannot push it
+        (the publisher delivers it as a patch, issue #1080). An already-clean
+        tree returns ``""``. Raises ``RuntimeError`` with actionable prose when
+        the commit could not be made (unresolved conflicts, no identity, a
+        hook refusal).
         """
         if not self._pending_paths():
             return ""
+        unmerged = self._run_git(["ls-files", "--unmerged"])
+        if unmerged:
+            paths = sorted({line.split("\t", 1)[-1] for line in unmerged.splitlines()})
+            raise RuntimeError(
+                "unresolved merge conflicts, refusing to commit: " + ", ".join(paths)
+            )
         try:
-            self._run_git(["add", "-A"])
+            self._run_git(["add", "-A", "--", ".", f":(exclude){_WORKFLOW_DIR}"])
+            if not self._run_git(["diff", "--cached", "--name-only"]):
+                return ""  # only workflow paths were pending
             self._run_git(
                 [
+                    # ``--no-verify``: the scaffold's workflow hook targets
+                    # agent commits; this one already excludes those paths.
                     "commit",
+                    "--no-verify",
                     "-m",
-                    "chore: finalize the agent session\n\n"
+                    "chore: engine: commit changes forgotten by agent\n\n"
                     "The engine commits anything the session left behind so the "
                     "work is not lost (issue #1089).",
                 ]
             )
+            return self._run_git(["rev-parse", "--short", "HEAD"])
         except RuntimeError as exc:
-            return f"automatic session commit failed: {_dedent(str(exc))}"
-        return ""
+            raise RuntimeError(
+                f"automatic session commit failed: {_dedent(str(exc))}"
+            ) from exc
 
     # @stub-protected
     def _is_fully_pushed(self, branch: str) -> Optional[str]:
@@ -384,9 +404,14 @@ class GitSessionGuard:
         except (RuntimeError, OSError):
             return ""
 
-    def _pending_paths(self) -> tuple[str, ...]:
+    def _pending_paths(self, *, exclude_workflows: bool = False) -> tuple[str, ...]:
+        args = ["status", "--porcelain"]
+        if exclude_workflows:
+            # Workflow leftovers are the publisher's patch to deliver, never
+            # this guard's commit — they cannot fail the clean-tree check.
+            args += ["--", ".", f":(exclude){_WORKFLOW_DIR}"]
         try:
-            out = self._run_git(["status", "--porcelain"])
+            out = self._run_git(args)
         except (RuntimeError, OSError):
             # An uninspectable tree is reported as pending: the caller turns it
             # into a failure instead of reading it as "clean".

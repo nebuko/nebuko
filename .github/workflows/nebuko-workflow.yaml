@@ -271,8 +271,11 @@ jobs:
                 ref: ${{ inputs.checkout_ref || (job.workflow_repository == github.repository && job.workflow_sha) || '' }}
                 persist-credentials: false
 
-            - name: Checkout nebuko engine (cross-repo caller)
-              if: job.workflow_repository != github.repository
+            # Always a separate checkout, nebuko's own runs included: the engine
+            # creates, merges and commits the feature branch in the workspace,
+            # so running it from there would swap its own code mid-run (and a
+            # conflicted merge would leave markers in modules it still imports).
+            - name: Checkout nebuko engine
               uses: actions/checkout@v5
               with:
                 repository: ${{ job.workflow_repository }}
@@ -282,13 +285,9 @@ jobs:
 
             - name: Locate nebuko engine
               run: |
-                if [ -d .nebuko-engine ]; then
-                  # Keep the engine checkout out of the caller's commits.
-                  echo "/.nebuko-engine/" >> .git/info/exclude
-                  echo "NEBUKO_ROOT=$GITHUB_WORKSPACE/.nebuko-engine" >> "$GITHUB_ENV"
-                else
-                  echo "NEBUKO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-                fi
+                # Keep the engine checkout out of the caller's commits.
+                echo "/.nebuko-engine/" >> .git/info/exclude
+                echo "NEBUKO_ROOT=$GITHUB_WORKSPACE/.nebuko-engine" >> "$GITHUB_ENV"
 
             - name: Set up Python
               uses: actions/setup-python@v6

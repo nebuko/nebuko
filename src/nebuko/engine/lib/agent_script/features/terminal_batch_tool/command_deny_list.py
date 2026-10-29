@@ -37,6 +37,28 @@ PUSH_PATTERN = (
     r"|--exec-path|--super-prefix)(?:\s+[^\s-]\S*)?)*\s+push(?:\s+\S+)*\s*"
 )
 
+#: The deny message for a ``git commit`` that skips the engine's hooks.
+NO_VERIFY_DENY_MESSAGE = (
+    "git commit --no-verify is disabled for agents: the engine's pre-commit "
+    "hook keeps .github/workflows/* out of your commits. Unstage those files "
+    "and leave them in the working tree; the engine delivers them as a patch."
+)
+
+#: One shell argument: a quoted string is a single token, so a message such
+#: as ``-m "drop -n"`` never reads as a flag.
+_ARG = r"""(?:"[^"]*"|'[^']*'|[^\s"']\S*)"""
+
+#: Matches a ``git commit`` statement carrying ``--no-verify`` or ``-n``
+#: (alone or inside a short-flag cluster such as ``-anm``), anywhere after
+#: the subcommand.
+NO_VERIFY_PATTERN = (
+    r"\s*"
+    r"(?:[A-Za-z_][A-Za-z_0-9]*=\S*\s+)*"
+    r"git(?:\s+(?:-{1,2}\S+|-c|-C|--git-dir|--work-tree|--namespace"
+    r"|--exec-path|--super-prefix)(?:\s+[^\s-]\S*)?)*\s+commit"
+    rf"(?:\s+{_ARG})*?\s+(?:--no-verify|-[A-Za-z]*n[A-Za-z]*)(?:\s+{_ARG})*\s*"
+)
+
 #: Shell operators that chain statements inside one ``commands`` entry.
 #: Quoted text is never split (``git commit -m 'a; git push'`` is one
 #: statement whose message happens to contain a mention).
@@ -107,13 +129,18 @@ class CommandDenyList:
 
 # @stub-protected: signature defined by architect — do not modify
 def push_deny_list() -> CommandDenyList:
-    """The built-in deny list: one rule, ``git-push``."""
+    """The built-in deny list: ``git-push`` and ``git-commit-no-verify``."""
     return CommandDenyList(
         [
             DenyRule(
                 name="git-push",
                 pattern=re.compile(PUSH_PATTERN),
                 message=PUSH_DENY_MESSAGE,
-            )
+            ),
+            DenyRule(
+                name="git-commit-no-verify",
+                pattern=re.compile(NO_VERIFY_PATTERN),
+                message=NO_VERIFY_DENY_MESSAGE,
+            ),
         ]
     )

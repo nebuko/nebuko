@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import logging
 import os
 import tempfile
@@ -575,6 +576,40 @@ def _event_count(conversation: Any) -> int:
     return len(events_of(conversation))
 
 
+def _parse_context_bodies_env() -> dict[str, str]:
+    """The run's cached thread-comment bodies from ``CONTEXT_BODIES`` (#748).
+
+    The engine writes the map to a temp file and stamps the file's *path*
+    into the child env before invoking the agent (issue #1193 - inlining the
+    JSON directly overflowed ``tmux set-environment``'s message-size limit
+    on threads with enough comment content); the in-process host reads the
+    file back here so the configured ``fetch_comment_bodies`` tool's executor
+    is bound to the actual thread. Absent/malformed values degrade to an
+    empty map (lookups return ``not_found``) without aborting the run. The
+    temp file is removed once read since nothing else owns it.
+    """
+    path = os.environ.get("CONTEXT_BODIES", "").strip()
+    if not path:
+        return {}
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        log.warning("Ignoring unreadable CONTEXT_BODIES path")
+        return {}
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(path)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        log.warning("Ignoring malformed CONTEXT_BODIES file contents")
+        return {}
+    if not isinstance(payload, dict):
+        log.warning("Ignoring malformed CONTEXT_BODIES file contents")
+        return {}
+    return {str(k): str(v) for k, v in payload.items()}
+
+
 def _run_pipeline(
     pipeline: SimpleNamespace,
     prompt: str,
@@ -593,7 +628,12 @@ def _run_pipeline(
     args = SimpleNamespace(prompt_location=None)
     llm_config, resolved_prompt, agent_cfg = pipeline.resolve_llm_config(args, prompt)
     conversation = pipeline.run_agent(
-        llm_config, resolved_prompt, args, agent_cfg=agent_cfg, workspace=workspace
+        llm_config,
+        resolved_prompt,
+        args,
+        agent_cfg=agent_cfg,
+        workspace=workspace,
+        context_bodies=_parse_context_bodies_env(),
     )
     if host is not None:
         host._elicit_report(conversation)

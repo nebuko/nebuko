@@ -27,7 +27,6 @@ from build_output import _agent_checkpoint_outcome, build_output
 from openhands.sdk.event import MessageEvent
 from openhands.sdk.llm import Message
 from workflow_state import Appreciation, TurnOutcome, TurnStatus
-from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
 from metrics_schema import Metrics
 from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 
@@ -88,11 +87,7 @@ class TestBuildOutputAgentCheckpoint(unittest.TestCase):
         self._tmp.cleanup()
 
     def _build(self, conv):
-        with patch(
-            "build_output.ensure_pr",
-            return_value=EnsurePrResult(skipped=True, message="no git remote"),
-        ):
-            return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
+        return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
 
     def test_fold_overrides_an_agent_emitted_verdict(self):
         from agent_script.features.dispatch_next_tool import record_turn_outcome

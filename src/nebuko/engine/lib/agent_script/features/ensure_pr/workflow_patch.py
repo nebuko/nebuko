@@ -132,7 +132,8 @@ def render_patch_comment(
 
     Over ``max_chars`` an inline fence would be rejected by GitHub (65,536
     hard cap), so the diff stays out of the comment and the staged artifact is
-    linked instead.
+    linked instead. A change the base already carries never gets here: its
+    diff against the base is empty and the delivery is skipped.
     """
     inline_lines = [
         "```diff",

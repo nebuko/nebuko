@@ -42,7 +42,7 @@ __all__ = [
 # ``call_agent`` tools (read-only legacy compatibility, #1033);
 # ``finalize`` - the terminal tool of every step: the report rides in the turn
 # text and the tool carries the typed ``turn_outcome`` only.
-PayloadKind = Literal["final_message", "routing", "handoff", "finalize"]
+PayloadKind = Literal["final_message", "routing", "handoff", "finalize", "query"]
 
 # Work-loop role of an engine tool: ``terminator`` ends the run (finish);
 # ``hidden`` is a control signal the work loop keeps running past.
@@ -276,6 +276,11 @@ DEFAULT_ENGINE_TOOLS: Final[EngineToolRegistry] = EngineToolRegistry(
             name="finalize",
             payload_kind="finalize",
             payload_fields=("turn_outcome",),
+        ),
+        "fetch_comment_bodies": EngineToolSpec(
+            name="fetch_comment_bodies",
+            payload_kind="query",
+            payload_fields=("comment_ids",),
         ),
     }
 )

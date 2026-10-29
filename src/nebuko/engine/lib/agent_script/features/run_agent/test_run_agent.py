@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 
 from openhands.sdk.llm.exceptions import LLMServiceUnavailableError
 
-from agent_script.features.ensure_pr.ensure_pr import PublicationState
 from agent_script.features.run_agent.run_agent import (
     _SYSTEM_PROMPT,
     _build_mcp_servers,
@@ -27,14 +26,6 @@ from agent_script.features.run_agent.run_outcome import (
     RunOutcome,
 )
 from agent_script.features.run_agent.run_watchdog import RunWatchdog
-
-
-def _clean() -> PublicationState:
-    return PublicationState(published=True)
-
-
-def _dirty() -> PublicationState:
-    return PublicationState(published=False, reasons=("dirty_tree",))
 
 
 # SDK registry sections the static prompt used to carry. Issue #943 removes all
@@ -382,151 +373,6 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertIsNone(convo.run_outcome.dispatch_recall_event_offset)
 
 
-class TestPublicationGuardWiring(unittest.TestCase):
-    """The approved-write publication guard in ``run_agent``.
-
-    A step that finalises approved with unpublished work must be recalled and,
-    failing that, checkpointed by ``ensure_pr`` — never silently left with no
-    PR (run 39622244543).
-    """
-
-    def _run(
-        self,
-        *,
-        tools=("file_editor", "terminal", "finish", "finalize"),
-        approved=True,
-        status="finished",
-        states=(),
-        publish_after_recall=False,
-        pr_url="https://github.com/acme/repo/pull/42",
-    ):
-        budget = SimpleNamespace(soft_timeout_s=60.0, wind_down_timeout_s=30.0)
-        convo = _make_conversation(status)
-        convo.execution_status = SimpleNamespace(value=status)
-        convo.state.events = [SimpleNamespace(id=f"ev-{i}") for i in range(4)]
-        ensure_pr_result = MagicMock(
-            pr_url=pr_url, error=not pr_url, message="m" if pr_url else "boom"
-        )
-        # ``check_publication`` is called once up front, once per recall
-        # iteration and again after the loop; model that with a stateful fake
-        # instead of a fixed call list.
-        queue = list(states) or [_clean()]
-
-        def check():
-            if publish_after_recall and convo.send_message.call_count > 1:
-                return _clean()
-            return queue.pop(0) if len(queue) > 1 else queue[0]
-
-        with patch(
-            "agent_script.features.run_agent.run_agent.Conversation",
-            return_value=convo,
-        ), patch("agent_script.features.run_agent.run_agent.Agent"), patch(
-            "agent_script.features.run_agent.run_agent.LLM"
-        ), patch(
-            "agent_script.features.run_agent.run_agent.resolve_timeout_budget",
-            return_value=budget,
-        ), patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
-            return_value=None,
-        ), patch(
-            "agent_script.features.run_agent.run_agent.has_dispatch_decision",
-            return_value=True,
-        ), patch(
-            "agent_script.features.run_agent.run_agent.recorded_is_approved",
-            return_value=approved,
-        ), patch(
-            "agent_script.features.run_agent.run_agent.check_publication",
-            side_effect=check,
-        ) as check_mock, patch(
-            "agent_script.features.run_agent.run_agent.ensure_pr",
-            return_value=ensure_pr_result,
-        ) as fallback, patch(
-            "agent_script.features.run_agent.run_agent._run_supervised",
-            return_value=(RunWatchdog(50.0, lambda: None), None),
-        ):
-            run_agent(
-                llm_config={},
-                prompt="do the thing",
-                agent_cfg=SimpleNamespace(tools=list(tools)),
-            )
-        return convo, check_mock, fallback
-
-    def test_clean_approved_step_is_marked_clean(self):
-        convo, check, fallback = self._run()
-        check.assert_called_once()
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "clean")
-
-    def test_recalled_agent_publishes_and_nothing_else_runs(self):
-        convo, _, fallback = self._run(states=[_dirty()], publish_after_recall=True)
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "recalled_ok")
-        self.assertEqual(convo.run_outcome.publication_recall_count, 1)
-        # The recall turn is engine-injected: its boundary is pinned.
-        self.assertEqual(convo.run_outcome.publication_recall_event_offset, 4)
-        self.assertIn("UNPUBLISHED WORK", convo.send_message.call_args_list[-1].args[0])
-        self.assertEqual(convo.run_outcome.publication_detail, "dirty_tree")
-
-    def test_ignored_recall_falls_back_to_ensure_pr(self):
-        convo, _, fallback = self._run(states=[_dirty()])
-        fallback.assert_called_once()
-        self.assertEqual(convo.run_outcome.publication_guard, "fallback_pr")
-        self.assertLessEqual(convo.run_outcome.publication_recall_count, 2)
-        self.assertEqual(
-            convo.run_outcome.publication_detail,
-            "https://github.com/acme/repo/pull/42",
-        )
-
-    def test_agent_without_shell_tool_skips_the_recall(self):
-        """The incident case: no shell tool ⇒ a recall would burn turns."""
-        convo, _, fallback = self._run(
-            tools=("file_editor", "finish", "finalize"),
-            states=[_dirty()],
-        )
-        fallback.assert_called_once()
-        convo.send_message.assert_called_once()  # only the main prompt
-        self.assertEqual(convo.run_outcome.publication_guard, "fallback_pr")
-        self.assertEqual(convo.run_outcome.publication_recall_count, 0)
-        self.assertIsNone(convo.run_outcome.publication_recall_event_offset)
-
-    def test_fallback_failure_is_recorded_not_swallowed(self):
-        convo, _, fallback = self._run(
-            tools=("file_editor",),
-            states=[_dirty()],
-            pr_url="",
-        )
-        fallback.assert_called_once()
-        self.assertEqual(convo.run_outcome.publication_guard, "fallback_failed")
-        self.assertEqual(convo.run_outcome.publication_detail, "boom")
-
-    def test_skip_records_nothing(self):
-        convo, _, fallback = self._run(
-            states=[PublicationState(published=True, skip_reason="no git remote")]
-        )
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "")
-
-    def test_rejected_verdict_is_never_checked(self):
-        convo, check, fallback = self._run(approved=False)
-        check.assert_not_called()
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "")
-
-    def test_non_write_tools_are_never_checked(self):
-        convo, check, fallback = self._run(
-            tools=("think", "finish", "finalize")
-        )
-        check.assert_not_called()
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "")
-
-    def test_non_success_status_is_never_checked(self):
-        convo, check, fallback = self._run(status="error")
-        check.assert_not_called()
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "")
-
-
 class TestRunAgentSystemPromptWiring(unittest.TestCase):
     """run_agent hands its own static prompt to the Agent constructor (#943)."""
 
@@ -721,6 +567,48 @@ class TestMCPServerWiring(unittest.TestCase):
             mcp_config["brave-search"].env["BRAVE_API_KEY"].get_secret_value(),
             "secret-value",
         )
+
+
+class TestParseContextBodiesEnv(unittest.TestCase):
+    """``CONTEXT_BODIES`` carries a temp-file *path*, not inline JSON (#1193)."""
+
+    def setUp(self) -> None:
+        import json
+        import os
+        import tempfile
+
+        self._json = json
+        self._os = os
+        self._tempfile = tempfile
+        self._prior = os.environ.get("CONTEXT_BODIES")
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self) -> None:
+        if self._prior is None:
+            self._os.environ.pop("CONTEXT_BODIES", None)
+        else:
+            self._os.environ["CONTEXT_BODIES"] = self._prior
+
+    def test_reads_bodies_from_the_path_and_removes_the_file(self) -> None:
+        from agent_script.features.run_agent.run_agent import (
+            _parse_context_bodies_env,
+        )
+
+        fd, path = self._tempfile.mkstemp(suffix=".json")
+        with self._os.fdopen(fd, "w") as handle:
+            self._json.dump({"101": "full text"}, handle)
+        self._os.environ["CONTEXT_BODIES"] = path
+
+        self.assertEqual(_parse_context_bodies_env(), {"101": "full text"})
+        self.assertFalse(self._os.path.exists(path))
+
+    def test_missing_file_degrades_to_an_empty_map(self) -> None:
+        from agent_script.features.run_agent.run_agent import (
+            _parse_context_bodies_env,
+        )
+
+        self._os.environ["CONTEXT_BODIES"] = "/nonexistent/path.json"
+        self.assertEqual(_parse_context_bodies_env(), {})
 
 
 if __name__ == "__main__":

@@ -131,12 +131,14 @@ class TestBuildPatch(unittest.TestCase):
 
 
 class TestRenderPatchComment(unittest.TestCase):
-    def _render(self, diff="--- a/x\n+++ b/x\n", max_chars=60_000, paths=None):
+    def _render(self, diff="--- a/x\n+++ b/x\n", max_chars=60_000, paths=None,
+                **kwargs):
         return render_patch_comment(
             diff=diff,
             workflow_paths=paths or [".github/workflows/ci.yaml"],
             base_name="main",
             max_chars=max_chars,
+            **kwargs,
         )
 
     def test_small_patch_is_inlined_with_the_apply_command(self):

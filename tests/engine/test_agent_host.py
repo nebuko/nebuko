@@ -20,6 +20,7 @@ from nebuko.engine.agent_host import (
     InProcessAgentHost,
     _FINALIZE_BODY_ATTR,
     _FINALIZE_PROMPT,
+    _parse_context_bodies_env,
 )
 from nebuko.engine.agent_runner import EngineAgentUnavailable
 from workflow_state import Appreciation, TurnOutcome, TurnStatus
@@ -194,7 +195,7 @@ def _host_for(
 ) -> InProcessAgentHost:
     """A host whose ``run_agent`` returns ``conversation``."""
 
-    def _run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+    def _run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None):
         return conversation
 
     return _host(
@@ -229,7 +230,7 @@ def _host(
             state["turn_outcome"] = state_turn_outcome
         Path("workflow_state.json").write_text(json.dumps(state), encoding="utf-8")
 
-    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None):
         # The engine-elicited closing turn calls ``send_message``/``run`` on the
         # conversation, so the work-loop stand-in must expose the SDK surface
         # (a bare ``state.events`` namespace no longer suffices, issue #1033).
@@ -328,7 +329,7 @@ def test_run_binds_the_explicit_repo_root_workspace(tmp_path: Path) -> None:
     _write_entry_point(repo_root)
     seen: dict[str, Any] = {}
 
-    def _capture_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+    def _capture_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None):
         seen["workspace"] = workspace
         seen["cwd"] = os.getcwd()
         return _FakeConversation(events=[])
@@ -520,3 +521,43 @@ class TestEngineElicitedClosingTurn:
         )
 
         assert "turn_outcome" not in host.run("prompt")
+
+
+class TestParseContextBodiesEnv:
+    """``CONTEXT_BODIES`` carries a temp-file *path*, not inline JSON (#1193).
+
+    Inlining the bodies directly overflowed ``tmux set-environment``'s
+    message-size limit on threads with enough comment content.
+    """
+
+    def test_reads_bodies_from_the_path_and_removes_the_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "bodies.json"
+        path.write_text(json.dumps({"101": "full text"}), encoding="utf-8")
+        monkeypatch.setenv("CONTEXT_BODIES", str(path))
+
+        assert _parse_context_bodies_env() == {"101": "full text"}
+        assert not path.exists()
+
+    def test_absent_env_yields_an_empty_map(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CONTEXT_BODIES", raising=False)
+        assert _parse_context_bodies_env() == {}
+
+    def test_missing_file_degrades_to_an_empty_map(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CONTEXT_BODIES", str(tmp_path / "missing.json"))
+        assert _parse_context_bodies_env() == {}
+
+    def test_malformed_file_contents_degrade_to_an_empty_map(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "bodies.json"
+        path.write_text("not json", encoding="utf-8")
+        monkeypatch.setenv("CONTEXT_BODIES", str(path))
+
+        assert _parse_context_bodies_env() == {}
+        assert not path.exists()

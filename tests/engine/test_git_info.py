@@ -29,13 +29,14 @@ class TestGitInfoModel:
         assert entry.turn == 0
         assert entry.detail == ""
 
-    def test_statuses_are_the_five_engine_actions(self):
+    def test_statuses_are_the_engine_actions(self):
         assert [s.value for s in GitActionStatus] == [
             "create",
             "rebase",
             "conflict",
             "dirty",
             "pr",
+            "already_applied",
         ]
 
 
