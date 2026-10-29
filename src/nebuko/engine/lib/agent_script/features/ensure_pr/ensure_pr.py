@@ -7,9 +7,11 @@ commits, pushes and opens PRs, so the agent never has to (and cannot push).
   1. Refuse to publish while merge conflicts remain unresolved.
   2. Split the delta by path — ``.github/workflows/*`` is patch-only.
   3. Commit everything else the agent left (if any), named after the issue.
-  4. Push the current branch to origin.
-  5. Open a PR if none exists for the branch (idempotent).
-  6. Deliver the workflow delta as a patch: committed on the branch and
+  4. Merge ``origin/<base>`` into the branch, skipped when the base is
+     already contained; a conflict refuses the publish.
+  5. Push the current branch to origin.
+  6. Open a PR if none exists for the branch (idempotent).
+  7. Deliver the workflow delta as a patch: committed on the branch and
      commented on the PR (issue #1080).
 
 The split (steps 2/6) exists because the agent's token has no ``workflow``
@@ -45,7 +47,7 @@ from agent_script.features.ensure_pr.workflow_patch import (
 from github_client import GitHubTransport, ensure_bot_marker
 from openhands.sdk import get_logger
 
-from nebuko.engine.lib.git.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
+from nebuko.engine.lib.git.git_session import git_identity_args
 
 logger = get_logger(__name__)
 
@@ -257,10 +259,7 @@ def _commit_pending_changes(
         return ""
     _run_git(
         [
-            "-c",
-            f"user.name={GIT_IDENTITY_NAME}",
-            "-c",
-            f"user.email={GIT_IDENTITY_EMAIL}",
+            *git_identity_args(),
             "commit",
             "-m",
             message or _commit_message(),
@@ -424,6 +423,75 @@ def _needs_push(split: PublishSplit) -> bool:
     return bool(
         split.plain_paths or split.committed_plain_paths or split.republished
     )
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _base_already_in_branch(branch: str, base: str) -> bool:
+    """True when ``origin/<base>`` is already an ancestor of ``branch``
+    (``git merge-base --is-ancestor``): the publish-time merge is a no-op
+    and must be skipped (the #1194 ancestry guard). An "is not an ancestor"
+    answer (git exits 1) returns False so the sync is attempted; any other
+    git failure (broken repo, unknown ref) is an infrastructure error and
+    propagates — the caller refuses the publish instead of attempting a
+    doomed fetch+merge.
+    """
+    try:
+        _run_git(["merge-base", "--is-ancestor", f"origin/{base}", branch])
+    except RuntimeError as exc:
+        if " failed (1)" in str(exc):
+            # Exit code 1 is git's "no, not an ancestor" answer.
+            return False
+        raise
+    return True
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _sync_base_before_push(branch: str, base: str) -> str:
+    """Publish-time base sync (issue #1219): fetch ``origin/<base>`` (no
+    tags, explicit refspec, same shape as ``BranchScaffold._fetch_base``),
+    skip when ``_base_already_in_branch``, else ``git merge --no-edit
+    origin/<base>`` into ``branch``. On a conflict, abort the merge and
+    report it. Returns ``""`` on success or benign skip, or an actionable
+    error detail (fetch failed / dirty tree / merge failed / conflict
+    aborted, with the abort outcome) that the caller MUST treat as a refusal
+    to push.
+    """
+    if _run_git(["status", "--porcelain"]).strip():
+        return (
+            f"cannot merge base '{base}' into '{branch}': the working tree has "
+            "uncommitted changes — commit or stash them before publishing"
+        )
+    try:
+        _run_git([
+            "fetch", "--no-tags", "origin",
+            f"+refs/heads/{base}:refs/remotes/origin/{base}",
+        ])
+    except RuntimeError as exc:
+        return f"could not fetch base '{base}' before pushing: {exc}"
+    if _base_already_in_branch(branch, base):
+        return ""
+    try:
+        _run_git(["merge", "--no-edit", f"origin/{base}"])
+    except RuntimeError as exc:
+        if _unmerged_paths():
+            try:
+                _run_git(["merge", "--abort"])
+                cleanup = "merge aborted cleanly"
+            except RuntimeError as abort_exc:
+                logger.warning(f"ensure_pr: merge --abort failed: {abort_exc}")
+                cleanup = (
+                    "merge --abort FAILED — resolve the conflicts manually "
+                    f"(merge --abort reported: {abort_exc})"
+                )
+            return (
+                f"merging base '{base}' into '{branch}' conflicts with local "
+                f"changes — publish refused, {cleanup}: {exc}"
+            )
+        return (
+            f"merging base '{base}' into '{branch}' failed (no conflicts, "
+            f"no merge in progress): {exc}"
+        )
+    return ""
 
 
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:
@@ -776,8 +844,11 @@ def _ensure_pr_impl(
     # published the same way, so a human can fetch the branch and apply it.
     no_push = not (_needs_push(split) or patch_commit_path)
 
-    pushed = False
     if not no_push:
+        # @stub-protected: signature defined by architect — do not modify
+        sync_detail = _sync_base_before_push(branch, base)
+        if sync_detail:
+            return EnsurePrResult(error=True, message=f"error: {sync_detail}")
         _push_branch(branch, remote, force=split.republished)
         pushed = True
         logger.info(f"ensure_pr: pushed branch '{branch}' to {remote}")

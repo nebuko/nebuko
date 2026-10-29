@@ -15,7 +15,8 @@ fi
 
 git rm --quiet -- "$HANDOFF_PATH" || { echo "handoff cleanup: git rm failed"; exit 1; }
 
-git -c user.name=nebuko -c user.email=nebuko@users.noreply.github.com \
+git -c "user.name=${NEBUKO_GIT_AUTHOR_NAME:-nebuko}" \
+  -c "user.email=${NEBUKO_GIT_AUTHOR_EMAIL:-nebuko@users.noreply.github.com}" \
   commit --quiet -m "chore: remove session handoff" -- "$HANDOFF_PATH" \
   || { echo "handoff cleanup: commit failed"; exit 1; }
 

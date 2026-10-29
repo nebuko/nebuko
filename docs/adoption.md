@@ -191,8 +191,10 @@ provider your config uses.
 
 **How to use:** only comments authored by a user with OWNER, MEMBER, or
 COLLABORATOR association start a run; anyone else's comments are ignored at
-the caller workflow level. Comments authored by `nebuko[bot]` never start a
-run (anti-loop guard). `issues` events (issue-body `@@nebuko` mentions, and
+the caller workflow level. Comments authored by `nebuko[bot]` pass the caller
+gate, but the reusable workflow only runs them when they carry a continuation
+marker (`<!-- workflow-continue -->`, `<!-- bot-trigger:` or `"function_call"`),
+and never when they carry the terminal marker (anti-loop guard). `issues` events (issue-body `@@nebuko` mentions, and
 the cleanup that runs when an issue is closed) are gated by the reusable
 workflow as before.
 

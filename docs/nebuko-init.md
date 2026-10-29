@@ -66,8 +66,10 @@ spec:
 
 - **`on: issue_comment` with `types: [created, edited]`** — comments start runs.
 - **An author gate** — only `OWNER`, `MEMBER` and `COLLABORATOR` comment authors
-  trigger a run, and comments authored by `nebuko[bot]` are ignored so the agent
-  never answers itself.
+  trigger a run, plus comments authored by `nebuko[bot]`, so the agent's own
+  continuation comments can start the next step. The reusable workflow only
+  acts on bot comments that carry a continuation marker, so the agent never
+  answers itself.
 - **`permissions: id-token: write`** — the job may request a GitHub OIDC token,
   which is what the broker exchange needs.
 - **A reference to `${{ vars.NEBUKO_BROKER_URL }}`** — the broker endpoint comes

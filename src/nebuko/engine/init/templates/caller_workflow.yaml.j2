@@ -28,8 +28,8 @@ jobs:
   agent:
     if: >-
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-               github.event.comment.author_association) &&
-      github.event.comment.user.login != 'nebuko[bot]'
+               github.event.comment.author_association) ||
+      github.event.comment.user.login == 'nebuko[bot]'
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
     with:
       agent_config_path: ".nebuko/agents/agent-config.yaml"

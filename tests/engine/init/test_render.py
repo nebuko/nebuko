@@ -119,10 +119,14 @@ def test_caller_workflow_gates_comment_author_association():
     assert "github.event.comment.author_association" in workflow
 
 
-def test_caller_workflow_ignores_nebuko_bot_comments():
-    """Rendered gate excludes comments whose user.login == 'nebuko[bot]'."""
+def test_caller_workflow_admits_nebuko_bot_comments():
+    """Rendered gate lets nebuko[bot] through so its continuation comments start the next step.
+
+    Anti-loop protection lives in the reusable workflow's marker filter.
+    """
     workflow = _render("openrouter").workflow
-    assert "github.event.comment.user.login != 'nebuko[bot]'" in workflow
+    assert "github.event.comment.user.login == 'nebuko[bot]'" in workflow
+    assert "user.login != 'nebuko[bot]'" not in workflow
 
 
 def test_caller_workflow_gate_passes_issue_events():
