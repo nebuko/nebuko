@@ -146,7 +146,9 @@ class InProcessAgentHost:
         self._repo_root = Path(repo_root)
         self._load_pipeline = load_pipeline
         self._env = env
-        self._caller_root = Path(caller_root) if caller_root is not None else Path(repo_root)
+        self._caller_root = (
+            Path(caller_root) if caller_root is not None else Path(repo_root)
+        )
 
     def run(self, prompt: str) -> dict[str, Any]:
         # @stub-protected: signature defined by architect — do not modify

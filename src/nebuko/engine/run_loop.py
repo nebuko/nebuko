@@ -2246,7 +2246,6 @@ class Engine:
         )
 
     # @stub-protected
-    # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:
         """Run the agent through the engine's in-process seam.
 
