@@ -66,6 +66,13 @@ git session guards and the agent's commit/push/PR wind-down all run there too
 the commits and the pull request then land in the caller's repository, not in
 the `.nebuko-engine` checkout that holds the engine's source.
 
+Only the *git operations* anchor at the caller workspace. The agent's **code**
+— the `agent_script` entry point and the assembly it imports — always resolves
+from the imported `.nebuko-engine` checkout, never from the caller workspace
+(issue #1208). That is why a caller repository needs no `src/nebuko/` tree of
+its own: the run borrows the engine's code and writes its results into the
+caller's checkout.
+
 ---
 
 ## The Default Workflow

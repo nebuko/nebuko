@@ -43,7 +43,7 @@ AGENT_CONFIG_PATH = ".nebuko/agents/agent-config.yaml"
 WORKFLOW_PATH = ".github/workflows/nebuko.yaml"
 # Published broker endpoint; the generated workflow reads it from the repository
 # variable so a client can point at their own broker without editing the file.
-DEFAULT_BROKER_URL = "https://token-broker.nebuko.dev"
+DEFAULT_BROKER_URL = "https://token-broker.nebuko.dev/token"
 BROKER_VARIABLE = "NEBUKO_BROKER_URL"
 BRANCH = "nebuko/init"
 PR_TITLE = "chore: add Nebuko agent configuration and workflow"

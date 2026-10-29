@@ -2230,6 +2230,10 @@ class Engine:
         assembly cannot start. Both receive the resolver's per-run hand-off
         (``ROLE_NAME``, ``CONFIG_*``, ...) on top of the ambient environment,
         mirroring the legacy ``$GITHUB_ENV`` export (issue #717).
+
+        Two roots reach the seams (issue #1208): ``repo_root`` is the engine
+        checkout that holds the agent's *code*, while ``caller_root`` is the
+        caller's workspace the agent's git operations anchor at (issue #1205).
         """
         from nebuko.engine.agent_runner import (
             EngineAgentUnavailable,
@@ -2238,18 +2242,28 @@ class Engine:
         )
 
         env = self._agent_env()
-        # The agent commits and pushes in the caller's checkout, not in the
+        # The agent commits and pushes in the caller's workspace, not in the
         # imported engine checkout (issue #1205).
         caller_root = self._caller_root()
         try:
-            return run_engine_agent(prompt, repo_root=caller_root, env=env)
+            return run_engine_agent(
+                prompt,
+                repo_root=self.repo_root,
+                env=env,
+                caller_root=caller_root,
+            )
         except EngineAgentUnavailable as exc:
             log.warning(
                 "[phase:agent] in-process agent seam unavailable (%s); "
                 "falling back to the legacy subprocess",
                 exc,
             )
-            return run_legacy_agent(prompt, repo_root=caller_root, env=env)
+            return run_legacy_agent(
+                prompt,
+                repo_root=self.repo_root,
+                env=env,
+                caller_root=caller_root,
+            )
 
     def _agent_env(self) -> dict[str, str]:
         """``self.env`` overlaid with the resolver's ``$GITHUB_ENV`` hand-off.

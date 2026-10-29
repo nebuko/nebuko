@@ -132,12 +132,25 @@ class InProcessAgentHost:
         repo_root: Path,
         load_pipeline: Callable[[], SimpleNamespace],
         env: Mapping[str, str] | None = None,
+        caller_root: Path | None = None,
     ) -> None:
+        # @stub-protected: signature defined by architect — do not modify
+        """Bind the engine checkout and the caller's git anchor (issue #1208).
+
+        ``repo_root`` is the engine checkout: it holds the ``agent_script``
+        entry point and the assembly this host imports. ``caller_root`` is the
+        caller's workspace, where the agent's git operations must land; it
+        defaults to ``repo_root`` so a same-repo run keeps one root.
+        """
         self._repo_root = Path(repo_root)
         self._load_pipeline = load_pipeline
         self._env = env
+        self._caller_root = (
+            Path(caller_root) if caller_root is not None else Path(repo_root)
+        )
 
     def run(self, prompt: str) -> dict[str, Any]:
+        # @stub-protected: signature defined by architect — do not modify
         """Run ``prompt`` in-process and read the run artefacts back.
 
         Returns the mapping :func:`nebuko.engine.agent_runner.run_legacy_agent` returns,
@@ -145,6 +158,10 @@ class InProcessAgentHost:
         its legacy value so routing/validation — which read the run's outcome
         from the workflow state, never from this text — are unchanged; only the
         posted body prefers ``deliverable``.
+
+        The entry point and assembly resolve from the engine checkout; the
+        child env's ``GFA_REPO_ROOT`` and the conversation workspace are the
+        caller's workspace (issue #1208).
 
         Raises:
             EngineAgentUnavailable: Setup failed before the run began.
@@ -157,16 +174,18 @@ class InProcessAgentHost:
             # The temp dir is the cwd only for *artefact staging* (the legacy
             # steps write latest_answer.md / state here). Control-plane work that
             # must target the real checkout — the conversation workspace and the
-            # wind-down git ops — is bound explicitly (issue #766).
+            # wind-down git ops — is bound explicitly (issue #766), and it is the
+            # *caller's* checkout, not the engine's (issue #1208).
             with _applied_env(
-                _child_env(script, self._env, repo_root=self._repo_root)
+                _child_env(script, self._env, repo_root=self._caller_root)
             ), contextlib.chdir(workdir):
                 with _capture_console() as console:
-                    conversation = _run_pipeline(pipeline, prompt, self._repo_root, self)
+                    conversation = _run_pipeline(pipeline, prompt, self._caller_root, self)
                     console_log = console.getvalue()
             return self._capture_artifacts(work, conversation, console_log)
 
     def _entry_point(self) -> Path:
+        # @stub-protected: signature defined by architect — do not modify
         """The frozen legacy entry point this host imports, or declare it out."""
         script = self._repo_root / _AGENT_SCRIPT
         if not script.is_file():

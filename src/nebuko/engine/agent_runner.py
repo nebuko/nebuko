@@ -48,14 +48,27 @@ _STAGED_ENTRY_FILE = "agent_script_entry.py"
 
 
 def run_legacy_agent(
-    prompt: str, *, repo_root: Path, env: Mapping[str, str] | None = None
+    prompt: str,
+    *,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+    caller_root: Path | None = None,
 ) -> dict[str, Any]:
+    # @stub-protected: signature defined by architect — do not modify
     """Run the legacy agent entry point for ``prompt`` and read back its artefacts.
+
+    Two roots, two meanings (issue #1208): the agent's *code* always comes from
+    the engine checkout, while the agent's *git operations* anchor at the
+    caller's workspace.
 
     Args:
         prompt: The assembled agent prompt (written to a temp file).
-        repo_root: Checkout holding ``engine/lib/agent_script``.
+        repo_root: The engine checkout holding ``engine/lib/agent_script``; the
+            entry point is ``repo_root / _AGENT_SCRIPT``.
         env: Extra environment for the child (LLM config, role, ...).
+        caller_root: The caller's workspace, exported to the child as
+            ``GFA_REPO_ROOT`` so the wind-down's commit/push/PR lands there.
+            ``None`` means the caller *is* the engine checkout (same-repo run).
 
     Returns:
         Dict with ``answer`` (``latest_answer.md``), ``final_message``,
@@ -65,7 +78,9 @@ def run_legacy_agent(
     if not script.is_file():
         raise FileNotFoundError(f"legacy agent entry point not found: {script}")
 
-    child_env = _child_env(script, env, repo_root=Path(repo_root))
+    # The agent's git operations anchor at the caller's workspace, while its
+    # code always comes from the engine checkout (issue #1208).
+    child_env = _child_env(script, env, repo_root=Path(caller_root or repo_root))
     with tempfile.TemporaryDirectory(prefix="gfa-agent-") as workdir:
         work = Path(workdir)
         prompt_file = work / _PROMPT_FILE
@@ -103,8 +118,13 @@ class EngineAgentUnavailable(RuntimeError):
 
 
 def run_engine_agent(
-    prompt: str, *, repo_root: Path, env: Mapping[str, str] | None = None
+    prompt: str,
+    *,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+    caller_root: Path | None = None,
 ) -> dict[str, Any]:
+    # @stub-protected: signature defined by architect — do not modify
     """Run the agent assembly in-process and capture the real deliverable.
 
     The in-process hosting lives in
@@ -115,8 +135,11 @@ def run_engine_agent(
 
     Args:
         prompt: The assembled agent prompt.
-        repo_root: Checkout holding ``engine/lib/agent_script``.
+        repo_root: The engine checkout holding ``engine/lib/agent_script``.
         env: Extra environment for the run (LLM config, role, ...).
+        caller_root: The caller's workspace — the git anchor for the agent's
+            commit/push/PR wind-down (issue #1205); ``None`` falls back to
+            ``repo_root`` for a same-repo run (issue #1208).
 
     Raises:
         EngineAgentUnavailable: Setup failed before the run began.
@@ -124,7 +147,10 @@ def run_engine_agent(
     from nebuko.engine.agent_host import InProcessAgentHost
 
     return InProcessAgentHost(
-        repo_root=repo_root, load_pipeline=_load_pipeline, env=env
+        repo_root=repo_root,
+        load_pipeline=_load_pipeline,
+        env=env,
+        caller_root=caller_root,
     ).run(prompt)
 
 
