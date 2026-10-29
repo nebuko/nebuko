@@ -244,11 +244,20 @@ jobs:
                     -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
                     "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
                   if [ -n "$OIDC_JWT" ]; then
-                    TOKEN=$(curl -sS --max-time 15 -X POST \
+                    BROKER_RESP=$(curl -sS --max-time 15 -X POST \
                       -H "Authorization: Bearer $OIDC_JWT" \
                       -H "Accept: application/json" \
-                      "$BROKER_URL" | jq -r '.token // empty' 2>/dev/null || true)
-                    if [ -n "$TOKEN" ]; then SOURCE="broker"; else echo "::warning::Token broker returned no token ($BROKER_URL)"; fi
+                      -w '\n%{http_code}' "$BROKER_URL" 2>&1 || true)
+                    BROKER_STATUS=$(printf '%s' "$BROKER_RESP" | tail -n 1)
+                    BROKER_BODY=$(printf '%s' "$BROKER_RESP" | sed '$d')
+                    TOKEN=$(printf '%s' "$BROKER_BODY" | jq -r '.token // empty' 2>/dev/null || true)
+                    if [ -n "$TOKEN" ]; then
+                      SOURCE="broker"
+                    else
+                      # Only error/message are echoed: never the raw body, which could hold a token.
+                      DETAIL=$(printf '%s' "$BROKER_BODY" | jq -r '[.error, .message] | map(select(. != null)) | join(": ")' 2>/dev/null || true)
+                      echo "::warning::Token broker returned no token ($BROKER_URL, HTTP $BROKER_STATUS${DETAIL:+, $DETAIL})"
+                    fi
                   else
                     echo "::warning::Could not obtain an OIDC JWT from GitHub"
                   fi
@@ -405,11 +414,20 @@ jobs:
                     -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
                     "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
                   if [ -n "$OIDC_JWT" ]; then
-                    TOKEN=$(curl -sS --max-time 15 -X POST \
+                    BROKER_RESP=$(curl -sS --max-time 15 -X POST \
                       -H "Authorization: Bearer $OIDC_JWT" \
                       -H "Accept: application/json" \
-                      "$BROKER_URL" | jq -r '.token // empty' 2>/dev/null || true)
-                    if [ -n "$TOKEN" ]; then SOURCE="broker"; else echo "::warning::Token broker returned no token ($BROKER_URL)"; fi
+                      -w '\n%{http_code}' "$BROKER_URL" 2>&1 || true)
+                    BROKER_STATUS=$(printf '%s' "$BROKER_RESP" | tail -n 1)
+                    BROKER_BODY=$(printf '%s' "$BROKER_RESP" | sed '$d')
+                    TOKEN=$(printf '%s' "$BROKER_BODY" | jq -r '.token // empty' 2>/dev/null || true)
+                    if [ -n "$TOKEN" ]; then
+                      SOURCE="broker"
+                    else
+                      # Only error/message are echoed: never the raw body, which could hold a token.
+                      DETAIL=$(printf '%s' "$BROKER_BODY" | jq -r '[.error, .message] | map(select(. != null)) | join(": ")' 2>/dev/null || true)
+                      echo "::warning::Token broker returned no token ($BROKER_URL, HTTP $BROKER_STATUS${DETAIL:+, $DETAIL})"
+                    fi
                   else
                     echo "::warning::Could not obtain an OIDC JWT from GitHub"
                   fi
