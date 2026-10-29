@@ -90,7 +90,7 @@ agents:
         reasoning_effort: "high"
 
   dev:
-    model: "${llms.deepseek-4_1-flash}"
+    model: "${llms.glm-5_3-flash}"
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
     temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
@@ -105,7 +105,7 @@ agents:
       require_batched_recon: true
 
   context:
-    model: "${llms.deepseek-4_1-flash}"
+    model: "${llms.glm-5_3-flash}"
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
     temperature: 0.1
     prompt_file: "defaults/prompts/context.md"
