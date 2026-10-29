@@ -180,7 +180,7 @@ def skill_context_from_env(env: Mapping[str, str]) -> SkillContext:
 
 
 def _default_skills_dir() -> str:
-    import nebuko.engine.lib.default_paths
+    import nebuko.engine.lib.default_paths as default_paths
 
     return default_paths.config_dir("skills", "SKILLS_DIR")
 

@@ -247,7 +247,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         LLMConfigError: If the config file is missing/unloadable, the agent role
             has no entry, or the provider secret env var is unset.
     """
-    import nebuko.engine.lib.default_paths
+    import nebuko.engine.lib.default_paths as default_paths
 
     config_path = default_paths.agent_config_file()
     role_name = os.environ.get("ROLE_NAME", "unknown")

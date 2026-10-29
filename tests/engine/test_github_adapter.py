@@ -448,16 +448,15 @@ class TestArtifacts:
 
 
 class TestImportBootstrap:
-    """The adapter bootstraps ``engine/lib`` itself (round-4, finding 1).
+    """The adapter imports its library by package name (issue #1165).
 
-    ``tests/conftest.py`` seeds ``sys.path`` for the whole suite, which masked a
-    real bug: under the production ``python -m nebuko.engine.run`` bootstrap only the
-    repository root is importable, so ``from event_normalizer import ...``
-    raised ``ModuleNotFoundError``. This exercises the adapter out-of-process
-    with only the repository root on ``PYTHONPATH``, i.e. no conftest seeding.
+    ``tests/conftest.py`` no longer seeds ``sys.path``: ``nebuko.engine.lib`` is
+    an ordinary subpackage, so these run the adapter out-of-process with only
+    ``src`` on ``PYTHONPATH`` — the production ``python -m nebuko.engine.run``
+    layout — and prove no bootstrap is needed.
     """
 
-    def test_read_trigger_bootstraps_the_legacy_path_without_conftest(self, tmp_path):
+    def test_read_trigger_imports_without_a_path_bootstrap(self, tmp_path):
         repo_root = Path(__file__).resolve().parents[2]
         event_path = _event_file(tmp_path, ISSUE_COMMENT_PAYLOAD)
         program = (
@@ -483,8 +482,8 @@ class TestImportBootstrap:
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "590 issue_comment"
 
-    def test_state_methods_bootstrap_the_legacy_path_without_conftest(self, tmp_path):
-        """``load_state``/``save_state`` import legacy packages too (round-4, finding 1)."""
+    def test_state_methods_import_without_a_path_bootstrap(self, tmp_path):
+        """``load_state``/``save_state`` reach the library by package name."""
         repo_root = Path(__file__).resolve().parents[2]
         event_path = _event_file(tmp_path, ISSUE_COMMENT_PAYLOAD)
         program = (
@@ -493,9 +492,7 @@ class TestImportBootstrap:
             "    def get_issue_comments(self, repo, number, limit=None):\n"
             "        return []\n"
             f"adapter = GitHubAdapter(repo='x/y', event_path={str(event_path)!r}, client=Client())\n"
-            # Legacy imports only resolve after the adapter's bootstrap, exactly
-            # as in the production ``python -m nebuko.engine.run`` ordering.
-            "from workflow_state.workflow_state import WorkflowState\n"
+            "from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState\n"
             "adapter.read_trigger()\n"
             "print(adapter.load_state())\n"
             "adapter.save_state(WorkflowState(run_id=1, workflow='spec-driven-impl', "

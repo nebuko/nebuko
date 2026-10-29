@@ -178,7 +178,7 @@ class TestCircuitBreakerSeam:
     def test_legacy_default_still_reads_the_github_api(self, monkeypatch):
         from nebuko.engine.lib.circuit_breaker import check_circuit_breaker
 
-        monkeypatch.setattr("circuit_breaker.get_issue_comments", lambda *a, **k: [])
+        monkeypatch.setattr("nebuko.engine.lib.circuit_breaker.get_issue_comments", lambda *a, **k: [])
 
         result = check_circuit_breaker(590, threshold=3)
 

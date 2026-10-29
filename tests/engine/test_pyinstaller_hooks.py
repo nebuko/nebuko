@@ -41,5 +41,5 @@ def test_the_engine_hook_executes_and_declares_hidden_imports():
 
     hook_path = Path(_pyinstaller_hooks.__file__).resolve().parent / "hook-nebuko.engine.py"
     ns = runpy.run_path(str(hook_path))
-    assert "config" in ns["hiddenimports"]
-    assert "workflow_state" in ns["hiddenimports"]
+    assert "nebuko.engine.lib.config" in ns["hiddenimports"]
+    assert "nebuko.engine.lib.workflow_state" in ns["hiddenimports"]

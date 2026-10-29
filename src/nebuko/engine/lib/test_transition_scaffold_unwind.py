@@ -29,7 +29,7 @@ import pytest
 import yaml
 
 
-import resolve_workflow
+import nebuko.engine.lib.resolve_workflow as resolve_workflow
 from nebuko.engine.lib.resolve_config import resolve_config
 from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 from nebuko.engine.lib.workflow_state.workflow_state import (

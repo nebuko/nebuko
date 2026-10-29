@@ -60,7 +60,7 @@ class TestEnsureBotMarker:
 class TestPostCommentMarker:
     """Test that post_comment tags bodies with the universal bot marker."""
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_posts_comment_with_bot_marker(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps({"id": "1"}))
 
@@ -70,7 +70,7 @@ class TestPostCommentMarker:
         body_arg = next(a for a in args if a.startswith("body="))
         assert body_arg.split("=", 1)[1].split("\n")[0] == BOT_MARKER
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_does_not_duplicate_existing_marker(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps({"id": "1"}))
 
@@ -88,7 +88,7 @@ class TestGetIssueComments:
         result = get_issue_comments("owner/repo", 42, dry_run=True)
         assert result == []
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_fetches_comments_successfully(self, mock_run):
         comments = [
             {"id": "1", "body": "Hello", "user": {"login": "user1"}},
@@ -104,7 +104,7 @@ class TestGetIssueComments:
         assert result[0]["body"] == "Hello"
         mock_run.assert_called_once()
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_paginates_the_fetch(self, mock_run):
         """Regression (issue #750): an unpaginated fetch returns only the oldest
         page, so any ``comments[-N:]`` "last N" slice picks the wrong end."""
@@ -117,7 +117,7 @@ class TestGetIssueComments:
         assert "--paginate" in args
         assert "--slurp" in args
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_flattens_all_pages_preserving_order(self, mock_run):
         page1 = [{"id": "1", "body": "oldest"}, {"id": "2", "body": "older"}]
         page2 = [{"id": "3", "body": "newer"}, {"id": "4", "body": "newest"}]
@@ -130,21 +130,21 @@ class TestGetIssueComments:
         assert [c["id"] for c in result] == ["1", "2", "3", "4"]
         assert result[-1]["body"] == "newest"
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_handles_api_error(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="rate limited")
 
         result = get_issue_comments("owner/repo", 42, transport=_transport())
         assert result == []
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_handles_invalid_json(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="not json")
 
         result = get_issue_comments("owner/repo", 42)
         assert result == []
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_limit_keeps_the_last_comments(self, mock_run):
         page = [{"id": str(index), "body": f"c{index}"} for index in range(5)]
         mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps([page]))
@@ -153,7 +153,7 @@ class TestGetIssueComments:
 
         assert [c["body"] for c in result] == ["c3", "c4"]
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_tail_fetch_falls_back_when_link_header_is_missing(self, mock_run):
         """A multi-page thread whose ``Link`` header is absent must not be
         mistaken for a single page of the *newest* comments (issue #805)."""
@@ -180,7 +180,7 @@ class TestGetAuthenticatedUser:
     def test_dry_run_returns_none(self):
         assert get_authenticated_user(dry_run=True) is None
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_returns_id_login_and_type(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -194,13 +194,13 @@ class TestGetAuthenticatedUser:
         assert args[:2] == ["gh", "api"]
         assert "/user" in args
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_api_error_returns_none(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="bad creds")
 
         assert get_authenticated_user(transport=_transport()) is None
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_invalid_json_returns_none(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="not json")
 
@@ -214,14 +214,14 @@ class TestGetCommentNodeId:
         result = get_comment_node_id("123", "owner/repo", dry_run=True)
         assert result is None
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_returns_node_id(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="C_kwPOTQ")
 
         result = get_comment_node_id("123", "owner/repo")
         assert result == "C_kwPOTQ"
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_returns_none_on_error(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
 
@@ -236,14 +236,14 @@ class TestGetCommentBody:
         result = get_comment_body("123", "owner/repo", dry_run=True)
         assert result is None
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_returns_body(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="This is the comment body")
 
         result = get_comment_body("123", "owner/repo")
         assert result == "This is the comment body"
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_returns_none_on_error(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
 
@@ -258,7 +258,7 @@ class TestPostComment:
         result = post_comment("owner/repo", 42, "Hello", dry_run=True)
         assert result.ok is True
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_posts_comment(self, mock_run):
         response = {"id": 999, "html_url": "https://example.test/c/999"}
         mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(response))
@@ -269,7 +269,7 @@ class TestPostComment:
         assert result.comment_id == 999
         assert result.comment_url == "https://example.test/c/999"
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_failure_is_reported_not_swallowed(self, mock_run):
         """The regression of issue #805: a dropped write must be visible."""
         mock_run.return_value = MagicMock(
@@ -290,13 +290,13 @@ class TestMinimizeComment:
     def test_dry_run(self):
         assert minimize_comment("node123", dry_run=True) is True
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_minimizes_successfully(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout='{"minimizedComment":{}}')
 
         assert minimize_comment("node123") is True
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_handles_error(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="fail")
 
@@ -317,7 +317,7 @@ class TestGitHubTransport:
             stderr=f"gh: {message} (HTTP {status})",
         )
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_success_parses_status_and_body(self, mock_run):
         mock_run.return_value = self._ok(stdout='{"id": 7}')
 
@@ -327,7 +327,7 @@ class TestGitHubTransport:
         assert result.status == 200
         assert result.payload == '{"id": 7}'
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_classifies_a_secondary_rate_limit(self, mock_run):
         mock_run.return_value = self._error(403, "You have exceeded a secondary rate limit")
 
@@ -335,7 +335,7 @@ class TestGitHubTransport:
 
         assert result.error_kind == ApiErrorKind.SECONDARY_RATE_LIMIT
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_classifies_a_primary_rate_limit_from_zero_remaining(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=1,
@@ -347,7 +347,7 @@ class TestGitHubTransport:
 
         assert result.error_kind == ApiErrorKind.PRIMARY_RATE_LIMIT
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_classifies_auth_and_not_found_as_terminal(self, mock_run):
         for status, message, expected in (
             (401, "Bad credentials", ApiErrorKind.AUTH),
@@ -357,7 +357,7 @@ class TestGitHubTransport:
             result = _transport().call(["api", "/x"], mutative=False)
             assert result.error_kind == expected
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_classifies_an_empty_body_decode_error(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=1,
@@ -369,7 +369,7 @@ class TestGitHubTransport:
 
         assert result.error_kind == ApiErrorKind.DECODE
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_retries_a_secondary_block_then_succeeds(self, mock_run):
         sleeps = []
         mock_run.side_effect = [
@@ -389,7 +389,7 @@ class TestGitHubTransport:
         assert transport.retries == 1
         assert sleeps and sleeps[0] >= 5.0
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_does_not_retry_a_terminal_failure(self, mock_run):
         mock_run.return_value = self._error(401, "Bad credentials")
 
@@ -399,7 +399,7 @@ class TestGitHubTransport:
         assert result.error_kind == ApiErrorKind.AUTH
         assert mock_run.call_count == 1
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_honours_retry_after_before_retrying(self, mock_run):
         sleeps = []
         mock_run.side_effect = [
@@ -419,7 +419,7 @@ class TestGitHubTransport:
         # The server-mandated Retry-After is honoured, not the 60s default.
         assert sleeps and sleeps[0] == pytest.approx(7.0, abs=0.2)
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_paces_mutative_requests(self, mock_run):
         clock = {"now": 0.0}
         sleeps = []
@@ -442,7 +442,7 @@ class TestGitHubTransport:
 
         assert any(seconds >= 1.0 for seconds in sleeps)
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_reads_do_not_add_headers_for_paginated_calls(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
 
@@ -451,7 +451,7 @@ class TestGitHubTransport:
         args = mock_run.call_args[0][0]
         assert "--include" not in args
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_forwards_cwd_and_timeout_to_subprocess(self, mock_run):
         """``ensure_pr`` runs git/gh from the real checkout, so the transport
         must pass ``cwd``/``timeout`` through to ``subprocess.run``."""

@@ -494,7 +494,7 @@ def resolve_config(
 
 
 def main():
-    import nebuko.engine.lib.default_paths
+    import nebuko.engine.lib.default_paths as default_paths
 
     parser = argparse.ArgumentParser(
         description="Resolve agent configuration from trigger body"

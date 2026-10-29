@@ -51,7 +51,7 @@ class PublishError(RuntimeError):
 
 
 def _github_client() -> Any:
-    import nebuko.engine.lib.github_client
+    import nebuko.engine.lib.github_client as github_client
 
     return github_client
 

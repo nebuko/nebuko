@@ -2928,7 +2928,7 @@ def _classify_terminal_kind(
 
 
 def main():
-    import nebuko.engine.lib.default_paths
+    import nebuko.engine.lib.default_paths as default_paths
 
     parser = argparse.ArgumentParser(description="Resolve workflow routing for agent")
     parser.add_argument(

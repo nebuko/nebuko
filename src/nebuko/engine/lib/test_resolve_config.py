@@ -1481,7 +1481,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
         state_block = self._build_state_block(workflow="default", step="analyze")
         comments = self._comments_with_state(state_block)
 
-        with patch("resolve_config.get_issue_comments", return_value=comments):
+        with patch("nebuko.engine.lib.resolve_config.get_issue_comments", return_value=comments):
             result = resolve_config(
                 "/nebuko force-step step --name context",
                 prompt_base,
@@ -1502,7 +1502,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
         prompt_base, workflows_dir = self._setup_dirs()
         comments = [{"body": "No state here", "id": 111}]
 
-        with patch("resolve_config.get_issue_comments", return_value=comments):
+        with patch("nebuko.engine.lib.resolve_config.get_issue_comments", return_value=comments):
             result = resolve_config(
                 "/nebuko force-step step --name context",
                 prompt_base,
@@ -1542,7 +1542,7 @@ class TestForceNextStepFallbackFromComments(unittest.TestCase):
         comments = self._comments_with_state(state_block)
 
         with patch(
-            "resolve_config.get_issue_comments", return_value=comments
+            "nebuko.engine.lib.resolve_config.get_issue_comments", return_value=comments
         ) as fetch:
             resolve_config(
                 "/nebuko force-step step --name context",

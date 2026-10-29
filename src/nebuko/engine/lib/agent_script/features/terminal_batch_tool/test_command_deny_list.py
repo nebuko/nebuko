@@ -148,7 +148,7 @@ class TestTerminalBatchDenyWiring(unittest.TestCase):
             raise AssertionError("the denied statement reached the executor")
 
         with patch(
-            "agent_script.features.terminal_batch_tool.terminal_batch_tool."
+            "nebuko.engine.lib.agent_script.features.terminal_batch_tool.terminal_batch_tool."
             "TerminalExecutor",
             side_effect=fail,
         ):

@@ -213,10 +213,12 @@ def _patch_resolver(monkeypatch, resolver) -> None:
     """
     import sys
 
-    import resolve_config  # noqa: F401 - ensures the submodule is imported
+    import nebuko.engine.lib.resolve_config  # noqa: F401 - ensures the submodule is imported
 
     monkeypatch.setattr(
-        sys.modules["resolve_config.resolve_config"], "resolve_config", resolver
+        sys.modules["nebuko.engine.lib.resolve_config.resolve_config"],
+        "resolve_config",
+        resolver,
     )
 
 

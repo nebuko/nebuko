@@ -186,7 +186,7 @@ def _skills_dir() -> str:
     Absolute because the prompt builder and the agent child run in different
     working directories; a relative value would resolve differently in each.
     """
-    import nebuko.engine.lib.default_paths
+    import nebuko.engine.lib.default_paths as default_paths
 
     return os.path.abspath(default_paths.config_dir("skills", "SKILLS_DIR"))
 

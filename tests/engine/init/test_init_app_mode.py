@@ -277,7 +277,7 @@ def test_given_the_app_is_installed_when_init_runs_end_to_end_then_no_pat_is_nee
             self.variables: dict[str, str] = {}
 
         def call(self, args, **kwargs):
-            from github_client import ApiCallResult
+            from nebuko.engine.lib.github_client import ApiCallResult
 
             joined = " ".join(args)
             if joined.endswith("/installation"):

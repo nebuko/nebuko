@@ -99,7 +99,7 @@ def test_state_file_missing_is_reported_as_none(tmp_path: Path) -> None:
 
 def test_artifact_names_match_the_legacy_readers() -> None:
     """The seam's file names are the ones the legacy host and scripts already use."""
-    import nebuko.engine.lib.prepare_comment
+    import nebuko.engine.lib.prepare_comment as prepare_comment
 
     assert _LATEST_ANSWER_FILE == prepare_comment.LATEST_ANSWER_FILE
 

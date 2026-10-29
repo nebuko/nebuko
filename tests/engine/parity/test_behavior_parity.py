@@ -102,7 +102,7 @@ def _seed_journal(run_dir: Path, history: Sequence[Mapping[str, Any]]) -> None:
 
 def _engine_for(fixture: Mapping[str, Any], run_dir: Path, monkeypatch) -> Engine:
     """Build the engine over the recorded payload with a run-dir-backed adapter."""
-    import nebuko.engine.lib.event_normalizer
+    import nebuko.engine.lib.event_normalizer as event_normalizer
     import nebuko.engine.lib.resolve_config as resolve_config_package
 
     trigger = event_normalizer.normalize_trigger(fixture["payload"])

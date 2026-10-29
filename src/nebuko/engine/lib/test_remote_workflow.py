@@ -143,7 +143,7 @@ class TestCacheUtils:
             os.environ.pop("WORKFLOW_CACHE_DIR", None)
 
     def _import_module(self):
-        import nebuko.engine.lib.remote_workflow
+        import nebuko.engine.lib.remote_workflow as remote_workflow
         importlib.reload(remote_workflow)
         return remote_workflow
 
@@ -195,7 +195,7 @@ class TestFetchRemoteWorkflow:
             os.environ.pop("WORKFLOW_CACHE_DIR", None)
 
     def _import_module(self):
-        import nebuko.engine.lib.remote_workflow
+        import nebuko.engine.lib.remote_workflow as remote_workflow
         importlib.reload(remote_workflow)
         return remote_workflow
 
@@ -321,7 +321,7 @@ class TestCacheCleanup:
             os.environ.pop("WORKFLOW_CACHE_DIR", None)
 
     def _import_module(self):
-        import nebuko.engine.lib.remote_workflow
+        import nebuko.engine.lib.remote_workflow as remote_workflow
         importlib.reload(remote_workflow)
         return remote_workflow
 
@@ -407,7 +407,7 @@ class TestResolverWithRemoteWorkflows:
         # in every other module that imported the enum (issue #964). The tests
         # below patch ``fetch_remote_workflow`` on the module, so the binding
         # does not need refreshing.
-        import nebuko.engine.lib.resolve_workflow
+        import nebuko.engine.lib.resolve_workflow as resolve_workflow
 
         return resolve_workflow.resolve_workflow_routing
 

@@ -105,7 +105,7 @@ class TestBuildSnapshot:
 class TestLoadThreadSnapshot:
     """``load_thread_snapshot`` performs one bounded, tail-only read."""
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_tail_read_jumps_to_the_last_page_only(self, mock_run):
         def fake_run(cmd, **_kwargs):
             joined = " ".join(cmd)
@@ -121,7 +121,7 @@ class TestLoadThreadSnapshot:
         # One discovery request plus the last page — never the whole thread.
         assert mock_run.call_count == 2
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_single_page_thread_needs_one_request(self, mock_run):
         mock_run.return_value = _ok_page([{"id": 1, "body": "only"}])
 
@@ -130,7 +130,7 @@ class TestLoadThreadSnapshot:
         assert [comment["id"] for comment in snapshot.comments] == [1]
         assert mock_run.call_count == 1
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_surfaces_a_failed_read_as_fetch_error(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=1, stdout="", stderr="gh: You have exceeded a secondary rate limit (HTTP 403)"
@@ -145,7 +145,7 @@ class TestLoadThreadSnapshot:
     def test_state_tail_floor_is_a_single_page(self):
         assert 0 < STATE_TAIL_FLOOR <= 100
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_extracts_state_from_the_fetched_tail(self, mock_run):
         state, payload = _state_json()
         mock_run.return_value = _ok_page([{"body": _state_body(payload)}])

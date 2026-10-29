@@ -1031,7 +1031,7 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
 
     def test_workflow_dirs_prefers_the_local_env_override(self):
         """``LOCAL_WORKFLOWS_DIR`` pins the local layer; empty falls back to cwd."""
-        import nebuko.engine.lib.default_paths
+        import nebuko.engine.lib.default_paths as default_paths
 
         shipped = os.path.join(self._repo, "shipped")
         local = os.path.join(self._repo, "elsewhere", "workflows")

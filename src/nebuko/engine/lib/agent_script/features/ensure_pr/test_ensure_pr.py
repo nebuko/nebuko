@@ -113,7 +113,7 @@ class TestHelpers(unittest.TestCase):
                 return '"develop"'
             return ""
 
-        with patch("agent_script.features.ensure_pr.ensure_pr._run_gh",
+        with patch("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
                    side_effect=gh_out) as gh_mock:
             try:
                 self.assertEqual(_default_base(), "develop")
@@ -130,7 +130,7 @@ class TestHelpers(unittest.TestCase):
     def test_default_base_falls_back_to_main_on_api_failure(self):
         saved = os.environ.pop("GITHUB_BASE_REF", None)
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
             side_effect=RuntimeError("gh api failed"),
         ):
             try:
@@ -146,7 +146,7 @@ class TestHelpers(unittest.TestCase):
 
         saved = os.environ.pop("GITHUB_BASE_REF", None)
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
             side_effect=TimeoutExpired(cmd=["gh", "api"], timeout=120),
         ):
             try:
@@ -157,7 +157,7 @@ class TestHelpers(unittest.TestCase):
 
     def test_find_pr_for_branch_returns_url(self):
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
             side_effect=_default_gh_response,
         ):
             url = _find_pr_for_branch("feature/x")
@@ -165,7 +165,7 @@ class TestHelpers(unittest.TestCase):
 
     def test_find_pr_for_branch_none_when_empty(self):
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
             return_value="",
         ):
             self.assertIsNone(_find_pr_for_branch("feature/x"))
@@ -227,7 +227,7 @@ class TestDirtyPaths(unittest.TestCase):
     def test_engine_owned_handoff_path_is_never_agent_work(self):
         self.assertIn(".nebuko/handoff.md", ENGINE_OWNED_PATHS)
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_git",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git",
             return_value=_porcelain_z("?? .nebuko/handoff.md\n M src/a.py"),
         ):
             self.assertEqual(_dirty_paths(), ("src/a.py",))
@@ -245,11 +245,11 @@ class TestEnsurePr(unittest.TestCase):
 
         return (
             patch(
-                "agent_script.features.ensure_pr.ensure_pr._run_git",
+                "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git",
                 side_effect=git_side_effect,
             ),
             patch(
-                "agent_script.features.ensure_pr.ensure_pr._run_gh",
+                "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
                 side_effect=gh_out if gh_out is not None else _default_gh_response,
             ),
         )
@@ -373,10 +373,10 @@ class TestEnsurePr(unittest.TestCase):
 
         env = {"TARGET_NUMBER": "805", "GITHUB_BASE_REF": ""}
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_git",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git",
             side_effect=_default_git_response,
         ), patch(
-            "agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
             side_effect=factory,
         ), patch.dict("os.environ", env):
             result = ensure_pr()
@@ -407,7 +407,7 @@ class TestEnsurePr(unittest.TestCase):
                 return _FailedResult()
 
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
             return_value=_FailTransport(),
         ):
             with self.assertRaises(RuntimeError):
@@ -557,13 +557,13 @@ class _GhRecorder:
 def _patch_ensure_pr(git, gh, env=None, artifact_dir=None):
     """Context manager running ``ensure_pr`` against the patch-flow fakes."""
     patchers = [
-        patch("agent_script.features.ensure_pr.ensure_pr._run_git", git),
-        patch("agent_script.features.ensure_pr.ensure_pr.GitHubTransport", gh.factory),
+        patch("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git", git),
+        patch("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.GitHubTransport", gh.factory),
     ]
     if artifact_dir is not None:
         patchers.append(
             patch(
-                "agent_script.features.ensure_pr.workflow_patch.PATCH_ARTIFACT_DIR",
+                "nebuko.engine.lib.agent_script.features.ensure_pr.workflow_patch.PATCH_ARTIFACT_DIR",
                 artifact_dir,
             )
         )
@@ -1298,7 +1298,7 @@ class TestCommittedOnlyPublication(unittest.TestCase):
 
     def test_given_clean_tree_with_one_unpushed_plain_commit_when_preparing_publish_then_committed_plain_paths_are_reported(self):
         git = self._git()
-        with patch("agent_script.features.ensure_pr.ensure_pr._run_git", git):
+        with patch("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git", git):
             split = _prepare_publish("origin/main", "feature/issue-1180", "origin/main")
         self.assertEqual(
             split,

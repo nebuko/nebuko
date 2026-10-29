@@ -32,7 +32,7 @@ def ensure_pr_result(monkeypatch):
         return outcome
 
     monkeypatch.setattr(
-        "agent_script.features.ensure_pr.ensure_pr.ensure_pr", _fake
+        "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.ensure_pr", _fake
     )
     return holder, calls
 
