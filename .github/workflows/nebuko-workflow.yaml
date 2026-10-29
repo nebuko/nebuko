@@ -242,12 +242,12 @@ jobs:
                 if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
                   OIDC_JWT=$(curl -sS --max-time 15 \
                     -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
+                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
                   if [ -n "$OIDC_JWT" ]; then
                     TOKEN=$(curl -sS --max-time 15 -X POST \
                       -H "Authorization: Bearer $OIDC_JWT" \
                       -H "Accept: application/json" \
-                      "$BROKER_URL" | jq -r '.token // empty')
+                      "$BROKER_URL" | jq -r '.token // empty' 2>/dev/null || true)
                     if [ -n "$TOKEN" ]; then SOURCE="broker"; else echo "::warning::Token broker returned no token ($BROKER_URL)"; fi
                   else
                     echo "::warning::Could not obtain an OIDC JWT from GitHub"
@@ -403,12 +403,12 @@ jobs:
                 if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
                   OIDC_JWT=$(curl -sS --max-time 15 \
                     -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
+                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
                   if [ -n "$OIDC_JWT" ]; then
                     TOKEN=$(curl -sS --max-time 15 -X POST \
                       -H "Authorization: Bearer $OIDC_JWT" \
                       -H "Accept: application/json" \
-                      "$BROKER_URL" | jq -r '.token // empty')
+                      "$BROKER_URL" | jq -r '.token // empty' 2>/dev/null || true)
                     if [ -n "$TOKEN" ]; then SOURCE="broker"; else echo "::warning::Token broker returned no token ($BROKER_URL)"; fi
                   else
                     echo "::warning::Could not obtain an OIDC JWT from GitHub"
