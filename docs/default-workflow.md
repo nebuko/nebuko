@@ -94,7 +94,7 @@ Determines whether the repository already has nebuko embedded. If the prompt fil
 **Input:** `needed` from Step 2.  
 **Output:** nebuko repository cloned at `.nebuko-cache/` (conditional).
 
-Only runs when `needed=true`. Clones `nebuko/nebuko` into `.nebuko-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed nebuko directly. The orchestration engine resolves script locations from the embedded `engine/lib/` tree, falling back to the `.nebuko-cache/` clone.
+Only runs when `needed=true`. Clones `nebuko/nebuko` into `.nebuko-cache/` using the run's GitHub token (the App installation token by default, `GH_PAT` in PAT fallback mode). Provides scripts and prompts for repositories that don't embed nebuko directly. The orchestration engine resolves script locations from the embedded `engine/lib/` tree, falling back to the `.nebuko-cache/` clone.
 
 ---
 
@@ -221,9 +221,9 @@ Produces a consolidated markdown prompt file.
 
 ---
 
-### Step 14: Configure git to Use GH_PAT
+### Step 14: Configure git to Use the GitHub Token
 
-**Input:** `GH_PAT` secret.  
+**Input:** the run's GitHub token — the App installation token minted via the OIDC broker, or `GH_PAT` in PAT fallback mode.  
 **Output:** Git remote configured with PAT authentication.
 
 Updates the git remote URL to embed the PAT, allowing the agent to push branches and create PRs.
@@ -454,7 +454,7 @@ GitHub Event
 | `PYTHON_VERSION` | `inputs.python_version` | `3.13` | Python runtime version |
 | `ENABLE_UV_CACHE` | `inputs.enable_uv_cache` | `true` | Enable uv dependency caching |
 | `OPENROUTER_API_KEY` | `secrets.OPENROUTER_API_KEY` | (required) | Default LLM API key |
-| `GH_PAT` | `secrets.GH_PAT` | (required) | GitHub token for API access |
+| `GH_PAT` | `secrets.GH_PAT` | (optional) | GitHub token for API access — PAT fallback only; App-mode runs mint an installation token instead |
 
 ### Output Variables (set during execution)
 
