@@ -48,6 +48,19 @@ GIT_IDENTITY_NAME: str = "nebuko"
 # @stub-protected
 GIT_IDENTITY_EMAIL: str = "nebuko@nebuko.dev"
 
+
+def git_identity_args(env: Optional[Mapping[str, str]] = None) -> list[str]:
+    """``git -c`` flags for engine-authored commits, honouring the env override.
+
+    ``NEBUKO_GIT_AUTHOR_NAME`` / ``NEBUKO_GIT_AUTHOR_EMAIL`` (set by the
+    workflow when the token is the App's, so GitHub links commits to the bot)
+    win over the ``GIT_IDENTITY_*`` constants. ``env`` defaults to ``os.environ``.
+    """
+    source = os.environ if env is None else env
+    name = source.get("NEBUKO_GIT_AUTHOR_NAME") or GIT_IDENTITY_NAME
+    email = source.get("NEBUKO_GIT_AUTHOR_EMAIL") or GIT_IDENTITY_EMAIL
+    return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
+
 #: Skip reasons a guard cannot act on: no remote or a detached HEAD means
 #: there is nothing to publish.
 # @stub-protected
