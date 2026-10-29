@@ -200,7 +200,7 @@ def _install_fake_pipeline(
             encoding="utf-8",
         )
 
-    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+    def _default_run_agent(llm_config, prompt, args, agent_cfg=None, **kwargs):
         return SimpleNamespace(state=SimpleNamespace(events=events))
 
     pipeline = SimpleNamespace(
@@ -277,6 +277,87 @@ def test_run_engine_agent_propagates_a_run_failure(monkeypatch, tmp_path: Path) 
     assert not isinstance(excinfo.value, EngineAgentUnavailable)
 
 
+# ── engine checkout vs caller git anchor (issue #1208) ────────────────────
+
+
+def _two_checkouts(tmp_path: Path) -> tuple[Path, Path]:
+    """An engine checkout holding the entry point and a caller checkout without ``src/``.
+
+    This is the ``nebuko/website`` layout: the engine code lives only in the
+    imported ``.nebuko-engine`` checkout, while ``$GITHUB_WORKSPACE`` holds the
+    caller's repository and has no ``src/nebuko`` tree at all.
+    """
+    engine_root = tmp_path / ".nebuko-engine"
+    _write_entry_point(engine_root)
+    caller_root = tmp_path / "website"
+    caller_root.mkdir()
+    (caller_root / "README.md").write_text("caller\n", encoding="utf-8")
+    return engine_root, caller_root
+
+
+def _repo_root_writing_entry_point(script: Path) -> None:
+    """A legacy entry point that reports the git anchor it was handed."""
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(
+        "import os, pathlib, sys\n"
+        "pathlib.Path('latest_answer.md').write_text(\n"
+        "    os.environ.get('GFA_REPO_ROOT', ''), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+
+def test_given_a_caller_checkout_without_src_when_the_engine_seam_runs_then_the_entry_point_comes_from_the_engine_checkout(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """#1208: the caller workspace never holds the agent code."""
+    engine_root, caller_root = _two_checkouts(tmp_path)
+    _install_fake_pipeline(
+        monkeypatch,
+        events=[_agent_message("Full proposal"), _finish_turn("short note")],
+        latest_answer="short note",
+    )
+
+    result = run_engine_agent("prompt", repo_root=engine_root, caller_root=caller_root)
+
+    assert result["deliverable"] == "Full proposal"
+
+
+def test_given_a_caller_checkout_without_src_when_the_legacy_seam_runs_then_the_entry_point_comes_from_the_engine_checkout(
+    tmp_path: Path
+) -> None:
+    """#1208: the fallback seam resolves the entry point the same way."""
+    engine_root, caller_root = _two_checkouts(tmp_path)
+    _stub_entry_point(engine_root / ENTRY_POINT)
+
+    result = run_legacy_agent("hello engine", repo_root=engine_root, caller_root=caller_root)
+
+    assert result["answer"] == "hello engine"
+
+
+def test_given_a_caller_root_when_the_legacy_seam_runs_then_gfa_repo_root_names_the_caller(
+    tmp_path: Path
+) -> None:
+    """#1208: the git anchor is the caller workspace, not the engine checkout."""
+    engine_root, caller_root = _two_checkouts(tmp_path)
+    _repo_root_writing_entry_point(engine_root / ENTRY_POINT)
+
+    result = run_legacy_agent("prompt", repo_root=engine_root, caller_root=caller_root)
+
+    assert result["answer"] == str(caller_root)
+
+
+def test_given_no_caller_root_when_the_legacy_seam_runs_then_gfa_repo_root_falls_back_to_the_engine_checkout(
+    tmp_path: Path
+) -> None:
+    """Same-repo parity: one root means one anchor (issue #1208)."""
+    engine_root = tmp_path / "checkout"
+    _repo_root_writing_entry_point(engine_root / ENTRY_POINT)
+
+    result = run_legacy_agent("prompt", repo_root=engine_root)
+
+    assert result["answer"] == str(engine_root)
+
+
 def _engine(tmp_path: Path):
     from nebuko.adapters.local import LocalAdapter
     from nebuko.engine.models import Trigger
@@ -296,7 +377,7 @@ def test_invoke_agent_prefers_the_in_process_seam(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr(
         agent_runner,
         "run_engine_agent",
-        lambda prompt, *, repo_root, env: {"answer": "captured"},
+        lambda prompt, *, repo_root, env, caller_root=None: {"answer": "captured"},
     )
 
     assert _engine(tmp_path).invoke_agent("prompt") == {"answer": "captured"}
@@ -308,7 +389,7 @@ def test_invoke_agent_falls_back_when_the_seam_is_unavailable(
     from nebuko.engine import agent_runner
     from nebuko.engine.run_loop import Engine
 
-    def _unavailable(prompt, *, repo_root, env):
+    def _unavailable(prompt, *, repo_root, env, caller_root=None):
         raise EngineAgentUnavailable("no legacy assembly")
 
     monkeypatch.setattr(Engine, "_agent_env", lambda self: {})
@@ -316,7 +397,7 @@ def test_invoke_agent_falls_back_when_the_seam_is_unavailable(
     monkeypatch.setattr(
         agent_runner,
         "run_legacy_agent",
-        lambda prompt, *, repo_root, env: {"answer": "legacy"},
+        lambda prompt, *, repo_root, env, caller_root=None: {"answer": "legacy"},
     )
 
     assert _engine(tmp_path).invoke_agent("prompt") == {"answer": "legacy"}

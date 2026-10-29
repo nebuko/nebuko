@@ -78,6 +78,16 @@ falling back to the engine checkout when that directory is gone. The caller
 checkout must therefore be a git checkout with an `origin` remote and push
 credentials; the workflow's checkout step above provides both.
 
+Two roots are involved, and they are not the same directory (issue #1208).
+The agent's **code** — the `agent_script` entry point and the assembly it
+imports — always resolves from the imported `.nebuko-engine` checkout; only the
+git operations above anchor at the caller workspace.
+
+**Behaviour:** an entry point missing from the engine checkout raises
+`EngineAgentUnavailable` and the run falls back to the legacy subprocess seam
+(unchanged), while `GFA_REPO_ROOT` handed to the agent always names the caller
+workspace whenever one exists, so the wind-down's commit/push/PR lands there.
+
 ---
 
 ### Step 2: Check if nebuko Checkout is Needed
