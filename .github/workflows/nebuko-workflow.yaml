@@ -232,24 +232,25 @@ jobs:
               id: gh_token
               env:
                 BROKER_URL: ${{ vars.NEBUKO_BROKER_URL || 'https://token-broker.nebuko.dev' }}
-                ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-                ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
                 FALLBACK_PAT: ${{ secrets.GH_PAT }}
                 FALLBACK_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                 # Never fail the job: every failure path falls back to a static token.
                 TOKEN=""
+                [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && echo "::warning::No OIDC token available (is id-token: write granted?)"
                 SOURCE=""
-                if [ -n "$ID_TOKEN_REQUEST_URL" ] && [ -n "$ID_TOKEN_REQUEST_TOKEN" ]; then
+                if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
                   OIDC_JWT=$(curl -sS --max-time 15 \
-                    -H "Authorization: bearer $ID_TOKEN_REQUEST_TOKEN" \
-                    "$ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
+                    -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
                   if [ -n "$OIDC_JWT" ]; then
                     TOKEN=$(curl -sS --max-time 15 -X POST \
                       -H "Authorization: Bearer $OIDC_JWT" \
                       -H "Accept: application/json" \
                       "$BROKER_URL" | jq -r '.token // empty')
-                    [ -n "$TOKEN" ] && SOURCE="broker"
+                    if [ -n "$TOKEN" ]; then SOURCE="broker"; else echo "::warning::Token broker returned no token ($BROKER_URL)"; fi
+                  else
+                    echo "::warning::Could not obtain an OIDC JWT from GitHub"
                   fi
                 fi
                 if [ -z "$TOKEN" ] && [ -n "$FALLBACK_PAT" ]; then
@@ -392,24 +393,25 @@ jobs:
               id: gh_token
               env:
                 BROKER_URL: ${{ vars.NEBUKO_BROKER_URL || 'https://token-broker.nebuko.dev' }}
-                ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-                ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
                 FALLBACK_PAT: ${{ secrets.GH_PAT }}
                 FALLBACK_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                 # Never fail the job: every failure path falls back to a static token.
                 TOKEN=""
+                [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && echo "::warning::No OIDC token available (is id-token: write granted?)"
                 SOURCE=""
-                if [ -n "$ID_TOKEN_REQUEST_URL" ] && [ -n "$ID_TOKEN_REQUEST_TOKEN" ]; then
+                if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
                   OIDC_JWT=$(curl -sS --max-time 15 \
-                    -H "Authorization: bearer $ID_TOKEN_REQUEST_TOKEN" \
-                    "$ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
+                    -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
                   if [ -n "$OIDC_JWT" ]; then
                     TOKEN=$(curl -sS --max-time 15 -X POST \
                       -H "Authorization: Bearer $OIDC_JWT" \
                       -H "Accept: application/json" \
                       "$BROKER_URL" | jq -r '.token // empty')
-                    [ -n "$TOKEN" ] && SOURCE="broker"
+                    if [ -n "$TOKEN" ]; then SOURCE="broker"; else echo "::warning::Token broker returned no token ($BROKER_URL)"; fi
+                  else
+                    echo "::warning::Could not obtain an OIDC JWT from GitHub"
                   fi
                 fi
                 if [ -z "$TOKEN" ] && [ -n "$FALLBACK_PAT" ]; then
