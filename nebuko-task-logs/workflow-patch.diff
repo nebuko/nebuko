@@ -1,0 +1,36 @@
+diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
+index d5b56a6..e9b8806 100644
+--- a/.github/workflows/nebuko-workflow.yaml
++++ b/.github/workflows/nebuko-workflow.yaml
+@@ -237,12 +237,11 @@ jobs:
+               run: |
+                 # Never fail the job: every failure path falls back to a static token.
+                 TOKEN=""
+-                [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && echo "::warning::No OIDC token available (is id-token: write granted?)"
+                 SOURCE=""
+-                if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
++                if [ -n "$ID_TOKEN_REQUEST_URL" ] && [ -n "$ID_TOKEN_REQUEST_TOKEN" ]; then
+                   OIDC_JWT=$(curl -sS --max-time 15 \
+-                    -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+-                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
++                    -H "Authorization: bearer $ID_TOKEN_REQUEST_TOKEN" \
++                    "$ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
+                   if [ -n "$OIDC_JWT" ]; then
+                     BROKER_RESP=$(curl -sS --max-time 15 -X POST \
+                       -H "Authorization: Bearer $OIDC_JWT" \
+@@ -407,12 +406,11 @@ jobs:
+               run: |
+                 # Never fail the job: every failure path falls back to a static token.
+                 TOKEN=""
+-                [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && echo "::warning::No OIDC token available (is id-token: write granted?)"
+                 SOURCE=""
+-                if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
++                if [ -n "$ID_TOKEN_REQUEST_URL" ] && [ -n "$ID_TOKEN_REQUEST_TOKEN" ]; then
+                   OIDC_JWT=$(curl -sS --max-time 15 \
+-                    -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+-                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
++                    -H "Authorization: bearer $ID_TOKEN_REQUEST_TOKEN" \
++                    "$ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
+                   if [ -n "$OIDC_JWT" ]; then
+                     BROKER_RESP=$(curl -sS --max-time 15 -X POST \
+                       -H "Authorization: Bearer $OIDC_JWT" \
