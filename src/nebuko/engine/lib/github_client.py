@@ -134,6 +134,35 @@ def ensure_bot_marker(body: str) -> str:
     return BOT_MARKER + "\n" + body
 
 
+def classify_integration_denial(result: "ApiCallResult") -> bool:
+    """Whether a failed call is an App-token integration denial (issue #1220).
+
+    App *installation* tokens are integration tokens: GitHub answers
+    ``403 Resource not accessible by integration`` on endpoints the App's
+    permissions do not cover (``GET /user`` among them). The generic
+    classifier maps a bare 403 to ``SECONDARY_RATE_LIMIT`` — retryable —
+    which stalled identity resolution for minutes in App mode. An
+    integration denial is deterministic auth information, not a rate
+    limit: detect it so the transport can fail fast instead.
+
+    A 403 that carries a rate-limit signature ("rate limit
+    exceeded", "secondary rate limit") is *not* an integration
+    denial and stays retryable. An exhausted rate-limit header alone
+    does not appear in the response text, so it is not matched here —
+    ``_classify`` still resolves it to ``PRIMARY_RATE_LIMIT``.
+    """
+    if result.ok:
+        return False
+    text = f"{result.detail} {result.payload}".lower()
+    if "resource not accessible by integration" not in text:
+        return False
+    rate_limit_signatures = (
+        "rate limit exceeded",
+        "secondary rate limit",
+    )
+    return not any(sig in text for sig in rate_limit_signatures)
+
+
 def _gh_cli() -> List[str]:
     """Return gh CLI path."""
     return ["gh"]
@@ -361,6 +390,11 @@ class GitHubTransport:
         if status == 404 or "http 404" in text or "not found" in text:
             return ApiErrorKind.NOT_FOUND
         if status == 401 or "bad credentials" in text or "http 401" in text:
+            return ApiErrorKind.AUTH
+        if classify_integration_denial(result):
+            # Issue #1220: an App installation token's 403 is a permanent
+            # permission boundary, not a rate limit — fail fast, do not
+            # sit out the secondary cooldown.
             return ApiErrorKind.AUTH
         if "secondary rate limit" in text:
             return ApiErrorKind.SECONDARY_RATE_LIMIT
