@@ -2390,13 +2390,7 @@ class Engine:
         pushed. A benign skip (no remote, detached HEAD) leaves the caller's
         environment untouched.
         """
-        guard = git_session.GitSessionGuard(self.repo_root, self._session_env())
-        result = guard.preflight()
-        if result.ok:
-            log.info("[phase:agent] git preflight ok: %s", result.detail)
-        else:
-            log.error("[phase:agent] git preflight failed: %s", result.detail)
-        return result
+        raise NotImplementedError
 
     # @stub-protected
     def _git_session_finalize(self) -> git_session.GuardResult:
@@ -2407,22 +2401,7 @@ class Engine:
         once, then the tree and the remote SHA are verified. A failure is a run
         error — an unpublished session must not look green.
         """
-        guard = git_session.GitSessionGuard(self.repo_root, self._session_env())
-        scaffold = self._scaffold_state.get("result")
-        expected = (
-            scaffold.branch
-            if isinstance(scaffold, branch_scaffold.ScaffoldResult) and scaffold.ok
-            else ""
-        )
-        result = guard.finalize(
-            expected_branch=expected,
-            head_before=self._scaffold_state.get("head_before", ""),
-        )
-        if result.ok:
-            log.info("[phase:agent] git finalize ok: %s", result.detail)
-        else:
-            log.error("[phase:agent] git finalize failed: %s", result.detail)
-        return result
+        raise NotImplementedError
 
     # @stub-protected
     def _branch_scaffold(self) -> branch_scaffold.ScaffoldResult:
@@ -2432,30 +2411,7 @@ class Engine:
         rebase-conflict note reaches the prompt. Never raises: a failure is
         returned as data and the caller turns it into a run error.
         """
-        trigger = self._active_trigger()
-        if trigger is None or trigger.type not in ("issue", "issue_comment"):
-            # Branch mechanics only make sense for an issue-driven dev session;
-            # a PR-review or dispatch trigger carries no issue to scaffold for.
-            result = branch_scaffold.ScaffoldResult(
-                ok=True, skipped=True, detail="not an issue-triggered run"
-            )
-            self._scaffold_state["result"] = result
-            return result
-        scaffold = branch_scaffold.BranchScaffold(
-            self.repo_root,
-            self._session_env(),
-            issue_number=trigger.number if trigger is not None else 0,
-            issue_title=branch_scaffold.issue_title_from_payload(trigger.payload)
-            if trigger is not None
-            else "",
-        )
-        result = scaffold.scaffold()
-        self._scaffold_state["result"] = result
-        if result.ok:
-            log.info("[phase:prompt] branch scaffold: %s", result.detail)
-        else:
-            log.error("[phase:prompt] branch scaffold failed: %s", result.detail)
-        return result
+        raise NotImplementedError
 
     def _render_scaffold_conflict(self) -> str:
         """The fix-first prompt section for a conflicted rebase (issue #1138).
