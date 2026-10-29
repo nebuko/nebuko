@@ -7,7 +7,8 @@ latest_answer.md
 *.egg-info/
 build/
 dist/
-node_modules/nebuko-task-logs/
+node_modules/
+nebuko-task-logs/
 site/
 docs/
 blog/
