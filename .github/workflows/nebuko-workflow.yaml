@@ -241,26 +241,16 @@ jobs:
                 SOURCE=""
                 if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
                   OIDC_JWT=$(curl -sS --max-time 15 \
-<<<<<<< HEAD
                     -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
-=======
-                    -H "Authorization: bearer $ID_TOKEN_REQUEST_TOKEN" \
-                    "$ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
->>>>>>> abf5307f (github app fix jq command)
+                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
                   if [ -n "$OIDC_JWT" ]; then
                     TOKEN=$(curl -sS --max-time 15 -X POST \
                       -H "Authorization: Bearer $OIDC_JWT" \
                       -H "Accept: application/json" \
-<<<<<<< HEAD
-                      "$BROKER_URL" | jq -r '.token // empty')
+                      "$BROKER_URL" | jq -r '.token // empty' 2>/dev/null || true)
                     if [ -n "$TOKEN" ]; then SOURCE="broker"; else echo "::warning::Token broker returned no token ($BROKER_URL)"; fi
                   else
                     echo "::warning::Could not obtain an OIDC JWT from GitHub"
-=======
-                      "$BROKER_URL" | jq -r '.token // empty' 2>/dev/null || true)
-                    if [ -n "$TOKEN" ]; then SOURCE="broker"; fi
->>>>>>> abf5307f (github app fix jq command)
                   fi
                 fi
                 if [ -z "$TOKEN" ] && [ -n "$FALLBACK_PAT" ]; then
@@ -412,26 +402,16 @@ jobs:
                 SOURCE=""
                 if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
                   OIDC_JWT=$(curl -sS --max-time 15 \
-<<<<<<< HEAD
                     -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty')
-=======
-                    -H "Authorization: bearer $ID_TOKEN_REQUEST_TOKEN" \
-                    "$ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
->>>>>>> abf5307f (github app fix jq command)
+                    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebuko-broker" | jq -r '.value // empty' 2>/dev/null || true)
                   if [ -n "$OIDC_JWT" ]; then
                     TOKEN=$(curl -sS --max-time 15 -X POST \
                       -H "Authorization: Bearer $OIDC_JWT" \
                       -H "Accept: application/json" \
-<<<<<<< HEAD
-                      "$BROKER_URL" | jq -r '.token // empty')
+                      "$BROKER_URL" | jq -r '.token // empty' 2>/dev/null || true)
                     if [ -n "$TOKEN" ]; then SOURCE="broker"; else echo "::warning::Token broker returned no token ($BROKER_URL)"; fi
                   else
                     echo "::warning::Could not obtain an OIDC JWT from GitHub"
-=======
-                      "$BROKER_URL" | jq -r '.token // empty' 2>/dev/null || true)
-                    if [ -n "$TOKEN" ]; then SOURCE="broker"; fi
->>>>>>> abf5307f (github app fix jq command)
                   fi
                 fi
                 if [ -z "$TOKEN" ] && [ -n "$FALLBACK_PAT" ]; then
