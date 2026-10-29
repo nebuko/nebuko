@@ -86,7 +86,7 @@ recognise its own output on later runs.
    `404` means it is not. The answer selects the mode for the rest of the run.
 2. **Broker variable.** `init` upserts `NEBUKO_BROKER_URL` through the
    repository-variables API. The default is Nebuko's published broker
-   (`https://token-broker.nebuko.dev`); `--broker-url` overrides it.
+   (`https://token-broker.nebuko.dev/token`); `--broker-url` overrides it.
 3. **Caller workflow.** The workflow is rendered from a packaged template and
    written to `.github/workflows/nebuko-caller.yaml`.
 
