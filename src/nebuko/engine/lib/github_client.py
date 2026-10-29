@@ -149,8 +149,17 @@ def classify_integration_denial(result: "ApiCallResult") -> bool:
     ``x-ratelimit-remaining``, "rate limit exceeded", "secondary rate
     limit") is *not* an integration denial and stays retryable.
     """
-    # @stub-protected: signature defined by architect — do not modify
-    raise NotImplementedError
+    if result.ok:
+        return False
+    text = f"{result.detail} {result.payload}".lower()
+    if "resource not accessible by integration" not in text:
+        return False
+    rate_limit_signatures = (
+        "rate limit exceeded",
+        "secondary rate limit",
+        "x-ratelimit-remaining: 0",
+    )
+    return not any(sig in text for sig in rate_limit_signatures)
 
 
 def _gh_cli() -> List[str]:
@@ -381,13 +390,9 @@ class GitHubTransport:
             return ApiErrorKind.NOT_FOUND
         if status == 401 or "bad credentials" in text or "http 401" in text:
             return ApiErrorKind.AUTH
-        try:
-            denial = classify_integration_denial(result)
-        except NotImplementedError:
-            # Skeleton stub: fall through to the legacy 403 handling until
-            # the integration-denial detector is implemented.
-            denial = False
-        if denial:
+        if status == 401 or "bad credentials" in text or "http 401" in text:
+            return ApiErrorKind.AUTH
+        if classify_integration_denial(result):
             # Issue #1220: an App installation token's 403 is a permanent
             # permission boundary, not a rate limit — fail fast, do not
             # sit out the secondary cooldown.
