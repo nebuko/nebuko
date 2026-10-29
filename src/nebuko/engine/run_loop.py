@@ -1012,7 +1012,7 @@ class Engine:
                     failure_reason = f"branch scaffold failed: {scaffold.detail}"
                 else:
                     self._scaffold_state["head_before"] = git_session.GitSessionGuard(
-                        self.repo_root, self._session_env()
+                        self._caller_root(), self._session_env()
                     ).head_sha()
             prompt =self.build_prompt(resolved, history, input_results, step_scope)
             conflict_note = self._render_scaffold_conflict()
@@ -2238,15 +2238,18 @@ class Engine:
         )
 
         env = self._agent_env()
+        # The agent commits and pushes in the caller's checkout, not in the
+        # imported engine checkout (issue #1205).
+        caller_root = self._caller_root()
         try:
-            return run_engine_agent(prompt, repo_root=self.repo_root, env=env)
+            return run_engine_agent(prompt, repo_root=caller_root, env=env)
         except EngineAgentUnavailable as exc:
             log.warning(
                 "[phase:agent] in-process agent seam unavailable (%s); "
                 "falling back to the legacy subprocess",
                 exc,
             )
-            return run_legacy_agent(prompt, repo_root=self.repo_root, env=env)
+            return run_legacy_agent(prompt, repo_root=caller_root, env=env)
 
     def _agent_env(self) -> dict[str, str]:
         """``self.env`` overlaid with the resolver's ``$GITHUB_ENV`` hand-off.
@@ -2365,7 +2368,7 @@ class Engine:
         pushed. A benign skip (no remote, detached HEAD) leaves the caller's
         environment untouched.
         """
-        guard = git_session.GitSessionGuard(self.repo_root, self._session_env())
+        guard = git_session.GitSessionGuard(self._caller_root(), self._session_env())
         result = guard.preflight()
         if result.ok:
             log.info("[phase:agent] git preflight ok: %s", result.detail)
@@ -2382,7 +2385,7 @@ class Engine:
         once, then the tree and the remote SHA are verified. A failure is a run
         error — an unpublished session must not look green.
         """
-        guard = git_session.GitSessionGuard(self.repo_root, self._session_env())
+        guard = git_session.GitSessionGuard(self._caller_root(), self._session_env())
         scaffold = self._scaffold_state.get("result")
         expected = (
             scaffold.branch
@@ -2416,13 +2419,18 @@ class Engine:
             )
             self._scaffold_state["result"] = result
             return result
+        issue_title = branch_scaffold.issue_title_from_payload(trigger.payload)
+        if not issue_title:
+            # An issue-comment trigger carries no payload title: the request
+            # body, minus the markers and the @@mention that routed it, is the
+            # only title the branch can be named after.
+            body = re.sub(r"<!--.*?-->", " ", trigger.body or "", flags=re.DOTALL)
+            issue_title = " ".join(re.sub(r"@@\S+", " ", body).split())
         scaffold = branch_scaffold.BranchScaffold(
-            self.repo_root,
+            self._caller_root(),
             self._session_env(),
-            issue_number=trigger.number if trigger is not None else 0,
-            issue_title=branch_scaffold.issue_title_from_payload(trigger.payload)
-            if trigger is not None
-            else "",
+            issue_number=trigger.number,
+            issue_title=issue_title,
         )
         result = scaffold.scaffold()
         self._scaffold_state["result"] = result
