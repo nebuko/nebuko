@@ -43,7 +43,8 @@ def test_given_a_writer_when_rendering_then_the_author_gate_is_present(tmp_path)
 
     assert 'contains(fromJSON(\'["OWNER","MEMBER","COLLABORATOR"]\')' in rendered
     assert "github.event.comment.author_association" in rendered
-    assert "github.event.comment.user.login != 'nebuko[bot]'" in rendered
+    assert "github.event.comment.user.login == 'nebuko[bot]'" in rendered
+    assert "user.login != 'nebuko[bot]'" not in rendered
 
 
 def test_given_a_writer_when_rendering_then_id_token_write_is_granted(tmp_path):
