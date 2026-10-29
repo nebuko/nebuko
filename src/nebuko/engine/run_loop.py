@@ -2260,7 +2260,29 @@ class Engine:
         checkout that holds the agent's *code*, while ``caller_root`` is the
         caller's workspace the agent's git operations anchor at (issue #1205).
         """
-        raise NotImplementedError
+        from nebuko.engine.agent_runner import (
+            EngineAgentUnavailable,
+            run_engine_agent,
+            run_legacy_agent,
+        )
+
+        env = self._agent_env()
+        # The agent commits and pushes in the caller's workspace, not in the
+        # imported engine checkout (issue #1205).
+        caller_root = self._caller_root()
+        try:
+            return run_engine_agent(
+                prompt, repo_root=caller_root, env=env, caller_root=caller_root
+            )
+        except EngineAgentUnavailable as exc:
+            log.warning(
+                "[phase:agent] in-process agent seam unavailable (%s); "
+                "falling back to the legacy subprocess",
+                exc,
+            )
+            return run_legacy_agent(
+                prompt, repo_root=caller_root, env=env, caller_root=caller_root
+            )
 
     def _agent_env(self) -> dict[str, str]:
         """``self.env`` overlaid with the resolver's ``$GITHUB_ENV`` hand-off.

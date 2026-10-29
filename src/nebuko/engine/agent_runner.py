@@ -75,7 +75,38 @@ def run_legacy_agent(
         Dict with ``answer`` (``latest_answer.md``), ``final_message``,
         ``state`` (``WorkflowState`` or ``None``) and ``console_log``.
     """
-    raise NotImplementedError
+    script = Path(repo_root) / _AGENT_SCRIPT
+    if not script.is_file():
+        raise FileNotFoundError(f"legacy agent entry point not found: {script}")
+
+    # The agent's git operations anchor at the caller's workspace, while its
+    # code always comes from the engine checkout (issue #1208).
+    child_env = _child_env(script, env, repo_root=Path(caller_root or repo_root))
+    with tempfile.TemporaryDirectory(prefix="gfa-agent-") as workdir:
+        work = Path(workdir)
+        prompt_file = work / _PROMPT_FILE
+        prompt_file.write_text(prompt, encoding="utf-8")
+        staged = _stage_entry_point(script, work)
+
+        completed = subprocess.run(
+            [sys.executable, str(staged), str(prompt_file)],
+            cwd=workdir,
+            env=child_env,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"agent_script exited {completed.returncode}: "
+                f"{completed.stderr.strip()[-500:]}"
+            )
+
+        return {
+            "answer": _read_text(work / _LATEST_ANSWER_FILE),
+            "final_message": _read_text(work / _FINAL_MESSAGE_FILE),
+            "state": _load_state(work / _STATE_FILE),
+            "console_log": (completed.stdout or "") + (completed.stderr or ""),
+        }
 
 
 class EngineAgentUnavailable(RuntimeError):
@@ -114,7 +145,14 @@ def run_engine_agent(
     Raises:
         EngineAgentUnavailable: Setup failed before the run began.
     """
-    raise NotImplementedError
+    from nebuko.engine.agent_host import InProcessAgentHost
+
+    return InProcessAgentHost(
+        repo_root=repo_root,
+        load_pipeline=_load_pipeline,
+        env=env,
+        caller_root=caller_root,
+    ).run(prompt)
 
 
 def _load_pipeline() -> SimpleNamespace:
