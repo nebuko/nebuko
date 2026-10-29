@@ -112,10 +112,9 @@ class ScriptedDevConversation:
 
     def _execute_finalize(self, events: list[Any]) -> None:
         """Run the real ``finalize`` executor over the turn's terminal calls."""
-        from nebuko.engine.paths import ensure_import_path
-
-        ensure_import_path()
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import (
+            FinalizeExecutor,
+        )
 
         executor = FinalizeExecutor(conversation_id=self.id)
         for event in events:
