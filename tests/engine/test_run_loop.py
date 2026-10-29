@@ -88,7 +88,9 @@ def _never_touch_the_real_checkout(monkeypatch, tmp_path_factory):
     ``_engine`` points the Engine at ``repo_root()`` (it needs ``defaults/``),
     which is also the git workspace: the session guard and branch scaffold
     would otherwise commit, push and switch branches in the developer's (or the
-    agent's) own tree. Against any other root the real methods still run.
+    agent's) own tree. Against any other root the real methods still run —
+    unless the caller workspace is not a git checkout, where the real seams
+    have nothing to act on and the spec stubs (issue #1205) would only raise.
 
     The PR finalizer is stubbed everywhere: ``ensure_pr`` runs git/gh in the
     process cwd (or ``GFA_REPO_ROOT``), never in the Engine's ``repo_root``, so
@@ -104,6 +106,8 @@ def _never_touch_the_real_checkout(monkeypatch, tmp_path_factory):
 
         def wrapper(self, *args, **kwargs):
             if Path(self.repo_root).resolve() == real:
+                return benign
+            if not (self._caller_root() / ".git").exists():
                 return benign
             return original(self, *args, **kwargs)
 
@@ -658,6 +662,187 @@ class TestCallerAnchoredConfigLookup:
 
         assert resolved.get("PROMPT_LOCATION") == str(prompts / "dev.md")
         assert resolved.get("SKILLS_DIR") == str(skills)
+
+
+class TestGitSeamsAnchorAtCallerWorkspace:
+    """Every engine-owned git operation runs in the caller's checkout (#1205).
+
+    A cross-repo caller runs the engine from an imported ``.nebuko-engine``
+    checkout (``Engine.repo_root``) while its own repository is checked out at
+    ``$GITHUB_WORKSPACE``. The scaffold, the session guards and the agent's
+    commit/push/PR wind-down must all target the caller's checkout, or the
+    feature branch is created in the engine's repository.
+    """
+
+    @staticmethod
+    def _git(repo: Path, *args: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def _caller_checkout(self, tmp_path) -> Path:
+        """The caller's repository: a work checkout on ``main`` with a remote."""
+        remote = tmp_path / "caller-origin.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(remote)],
+            check=True,
+        )
+        seed = tmp_path / "caller-seed"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+        self._git(seed, "config", "user.name", "t")
+        self._git(seed, "config", "user.email", "t@example.com")
+        self._git(seed, "remote", "add", "origin", remote.as_uri())
+        (seed / "base.txt").write_text("base\n", encoding="utf-8")
+        self._git(seed, "add", "base.txt")
+        self._git(seed, "commit", "-q", "-m", "base")
+        self._git(seed, "push", "-q", "origin", "main")
+
+        caller = tmp_path / "caller"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(caller)], check=True)
+        self._git(caller, "config", "user.name", "t")
+        self._git(caller, "config", "user.email", "t@example.com")
+        self._git(caller, "remote", "add", "origin", remote.as_uri())
+        self._git(caller, "fetch", "-q", "origin", "main")
+        self._git(caller, "checkout", "-q", "-B", "main", "origin/main")
+        return caller
+
+    def _engine_checkout(self, tmp_path) -> Path:
+        """The imported engine checkout: a git checkout with its own remote."""
+        engine_root = tmp_path / ".nebuko-engine"
+        remote = tmp_path / "engine-origin.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True
+        )
+        subprocess.run(
+            ["git", "init", "-q", "-b", "main", str(engine_root)], check=True
+        )
+        self._git(engine_root, "config", "user.name", "t")
+        self._git(engine_root, "config", "user.email", "t@example.com")
+        self._git(engine_root, "remote", "add", "origin", remote.as_uri())
+        (engine_root / "engine.txt").write_text("engine\n", encoding="utf-8")
+        self._git(engine_root, "add", "engine.txt")
+        self._git(engine_root, "commit", "-q", "-m", "engine")
+        self._git(engine_root, "push", "-q", "origin", "main")
+        return engine_root
+
+    def _caller_anchored_engine(self, tmp_path, monkeypatch, caller: Path) -> Engine:
+        """An Engine whose checkout is the engine tree, anchored at ``caller``."""
+        engine_root = self._engine_checkout(tmp_path)
+        adapter = LocalAdapter(tmp_path / "runs" / "run-1", trigger=_trigger(number=1205))
+        engine = Engine(
+            adapter=adapter,
+            repo_root=engine_root,
+            env={
+                "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
+                "GITHUB_WORKSPACE": str(caller),
+            },
+        )
+        monkeypatch.setattr(Engine, "_active_trigger", lambda self: _trigger(number=1205))
+        return engine
+
+    def test_the_scaffold_creates_the_branch_in_the_caller_checkout(
+        self, tmp_path, monkeypatch
+    ):
+        caller = self._caller_checkout(tmp_path)
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+
+        result = engine._branch_scaffold()
+
+        branch = "feature/issue-1205-fix-it"
+        assert result.ok, result.detail
+        assert result.branch == branch
+        # Created in the caller's repository, not in the engine checkout.
+        assert self._git(caller, "rev-parse", "--abbrev-ref", "HEAD") == branch
+        assert self._git(engine.repo_root, "branch", "--list", branch) == ""
+
+    def test_the_scaffold_does_not_touch_the_engine_checkout(self, tmp_path, monkeypatch):
+        caller = self._caller_checkout(tmp_path)
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+        engine_head = self._git(engine.repo_root, "rev-parse", "HEAD")
+
+        engine._branch_scaffold()
+
+        assert self._git(engine.repo_root, "rev-parse", "HEAD") == engine_head
+        assert self._git(engine.repo_root, "status", "--porcelain") == ""
+
+    def test_the_preflight_guard_targets_the_caller_checkout(
+        self, tmp_path, monkeypatch
+    ):
+        """The guard probes the caller's remote, not the engine checkout's."""
+        caller = self._caller_checkout(tmp_path)
+        missing = tmp_path / "missing-origin.git"
+        self._git(caller, "remote", "set-url", "origin", missing.as_uri())
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+
+        result = engine._git_session_preflight()
+
+        assert not result.ok
+        assert str(missing) in result.detail
+
+    def test_the_finalize_guard_commits_and_pushes_the_caller_checkout(
+        self, tmp_path, monkeypatch
+    ):
+        caller = self._caller_checkout(tmp_path)
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+        (caller / "work.txt").write_text("work\n", encoding="utf-8")
+
+        result = engine._git_session_finalize()
+
+        assert result.ok, result.detail
+        assert self._git(caller, "status", "--porcelain") == ""
+        pushed = self._git(
+            caller,
+            "--git-dir",
+            str(tmp_path / "caller-origin.git"),
+            "log",
+            "--oneline",
+            "main",
+        )
+        assert "work" in pushed or "nebuko" in pushed
+
+    def test_the_agent_host_receives_the_caller_checkout(self, tmp_path, monkeypatch):
+        from nebuko.engine import agent_runner
+
+        caller = self._caller_checkout(tmp_path)
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+        seen: list[Path] = []
+        monkeypatch.setattr(Engine, "_agent_env", lambda self: {})
+        monkeypatch.setattr(
+            agent_runner,
+            "run_engine_agent",
+            lambda prompt, *, repo_root, env: seen.append(Path(repo_root)) or {},
+        )
+
+        engine.invoke_agent("prompt")
+
+        assert seen == [caller]
+
+    def test_the_seams_fall_back_to_the_start_directory_without_a_workspace(
+        self, tmp_path, monkeypatch
+    ):
+        """No ``$GITHUB_WORKSPACE``: the cwd the engine started in is the root."""
+        caller = self._caller_checkout(tmp_path)
+        engine_root = self._engine_checkout(tmp_path)
+        adapter = LocalAdapter(tmp_path / "runs" / "run-1", trigger=_trigger(number=1205))
+        engine = Engine(
+            adapter=adapter,
+            repo_root=engine_root,
+            env={"GITHUB_REPOSITORY": "olivier-norture/git-flow-ai"},
+        )
+        monkeypatch.setattr(Engine, "_active_trigger", lambda self: _trigger(number=1205))
+        monkeypatch.chdir(caller)
+
+        assert engine._caller_root() == caller.resolve()
+        result = engine._branch_scaffold()
+
+        assert result.ok, result.detail
+        assert self._git(caller, "rev-parse", "--abbrev-ref", "HEAD") == (
+            "feature/issue-1205-fix-it"
+        )
 
 
 class TestDeterministicActionPhase:
