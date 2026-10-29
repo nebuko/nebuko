@@ -809,17 +809,22 @@ class TestGitSeamsAnchorAtCallerWorkspace:
 
         caller = self._caller_checkout(tmp_path)
         engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
-        seen: list[Path] = []
+        seen: list[tuple[Path, Path]] = []
         monkeypatch.setattr(Engine, "_agent_env", lambda self: {})
         monkeypatch.setattr(
             agent_runner,
             "run_engine_agent",
-            lambda prompt, *, repo_root, env: seen.append(Path(repo_root)) or {},
+            lambda prompt, *, repo_root, env, caller_root=None: seen.append(
+                (Path(repo_root), Path(caller_root))
+            )
+            or {},
         )
 
         engine.invoke_agent("prompt")
 
-        assert seen == [caller]
+        # The agent *code* comes from the engine checkout (#1208); the git
+        # anchor is the caller workspace (#1205).
+        assert seen == [(engine.repo_root.resolve(), caller.resolve())]
 
     def test_the_seams_fall_back_to_the_start_directory_without_a_workspace(
         self, tmp_path, monkeypatch
